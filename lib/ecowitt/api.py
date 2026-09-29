@@ -32,7 +32,8 @@ UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh
 UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rainfall_unitid": 12}
 
 BUSY_RETRIES = 3
-MAX_CONCURRENT = 2
+MIN_GAP_SECONDS = 1.1  # Ecowitt rejects more than about one request a second ("Operation too frequent")
+RETRY_ON = ("busy", "too frequent")
 FMT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -44,16 +45,22 @@ class EcowittAPI:
     def __init__(self, api_key: str, app_key: str, transport: httpx.AsyncBaseTransport | None = None):
         self.keys = {"application_key": app_key, "api_key": api_key}
         self.client = httpx.AsyncClient(timeout=30, transport=transport)
-        self._slots = asyncio.Semaphore(MAX_CONCURRENT)
+        self._turn = asyncio.Lock()  # one request at a time, spaced out
+        self._last = 0.0
         self.requests = 0  # sent so far, including retries
 
     async def close(self):
         await self.client.aclose()
 
     async def _get(self, path: str, **params) -> dict | list:
-        """The response's "data". Retries when Ecowitt says it is busy; raises EcowittError."""
-        async with self._slots:
+        """The response's "data". Retries when Ecowitt says it is busy or we were too quick;
+        raises EcowittError."""
+        loop = asyncio.get_running_loop()
+        async with self._turn:
             for attempt in range(BUSY_RETRIES + 1):
+                if (pause := self._last + MIN_GAP_SECONDS - loop.time()) > 0:
+                    await asyncio.sleep(pause)
+                self._last = loop.time()
                 self.requests += 1
                 try:
                     res = await self.client.get(f"{BASE}/{path}", params={**self.keys, **params})
@@ -64,9 +71,9 @@ class EcowittAPI:
                     msg = str(body.get("msg") or "API error")
                 except (httpx.HTTPError, ValueError) as e:
                     msg = str(e) or type(e).__name__
-                if "busy" in msg.lower() and attempt < BUSY_RETRIES:
+                if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
                     wait = 1.5 * 2 ** attempt
-                    log.info("Ecowitt busy (%s), retrying in %.1fs", path, wait)
+                    log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
                     await asyncio.sleep(wait)
                     continue
                 raise EcowittError(msg)

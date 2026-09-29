@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta
 
@@ -6,7 +7,7 @@ import pytest
 from lib.charts import CHART_REQUESTS
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
-from tests.fakes import FakeEcowitt, MAC, config, ecowitt_transport
+from tests.fakes import MAC, config, ecowitt_transport
 
 
 @pytest.fixture
@@ -24,15 +25,30 @@ async def test_finds_the_station(station):
     assert "Fairleigh" in eco.describe() and "created" in eco.describe()
 
 
-async def test_busy_is_retried(tmp_path, monkeypatch):
-    slept = []
+@pytest.mark.parametrize("msg", ["System is busy.", "Operation too frequent"])
+async def test_busy_and_too_frequent_are_retried(monkeypatch, msg):
+    import httpx
+    slept, replies = [], [{"code": -1, "msg": msg}, {"code": 0, "data": {"list": [{"mac": "x"}]}}]
 
     async def fake_sleep(s):
         slept.append(s)
     monkeypatch.setattr(ecowitt_api.asyncio, "sleep", fake_sleep)
-    transport, fake = ecowitt_transport(FakeEcowitt(busy_first=True))
-    api = ecowitt_api.EcowittAPI("a", "b", transport)
+    api = ecowitt_api.EcowittAPI("a", "b", httpx.MockTransport(lambda r: httpx.Response(200, json=replies.pop(0))))
     assert len(await api.devices()) == 1 and slept == [1.5]
+    await api.close()
+
+
+async def test_requests_are_spaced_out(monkeypatch):
+    import httpx
+    monkeypatch.setattr(ecowitt_api, "MIN_GAP_SECONDS", 0.2)
+    stamps = []
+
+    def handler(request):
+        stamps.append(asyncio.get_running_loop().time())
+        return httpx.Response(200, json={"code": 0, "data": {}})
+    api = ecowitt_api.EcowittAPI("a", "b", httpx.MockTransport(handler))
+    await asyncio.gather(api.devices(), api.devices(), api.devices())
+    assert min(b - a for a, b in zip(stamps, stamps[1:])) >= 0.19
     await api.close()
 
 
