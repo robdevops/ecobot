@@ -141,3 +141,14 @@ def test_a_bare_week_month_or_year_charts_for_air_quality_too():
         name, args, label = call(text)
         assert name == "air_quality" and args["chart"] and args["start_date"] == start, text
     assert call("aq")[:2] == ("air_quality", {})   # no period at all: the current reading
+
+
+def test_air_quality_chart_or_current_reading():
+    """A period (however written) charts; the bare words give the current reading as text."""
+    for text in ("aq week", "aq 1w", "air quality 1d", "aq 1d", "air quality week", "air qual week", "air qual 1d",
+                 "aq 24h", "aq 1m", "pm2.5 1d"):
+        name, args, label = call(text)
+        assert name == "air_quality" and args["chart"] is True, text
+    for text in ("aq", "air qual", "air quality", "air", "aqi", "aq now", "how's the air", "pm2.5"):
+        assert call(text)[:2] == ("air_quality", {}), text
+    assert call("aq 1w")[2] == "air quality chart, last 1 week"

@@ -113,7 +113,7 @@ def numbered_span(count: str, unit: str, now: datetime) -> tuple[str, datetime, 
     days = n if u[0] == "d" else 7 * n if u[0] == "w" else 365 * n if u[0] == "y" else round(n * 365 / 12)
     start = datetime.combine(now.date() - timedelta(days=days - 1), datetime.min.time())
     label = {"d": "days", "w": "weeks", "y": "years", "m": "months"}[u[0]]
-    return f"last {n} {label}", start, datetime.combine(now.date(), datetime.max.time()).replace(microsecond=0)
+    return f"last {n} {label[:-1] if n == 1 else label}", start, datetime.combine(now.date(), datetime.max.time()).replace(microsecond=0)
 
 
 def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
