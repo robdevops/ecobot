@@ -438,6 +438,7 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     direction = out["series"]["wind.wind_direction"]
     assert direction["most_common"].startswith("N ") and "low" not in direction and "high" not in direction
     assert direction["average_direction"].startswith("N (") and "note" not in direction   # 5-minute readings
+    assert direction["calm"].startswith("25%")                                             # midnight to 6am had no wind
     assert len(direction["daily"]) == 6 and all(v.startswith("N ") for v in direction["daily"].values())
     assert "high" in out["series"]["wind.wind_gust"]                                       # speeds are unchanged
     holder = CHART_REQUESTS.set([])                                                        # asking for a chart of direction alone
@@ -476,3 +477,11 @@ async def test_a_direction_chart_is_a_scatter_by_hour_of_day(tmp_path, monkeypat
     assert png[:4] == b"\x89PNG"
     (tmp_path / "direction.png").write_bytes(png)
     await eco.close()
+
+
+def test_calm_readings_are_reported_not_counted():
+    from lib.ecowitt.direction import summarise
+    from tests.fakes import TZ
+    windy = [(1_780_000_000 + i * 300, 90.0, True) for i in range(80)]
+    out = summarise(windy, TZ, by_day=False, calm=20)
+    assert out["most_common"].startswith("E ") and out["calm"].startswith("20%")

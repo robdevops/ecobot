@@ -25,6 +25,7 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 log = logging.getLogger(__name__)
 
 MAX_DIRECTION_POINTS = 4000     # dots on the wind direction chart
+DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
 MAX_REFINE_WINDOWS = 4          # overall records
 MAX_MONTH_REFINE_WINDOWS = 24
 # Periods up to this long are built from local-day-aligned data, so each month's low/high and its
@@ -240,6 +241,7 @@ class HistoryQuery:
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
+        self.direction_period = (None, None)               # what the counted readings actually span
         self.direction_points: list = []                   # [local hour, degrees] of each counted reading, for the chart
 
     async def run(self) -> str:
@@ -306,13 +308,14 @@ class HistoryQuery:
     async def _summarise_direction(self):
         """Wind direction leaves the low/high pipeline: it is counted by compass point instead. Recent
         days are counted from 5-minute readings where the cache has them (averaging degrees is wrong
-        near north); older parts of a long period are left out rather than counted from daily averages."""
+        near north); older parts of a long period are left out rather than counted from daily averages.
+        Calm readings (no wind speed) are dropped: a sensor with nothing to point at repeats its last direction."""
         keys = [k for k in self.store if k.endswith(".wind_direction")]
         if not keys:
             return
         f = self.f
         wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz)
-        first = max(self.start, self.end - timedelta(days=DETAILED_DAYS))
+        first = max(self.start, self.end - timedelta(days=DIRECTION_DAYS))
         for key in keys:
             fine: dict = {}
             fine_days = set()
@@ -323,17 +326,23 @@ class HistoryQuery:
                     collect(fine, await wind.get("5min", a, b), "5min")  # today's comes from memory or one request
                     fine_days.add(day)
             pts = self.store.pop(key)["pts"]
+            speed_key = key[:-len("wind_direction")] + "wind_speed"
+            speeds = {t: r["value"][0] for src in (self.store, fine) for t, r in src.get(speed_key, {}).get("pts", {}).items()
+                      if "value" in r}
             readings = {t: (r["value"][0], r["cycle"] == "5min") for t, r in pts.items()
                         if "value" in r and r["cycle"] in ("5min", "30min") and local_date(t, self.tz) not in fine_days}
             readings.update({t: (r["value"][0], True) for t, r in fine.get(key, {}).get("pts", {}).items() if "value" in r})
             counted = [(t, d, exact) for t, (d, exact) in sorted(readings.items()) if first <= f.local(t)]
-            result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31))
+            calm = [x for x in counted if speeds.get(x[0], 1) <= 0]
+            counted = [x for x in counted if speeds.get(x[0], 1) > 0]
+            result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31), len(calm))
             if not result:
                 continue
             step = -(-len(counted) // MAX_DIRECTION_POINTS)
             self.direction_points = [[(lt := f.local(t)).hour + lt.minute / 60, d] for t, d, _ in counted[::step]]
+            self.direction_period = (first, self.end)
             if self.start < first:
-                result["note_period"] = f"covers only the last {DETAILED_DAYS} days of the period"
+                result["note_period"] = f"covers only the last {DIRECTION_DAYS} days of the period"
             self.direction[key] = result
 
     def _monthly_extremes(self) -> dict:
@@ -458,7 +467,7 @@ class HistoryQuery:
                 out["chart"] = CHART_HINT
             if self.direction_points:
                 holder.append({"kind": "direction", "title": "Wind direction by hour of day",
-                               "subtitle": _period(self.start, self.end), "points": self.direction_points})
+                               "subtitle": _period(*self.direction_period), "points": self.direction_points})
                 out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
                                 if spec else DIRECTION_CHART_HINT)
         if f.errors:

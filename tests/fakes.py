@@ -45,6 +45,11 @@ def direction(ts: int) -> float:
     return (350 + ts // 300 % 3 * 10) % 360
 
 
+def wind_speed(ts: int) -> float:
+    """Calm from midnight to 6am local, 10 km/h otherwise."""
+    return 0.0 if datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ).hour < 6 else 10.0
+
+
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
@@ -79,7 +84,7 @@ class FakeEcowitt:
         first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            named = {"rainfall": [("daily", rain_day)], "wind": [("wind_gust", gust), ("wind_direction", direction)]}
+            named = {"rainfall": [("daily", rain_day)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)]):
                 for ts in range(first, end + 1, step):

@@ -32,9 +32,10 @@ def steadiness(r: float) -> str:
     return "steady" if r >= 0.6 else "fairly steady" if r >= 0.35 else "variable"
 
 
-def summarise(readings: list[tuple[int, float, bool]], tz: tzinfo, by_day: bool) -> dict:
+def summarise(readings: list[tuple[int, float, bool]], tz: tzinfo, by_day: bool, calm: int = 0) -> dict:
     """readings: (epoch, degrees, exact) where exact means a real reading, not an average of a bucket.
-    Returns the result for the model, e.g. {"most_common": "NE (34%)", "then": ["E (20%)"], ...}."""
+    calm: readings already left out because there was no wind. Returns the result for the model,
+    e.g. {"most_common": "NE (34%)", "then": ["E (20%)"], ...}."""
     if not readings:
         return {}
     degrees = [d for _, d, _ in readings]
@@ -48,6 +49,8 @@ def summarise(readings: list[tuple[int, float, bool]], tz: tzinfo, by_day: bool)
                  "readings": len(degrees)}
     if not out["then"]:
         del out["then"]
+    if calm:
+        out["calm"] = f"{_share(calm, calm + len(degrees))} of readings had no wind and are left out (no direction to count)"
     inexact = sum(1 for _, _, exact in readings if not exact)
     if inexact:
         out["note"] = (f"{_share(inexact, len(readings))} of this is from averaged data, where directions near "

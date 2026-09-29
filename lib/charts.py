@@ -222,7 +222,7 @@ def _render_direction(fig, ax, spec: dict):
     ax.set_ylim(-12, 372)
     ax.set_yticks([0, 90, 180, 270, 360])
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: {0: "N", 90: "E", 180: "S", 270: "W", 360: "N"}.get(int(v), "")))
-    ax.set_xticks(range(0, 25, 3))
+    ax.set_xticks(range(0, 24, 3))
     ax.xaxis.set_major_formatter(FuncFormatter(
         lambda v, _: f"{int(v) % 12 or 12}{'am' if int(v) % 24 < 12 else 'pm'}"))
 
