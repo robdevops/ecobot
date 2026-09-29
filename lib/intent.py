@@ -47,11 +47,11 @@ ANALYSIS = re.compile(
 
 
 def reasoning_effort(text: str) -> str:
-    """Thinking is for judgement calls only: predictions, analysis across days or readings, and
-    describing a day. Lookups get none."""
-    if FORECAST.search(text) or ANALYSIS.search(text):
+    """Thinking is for judgement calls only: predictions (medium), and analysis across days or readings
+    or describing a day (low). Lookups get none."""
+    if FORECAST.search(text):
         return EFFORT_FORECAST
-    return EFFORT_DESCRIBE if DESCRIBE.search(text) else EFFORT_DEFAULT
+    return EFFORT_DESCRIBE if ANALYSIS.search(text) or DESCRIBE.search(text) else EFFORT_DEFAULT
 
 
 def needs_data(text: str) -> bool:

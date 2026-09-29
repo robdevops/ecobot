@@ -154,11 +154,11 @@ def test_air_quality_chart_or_current_reading():
     assert call("aq 1w")[2] == "air quality chart, last 1 week"
 
 
-def test_analysis_across_days_or_readings_gets_thinking():
+def test_analysis_across_days_or_readings_gets_low_thinking():
     for text in ("what was the hottest day that where it also rained", "how many days over 30 had rain",
                  "hottest day when it also rained?", "days when it was both windy and cold",
                  "how often does it rain on hot days", "was the coldest day also the wettest"):
-        assert intent.reasoning_effort(text) == "medium", text
+        assert intent.reasoning_effort(text) == "low", text
     for text in ("what was this week's high and low", "how much rain fell yesterday", "weather 1m",
                  "what's the hottest day this year", "thanks!"):
         assert intent.reasoning_effort(text) == "none", text
