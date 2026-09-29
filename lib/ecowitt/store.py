@@ -104,6 +104,27 @@ class HistoryCache:
                 (mac, cycle, grp, start, end)).fetchall()
         return subtract((start, end), rows)
 
+    def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
+        """Every time range held for this group at this resolution (merged, oldest first)."""
+        with self._lock:
+            rows = self.db.execute("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?",
+                                   (mac, cycle, grp)).fetchall()
+        return merge(rows)
+
+    def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str], start: int, end: int) -> dict:
+        """Just some fields of a group, in Ecowitt's response shape: {field: {unit, list}}."""
+        out: dict = {}
+        marks = ",".join("?" * len(fields))
+        with self._lock:
+            units = dict(self.db.execute(
+                f"SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=? AND field IN ({marks})",
+                (mac, cycle, grp, *fields)).fetchall())
+            for field, ts, value in self.db.execute(
+                    f"SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=? AND field IN ({marks}) "
+                    "AND ts BETWEEN ? AND ?", (mac, cycle, grp, *fields, start, end)):
+                out.setdefault(field, {"unit": units.get(field, ""), "list": {}})["list"][str(ts)] = value
+        return out
+
     def days_held(self, mac: str, cycle: str, groups: list[str]) -> int:
         """Days of history stored at this resolution (the least any of the groups has)."""
         held = []

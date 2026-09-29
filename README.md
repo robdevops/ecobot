@@ -31,7 +31,7 @@ lib/bot.py              Telegram handlers and replies
 lib/llm.py, prompt.py   tool-calling loop; system prompt
 lib/intent.py           reasoning effort, "needs data?", fast path
 lib/tools.py, warm.py   tool registry; keep-warm helper shared by both sources
-lib/ecowitt/            api, store (SQLite + memory), history, station, nightly archive
+lib/ecowitt/            api, store (SQLite + memory), history, days (rank/count days), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air
 lib/charts.py           chart renderer (shared theme)

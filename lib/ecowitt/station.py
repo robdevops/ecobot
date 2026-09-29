@@ -11,6 +11,7 @@ from ..config import Config
 from ..tools import Tool
 from ..warm import Warmer
 from .api import EcowittAPI, GROUPS, UNITS
+from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .history import Fetcher, HistoryQuery
 from .store import HistoryCache, HotStore
 
@@ -81,7 +82,8 @@ class Ecowitt:
         self.created: datetime | None = None
         self.longitude = 145.0  # Melbourne; only used to time the pressure tide
         self.tools = [Tool("weather_now", REALTIME_DESCRIPTION, REALTIME_PARAMS, self._realtime),
-                      Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history)]
+                      Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history),
+                      Tool("weather_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
 
     async def start(self):
         devices = await self.api.devices()
@@ -114,6 +116,9 @@ class Ecowitt:
     # ---------- tools ----------
     async def _history(self, args: dict) -> str:
         return await HistoryQuery(self.fetcher(parse_groups(args.get("groups"))), args).run()
+
+    async def _days(self, args: dict) -> str:
+        return await days_tool(self.cache, self.mac, self.tz, args)
 
     async def _realtime(self, args: dict) -> str:
         data = await self.api.realtime(self.mac, ",".join(parse_groups(args.get("groups"))))
