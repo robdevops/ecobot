@@ -610,8 +610,8 @@ async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(t
     from lib.charts import AVERAGE_ASKED
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
-    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=10)} 00:00:00",
-            "end_date": f"{today - timedelta(days=2)} 23:59:59", "chart": True}
+    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=6)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59", "chart": True}   # five days: intraday unless an average was asked
     subtitles = {}
     for asked in (False, True):
         chart, avg = CHART_REQUESTS.set([]), AVERAGE_ASKED.set(asked)

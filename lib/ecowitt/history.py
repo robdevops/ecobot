@@ -24,6 +24,7 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
+DAILY_CHART_DAYS = 7            # a chart longer than this is one point a day: the mean, with the day's low-to-high band
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
 MAX_DIRECTION_POINTS = 4000     # dots on the wind direction chart
@@ -564,7 +565,7 @@ class HistoryQuery:
         for r in pts.values():
             counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
         sub_daily = [c for c in ("5min", "30min") if c in counts]
-        if sub_daily and ("1day" in counts or AVERAGE_ASKED.get()):
+        if sub_daily and ("1day" in counts or AVERAGE_ASKED.get() or self.span > timedelta(days=DAILY_CHART_DAYS)):
             return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
 
         if len(sub_daily) > 1 and sum(counts[c] for c in sub_daily) >= counts.get("1day", 0):

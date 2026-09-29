@@ -270,22 +270,30 @@ def _render_panels(spec: dict, tz: tzinfo):
         colour = _colour(p["label"], i)
         xs = mdates.date2num([to_dt(t) for t in p["x"]])
         ys = np.asarray(p["y"], dtype=float)
-        lo, hi = float(ys.min()), float(ys.max())
+        lo, hi = float(min(p.get("low") or ys)), float(max(p.get("high") or ys))
         span = max(hi - lo, 1.0)
-        ybottom, ytop = lo - span * 0.12, hi + span * 0.35
+        ybottom, ytop = lo - span * 0.3, hi + span * 0.35
         if p.get("zones"):
             z1, z2 = p["zones"]
             for a, b, zc in ((ybottom, z1, ZONE_COLOURS[0]), (z1, z2, ZONE_COLOURS[1]), (z2, ytop, ZONE_COLOURS[2])):
                 if b > ybottom and a < ytop:
                     ax.axhspan(max(a, ybottom), min(b, ytop), color=zc, alpha=0.08, linewidth=0, zorder=0)
+        if p.get("low"):  # each day's low-to-high range behind its mean
+            ax.fill_between(xs, p["low"], p["high"], color=colour, alpha=0.2, linewidth=0, zorder=2)
         ax.plot(xs, ys, color=colour, linewidth=1.2, solid_joinstyle="round", zorder=3)
-        h = int(ys.argmax())
-        ax.scatter([xs[h]], [ys[h]], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
-        frac = (xs[h] - xs[0]) / max(xs[-1] - xs[0], 1e-9)
-        ax.annotate(f"{ys[h]:g}", (xs[h], ys[h]), xytext=(0, 5), textcoords="offset points",
-                    ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom",
-                    fontsize=6.5, fontweight="bold", color="white", zorder=5,
-                    bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
+        records = p.get("records") or {}
+        marks = [(mdates.date2num(to_dt(records[w][0])), float(records[w][1]), above) for w, above in
+                 (("high", True), ("low", False)) if w in records]
+        if not marks:  # no records given: the highest point of the line
+            h = int(ys.argmax())
+            marks = [(xs[h], ys[h], True)]
+        for mx, my, above in marks:
+            ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+            frac = (mx - xs[0]) / max(xs[-1] - xs[0], 1e-9)
+            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, 5 if above else -5), textcoords="offset points",
+                        ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center",
+                        va="bottom" if above else "top", fontsize=6.5, fontweight="bold", color="white", zorder=5,
+                        bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
         ax.set_xlim(xs[0], xs[-1])
         ax.set_ylim(ybottom, ytop)
         unit = p.get("unit", "")

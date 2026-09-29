@@ -42,6 +42,7 @@ BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some da
 BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a long recent outage isn't the start)
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
+DAILY_CHART_DAYS = 7              # a chart longer than this is one point a day, with each day's range shaded
 CHART_POINTS = 1500               # long charts are averaged down to about this many points
 
 PARAMETERS = {
@@ -336,27 +337,40 @@ class AirGradient:
         holder = CHART_REQUESTS.get()
         if chart and rows and holder is not None:
             wanted = [m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"]
-            specs = [sp for sp in (self._chart_spec(m, rows, out["period"]) for m in wanted) if sp]
+            daily = t1 - t0 > timedelta(days=DAILY_CHART_DAYS)  # over a week: a point a day (mean, low-to-high band)
+            specs = [sp for sp in (self._chart_spec(m, rows, out["period"], daily) for m in wanted) if sp]
             spec = specs[0] if len(specs) == 1 else {  # several metrics: one image, a panel each
                 "kind": "panels", "title": "Air quality", "subtitle": f"{out['period']}  ·  AirGradient readings",
-                "panels": [{"label": sp["title"], "unit": sp["unit"], "zones": sp["zones"],
-                            "x": sp["series"][0]["x"], "y": sp["series"][0]["y"]} for sp in specs]} if specs else None
+                "panels": [{"label": sp["title"], "unit": sp["unit"], "zones": sp["zones"], **{
+                                k: sp["series"][0][k] for k in ("x", "y", "low", "high", "records") if k in sp["series"][0]}}
+                           for sp in specs]} if specs else None
             if spec:
                 holder.append(spec)
                 out["chart"] = CHART_HINT
         return out
 
-    @staticmethod
-    def _chart_spec(name: str, rows: list[dict], period: str) -> dict | None:
-        """One metric, in its own units. The record high/low are the true readings; the line is
-        averaged down when the period is long."""
+    def _chart_spec(self, name: str, rows: list[dict], period: str, daily: bool = False) -> dict | None:
+        """One metric, in its own units. The record high/low are the true readings. A week or less is the readings
+        themselves (averaged down if there are very many); longer is a point a day: its mean, with the day's range shaded."""
         pts = [(r["ts"], r[name]) for r in rows if name in r]
         if len(pts) < 2:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        line = downsample(pts)
         label = LABELS[name]
-        return {"kind": "line", "title": label, "subtitle": f"{period}  ·  AirGradient readings",
-                "unit": CHART_UNITS[name], "zones": list(RATINGS[name]),
-                "series": [{"label": label, "x": [t for t, _ in line], "y": [v for _, v in line],
-                            "records": {"low": [lo[0], lo[1]], "high": [hi[0], hi[1]]}}]}
+        series = {"label": label, "records": {"low": [lo[0], lo[1]], "high": [hi[0], hi[1]]}}
+        subtitle = f"{period}  ·  AirGradient readings"
+        if daily:
+            by_day: dict = {}
+            for t, v in pts:
+                by_day.setdefault(local_date(t, self.tz), []).append(v)
+            days = sorted(by_day)
+            if len(days) >= 2:
+                noon = lambda d: int(datetime.combine(d, datetime.min.time()).replace(hour=12, tzinfo=self.tz).timestamp())
+                series.update(x=[noon(d) for d in days], y=[sum(by_day[d]) / len(by_day[d]) for d in days],
+                              low=[min(by_day[d]) for d in days], high=[max(by_day[d]) for d in days])
+                subtitle = f"{period}  ·  daily averages, range shaded  ·  records marked"
+        if "x" not in series:
+            line = downsample(pts)
+            series.update(x=[t for t, _ in line], y=[v for _, v in line])
+        return {"kind": "line", "title": label, "subtitle": subtitle, "unit": CHART_UNITS[name],
+                "zones": list(RATINGS[name]), "series": [series]}

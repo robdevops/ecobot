@@ -212,3 +212,29 @@ async def test_a_gap_after_data_longer_than_the_limit_is_taken_as_the_start(tmp_
     with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
     assert max(with_data) < 20                                            # stopped at the gap
     await air.close()
+
+
+async def test_air_charts_over_a_week_are_a_daily_mean_with_the_range_shaded(tmp_path):
+    air, _ = await make(tmp_path)
+    now = datetime.now(TZ)
+    fmt = "%Y-%m-%d %H:%M:%S"
+
+    async def specs(days_back, metrics):
+        token = CHART_REQUESTS.set([])
+        try:
+            await air.handle({"start_date": (now - timedelta(days=days_back)).strftime(fmt), "end_date": now.strftime(fmt),
+                              "chart": True, "metrics": metrics})
+            return CHART_REQUESTS.get()
+        finally:
+            CHART_REQUESTS.reset(token)
+    short = (await specs(3, ["pm2_5"]))[0]["series"][0]
+    assert "low" not in short and len(short["x"]) > 20                          # a few days: the readings themselves
+    week = (await specs(10, ["pm2_5"]))[0]
+    line = week["series"][0]
+    assert "daily averages, range shaded" in week["subtitle"] and 8 <= len(line["x"]) <= 12
+    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"])) and set(line["records"]) == {"low", "high"}
+    panels = (await specs(10, ["pm2_5", "co2"]))[0]                             # several metrics keep the band and both labels
+    assert panels["kind"] == "panels" and all("low" in p and "records" in p for p in panels["panels"])
+    from lib.charts import render
+    assert render(panels, TZ)[:4] == b"\x89PNG" and render(week, TZ)[:4] == b"\x89PNG"
+    await air.close()
