@@ -31,14 +31,14 @@ class Agent:
         calls = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                  for tc in msg.tool_calls or []]
         content = msg.content or ""
-        detail = "no usage reported"
+        detail = "no usage"
         if usage := resp.usage:
             cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
             thought = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
-            detail = (f"input {usage.prompt_tokens} tok (cached {cached if cached is not None else 'n/a'}), "
-                      f"output {usage.completion_tokens} tok (reasoning {thought if thought is not None else 'n/a'})")
-        log.info("LLM call %d (%s): %.1fs, %s, %d tool call(s), %d chars answer",
-                 call_no, kwargs["extra_body"]["reasoning_effort"], elapsed, detail, len(calls), len(content))
+            detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached), "
+                      f"out {usage.completion_tokens} ({'?' if thought is None else thought} thinking)")
+        log.info("LLM %d (%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
+                 elapsed, detail, len(calls), len(content))
         return content, calls, elapsed
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,

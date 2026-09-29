@@ -31,12 +31,14 @@ log = logging.getLogger(__name__)
 
 API = "https://api.airgradient.com/public/api/v1/locations/{loc}/measures/{kind}"
 MAX_DAYS = 400                    # longest history period per question
-MAX_INLINE_DAYS = 14              # missing days fetched while answering; more are left to the backfill
+MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of margin for clock changes
+MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
+HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly averages (24), not 5-minute (288)
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
 WARM_DAYS = 7                     # finished days kept ready by every refresh
 BACKFILL_PACE = 1.0               # seconds between backfill requests
 BACKFILL_EMPTY_STOP = 30          # this many empty days in a row: the sensor's data starts here
-BACKFILL_FAIL_STOP = 5            # this many failures in a row: give up until the next start
+BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
 CHART_POINTS = 1500               # long charts are averaged down to about this many points
 
@@ -114,6 +116,8 @@ class AirGradient:
     async def _get(self, kind: str, **params):
         self.requests += 1
         res = await self.client.get(API.format(loc=self.loc, kind=kind), params={**params, "token": self.token})
+        if res.status_code == 404 and kind == "past":  # "No data available" for the period
+            return []
         if res.status_code != 200:
             raise RuntimeError(f"AirGradient {kind} failed: HTTP {res.status_code}")
         return res.json()
@@ -139,30 +143,47 @@ class AirGradient:
         """Over for more than an hour, so its data won't change."""
         return self._now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
 
-    async def _stored(self, day: date) -> bool:
-        return self._final(day) and await asyncio.to_thread(self.store.day_count, day) is not None
+    def _utc(self, local: datetime) -> str:
+        return local.replace(tzinfo=self.tz).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    async def _past(self, start: datetime, end: datetime) -> list[dict]:
+        """Readings between two local times, normalised and oldest first."""
+        data = await self._get("past", **{"from": self._utc(start), "to": self._utc(end)})
+        raw = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
+        return sorted((normalise(r) for r in raw if isinstance(r, dict) and r.get("timestamp")), key=lambda r: r["ts"])
+
+    async def _fetch_days(self, days: list[date]):
+        """Fetch finished days and store them, in as few requests as the API allows (it takes up to
+        10 days at a time; we use 9)."""
+        days = sorted(days)
+        while days:
+            window = [d for d in days if (d - days[0]).days < MAX_REQUEST_DAYS]
+            days = days[len(window):]
+            start = datetime.combine(window[0], datetime.min.time())
+            end = datetime.combine(window[-1], datetime.min.time()) + timedelta(days=1)
+            by_day: dict = {d: [] for d in window}
+            for r in await self._past(start, min(end, self._now())):
+                by_day.get(datetime.fromtimestamp(r["ts"], timezone.utc).astimezone(self.tz).date(), []).append(r)
+            for d, day_rows in by_day.items():
+                await asyncio.to_thread(self.store.save_day, d, day_rows)
+                self._recent.pop(d, None)
 
     async def _day_rows(self, day: date, refresh: bool = False) -> list[dict]:
         """All of one local day's readings, normalised. Finished days come from the disk cache (and
         are fetched once if missing); today, and a just-finished day, are refetched when a few
         minutes old."""
-        start = datetime.combine(day, datetime.min.time())
         final = self._final(day)
         async with self._lock(day):
-            if final and await asyncio.to_thread(self.store.day_count, day) is not None:
+            if final:
+                if await asyncio.to_thread(self.store.day_count, day) is None:
+                    await self._fetch_days([day])
                 return await asyncio.to_thread(self.store.load_day, day)
             cached = self._recent.get(day)
-            if not final and cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
+            if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
                 return cached[0]
-            utc = lambda d: d.replace(tzinfo=self.tz).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            data = await self._get("past", **{"from": utc(start), "to": utc(min(start + timedelta(days=1), self._now()))})
-            raw = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
-            rows = sorted((normalise(r) for r in raw if isinstance(r, dict) and r.get("timestamp")), key=lambda r: r["ts"])
-            if final:
-                await asyncio.to_thread(self.store.save_day, day, rows)
-                self._recent.pop(day, None)
-            else:
-                self._recent[day] = (rows, time.time())
+            start = datetime.combine(day, datetime.min.time())
+            rows = await self._past(start, min(start + timedelta(days=1), self._now()))
+            self._recent[day] = (rows, time.time())
             return rows
 
     async def warm(self, fresh: bool = True) -> str:
@@ -170,39 +191,51 @@ class AirGradient:
         before, today = self.requests, self._now().date()
         await self._current_row(fresh)
         await self._day_rows(today, fresh)
-        for n in range(1, WARM_DAYS + 1):
-            await self._day_rows(today - timedelta(days=n))
+        week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
+        missing = [d for d in week if self._final(d) and await asyncio.to_thread(self.store.day_count, d) is None]
+        await self._fetch_days(missing)  # one request for all of them
+        for day in week:
+            await self._day_rows(day)
         return f"AirGradient {self.requests - before} request(s)"
 
     async def backfill(self, pace: float | None = None, empty_stop: int | None = None,
                        max_days: int = BACKFILL_MAX_DAYS) -> tuple[int, int, int]:
         """Cache every finished day back to where the sensor's data starts (newest first, so recent
-        charts are ready soonest). Returns (days fetched, days failed, days cached in total)."""
+        charts are ready soonest; up to 9 days per request). Returns (days fetched, days failed,
+        days cached in total)."""
         pace = BACKFILL_PACE if pace is None else pace
         empty_stop = BACKFILL_EMPTY_STOP if empty_stop is None else empty_stop
         today = self._now().date()
         fetched = failed = failed_run = empty_run = total = 0
-        for n in range(1, max_days + 1):
-            day = today - timedelta(days=n)
-            count = await asyncio.to_thread(self.store.day_count, day) if self._final(day) else None
-            if count is None:
+        n = 1
+        while n <= max_days:
+            days = [today - timedelta(days=k) for k in range(n, min(n + MAX_REQUEST_DAYS, max_days + 1))]
+            n += MAX_REQUEST_DAYS
+            counts = {d: await asyncio.to_thread(self.store.day_count, d) if self._final(d) else None for d in days}
+            missing = [d for d in days if self._final(d) and counts[d] is None]
+            if missing:
                 try:
-                    count = len(await self._day_rows(day))
-                    fetched, failed_run = fetched + 1, 0
-                    if fetched % 30 == 0:
-                        log.info("AirGradient archive: %d day(s) fetched so far, now at %s", fetched, day)
+                    await self._fetch_days(missing)
+                    fetched, failed_run = fetched + len(missing), 0
+                    for d in missing:
+                        counts[d] = await asyncio.to_thread(self.store.day_count, d)
+                    if fetched // 30 != (fetched - len(missing)) // 30:
+                        log.info("AirGradient archive: %d day(s) fetched so far, now at %s", fetched, days[-1])
                 except Exception as e:
-                    failed, failed_run = failed + 1, failed_run + 1
-                    log.warning("AirGradient backfill of %s failed: %s", day, e)
+                    failed, failed_run = failed + len(missing), failed_run + 1
+                    log.warning("AirGradient backfill of %s to %s failed: %s", missing[-1], missing[0], e)
                     if failed_run >= BACKFILL_FAIL_STOP:
                         break
                     continue
                 finally:
                     await asyncio.sleep(pace)
-            total += 1
-            empty_run = empty_run + 1 if count == 0 else 0
-            if empty_run >= empty_stop:
-                break
+            for d in days:  # newest first
+                if counts[d] is None:
+                    continue
+                total += 1
+                empty_run = empty_run + 1 if counts[d] == 0 else 0
+                if empty_run >= empty_stop:
+                    return fetched, failed, total
         return fetched, failed, total
 
     # ---------- the tool ----------
@@ -245,18 +278,21 @@ class AirGradient:
         if t0 >= t1:
             return {"error": "start must be before end"}
         before = self.requests
-        rows, skipped, inline, day = [], 0, 0, t0.date()
-        while day <= t1.date():
-            if not await self._stored(day):
-                inline += self._final(day)
-                if inline > MAX_INLINE_DAYS:
-                    skipped, day = skipped + 1, day + timedelta(days=1)
-                    continue
-            rows += await self._day_rows(day)
-            day += timedelta(days=1)
+        days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
+        held = {d: await asyncio.to_thread(self.store.day_count, d) if self._final(d) else None for d in days}
+        missing = [d for d in days if self._final(d) and held[d] is None]
+        skipped = missing[:-MAX_INLINE_DAYS] if len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
+        await self._fetch_days([d for d in missing if d not in skipped])
+        rows = []
+        for d in days:
+            if d not in skipped:
+                rows += await self._day_rows(d)
+        counts = [await asyncio.to_thread(self.store.day_count, d) for d in days if self._final(d) and d not in skipped]
+        hourly = sum(1 for c in counts if c and c <= HOURLY_MAX_READINGS)
         lo_ts, hi_ts = t0.replace(tzinfo=self.tz).timestamp(), t1.replace(tzinfo=self.tz).timestamp()
         rows = [r for r in rows if lo_ts <= r["ts"] <= hi_ts]
-        log.info("AirGradient history %s -> %s: %d readings, %d request(s)", t0, t1, len(rows), self.requests - before)
+        log.info("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}", f"{t1:%m-%d %H:%M}", len(rows),
+                 self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",
                "readings": len(rows)}
         for name, (_, unit) in METRICS.items():
@@ -274,8 +310,12 @@ class AirGradient:
             out[name] = entry
         if trimmed:
             out["note_period"] = f"Only the last {MAX_DAYS} days can be covered per question; this covers {out['period']}."
+        if hourly:
+            out["note_resolution"] = (f"{hourly} of the days in this period only exist as hourly averages (AirGradient keeps "
+                                      "5-minute readings for recent months), so their highs and lows are hourly averages and "
+                                      "short spikes are smoothed. Say so briefly if it matters to the answer.")
         if skipped:
-            out["note_missing"] = (f"{skipped} older day(s) aren't in the bot's cache yet and were left out; it is still "
+            out["note_missing"] = (f"{len(skipped)} older day(s) aren't in the bot's cache yet and were left out; it is still "
                                    "downloading the sensor's history. Say so briefly.")
         if not rows:
             out["note"] = "No readings for this period."

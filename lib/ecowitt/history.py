@@ -394,9 +394,9 @@ class HistoryQuery:
                         entry["monthly"][month] = {w: e.raw for w, e in d.items()}
             series_out[key] = entry
 
-        log.info("History %s -> %s: %d range(s), %d fully cached, %d recent from memory, %d Ecowitt request(s), "
-                 "%d failed, %d series, %d refined", self.start, self.end, f.ranges, f.from_cache,
-                 f.from_memory, f.calls, len(f.errors), len(series_out), refined)
+        log.info("%s to %s: %d ranges, %d cached, %d in mem, %d req%s, %d series, %d refined",
+                 f"{self.start:%Y-%m-%d}", f"{self.end:%m-%d %H:%M}", f.ranges, f.from_cache, f.from_memory, f.calls,
+                 f", {len(f.errors)} failed" if f.errors else "", len(series_out), refined)
         out = {"period": f"{self.start:%a %d %b %Y} - {self.end:%a %d %b %Y}", "series": series_out}
         if self.monthly and not self.detailed:
             out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "

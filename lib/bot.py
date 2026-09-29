@@ -299,9 +299,8 @@ class Bot:
                 await typing  # wait for any in-flight "typing" so none is sent after the reply
 
         used = [m for m in working[new_from:] if m["role"] == "tool"]
-        log.info("%s chat %s in %.1fs, %d tool call(s), %d chars, %d chart(s): %s",
-                 "Replied to" if ok else "Error reply to", msg.chat_id, time.monotonic() - started,
-                 len(used), len(reply), len(photos), _short(reply, 120))
+        log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
+                 time.monotonic() - started, len(used), len(photos), len(reply), _short(reply, 30))
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")

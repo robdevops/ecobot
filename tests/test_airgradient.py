@@ -91,7 +91,8 @@ async def test_backfill_walks_back_to_the_start_of_the_sensors_data(tmp_path):
     transport, calls = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=10))
     air = AirGradient(config(tmp_path), transport=transport)
     fetched, failed, total = await air.backfill(pace=0, empty_stop=3)
-    assert failed == 0 and 10 <= fetched <= 15 and total == fetched
+    assert failed == 0 and fetched >= 10 and 10 <= total <= fetched
+    assert calls.count("past") <= 3  # nine days per request, not one
     n = len(calls)
     assert await air.backfill(pace=0, empty_stop=3) == (0, 0, total)  # nothing left to fetch
     assert len(calls) == n
@@ -105,7 +106,7 @@ async def test_backfill_walks_back_to_the_start_of_the_sensors_data(tmp_path):
 async def test_backfill_stops_after_repeated_failures(tmp_path):
     air = AirGradient(config(tmp_path), transport=httpx.MockTransport(lambda r: httpx.Response(429)))
     fetched, failed, total = await air.backfill(pace=0)
-    assert (fetched, total) == (0, 0) and failed == source.BACKFILL_FAIL_STOP
+    assert (fetched, total) == (0, 0) and failed == source.BACKFILL_FAIL_STOP * source.MAX_REQUEST_DAYS
     await air.close()
 
 
@@ -114,7 +115,7 @@ async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monk
     air, calls = await make(tmp_path)
     out = json.loads(await air.handle({"start_date": (datetime.now(TZ) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S"),
                                        "end_date": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")}))
-    assert calls.count("past") <= 3 + 2 and "note_missing" in out and out["readings"] > 0
+    assert calls.count("past") <= 1 + 1 and "note_missing" in out and out["readings"] > 0  # one window, plus today
     await air.close()
 
 
@@ -126,4 +127,46 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     line = spec["series"][0]
     assert len(line["x"]) <= source.CHART_POINTS + 50
     assert line["records"]["high"] == [ts[5000], 305.0] and line["records"]["low"][1] == 5.0
+    await air.close()
+
+
+# ---------- what the API's docs promise ----------
+def longest_request(transport) -> timedelta:
+    return max(end - start for start, end in transport.spans)
+
+
+async def test_requests_never_ask_for_more_than_ten_days(tmp_path):
+    transport, calls = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=60))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.backfill(pace=0, empty_stop=3)
+    assert 2 <= calls.count("past") <= 10 and longest_request(transport) <= timedelta(days=10)
+    day = datetime.now(TZ) - timedelta(days=200)
+    out = json.loads(await air.handle({"start_date": day.strftime("%Y-%m-%d %H:%M:%S"),
+                                       "end_date": (day + timedelta(days=25)).strftime("%Y-%m-%d %H:%M:%S")}))
+    assert "error" not in out and longest_request(transport) <= timedelta(days=10)  # 422s would have failed the answer
+    await air.close()
+
+
+async def test_no_data_available_is_an_empty_period_not_a_failure(tmp_path):
+    transport, calls = air_transport(oldest=datetime.now(timezone.utc) + timedelta(days=5))  # every request gets a 404
+    air = AirGradient(config(tmp_path), transport=transport)
+    fetched, failed, total = await air.backfill(pace=0, empty_stop=5)
+    assert failed == 0 and fetched >= 5 and total == 5
+    day = datetime.now(TZ).date() - timedelta(days=3)
+    out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}))
+    assert out["note"] == "No readings for this period." and "error" not in out
+    await air.close()
+
+
+async def test_answers_say_when_old_days_are_hourly_averages(tmp_path):
+    transport, _ = air_transport(rows_per_day=288, hourly_before=datetime.now(timezone.utc) - timedelta(days=4))
+    air = AirGradient(config(tmp_path), transport=transport)
+    now = datetime.now(TZ)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    out = json.loads(await air.handle({"start_date": (now - timedelta(days=9)).strftime(fmt),
+                                       "end_date": (now - timedelta(days=1)).strftime(fmt)}))
+    assert "hourly averages" in out["note_resolution"] and out["note_resolution"].startswith(("4 ", "5 ", "6 "))
+    recent = json.loads(await air.handle({"start_date": (now - timedelta(days=3)).strftime(fmt),
+                                          "end_date": (now - timedelta(days=1)).strftime(fmt)}))
+    assert "note_resolution" not in recent
     await air.close()
