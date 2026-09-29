@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import subprocess
 import time
 
 from openai import AsyncOpenAI
@@ -16,7 +17,7 @@ from telegram.ext import Application, Defaults
 from lib.airgradient import AirGradient
 from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, Notifier, WeatherMonitor
 from lib.bot import Bot, polling_error
-from lib.config import Config
+from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.llm import Agent
 from lib.tools import Tools
@@ -41,7 +42,17 @@ async def start_sources(cfg: Config) -> list:
     return sources
 
 
+def version() -> str:
+    """The checked-out commit, so the log shows which code is running."""
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+                              timeout=5, check=True).stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 async def main():
+    log.info("Starting envirobot %s", version())
     cfg = Config.from_env()
     sources = await start_sources(cfg)
     if not sources:
