@@ -13,7 +13,6 @@ What to look for: "lower" days at 30-minute resolution mean the totals are avera
 so days just over the 1 mm line can be missed.
 """
 
-import argparse
 import os
 import sqlite3
 import sys
@@ -21,8 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
 
 from lib.ecowitt import days as day_tool  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
@@ -50,8 +48,8 @@ def totals(cache: HistoryCache, mac: str, tz, cycle: str, days: list) -> dict:
     lo, hi = day_bounds(min(days), tz, True)[0], day_bounds(max(days), tz, True)[1]
     if cycle == "1day":
         lo, hi = lo - 86400, hi + 86400
-    store = day_tool._load(cache, mac, cycle, ["rain"], lo, hi)
-    return day_tool._per_day(store, "rain", set(days), tz)
+    store = day_tool.load_cached(cache, mac, cycle, ["rain"], lo, hi)
+    return day_tool.per_day(store, "rain", set(days), tz)
 
 
 def compare_rain(cache: HistoryCache, mac: str, tz, today, days_back: int = 88) -> dict:
@@ -107,7 +105,7 @@ def report(res: dict):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = parser(__doc__)
     ap.add_argument("--days", type=int, default=88)
     ap.add_argument("--cache", type=Path, default=ROOT / "ecowitt_cache.sqlite")
     args = ap.parse_args()

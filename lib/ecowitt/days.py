@@ -56,7 +56,7 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "days and the top ones. Works from cached history, so any period up to the whole record is fast.")
 
 
-def _load(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: int, end: int) -> dict:
+def load_cached(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: int, end: int) -> dict:
     """The cached readings of the wanted fields, folded by collect() into {"group.field": {"pts": ...}}."""
     data: dict = {}
     for name in names:
@@ -68,7 +68,7 @@ def _load(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: in
     return store
 
 
-def _per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, float]:
+def per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, float]:
     """One extreme per day (the highest high, or the lowest low) of the readings that fall in `days`."""
     group, field, kind, _ = FIELDS[name]
     out: dict[date, float] = {}
@@ -116,13 +116,13 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     for cycle in SUB_DAILY:
         mine = {d for d, c in source.items() if c == cycle}
         if mine:
-            store = _load(cache, mac, cycle, shown, day_bounds(min(mine), tz, True)[0], day_bounds(max(mine), tz, True)[1])
+            store = load_cached(cache, mac, cycle, shown, day_bounds(min(mine), tz, True)[0], day_bounds(max(mine), tz, True)[1])
             for n in shown:
-                values[n].update(_per_day(store, n, mine, tz))
+                values[n].update(per_day(store, n, mine, tz))
     if rest:  # daily buckets: labelled with the local date their 10am start falls on
-        store = _load(cache, mac, "1day", shown, day_bounds(min(rest), tz, True)[0] - 86400, day_bounds(max(rest), tz, True)[1] + 86400)
+        store = load_cached(cache, mac, "1day", shown, day_bounds(min(rest), tz, True)[0] - 86400, day_bounds(max(rest), tz, True)[1] + 86400)
         for n in shown:
-            values[n].update(_per_day(store, n, rest, tz))
+            values[n].update(per_day(store, n, rest, tz))
         for d in rest:
             if any(d in values[n] for n in shown):
                 source[d] = "daily"

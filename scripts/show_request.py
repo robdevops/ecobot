@@ -10,7 +10,6 @@ is printed in full.
     python scripts/show_request.py --cache /path/ecowitt_cache.sqlite --call '{"name": ..., "arguments": {...}}' "..."
 """
 
-import argparse
 import asyncio
 import json
 import os
@@ -21,8 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
 
 from lib import intent, prompt  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
@@ -61,7 +59,7 @@ def banner(text):
 
 
 async def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = parser(__doc__)
     ap.add_argument("question")
     ap.add_argument("--cache", type=Path, default=ROOT / "ecowitt_cache.sqlite")
     ap.add_argument("--call", help="JSON tool call the stand-in model makes first")

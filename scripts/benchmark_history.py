@@ -8,7 +8,6 @@ size, chart cost and the answers themselves. No network, no API keys. Run it on 
 is reported, not fetched.
 """
 
-import argparse
 import asyncio
 import json
 import os
@@ -19,8 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
 
 from lib.charts import CHART_REQUESTS, render  # noqa: E402
 from lib.ecowitt.api import EcowittError, UNITS  # noqa: E402
@@ -82,7 +80,7 @@ def compare(a: dict, b: dict):
 
 
 async def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = parser(__doc__)
     ap.add_argument("--days", type=int, default=120)
     ap.add_argument("--groups", default="outdoor,indoor")
     ap.add_argument("--repeat", type=int, default=3)

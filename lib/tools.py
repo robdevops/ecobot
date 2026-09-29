@@ -29,9 +29,6 @@ class Tools:
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
 
-    def __contains__(self, name: str) -> bool:
-        return name in self.by_name
-
     async def call(self, name: str, raw_args: str) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""
         tool = self.by_name.get(name)

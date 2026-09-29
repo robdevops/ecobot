@@ -203,9 +203,13 @@ class Bot:
         await msg.reply_text(ALERTS_TEXT.format(on="on" if on else "off", other="off" if on else "on"))
 
     @staticmethod
-    def _key(msg: Message) -> tuple:
-        """Forum topics get their own conversation."""
-        return (msg.chat_id, msg.message_thread_id if msg.is_topic_message else None)
+    def _thread(msg: Message):
+        """The forum topic a message is in (None outside topics); each topic is its own conversation."""
+        return msg.message_thread_id if msg.is_topic_message else None
+
+    @classmethod
+    def _key(cls, msg: Message) -> tuple:
+        return (msg.chat_id, cls._thread(msg))
 
     async def on_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/reset: forget this chat's conversation."""
@@ -276,7 +280,7 @@ class Bot:
             log.info("Fast path: %s", fast[2])
 
         chat = self.chats[self._key(msg)]
-        thread_id = msg.message_thread_id if msg.is_topic_message else None
+        thread_id = self._thread(msg)
         started = time.monotonic()
         async with chat.lock:
             stop_typing = asyncio.Event()

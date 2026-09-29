@@ -7,15 +7,12 @@ The newest day or two is not reported as a gap (recent readings are still settli
 means the archive hasn't finished or a range failed; it fills in on the next start or nightly run.
 """
 
-import argparse
 import sqlite3
-import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
 
 from lib.ecowitt.api import GROUPS, RETENTION  # noqa: E402
 from lib.ecowitt.store import horizon, subtract  # noqa: E402
@@ -72,7 +69,7 @@ def airgradient(path: Path):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = parser(__doc__)
     ap.add_argument("--ecowitt", type=Path, default=ROOT / "ecowitt_cache.sqlite")
     ap.add_argument("--airgradient", type=Path, default=ROOT / "airgradient_cache.sqlite")
     args = ap.parse_args()
