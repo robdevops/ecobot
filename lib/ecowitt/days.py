@@ -51,7 +51,7 @@ PARAMETERS = {
 DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking every day in the period: for questions that "
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
                "35°C\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
-               "rain (mm total for the day; it rained if above 0), wind_gust (km/h, highest). Returns the total of matching "
+               "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest). Returns the total of matching "
                "days and the top ones. Works from cached history, so any period up to the whole record is fast.")
 
 

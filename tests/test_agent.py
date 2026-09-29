@@ -110,3 +110,12 @@ async def test_reset_forgets_only_that_chat():
     await bot.on_reset(NS(effective_message=topic, effective_chat=update.effective_chat,
                           effective_user=update.effective_user), None)
     assert (1, 7) not in bot.chats and bot.chats[(2, None)].history
+
+
+def test_the_prompt_defines_a_rainy_day_and_how_to_phrase_the_count():
+    from datetime import datetime
+    from lib import prompt
+    from lib.ecowitt import days
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    assert "rain >= 1" in text and "any rain" in text and "It rained on 507 of 1,454 days" in text
+    assert "1 mm or more" in days.DESCRIPTION
