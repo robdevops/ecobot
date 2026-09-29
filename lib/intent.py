@@ -158,6 +158,9 @@ NOT_SIMPLE = re.compile(r"\b(rain\w*|wind\w*|gusts?|pressure|humid\w*|uv|solar|l
                         r"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|airgradient|"
                         r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
                         r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now)\b", I)
+# Wind is fine for the fast path when it is a plain chart request ("wind direction plot 3m")
+WIND = re.compile(r"\b(wind\w*|gusts?|breez\w*)\b", I)
+NOT_SIMPLE_WIND_OK = re.compile(NOT_SIMPLE.pattern.replace(r"wind\w*|gusts?|", ""), I)
 # What a chart request with no period must name to default to a week ("chart it" refers back instead)
 WEATHER_SUBJECT = re.compile(r"\b(weather|temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|highs?|lows?|indoors?|outdoors?|"
                              r"inside|outside|station)\b", I)
@@ -173,7 +176,7 @@ FMT = "%Y-%m-%d %H:%M:%S"
 def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | None:
     """(period name, start, end) for a simple highs/lows or chart request, else None. "chart the
     past week" counts too: the chart plus a highs/lows summary is the answer."""
-    if NOT_SIMPLE.search(text):
+    if (NOT_SIMPLE_WIND_OK if GRAPH.search(text) else NOT_SIMPLE).search(text):
         return None
     spans = spans_in(text, now)
     # "weather <period>" is a summary request too, but "weather today" also wants current conditions
@@ -186,7 +189,9 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
 
 
 def weather_groups(text: str) -> str:
-    """Just indoor or just outdoor if only one is asked about, otherwise both."""
+    """Just indoor or just outdoor if only one is asked about, otherwise both. A wind chart is just wind."""
+    if WIND.search(text):
+        return "wind"
     indoor, outdoor = bool(INDOOR.search(text)), bool(OUTDOOR.search(text))
     return "indoor" if indoor and not outdoor else "outdoor" if outdoor and not indoor else "outdoor,indoor"
 

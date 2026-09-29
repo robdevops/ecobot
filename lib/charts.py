@@ -36,8 +36,13 @@ CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=N
 CHART_ASKED: ContextVar[bool] = ContextVar("chart_asked", default=False)
 
 
-def wants_chart(args: dict) -> bool:
-    return bool(args.get("chart")) or CHART_ASKED.get()
+CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
+
+
+def wants_chart(args: dict, start: datetime | None = None, end: datetime | None = None) -> bool:
+    """The model asked for one, the person's words did, or the period (naive local start/end) spans 3+ days."""
+    long = bool(start and end and (end.date() - start.date()).days >= CHART_MIN_DAYS - 1)
+    return bool(args.get("chart")) or CHART_ASKED.get() or long
 
 
 # Added to a tool result when a chart was made, so the reply becomes a good caption

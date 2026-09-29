@@ -460,7 +460,7 @@ class HistoryQuery:
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
         holder = CHART_REQUESTS.get()
         plottable = {k: v for k, v in series_out.items() if k in self.store}
-        if wants_chart(self.args) and holder is not None:
+        if wants_chart(self.args, self.start, self.end) and holder is not None:
             spec = self._chart_spec(plottable) if plottable else None
             if spec:
                 holder.append(spec)

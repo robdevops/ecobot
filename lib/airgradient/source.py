@@ -290,6 +290,7 @@ class AirGradient:
         t0 = max(t0, t1 - timedelta(days=MAX_DAYS))
         if t0 >= t1:
             return {"error": "start must be before end"}
+        chart = wants_chart({"chart": chart}, t0, t1)
         before = self.requests
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
         held = await self._held(days)

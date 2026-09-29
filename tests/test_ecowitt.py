@@ -496,9 +496,10 @@ async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model
     await eco.start()
     await Archive(eco).run_once()
     today = datetime.now(eco.tz).date()
-    args = {"groups": "wind", "chart": False, "start_date": f"{today - timedelta(days=6)} 00:00:00",
-            "end_date": f"{today - timedelta(days=2)} 23:59:59"}
-    for asked, expected in ((False, 0), (True, 2)):
+    short = {"groups": "wind", "chart": False, "start_date": f"{today - timedelta(days=3)} 00:00:00",
+             "end_date": f"{today - timedelta(days=2)} 23:59:59"}   # two days
+    long = {**short, "start_date": f"{today - timedelta(days=5)} 00:00:00"}   # four days: always a chart
+    for args, asked, expected in ((short, False, 0), (short, True, 2), (long, False, 2)):
         holder, asked_token = CHART_REQUESTS.set([]), CHART_ASKED.set(asked)
         try:
             await eco.tools[1].handler(args)

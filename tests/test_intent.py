@@ -126,6 +126,15 @@ def test_a_period_we_cant_read_goes_to_the_model_not_to_a_default():
     assert call("chart the air quality over the last few days") is None
 
 
+def test_a_plain_wind_chart_takes_the_fast_path_with_the_period_read():
+    name, args, _ = call("wind direction plot 3m")
+    assert name == "weather_history" and args["groups"] == "wind" and args["chart"] is True
+    assert args["start_date"] == "2026-07-01 00:00:00" and args["end_date"] == "2026-09-29 23:59:59"
+    assert call("graph the wind this week")[1]["groups"] == "wind"
+    for text in ("highest wind this week", "plot wind vs temperature 3m", "will the wind chart change", "why was the wind strong 3m"):
+        assert call(text) is None, text
+
+
 def test_1m_means_one_month():
     assert call("weather 1m")[1]["start_date"] == "2026-08-31 00:00:00"
     assert call("weather 1mo")[1]["start_date"] == "2026-08-31 00:00:00"
