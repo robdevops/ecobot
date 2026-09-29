@@ -485,3 +485,25 @@ def test_calm_readings_are_reported_not_counted():
     windy = [(1_780_000_000 + i * 300, 90.0, True) for i in range(80)]
     out = summarise(windy, TZ, by_day=False, calm=20)
     assert out["most_common"].startswith("E ") and out["calm"].startswith("20%")
+
+
+async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model_says_chart_false(tmp_path, monkeypatch):
+    from lib.charts import CHART_ASKED
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await Archive(eco).run_once()
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "wind", "chart": False, "start_date": f"{today - timedelta(days=6)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59"}
+    for asked, expected in ((False, 0), (True, 2)):
+        holder, asked_token = CHART_REQUESTS.set([]), CHART_ASKED.set(asked)
+        try:
+            await eco.tools[1].handler(args)
+            assert len(CHART_REQUESTS.get()) == expected
+        finally:
+            CHART_ASKED.reset(asked_token)
+            CHART_REQUESTS.reset(holder)
+    await eco.close()

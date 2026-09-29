@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
-from ..charts import CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT
+from ..charts import CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import summarise as summarise_direction
@@ -460,7 +460,7 @@ class HistoryQuery:
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
         holder = CHART_REQUESTS.get()
         plottable = {k: v for k, v in series_out.items() if k in self.store}
-        if self.args.get("chart") and holder is not None:
+        if wants_chart(self.args) and holder is not None:
             spec = self._chart_spec(plottable) if plottable else None
             if spec:
                 holder.append(spec)

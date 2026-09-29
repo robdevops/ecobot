@@ -20,7 +20,7 @@ from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, Messag
 
 from . import intent, prompt
 from .alerts import AlertState, with_footer
-from .charts import CHART_REQUESTS, render as render_chart
+from .charts import CHART_ASKED, CHART_REQUESTS, render as render_chart
 from .config import Config
 from .timeutil import now_local
 from .llm import Agent, strip_tool_turns, trim_history
@@ -289,6 +289,7 @@ class Bot:
             new_from = len(working)
             ok, charts, photos = True, [], []
             chart_token = CHART_REQUESTS.set(charts)  # the history tools add chart specs here
+            asked_token = CHART_ASKED.set(bool(intent.GRAPH.search(text)))  # "plot" means a chart, whatever the model calls
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources])
                 reply = await self.agent.run(working, system, effort, first_call=fast[:2] if fast else None,
@@ -305,6 +306,7 @@ class Bot:
                 ok, reply = False, f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment."
             finally:
                 CHART_REQUESTS.reset(chart_token)
+                CHART_ASKED.reset(asked_token)
                 stop_typing.set()
                 await typing  # wait for any in-flight "typing" so none is sent after the reply
 

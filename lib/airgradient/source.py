@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from .. import intent
-from ..charts import CHART_HINT, CHART_REQUESTS
+from ..charts import CHART_HINT, CHART_REQUESTS, wants_chart
 from ..config import Config
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool
@@ -254,9 +254,10 @@ class AirGradient:
     async def handle(self, args: dict) -> str:
         """The air_quality tool: current reading, or a summary of a past period."""
         try:
-            if args.get("start_date") or args.get("end_date") or args.get("chart"):
+            chart = wants_chart(args)
+            if args.get("start_date") or args.get("end_date") or chart:
                 return json.dumps(await self.history(args.get("start_date"), args.get("end_date"),
-                                                     chart=bool(args.get("chart")), metrics=args.get("metrics")),
+                                                     chart=chart, metrics=args.get("metrics")),
                                   ensure_ascii=False)
             reading = await self.current()
             reading.pop("_time_utc", None)

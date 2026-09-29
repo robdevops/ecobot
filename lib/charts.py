@@ -32,6 +32,14 @@ from matplotlib.ticker import FuncFormatter  # noqa: E402
 
 # Set per question by the bot; the history tools append chart specs to it
 CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=None)
+# True when the person's own words ask for a graph ("plot", "chart"...): the model sometimes forgets chart=true
+CHART_ASKED: ContextVar[bool] = ContextVar("chart_asked", default=False)
+
+
+def wants_chart(args: dict) -> bool:
+    return bool(args.get("chart")) or CHART_ASKED.get()
+
+
 # Added to a tool result when a chart was made, so the reply becomes a good caption
 CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
               "per series with its high and low (for weather, one line each for Outdoor and Indoor when both were "
