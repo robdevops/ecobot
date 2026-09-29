@@ -125,6 +125,9 @@ def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
     for m in NUMBERED_PERIOD.finditer(text):
         if numbered := numbered_span(m.group(1), m.group(2), now):
             found.setdefault(numbered[1:], numbered[0])
+    if not found and (bare := BARE_PERIOD.search(text)):  # "weather week", "aq month": as if "this ..."
+        name = BARE_PERIODS[bare.group(1).lower()]
+        found[span(name, now)] = name
     return [(name, *window) for window, name in found.items()]
 
 
@@ -141,7 +144,7 @@ NOT_SIMPLE = re.compile(r"\b(rain\w*|wind\w*|gusts?|pressure|humid\w*|uv|solar|l
 WEATHER_SUBJECT = re.compile(r"\b(weather|temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|highs?|lows?|indoors?|outdoors?|"
                              r"inside|outside|station)\b", I)
 WEATHER_WORD = re.compile(r"\b(weather|conditions)\b", I)
-# A period named on its own ("weather week") counts as "this week/month/year"
+# A period named on its own ("weather week", "aq month") counts as "this week/month/year"
 BARE_PERIODS = {"week": "last 7 days", "month": "this month", "year": "this year"}
 BARE_PERIOD = re.compile(r"\b(week|month|year)\b", I)
 INDOOR = re.compile(r"\b(indoors?|inside)\b", I)
@@ -155,8 +158,6 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     if NOT_SIMPLE.search(text):
         return None
     spans = spans_in(text, now)
-    if not spans and (bare := BARE_PERIOD.search(text)):  # "weather week": as if "this week"
-        spans = [(BARE_PERIODS[bare.group(1).lower()], *span(BARE_PERIODS[bare.group(1).lower()], now))]
     # "weather <period>" is a summary request too, but "weather today" also wants current conditions
     named_weather = bool(WEATHER_WORD.search(text)) and bool(spans) and {n for n, _, _ in spans} != {"today"}
     if not (EXTREMES.search(text) or GRAPH.search(text) or named_weather):

@@ -133,3 +133,11 @@ def test_1m_means_one_month():
     assert call("weather 3m")[1]["start_date"] == "2026-07-01 00:00:00"
     # "30 minute" is not "30 months"
     assert call("use 30 minute data to plot 4 months of weather")[1]["start_date"] == "2026-05-31 00:00:00"
+
+
+def test_a_bare_week_month_or_year_charts_for_air_quality_too():
+    for text, start in (("aq week", "2026-09-23 00:00:00"), ("air quality month", "2026-09-01 00:00:00"),
+                        ("aq year", "2026-01-01 00:00:00"), ("pm2.5 week", "2026-09-23 00:00:00")):
+        name, args, label = call(text)
+        assert name == "air_quality" and args["chart"] and args["start_date"] == start, text
+    assert call("aq")[:2] == ("air_quality", {})   # no period at all: the current reading
