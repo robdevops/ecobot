@@ -58,3 +58,16 @@ def test_air_now_and_air_chart():
 def test_sources_are_optional():
     assert call("how's the air?", air=False) is None
     assert call("this week's highs", ecowitt=False) is None
+
+
+def test_weather_plus_a_period_is_a_summary_request():
+    for text in ("weather week", "weather this week", "weather yesterday", "what was the weather last month"):
+        assert call(text) and call(text)[0] == "weather_history", text
+    assert call("weather week")[1]["start_date"] == "2026-09-23 00:00:00" and call("weather week")[1]["chart"]
+    assert call("hottest day of the month")[1]["start_date"] == "2026-09-01 00:00:00"
+
+
+def test_weather_now_and_open_questions_still_go_to_the_model():
+    for text in ("weather", "weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week",
+                 "will the weather be nice this week"):
+        assert call(text) is None, text

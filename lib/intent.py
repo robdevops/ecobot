@@ -103,6 +103,10 @@ NOT_SIMPLE = re.compile(r"\b(rain\w*|wind\w*|gusts?|pressure|humid\w*|uv|solar|l
 # What a chart request with no period must name to default to a week ("chart it" refers back instead)
 WEATHER_SUBJECT = re.compile(r"\b(weather|temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|highs?|lows?|indoors?|outdoors?|"
                              r"inside|outside|station)\b", I)
+WEATHER_WORD = re.compile(r"\b(weather|conditions)\b", I)
+# A period named on its own ("weather week") counts as "this week/month/year"
+BARE_PERIODS = {"week": "last 7 days", "month": "this month", "year": "this year"}
+BARE_PERIOD = re.compile(r"\b(week|month|year)\b", I)
 INDOOR = re.compile(r"\b(indoors?|inside)\b", I)
 OUTDOOR = re.compile(r"\b(outdoors?|outside)\b", I)
 FMT = "%Y-%m-%d %H:%M:%S"
@@ -111,9 +115,15 @@ FMT = "%Y-%m-%d %H:%M:%S"
 def weather_period(text: str, today: date, now: datetime) -> tuple[str, datetime, datetime] | None:
     """(period name, start, end) for a simple highs/lows or chart request, else None. "chart the
     past week" counts too: the chart plus a highs/lows summary is the answer."""
-    if not (EXTREMES.search(text) or GRAPH.search(text)) or NOT_SIMPLE.search(text):
+    if NOT_SIMPLE.search(text):
         return None
     found = periods_named(text)
+    if not found and (bare := BARE_PERIOD.search(text)):
+        found = {BARE_PERIODS[bare.group(1).lower()]}  # "weather week": as if "this week"
+    # "weather <period>" is a summary request too, but "weather today" also wants current conditions
+    named_weather = bool(WEATHER_WORD.search(text)) and found not in (set(), {"today"})
+    if not (EXTREMES.search(text) or GRAPH.search(text) or named_weather):
+        return None
     if not found and GRAPH.search(text) and WEATHER_SUBJECT.search(text):
         found = {"last 7 days"}  # "chart weather": a week is the natural default
     if len(found) != 1:  # no period, or several ("this week vs last week"): let the model decide
