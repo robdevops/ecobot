@@ -106,6 +106,16 @@ class HistoryCache:
                 (mac, cycle, grp, start, end)).fetchall()
         return subtract((start, end), rows)
 
+    def days_held(self, mac: str, cycle: str, groups: list[str]) -> int:
+        """Days of history stored at this resolution (the least any of the groups has)."""
+        held = []
+        with self._lock:
+            for grp in groups:
+                rows = self.db.execute("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?",
+                                       (mac, cycle, grp)).fetchall()
+                held.append(sum(e - s + 1 for s, e in merge(rows)) // 86400)
+        return min(held, default=0)
+
     def store(self, mac: str, cycle: str, groups: list[str], data: dict, start: int, end: int):
         """Save the final readings of one response and mark what was fetched, per group.
 

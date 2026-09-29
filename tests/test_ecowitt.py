@@ -254,3 +254,18 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     await Archive(eco).run_once()
     assert len(fake.calls) <= 4  # complete: only the newest unsettled ranges remain
     await eco.close()
+
+
+async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    arch = Archive(eco)
+    assert arch.held().startswith("0 day(s) of 5-min, 0 of 30-min")
+    await arch.run_once()
+    held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
+    assert 85 <= held["5min"] <= 90 and 350 <= held["30min"] <= 365 and 700 <= held["4hour"] <= 730 and held["1day"] > 1400
+    assert arch.held().startswith(f"{held['5min']} day(s) of 5-min, {held['30min']} of 30-min")
+    await eco.close()
