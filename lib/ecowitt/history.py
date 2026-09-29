@@ -310,8 +310,19 @@ class HistoryQuery:
             if start < thirty_floor:
                 await self._chunks("1day", start, min(end, thirty_floor - timedelta(seconds=1)))
         else:
-            await self._chunks("30min", max(start, recent), end)
-            await self._chunks("1day", start, min(end, recent - timedelta(seconds=1)))
+            # Long period: the newest weeks come at 30 minutes while they are already cached (day boundaries and
+            # each day's low/high are then exact local ones, and it costs no requests); older ones as daily buckets
+            fine_from = max(start, recent)
+            newest_first = list(spans("30min", max(start, thirty_floor), end))[::-1]
+            if newest_first:
+                await self._chunks("30min", *newest_first[0])  # the current week: kept warm anyway
+                fine_from = max(start, newest_first[0][0])
+                for a, b in newest_first[1:]:
+                    if not await f.covered("30min", f.epoch(a), f.epoch(b)):
+                        break
+                    await self._chunks("30min", a, b)
+                    fine_from = a
+            await self._chunks("1day", start, min(end, fine_from - timedelta(seconds=1)))
 
     async def _summarise_direction(self):
         """Wind direction leaves the low/high pipeline: it is counted by compass point instead. Recent
@@ -530,6 +541,8 @@ class HistoryQuery:
         for r in pts.values():
             counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
         sub_daily = [c for c in ("5min", "30min") if c in counts]
+        if "1day" in counts and sub_daily:
+            return self._daily_line(pts)
         if len(sub_daily) > 1 and sum(counts[c] for c in sub_daily) >= counts.get("1day", 0):
             # archived 5-minute weeks next to 30-minute weeks: average into 30-minute bins
             bins: dict = {}
@@ -541,21 +554,29 @@ class HistoryQuery:
         cycle = max(counts, key=counts.get)
         line = {t: pts[t]["value"][0] for t in pts if pts[t]["cycle"] == cycle}
         band = {t: (_low(pts[t]), _high(pts[t])) for t in line if "low" in pts[t] and "high" in pts[t]}
-        if cycle == "1day" and line:
-            # The last week comes as 30-minute data: add it as daily averages so the line reaches
-            # today (today's own average isn't meaningful until the day is over)
-            last_day = max(local_date(t, self.tz) for t in line)
-            today = now_local(self.tz).date()
-            by_day: dict = {}
-            for t, r in pts.items():
-                d = local_date(t, self.tz)
-                if r["cycle"] == "30min" and last_day < d < today:
-                    by_day.setdefault(d, []).append(r)
-            for d, recs in by_day.items():
-                noon = int(datetime.combine(d, datetime.min.time()).replace(hour=10, tzinfo=self.tz).timestamp())
-                line[noon] = sum(r["value"][0] for r in recs) / len(recs)
-                band[noon] = (min(_low(r) for r in recs), max(_high(r) for r in recs))
         return cycle, line, band
+
+    def _daily_line(self, pts: dict) -> tuple[str, dict, dict]:
+        """One point a day: Ecowitt's daily buckets for the older part, and for days we hold at 5 or 30 minutes
+        their own mean, low and high over the local day (so those days are exact). Today is left out until it is over."""
+        today = now_local(self.tz).date()
+        by_day: dict = {}
+        for t, r in pts.items():
+            if r["cycle"] != "1day" and (d := local_date(t, self.tz)) < today:
+                by_day.setdefault(d, []).append(r)
+        line, band = {}, {}
+        for t, r in pts.items():
+            if r["cycle"] == "1day" and local_date(t, self.tz) not in by_day and "value" in r:
+                line[t] = r["value"][0]
+                if "low" in r and "high" in r:
+                    band[t] = (_low(r), _high(r))
+        for d, recs in by_day.items():
+            at = int(datetime.combine(d, datetime.min.time()).replace(hour=10, tzinfo=self.tz).timestamp())
+            values = [r["value"][0] for r in recs if "value" in r]
+            if values:
+                line[at] = sum(values) / len(values)
+                band[at] = (min(_low(r) for r in recs), max(_high(r) for r in recs))
+        return "1day", line, band
 
 
 def _period(start: datetime, end: datetime) -> str:

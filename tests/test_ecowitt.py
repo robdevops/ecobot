@@ -556,3 +556,30 @@ async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
     assert all(lo <= y <= hi for lo, y, hi in zip(week["low"], week["y"], week["high"]))
     assert "range shaded" in (await spec_for(8))["subtitle"]
     await eco.close()
+
+
+async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await Archive(eco).run_once()
+    fake.calls.clear()
+    today = datetime.now(eco.tz).date()
+    token = CHART_REQUESTS.set([])
+    try:
+        await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+                                    "start_date": f"{today - timedelta(days=700)} 00:00:00",
+                                    "end_date": f"{today - timedelta(days=1)} 00:00:00"})   # settled: no request in the small hours
+        spec = CHART_REQUESTS.get()[0]
+    finally:
+        CHART_REQUESTS.reset(token)
+    line = spec["series"][0]
+    assert fake.calls == [], fake.calls                          # all from the cache
+    assert len(line["x"]) >= 650 and len(line["low"]) == len(line["x"])   # one point a day across the whole period
+    assert line["x"] == sorted(line["x"]) and len(set(line["x"])) == len(line["x"])
+    days_seen = {datetime.fromtimestamp(t, eco.tz).date() for t in line["x"]}
+    assert len(days_seen) == len(line["x"])                      # never two points for one day
+    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
+    await eco.close()
