@@ -199,6 +199,14 @@ def series_extremes(series: dict, lo_ts: int | None = None, hi_ts: int | None = 
     return out
 
 
+def _low(rec: dict) -> float:
+    return rec["low"][0] if "low" in rec else rec["value"][0]
+
+
+def _high(rec: dict) -> float:
+    return rec["high"][0] if "high" in rec else rec["value"][0]
+
+
 def _clock(dt: datetime) -> str:
     """12-hour clock, e.g. '7:05am', '3:30pm', '10am'."""
     text = dt.strftime("%I:%M%p").lstrip("0").lower()
@@ -488,29 +496,36 @@ class HistoryQuery:
         unit = series_out[keys[0]]["unit"].replace("º", "°")
         names = {"5min": "5-minute readings", "30min": "30-minute readings", "4hour": "4-hour averages",
                  "1day": "daily averages"}
-        series, resolution = [], None
+        series, resolution, ranged = [], None, False
         for k in keys:
             pts = {t: r for t, r in self.store[k]["pts"].items() if "value" in r}
             if not pts:
                 continue
-            cycle, line = self._line(pts)
+            cycle, line, band = self._line(pts)
             xs = sorted(line)
             if len(xs) < 2:
                 continue
             resolution = resolution or names.get(cycle, cycle)
             rec = self.overall.get(k, {})
             records = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec}
-            series.append({"label": k.split(".", 1)[0].replace("_", " ").capitalize(),
-                           "x": xs, "y": [line[t] for t in xs], "records": records})
+            entry = {"label": k.split(".", 1)[0].replace("_", " ").capitalize(),
+                     "x": xs, "y": [line[t] for t in xs], "records": records}
+            if len(band) >= len(xs) // 2:  # bucketed data: the range of each bucket, behind its average
+                entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
+                entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
+                ranged = True
+            series.append(entry)
         if not series:
             return None
         return {"kind": "line", "title": field.replace("_", " ").capitalize(),
                 "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
-                            + ("  ·  record high and low marked" if any(x["records"] for x in series) else ""),
+                            + (", range shaded" if ranged else "")
+                            + ("  ·  records marked" if any(x["records"] for x in series) else ""),
                 "unit": unit, "series": series}
 
-    def _line(self, pts: dict) -> tuple[str, dict]:
-        """(cycle, {ts: value}) for one series, at a single consistent resolution."""
+    def _line(self, pts: dict) -> tuple[str, dict, dict]:
+        """(cycle, {ts: value}, {ts: (low, high)}) for one series, at a single consistent resolution. The band is
+        each bucket's own low and high where Ecowitt gives them (30-minute and longer data)."""
         counts: dict = {}
         for r in pts.values():
             counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
@@ -520,10 +535,12 @@ class HistoryQuery:
             bins: dict = {}
             for t, r in pts.items():
                 if r["cycle"] in sub_daily:
-                    bins.setdefault(t // 1800 * 1800, []).append(r["value"][0])
-            return "30min", {t: sum(v) / len(v) for t, v in bins.items()}
+                    bins.setdefault(t // 1800 * 1800, []).append(r)
+            return "30min", {t: sum(x["value"][0] for x in v) / len(v) for t, v in bins.items()}, {
+                t: (min(_low(x) for x in v), max(_high(x) for x in v)) for t, v in bins.items()}
         cycle = max(counts, key=counts.get)
         line = {t: pts[t]["value"][0] for t in pts if pts[t]["cycle"] == cycle}
+        band = {t: (_low(pts[t]), _high(pts[t])) for t in line if "low" in pts[t] and "high" in pts[t]}
         if cycle == "1day" and line:
             # The last week comes as 30-minute data: add it as daily averages so the line reaches
             # today (today's own average isn't meaningful until the day is over)
@@ -533,11 +550,12 @@ class HistoryQuery:
             for t, r in pts.items():
                 d = local_date(t, self.tz)
                 if r["cycle"] == "30min" and last_day < d < today:
-                    by_day.setdefault(d, []).append(r["value"][0])
-            for d, vals in by_day.items():
+                    by_day.setdefault(d, []).append(r)
+            for d, recs in by_day.items():
                 noon = int(datetime.combine(d, datetime.min.time()).replace(hour=10, tzinfo=self.tz).timestamp())
-                line[noon] = sum(vals) / len(vals)
-        return cycle, line
+                line[noon] = sum(r["value"][0] for r in recs) / len(recs)
+                band[noon] = (min(_low(r) for r in recs), max(_high(r) for r in recs))
+        return cycle, line, band
 
 
 def _period(start: datetime, end: datetime) -> str:

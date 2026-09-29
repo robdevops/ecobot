@@ -4,7 +4,8 @@ A history tool adds a chart spec to CHART_REQUESTS (a per-question list set by t
 bot) when a chart was asked for; the bot renders them after the answer is written
 and sends them with it. One line per reading type (e.g. outdoor and indoor):
   {"kind": "line", "title", "subtitle", "unit",
-   "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]}}]}
+   "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
+               "low": [float], "high": [float]}]}      (low/high optional: each point's range, drawn as a band)
 
 Wind direction has no line (it is circular), so it gets a scatter of each reading by hour of day:
   {"kind": "direction", "title", "subtitle", "points": [[local hour 0-24, degrees]]}
@@ -139,8 +140,8 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
     to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
     series = spec["series"]
     rec_vals = [float(r[1]) for s in series for r in (s.get("records") or {}).values()]
-    lo = min([min(s["y"]) for s in series] + rec_vals)
-    hi = max([max(s["y"]) for s in series] + rec_vals)
+    lo = min([min(s.get("low") or s["y"]) for s in series] + rec_vals)
+    hi = max([max(s.get("high") or s["y"]) for s in series] + rec_vals)
     _pad_limits(ax, lo, hi, top=0.26, bottom=0.26)  # room for pills
     ybottom = ax.get_ylim()[0]
     x_min = min(min(s["x"]) for s in series)
@@ -152,7 +153,9 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
         labels.append(s["label"]); colours.append(colour)
         xs = mdates.date2num([to_dt(t) for t in s["x"]])
         ys = np.asarray(s["y"], dtype=float)
-        if len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
+        if s.get("low"):  # each bucket's low-to-high range behind its average: the chart shows the full swing
+            ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=3)
+        elif len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
             poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
             ax.add_patch(poly)
             rgba = np.zeros((256, 1, 4))
@@ -160,7 +163,7 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
             rgba[..., 3] = np.linspace(0.22, 0.0, 256)[:, None]
             img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
             img.set_clip_path(poly)
-        width = 1.3 if len(series) > 2 else 1.5 if dense else 2.2
+        width = 1.3 if len(series) > 2 or s.get("low") else 1.5 if dense else 2.2
         ax.plot(xs, ys, color=colour, linewidth=width, solid_capstyle="round", solid_joinstyle="round", zorder=4)
         ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
         deg = _deg(spec.get("unit", ""))

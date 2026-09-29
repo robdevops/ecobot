@@ -534,3 +534,25 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
     finally:
         CHART_FIELD.reset(token)
     await eco.close()
+
+
+async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+
+    async def spec_for(days_back):
+        token = CHART_REQUESTS.set([])
+        try:
+            await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+                                        "start_date": f"{today - timedelta(days=days_back)} 00:00:00",
+                                        "end_date": f"{today - timedelta(days=1)} 23:59:59"})
+            return CHART_REQUESTS.get()[0]
+        finally:
+            CHART_REQUESTS.reset(token)
+    week = (await spec_for(8))["series"][0]                       # 30-minute data: each has a low and a high
+    assert len(week["low"]) == len(week["high"]) == len(week["y"])
+    assert all(lo <= y <= hi for lo, y, hi in zip(week["low"], week["y"], week["high"]))
+    assert "range shaded" in (await spec_for(8))["subtitle"]
+    await eco.close()
