@@ -17,6 +17,7 @@ from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import CHART_HINT, CHART_REQUESTS
+from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
@@ -74,10 +75,10 @@ class Fetcher:
         self.rejected = 0  # requests Ecowitt itself refused (not network trouble or a busy server)
 
     def epoch(self, local: datetime) -> int:
-        return int(local.replace(tzinfo=self.tz).timestamp())
+        return local_epoch(local, self.tz)
 
     def local(self, epoch: int) -> datetime:
-        return datetime.fromtimestamp(epoch, timezone.utc).astimezone(self.tz).replace(tzinfo=None)
+        return to_local(epoch, self.tz).replace(tzinfo=None)
 
     async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
         """Readings for [start, end] (local time). refresh=True ignores the in-memory copy (used by
@@ -229,16 +230,13 @@ class HistoryQuery:
 
     def __init__(self, fetcher: Fetcher, args: dict):
         self.f, self.tz, self.args = fetcher, fetcher.tz, args
-        self.now = datetime.now(self.tz).replace(tzinfo=None)
+        self.now = now_local(self.tz)
         self.now_utc = datetime.now(timezone.utc)
         self.store: dict = {}       # "group.field" -> {"unit", "pts"}, filled by _fetch_period
         self.start = self.end = self.span = None          # the period, set by run()
         self.detailed = False                              # local-day-aligned data available for the whole period
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
-
-    def _local_date(self, ts: int):
-        return datetime.fromtimestamp(ts, timezone.utc).astimezone(self.tz).date()
 
     async def run(self) -> str:
         today = self.now.date()
@@ -390,7 +388,7 @@ class HistoryQuery:
                 days: dict = {}
                 for ts, rec in self.store[key]["pts"].items():
                     if rec["cycle"] != "1day":  # sub-daily points give correct local days
-                        _fold(days.setdefault(self._local_date(ts), {}), ts, rec)
+                        _fold(days.setdefault(local_date(ts, self.tz), {}), ts, rec)
                 entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)}
             else:
                 entry["monthly"] = {}
@@ -472,11 +470,11 @@ class HistoryQuery:
         if cycle == "1day" and line:
             # The last week comes as 30-minute data: add it as daily averages so the line reaches
             # today (today's own average isn't meaningful until the day is over)
-            last_day = max(self._local_date(t) for t in line)
-            today = datetime.now(self.tz).date()
+            last_day = max(local_date(t, self.tz) for t in line)
+            today = now_local(self.tz).date()
             by_day: dict = {}
             for t, r in pts.items():
-                d = self._local_date(t)
+                d = local_date(t, self.tz)
                 if r["cycle"] == "30min" and last_day < d < today:
                     by_day.setdefault(d, []).append(r["value"][0])
             for d, vals in by_day.items():

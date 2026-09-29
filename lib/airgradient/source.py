@@ -22,6 +22,7 @@ import httpx
 from .. import intent
 from ..charts import CHART_HINT, CHART_REQUESTS
 from ..config import Config
+from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool
 from ..warm import Warmer
 from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
@@ -127,10 +128,10 @@ class AirGradient:
         return self._locks.setdefault(key, asyncio.Lock())
 
     def _now(self) -> datetime:
-        return datetime.now(self.tz).replace(tzinfo=None)
+        return now_local(self.tz)
 
     def _when(self, ts: int) -> str:
-        dt = datetime.fromtimestamp(ts, timezone.utc).astimezone(self.tz)
+        dt = to_local(ts, self.tz)
         return f"{dt:%a} {dt.day} {dt:%b %Y} {dt:%I:%M%p}".replace(" 0", " ").replace("AM", "am").replace("PM", "pm")
 
     # ---------- cached data ----------
@@ -169,7 +170,7 @@ class AirGradient:
             end = datetime.combine(window[-1], datetime.min.time()) + timedelta(days=1)
             by_day: dict = {d: [] for d in window}
             for r in await self._past(start, min(end, self._now())):
-                by_day.get(datetime.fromtimestamp(r["ts"], timezone.utc).astimezone(self.tz).date(), []).append(r)
+                by_day.get(local_date(r["ts"], self.tz), []).append(r)
             for d, day_rows in by_day.items():
                 await asyncio.to_thread(self.store.save_day, d, day_rows)
                 self._recent.pop(d, None)

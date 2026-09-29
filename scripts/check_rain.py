@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 from lib.ecowitt import days as day_tool  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
+from lib.timeutil import day_bounds  # noqa: E402
 from lib.ecowitt.store import HistoryCache, subtract  # noqa: E402
 
 TOLERANCE = 0.05  # mm: equal within this
@@ -46,7 +47,7 @@ def totals(cache: HistoryCache, mac: str, tz, cycle: str, days: list) -> dict:
     """{day: rain total} the way weather_days works it out at this resolution."""
     if not days:
         return {}
-    lo, hi = day_tool._bounds(min(days), tz)[0], day_tool._bounds(max(days), tz)[1]
+    lo, hi = day_bounds(min(days), tz, True)[0], day_bounds(max(days), tz, True)[1]
     if cycle == "1day":
         lo, hi = lo - 86400, hi + 86400
     store = day_tool._load(cache, mac, cycle, ["rain"], lo, hi)
@@ -56,7 +57,7 @@ def totals(cache: HistoryCache, mac: str, tz, cycle: str, days: list) -> dict:
 def compare_rain(cache: HistoryCache, mac: str, tz, today, days_back: int = 88) -> dict:
     cover = cache.coverage(mac, "5min", "rainfall")
     days = [today - timedelta(days=n) for n in range(days_back, 0, -1)]
-    days = [d for d in days if not subtract(day_tool._bounds(d, tz), cover)]
+    days = [d for d in days if not subtract(day_bounds(d, tz, True), cover)]
     reference = totals(cache, mac, tz, "5min", days)
     result = {"days": len(days), "fields": fields_held(cache, mac), "against": {}}
     for cycle in ("30min", "1day"):

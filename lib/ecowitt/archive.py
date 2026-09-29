@@ -12,6 +12,7 @@ import logging
 from collections.abc import Iterator
 from datetime import datetime, time, timedelta
 
+from ..timeutil import now_local
 from .api import MIN_GAP_SECONDS, RETENTION
 from .history import spans
 from .store import BUCKET_SECONDS, horizon, subtract
@@ -36,7 +37,7 @@ class Archive:
         """(cycle, start, end) ranges to have in the cache, oldest first within each cycle. Only
         settled data: the newest hours are still changing, and the warm-up keeps those fresh."""
         tz = self.station.tz
-        now = datetime.now(tz).replace(tzinfo=None, microsecond=0)
+        now = now_local(tz)
         today = now.date()
         created = self.station.created
         earliest = (created.date() - timedelta(days=1)) if created else None

@@ -22,6 +22,7 @@ from . import intent, prompt
 from .alerts import AlertState, with_footer
 from .charts import CHART_REQUESTS, render as render_chart
 from .config import Config
+from .timeutil import now_local
 from .llm import Agent, strip_tool_turns, trim_history
 
 log = logging.getLogger(__name__)
@@ -265,7 +266,7 @@ class Bot:
         for source in self.sources:  # fetch recent readings while the model thinks
             if source.wants(text):
                 source.poke()
-        now = datetime.now(self.cfg.tz).replace(tzinfo=None)
+        now = now_local(self.cfg.tz)
         try:
             fast = intent.fast_call(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
         except Exception:  # never lose a reply to a shortcut: let the model handle it

@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from ..config import Config
+from ..timeutil import now_local
 from ..tools import Tool
 from ..warm import Warmer
 from .api import EcowittAPI, GROUPS, UNITS
@@ -111,7 +112,7 @@ class Ecowitt:
         return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz)
 
     def now(self) -> datetime:
-        return datetime.now(self.tz).replace(tzinfo=None, microsecond=0)
+        return now_local(self.tz)
 
     # ---------- tools ----------
     async def _history(self, args: dict) -> str:

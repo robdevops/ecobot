@@ -7,8 +7,9 @@ so days before the sensor existed aren't asked for again.
 
 import sqlite3
 import threading
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import date, tzinfo
 
+from ..timeutil import day_bounds
 from .metrics import METRICS
 
 COLUMNS = list(METRICS)
@@ -32,10 +33,6 @@ class AirStore:
         with self._lock:
             self.db.close()
 
-    def _bounds(self, day: date) -> tuple[int, int]:
-        start = datetime.combine(day, datetime.min.time()).replace(tzinfo=self.tz)
-        return int(start.timestamp()), int((start + timedelta(days=1)).timestamp())
-
     def day_count(self, day: date) -> int | None:
         """Readings stored for this finished day, or None if it hasn't been fetched."""
         with self._lock:
@@ -52,7 +49,7 @@ class AirStore:
         return {d: found.get(d.isoformat()) for d in days}
 
     def save_day(self, day: date, rows: list[dict]):
-        lo, hi = self._bounds(day)
+        lo, hi = day_bounds(day, self.tz)
         rows = [r for r in rows if lo <= r["ts"] < hi]
         with self._lock:
             self.db.execute("DELETE FROM readings WHERE loc=? AND ts>=? AND ts<?", (self.loc, lo, hi))
@@ -71,4 +68,4 @@ class AirStore:
         return [{"ts": ts, **{c: v for c, v in zip(COLUMNS, vals) if v is not None}} for ts, *vals in found]
 
     def load_day(self, day: date) -> list[dict]:
-        return self.load(*self._bounds(day))
+        return self.load(*day_bounds(day, self.tz))

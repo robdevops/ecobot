@@ -13,8 +13,9 @@ import asyncio
 import json
 import logging
 import operator
-from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 
+from ..timeutil import day_bounds, local_date, now_local
 from .history import collect
 from .store import HistoryCache, subtract
 
@@ -55,15 +56,6 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "days and the top ones. Works from cached history, so any period up to the whole record is fast.")
 
 
-def _local_date(ts: int, tz: tzinfo) -> date:
-    return datetime.fromtimestamp(ts, timezone.utc).astimezone(tz).date()
-
-
-def _bounds(day: date, tz: tzinfo) -> tuple[int, int]:
-    start = datetime.combine(day, time()).replace(tzinfo=tz)
-    return int(start.timestamp()), int((start + timedelta(days=1)).timestamp()) - 1
-
-
 def _load(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: int, end: int) -> dict:
     """The cached readings of the wanted fields, folded by collect() into {"group.field": {"pts": ...}}."""
     data: dict = {}
@@ -81,7 +73,7 @@ def _per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, 
     group, field, kind, _ = FIELDS[name]
     out: dict[date, float] = {}
     for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
-        day = _local_date(ts, tz)
+        day = local_date(ts, tz)
         found = rec.get(kind) or rec.get("value")
         if day in days and found is not None:
             if day not in out or (found[0] > out[day] if kind == "high" else found[0] < out[day]):
@@ -115,7 +107,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     for cycle in SUB_DAILY:
         cover = {g: cache.coverage(mac, cycle, g) for g in groups}
         for d in days:
-            lo, hi = _bounds(d, tz)
+            lo, hi = day_bounds(d, tz, True)
             if d not in source and all(not subtract((lo, hi), cover[g]) for g in groups):
                 source[d] = cycle
     rest = {d for d in days if d not in source}
@@ -124,11 +116,11 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     for cycle in SUB_DAILY:
         mine = {d for d, c in source.items() if c == cycle}
         if mine:
-            store = _load(cache, mac, cycle, shown, _bounds(min(mine), tz)[0], _bounds(max(mine), tz)[1])
+            store = _load(cache, mac, cycle, shown, day_bounds(min(mine), tz, True)[0], day_bounds(max(mine), tz, True)[1])
             for n in shown:
                 values[n].update(_per_day(store, n, mine, tz))
     if rest:  # daily buckets: labelled with the local date their 10am start falls on
-        store = _load(cache, mac, "1day", shown, _bounds(min(rest), tz)[0] - 86400, _bounds(max(rest), tz)[1] + 86400)
+        store = _load(cache, mac, "1day", shown, day_bounds(min(rest), tz, True)[0] - 86400, day_bounds(max(rest), tz, True)[1] + 86400)
         for n in shown:
             values[n].update(_per_day(store, n, rest, tz))
         for d in rest:
@@ -180,6 +172,6 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
 
 
 async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict) -> str:
-    now = datetime.now(tz).replace(tzinfo=None)
+    now = now_local(tz)
     result = await asyncio.to_thread(find_days, cache, mac, tz, args, now)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
