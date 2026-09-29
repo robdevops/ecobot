@@ -372,3 +372,28 @@ async def test_transient_and_refused_requests_are_told_apart(tmp_path):
     finally:
         aio.sleep = orig
     await api.close()
+
+
+async def test_http_errors_are_refused_only_when_ecowitt_answers_with_a_reason(tmp_path):
+    import httpx
+    from lib.ecowitt import api as ecowitt_api
+    replies = {
+        "400 with reason": httpx.Response(400, json={"code": 40010, "msg": "Invalid mac"}),
+        "401 no body": httpx.Response(401, text="Unauthorized"),
+        "502 gateway": httpx.Response(502, text="<html>Bad gateway</html>"),
+        "429 with reason": httpx.Response(429, json={"code": 429, "msg": "Rate limited"}),
+        "500 with reason": httpx.Response(500, json={"code": 500, "msg": "Internal error"}),
+    }
+    expected = {"400 with reason": False, "401 no body": True, "502 gateway": True,
+                "429 with reason": True, "500 with reason": True}
+    import asyncio as aio
+    orig, aio.sleep = aio.sleep, (lambda s: orig(0))
+    try:
+        for name, reply in replies.items():
+            api = ecowitt_api.EcowittAPI("a", "b", httpx.MockTransport(lambda r, reply=reply: reply))
+            with pytest.raises(ecowitt_api.EcowittError) as err:
+                await api.devices()
+            assert err.value.transient is expected[name], name   # a bad key or gateway must never drop a group
+            await api.close()
+    finally:
+        aio.sleep = orig

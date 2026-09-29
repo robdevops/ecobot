@@ -48,6 +48,15 @@ class EcowittError(Exception):
         self.transient = transient
 
 
+def _body(res: httpx.Response) -> dict | None:
+    """The JSON object Ecowitt answered with ({"code": ..., "msg": ...}), or None if the reply isn't one."""
+    try:
+        body = res.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) and "code" in body else None
+
+
 class EcowittAPI:
     def __init__(self, api_key: str, app_key: str, transport: httpx.AsyncBaseTransport | None = None):
         self.keys = {"application_key": app_key, "api_key": api_key}
@@ -71,12 +80,15 @@ class EcowittAPI:
                 self.requests += 1
                 try:
                     res = await self.client.get(f"{BASE}/{path}", params={**self.keys, **params})
-                    res.raise_for_status()
-                    body = res.json()
-                    if str(body.get("code")) == "0":
+                    body = _body(res)
+                    if body is None:  # no Ecowitt answer: the network, or a gateway error page
+                        res.raise_for_status()
+                        raise ValueError("unreadable response")
+                    if str(body.get("code")) == "0" and res.is_success:
                         return body.get("data") or {}
-                    msg = str(body.get("msg") or "API error")
-                    passing = any(k in msg.lower() for k in RETRY_ON)
+                    msg = str(body.get("msg") or f"HTTP {res.status_code}")
+                    # Ecowitt answered and said no (any HTTP status): passing only if busy or rate limited
+                    passing = res.status_code in (408, 429) or res.status_code >= 500 or any(k in msg.lower() for k in RETRY_ON)
                 except (httpx.HTTPError, ValueError) as e:
                     msg, passing = str(e) or type(e).__name__, True
                 if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
