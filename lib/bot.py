@@ -266,7 +266,11 @@ class Bot:
             if source.wants(text):
                 source.poke()
         now = datetime.now(self.cfg.tz).replace(tzinfo=None)
-        fast = intent.fast_call(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
+        try:
+            fast = intent.fast_call(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
+        except Exception:  # never lose a reply to a shortcut: let the model handle it
+            log.exception("Fast path failed; using the normal path")
+            fast = None
         if fast:
             log.info("Fast path: %s", fast[2])
 
@@ -292,7 +296,8 @@ class Bot:
                         log.exception("Chart failed; sending the answer without it")
             except Exception as e:
                 log.exception("Agent error")
-                ok, reply = False, f"Sorry, something went wrong: {type(e).__name__}: {e}"
+                # The details (which can include provider error bodies) go to the log, not the chat
+                ok, reply = False, f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment."
             finally:
                 CHART_REQUESTS.reset(chart_token)
                 stop_typing.set()

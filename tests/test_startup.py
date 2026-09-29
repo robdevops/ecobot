@@ -77,3 +77,40 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
     assert "failed" not in final and "days (5min/30min/4h/1d)" in final
     assert len(app.handlers) == 6  # start+help, reset, alerts, membership, messages, errors
+
+
+async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(tmp_path, monkeypatch, caplog):
+    """If the first Ecowitt or AirGradient refresh raises, the archive and the backfill (and the alert
+    monitor) must still start: the regular refreshes then catch up."""
+    caplog.set_level("INFO")
+    cfg = config(tmp_path)
+    eco_t, _ = ecowitt_transport()
+    air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    app = FakeApp()
+    monkeypatch.setattr(envirobot.Config, "from_env", classmethod(lambda cls: cfg))
+    for cls, transport in ((envirobot.Ecowitt, eco_t), (envirobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setattr(envirobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
+    monkeypatch.setattr(archive, "PACE_SECONDS", 0)
+    monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
+    monkeypatch.setattr(air_source, "BACKFILL_EMPTY_STOP", 3)
+
+    async def broken(self, fresh=True):
+        raise RuntimeError("the network dropped")
+    monkeypatch.setattr(envirobot.Ecowitt, "warm", broken)
+    monkeypatch.setattr(envirobot.AirGradient, "warm", broken)
+
+    async def stop_when_archived():
+        for _ in range(300):
+            if " req, held " in caplog.text and "AirGradient archive:" in caplog.text:
+                break
+            await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    stopper = asyncio.create_task(stop_when_archived())
+    await envirobot.main()
+    await stopper
+    log = caplog.text
+    assert "Ecowitt failed" in log and "AirGradient failed" in log        # the summary says so
+    assert "the network dropped" in log                                     # and the reason is in the log
+    assert " req, held " in log and "AirGradient archive:" in log         # yet both archives ran
+    assert "Startup warm-up failed" not in log                            # not lost to the catch-all

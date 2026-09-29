@@ -37,7 +37,8 @@ HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly av
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
 WARM_DAYS = 7                     # finished days kept ready by every refresh
 BACKFILL_PACE = 1.0               # seconds between backfill requests
-BACKFILL_EMPTY_STOP = 30          # this many empty days in a row: the sensor's data starts here
+BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some data: the sensor's data starts here
+BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a long recent outage isn't the start)
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
 CHART_POINTS = 1500               # long charts are averaged down to about this many points
@@ -199,14 +200,16 @@ class AirGradient:
         return f"AirGradient {self.requests - before} req"
 
     async def backfill(self, pace: float | None = None, empty_stop: int | None = None,
-                       max_days: int = BACKFILL_MAX_DAYS) -> tuple[int, int, int]:
+                       empty_before_data: int | None = None, max_days: int = BACKFILL_MAX_DAYS) -> tuple[int, int, int]:
         """Cache every finished day back to where the sensor's data starts (newest first, so recent
         charts are ready soonest; up to 9 days per request). Returns (days fetched, days failed,
         days cached in total)."""
         pace = BACKFILL_PACE if pace is None else pace
         empty_stop = BACKFILL_EMPTY_STOP if empty_stop is None else empty_stop
+        empty_before_data = BACKFILL_EMPTY_BEFORE_DATA if empty_before_data is None else empty_before_data
         today = self._now().date()
         fetched = failed = failed_run = empty_run = total = 0
+        seen_data = False
         n = 1
         while n <= max_days:
             days = [today - timedelta(days=k) for k in range(n, min(n + MAX_REQUEST_DAYS, max_days + 1))]
@@ -233,8 +236,11 @@ class AirGradient:
                 if counts[d] is None:
                     continue
                 total += 1
+                seen_data = seen_data or counts[d] > 0
                 empty_run = empty_run + 1 if counts[d] == 0 else 0
-                if empty_run >= empty_stop:
+                # A gap after data means the sensor's history starts before it; a gap before any data is
+                # most likely a recent outage, so look much further back before giving up
+                if empty_run >= (empty_stop if seen_data else empty_before_data):
                     return fetched, failed, total
         return fetched, failed, total
 

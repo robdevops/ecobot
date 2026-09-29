@@ -324,3 +324,51 @@ async def test_the_archive_leaves_the_still_settling_newest_data_to_the_warm_up(
     for cycle, start, end in Archive(eco)._work():
         assert end <= now - timedelta(hours=1), (cycle, end)  # nothing that is still changing
     await eco.close()
+
+
+async def test_a_passing_outage_does_not_drop_a_group_and_the_ranges_are_retried(tmp_path, monkeypatch):
+    import httpx
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    real = ecowitt_transport()[1]
+    down = {"on": True}
+
+    def handler(request):  # the network to Ecowitt drops whenever the piezo group is asked for
+        if down["on"] and "rainfall_piezo" in request.url.params.get("call_back", ""):
+            raise httpx.ConnectTimeout("timed out")
+        return real(request)
+    eco = Ecowitt(config(tmp_path), transport=httpx.MockTransport(handler))
+    await eco.start()
+    arch = Archive(eco)
+    first_three = list(arch._work())[:3]
+    monkeypatch.setattr(Archive, "_work", lambda self: iter(first_three))
+    fetched, failed = await arch.run_once()
+    assert (fetched, failed) == (0, 3) and "rainfall_piezo" in eco.groups   # kept: a timeout says nothing about the group
+    down["on"] = False
+    fetched, failed = await arch.run_once()                                 # the outage is over: they are retried
+    assert (fetched, failed) == (3, 0) and "rainfall_piezo" in eco.groups
+    await eco.close()
+
+
+async def test_transient_and_refused_requests_are_told_apart(tmp_path):
+    import httpx
+    from lib.ecowitt import api as ecowitt_api
+    calls = []
+
+    def handler(request):  # the first request is refused outright; every later one gets "busy"
+        calls.append(1)
+        return httpx.Response(200, json={"code": 40000, "msg": "Invalid call_back"} if len(calls) == 1
+                              else {"code": -1, "msg": "System is busy."})
+    api = ecowitt_api.EcowittAPI("a", "b", httpx.MockTransport(handler))
+    import asyncio as aio
+    orig, aio.sleep = aio.sleep, (lambda s: orig(0))
+    try:
+        with pytest.raises(ecowitt_api.EcowittError) as refused:
+            await api.devices()
+        assert refused.value.transient is False
+        with pytest.raises(ecowitt_api.EcowittError) as busy:      # still busy after every retry
+            await api.devices()
+        assert busy.value.transient is True
+    finally:
+        aio.sleep = orig
+    await api.close()

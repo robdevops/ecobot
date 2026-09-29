@@ -97,11 +97,11 @@ def air_row(ts: datetime, pm25: float = 5.0, pm10: float = 8.0) -> dict:
             "tvocIndex": 100, "noxIndex": 1}
 
 
-def air_transport(rows_per_day: int = 24, oldest: datetime | None = None,
-                  hourly_before: datetime | None = None) -> tuple[httpx.MockTransport, list]:
+def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly_before: datetime | None = None,
+                  outage: tuple[datetime, datetime] | None = None) -> tuple[httpx.MockTransport, list]:
     """Like AirGradient's v1 API: `past` takes at most 10 days (422 otherwise), answers 404 when
     there is no data, and gives 5-minute buckets (rows_per_day = 288) or hourly ones for anything
-    before hourly_before. oldest: the sensor's first reading. transport.spans lists each past request."""
+    before hourly_before. oldest: the sensor's first reading; outage: (from, to) with no readings. transport.spans lists each past request."""
     calls: list = []
     spans: list = []
 
@@ -118,7 +118,7 @@ def air_transport(rows_per_day: int = 24, oldest: datetime | None = None,
         rows, t = [], start
         while t <= end:
             hourly = hourly_before is not None and t < hourly_before
-            if oldest is None or t >= oldest:
+            if (oldest is None or t >= oldest) and not (outage and outage[0] <= t < outage[1]):
                 rows.append(air_row(t, pm25=5 + (t.hour % 12)))
             t += timedelta(hours=1 if hourly else 24 / rows_per_day)
         return httpx.Response(200, json=rows) if rows else httpx.Response(404, json={"message": "No data available"})

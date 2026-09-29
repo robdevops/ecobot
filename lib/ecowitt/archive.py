@@ -99,7 +99,7 @@ class Archive:
         for group in self.groups:
             probe = self.station.fetcher([group])
             await probe.get(cycle, start, end)
-            if probe.errors and "busy" not in probe.errors[-1].lower():
+            if probe.rejected:  # Ecowitt said no; a timeout or "too frequent" says nothing about the group
                 bad.append(group)
             await asyncio.sleep(self.pace)
         if bad and len(bad) < len(self.groups):

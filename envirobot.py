@@ -110,7 +110,8 @@ async def main():
                     async def ecowitt_part():
                         # One request at a time (Ecowitt rate-limits): warm first, so the alerts'
                         # own look at the last 3 hours is answered from what was just fetched
-                        parts.append(await eco.warm(True))
+                        # A failed first refresh must not stop the alerts or the archive: safely() logs it
+                        parts.append(await safely(eco.warm, True) or "Ecowitt failed")
                         try:
                             await monitor.init()
                             eco.warmer.after.append(monitor.check)  # checked on every fresh refresh
@@ -122,8 +123,8 @@ async def main():
                         tasks.append(asyncio.create_task(archive.loop()))
 
                     async def air_part():
-                        parts.append(await air.warm(True))
-                        tasks.append(asyncio.create_task(safely(air_backfill)))
+                        parts.append(await safely(air.warm, True) or "AirGradient failed")
+                        tasks.append(asyncio.create_task(safely(air_backfill)))  # even if the sensor was unreachable just now
 
                     async def air_backfill():
                         started = time.monotonic()

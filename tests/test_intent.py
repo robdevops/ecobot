@@ -164,3 +164,22 @@ def test_analysis_across_days_or_readings_gets_low_thinking():
         assert intent.reasoning_effort(text) == "none", text
     assert intent.reasoning_effort("will it rain later?") == "medium"
     assert intent.reasoning_effort("what was yesterday like?") == "low"
+
+
+def test_absurd_periods_go_to_the_model_instead_of_crashing():
+    from datetime import date
+    for text in ("weather last 99999 years", "chart weather 2000 years", "aq 99999999999999999999 days",
+                 "weather 999999 hours", "aq 500000 weeks", "weather 12345678 months"):
+        assert call(text) is None, text            # no exception, no nonsense dates
+    assert call("weather 4 years")[1]["start_date"] == "2022-10-01 00:00:00"      # a sane long period still works
+    assert call("weather 8760 hours")[1]["chart"]
+    # "on record" is safe on 29 February, when the year four earlier had none
+    ranges = intent.period_ranges(date(2028, 2, 29))
+    assert ranges["on record"] == (date(2028, 2, 29) - __import__("datetime").timedelta(days=1459), date(2028, 2, 29))
+
+
+def test_an_air_question_with_a_time_we_cant_read_is_not_answered_with_the_current_reading():
+    for text in ("air quality since march", "aq the last few days", "how was the air 3 days ago", "aq these days"):
+        assert call(text) is None, text
+    for text in ("aq", "air quality", "aq now", "how's the air"):
+        assert call(text)[:2] == ("air_quality", {}), text

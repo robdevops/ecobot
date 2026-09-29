@@ -59,6 +59,7 @@ class Fetcher:
         self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
         self.ranges = self.from_cache = self.from_memory = self.calls = 0
         self.errors: list[str] = []
+        self.rejected = 0  # requests Ecowitt itself refused (not network trouble or a busy server)
 
     def epoch(self, local: datetime) -> int:
         return int(local.replace(tzinfo=self.tz).timestamp())
@@ -104,6 +105,7 @@ class Fetcher:
             label = f"{cycle} {start:%d %b %Y} - {end:%d %b %Y}"
             log.warning("History request failed (%s): %s", label, e)
             self.errors.append(f"{label}: {e}")
+            self.rejected += not e.transient
             return None
 
     async def covered(self, cycle: str, start: int, end: int) -> bool:

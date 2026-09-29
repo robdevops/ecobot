@@ -130,6 +130,12 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     await air.close()
 
 
+def await_days(air, days_ago):
+    """Readings stored for the local day this many days ago (0 if none or not fetched)."""
+    day = datetime.now(TZ).date() - timedelta(days=days_ago)
+    return air.store.day_count(day) or 0
+
+
 # ---------- what the API's docs promise ----------
 def longest_request(transport) -> timedelta:
     return max(end - start for start, end in transport.spans)
@@ -150,7 +156,7 @@ async def test_requests_never_ask_for_more_than_ten_days(tmp_path):
 async def test_no_data_available_is_an_empty_period_not_a_failure(tmp_path):
     transport, calls = air_transport(oldest=datetime.now(timezone.utc) + timedelta(days=5))  # every request gets a 404
     air = AirGradient(config(tmp_path), transport=transport)
-    fetched, failed, total = await air.backfill(pace=0, empty_stop=5)
+    fetched, failed, total = await air.backfill(pace=0, empty_stop=5, empty_before_data=5)
     assert failed == 0 and fetched >= 5 and total == 5
     day = datetime.now(TZ).date() - timedelta(days=3)
     out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}))
@@ -169,4 +175,38 @@ async def test_answers_say_when_old_days_are_hourly_averages(tmp_path):
     recent = json.loads(await air.handle({"start_date": (now - timedelta(days=3)).strftime(fmt),
                                           "end_date": (now - timedelta(days=1)).strftime(fmt)}))
     assert "note_resolution" not in recent
+    await air.close()
+
+
+
+async def test_a_recent_outage_does_not_hide_older_history(tmp_path):
+    """The sensor was offline for the last 40 days: the empty run comes before any data, so the backfill
+    keeps looking instead of concluding that the history starts here."""
+    now = datetime.now(timezone.utc)
+    transport, calls = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=40), now + timedelta(days=1)))
+    air = AirGradient(config(tmp_path), transport=transport)
+    fetched, failed, total = await air.backfill(pace=0, empty_stop=10, empty_before_data=80)
+    assert failed == 0
+    with_data = [d for d in range(1, 110) if (await_days(air, d)) > 0]
+    assert len(with_data) >= 50 and max(with_data) >= 95      # the days before the outage were found and cached
+    await air.close()
+
+
+async def test_a_gap_in_the_middle_shorter_than_the_limit_does_not_stop_the_backfill(tmp_path):
+    now = datetime.now(timezone.utc)
+    transport, _ = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=50), now - timedelta(days=15)))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.backfill(pace=0, empty_stop=40, empty_before_data=80)      # a 35-day gap, under the limit
+    with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
+    assert max(with_data) >= 95
+    await air.close()
+
+
+async def test_a_gap_after_data_longer_than_the_limit_is_taken_as_the_start(tmp_path):
+    now = datetime.now(timezone.utc)
+    transport, _ = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=50), now - timedelta(days=15)))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.backfill(pace=0, empty_stop=20, empty_before_data=80)      # a 35-day gap, over the limit
+    with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
+    assert max(with_data) < 20                                            # stopped at the gap
     await air.close()

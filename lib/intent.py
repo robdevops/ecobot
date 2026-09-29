@@ -76,7 +76,7 @@ def period_ranges(today: date) -> dict[str, tuple[date, date]]:
         "last year": (date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)),
         "past month": (today - timedelta(days=29), today),
         "past year": (today - timedelta(days=364), today),
-        "on record": (max(today - timedelta(days=1459), today.replace(year=today.year - 4)), today),
+        "on record": (today - timedelta(days=1459), today),  # what Ecowitt keeps (also safe on 29 Feb)
     }
 
 
@@ -111,17 +111,24 @@ def span(name: str, now: datetime) -> tuple[datetime, datetime]:
     return datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
 
 
+MAX_PERIOD_DAYS = 3650  # ten years: well past the four Ecowitt keeps, which the tools trim to what exists
+
+
 def numbered_span(count: str, unit: str, now: datetime) -> tuple[str, datetime, datetime] | None:
     """"4 months", "24h", "2 weeks": a rolling period ending now. One day means the last 24 hours;
     longer ones cover whole days up to today (a month is 30 days, a year 365, as in the named periods)."""
-    n = int(count) if count.isdigit() else NUMBER_WORDS[count.lower()]
+    n = int(count[:6]) if count.isdigit() else NUMBER_WORDS[count.lower()]  # 6 digits at most: nothing sane is longer
     u = unit.lower()
     if n == 0:
         return None
     if u[0] == "h" or (u[0] == "d" and n == 1):
         hours = n if u[0] == "h" else 24
+        if hours > 24 * MAX_PERIOD_DAYS:
+            return None
         return f"last {hours} hours", now - timedelta(hours=hours), now
     days = n if u[0] == "d" else 7 * n if u[0] == "w" else 365 * n if u[0] == "y" else round(n * 365 / 12)
+    if days > MAX_PERIOD_DAYS or n > 99999:  # beyond what any sensor has: the model can explain, dates would be nonsense
+        return None
     start = datetime.combine(now.date() - timedelta(days=days - 1), datetime.min.time())
     label = {"d": "days", "w": "weeks", "y": "years", "m": "months"}[u[0]]
     return f"last {n} {label[:-1] if n == 1 else label}", start, datetime.combine(now.date(), datetime.max.time()).replace(microsecond=0)
@@ -233,7 +240,7 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
         name, start, end = period
         return "air_quality", {"chart": True, "metrics": air_metrics(text),
                                "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"air quality chart, {name}"
-    if air and mentions_air(text) and not AIR_NOT_NOW.search(text):
+    if air and mentions_air(text) and not AIR_NOT_NOW.search(text) and not TIME_WORDS.search(text):
         return "air_quality", {}, "air quality now"
     if ecowitt and (period := weather_period(text, now)):
         name, start, end = period

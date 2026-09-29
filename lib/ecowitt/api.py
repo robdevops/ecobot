@@ -41,7 +41,11 @@ FMT = "%Y-%m-%d %H:%M:%S"
 
 
 class EcowittError(Exception):
-    pass
+    """transient: a passing problem (network, timeout, rate limit), not Ecowitt rejecting the request."""
+
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 class EcowittAPI:
@@ -72,14 +76,15 @@ class EcowittAPI:
                     if str(body.get("code")) == "0":
                         return body.get("data") or {}
                     msg = str(body.get("msg") or "API error")
+                    passing = any(k in msg.lower() for k in RETRY_ON)
                 except (httpx.HTTPError, ValueError) as e:
-                    msg = str(e) or type(e).__name__
+                    msg, passing = str(e) or type(e).__name__, True
                 if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
                     wait = 3 * 2 ** attempt
                     log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
                     await asyncio.sleep(wait)
                     continue
-                raise EcowittError(msg)
+                raise EcowittError(msg, transient=passing)
 
     async def devices(self) -> list[dict]:
         data = await self._get("list", limit=50)
