@@ -201,3 +201,33 @@ async def test_archive_skips_time_before_the_station_existed(tmp_path, monkeypat
     assert not any(c["cycle_type"] == "5min" and c["start_date"][:10] < str(eco.created.date() - timedelta(days=1))
                    for c in fake.calls if "cycle_type" in c)
     await eco.close()
+
+
+async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is_cached(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today} 00:00:00"}
+
+    def monthly(out):
+        return json.loads(out)["series"]["outdoor.temperature"]["monthly"]
+
+    before = monthly(await eco.tools[1].handler(args))          # nothing cached: daily figures, values only
+    assert all("low_when" not in m for m in before.values())
+
+    await Archive(eco).run_once()
+    fake.calls.clear()
+    token = CHART_REQUESTS.set([])
+    try:
+        out = await eco.tools[1].handler({**args, "chart": True})
+        spec = CHART_REQUESTS.get()[0]
+    finally:
+        CHART_REQUESTS.reset(token)
+    after = monthly(out)
+    assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
+    assert "monthly_note" not in json.loads(out) and fake.calls == []
+    assert "30-minute" in spec["subtitle"] or "5-minute" in spec["subtitle"]
+    await eco.close()

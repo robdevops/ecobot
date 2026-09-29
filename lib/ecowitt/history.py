@@ -25,8 +25,10 @@ log = logging.getLogger(__name__)
 MAX_REFINE_WINDOWS = 4          # overall records
 MAX_MONTH_REFINE_WINDOWS = 24
 # Periods up to this long are built from local-day-aligned data, so each month's low/high and its
-# date are exact even at month boundaries. Longer periods use daily data (10am-10am buckets).
+# date are exact even at month boundaries. Longer periods use daily data (10am-10am buckets), unless
+# the cache already holds the 30-minute data (the archive does), in which case up to a year is detailed.
 DETAILED_DAYS = 93
+CACHED_DETAILED_DAYS = 365
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
 # question asks for them, so an "averaged data" note can't be misapplied elsewhere.
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
@@ -234,7 +236,8 @@ class HistoryQuery:
         if self.start >= self.end:
             return "Error: start_date must be before end_date and within the last 4 years."
         self.span = self.end - self.start
-        self.detailed = self.span <= timedelta(days=DETAILED_DAYS)
+        self.detailed = self.span <= timedelta(days=DETAILED_DAYS) or (
+            self.span <= timedelta(days=CACHED_DETAILED_DAYS) and await self._cached_locally())
 
         await self._fetch_period()
         if not self.store:
@@ -244,6 +247,20 @@ class HistoryQuery:
         self.monthly = self._monthly_extremes() if self.span > timedelta(days=31) else {}
         refined = await self._refine()
         return self._answer(refined)
+
+    async def _cached_locally(self) -> bool:
+        """Is the whole period already in the cache at 5- or 30-minute resolution (bar the newest day,
+        which is still settling)? Then detail costs no requests."""
+        f = self.f
+        floor = datetime.combine(self.now.date() - timedelta(days=RETENTION["30min"] - 2), time())
+        t, until = max(self.start, floor), self.end - timedelta(days=1)
+        while t < until:
+            e = min(t + MAX_SPAN["30min"] - timedelta(seconds=1), until)
+            first, last = f.epoch(t), f.epoch(e)
+            if not (await f.covered("5min", first, last) or await f.covered("30min", first, last)):
+                return False
+            t = e + timedelta(seconds=1)
+        return True
 
     async def _chunks(self, cycle: str, t: datetime, until: datetime):
         while t < until:
@@ -299,7 +316,7 @@ class HistoryQuery:
         if self.monthly and self.detailed:
             for key, months in self.monthly.items():
                 if key.endswith(".temperature"):
-                    for month, d in months.items():
+                    for month, d in reversed(list(months.items())):  # newest first: where 5-minute data is
                         for want, ext in d.items():
                             slots[("month", key, month, want)] = ext
         caps = {"all": MAX_REFINE_WINDOWS, "month": MAX_MONTH_REFINE_WINDOWS}
