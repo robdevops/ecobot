@@ -138,7 +138,7 @@ class Ecowitt:
         f30, f5 = self.fetcher(WARM_GROUPS), self.fetcher(WARM_GROUPS)
         await asyncio.gather(f30.get("30min", today - timedelta(days=6), now, refresh=fresh),
                              f5.get("5min", today, now, refresh=fresh))
-        return f"Ecowitt recent data {f30.calls + f5.calls} request(s)"
+        return f"Ecowitt {f30.calls + f5.calls} request(s)"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Weather data is used by nearly all."""
