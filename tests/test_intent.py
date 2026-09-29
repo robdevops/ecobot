@@ -124,3 +124,12 @@ def test_a_period_we_cant_read_goes_to_the_model_not_to_a_default():
     assert call("chart weather")[1]["start_date"] == "2026-09-23 00:00:00"   # nothing period-like: a week
     assert call("chart the air quality")[1]["start_date"] == "2026-09-28 14:05:00"
     assert call("chart the air quality over the last few days") is None
+
+
+def test_1m_means_one_month():
+    assert call("weather 1m")[1]["start_date"] == "2026-08-31 00:00:00"
+    assert call("weather 1mo")[1]["start_date"] == "2026-08-31 00:00:00"
+    assert call("aq 1m")[1]["start_date"] == "2026-08-31 00:00:00"
+    assert call("weather 3m")[1]["start_date"] == "2026-07-01 00:00:00"
+    # "30 minute" is not "30 months"
+    assert call("use 30 minute data to plot 4 months of weather")[1]["start_date"] == "2026-05-31 00:00:00"
