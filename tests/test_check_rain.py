@@ -6,20 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from lib.ecowitt import Archive, Ecowitt, archive as archive_mod
-from tests.fakes import config, ecowitt_transport
+from tests.fakes import archived_station
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import check_rain  # noqa: E402
 
 
 @pytest.fixture
-async def station(tmp_path, monkeypatch):
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
+async def station(tmp_path, archived_cache):
+    eco, _ = await archived_station(tmp_path, archived_cache)
     yield eco
     await eco.close()
 

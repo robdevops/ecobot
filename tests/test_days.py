@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from lib.ecowitt import Archive, Ecowitt, archive as archive_mod
-from tests.fakes import TZ, config, ecowitt_transport, rain_day, temp
+from lib.ecowitt import Ecowitt
+from tests.fakes import TZ, archived_station, config, ecowitt_transport, rain_day, temp
 
 pytestmark = pytest.mark.asyncio
 
@@ -27,13 +27,8 @@ def label(d):
 
 
 @pytest.fixture
-async def station(tmp_path, monkeypatch):
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
-    fake.calls.clear()
+async def station(tmp_path, archived_cache):
+    eco, fake = await archived_station(tmp_path, archived_cache)
     yield eco, fake
     await eco.close()
 
@@ -90,9 +85,9 @@ async def test_ascending_order_and_the_limit(station):
 
 async def test_old_days_come_from_daily_buckets_and_say_so(station):
     eco, fake = station
-    first, last = dates(eco, 700, 1)   # reaches past the year of 30-minute data
+    first, last = dates(eco, 540, 1)   # reaches past the year of 30-minute data
     out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], limit=20)
-    assert out["days_checked"] > 600 and "note_daily" in out and out["exact_from"]
+    assert out["days_checked"] > 500 and "note_daily" in out and out["exact_from"]
     cutoff = datetime.now(eco.tz).date() - timedelta(days=365)
     exact_from = datetime.strptime(out["exact_from"], "%a %d %b %Y").date()
     assert cutoff - timedelta(days=3) <= exact_from <= cutoff + timedelta(days=3)  # about where 30-minute data begins
@@ -102,13 +97,9 @@ async def test_old_days_come_from_daily_buckets_and_say_so(station):
     assert fake.calls == []
 
 
-async def test_a_longer_archive_makes_more_of_the_record_exact_without_code_changes(tmp_path, monkeypatch):
+async def test_a_longer_archive_makes_more_of_the_record_exact_without_code_changes(tmp_path, archived_cache):
     """The exact range follows what the cache holds, not a fixed cutoff."""
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
+    eco, _ = await archived_station(tmp_path, archived_cache)
     first, last = dates(eco, 500, 300)   # 300-500 days ago: daily buckets only, for now
     args = dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], limit=1)
     assert (await ask(eco, **args))["days"][0]["source"] == "daily"

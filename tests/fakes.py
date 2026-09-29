@@ -10,6 +10,7 @@ from lib.config import Config
 
 TZ = ZoneInfo("Australia/Melbourne")
 MAC = "AA:BB:CC:DD:EE:FF"
+HISTORY_DAYS = 548  # the fake station is 18 months old: enough for every test, and far quicker to archive than years
 STEP = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
 
 
@@ -66,7 +67,7 @@ class FakeEcowitt:
         path = request.url.path.rsplit("/", 1)[-1]
         if path == "list":
             return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0,
-                                       "createtime": 1600000000}]})
+                                       "createtime": int((datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)).timestamp())}]})
         if path == "real_time":
             now = int(datetime.now(timezone.utc).timestamp())
             return self._ok({"outdoor": {"temperature": {"time": str(now), "unit": "℃", "value": "12.3"}}})
@@ -137,3 +138,19 @@ def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly
     transport = httpx.MockTransport(handler)
     transport.spans = spans
     return transport, calls
+
+
+# ---------- a station whose whole history is already archived (built once per test session) ----------
+async def archived_station(tmp_path, cache_file):
+    """(Ecowitt, fake) with a copy of the session's archived cache: what `await Archive(eco).run_once()` would
+    leave, without paying for it in every test. fake.calls is empty."""
+    import shutil
+
+    from lib.ecowitt import Ecowitt
+    transport, fake = ecowitt_transport()
+    cfg = config(tmp_path)
+    shutil.copy(cache_file, cfg.cache_path)
+    eco = Ecowitt(cfg, transport=transport)
+    await eco.start()
+    fake.calls.clear()
+    return eco, fake

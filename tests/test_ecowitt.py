@@ -7,7 +7,7 @@ import pytest
 from lib.charts import CHART_REQUESTS
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
-from tests.fakes import MAC, config, ecowitt_transport
+from tests.fakes import MAC, archived_station, config, ecowitt_transport
 
 
 @pytest.fixture
@@ -166,7 +166,7 @@ async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp
     assert {c["cycle_type"] for c in fake.calls if "cycle_type" in c} == {"5min", "30min", "4hour", "1day"}
     fake.calls.clear()
     today = datetime.now(eco.tz).date()
-    for days in (30, 200, 700):  # a month, most of a year, nearly two years
+    for days in (30, 200, 540):  # a month, most of a year, all 18 months of the fake station
         out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                           "end_date": f"{today - timedelta(days=2)} 23:59:59"})
         assert "Error" not in out[:20], out[:200]
@@ -269,7 +269,7 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     assert arch.held() == "0/0/0/0 days (5min/30min/4h/1d)"
     await arch.run_once()
     held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
-    assert 85 <= held["5min"] <= 90 and 350 <= held["30min"] <= 365 and 700 <= held["4hour"] <= 730 and held["1day"] > 1400
+    assert 85 <= held["5min"] <= 90 and 350 <= held["30min"] <= 365 and 530 <= held["4hour"] <= 548 and 530 <= held["1day"] <= 548
     assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
     await eco.close()
 
@@ -425,13 +425,8 @@ def test_direction_summary_of_a_variable_wind_and_averaged_data():
     assert summarise([], TZ, by_day=False) == {}
 
 
-async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, monkeypatch):
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
+async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, archived_cache):
+    eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{today - timedelta(days=7)} 00:00:00",
                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
@@ -452,14 +447,9 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     await eco.close()
 
 
-async def test_a_direction_chart_is_a_scatter_by_hour_of_day(tmp_path, monkeypatch):
+async def test_a_direction_chart_is_a_scatter_by_hour_of_day(tmp_path, archived_cache):
     from lib.charts import render
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
+    eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "wind", "chart": True, "start_date": f"{today - timedelta(days=6)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
@@ -487,14 +477,9 @@ def test_calm_readings_are_reported_not_counted():
     assert out["most_common"].startswith("E ") and out["calm"].startswith("20%")
 
 
-async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model_says_chart_false(tmp_path, monkeypatch):
+async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model_says_chart_false(tmp_path, archived_cache):
     from lib.charts import CHART_ASKED
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
+    eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     short = {"groups": "wind", "chart": False, "start_date": f"{today - timedelta(days=3)} 00:00:00",
              "end_date": f"{today - timedelta(days=2)} 23:59:59"}   # two days
@@ -558,26 +543,20 @@ async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
     await eco.close()
 
 
-async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year(tmp_path, monkeypatch):
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    await Archive(eco).run_once()
-    fake.calls.clear()
+async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year(tmp_path, archived_cache):
+    eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     token = CHART_REQUESTS.set([])
     try:
         await eco.tools[1].handler({"groups": "outdoor", "chart": True,
-                                    "start_date": f"{today - timedelta(days=700)} 00:00:00",
+                                    "start_date": f"{today - timedelta(days=540)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 00:00:00"})   # settled: no request in the small hours
         spec = CHART_REQUESTS.get()[0]
     finally:
         CHART_REQUESTS.reset(token)
     line = spec["series"][0]
     assert fake.calls == [], fake.calls                          # all from the cache
-    assert len(line["x"]) >= 650 and len(line["low"]) == len(line["x"])   # one point a day across the whole period
+    assert len(line["x"]) >= 500 and len(line["low"]) == len(line["x"])   # one point a day across the whole period
     assert line["x"] == sorted(line["x"]) and len(set(line["x"])) == len(line["x"])
     days_seen = {datetime.fromtimestamp(t, eco.tz).date() for t in line["x"]}
     assert len(days_seen) == len(line["x"])                      # never two points for one day

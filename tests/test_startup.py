@@ -64,7 +64,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
 
     async def stop_when_archived():  # the background archives finish, then we shut down
         for _ in range(300):
-            if " req, held " in caplog.text and "AirGradient archive: 1 day" in caplog.text:
+            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
