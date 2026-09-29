@@ -196,7 +196,7 @@ class AirGradient:
         await self._fetch_days(missing)  # one request for all of them
         for day in week:
             await self._day_rows(day)
-        return f"AirGradient {self.requests - before} request(s)"
+        return f"AirGradient {self.requests - before} req"
 
     async def backfill(self, pace: float | None = None, empty_stop: int | None = None,
                        max_days: int = BACKFILL_MAX_DAYS) -> tuple[int, int, int]:

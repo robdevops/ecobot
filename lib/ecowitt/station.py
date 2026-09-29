@@ -10,14 +10,12 @@ from datetime import datetime, timedelta, timezone
 from ..config import Config
 from ..tools import Tool
 from ..warm import Warmer
-from .api import EcowittAPI, UNITS
+from .api import EcowittAPI, GROUPS, UNITS
 from .history import Fetcher, HistoryQuery
 from .store import HistoryCache, HotStore
 
 log = logging.getLogger(__name__)
 
-# Fetched ahead of questions; the extras feed the rain alerts and predictions
-WARM_GROUPS = ["outdoor", "indoor", "rainfall", "pressure", "wind"]
 DEFAULT_GROUPS = "outdoor,indoor"
 
 
@@ -76,6 +74,7 @@ class Ecowitt:
         self.api = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport)
         self.cache = HistoryCache(cfg.cache_path, UNITS)
         self.hot = HotStore()
+        self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm)
         self.mac = ""
         self.station_name = ""
@@ -135,10 +134,10 @@ class Ecowitt:
         """The last 7 days at 30 minutes (only the unsettled tail goes to Ecowitt) and today at 5 minutes."""
         now = self.now()
         today = datetime.combine(now.date(), datetime.min.time())
-        f30, f5 = self.fetcher(WARM_GROUPS), self.fetcher(WARM_GROUPS)
+        f30, f5 = self.fetcher(self.groups), self.fetcher(self.groups)
         await asyncio.gather(f30.get("30min", today - timedelta(days=6), now, refresh=fresh),
                              f5.get("5min", today, now, refresh=fresh))
-        return f"Ecowitt {f30.calls + f5.calls} request(s)"
+        return f"Ecowitt {f30.calls + f5.calls} req"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Weather data is used by nearly all."""
@@ -148,9 +147,9 @@ class Ecowitt:
         self.warmer.poke()
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
-                       groups: list[str] = WARM_GROUPS) -> list[tuple[int, dict]]:
+                       groups: list[str] | None = None) -> list[tuple[int, dict]]:
         """Readings for the alert monitors, straight from the warm data."""
-        return readings(await self.fetcher(groups).get(cycle, start, end))
+        return readings(await self.fetcher(groups or self.groups).get(cycle, start, end))
 
     async def recent(self, hours: float) -> list[tuple[int, dict]]:
         now = self.now()

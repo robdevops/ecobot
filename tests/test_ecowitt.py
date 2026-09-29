@@ -65,7 +65,7 @@ async def test_requests_use_metric_unit_ids(station):
     eco, fake = station
     await eco.recent(1)
     assert fake.calls[-1]["temp_unitid"] == "1" and fake.calls[-1]["rainfall_unitid"] == "12"
-    assert fake.calls[-1]["call_back"] == "outdoor,indoor,rainfall,pressure,wind"
+    assert fake.calls[-1]["call_back"] == "outdoor,indoor,pressure,wind,rainfall,rainfall_piezo"  # what the archive keeps too
 
 
 async def test_realtime_is_compact_and_local(station):
@@ -147,7 +147,7 @@ async def test_bad_dates_are_reported(station):
 async def test_warm_then_question_needs_no_new_requests_for_the_tail(station):
     eco, fake = station
     summary = await eco.warm(True)
-    assert "request(s)" in summary
+    assert summary.startswith("Ecowitt ") and summary.endswith(" req")
     fake.calls.clear()
     now = eco.now()
     await eco.fetcher(["outdoor"]).get("5min", datetime.combine(now.date(), datetime.min.time()), now)
@@ -252,7 +252,7 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     assert len(first & second) <= 1, "only the range in flight when it stopped is asked for again"
     fake.calls.clear()
     await Archive(eco).run_once()
-    assert len(fake.calls) <= 4  # complete: only the newest unsettled ranges remain
+    assert fake.calls == []  # complete: the archive only asks for settled data, and there is none left to fetch
     await eco.close()
 
 
@@ -280,10 +280,47 @@ async def test_archive_estimates_its_duration_from_the_pace(tmp_path, monkeypatc
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     await Archive(eco).run_once()
+    assert not any("readings stored" in r.message for r in caplog.records)
     caplog.clear()
-    await Archive(eco).run_once()  # only the newest ranges are left
+    await Archive(eco).run_once()
+    assert not any("to fetch" in r.message for r in caplog.records)  # nothing left: no estimate to give
+    # a fresh cache has everything to fetch: about 3s each, shown in minutes once it is over 90s
+    eco.cache.db.executescript("DELETE FROM coverage; DELETE FROM points;")
+    caplog.clear()
+    await Archive(eco).run_once()
     line = next(r.message for r in caplog.records if "to fetch" in r.message)
     n = int(line.split(": ")[1].split(" ")[0])
-    assert f"about {n * 3} s" in line
-    assert not any("readings stored" in r.message for r in caplog.records)
+    assert f"{n} req to fetch (about {n * 3 / 60:.0f} min)" in line
+    await eco.close()
+
+
+async def test_a_group_the_station_lacks_is_dropped_for_the_warm_up_too(tmp_path, monkeypatch):
+    import httpx
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    real = ecowitt_transport()[1]
+
+    def handler(request):  # this station has no piezo rain gauge
+        if "rainfall_piezo" in request.url.params.get("call_back", ""):
+            return httpx.Response(200, json={"code": 40000, "msg": "Invalid call_back"})
+        return real(request)
+    eco = Ecowitt(config(tmp_path), transport=httpx.MockTransport(handler))
+    await eco.start()
+    assert "rainfall_piezo" in eco.groups
+    fetched, failed = await Archive(eco).run_once()
+    assert failed == 0 and fetched > 100 and "rainfall_piezo" not in eco.groups
+    real.calls.clear()
+    await eco.warm(True)  # would fail on the missing group if it still asked for it
+    assert real.calls and all("rainfall_piezo" not in c["call_back"] for c in real.calls if "call_back" in c)
+    await eco.close()
+
+
+async def test_the_archive_leaves_the_still_settling_newest_data_to_the_warm_up(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    now = eco.now()
+    for cycle, start, end in Archive(eco)._work():
+        assert end <= now - timedelta(hours=1), (cycle, end)  # nothing that is still changing
     await eco.close()

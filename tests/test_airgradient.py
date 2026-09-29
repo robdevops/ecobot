@@ -54,7 +54,7 @@ async def test_finished_days_are_fetched_once(tmp_path):
 
 async def test_warm_summary_and_wants(tmp_path):
     air, _ = await make(tmp_path)
-    assert "request(s)" in await air.warm(True)
+    assert (await air.warm(True)).startswith("AirGradient ") and (await air.warm(True)).endswith(" req")
     assert air.wants("how's the air?") and not air.wants("what's the temperature")
     await air.close()
 

@@ -13,22 +13,27 @@ from collections.abc import Iterator
 from datetime import datetime, time, timedelta
 
 from .api import MAX_SPAN, MIN_GAP_SECONDS, RETENTION
+from .store import BUCKET_SECONDS, horizon
 
 log = logging.getLogger(__name__)
 
 RUN_AT = time(1, 30)
 PACE_SECONDS = 2.0  # gap between requests, so questions aren't starved
-GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo"]
 COARSE_CYCLES = ("1day", "4hour", "30min")  # 5-minute data goes day by day, first
 
 
 class Archive:
     def __init__(self, station, pace: float | None = None):
-        self.station, self.groups = station, list(GROUPS)
+        self.station = station
         self.pace = PACE_SECONDS if pace is None else pace
 
+    @property
+    def groups(self) -> list[str]:
+        return self.station.groups  # shared with the warm-up, so both fetch the same thing
+
     def _work(self) -> Iterator[tuple[str, datetime, datetime]]:
-        """(cycle, start, end) ranges to have in the cache, oldest first within each cycle."""
+        """(cycle, start, end) ranges to have in the cache, oldest first within each cycle. Only
+        settled data: the newest hours are still changing, and the warm-up keeps those fresh."""
         tz = self.station.tz
         now = datetime.now(tz).replace(tzinfo=None, microsecond=0)
         today = now.date()
@@ -39,13 +44,23 @@ class Archive:
             oldest = today - timedelta(days=RETENTION[cycle] - 2)  # stay clear of the retention edge
             return max(oldest, earliest) if earliest else oldest
 
+        def settled(cycle: str) -> datetime:
+            """The end of the last whole bucket that is final at this resolution. Whole buckets only,
+            so the edge holds still between runs instead of creeping forward with the clock (which
+            would leave a few seconds uncovered, and refetched, every time)."""
+            size = BUCKET_SECONDS[cycle]
+            ts = horizon(cycle) - size
+            return datetime.fromtimestamp(ts - ts % size - 1, tz).replace(tzinfo=None)
+
         for n in range((today - first_day("5min")).days, 0, -1):  # finished days only
             day = today - timedelta(days=n)
-            yield "5min", datetime.combine(day, time()), datetime.combine(day, time(23, 59, 59))
+            start, end = datetime.combine(day, time()), min(datetime.combine(day, time(23, 59, 59)), settled("5min"))
+            if start < end:
+                yield "5min", start, end
         for cycle in COARSE_CYCLES:
-            t = datetime.combine(first_day(cycle), time())
-            while t < now:
-                end = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), now)
+            t, last = datetime.combine(first_day(cycle), time()), settled(cycle)
+            while t < last:
+                end = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), last)
                 yield cycle, t, end
                 t = end + timedelta(seconds=1)
 
@@ -60,7 +75,7 @@ class Archive:
         if todo:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
-            log.info("Ecowitt archive: %d range(s) to fetch (about %s)", len(todo),
+            log.info("Ecowitt archive: %d req to fetch (about %s)", len(todo),
                      f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
         fetched = failed = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
@@ -71,7 +86,7 @@ class Archive:
             else:
                 fetched += 1
             if i % 20 == 0 and i < len(todo):
-                log.info("Ecowitt archive: %d of %d range(s) done", i, len(todo))
+                log.info("Ecowitt archive: %d of %d req done", i, len(todo))
             await asyncio.sleep(self.pace)
         return fetched, failed
 
@@ -88,7 +103,7 @@ class Archive:
                 bad.append(group)
             await asyncio.sleep(self.pace)
         if bad and len(bad) < len(self.groups):
-            self.groups = [g for g in self.groups if g not in bad]
+            self.station.groups[:] = [g for g in self.groups if g not in bad]
             log.warning("Archive: dropping group(s) Ecowitt rejected: %s (keeping %s)",
                         ", ".join(bad), ", ".join(self.groups))
             return True
@@ -113,7 +128,7 @@ class Archive:
             try:
                 started = datetime.now()
                 fetched, failed = await self.run_once()
-                log.info("Ecowitt archive: %d cached, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
+                log.info("Ecowitt archive: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
                          self.held(), (datetime.now() - started).total_seconds())
             except asyncio.CancelledError:
                 raise

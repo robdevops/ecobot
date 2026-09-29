@@ -17,8 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from lib.ecowitt.api import RETENTION  # noqa: E402
-from lib.ecowitt.archive import GROUPS  # noqa: E402
+from lib.ecowitt.api import GROUPS, RETENTION  # noqa: E402
 from lib.ecowitt.store import horizon, subtract  # noqa: E402
 
 
