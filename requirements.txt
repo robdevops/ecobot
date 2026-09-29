@@ -1,0 +1,5 @@
+httpx
+matplotlib
+numpy
+openai
+python-telegram-bot>=21

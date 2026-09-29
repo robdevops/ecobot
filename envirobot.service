@@ -1,0 +1,17 @@
+# /etc/systemd/system/envirobot.service
+# The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*,
+# AIRGRADIENT_*, TELEGRAM_BOT_TOKEN, ...).
+[Unit]
+Description=envirobot (Telegram weather and air-quality bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/envirobot
+EnvironmentFile=/etc/envirobot.env
+ExecStart=/opt/envirobot/.venv/bin/python envirobot.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
