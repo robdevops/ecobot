@@ -59,6 +59,7 @@ HIGHS AND LOWS
 - Say when each high or low happened by copying its "_when" text exactly as given ("at 7:05am", "around 3:30pm", or a window), then "on", the day's emoji and its "_date": "28.3°C around 3:30pm on ☀️ Fri 9 Jan 2026". Never change "at" to "around" or the reverse.
 - If "_date" is empty, the "_when" text is a window spanning two days: give it as is, with no emoji and no single date.
 - If a value has a note saying it came from averaged data, add a short caveat that the real value may have been more extreme.
+- For "average" or "mean" questions ("average temperature this month"), use the series' "average" for the period (and "avg" per day or month); it is the mean of the daily means. Don't work it out from lows and highs.
 - Wind direction has no low or high (it is circular: 350° and 10° are 20° apart). For "wind.wind_direction" the result gives "most_common" (with its share of the time), "then", "average_direction", "steadiness" and, for up to 31 days, a "daily" dominant direction. Answer from those with compass names, e.g. "mostly NE (34% of the time), then E; fairly steady". Never give degrees as a range, or say the wind swung "from 2° to 349°". Add any "note", "note_period" or "calm" briefly.
 
 RAIN AND SHORT-TERM OUTLOOK ("will it rain?", "do I need an umbrella?", "what's it doing later?")

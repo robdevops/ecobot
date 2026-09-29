@@ -467,6 +467,8 @@ class HistoryQuery:
                                 describe_time(e.ts, e.cycle, tz)
                     else:  # long periods: values only, to keep the result small
                         entry["monthly"][month] = {w: e.raw for w, e in d.items()}
+            if not key.startswith("rainfall"):  # a rain total has no meaningful mean
+                self._add_averages(entry, self._daily_means(self.store[key]["pts"]))
             series_out[key] = entry
 
         series_out.update(self.direction)
@@ -493,6 +495,34 @@ class HistoryQuery:
             out["missing"] = f.errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+    def _daily_means(self, pts: dict) -> dict:
+        """{local date: mean of that day's readings}: from 5- or 30-minute readings where held, else the daily bucket."""
+        sub, daily = {}, {}
+        for ts, rec in pts.items():
+            if "value" not in rec:
+                continue
+            (daily if rec["cycle"] == "1day" else sub).setdefault(local_date(ts, self.tz), []).append(rec["value"][0])
+        means = {d: sum(v) / len(v) for d, v in daily.items()}
+        means.update({d: sum(v) / len(v) for d, v in sub.items()})  # exact local days win over 10am-10am buckets
+        return means
+
+    def _add_averages(self, entry: dict, means: dict):
+        """The mean over the period, and per day (up to 31 days) or per month: the answer to "what was the average"."""
+        if not means:
+            return
+        fmt = lambda v: f"{v:.1f}"
+        entry["average"] = fmt(sum(means.values()) / len(means))
+        for d, v in means.items():
+            table = entry.get("daily") if self.span <= timedelta(days=31) else entry.get("monthly")
+            label = d.strftime("%a %d %b") if self.span <= timedelta(days=31) else d.strftime("%b %Y")
+            if table is not None and label in table:
+                table[label].setdefault("_sum", []).append(v)
+        for table in (entry.get("daily"), entry.get("monthly")):
+            for row in (table or {}).values():
+                values = row.pop("_sum", None)
+                if values:
+                    row["avg"] = fmt(sum(values) / len(values))
 
     def _chart_spec(self, series_out: dict) -> dict | None:
         """Line chart: one line per group for the field asked about (chart_field; temperature by default,

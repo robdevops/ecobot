@@ -50,7 +50,7 @@ def wants_chart(args: dict, start: datetime | None = None, end: datetime | None 
 
 # Added to a tool result when a chart was made, so the reply becomes a good caption
 CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
-              "per series with its high and low (for weather, one line each for Outdoor and Indoor when both were "
+              "per series with its high and low, or its average if that is what was asked (for weather, one line each for Outdoor and Indoor when both were "
               "fetched; for air quality, the peak). No other lists or breakdowns; don't mention or describe the chart.")
 
 DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction by hour of day, so keep it short: "

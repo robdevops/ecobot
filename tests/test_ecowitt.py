@@ -562,3 +562,20 @@ async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year
     assert len(days_seen) == len(line["x"])                      # never two points for one day
     assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
     await eco.close()
+
+
+async def test_averages_come_with_the_answer(tmp_path, archived_cache):
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    week = json.loads(await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=9)} 00:00:00",
+                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+    temp = week["series"]["outdoor.temperature"]
+    days = list(temp["daily"].values())
+    assert float(temp["average"]) == pytest.approx(sum(float(d["avg"]) for d in days) / len(days), abs=0.1)
+    assert float(temp["low"]) <= float(temp["average"]) <= float(temp["high"])
+    assert all(float(d["low"]) <= float(d["avg"]) <= float(d["high"]) and "_sum" not in d for d in days)
+    year = json.loads(await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00",
+                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+    months = year["series"]["outdoor.temperature"]["monthly"]
+    assert all("avg" in m and "_sum" not in m for m in months.values()) and "average" in year["series"]["outdoor.temperature"]
+    await eco.close()
