@@ -26,5 +26,12 @@ class PublicHolidays:
         """The holiday's name (e.g. "Australia Day"), or None on an ordinary day."""
         return self._calendar.get(day)
 
-    def label(self) -> str:
-        return "-".join(self.region) if self.region else "unknown"
+    def problem(self) -> str:
+        """Why holidays can't be answered (for the person, via the model), or "" if they can."""
+        if self.available:
+            return ""
+        if self.region:
+            return ("The 'holidays' Python package isn't installed on the bot's server, so public holidays can't be "
+                    "looked up. The owner needs to run: pip install holidays (or pip install -r requirements.txt), "
+                    "then restart the bot. Say exactly that.")
+        return "Public holidays aren't known for this time zone; say so."

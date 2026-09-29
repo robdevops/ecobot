@@ -36,6 +36,8 @@ CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=N
 CHART_ASKED: ContextVar[bool] = ContextVar("chart_asked", default=False)
 
 
+# The reading a chart should plot, from the person's words ("humidity"); None means temperature
+CHART_FIELD: ContextVar[str | None] = ContextVar("chart_field", default=None)
 CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
 
 

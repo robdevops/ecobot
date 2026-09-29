@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
-from ..charts import CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
+from ..charts import CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import summarise as summarise_direction
@@ -479,7 +479,7 @@ class HistoryQuery:
         """Line chart: one line per group for the field asked about (chart_field; temperature by default,
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
-        wanted = str(self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
+        wanted = str(CHART_FIELD.get() or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
         keys = [k for k in series_out if k.endswith("." + wanted)] or [k for k in series_out if k.endswith(".temperature")]
         if not keys:
             field = next(iter(series_out)).split(".", 1)[-1]

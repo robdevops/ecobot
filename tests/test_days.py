@@ -218,4 +218,12 @@ async def test_weekends_and_unknown_places(station):
     elsewhere = days.find_days(eco.cache, eco.mac, ZoneInfo("Europe/Paris"),
                                {"start_date": "2026-08-03", "end_date": "2026-08-16", "only": "public_holiday"},
                                datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None))
-    assert "aren't available" in elsewhere["error"]      # says so instead of guessing
+    assert "aren't known for this time zone" in elsewhere["error"]      # says so instead of guessing
+
+
+async def test_a_missing_holidays_package_is_explained_not_guessed(station, monkeypatch):
+    from lib.ecowitt import calendar
+    eco, _ = station
+    monkeypatch.setattr(calendar, "holidays", None)
+    out = await ask(eco, start_date="2026-01-01", end_date="2026-02-01", only="public_holiday")
+    assert "pip install holidays" in out["error"]

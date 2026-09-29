@@ -188,6 +188,21 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     return spans[0] if len(spans) == 1 else None  # none, or several ("this week vs last week"): the model decides
 
 
+# What a chart plots when the question is about one reading other than temperature: keyword -> field name
+CHART_FIELDS = {r"humid\w*": "humidity", r"pressure|barometer|barometric": "relative", r"gusts?|wind": "wind_gust",
+                r"rain\w*": "daily"}
+TEMPERATURE_WORDS = re.compile(r"\b(temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|heat\w*|degrees?|celsius|freez\w*)\b", I)
+
+
+def chart_field(text: str) -> str | None:
+    """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
+    is about temperature, several readings, or none in particular."""
+    if TEMPERATURE_WORDS.search(text):
+        return None
+    found = {field for pattern, field in CHART_FIELDS.items() if re.search(rf"\b({pattern})\b", text, I)}
+    return found.pop() if len(found) == 1 else None
+
+
 def weather_groups(text: str) -> str:
     """Just indoor or just outdoor if only one is asked about, otherwise both. A wind chart is just wind."""
     if WIND.search(text):

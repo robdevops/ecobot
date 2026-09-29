@@ -204,3 +204,11 @@ def test_a_particular_date_or_time_goes_to_the_model_not_a_whole_period():
     for text in ("weather this week", "weather 1m", "aq 24h", "aq week", "hottest day this month", "weather 3 months",
                  "high and low this year", "chart the temperature last 7 days", "weather 12h", "how sunny was last month"):
         assert call(text) is not None or text == "how sunny was last month", text
+
+
+def test_a_question_about_one_reading_charts_that_reading():
+    assert intent.chart_field("lowest and highest humidity") == "humidity"
+    assert intent.chart_field("plot pressure this week") == "relative"
+    assert intent.chart_field("highest wind gust this year") == "wind_gust"
+    for text in ("hottest day this year", "humidity and temperature this week", "wind and rain", "weather week", "how hot was it"):
+        assert intent.chart_field(text) is None, text

@@ -12,6 +12,7 @@ from ..timeutil import now_local
 from ..tools import Tool
 from ..warm import Warmer
 from .api import EcowittAPI, GROUPS, UNITS
+from .calendar import PublicHolidays
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .history import Fetcher, HistoryQuery
 from .store import HistoryCache, HotStore
@@ -104,6 +105,8 @@ class Ecowitt:
             self.longitude = float(device["longitude"])
         except (KeyError, TypeError, ValueError):
             pass
+        if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
+            log.warning("Public holiday questions won't work: pip install holidays (then restart)")
         log.info("Weather station: Ecowitt '%s' (%s)%s", self.station_name, self.mac,
                  f", devices found: {len(devices)}" if len(devices) > 1 else "")
 

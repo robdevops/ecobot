@@ -106,7 +106,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
         return {"error": "only must be public_holiday or weekend"}
     calendar = PublicHolidays(tz)
     if only == "public_holiday" and not calendar.available:
-        return {"error": f"Public holidays aren't available for this location ({calendar.label()}); say so."}
+        return {"error": calendar.problem()}
     kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
             "public_holiday": lambda d: calendar.name(d) is not None}[only]
     shown = list(dict.fromkeys([*ALWAYS_SHOWN, sort_by, *(c["field"] for c in where)]))

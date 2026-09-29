@@ -527,4 +527,10 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
     assert (await chart_of())["title"] == "Temperature"                       # the default
     assert (await chart_of(chart_field="wind_gust", groups="wind"))["title"] == "Wind gust"
     assert (await chart_of(chart_field="Nonsense"))["title"] == "Temperature"  # unknown: fall back, never fail
+    from lib.charts import CHART_FIELD
+    token = CHART_FIELD.set("wind_gust")                                       # from the person's words: beats the model's choice
+    try:
+        assert (await chart_of(groups="outdoor,wind", chart_field="temperature"))["title"] == "Wind gust"
+    finally:
+        CHART_FIELD.reset(token)
     await eco.close()
