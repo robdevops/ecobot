@@ -64,7 +64,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
 
     async def stop_when_archived():  # the background archives finish, then we shut down
         for _ in range(300):
-            if "range(s) cached," in caplog.text and "AirGradient archive: 1 day" in caplog.text:
+            if " cached, held " in caplog.text and "AirGradient archive: 1 day" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -74,5 +74,6 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     log = caplog.text
     assert "Weather station: Ecowitt 'Fairleigh'" in log and "Bot @testbot running" in log
     assert "Startup warm-up:" in log and "range(s) to fetch" in log and "AirGradient archive:" in log
-    assert "0 failed" in log.split("range(s) cached,")[1].split("\n")[0]
-    assert len(app.handlers) == 5
+    final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " cached, held " in line)
+    assert "failed" not in final and "days (5min/30min/4h/1d)" in final
+    assert len(app.handlers) == 6  # start+help, reset, alerts, membership, messages, errors

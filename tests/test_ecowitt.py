@@ -263,11 +263,11 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
-    assert arch.held().startswith("0 day(s) of 5-min, 0 of 30-min")
+    assert arch.held() == "0/0/0/0 days (5min/30min/4h/1d)"
     await arch.run_once()
     held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
     assert 85 <= held["5min"] <= 90 and 350 <= held["30min"] <= 365 and 700 <= held["4hour"] <= 730 and held["1day"] > 1400
-    assert arch.held().startswith(f"{held['5min']} day(s) of 5-min, {held['30min']} of 30-min")
+    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
     await eco.close()
 
 

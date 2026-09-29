@@ -88,3 +88,25 @@ def test_charts_render_for_both_datasets():
     from zoneinfo import ZoneInfo
     for spec in (line, air):
         assert charts.render(spec, ZoneInfo("Australia/Melbourne"))[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+async def test_reset_forgets_only_that_chat():
+    from lib.bot import Bot
+    sent = []
+
+    async def reply_text(text, **kw):
+        sent.append(text)
+    bot = Bot(None, None, [], None)
+    bot.chats[(1, None)].history.append({"role": "user", "content": "hi"})
+    bot.chats[(2, None)].history.append({"role": "user", "content": "other chat"})
+    bot.chats[(1, 7)].history.append({"role": "user", "content": "topic 7"})
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text)
+    update = NS(effective_message=msg, effective_chat=NS(type="private", title=None),
+                effective_user=NS(username="rob", full_name="Rob"))
+    await bot.on_reset(update, None)
+    assert (1, None) not in bot.chats and bot.chats[(2, None)].history and bot.chats[(1, 7)].history
+    assert sent == ["Conversation memory cleared."]
+    topic = NS(chat_id=1, message_thread_id=7, is_topic_message=True, reply_text=reply_text)
+    await bot.on_reset(NS(effective_message=topic, effective_chat=update.effective_chat,
+                          effective_user=update.effective_user), None)
+    assert (1, 7) not in bot.chats and bot.chats[(2, None)].history

@@ -31,7 +31,7 @@ CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
-        "/alerts manages weather alerts (on/off for this chat).\n"
+        "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "Your user ID: {user} | Chat ID: {chat}")
 ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, indoor/outdoor "
                "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
@@ -159,6 +159,7 @@ class Bot:
 
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
+        app.add_handler(CommandHandler("reset", self.on_reset))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
@@ -199,6 +200,18 @@ class Bot:
         self.remember_chat(update)
         on = self.state.alerts_on(chat.id)
         await msg.reply_text(ALERTS_TEXT.format(on="on" if on else "off", other="off" if on else "on"))
+
+    @staticmethod
+    def _key(msg: Message) -> tuple:
+        """Forum topics get their own conversation."""
+        return (msg.chat_id, msg.message_thread_id if msg.is_topic_message else None)
+
+    async def on_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/reset: forget this chat's conversation."""
+        msg = update.effective_message
+        self.chats.pop(self._key(msg), None)
+        log.info("/reset in %s", describe_source(update))
+        await msg.reply_text("Conversation memory cleared.")
 
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.remember_chat(update)
@@ -257,7 +270,7 @@ class Bot:
         if fast:
             log.info("Fast path: %s", fast[2])
 
-        chat = self.chats[(msg.chat_id, msg.message_thread_id if msg.is_topic_message else None)]
+        chat = self.chats[self._key(msg)]
         thread_id = msg.message_thread_id if msg.is_topic_message else None
         started = time.monotonic()
         async with chat.lock:

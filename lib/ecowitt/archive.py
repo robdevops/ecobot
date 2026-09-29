@@ -95,10 +95,10 @@ class Archive:
         return False
 
     def held(self) -> str:
-        """e.g. "88 day(s) of 5-min, 363 of 30-min, 728 of 4-hour, 1458 of daily" """
-        names = {"5min": "5-min", "30min": "30-min", "4hour": "4-hour", "1day": "daily"}
-        counts = [(names[c], self.station.cache.days_held(self.station.mac, c, self.groups)) for c in names]
-        return ", ".join([f"{counts[0][1]} day(s) of {counts[0][0]}"] + [f"{n} of {label}" for label, n in counts[1:]])
+        """Days of history held per resolution, e.g. "88/363/728/1456 days (5min/30min/4h/1d)" """
+        cycles = ("5min", "30min", "4hour", "1day")
+        days = "/".join(str(self.station.cache.days_held(self.station.mac, c, self.groups)) for c in cycles)
+        return f"{days} days (5min/30min/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:
         now = datetime.now(self.station.tz)
@@ -113,7 +113,7 @@ class Archive:
             try:
                 started = datetime.now()
                 fetched, failed = await self.run_once()
-                log.info("Ecowitt archive: %d range(s) cached, %d failed, %s held, %.0fs", fetched, failed,
+                log.info("Ecowitt archive: %d cached, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
                          self.held(), (datetime.now() - started).total_seconds())
             except asyncio.CancelledError:
                 raise
