@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
-from ..charts import CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
+from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import summarise as summarise_direction
@@ -24,6 +24,7 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
+LONG_CHART_DAYS = 45            # beyond this a chart shows one point a day (mean line, low-to-high band)
 MAX_DIRECTION_POINTS = 4000     # dots on the wind direction chart
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
 MAX_REFINE_WINDOWS = 4          # overall records
@@ -485,7 +486,7 @@ class HistoryQuery:
             spec = self._chart_spec(plottable) if plottable else None
             if spec:
                 holder.append(spec)
-                out["chart"] = CHART_HINT
+                out["chart"] = AVERAGE_CHART_HINT if AVERAGE_ASKED.get() else CHART_HINT
             if self.direction_points:
                 holder.append({"kind": "direction", "title": "Wind direction by hour of day",
                                "subtitle": _period(*self.direction_period), "points": self.direction_points})
@@ -571,8 +572,9 @@ class HistoryQuery:
         for r in pts.values():
             counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
         sub_daily = [c for c in ("5min", "30min") if c in counts]
-        if "1day" in counts and sub_daily:
-            return self._daily_line(pts)
+        if sub_daily and ("1day" in counts or self.span > timedelta(days=LONG_CHART_DAYS) or AVERAGE_ASKED.get()):
+            return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
+
         if len(sub_daily) > 1 and sum(counts[c] for c in sub_daily) >= counts.get("1day", 0):
             # archived 5-minute weeks next to 30-minute weeks: average into 30-minute bins
             bins: dict = {}

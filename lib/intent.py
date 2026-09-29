@@ -194,6 +194,9 @@ CHART_FIELDS = {r"humid\w*": "humidity", r"pressure|barometer|barometric": "rela
 TEMPERATURE_WORDS = re.compile(r"\b(temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|heat\w*|degrees?|celsius|freez\w*)\b", I)
 
 
+AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
+
+
 def chart_field(text: str) -> str | None:
     """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
     is about temperature, several readings, or none in particular."""

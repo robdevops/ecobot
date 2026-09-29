@@ -39,6 +39,8 @@ CHART_ASKED: ContextVar[bool] = ContextVar("chart_asked", default=False)
 
 # The reading a chart should plot, from the person's words ("humidity"); None means temperature
 CHART_FIELD: ContextVar[str | None] = ContextVar("chart_field", default=None)
+# True when the person asked for an average ("average temp 3m"): the caption then leads with the average
+AVERAGE_ASKED: ContextVar[bool] = ContextVar("average_asked", default=False)
 CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
 
 
@@ -53,6 +55,10 @@ CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep i
               "per series with its high and low, or its average if that is what was asked (for weather, one line each for Outdoor and Indoor when both were "
               "fetched; for air quality, the peak). No other lists or breakdowns; don't mention or describe the chart.")
 
+AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
+                      "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
+                      "\"average\" field, and its low and high in brackets. Lead with the average: that is what was asked. "
+                      "Don't mention or describe the chart.")
 DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction by hour of day, so keep it short: "
                         "the period, then the most common direction and how steady it was. Don't mention or describe the chart.")
 

@@ -212,3 +212,9 @@ def test_a_question_about_one_reading_charts_that_reading():
     assert intent.chart_field("highest wind gust this year") == "wind_gust"
     for text in ("hottest day this year", "humidity and temperature this week", "wind and rain", "weather week", "how hot was it"):
         assert intent.chart_field(text) is None, text
+
+
+def test_average_questions_are_recognised():
+    for text in ("average temp 3m", "what was the mean humidity", "avg wind this week"):
+        assert intent.AVERAGE.search(text), text
+    assert not intent.AVERAGE.search("hottest day this year")

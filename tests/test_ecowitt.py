@@ -232,7 +232,8 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
     assert "monthly_note" not in json.loads(out) and fake.calls == []
-    assert "30-minute" in spec["subtitle"] or "5-minute" in spec["subtitle"]
+    assert "daily averages, range shaded" in spec["subtitle"]      # 200 days: a point a day from the cached 30-minute data
+    assert len(spec["series"][0]["x"]) > 150 and len(spec["series"][0]["low"]) == len(spec["series"][0]["x"])
     await eco.close()
 
 
@@ -578,4 +579,45 @@ async def test_averages_come_with_the_answer(tmp_path, archived_cache):
                                                   "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
     months = year["series"]["outdoor.temperature"]["monthly"]
     assert all("avg" in m and "_sum" not in m for m in months.values()) and "average" in year["series"]["outdoor.temperature"]
+    await eco.close()
+
+
+async def test_an_average_question_gets_a_caption_that_leads_with_the_average_and_a_daily_range_chart(tmp_path, archived_cache):
+    from lib.charts import AVERAGE_ASKED, AVERAGE_CHART_HINT
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "outdoor,indoor", "start_date": f"{today - timedelta(days=90)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59"}
+    hints = {}
+    for asked in (False, True):
+        chart, avg = CHART_REQUESTS.set([]), AVERAGE_ASKED.set(asked)
+        try:
+            out = json.loads(await eco.tools[1].handler(args))
+            spec = CHART_REQUESTS.get()[0]
+        finally:
+            AVERAGE_ASKED.reset(avg)
+            CHART_REQUESTS.reset(chart)
+        hints[asked] = out["chart"]
+        assert "average" in out["series"]["outdoor.temperature"]
+        assert "daily averages, range shaded" in spec["subtitle"] and len(spec["series"][0]["x"]) > 80   # 90 days: a point a day
+    assert hints[True] == AVERAGE_CHART_HINT and hints[False] != AVERAGE_CHART_HINT
+    await eco.close()
+
+
+async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(tmp_path, archived_cache):
+    from lib.charts import AVERAGE_ASKED
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=10)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59", "chart": True}
+    subtitles = {}
+    for asked in (False, True):
+        chart, avg = CHART_REQUESTS.set([]), AVERAGE_ASKED.set(asked)
+        try:
+            await eco.tools[1].handler(args)
+            subtitles[asked] = CHART_REQUESTS.get()[0]["subtitle"]
+        finally:
+            AVERAGE_ASKED.reset(avg)
+            CHART_REQUESTS.reset(chart)
+    assert "daily averages" not in subtitles[False] and "daily averages, range shaded" in subtitles[True]
     await eco.close()
