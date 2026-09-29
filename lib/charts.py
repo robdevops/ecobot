@@ -1,6 +1,6 @@
-"""Charts sent alongside history answers.
+"""Charts sent alongside history answers, for both Ecowitt and AirGradient.
 
-The history tool adds a chart spec to CHART_REQUESTS (a per-question list set by the
+A history tool adds a chart spec to CHART_REQUESTS (a per-question list set by the
 bot) when a chart was asked for; the bot renders them after the answer is written
 and sends them with it. One line per reading type (e.g. outdoor and indoor):
   {"kind": "line", "title", "subtitle", "unit",
@@ -27,8 +27,12 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
 
-# Set per question by the bot; the history tool appends chart specs to it
+# Set per question by the bot; the history tools append chart specs to it
 CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=None)
+# Added to a tool result when a chart was made, so the reply becomes a good caption
+CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it to one or two short lines: "
+              "the period and the most notable point (e.g. the peak). No lists or breakdowns; "
+              "don't mention or describe the chart.")
 
 # Palette (slate neutrals, warm outdoor, cool indoor)
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"

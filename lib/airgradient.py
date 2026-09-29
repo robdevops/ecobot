@@ -1,7 +1,8 @@
-"""Air quality from your own AirGradient sensor, via AirGradient's documented API.
+"""Air quality from your own AirGradient sensor, as a data source (peer of Ecowitt):
+start() checks the sensor, tools are what the model can call, warm()/poke() keep recent
+readings ready, current() feeds the air alert monitor.
 
-wellness-air can't read private sensors (its owned-sensor request 404s) and its history
-request is rejected without a token, so the bot talks to AirGradient directly:
+AirGradient's documented API:
   current: GET /public/api/v1/locations/{id}/measures/current?token=...
   history: GET /public/api/v1/locations/{id}/measures/past?from=...&to=...&token=...
 
@@ -13,18 +14,21 @@ import asyncio
 import json
 import logging
 import time
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-from .charts import CHART_REQUESTS
+from . import intent
+from .charts import CHART_HINT, CHART_REQUESTS
+from .config import Config
+from .tools import Tool
+from .warm import Warmer
 
 log = logging.getLogger(__name__)
 
 API = "https://api.airgradient.com/public/api/v1/locations/{loc}/measures/{kind}"
 MAX_DAYS = 14                     # longest history period per question
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
-REFRESH_SECONDS = 240             # keep-warm refresh interval (under FRESH_SECONDS)
 WARM_DAYS = 7                     # finished days fetched ahead of questions
 KEEP_DAYS = MAX_DAYS + 2          # finished days kept in memory
 
@@ -111,19 +115,40 @@ def pm25_aqi(conc: float) -> tuple[int, str]:
 
 class AirGradient:
     """AirGradient client with its data kept warm:
-      - the current reading and today's history are refreshed every few minutes (keep_warm);
-      - finished days are fetched once and kept in memory (they no longer change);
-      - question_arrived() starts fetching straight away if anything is missing."""
+      - the current reading and today's history are refreshed every few minutes (warm);
+      - finished days are fetched once and kept in memory (they no longer change)."""
 
-    def __init__(self, token: str, location_id: str, tz: tzinfo, transport=None):
-        self.token, self.loc, self.tz = token, str(location_id), tz
+    name = "AirGradient"
+
+    def __init__(self, cfg: Config, transport=None):
+        self.loc, self.tz = cfg.airgradient_location, cfg.tz
+        self.token = cfg.airgradient_token
+        self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
         self._current: tuple[dict, float] | None = None       # (row, fetched at)
         self._days: dict[date, list[dict]] = {}                # finished days
         self._recent: dict[date, tuple[list[dict], float]] = {}  # today / just-finished days, refreshed
         self._locks: dict = {}
-        self._task: asyncio.Task | None = None
         self.requests = 0
+        self.warmer = Warmer(self.warm)
+        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle)]
+
+    async def start(self):
+        try:
+            row = await self._current_row(refresh=True)
+            log.info("Air quality: AirGradient '%s' (location %s)", row.get("locationName"), self.loc)
+        except Exception as e:  # keep going: the sensor may just be briefly unreachable
+            log.warning("AirGradient location %s not readable yet: %s", self.loc, e)
+
+    def describe(self) -> str:
+        return f"AirGradient outdoor air-quality sensor (location {self.loc})"
+
+    def wants(self, text: str) -> bool:
+        """Should a question start refreshing this source? Only air-quality questions."""
+        return intent.mentions_air(text)
+
+    def poke(self):
+        self.warmer.poke()
 
     async def close(self):
         await self.client.aclose()
@@ -177,33 +202,14 @@ class AirGradient:
                 self._recent[day] = (rows, time.time())
             return rows
 
-    async def warm(self, refresh: bool = False):
+    async def warm(self, fresh: bool = True) -> str:
         """Current reading, today, and the last week of finished days."""
-        today = self._now().date()
-        await self._current_row(refresh)
-        await self._day_rows(today, refresh)
+        before, today = self.requests, self._now().date()
+        await self._current_row(fresh)
+        await self._day_rows(today, fresh)
         for n in range(1, WARM_DAYS + 1):
             await self._day_rows(today - timedelta(days=n))
-
-    def question_arrived(self):
-        """Start warming in the background; the question's own reads wait for it (shared locks)."""
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._safe_warm(False))
-
-    async def _safe_warm(self, refresh: bool):
-        try:
-            await self.warm(refresh)
-        except Exception as e:
-            log.warning("AirGradient warm-up failed: %s", e)
-
-    async def keep_warm(self, skip_first: bool = False):
-        """Refresh the current reading and today every few minutes. Runs until cancelled.
-        skip_first: the startup warm-up already fetched, so wait first."""
-        if skip_first:
-            await asyncio.sleep(REFRESH_SECONDS)
-        while True:
-            await self._safe_warm(True)
-            await asyncio.sleep(REFRESH_SECONDS)
+        return f"AirGradient {self.requests - before} request(s)"
 
     # ---------- the tool ----------
     async def handle(self, args: dict) -> str:
@@ -282,9 +288,7 @@ class AirGradient:
                             "x": sp["series"][0]["x"], "y": sp["series"][0]["y"]} for sp in specs]} if specs else None
             if spec:
                 holder.append(spec)
-                out["chart"] = ("Your reply becomes the caption of a chart of this data, so keep it to one or two short lines: "
-                                "the period and the most notable point (e.g. the peak). No lists or breakdowns; "
-                                "don't mention or describe the chart.")
+                out["chart"] = CHART_HINT
         return out
 
     @staticmethod

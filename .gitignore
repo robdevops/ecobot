@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+bot_state.json
+bot_state.json.tmp
+ecowitt_cache.sqlite*
+*.env
