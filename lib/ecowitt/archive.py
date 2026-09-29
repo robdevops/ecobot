@@ -12,7 +12,7 @@ import logging
 from collections.abc import Iterator
 from datetime import datetime, time, timedelta
 
-from .api import MAX_SPAN, RETENTION
+from .api import MAX_SPAN, MIN_GAP_SECONDS, RETENTION
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,10 @@ class Archive:
             if not await fetcher.covered(cycle, fetcher.epoch(start), fetcher.epoch(end)):
                 todo.append((cycle, start, end))
         if todo:
-            log.info("Ecowitt archive: %d range(s) to fetch (about %d min)", len(todo), len(todo) * self.pace // 60 + 1)
+            # each range takes the pause after it plus about a second for the request itself
+            seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
+            log.info("Ecowitt archive: %d range(s) to fetch (about %s)", len(todo),
+                     f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
         fetched = failed = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
             fetcher = self.station.fetcher(self.groups)

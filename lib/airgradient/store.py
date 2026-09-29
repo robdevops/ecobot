@@ -5,14 +5,12 @@ A day is recorded once it is over (and its data has had an hour to arrive), even
 so days before the sensor existed aren't asked for again.
 """
 
-import logging
 import sqlite3
 import threading
 from datetime import date, datetime, timedelta, tzinfo
 
 from .metrics import METRICS
 
-log = logging.getLogger(__name__)
 COLUMNS = list(METRICS)
 
 
@@ -29,8 +27,6 @@ class AirStore:
             CREATE TABLE IF NOT EXISTS days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;
         """)
         self.db.commit()
-        n = self.db.execute("SELECT COUNT(*) FROM readings WHERE loc=?", (self.loc,)).fetchone()[0]
-        log.info("AirGradient cache %s: %d readings stored", path, n)
 
     def close(self):
         with self._lock:

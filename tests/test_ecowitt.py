@@ -269,3 +269,21 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     assert 85 <= held["5min"] <= 90 and 350 <= held["30min"] <= 365 and 700 <= held["4hour"] <= 730 and held["1day"] > 1400
     assert arch.held().startswith(f"{held['5min']} day(s) of 5-min, {held['30min']} of 30-min")
     await eco.close()
+
+
+async def test_archive_estimates_its_duration_from_the_pace(tmp_path, monkeypatch, caplog):
+    from lib.ecowitt import Archive, archive as archive_mod
+    caplog.set_level("INFO")
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    monkeypatch.setattr(archive_mod, "MIN_GAP_SECONDS", 2.0)  # as in production: 2s per range plus about 1s
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await Archive(eco).run_once()
+    caplog.clear()
+    await Archive(eco).run_once()  # only the newest ranges are left
+    line = next(r.message for r in caplog.records if "to fetch" in r.message)
+    n = int(line.split(": ")[1].split(" ")[0])
+    assert f"about {n * 3} s" in line
+    assert not any("readings stored" in r.message for r in caplog.records)
+    await eco.close()

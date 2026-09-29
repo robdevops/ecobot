@@ -92,8 +92,6 @@ class HistoryCache:
             self.db.executescript("DELETE FROM points; DELETE FROM fields; DELETE FROM coverage;")
         self.db.execute("INSERT OR REPLACE INTO meta VALUES ('signature', ?)", (signature,))
         self.db.commit()
-        n = self.db.execute("SELECT COUNT(*) FROM points").fetchone()[0]
-        log.info("History cache %s: %d readings stored", path, n)
 
     def close(self):
         with self._lock:
