@@ -24,7 +24,8 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
-LONG_CHART_DAYS = 45            # beyond this a chart shows one point a day (mean line, low-to-high band)
+INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
+FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
 MAX_DIRECTION_POINTS = 4000     # dots on the wind direction chart
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
 MAX_REFINE_WINDOWS = 4          # overall records
@@ -302,28 +303,19 @@ class HistoryQuery:
         if self.span <= timedelta(days=1) and (age_days < RETENTION["5min"] - 1 or await f.covered(
                 "5min", f.epoch(start), f.epoch(end))):
             collect(self.store, await f.get("5min", start, end), "5min")
-        elif self.detailed and end > thirty_floor:
-            # Weeks already in the 5-minute archive come free from the cache; the rest is
-            # fetched at 30 minutes (one request per week, cached afterwards)
+        elif self.span <= timedelta(days=FINE_DAYS) and end > thirty_floor:
+            # Resolution follows the length: a few days at 5 minutes (where archived, free from the cache),
+            # up to a month at 30 minutes (one request per week, cached afterwards)
             for a, b in spans("30min", max(start, thirty_floor), end):
-                cycle = "5min" if await f.covered("5min", f.epoch(a), f.epoch(b)) else "30min"
-                collect(self.store, await f.get(cycle, a, b), cycle)
+                five = self.span <= timedelta(days=INTRADAY_DAYS) and await f.covered("5min", f.epoch(a), f.epoch(b))
+                collect(self.store, await f.get("5min" if five else "30min", a, b), "5min" if five else "30min")
             if start < thirty_floor:
                 await self._chunks("1day", start, min(end, thirty_floor - timedelta(seconds=1)))
         else:
-            # Long period: the newest weeks come at 30 minutes while they are already cached (day boundaries and
-            # each day's low/high are then exact local ones, and it costs no requests); older ones as daily buckets
-            fine_from = max(start, recent)
-            newest_first = list(spans("30min", max(start, thirty_floor), end))[::-1]
-            if newest_first:
-                await self._chunks("30min", *newest_first[0])  # the current week: kept warm anyway
-                fine_from = max(start, newest_first[0][0])
-                for a, b in newest_first[1:]:
-                    if not await f.covered("30min", f.epoch(a), f.epoch(b)):
-                        break
-                    await self._chunks("30min", a, b)
-                    fine_from = a
-            await self._chunks("1day", start, min(end, fine_from - timedelta(seconds=1)))
+            # Longer: Ecowitt's daily records (each has its own low and high, and it is a request or two, cached),
+            # plus the newest days at 30 minutes so the line reaches today. Exact times come from refining the extremes.
+            await self._chunks("30min", max(start, recent), end)
+            await self._chunks("1day", start, min(end, recent - timedelta(seconds=1)))
 
     async def _summarise_direction(self):
         """Wind direction leaves the low/high pipeline: it is counted by compass point instead. Recent
@@ -468,7 +460,7 @@ class HistoryQuery:
                                 describe_time(e.ts, e.cycle, tz)
                     else:  # long periods: values only, to keep the result small
                         entry["monthly"][month] = {w: e.raw for w, e in d.items()}
-            if not key.startswith("rainfall"):  # a rain total has no meaningful mean
+            if (self.args.get("average") or AVERAGE_ASKED.get()) and not key.startswith("rainfall"):  # a rain total has no mean
                 self._add_averages(entry, self._daily_means(self.store[key]["pts"]))
             series_out[key] = entry
 
@@ -572,7 +564,7 @@ class HistoryQuery:
         for r in pts.values():
             counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
         sub_daily = [c for c in ("5min", "30min") if c in counts]
-        if sub_daily and ("1day" in counts or self.span > timedelta(days=LONG_CHART_DAYS) or AVERAGE_ASKED.get()):
+        if sub_daily and ("1day" in counts or AVERAGE_ASKED.get()):
             return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
 
         if len(sub_daily) > 1 and sum(counts[c] for c in sub_daily) >= counts.get("1day", 0):

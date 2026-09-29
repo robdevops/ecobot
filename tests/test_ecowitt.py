@@ -158,15 +158,15 @@ async def test_warm_then_question_needs_no_new_requests_for_the_tail(station):
 async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
+    transport, fake = ecowitt_transport(history_days=60)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     fetched, failed = await Archive(eco).run_once()
-    assert failed == 0 and fetched > 100
+    assert failed == 0 and fetched > 40
     assert {c["cycle_type"] for c in fake.calls if "cycle_type" in c} == {"5min", "30min", "4hour", "1day"}
     fake.calls.clear()
     today = datetime.now(eco.tz).date()
-    for days in (30, 200, 540):  # a month, most of a year, all 18 months of the fake station
+    for days in (10, 30, 58):  # up to all of the fake station's 60 days
         out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                           "end_date": f"{today - timedelta(days=2)} 23:59:59"})
         assert "Error" not in out[:20], out[:200]
@@ -177,7 +177,7 @@ async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp
 async def test_archive_only_refetches_the_newest_ranges_next_time(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
+    transport, fake = ecowitt_transport(history_days=60)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
@@ -263,14 +263,14 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
 async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport()
+    transport, _ = ecowitt_transport(history_days=60)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
     assert arch.held() == "0/0/0/0 days (5min/30min/4h/1d)"
     await arch.run_once()
     held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
-    assert 85 <= held["5min"] <= 90 and 350 <= held["30min"] <= 365 and 530 <= held["4hour"] <= 548 and 530 <= held["1day"] <= 548
+    assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
     assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
     await eco.close()
 
@@ -280,7 +280,7 @@ async def test_archive_estimates_its_duration_from_the_pace(tmp_path, monkeypatc
     caplog.set_level("INFO")
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
     monkeypatch.setattr(archive_mod, "MIN_GAP_SECONDS", 2.0)  # as in production: 2s per range plus about 1s
-    transport, _ = ecowitt_transport()
+    transport, _ = ecowitt_transport(history_days=60)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     await Archive(eco).run_once()
@@ -568,15 +568,17 @@ async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year
 async def test_averages_come_with_the_answer(tmp_path, archived_cache):
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
-    week = json.loads(await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=9)} 00:00:00",
-                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+    span = {"groups": "outdoor", "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=2)} 23:59:59"}
+    plain = json.loads(await eco.tools[1].handler(span))
+    assert "average" not in plain["series"]["outdoor.temperature"]         # highs and lows are the default
+    week = json.loads(await eco.tools[1].handler({**span, "average": True}))
     temp = week["series"]["outdoor.temperature"]
     days = list(temp["daily"].values())
     assert float(temp["average"]) == pytest.approx(sum(float(d["avg"]) for d in days) / len(days), abs=0.1)
     assert float(temp["low"]) <= float(temp["average"]) <= float(temp["high"])
     assert all(float(d["low"]) <= float(d["avg"]) <= float(d["high"]) and "_sum" not in d for d in days)
     year = json.loads(await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00",
-                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59", "average": True}))
     months = year["series"]["outdoor.temperature"]["monthly"]
     assert all("avg" in m and "_sum" not in m for m in months.values()) and "average" in year["series"]["outdoor.temperature"]
     await eco.close()
@@ -598,7 +600,7 @@ async def test_an_average_question_gets_a_caption_that_leads_with_the_average_an
             AVERAGE_ASKED.reset(avg)
             CHART_REQUESTS.reset(chart)
         hints[asked] = out["chart"]
-        assert "average" in out["series"]["outdoor.temperature"]
+        assert ("average" in out["series"]["outdoor.temperature"]) is asked      # highs and lows by default
         assert "daily averages, range shaded" in spec["subtitle"] and len(spec["series"][0]["x"]) > 80   # 90 days: a point a day
     assert hints[True] == AVERAGE_CHART_HINT and hints[False] != AVERAGE_CHART_HINT
     await eco.close()
@@ -621,3 +623,26 @@ async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(t
             CHART_REQUESTS.reset(chart)
     assert "daily averages" not in subtitles[False] and "daily averages, range shaded" in subtitles[True]
     await eco.close()
+
+
+async def test_resolution_follows_the_length_of_the_period(tmp_path):
+    """Nothing cached, so every request shows what the planner chose. Longer periods use daily records, not weeks of 5-minute data."""
+    fmt = "%Y-%m-%d %H:%M:%S"
+    seen = {}
+    for days in (5, 20, 60, 300):
+        transport, fake = ecowitt_transport()
+        (tmp_path / str(days)).mkdir()
+        eco = Ecowitt(config(tmp_path / str(days)), transport=transport)
+        await eco.start()
+        today = datetime.now(eco.tz).date()
+        await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
+                                    "end_date": f"{today - timedelta(days=2)} 23:59:59"})
+        calls = [c for c in fake.calls if c.get("path") == "history"]
+        seen[days] = {c["cycle_type"]: sum(1 for x in calls if x["cycle_type"] == c["cycle_type"]) for c in calls}
+        long_five = [c for c in calls if c["cycle_type"] == "5min"
+                     and datetime.strptime(c["end_date"], fmt) - datetime.strptime(c["start_date"], fmt) > timedelta(days=1)]
+        assert not long_five                                           # 5-minute data only ever a day at a time
+        await eco.close()
+    assert set(seen[20]) <= {"30min", "5min"} and "1day" not in seen[20]  # a month or less: 30-minute weeks
+    assert "1day" in seen[60] and seen[60].get("30min", 0) <= 3        # longer: daily records (+ the newest days, + refinements)
+    assert seen[300]["1day"] >= 1 and seen[300].get("30min", 0) <= 6   # not a year of 30-minute weeks

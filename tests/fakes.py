@@ -1,6 +1,7 @@
 """Stand-ins for the Ecowitt and AirGradient HTTP APIs."""
 
 import math
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -22,12 +23,14 @@ def config(tmp_path, **over) -> Config:
     return Config(**{**base, **over})
 
 
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
 def temp(ts: int) -> float:
     """Outdoor temperature: daily cycle peaking ~3pm local, slowly warming over the days."""
     local = datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ)
     return 14 + 6 * math.sin((local.hour + local.minute / 60 - 9) / 24 * 2 * math.pi) + ts / 86400 % 5 * 0.1
 
 
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
 def rain_day(ts: int) -> float:
     """The rain counter, from 2pm to midnight: every 8th day of the year is wet (5 mm), the 4th after
     it is a trace (0.5 mm), the rest are dry."""
@@ -36,16 +39,19 @@ def rain_day(ts: int) -> float:
     return amount if local.hour >= 14 else 0.0
 
 
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
 def gust(ts: int) -> float:
     local = datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ)
     return 20.0 + local.day % 7 * 3 + (10 if local.hour == 15 else 0)
 
 
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
 def direction(ts: int) -> float:
     """Wind direction that keeps crossing north: 350, 0, 10 degrees in turn (a plain average would say south)."""
     return (350 + ts // 300 % 3 * 10) % 360
 
 
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
 def wind_speed(ts: int) -> float:
     """Calm from midnight to 6am local, 10 km/h otherwise."""
     return 0.0 if datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ).hour < 6 else 10.0
@@ -54,9 +60,10 @@ def wind_speed(ts: int) -> float:
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
-    def __init__(self, busy_first: bool = False):
+    def __init__(self, busy_first: bool = False, history_days: int = HISTORY_DAYS):
         self.calls: list[dict] = []
         self.busy = busy_first
+        self.history_days = history_days
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         p = dict(request.url.params)
@@ -67,7 +74,7 @@ class FakeEcowitt:
         path = request.url.path.rsplit("/", 1)[-1]
         if path == "list":
             return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0,
-                                       "createtime": int((datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)).timestamp())}]})
+                                       "createtime": int((datetime.now(timezone.utc) - timedelta(days=self.history_days)).timestamp())}]})
         if path == "real_time":
             now = int(datetime.now(timezone.utc).timestamp())
             return self._ok({"outdoor": {"temperature": {"time": str(now), "unit": "℃", "value": "12.3"}}})
@@ -98,8 +105,9 @@ class FakeEcowitt:
         return out
 
 
-def ecowitt_transport(fake: FakeEcowitt | None = None) -> tuple[httpx.MockTransport, FakeEcowitt]:
-    fake = fake or FakeEcowitt()
+def ecowitt_transport(fake: FakeEcowitt | None = None, history_days: int = HISTORY_DAYS) -> tuple[httpx.MockTransport, FakeEcowitt]:
+    """history_days: how old the fake station is; tests of the archive's behaviour use a young one, which is much quicker."""
+    fake = fake or FakeEcowitt(history_days=history_days)
     return httpx.MockTransport(fake), fake
 
 

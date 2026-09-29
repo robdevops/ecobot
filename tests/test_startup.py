@@ -51,7 +51,7 @@ class FakeBuilder:
 async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
     caplog.set_level("INFO")
     cfg = config(tmp_path)
-    eco_t, _ = ecowitt_transport()
+    eco_t, _ = ecowitt_transport(history_days=45)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
     monkeypatch.setattr(envirobot.Config, "from_env", classmethod(lambda cls: cfg))
@@ -84,7 +84,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     monitor) must still start: the regular refreshes then catch up."""
     caplog.set_level("INFO")
     cfg = config(tmp_path)
-    eco_t, _ = ecowitt_transport()
+    eco_t, _ = ecowitt_transport(history_days=45)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
     monkeypatch.setattr(envirobot.Config, "from_env", classmethod(lambda cls: cfg))

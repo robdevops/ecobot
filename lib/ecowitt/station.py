@@ -51,6 +51,8 @@ HISTORY_PARAMS = {
         "end_date": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM:SS' local time (today is fine: up to now)."},
         "groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. Add 'rainfall', "
                                                     "'wind' or 'pressure' only if needed. Plain group names, not dotted fields."},
+        "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
+                                                      "period's average (and per day or month). Highs and lows are the default."},
         "chart_field": {"type": "string", "description": "What the chart should plot when the question is about something other "
                                                          "than temperature: the field name, e.g. 'humidity', 'pressure' or 'wind_gust'. "
                                                          "Omit for temperature."},
