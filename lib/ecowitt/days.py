@@ -136,16 +136,38 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
                 source[d] = "daily"
 
     checked = [d for d in days if any(d in values[n] for n in shown)]
-    matches = [d for d in checked if all(
-        d in values[c["field"]] and OPS[c["op"]](values[c["field"]][d], c["value"]) for c in where)]
-    ranked = sorted((d for d in matches if d in values[sort_by]), key=lambda d: values[sort_by][d],
-                    reverse=args.get("order", "desc") != "asc")
+    holds = lambda d, conds: all(d in values[c["field"]] and OPS[c["op"]](values[c["field"]][d], c["value"]) for c in conds)
+    rank = lambda ds: sorted((d for d in ds if d in values[sort_by]), key=lambda d: values[sort_by][d],
+                             reverse=args.get("order", "desc") != "asc")
     label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
-    rows = [{"date": label(d), **{n: round(values[n][d], 1) for n in shown if d in values[n]},
-             "source": "daily" if source.get(d) == "daily" else "exact"} for d in ranked[:limit]]
+    row = lambda d: {"date": label(d), **{n: round(values[n][d], 1) for n in shown if d in values[n]},
+                     "source": "daily" if source.get(d) == "daily" else "exact"}
+    matches = [d for d in checked if holds(d, where)]
+    ranked = rank(matches)
+    rows = [row(d) for d in ranked[:limit]]
+
+    # Days that would have ranked higher had a trace of rain counted: the answer should mention them
+    trace: list[date] = []
+    rain_cond = next((c for c in where if c["field"] == "rain" and c["op"] in (">", ">=") and c["value"] > 0), None)
+    if rain_cond:
+        relaxed = [{"field": "rain", "op": ">", "value": 0} if c is rain_cond else c for c in where]
+        matched = set(matches)
+        better = operator.lt if args.get("order", "desc") == "asc" else operator.gt
+        for d in rank(d for d in checked if holds(d, relaxed)):
+            if d in matched:
+                break  # from here on the real matches rank at least as high
+            if not ranked or better(values[sort_by][d], values[sort_by][ranked[0]]):  # strictly ahead, not a tie
+                trace.append(d)
+            if len(trace) == 2:
+                break
+
     exact_days = sorted(d for d in checked if source.get(d) != "daily")
     out = {"period": f"{label(first)} - {label(last)}", "days_checked": len(checked), "matching_days": len(matches),
            "units": {n: FIELDS[n][3] for n in shown}, "days": rows}
+    if trace:
+        out["trace_rain_days"] = [row(d) for d in trace]
+        out["note_trace"] = (f"These days rank higher but had less than {rain_cond['value']:g} mm of rain (a trace), so they "
+                             "are not in \"days\". Mention the first as a short footnote.")
     if any(source.get(d) == "daily" for d in checked):
         out["exact_from"] = label(exact_days[0]) if exact_days else None
         out["note_daily"] = ("Days marked \"daily\" come from daily readings that run 10am to 10am, so their rain and dates "

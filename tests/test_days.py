@@ -57,7 +57,7 @@ async def test_the_hottest_day_that_also_rained(station):
     assert out["matching_days"] == len(rainy) and out["days_checked"] == len(days)
     assert [r["date"] for r in out["days"]] == [label(d) for d in rainy[:3]]
     top = out["days"][0]
-    assert top["temp_max"] == round(truth(rainy[0])[0], 1) and top["rain"] == 5.0 and top["source"] == "exact"
+    assert top["temp_max"] == round(truth(rainy[0])[0], 1) and top["rain"] == truth(rainy[0])[1] and top["source"] == "exact"
     assert fake.calls == []  # answered from the cache alone
 
 
@@ -139,3 +139,53 @@ async def test_bad_input_gets_a_clear_error(station):
     assert "unusable" in (await ask(eco, start_date=str(first), end_date=str(last),
                                     where=[{"field": "mood", "op": ">", "value": 1}]))["error"]
     assert "sort_by" in (await ask(eco, start_date=str(first), end_date=str(last), sort_by="mood"))["error"]
+
+
+async def test_a_hotter_trace_rain_day_is_returned_for_a_footnote(station):
+    eco, _ = station
+    first, last = dates(eco, 80, 1)
+    days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
+    wet = sorted((d for d in days if truth(d)[1] >= 1), key=lambda d: -truth(d)[0])
+    trace_only = [d for d in days if 0 < truth(d)[1] < 1]
+    assert wet and trace_only
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "rain", "op": ">=", "value": 1}],
+                    sort_by="temp_max", limit=1)
+    assert out["days"][0]["date"] == label(wet[0]) and out["matching_days"] == len(wet)
+    hotter = [d for d in sorted(trace_only, key=lambda d: -truth(d)[0]) if truth(d)[0] > truth(wet[0])[0]][:2]
+    if hotter:
+        assert [r["date"] for r in out["trace_rain_days"]] == [label(d) for d in hotter][:len(out["trace_rain_days"])]
+        assert all(0 < r["rain"] < 1 for r in out["trace_rain_days"]) and "footnote" in out["note_trace"]
+    else:
+        assert "trace_rain_days" not in out
+
+
+async def test_trace_days_are_reported_even_when_nothing_reaches_the_threshold(station):
+    eco, _ = station
+    first, last = dates(eco, 80, 1)
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "rain", "op": ">=", "value": 50}],
+                    sort_by="temp_max")
+    assert out["matching_days"] == 0 and out["days"] == []
+    assert len(out["trace_rain_days"]) == 2 and "less than 50 mm" in out["note_trace"]
+    top = max((d for d in [first + timedelta(days=k) for k in range((last - first).days + 1)] if truth(d)[1] > 0),
+              key=lambda d: truth(d)[0])
+    assert out["trace_rain_days"][0]["date"] == label(top)
+
+
+async def test_no_footnote_without_a_rain_threshold_or_when_nothing_ranks_higher(station):
+    eco, _ = station
+    first, last = dates(eco, 80, 1)
+    assert "trace_rain_days" not in await ask(eco, start_date=str(first), end_date=str(last),
+                                              where=[{"field": "temp_max", "op": ">", "value": 0}])
+    assert "trace_rain_days" not in await ask(eco, start_date=str(first), end_date=str(last),
+                                              where=[{"field": "rain", "op": ">", "value": 0}])   # any rain: nothing is hidden
+    assert "trace_rain_days" not in await ask(eco, start_date=str(first), end_date=str(last),
+                                              where=[{"field": "rain", "op": "<", "value": 1}])   # not a "rained" question
+
+
+async def test_a_tie_is_not_reported_as_a_hotter_day(station):
+    eco, _ = station
+    first, last = dates(eco, 80, 1)
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "rain", "op": ">=", "value": 1}],
+                    sort_by="temp_max", limit=1)
+    top = out["days"][0]["temp_max"]
+    assert all(r["temp_max"] > top for r in out.get("trace_rain_days", []))   # strictly hotter, never equal

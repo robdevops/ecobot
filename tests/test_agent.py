@@ -119,3 +119,10 @@ def test_the_prompt_defines_a_rainy_day_and_how_to_phrase_the_count():
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
     assert "rain >= 1" in text and "any rain" in text and "It rained on 507 of 1,454 days" in text
     assert "1 mm or more" in days.DESCRIPTION
+
+
+def test_the_prompt_asks_for_a_footnote_about_hotter_trace_days():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    assert "trace_rain_days" in text and "footnote" in text

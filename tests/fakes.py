@@ -28,9 +28,11 @@ def temp(ts: int) -> float:
 
 
 def rain_day(ts: int) -> float:
-    """The rain counter: every 4th day of the year is a rainy day, with 5 mm from 2pm to midnight."""
+    """The rain counter, from 2pm to midnight: every 8th day of the year is wet (5 mm), the 4th after
+    it is a trace (0.5 mm), the rest are dry."""
     local = datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ)
-    return 5.0 if local.timetuple().tm_yday % 4 == 0 and local.hour >= 14 else 0.0
+    amount = {0: 5.0, 4: 0.5}.get(local.timetuple().tm_yday % 8, 0.0)
+    return amount if local.hour >= 14 else 0.0
 
 
 def gust(ts: int) -> float:
