@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from lib import intent
 
@@ -174,8 +174,8 @@ def test_absurd_periods_go_to_the_model_instead_of_crashing():
     assert call("weather 4 years")[1]["start_date"] == "2022-10-01 00:00:00"      # a sane long period still works
     assert call("weather 8760 hours")[1]["chart"]
     # "on record" is safe on 29 February, when the year four earlier had none
-    ranges = intent.period_ranges(date(2028, 2, 29))
-    assert ranges["on record"] == (date(2028, 2, 29) - __import__("datetime").timedelta(days=1459), date(2028, 2, 29))
+    ranges = intent.period_ranges(date(2104, 2, 29))   # 2100 was not a leap year: the old code raised here
+    assert ranges["on record"] == (date(2104, 2, 29) - timedelta(days=1459), date(2104, 2, 29))
 
 
 def test_an_air_question_with_a_time_we_cant_read_is_not_answered_with_the_current_reading():
@@ -183,3 +183,15 @@ def test_an_air_question_with_a_time_we_cant_read_is_not_answered_with_the_curre
         assert call(text) is None, text
     for text in ("aq", "air quality", "aq now", "how's the air"):
         assert call(text)[:2] == ("air_quality", {}), text
+
+
+def test_a_particular_date_or_time_goes_to_the_model_not_a_whole_period():
+    for text in ("what was the high on 5 Jan this year", "temperature at 3pm today", "hottest day in Jan 12 to Jan 20",
+                 "weather on monday this week", "high at 15:30 yesterday", "how hot was it on 3/2 this month",
+                 "aq on sunday this week", "air quality this morning", "graph the temperature yesterday afternoon",
+                 "what was the low on the 5th of March this year", "weather tonight this week"):
+        assert call(text) is None, text
+    # whole periods, however they are written, still take the fast path
+    for text in ("weather this week", "weather 1m", "aq 24h", "aq week", "hottest day this month", "weather 3 months",
+                 "high and low this year", "chart the temperature last 7 days", "weather 12h", "how sunny was last month"):
+        assert call(text) is not None or text == "how sunny was last month", text

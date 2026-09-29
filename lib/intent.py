@@ -234,8 +234,17 @@ def air_metrics(text: str) -> list[str]:
 
 
 # ---------- dispatch ----------
+# A particular date, weekday or time of day: the fast path only knows whole periods, so these go to the model
+_MONTHS = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*"
+SPECIFIC_MOMENT = re.compile(
+    rf"\b\d{{1,2}}(st|nd|rd|th)?\s+(of\s+)?{_MONTHS}|\b{_MONTHS}\s+\d{{1,2}}\b|\b\d{{1,2}}/\d{{1,2}}\b|"
+    r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b\d{1,2}:\d{2}\b|\b(noon|midnight|morning|afternoon|evening|overnight|tonight)\b|"
+    r"\b(mon|tues?|wed(nes)?|thu(rs?)?|fri|sat(ur)?|sun)(day)?\b", I)
+
 def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
+    if SPECIFIC_MOMENT.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
+        return None
     if air and (period := air_period(text, now)):
         name, start, end = period
         return "air_quality", {"chart": True, "metrics": air_metrics(text),
