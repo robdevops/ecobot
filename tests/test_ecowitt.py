@@ -400,3 +400,52 @@ async def test_http_errors_are_refused_only_when_ecowitt_answers_with_a_reason(t
             await api.close()
     finally:
         aio.sleep = orig
+
+
+# ---------- wind direction is circular ----------
+def test_direction_summary_crosses_north_without_a_wide_swing():
+    from lib.ecowitt.direction import point, summarise, vector_mean
+    from tests.fakes import TZ
+    readings = [(1_780_000_000 + i * 300, d, True) for i, d in enumerate([350, 0, 10] * 20)]
+    out = summarise(readings, TZ, by_day=True)
+    assert out["most_common"].startswith("N ") and out["average_direction"].startswith("N (") and out["steadiness"] == "steady"
+    assert "low" not in out and "high" not in out and "note" not in out
+    mean = vector_mean([359, 1])[0]
+    assert mean > 359 or mean < 1   # north, not 180
+    assert point(359) == point(1) == "N" and point(90) == "E" and point(202) == "SSW"
+    assert len(out["daily"]) >= 1
+
+
+def test_direction_summary_of_a_variable_wind_and_averaged_data():
+    from lib.ecowitt.direction import summarise
+    from tests.fakes import TZ
+    spread = [(1_780_000_000 + i * 300, (i * 47) % 360, i % 2 == 0) for i in range(200)]
+    out = summarise(spread, TZ, by_day=False)
+    assert out["steadiness"] == "variable" and "averaged data" in out["note"] and "daily" not in out
+    assert summarise([], TZ, by_day=False) == {}
+
+
+async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await Archive(eco).run_once()
+    today = datetime.now(eco.tz).date()
+    out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{today - timedelta(days=7)} 00:00:00",
+                                                 "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+    direction = out["series"]["wind.wind_direction"]
+    assert direction["most_common"].startswith("N ") and "low" not in direction and "high" not in direction
+    assert direction["average_direction"].startswith("N (") and "note" not in direction   # 5-minute readings
+    assert len(direction["daily"]) == 6 and all(v.startswith("N ") for v in direction["daily"].values())
+    assert "high" in out["series"]["wind.wind_gust"]                                       # speeds are unchanged
+    holder = CHART_REQUESTS.set([])                                                        # asking for a chart of direction alone
+    try:
+        again = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "include_derived": [],
+                                                       "start_date": f"{today - timedelta(days=3)} 00:00:00",
+                                                       "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+    finally:
+        CHART_REQUESTS.reset(holder)
+    assert "wind.wind_direction" in again["series"]
+    await eco.close()

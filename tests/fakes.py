@@ -40,6 +40,11 @@ def gust(ts: int) -> float:
     return 20.0 + local.day % 7 * 3 + (10 if local.hour == 15 else 0)
 
 
+def direction(ts: int) -> float:
+    """Wind direction that keeps crossing north: 350, 0, 10 degrees in turn (a plain average would say south)."""
+    return (350 + ts // 300 % 3 * 10) % 360
+
+
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
@@ -74,14 +79,15 @@ class FakeEcowitt:
         first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            name, fn = {"rainfall": ("daily", rain_day), "wind": ("wind_gust", gust)}.get(group, ("temperature", temp))
+            named = {"rainfall": [("daily", rain_day)], "wind": [("wind_gust", gust), ("wind_direction", direction)]}
             fields: dict = {}
-            for ts in range(first, end + 1, step):
-                samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                fields.setdefault(name, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
-                if p["cycle_type"] != "5min":
-                    for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
-                        fields.setdefault(name + suffix, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{val:.1f}"
+            for name, fn in named.get(group, [("temperature", temp)]):
+                for ts in range(first, end + 1, step):
+                    samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
+                    fields.setdefault(name, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
+                    if p["cycle_type"] != "5min":
+                        for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
+                            fields.setdefault(name + suffix, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{val:.1f}"
             out[group] = fields
         return out
 

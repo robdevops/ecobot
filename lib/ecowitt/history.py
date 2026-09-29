@@ -19,6 +19,7 @@ from typing import NamedTuple
 from ..charts import CHART_HINT, CHART_REQUESTS
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
+from .direction import summarise as summarise_direction
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
@@ -237,6 +238,7 @@ class HistoryQuery:
         self.detailed = False                              # local-day-aligned data available for the whole period
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
+        self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
 
     async def run(self) -> str:
         today = self.now.date()
@@ -254,7 +256,8 @@ class HistoryQuery:
             self.span <= timedelta(days=CACHED_DETAILED_DAYS) and await self._cached_locally())
 
         await self._fetch_period()
-        if not self.store:
+        await self._summarise_direction()
+        if not self.store and not self.direction:
             return "Error: no history data returned." + (
                 " Details: " + "; ".join(self.f.errors[:5]) if self.f.errors else "")
         self.overall = {k: ex for k, s in self.store.items() if len(ex := series_extremes(s)) == 2}
@@ -297,6 +300,37 @@ class HistoryQuery:
         else:
             await self._chunks("30min", max(start, recent), end)
             await self._chunks("1day", start, min(end, recent - timedelta(seconds=1)))
+
+    async def _summarise_direction(self):
+        """Wind direction leaves the low/high pipeline: it is counted by compass point instead. Recent
+        days are counted from 5-minute readings where the cache has them (averaging degrees is wrong
+        near north); older parts of a long period are left out rather than counted from daily averages."""
+        keys = [k for k in self.store if k.endswith(".wind_direction")]
+        if not keys:
+            return
+        f = self.f
+        wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz)
+        first = max(self.start, self.end - timedelta(days=DETAILED_DAYS))
+        for key in keys:
+            fine: dict = {}
+            fine_days = set()
+            for n in range((self.end.date() - first.date()).days + 1):
+                day = first.date() + timedelta(days=n)
+                a, b = max(first, datetime.combine(day, time())), min(self.end, datetime.combine(day, time(23, 59, 59)))
+                if a < b and (day == self.end.date() or await wind.covered("5min", wind.epoch(a), wind.epoch(b))):
+                    collect(fine, await wind.get("5min", a, b), "5min")  # today's comes from memory or one request
+                    fine_days.add(day)
+            pts = self.store.pop(key)["pts"]
+            readings = {t: (r["value"][0], r["cycle"] == "5min") for t, r in pts.items()
+                        if "value" in r and r["cycle"] in ("5min", "30min") and local_date(t, self.tz) not in fine_days}
+            readings.update({t: (r["value"][0], True) for t, r in fine.get(key, {}).get("pts", {}).items() if "value" in r})
+            result = summarise_direction([(t, d, exact) for t, (d, exact) in sorted(readings.items())
+                                          if first <= f.local(t)], self.tz, self.span <= timedelta(days=31))
+            if not result:
+                continue
+            if self.start < first:
+                result["note_period"] = f"covers only the last {DETAILED_DAYS} days of the period"
+            self.direction[key] = result
 
     def _monthly_extremes(self) -> dict:
         """key -> {month label: {"low": Ext, "high": Ext}}"""
@@ -403,6 +437,7 @@ class HistoryQuery:
                         entry["monthly"][month] = {w: e.raw for w, e in d.items()}
             series_out[key] = entry
 
+        series_out.update(self.direction)
         log.info("%s to %s: %d ranges, %d cached, %d in mem, %d req%s, %d series, %d refined",
                  f"{self.start:%Y-%m-%d}", f"{self.end:%m-%d %H:%M}", f.ranges, f.from_cache, f.from_memory, f.calls,
                  f", {len(f.errors)} failed" if f.errors else "", len(series_out), refined)
@@ -411,8 +446,9 @@ class HistoryQuery:
             out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
         holder = CHART_REQUESTS.get()
-        if self.args.get("chart") and holder is not None and series_out:
-            spec = self._chart_spec(series_out)
+        plottable = {k: v for k, v in series_out.items() if k in self.store}
+        if self.args.get("chart") and holder is not None and plottable:
+            spec = self._chart_spec(plottable)
             if spec:
                 holder.append(spec)
                 out["chart"] = CHART_HINT
