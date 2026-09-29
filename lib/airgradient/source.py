@@ -189,6 +189,8 @@ class AirGradient:
                 try:
                     count = len(await self._day_rows(day))
                     fetched, failed_run = fetched + 1, 0
+                    if fetched % 30 == 0:
+                        log.info("AirGradient archive: %d day(s) fetched so far, now at %s", fetched, day)
                 except Exception as e:
                     failed, failed_run = failed + 1, failed_run + 1
                     log.warning("AirGradient backfill of %s failed: %s", day, e)

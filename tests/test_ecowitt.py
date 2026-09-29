@@ -231,3 +231,26 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     assert "monthly_note" not in json.loads(out) and fake.calls == []
     assert "30-minute" in spec["subtitle"] or "5-minute" in spec["subtitle"]
     await eco.close()
+
+
+async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeypatch):
+    import asyncio as aio
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0.005)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    fake.calls.clear()
+    with pytest.raises(aio.TimeoutError):  # power cut / restart part-way through the backfill
+        await aio.wait_for(Archive(eco).run_once(), timeout=0.6)
+    first = {(c["cycle_type"], c["start_date"]) for c in fake.calls if "cycle_type" in c}
+    assert 5 < len(first) < 150, len(first)
+    fake.calls.clear()
+    fetched, failed = await Archive(eco).run_once()  # the next start
+    second = {(c["cycle_type"], c["start_date"]) for c in fake.calls if "cycle_type" in c}
+    assert failed == 0 and second, "the rest was fetched"
+    assert len(first & second) <= 1, "only the range in flight when it stopped is asked for again"
+    fake.calls.clear()
+    await Archive(eco).run_once()
+    assert len(fake.calls) <= 4  # complete: only the newest unsettled ranges remain
+    await eco.close()

@@ -50,17 +50,25 @@ class Archive:
                 t = end + timedelta(seconds=1)
 
     async def run_once(self) -> tuple[int, int]:
-        """Cache whatever is missing. Returns (ranges fetched, ranges failed)."""
-        fetched = failed = 0
+        """Cache whatever is missing. Returns (ranges fetched, ranges failed). Each range is saved as
+        soon as it arrives, so an interrupted run just carries on from there next time."""
+        todo = []
         for cycle, start, end in self._work():
             fetcher = self.station.fetcher(self.groups)
-            if await fetcher.covered(cycle, fetcher.epoch(start), fetcher.epoch(end)):
-                continue
+            if not await fetcher.covered(cycle, fetcher.epoch(start), fetcher.epoch(end)):
+                todo.append((cycle, start, end))
+        if todo:
+            log.info("Ecowitt archive: %d range(s) to fetch (about %d min)", len(todo), len(todo) * self.pace // 60 + 1)
+        fetched = failed = 0
+        for i, (cycle, start, end) in enumerate(todo, 1):
+            fetcher = self.station.fetcher(self.groups)
             await fetcher.get(cycle, start, end)
             if fetcher.errors and not await self._drop_unsupported_groups(cycle, start, end):
                 failed += 1
             else:
                 fetched += 1
+            if i % 20 == 0 and i < len(todo):
+                log.info("Ecowitt archive: %d of %d range(s) done", i, len(todo))
             await asyncio.sleep(self.pace)
         return fetched, failed
 
