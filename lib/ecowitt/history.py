@@ -35,18 +35,30 @@ DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
 
 
 # ---------- fetching ----------
+def series_in(data: dict):
+    """(group, field, obj) for every time series in an Ecowitt 'data' object; obj["list"] is {ts: value}."""
+    for group, fields in data.items():
+        if isinstance(fields, dict):
+            for field, obj in fields.items():
+                if isinstance(obj, dict) and isinstance(obj.get("list"), dict):
+                    yield group, field, obj
+
+
+def spans(cycle: str, t: datetime, until: datetime):
+    """(start, end) pieces of [t, until) that each fit Ecowitt's per-request limit for this cycle."""
+    while t < until:
+        e = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), until)
+        yield t, e
+        t = e + timedelta(seconds=1)
+
+
 def merge_data(into: dict, new: dict, window: tuple[int, int] | None = None):
     """Merge one Ecowitt 'data' object into another, optionally only timestamps in window."""
-    for grp, fields in new.items():
-        if not isinstance(fields, dict):
-            continue
-        for field, obj in fields.items():
-            if not isinstance(obj, dict) or not isinstance(obj.get("list"), dict):
-                continue
-            entry = into.setdefault(grp, {}).setdefault(field, {"unit": obj.get("unit", ""), "list": {}})
-            for ts, value in obj["list"].items():
-                if window is None or window[0] <= int(ts) <= window[1]:
-                    entry["list"][ts] = value
+    for grp, field, obj in series_in(new):
+        entry = into.setdefault(grp, {}).setdefault(field, {"unit": obj.get("unit", ""), "list": {}})
+        for ts, value in obj["list"].items():
+            if window is None or window[0] <= int(ts) <= window[1]:
+                entry["list"][ts] = value
 
 
 class Fetcher:
@@ -67,9 +79,10 @@ class Fetcher:
     def local(self, epoch: int) -> datetime:
         return datetime.fromtimestamp(epoch, timezone.utc).astimezone(self.tz).replace(tzinfo=None)
 
-    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False) -> dict:
-        """Readings for [start, end] (local time). refresh=True ignores the in-memory copy
-        (used by the keep-warm refresh)."""
+    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
+        """Readings for [start, end] (local time). refresh=True ignores the in-memory copy (used by
+        the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
+        skips building the result nobody will read (the refresh and the archive)."""
         self.ranges += 1
         s, e = self.epoch(start), self.epoch(end)
         async with self.hot.lock(self.mac, cycle):
@@ -92,6 +105,8 @@ class Fetcher:
                 for g in need:
                     self.hot.put(self.mac, cycle, g, gap_start, gap_end, data.get(g) or {})
                 merge_data(fresh, data)
+            if not load:
+                return {}
             result = await asyncio.to_thread(self.cache.load, self.mac, cycle, self.groups, s, e)
         merge_data(result, fresh, (s, e))  # recent readings aren't on disk; use the fresh ones
         return result
@@ -139,24 +154,19 @@ class Ext(NamedTuple):
 def collect(store: dict, data: dict, cycle: str):
     """Fold an Ecowitt 'data' object into store["group.field"] = {unit, pts: {ts: rec}}.
     rec holds value / low / high as (float, raw string) and the source cycle."""
-    for group, fields in data.items():
-        if not isinstance(fields, dict):
-            continue
-        for fname, fobj in fields.items():
-            if not isinstance(fobj, dict) or not isinstance(fobj.get("list"), dict):
+    for group, fname, fobj in series_in(data):
+        base, kind = fname, "value"
+        if fname.endswith("_low"):
+            base, kind = fname[:-4], "low"
+        elif fname.endswith("_high"):
+            base, kind = fname[:-5], "high"
+        series = store.setdefault(f"{group}.{base}", {"unit": fobj.get("unit", ""), "pts": {}})
+        for ts, raw in fobj["list"].items():
+            try:
+                rec = series["pts"].setdefault(int(ts), {"cycle": cycle})
+                rec[kind] = (float(raw), str(raw))
+            except (TypeError, ValueError):
                 continue
-            base, kind = fname, "value"
-            if fname.endswith("_low"):
-                base, kind = fname[:-4], "low"
-            elif fname.endswith("_high"):
-                base, kind = fname[:-5], "high"
-            series = store.setdefault(f"{group}.{base}", {"unit": fobj.get("unit", ""), "pts": {}})
-            for ts, raw in fobj["list"].items():
-                try:
-                    rec = series["pts"].setdefault(int(ts), {"cycle": cycle})
-                    rec[kind] = (float(raw), str(raw))
-                except (TypeError, ValueError):
-                    continue
 
 
 def _better(want: str, a: float, b: float) -> bool:
@@ -221,7 +231,11 @@ class HistoryQuery:
         self.f, self.tz, self.args = fetcher, fetcher.tz, args
         self.now = datetime.now(self.tz).replace(tzinfo=None)
         self.now_utc = datetime.now(timezone.utc)
-        self.store: dict = {}
+        self.store: dict = {}       # "group.field" -> {"unit", "pts"}, filled by _fetch_period
+        self.start = self.end = self.span = None          # the period, set by run()
+        self.detailed = False                              # local-day-aligned data available for the whole period
+        self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
+        self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
 
     def _local_date(self, ts: int):
         return datetime.fromtimestamp(ts, timezone.utc).astimezone(self.tz).date()
@@ -255,20 +269,15 @@ class HistoryQuery:
         which is still settling)? Then detail costs no requests."""
         f = self.f
         floor = datetime.combine(self.now.date() - timedelta(days=RETENTION["30min"] - 2), time())
-        t, until = max(self.start, floor), self.end - timedelta(days=1)
-        while t < until:
-            e = min(t + MAX_SPAN["30min"] - timedelta(seconds=1), until)
+        for t, e in spans("30min", max(self.start, floor), self.end - timedelta(days=1)):
             first, last = f.epoch(t), f.epoch(e)
             if not (await f.covered("5min", first, last) or await f.covered("30min", first, last)):
                 return False
-            t = e + timedelta(seconds=1)
         return True
 
     async def _chunks(self, cycle: str, t: datetime, until: datetime):
-        while t < until:
-            e = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), until)
-            collect(self.store, await self.f.get(cycle, t, e), cycle)
-            t = e + timedelta(seconds=1)
+        for a, b in spans(cycle, t, until):
+            collect(self.store, await self.f.get(cycle, a, b), cycle)
 
     async def _fetch_period(self):
         """Coarse pass: the best data for the whole period at the fewest requests."""
@@ -282,12 +291,9 @@ class HistoryQuery:
         elif self.detailed and end > thirty_floor:
             # Weeks already in the 5-minute archive come free from the cache; the rest is
             # fetched at 30 minutes (one request per week, cached afterwards)
-            t = max(start, thirty_floor)
-            while t < end:
-                e = min(t + MAX_SPAN["30min"] - timedelta(seconds=1), end)
-                cycle = "5min" if await f.covered("5min", f.epoch(t), f.epoch(e)) else "30min"
-                collect(self.store, await f.get(cycle, t, e), cycle)
-                t = e + timedelta(seconds=1)
+            for a, b in spans("30min", max(start, thirty_floor), end):
+                cycle = "5min" if await f.covered("5min", f.epoch(a), f.epoch(b)) else "30min"
+                collect(self.store, await f.get(cycle, a, b), cycle)
             if start < thirty_floor:
                 await self._chunks("1day", start, min(end, thirty_floor - timedelta(seconds=1)))
         else:
@@ -326,9 +332,12 @@ class HistoryQuery:
         for _ in range(2):
             windows: dict = {}  # (cycle, start_ts, end_ts) -> [slot id]
             used = {"all": 0, "month": 0}
+            finer_of: dict = {}  # slots on the same bucket share an answer; a new pass looks again (data was fetched)
             for sid, ext in slots.items():
                 w_end = ext.ts + CYCLE_SECONDS[ext.cycle] - 1
-                finer = await f.finer_cycle(ext.ts, ext.cycle, w_end, self.now_utc)
+                if (ext.ts, ext.cycle) not in finer_of:
+                    finer_of[ext.ts, ext.cycle] = await f.finer_cycle(ext.ts, ext.cycle, w_end, self.now_utc)
+                finer = finer_of[ext.ts, ext.cycle]
                 if not finer:
                     continue
                 w = (finer, ext.ts, w_end)

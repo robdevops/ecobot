@@ -12,8 +12,9 @@ import logging
 from collections.abc import Iterator
 from datetime import datetime, time, timedelta
 
-from .api import MAX_SPAN, MIN_GAP_SECONDS, RETENTION
-from .store import BUCKET_SECONDS, horizon
+from .api import MIN_GAP_SECONDS, RETENTION
+from .history import spans
+from .store import BUCKET_SECONDS, horizon, subtract
 
 log = logging.getLogger(__name__)
 
@@ -58,20 +59,18 @@ class Archive:
             if start < end:
                 yield "5min", start, end
         for cycle in COARSE_CYCLES:
-            t, last = datetime.combine(first_day(cycle), time()), settled(cycle)
-            while t < last:
-                end = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), last)
-                yield cycle, t, end
-                t = end + timedelta(seconds=1)
+            for start, end in spans(cycle, datetime.combine(first_day(cycle), time()), settled(cycle)):
+                yield cycle, start, end
 
     async def run_once(self) -> tuple[int, int]:
         """Cache whatever is missing. Returns (ranges fetched, ranges failed). Each range is saved as
         soon as it arrives, so an interrupted run just carries on from there next time."""
-        todo = []
-        for cycle, start, end in self._work():
-            fetcher = self.station.fetcher(self.groups)
-            if not await fetcher.covered(cycle, fetcher.epoch(start), fetcher.epoch(end)):
-                todo.append((cycle, start, end))
+        # What is cached, read once (a query per resolution and group) rather than once per range
+        cover = await asyncio.to_thread(lambda: {(c, g): self.station.cache.coverage(self.station.mac, c, g)
+                                                  for c in ("5min", *COARSE_CYCLES) for g in self.groups})
+        epoch = self.station.fetcher(self.groups).epoch
+        todo = [(cycle, start, end) for cycle, start, end in self._work()
+                if any(subtract((epoch(start), epoch(end)), cover[cycle, g]) for g in self.groups)]
         if todo:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
@@ -80,7 +79,7 @@ class Archive:
         fetched = failed = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
             fetcher = self.station.fetcher(self.groups)
-            await fetcher.get(cycle, start, end)
+            await fetcher.get(cycle, start, end, load=False)  # only to cache it
             if fetcher.errors and not await self._drop_unsupported_groups(cycle, start, end):
                 failed += 1
             else:
@@ -98,7 +97,7 @@ class Archive:
         bad = []
         for group in self.groups:
             probe = self.station.fetcher([group])
-            await probe.get(cycle, start, end)
+            await probe.get(cycle, start, end, load=False)
             if probe.rejected:  # Ecowitt said no; a timeout or "too frequent" says nothing about the group
                 bad.append(group)
             await asyncio.sleep(self.pace)

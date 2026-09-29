@@ -144,6 +144,11 @@ class AirGradient:
         """Over for more than an hour, so its data won't change."""
         return self._now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
 
+    async def _held(self, days: list[date]) -> dict[date, int | None]:
+        """Readings stored per finished day, in one query (None: not fetched yet, or not finished)."""
+        stored = await asyncio.to_thread(self.store.counts, days)
+        return {d: stored[d] if self._final(d) else None for d in days}
+
     def _utc(self, local: datetime) -> str:
         return local.replace(tzinfo=self.tz).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -193,10 +198,11 @@ class AirGradient:
         await self._current_row(fresh)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
-        missing = [d for d in week if self._final(d) and await asyncio.to_thread(self.store.day_count, d) is None]
-        await self._fetch_days(missing)  # one request for all of them
+        held = await self._held(week)
+        await self._fetch_days([d for d in week if self._final(d) and held[d] is None])  # one request for all of them
         for day in week:
-            await self._day_rows(day)
+            if not self._final(day):  # a day that just ended is still refetched for a while; finished ones are stored
+                await self._day_rows(day)
         return f"AirGradient {self.requests - before} req"
 
     async def backfill(self, pace: float | None = None, empty_stop: int | None = None,
@@ -214,14 +220,13 @@ class AirGradient:
         while n <= max_days:
             days = [today - timedelta(days=k) for k in range(n, min(n + MAX_REQUEST_DAYS, max_days + 1))]
             n += MAX_REQUEST_DAYS
-            counts = {d: await asyncio.to_thread(self.store.day_count, d) if self._final(d) else None for d in days}
+            counts = await self._held(days)
             missing = [d for d in days if self._final(d) and counts[d] is None]
             if missing:
                 try:
                     await self._fetch_days(missing)
                     fetched, failed_run = fetched + len(missing), 0
-                    for d in missing:
-                        counts[d] = await asyncio.to_thread(self.store.day_count, d)
+                    counts.update(await asyncio.to_thread(self.store.counts, missing))
                     if fetched // 30 != (fetched - len(missing)) // 30:
                         log.info("AirGradient archive: %d day(s) fetched so far, now at %s", fetched, days[-1])
                 except Exception as e:
@@ -285,16 +290,16 @@ class AirGradient:
             return {"error": "start must be before end"}
         before = self.requests
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
-        held = {d: await asyncio.to_thread(self.store.day_count, d) if self._final(d) else None for d in days}
+        held = await self._held(days)
         missing = [d for d in days if self._final(d) and held[d] is None]
         skipped = missing[:-MAX_INLINE_DAYS] if len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
         await self._fetch_days([d for d in missing if d not in skipped])
         rows = []
         for d in days:
-            if d not in skipped:
-                rows += await self._day_rows(d)
-        counts = [await asyncio.to_thread(self.store.day_count, d) for d in days if self._final(d) and d not in skipped]
-        hourly = sum(1 for c in counts if c and c <= HOURLY_MAX_READINGS)
+            if d not in skipped:  # finished days are all stored by now; today and a just-ended day come via _day_rows
+                rows += await (asyncio.to_thread(self.store.load_day, d) if self._final(d) else self._day_rows(d))
+        counts = await self._held([d for d in days if d not in skipped])
+        hourly = sum(1 for c in counts.values() if c and c <= HOURLY_MAX_READINGS)
         lo_ts, hi_ts = t0.replace(tzinfo=self.tz).timestamp(), t1.replace(tzinfo=self.tz).timestamp()
         rows = [r for r in rows if lo_ts <= r["ts"] <= hi_ts]
         log.info("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}", f"{t1:%m-%d %H:%M}", len(rows),

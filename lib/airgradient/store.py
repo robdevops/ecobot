@@ -42,6 +42,15 @@ class AirStore:
             row = self.db.execute("SELECT n FROM days WHERE loc=? AND day=?", (self.loc, day.isoformat())).fetchone()
         return row[0] if row else None
 
+    def counts(self, days: list[date]) -> dict[date, int | None]:
+        """day_count for many days in one query."""
+        if not days:
+            return {}
+        with self._lock:
+            found = dict(self.db.execute("SELECT day, n FROM days WHERE loc=? AND day BETWEEN ? AND ?",
+                                         (self.loc, min(days).isoformat(), max(days).isoformat())).fetchall())
+        return {d: found.get(d.isoformat()) for d in days}
+
     def save_day(self, day: date, rows: list[dict]):
         lo, hi = self._bounds(day)
         rows = [r for r in rows if lo <= r["ts"] < hi]

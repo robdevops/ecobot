@@ -140,8 +140,8 @@ class Ecowitt:
         now = self.now()
         today = datetime.combine(now.date(), datetime.min.time())
         f30, f5 = self.fetcher(self.groups), self.fetcher(self.groups)
-        await asyncio.gather(f30.get("30min", today - timedelta(days=6), now, refresh=fresh),
-                             f5.get("5min", today, now, refresh=fresh))
+        await asyncio.gather(f30.get("30min", today - timedelta(days=6), now, refresh=fresh, load=False),
+                             f5.get("5min", today, now, refresh=fresh, load=False))
         return f"Ecowitt {f30.calls + f5.calls} req"
 
     def wants(self, text: str) -> bool:
