@@ -30,9 +30,9 @@ from matplotlib.ticker import FuncFormatter  # noqa: E402
 # Set per question by the bot; the history tools append chart specs to it
 CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=None)
 # Added to a tool result when a chart was made, so the reply becomes a good caption
-CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it to one or two short lines: "
-              "the period and the most notable point (e.g. the peak). No lists or breakdowns; "
-              "don't mention or describe the chart.")
+CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
+              "per series with its high and low (for weather, one line each for Outdoor and Indoor when both were "
+              "fetched; for air quality, the peak). No other lists or breakdowns; don't mention or describe the chart.")
 
 # Palette (slate neutrals, warm outdoor, cool indoor)
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
