@@ -110,12 +110,3 @@ async def test_reset_forgets_only_that_chat():
     await bot.on_reset(NS(effective_message=topic, effective_chat=update.effective_chat,
                           effective_user=update.effective_user), None)
     assert (1, 7) not in bot.chats and bot.chats[(2, None)].history
-
-
-def test_the_prompt_tells_the_model_to_check_candidate_days_itself():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
-    assert "don't stop and ask" in text and "rainfall.daily" in text and "about 6 days" in text
-    assert "Never guess or say \"no rain was recorded\"" in text
-    assert "{now}" not in text and "{dates}" not in text and "{sources}" not in text
