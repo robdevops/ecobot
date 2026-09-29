@@ -36,7 +36,8 @@ lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air
 lib/charts.py           chart renderer (shared theme)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram
-scripts/                cache_status.py (is everything cached?), benchmark_history.py (30-minute vs daily)
+scripts/                cache_status.py (is everything cached?), benchmark_history.py (30-minute vs daily),
+                        show_request.py (exactly what is sent to the model for a question)
 ```
 
 Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.

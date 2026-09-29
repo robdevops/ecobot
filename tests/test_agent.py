@@ -126,3 +126,9 @@ def test_the_prompt_asks_for_a_footnote_about_hotter_trace_days():
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
     assert "trace_rain_days" in text and "footnote" in text
+
+
+def test_the_day_tool_schema_agrees_with_the_prompt_about_a_rainy_day():
+    from lib.ecowitt import days
+    where = days.PARAMETERS["properties"]["where"]["description"]
+    assert "rain >= 1" in where and "rain > 0" not in where

@@ -37,7 +37,7 @@ PARAMETERS = {
     "properties": {
         "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Use the start of the 'on record' range for all time."},
         "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (today's readings aren't final, so up to yesterday)."},
-        "where": {"type": "array", "description": "Conditions that must ALL hold on the same day, e.g. rain > 0 and temp_max > 30.",
+        "where": {"type": "array", "description": "Conditions that must ALL hold on the same day, e.g. rain >= 1 and temp_max > 30.",
                   "items": {"type": "object", "properties": {
                       "field": {"type": "string", "enum": list(FIELDS)},
                       "op": {"type": "string", "enum": list(OPS)},
