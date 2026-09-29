@@ -71,3 +71,17 @@ def test_weather_now_and_open_questions_still_go_to_the_model():
     for text in ("weather", "weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week",
                  "will the weather be nice this week"):
         assert call(text) is None, text
+
+
+def test_24_hour_weather_charts_over_a_rolling_window():
+    for text in ("weather 24h", "weather 1d", "weather last 24 hours", "weather 1 day"):
+        name, args, label = call(text)
+        assert name == "weather_history" and args["chart"] is True, text
+        assert args["start_date"] == "2026-09-28 14:05:00" and args["end_date"] == "2026-09-29 14:05:00"
+    assert call("weather yesterday")[1]["chart"] is False
+
+
+def test_air_chart_over_the_last_24_hours_works():
+    for text in ("chart pm2.5 last 24 hours", "graph the air quality 24h", "chart co2 1d"):
+        name, args, _ = call(text)
+        assert name == "air_quality" and args["start_date"] == "2026-09-28 14:05:00", text

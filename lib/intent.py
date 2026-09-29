@@ -81,10 +81,18 @@ PERIOD_PHRASES = [
     (r"(?<!the )last month", "last month"),
     (r"this year", "this year"),
     (r"(?<!the )last year", "last year"),
-    (r"(last|past) 24 ?(h|hrs?|hours?)|24 ?(h|hrs?|hours?)|(the )?(last|past) day", "last 24 hours"),
+    (r"(last|past) 24 ?(h|hrs?|hours?)|24 ?(h|hrs?|hours?)|1 ?d(ay)?|(the )?(last|past) day", "last 24 hours"),
     (r"yesterday", "yesterday"),
     (r"today|so far today", "today"),
 ]
+
+
+def span(name: str, now: datetime) -> tuple[datetime, datetime]:
+    """Start and end of a named period. The rolling "last 24 hours" ends now; others cover whole days."""
+    if name == "last 24 hours":
+        return now - timedelta(hours=24), now
+    first, last = period_ranges(now.date())[name]
+    return datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
 
 
 def periods_named(text: str) -> set[str]:
@@ -112,7 +120,7 @@ OUTDOOR = re.compile(r"\b(outdoors?|outside)\b", I)
 FMT = "%Y-%m-%d %H:%M:%S"
 
 
-def weather_period(text: str, today: date, now: datetime) -> tuple[str, datetime, datetime] | None:
+def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | None:
     """(period name, start, end) for a simple highs/lows or chart request, else None. "chart the
     past week" counts too: the chart plus a highs/lows summary is the answer."""
     if NOT_SIMPLE.search(text):
@@ -129,10 +137,7 @@ def weather_period(text: str, today: date, now: datetime) -> tuple[str, datetime
     if len(found) != 1:  # no period, or several ("this week vs last week"): let the model decide
         return None
     name = found.pop()
-    if name == "last 24 hours":
-        return name, now - timedelta(hours=24), now
-    first, last = period_ranges(today)[name]
-    return name, datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
+    return name, *span(name, now)
 
 
 def weather_groups(text: str) -> str:
@@ -171,11 +176,8 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
     found = periods_named(text)
     if len(found) > 1:
         return None
-    if not found:
-        return "last 24 hours", now - timedelta(hours=24), now
-    name = found.pop()
-    first, last = period_ranges(now.date())[name]
-    return name, datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
+    name = found.pop() if found else "last 24 hours"
+    return name, *span(name, now)
 
 
 def air_metrics(text: str) -> list[str]:
@@ -195,9 +197,10 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
                                "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"air quality chart, {name}"
     if air and mentions_air(text) and not AIR_NOT_NOW.search(text):
         return "air_quality", {}, "air quality now"
-    if ecowitt and (period := weather_period(text, now.date(), now)):
+    if ecowitt and (period := weather_period(text, now)):
         name, start, end = period
-        chart = (end - start).days >= 2 or bool(GRAPH.search(text))  # 3+ days, or whenever a graph is asked for
+        # 3+ days, the rolling 24 hours, or whenever a graph is asked for
+        chart = (end - start).days >= 2 or name == "last 24 hours" or bool(GRAPH.search(text))
         return "weather_history", {"groups": weather_groups(text), "chart": chart, "start_date": start.strftime(FMT),
                                    "end_date": end.strftime(FMT)}, f"weather history, {name}"
     return None
