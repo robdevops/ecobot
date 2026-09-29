@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
-from ..charts import CHART_HINT, CHART_REQUESTS
+from ..charts import CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import summarise as summarise_direction
@@ -24,6 +24,7 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
+MAX_DIRECTION_POINTS = 4000     # dots on the wind direction chart
 MAX_REFINE_WINDOWS = 4          # overall records
 MAX_MONTH_REFINE_WINDOWS = 24
 # Periods up to this long are built from local-day-aligned data, so each month's low/high and its
@@ -239,6 +240,7 @@ class HistoryQuery:
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
+        self.direction_points: list = []                   # [local hour, degrees] of each counted reading, for the chart
 
     async def run(self) -> str:
         today = self.now.date()
@@ -324,10 +326,12 @@ class HistoryQuery:
             readings = {t: (r["value"][0], r["cycle"] == "5min") for t, r in pts.items()
                         if "value" in r and r["cycle"] in ("5min", "30min") and local_date(t, self.tz) not in fine_days}
             readings.update({t: (r["value"][0], True) for t, r in fine.get(key, {}).get("pts", {}).items() if "value" in r})
-            result = summarise_direction([(t, d, exact) for t, (d, exact) in sorted(readings.items())
-                                          if first <= f.local(t)], self.tz, self.span <= timedelta(days=31))
+            counted = [(t, d, exact) for t, (d, exact) in sorted(readings.items()) if first <= f.local(t)]
+            result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31))
             if not result:
                 continue
+            step = -(-len(counted) // MAX_DIRECTION_POINTS)
+            self.direction_points = [[(lt := f.local(t)).hour + lt.minute / 60, d] for t, d, _ in counted[::step]]
             if self.start < first:
                 result["note_period"] = f"covers only the last {DETAILED_DAYS} days of the period"
             self.direction[key] = result
@@ -447,11 +451,16 @@ class HistoryQuery:
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
         holder = CHART_REQUESTS.get()
         plottable = {k: v for k, v in series_out.items() if k in self.store}
-        if self.args.get("chart") and holder is not None and plottable:
-            spec = self._chart_spec(plottable)
+        if self.args.get("chart") and holder is not None:
+            spec = self._chart_spec(plottable) if plottable else None
             if spec:
                 holder.append(spec)
                 out["chart"] = CHART_HINT
+            if self.direction_points:
+                holder.append({"kind": "direction", "title": "Wind direction by hour of day",
+                               "subtitle": _period(self.start, self.end), "points": self.direction_points})
+                out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
+                                if spec else DIRECTION_CHART_HINT)
         if f.errors:
             out["missing"] = f.errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."

@@ -449,3 +449,30 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
         CHART_REQUESTS.reset(holder)
     assert "wind.wind_direction" in again["series"]
     await eco.close()
+
+
+async def test_a_direction_chart_is_a_scatter_by_hour_of_day(tmp_path, monkeypatch):
+    from lib.charts import render
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await Archive(eco).run_once()
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "wind", "chart": True, "start_date": f"{today - timedelta(days=6)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59"}
+    token = CHART_REQUESTS.set([])
+    try:
+        out = json.loads(await eco.tools[1].handler(args))
+        specs = CHART_REQUESTS.get()
+    finally:
+        CHART_REQUESTS.reset(token)
+    kinds = [s["kind"] for s in specs]
+    assert kinds == ["line", "direction"] and "wind direction" in out["chart"]     # gusts still get their line
+    points = specs[1]["points"]
+    assert 0 < len(points) <= 4000 and all(0 <= h < 24 and 0 <= d < 360 for h, d in points)
+    png = render(specs[1], eco.tz)
+    assert png[:4] == b"\x89PNG"
+    (tmp_path / "direction.png").write_bytes(png)
+    await eco.close()

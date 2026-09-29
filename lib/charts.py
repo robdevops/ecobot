@@ -6,6 +6,9 @@ and sends them with it. One line per reading type (e.g. outdoor and indoor):
   {"kind": "line", "title", "subtitle", "unit",
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]}}]}
 
+Wind direction has no line (it is circular), so it gets a scatter of each reading by hour of day:
+  {"kind": "direction", "title", "subtitle", "points": [[local hour 0-24, degrees]]}
+
 Rendered at exactly 1280x720, the size Telegram displays photos at, so nothing is
 rescaled and the chart stays sharp.
 """
@@ -33,6 +36,9 @@ CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=N
 CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
               "per series with its high and low (for weather, one line each for Outdoor and Indoor when both were "
               "fetched; for air quality, the peak). No other lists or breakdowns; don't mention or describe the chart.")
+
+DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction by hour of day, so keep it short: "
+                        "the period, then the most common direction and how steady it was. Don't mention or describe the chart.")
 
 # Palette (slate neutrals, warm outdoor, cool indoor)
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
@@ -205,6 +211,22 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
     _frame(fig, ax, spec, labels, colours)
 
 
+def _render_direction(fig, ax, spec: dict):
+    """Each reading as a dot: hour of day across, compass direction up. Days overlay each other, so a
+    sea breeze or an evening turn shows as a band."""
+    hours, degrees = (np.asarray(v, dtype=float) for v in zip(*spec["points"]))
+    colour = _colour("Outdoor", 0)
+    ax.scatter(hours, degrees, s=9, color=colour, alpha=0.3, linewidths=0, zorder=3)
+    _frame(fig, ax, {**spec, "unit": ""}, [spec.get("label", "Wind direction")], [colour])
+    ax.set_xlim(0, 24)
+    ax.set_ylim(-12, 372)
+    ax.set_yticks([0, 90, 180, 270, 360])
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: {0: "N", 90: "E", 180: "S", 270: "W", 360: "N"}.get(int(v), "")))
+    ax.set_xticks(range(0, 25, 3))
+    ax.xaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: f"{int(v) % 12 or 12}{'am' if int(v) % 24 < 12 else 'pm'}"))
+
+
 def _render_panels(spec: dict, tz: tzinfo):
     """Several metrics in one image: a small line chart each (own axis and units), in one
     column for up to 3, otherwise two columns. Rating zones and each panel's peak shown."""
@@ -276,7 +298,10 @@ def render(spec: dict, tz: tzinfo) -> bytes:
     fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI, facecolor=BG)
     ax = fig.add_axes(AX_RECT, facecolor=BG)
     try:
-        _render_line(fig, ax, spec, tz)
+        if spec["kind"] == "direction":
+            _render_direction(fig, ax, spec)
+        else:
+            _render_line(fig, ax, spec, tz)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
         return buf.getvalue()
