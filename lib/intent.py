@@ -39,8 +39,19 @@ FORECAST = re.compile(
     r"should i|chance of|likely|expect\w*|predict\w*|outlook)\b", I)
 
 
+# Combining readings across days or conditions ("the hottest day that also rained", "how many days ...")
+ANALYSIS = re.compile(
+    r"\b(also|both|same day|at the same time|coincid\w*|correlat\w*|combination|how many days|how often|"
+    r"(days?|times?|when) (when|that|where|with|it)|(that|where|when) (it )?(also|and)|"
+    r"(hottest|coldest|wettest|driest|windiest|warmest|coolest)\b.*\b(that|where|when|but|and)\b)", I)
+
+
 def reasoning_effort(text: str) -> str:
-    return EFFORT_FORECAST if FORECAST.search(text) else EFFORT_DESCRIBE if DESCRIBE.search(text) else EFFORT_DEFAULT
+    """Thinking is for judgement calls only: predictions, analysis across days or readings, and
+    describing a day. Lookups get none."""
+    if FORECAST.search(text) or ANALYSIS.search(text):
+        return EFFORT_FORECAST
+    return EFFORT_DESCRIBE if DESCRIBE.search(text) else EFFORT_DEFAULT
 
 
 def needs_data(text: str) -> bool:
