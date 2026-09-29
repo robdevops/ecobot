@@ -106,7 +106,9 @@ async def test_backfill_walks_back_to_the_start_of_the_sensors_data(tmp_path):
 async def test_backfill_stops_after_repeated_failures(tmp_path):
     air = AirGradient(config(tmp_path), transport=httpx.MockTransport(lambda r: httpx.Response(429)))
     fetched, failed, total = await air.backfill(pace=0)
-    assert (fetched, total) == (0, 0) and failed == source.BACKFILL_FAIL_STOP * source.MAX_REQUEST_DAYS
+    assert (fetched, total) == (0, 0)
+    # each failed request covers nine days; eight in the small hours, when yesterday is not finished yet
+    assert source.BACKFILL_FAIL_STOP * (source.MAX_REQUEST_DAYS - 1) <= failed <= source.BACKFILL_FAIL_STOP * source.MAX_REQUEST_DAYS
     await air.close()
 
 
@@ -115,7 +117,7 @@ async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monk
     air, calls = await make(tmp_path)
     out = json.loads(await air.handle({"start_date": (datetime.now(TZ) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S"),
                                        "end_date": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")}))
-    assert calls.count("past") <= 1 + 1 and "note_missing" in out and out["readings"] > 0  # one window, plus today
+    assert calls.count("past") <= 3 and "note_missing" in out and out["readings"] > 0  # one window, plus today (and yesterday, in the small hours)
     await air.close()
 
 

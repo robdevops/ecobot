@@ -43,8 +43,10 @@ async def ask(eco, **args):
 
 
 def dates(eco, first_ago, last_ago):
+    """(first, last) local days, this many days ago. Never later than the day before yesterday: in the
+    small hours yesterday is not settled yet, so it isn't cached (and isn't counted) until it is."""
     today = datetime.now(eco.tz).date()
-    return today - timedelta(days=first_ago), today - timedelta(days=last_ago)
+    return today - timedelta(days=first_ago), today - timedelta(days=max(last_ago, 2))
 
 
 async def test_the_hottest_day_that_also_rained(station):
@@ -81,7 +83,7 @@ async def test_ascending_order_and_the_limit(station):
     first, last = dates(eco, 30, 1)
     out = await ask(eco, start_date=str(first), end_date=str(last), sort_by="temp_min", order="asc", limit=2)
     assert len(out["days"]) == 2 and out["days"][0]["temp_min"] <= out["days"][1]["temp_min"]
-    assert out["matching_days"] == out["days_checked"] == 30      # no conditions: every day matches
+    assert out["matching_days"] == out["days_checked"] == (last - first).days + 1   # no conditions: every day matches
     many = await ask(eco, start_date=str(first), end_date=str(last), limit=500)
     assert len(many["days"]) == 20                                  # capped
 

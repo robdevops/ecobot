@@ -1,7 +1,7 @@
 """scripts/check_rain.py: reports honestly on healthy data, and catches rain totals that are averages."""
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,7 +25,8 @@ async def station(tmp_path, monkeypatch):
 
 
 def run(eco):
-    return check_rain.compare_rain(eco.cache, eco.mac, eco.tz, datetime.now(eco.tz).date(), 60)
+    # counts back from yesterday: in the small hours yesterday is not settled, so it isn't in the cache yet
+    return check_rain.compare_rain(eco.cache, eco.mac, eco.tz, datetime.now(eco.tz).date() - timedelta(days=1), 60)
 
 
 async def test_healthy_data_is_reported_as_matching(station, capsys):
