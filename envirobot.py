@@ -81,12 +81,7 @@ async def main():
                 kinds = []
                 if eco:
                     monitor = WeatherMonitor(eco, state, notify)
-                    try:
-                        await monitor.init()
-                        eco.warmer.after.append(monitor.check)  # checked on every fresh refresh
-                        kinds += ["rain", "rain likely", "temperature crossing"]
-                    except Exception:
-                        log.exception("Weather alerts couldn't start")
+                    kinds += ["rain", "rain likely", "temperature crossing"]
                 if air:
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
@@ -104,9 +99,15 @@ async def main():
                     started, parts = time.monotonic(), []
 
                     async def ecowitt_part():
+                        # One request at a time (Ecowitt rate-limits): warm first, so the alerts'
+                        # own look at the last 3 hours is answered from what was just fetched
                         parts.append(await eco.warm(True))
-                        for check in eco.warmer.after:  # alert checks on fresh readings straight away
-                            await check()
+                        try:
+                            await monitor.init()
+                            eco.warmer.after.append(monitor.check)  # checked on every fresh refresh
+                            await monitor.check()
+                        except Exception:
+                            log.exception("Weather alerts couldn't start")
                         added, failed = await archive.run_once()  # backfill days Ecowitt still has, oldest first
                         parts.append(f"5-min archive +{added} day(s)" + (f", {failed} failed" if failed else ""))
 

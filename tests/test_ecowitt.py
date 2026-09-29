@@ -34,7 +34,7 @@ async def test_busy_and_too_frequent_are_retried(monkeypatch, msg):
         slept.append(s)
     monkeypatch.setattr(ecowitt_api.asyncio, "sleep", fake_sleep)
     api = ecowitt_api.EcowittAPI("a", "b", httpx.MockTransport(lambda r: httpx.Response(200, json=replies.pop(0))))
-    assert len(await api.devices()) == 1 and slept == [1.5]
+    assert len(await api.devices()) == 1 and slept == [3]
     await api.close()
 
 

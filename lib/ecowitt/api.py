@@ -32,7 +32,7 @@ UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh
 UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rainfall_unitid": 12}
 
 BUSY_RETRIES = 3
-MIN_GAP_SECONDS = 1.1  # Ecowitt rejects more than about one request a second ("Operation too frequent")
+MIN_GAP_SECONDS = 2.0  # Ecowitt rejects requests that come too fast ("Operation too frequent")
 RETRY_ON = ("busy", "too frequent")
 FMT = "%Y-%m-%d %H:%M:%S"
 
@@ -72,7 +72,7 @@ class EcowittAPI:
                 except (httpx.HTTPError, ValueError) as e:
                     msg = str(e) or type(e).__name__
                 if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
-                    wait = 1.5 * 2 ** attempt
+                    wait = 3 * 2 ** attempt
                     log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
                     await asyncio.sleep(wait)
                     continue
