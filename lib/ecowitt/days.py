@@ -16,6 +16,7 @@ import operator
 from datetime import date, datetime, timedelta, tzinfo
 
 from ..timeutil import day_bounds, local_date, now_local
+from .calendar import PublicHolidays
 from .history import collect
 from .store import HistoryCache, subtract
 
@@ -45,6 +46,9 @@ PARAMETERS = {
                       "value": {"type": "number"}}, "required": ["field", "op", "value"]}},
         "sort_by": {"type": "string", "enum": list(FIELDS), "description": "Rank matching days by this. Default: the first condition's field."},
         "order": {"type": "string", "enum": ["desc", "asc"], "description": "desc = highest first (default), asc = lowest first."},
+        "only": {"type": "string", "enum": ["public_holiday", "weekend"],
+                 "description": "Only look at public holidays in the owner's local area (the bot knows them: never pick "
+                                "holiday dates yourself) or only Saturdays and Sundays. Days are then counted from those only."},
         "limit": {"type": "integer", "description": f"How many days to list (default 5, at most {MAX_LIMIT}). The total is always counted."},
     },
     "required": ["start_date", "end_date"],
@@ -53,7 +57,7 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
                "35°C\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
                "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest). Returns the total of matching "
-               "days and the top ones. Works from cached history, so any period up to the whole record is fast.")
+               "days and the top ones. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
 def load_cached(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: int, end: int) -> dict:
@@ -97,6 +101,14 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     sort_by = args.get("sort_by") or (where[0]["field"] if where else "temp_max")
     if sort_by not in FIELDS:
         return {"error": f"sort_by must be one of {', '.join(FIELDS)}"}
+    only = args.get("only")
+    if only not in (None, "public_holiday", "weekend"):
+        return {"error": "only must be public_holiday or weekend"}
+    calendar = PublicHolidays(tz)
+    if only == "public_holiday" and not calendar.available:
+        return {"error": f"Public holidays aren't available for this location ({calendar.label()}); say so."}
+    kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
+            "public_holiday": lambda d: calendar.name(d) is not None}[only]
     shown = list(dict.fromkeys([*ALWAYS_SHOWN, sort_by, *(c["field"] for c in where)]))
     limit = max(1, min(int(args.get("limit") or 5), MAX_LIMIT))
     groups = sorted({FIELDS[n][0] for n in shown})
@@ -127,12 +139,13 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
             if any(d in values[n] for n in shown):
                 source[d] = "daily"
 
-    checked = [d for d in days if any(d in values[n] for n in shown)]
+    checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
     holds = lambda d, conds: all(d in values[c["field"]] and OPS[c["op"]](values[c["field"]][d], c["value"]) for c in conds)
     rank = lambda ds: sorted((d for d in ds if d in values[sort_by]), key=lambda d: values[sort_by][d],
                              reverse=args.get("order", "desc") != "asc")
     label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
-    row = lambda d: {"date": label(d), **{n: round(values[n][d], 1) for n in shown if d in values[n]},
+    row = lambda d: {"date": label(d), **({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
+                     **{n: round(values[n][d], 1) for n in shown if d in values[n]},
                      "source": "daily" if source.get(d) == "daily" else "exact"}
     matches = [d for d in checked if holds(d, where)]
     ranked = rank(matches)

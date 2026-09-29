@@ -476,10 +476,11 @@ class HistoryQuery:
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     def _chart_spec(self, series_out: dict) -> dict | None:
-        """Line chart: one line per reading type asked about (temperature if present, else the
-        first), at the finest resolution fetched for the whole period (5- or 30-minute readings,
+        """Line chart: one line per group for the field asked about (chart_field; temperature by default,
+        else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
-        keys = [k for k in series_out if k.endswith(".temperature")]
+        wanted = str(self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
+        keys = [k for k in series_out if k.endswith("." + wanted)] or [k for k in series_out if k.endswith(".temperature")]
         if not keys:
             field = next(iter(series_out)).split(".", 1)[-1]
             keys = [k for k in series_out if k.endswith("." + field)]
@@ -504,7 +505,9 @@ class HistoryQuery:
         if not series:
             return None
         return {"kind": "line", "title": field.replace("_", " ").capitalize(),
-                "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}", "unit": unit, "series": series}
+                "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
+                            + ("  ·  record high and low marked" if any(x["records"] for x in series) else ""),
+                "unit": unit, "series": series}
 
     def _line(self, pts: dict) -> tuple[str, dict]:
         """(cycle, {ts: value}) for one series, at a single consistent resolution."""

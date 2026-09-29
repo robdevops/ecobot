@@ -50,6 +50,9 @@ HISTORY_PARAMS = {
         "end_date": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM:SS' local time (today is fine: up to now)."},
         "groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. Add 'rainfall', "
                                                     "'wind' or 'pressure' only if needed. Plain group names, not dotted fields."},
+        "chart_field": {"type": "string", "description": "What the chart should plot when the question is about something other "
+                                                         "than temperature: the field name, e.g. 'humidity', 'pressure' or 'wind_gust'. "
+                                                         "Omit for temperature."},
         "chart": {"type": "boolean", "description": "Set true to send a chart with the answer: for trends over several "
                                                     "days or longer, or when a graph/chart is asked for."},
         "include_derived": {"type": "array", "items": {"type": "string", "enum": ["feels_like", "app_temp", "dew_point", "vpd"]},

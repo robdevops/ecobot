@@ -191,3 +191,31 @@ async def test_a_tie_is_not_reported_as_a_hotter_day(station):
                     sort_by="temp_max", limit=1)
     top = out["days"][0]["temp_max"]
     assert all(r["temp_max"] > top for r in out.get("trace_rain_days", []))   # strictly hotter, never equal
+
+
+async def test_public_holidays_are_the_local_ones_not_the_models_guess(station):
+    import holidays
+    eco, _ = station
+    out = await ask(eco, start_date="2025-11-01", end_date="2026-02-28", only="public_holiday", sort_by="temp_max", limit=20)
+    vic = holidays.country_holidays("AU", subdiv="VIC")
+    expected = {d for d in (datetime(2025, 11, 1).date() + timedelta(days=k) for k in range(120)) if d in vic}
+    assert out["days_checked"] == out["matching_days"] == len(expected) and len(expected) == 5   # Cup Day, Christmas, Boxing Day, New Year, Australia Day
+    assert {r["date"] for r in out["days"]} == {label(d) for d in expected}
+    names = {r["holiday"] for r in out["days"]}
+    assert {"Melbourne Cup Day", "Christmas Day", "Boxing Day", "New Year's Day", "Australia Day"} <= names
+    temps = [r["temp_max"] for r in out["days"]]
+    assert temps == sorted(temps, reverse=True)
+
+
+async def test_weekends_and_unknown_places(station):
+    from zoneinfo import ZoneInfo
+
+    from lib.ecowitt import days
+    eco, _ = station
+    out = await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="weekend", limit=10)   # two weekends
+    assert out["days_checked"] == 4 and all(r["date"].startswith(("Sat", "Sun")) for r in out["days"])
+    assert "error" in await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="bank_holiday")
+    elsewhere = days.find_days(eco.cache, eco.mac, ZoneInfo("Europe/Paris"),
+                               {"start_date": "2026-08-03", "end_date": "2026-08-16", "only": "public_holiday"},
+                               datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None))
+    assert "aren't available" in elsewhere["error"]      # says so instead of guessing

@@ -508,3 +508,23 @@ async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model
             CHART_ASKED.reset(asked_token)
             CHART_REQUESTS.reset(holder)
     await eco.close()
+
+
+async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    base = {"groups": "outdoor", "start_date": f"{today - timedelta(days=8)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59"}
+    async def chart_of(**extra):
+        token = CHART_REQUESTS.set([])
+        try:
+            await eco.tools[1].handler({**base, **extra})
+            return CHART_REQUESTS.get()[0]
+        finally:
+            CHART_REQUESTS.reset(token)
+    assert (await chart_of())["title"] == "Temperature"                       # the default
+    assert (await chart_of(chart_field="wind_gust", groups="wind"))["title"] == "Wind gust"
+    assert (await chart_of(chart_field="Nonsense"))["title"] == "Temperature"  # unknown: fall back, never fail
+    await eco.close()
