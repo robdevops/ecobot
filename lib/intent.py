@@ -69,22 +69,27 @@ def period_ranges(today: date) -> dict[str, tuple[date, date]]:
     }
 
 
-# Phrase -> period name. Order matters: longer / more specific phrases first.
+# Phrase -> period name. Numbered periods ("4 months", "24h", "last 7 days") are parsed separately.
 PERIOD_PHRASES = [
     # "the last year" / "in the last year" = rolling; bare "last year" = previous calendar year
     (r"(on record|all[- ]time|of all time|ever recorded|ever)", "on record"),
-    (r"(past|last) (12|twelve) months|(the )?past year|the last year|last 365 days|1 ?y(ear)?", "past year"),
-    (r"(past|last) (30|thirty) days|(the )?past month|the last month|1 ?(month|mo)|30 ?d(ays?)?", "past month"),
-    (r"(past|last) (7|seven) days|(the )?past week|the last week|this week|7 ?d(ays?)?|1 ?w(eek)?", "last 7 days"),
+    (r"(the )?past year|the last year", "past year"),
+    (r"(the )?past month|the last month", "past month"),
+    (r"(the )?past week|the last week|this week", "last 7 days"),
     (r"(?<!the )last week", "last week"),
     (r"this month", "this month"),
     (r"(?<!the )last month", "last month"),
     (r"this year", "this year"),
     (r"(?<!the )last year", "last year"),
-    (r"(last|past) 24 ?(h|hrs?|hours?)|24 ?(h|hrs?|hours?)|1 ?d(ay)?|(the )?(last|past) day", "last 24 hours"),
+    (r"(the )?(last|past) day", "last 24 hours"),
     (r"yesterday", "yesterday"),
     (r"today|so far today", "today"),
 ]
+NUMBER_WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+NUMBERED_PERIOD = re.compile(
+    r"(?<![\d.])(\d+|" + "|".join(list(NUMBER_WORDS)[1:]) + r") ?(hours?|hrs?|h|days?|d|weeks?|w|months?|mo|years?|y)\b(?! ago)", I)
+# Any of these left unrecognised means the question names a period we can't read: let the model decide
+TIME_WORDS = re.compile(r"\b(hours?|days?|weeks?|months?|years?|quarter|fortnight|decade|since|between|until|ago|ytd)\b", I)
 
 
 def span(name: str, now: datetime) -> tuple[datetime, datetime]:
@@ -95,8 +100,32 @@ def span(name: str, now: datetime) -> tuple[datetime, datetime]:
     return datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
 
 
-def periods_named(text: str) -> set[str]:
-    return {name for phrase, name in PERIOD_PHRASES if re.search(rf"\b({phrase})\b", text, I)}
+def numbered_span(count: str, unit: str, now: datetime) -> tuple[str, datetime, datetime] | None:
+    """"4 months", "24h", "2 weeks": a rolling period ending now. One day means the last 24 hours;
+    longer ones cover whole days up to today (a month is 30 days, a year 365, as in the named periods)."""
+    n = int(count) if count.isdigit() else NUMBER_WORDS[count.lower()]
+    u = unit.lower()
+    if n == 0:
+        return None
+    if u[0] == "h" or (u[0] == "d" and n == 1):
+        hours = n if u[0] == "h" else 24
+        return f"last {hours} hours", now - timedelta(hours=hours), now
+    days = n if u[0] == "d" else 7 * n if u[0] == "w" else 365 * n if u[0] == "y" else round(n * 365 / 12)
+    start = datetime.combine(now.date() - timedelta(days=days - 1), datetime.min.time())
+    label = {"d": "days", "w": "weeks", "y": "years", "m": "months"}[u[0]]
+    return f"last {n} {label}", start, datetime.combine(now.date(), datetime.max.time()).replace(microsecond=0)
+
+
+def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
+    """Every distinct period the text names, as (name, start, end)."""
+    found: dict = {}
+    for phrase, name in PERIOD_PHRASES:
+        if re.search(rf"\b({phrase})\b", text, I):
+            found.setdefault(span(name, now), name)
+    for m in NUMBERED_PERIOD.finditer(text):
+        if numbered := numbered_span(m.group(1), m.group(2), now):
+            found.setdefault(numbered[1:], numbered[0])
+    return [(name, *window) for window, name in found.items()]
 
 
 # ---------- weather fast path ----------
@@ -125,19 +154,16 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     past week" counts too: the chart plus a highs/lows summary is the answer."""
     if NOT_SIMPLE.search(text):
         return None
-    found = periods_named(text)
-    if not found and (bare := BARE_PERIOD.search(text)):
-        found = {BARE_PERIODS[bare.group(1).lower()]}  # "weather week": as if "this week"
+    spans = spans_in(text, now)
+    if not spans and (bare := BARE_PERIOD.search(text)):  # "weather week": as if "this week"
+        spans = [(BARE_PERIODS[bare.group(1).lower()], *span(BARE_PERIODS[bare.group(1).lower()], now))]
     # "weather <period>" is a summary request too, but "weather today" also wants current conditions
-    named_weather = bool(WEATHER_WORD.search(text)) and found not in (set(), {"today"})
+    named_weather = bool(WEATHER_WORD.search(text)) and bool(spans) and {n for n, _, _ in spans} != {"today"}
     if not (EXTREMES.search(text) or GRAPH.search(text) or named_weather):
         return None
-    if not found and GRAPH.search(text) and WEATHER_SUBJECT.search(text):
-        found = {"last 7 days"}  # "chart weather": a week is the natural default
-    if len(found) != 1:  # no period, or several ("this week vs last week"): let the model decide
-        return None
-    name = found.pop()
-    return name, *span(name, now)
+    if not spans and GRAPH.search(text) and WEATHER_SUBJECT.search(text) and not TIME_WORDS.search(text):
+        spans = [("last 7 days", *span("last 7 days", now))]  # "chart weather": a week is the natural default
+    return spans[0] if len(spans) == 1 else None  # none, or several ("this week vs last week"): the model decides
 
 
 def weather_groups(text: str) -> str:
@@ -174,11 +200,10 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
     24 hours."""
     if not mentions_air(text) or AIR_CHART_NOT.search(text):
         return None
-    found = periods_named(text)
-    if not (found or GRAPH.search(text)) or len(found) > 1:  # a period alone ("aq 1d") is a chart request too
-        return None
-    name = found.pop() if found else "last 24 hours"
-    return name, *span(name, now)
+    spans = spans_in(text, now)
+    if not spans and GRAPH.search(text) and not TIME_WORDS.search(text):
+        spans = [("last 24 hours", *numbered_span("24", "h", now)[1:])]
+    return spans[0] if len(spans) == 1 else None
 
 
 def air_metrics(text: str) -> list[str]:
@@ -200,8 +225,8 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
         return "air_quality", {}, "air quality now"
     if ecowitt and (period := weather_period(text, now)):
         name, start, end = period
-        # 3+ days, the rolling 24 hours, or whenever a graph is asked for
-        chart = (end - start).days >= 2 or name == "last 24 hours" or bool(GRAPH.search(text))
+        # 3+ days, an hours-long window, or whenever a graph is asked for
+        chart = (end - start).days >= 2 or name.endswith("hours") or bool(GRAPH.search(text))
         return "weather_history", {"groups": weather_groups(text), "chart": chart, "start_date": start.strftime(FMT),
                                    "end_date": end.strftime(FMT)}, f"weather history, {name}"
     return None

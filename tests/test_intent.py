@@ -103,3 +103,24 @@ def test_more_ways_to_name_a_period_for_weather():
     assert call("weather 1 month")[1]["start_date"] == "2026-08-31 00:00:00"
     assert call("weather 1y")[1]["start_date"] == "2025-09-30 00:00:00"
     assert call("weather 7d")[1]["start_date"] == "2026-09-23 00:00:00"
+
+
+def test_numbered_periods_are_read_not_guessed():
+    text = "use 30 minute day to plot 4 months of weather"   # was answered with the last 7 days
+    name, args, label = call(text)
+    assert name == "weather_history" and args["chart"] and label.endswith("last 4 months")
+    assert args["start_date"] == "2026-05-31 00:00:00" and args["end_date"] == "2026-09-29 23:59:59"
+    assert call("plot weather for four months")[1]["start_date"] == "2026-05-31 00:00:00"
+    assert call("weather 2 weeks")[1]["start_date"] == "2026-09-16 00:00:00"
+    assert call("weather 12h")[1]["start_date"] == "2026-09-29 02:05:00" and call("weather 12h")[1]["chart"]
+    assert call("chart the temperature over 3 days")[1]["start_date"] == "2026-09-27 00:00:00"
+    assert call("aq 3 days")[1]["start_date"] == "2026-09-27 00:00:00"
+
+
+def test_a_period_we_cant_read_goes_to_the_model_not_to_a_default():
+    for text in ("plot the weather over the last few months", "chart weather since march", "plot temperature this decade",
+                 "graph the weather 3 days ago", "chart weather 3 months vs 6 months"):
+        assert call(text) is None, text
+    assert call("chart weather")[1]["start_date"] == "2026-09-23 00:00:00"   # nothing period-like: a week
+    assert call("chart the air quality")[1]["start_date"] == "2026-09-28 14:05:00"
+    assert call("chart the air quality over the last few days") is None
