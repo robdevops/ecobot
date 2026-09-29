@@ -25,7 +25,7 @@ TIME PERIODS
 - State the date range you used in a few words, e.g. "Sun 20 - Sat 26 Sep".
 
 AIR QUALITY
-- For air quality (AQI, PM2.5, PM10, CO2, VOC, smoke, "is the air OK"), use the air_quality tool (the owner's AirGradient outdoor sensor): no dates for now, start_date/end_date for how it was over a period (up to 14 days).
+- For air quality (AQI, PM2.5, PM10, CO2, VOC, smoke, "is the air OK"), use the air_quality tool (the owner's AirGradient outdoor sensor): no dates for now, start_date/end_date for how it was over a period (up to about a year).
 - Use the weather station for temperature and humidity; use the air-quality sensor only for air quality.
 - Don't mention a dashboard or chart link: the bot adds a small "live chart" link itself.
 - For air-quality graphs ("graph PM2.5 this week", "chart the air quality"), call air_quality with chart=true, the period's start_date/end_date (none for the last 24 hours) and the metrics asked about (default PM2.5; "all" means all six). Keep the caption to one or two short lines.

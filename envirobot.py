@@ -21,7 +21,7 @@ from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.llm import Agent
 from lib.tools import Tools
-from lib.warm import REFRESH_SECONDS, every
+from lib.warm import REFRESH_SECONDS, every, safely
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -102,8 +102,6 @@ async def main():
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
                 log.info("Keeping warm every %ds: %s", REFRESH_SECONDS, " + ".join(s.name for s in sources))
-                if archive:
-                    tasks.append(asyncio.create_task(archive.loop()))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""
@@ -119,11 +117,19 @@ async def main():
                             await monitor.check()
                         except Exception:
                             log.exception("Weather alerts couldn't start")
-                        added, failed = await archive.run_once()  # backfill days Ecowitt still has, oldest first
-                        parts.append(f"5-min archive +{added} day(s)" + (f", {failed} failed" if failed else ""))
+                        # The full history is copied into the cache in the background (a few minutes
+                        # the first time), so questions rarely need Ecowitt inline
+                        tasks.append(asyncio.create_task(archive.loop()))
 
                     async def air_part():
                         parts.append(await air.warm(True))
+                        tasks.append(asyncio.create_task(safely(air_backfill)))
+
+                    async def air_backfill():
+                        started = time.monotonic()
+                        fetched, failed, total = await air.backfill()
+                        log.info("AirGradient archive: %d day(s) cached, %d failed, %d day(s) held, %.0fs",
+                                 fetched, failed, total, time.monotonic() - started)
 
                     try:
                         await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))

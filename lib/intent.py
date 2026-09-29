@@ -73,9 +73,9 @@ def period_ranges(today: date) -> dict[str, tuple[date, date]]:
 PERIOD_PHRASES = [
     # "the last year" / "in the last year" = rolling; bare "last year" = previous calendar year
     (r"(on record|all[- ]time|of all time|ever recorded|ever)", "on record"),
-    (r"(past|last) (12|twelve) months|(the )?past year|the last year|last 365 days", "past year"),
-    (r"(past|last) (30|thirty) days|(the )?past month|the last month", "past month"),
-    (r"(past|last) (7|seven) days|(the )?past week|the last week|this week", "last 7 days"),
+    (r"(past|last) (12|twelve) months|(the )?past year|the last year|last 365 days|1 ?y(ear)?", "past year"),
+    (r"(past|last) (30|thirty) days|(the )?past month|the last month|1 ?(month|mo)|30 ?d(ays?)?", "past month"),
+    (r"(past|last) (7|seven) days|(the )?past week|the last week|this week|7 ?d(ays?)?|1 ?w(eek)?", "last 7 days"),
     (r"(?<!the )last week", "last week"),
     (r"this month", "this month"),
     (r"(?<!the )last month", "last month"),
@@ -169,12 +169,13 @@ def mentions_air(text: str) -> bool:
 
 
 def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | None:
-    """(period name, start, end) for a plain air-quality chart request, else None. No period
-    named: the last 24 hours. Longer than 14 days: the tool trims it and says so."""
-    if not mentions_air(text) or not GRAPH.search(text) or AIR_CHART_NOT.search(text):
+    """(period name, start, end) for a plain air-quality chart request, else None. Any air question
+    with a period ("aq 1d", "air quality this week") is a chart; a graph word alone means the last
+    24 hours."""
+    if not mentions_air(text) or AIR_CHART_NOT.search(text):
         return None
     found = periods_named(text)
-    if len(found) > 1:
+    if not (found or GRAPH.search(text)) or len(found) > 1:  # a period alone ("aq 1d") is a chart request too
         return None
     name = found.pop() if found else "last 24 hours"
     return name, *span(name, now)

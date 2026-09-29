@@ -17,7 +17,7 @@ def config(tmp_path, **over) -> Config:
     base = dict(telegram_token="1:x", xai_api_key="k", xai_base_url="http://x", xai_model="m", tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                cache_path=tmp_path / "cache.sqlite")
+                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite")
     return Config(**{**base, **over})
 
 
@@ -63,7 +63,7 @@ class FakeEcowitt:
         for group in p["call_back"].split(","):
             fields: dict = {}
             for ts in range(first, end + 1, step):
-                samples = [temp(t) for t in range(ts, ts + step, 300)]
+                samples = [temp(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
                 fields.setdefault("temperature", {"unit": "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
                 if p["cycle_type"] != "5min":
                     for name, val in (("temperature_low", min(samples)), ("temperature_high", max(samples))):
@@ -83,7 +83,8 @@ def air_row(ts: datetime, pm25: float = 5.0, pm10: float = 8.0) -> dict:
             "tvocIndex": 100, "noxIndex": 1}
 
 
-def air_transport(rows_per_day: int = 24) -> tuple[httpx.MockTransport, list]:
+def air_transport(rows_per_day: int = 24, oldest: datetime | None = None) -> tuple[httpx.MockTransport, list]:
+    """oldest: the sensor's first reading (nothing earlier exists)."""
     calls: list = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -95,7 +96,8 @@ def air_transport(rows_per_day: int = 24) -> tuple[httpx.MockTransport, list]:
         end = datetime.strptime(request.url.params["to"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         rows, t = [], start
         while t <= end:
-            rows.append(air_row(t, pm25=5 + (t.hour % 12)))
+            if oldest is None or t >= oldest:
+                rows.append(air_row(t, pm25=5 + (t.hour % 12)))
             t += timedelta(hours=24 / rows_per_day)
         return httpx.Response(200, json=rows)
 

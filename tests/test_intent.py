@@ -52,7 +52,7 @@ def test_air_now_and_air_chart():
     assert name == "air_quality" and args["chart"] and args["metrics"] == ["pm2_5", "co2"]
     assert args["start_date"] == "2026-09-23 00:00:00"
     assert call("chart the air quality")[1]["metrics"] == ["pm2_5"]
-    assert call("air quality yesterday") is None
+    assert call("air quality yesterday")[1]["start_date"] == "2026-09-28 00:00:00"
 
 
 def test_sources_are_optional():
@@ -85,3 +85,21 @@ def test_air_chart_over_the_last_24_hours_works():
     for text in ("chart pm2.5 last 24 hours", "graph the air quality 24h", "chart co2 1d"):
         name, args, _ = call(text)
         assert name == "air_quality" and args["start_date"] == "2026-09-28 14:05:00", text
+
+
+def test_aq_with_a_period_charts():
+    cases = {"aq 24h": "2026-09-28 14:05:00", "aq 1d": "2026-09-28 14:05:00", "aq 1 month": "2026-08-31 00:00:00",
+             "aq 1w": "2026-09-23 00:00:00", "air quality 1 year": "2025-09-30 00:00:00"}
+    for text, start in cases.items():
+        name, args, _ = call(text)
+        assert name == "air_quality" and args["chart"] and args["start_date"] == start, text
+    assert call("aq")[:2] == ("air_quality", {})          # no period: the current reading
+    assert call("aq now")[:2] == ("air_quality", {})
+    assert call("why was the aq bad yesterday") is None   # a question, not a chart request
+    assert call("aq this week vs last week") is None
+
+
+def test_more_ways_to_name_a_period_for_weather():
+    assert call("weather 1 month")[1]["start_date"] == "2026-08-31 00:00:00"
+    assert call("weather 1y")[1]["start_date"] == "2025-09-30 00:00:00"
+    assert call("weather 7d")[1]["start_date"] == "2026-09-23 00:00:00"

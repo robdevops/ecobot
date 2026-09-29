@@ -28,6 +28,7 @@ class Config:
     airgradient_dashboard: str
     state_path: Path = ROOT / "bot_state.json"
     cache_path: Path = ROOT / "ecowitt_cache.sqlite"
+    air_cache_path: Path = ROOT / "airgradient_cache.sqlite"
 
     @property
     def ecowitt(self) -> bool:

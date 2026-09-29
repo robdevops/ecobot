@@ -152,3 +152,52 @@ async def test_warm_then_question_needs_no_new_requests_for_the_tail(station):
     now = eco.now()
     await eco.fetcher(["outdoor"]).get("5min", datetime.combine(now.date(), datetime.min.time()), now)
     assert fake.calls == []  # recent tail came from memory
+
+
+# ---------- the whole history is cached ----------
+async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    fetched, failed = await Archive(eco).run_once()
+    assert failed == 0 and fetched > 100
+    assert {c["cycle_type"] for c in fake.calls if "cycle_type" in c} == {"5min", "30min", "4hour", "1day"}
+    fake.calls.clear()
+    today = datetime.now(eco.tz).date()
+    for days in (30, 200, 700):  # a month, most of a year, nearly two years
+        out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
+                                          "end_date": f"{today - timedelta(days=2)} 23:59:59"})
+        assert "Error" not in out[:20], out[:200]
+    assert fake.calls == []  # nothing was fetched while answering
+    await eco.close()
+
+
+async def test_archive_only_refetches_the_newest_ranges_next_time(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    arch = Archive(eco)
+    await arch.run_once()
+    fake.calls.clear()
+    await arch.run_once()
+    assert len(fake.calls) <= 4  # the unsettled tail of each cycle
+    await eco.close()
+
+
+async def test_archive_skips_time_before_the_station_existed(tmp_path, monkeypatch):
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    eco.created = datetime.now(eco.tz) - timedelta(days=20)
+    await Archive(eco).run_once()
+    starts = [c["start_date"][:10] for c in fake.calls if "start_date" in c]
+    assert min(starts) >= str((eco.created - timedelta(days=1)).date())
+    assert not any(c["cycle_type"] == "5min" and c["start_date"][:10] < str(eco.created.date() - timedelta(days=1))
+                   for c in fake.calls if "cycle_type" in c)
+    await eco.close()

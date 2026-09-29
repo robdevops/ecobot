@@ -32,7 +32,7 @@ lib/llm.py, prompt.py   tool-calling loop; system prompt
 lib/intent.py           reasoning effort, "needs data?", fast path
 lib/tools.py, warm.py   tool registry; keep-warm helper shared by both sources
 lib/ecowitt/            api, store (SQLite + memory), history, station, nightly archive
-lib/airgradient.py      AirGradient source
+lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air
 lib/charts.py           chart renderer (shared theme)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram
@@ -45,5 +45,8 @@ Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close
 - The model only reasons for predictions ("will it rain?") and "describe it" questions.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
   model is called once, at the end, just to word the answer.
-- Recent readings are prefetched when a question arrives and refreshed every 4 minutes; settled
-  history is cached in SQLite, and 5-minute data is archived nightly before Ecowitt drops it.
+- Recent readings are prefetched when a question arrives and refreshed every 4 minutes.
+- The whole history of both sensors is kept in SQLite (`ecowitt_cache.sqlite`,
+  `airgradient_cache.sqlite`): a background archive copies every Ecowitt cycle (5-minute, 30-minute,
+  4-hour, daily) before Ecowitt expires it, and backfills AirGradient day by day to where the sensor's
+  data starts. Questions only go to the APIs for data the cache is missing.
