@@ -62,11 +62,11 @@ DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: aver
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
 COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            # air-quality metrics (kept clear of the green/yellow/red rating zones)
-           "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
+           "PM2.5": "#7C3AED", "PM10": "#92400E", "PM1": "#14B8A6", "CO₂": "#475569",
            "VOC index": "#D97706", "NOx index": "#DB2777"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
-FALLBACK = ["#10B981", "#EC4899", "#0EA5E9"]
-RAIN = "#0EA5E9"
+FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
+RAIN = "#0EA5E9"                 # blue is the rain's alone: no reading is drawn in it
 WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
 W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
@@ -244,8 +244,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     panel = chart.panels[0]
     lines = panel.lines
     ax = fig.add_axes([*AX_RECT[:2], _axes_width(chart), AX_RECT[3]], facecolor=BG)
-    _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()]), top=0.26, bottom=0.26,  # room for pills
-                floor=None if any("low" in s.records for s in lines) else 0)
+    _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()]), top=0.26, bottom=0.26, floor=0)  # room for pills
     ybottom = ax.get_ylim()[0]
     x_min, x_max = min(t for s in lines for t in s.x), max(t for s in lines for t in s.x)
     dense = max(len(s.x) for s in lines) > 200
@@ -279,7 +278,8 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
                 ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
                           linewidth=1.2, alpha=0.8, zorder=3)
             ax.scatter([rx], [ry], s=18, color=colour, edgecolors="white", linewidths=1.2, zorder=6)
-            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above, edge(rx)])
+            y_lo, y_hi = ax.get_ylim()
+            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low at the floor: pill above
     # Records that land close together (e.g. outdoor and indoor on the same hot day) go side by side
     y_lo, y_hi = ax.get_ylim()
     for a in range(len(pills)):
@@ -350,6 +350,8 @@ def _mark_records(ax, line: Line, colour: str, tz: tzinfo, x0: float, x1: float)
             continue
         mx, my = mdates.date2num(to_dt(line.records[want][0])), float(line.records[want][1])
         frac = (mx - x0) / max(x1 - x0, 1e-9)
+        y_lo, y_hi = ax.get_ylim()
+        above = above or (my - y_lo) < 0.16 * (y_hi - y_lo)  # a low at the floor: label above
         ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
         ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, 5 if above else -5), textcoords="offset points",
                     ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
@@ -382,8 +384,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first)
     marked = len(p.lines) + len(p.right) == 1 and bool(p.lines[0].records)  # a lone line has its records labelled
     _pad_limits(ax, *_extent(p.lines, [float(r[1]) for r in p.lines[0].records.values()] if marked else []),
-                top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12,
-                floor=None if marked and "low" in p.lines[0].records else 0)
+                top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
     if p.right:
