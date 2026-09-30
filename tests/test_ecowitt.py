@@ -1028,7 +1028,7 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
         await eco.tools[1].handler({"groups": "outdoor,wind,pressure", "chart": True, "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         panel = turn.charts[0].panels[0]
-        assert panel.reading == reading and _colour(panel.lines[0].label, 0, panel.reading) == READING_COLOURS[reading]
+        assert panel.reading == reading and _colour(panel.lines[0], 0, panel.reading) == READING_COLOURS[reading]
     await eco.close()
 
 

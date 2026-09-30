@@ -30,13 +30,9 @@ from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: 
 
 from .specs import Chart, Compass, Line, Panel  # noqa: E402
 
-# Palette (slate neutrals, warm outdoor, cool indoor)
+# Palette. Slate neutrals for the furniture; one hue per reading (weather and air quality, kept clear of the green/yellow/red
+# rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
-COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
-           # air-quality metrics (kept clear of the green/yellow/red rating zones)
-           "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
-           "VOC index": "#D97706", "NOx index": "#DB2777"}
-# One hue per weather reading, outdoors; the same reading indoors is that hue lightened.
 READING_COLOURS = {
     "temperature": "#E5383B",   # crimson
     "feels_like": "#FF8C42",    # tangerine (beside the crimson, as blue sits beside violet)
@@ -45,12 +41,11 @@ READING_COLOURS = {
     "pressure": "#C04CE8",      # orchid
     "vpd": "#06B6D4",           # cyan
     "humidity": "#2747C9",      # deep blue
-    "rain": "#7CC3F7",          # light blue (also the rain bars, RAIN)
     "dew_point": "#13B8A6",     # teal
     "wind": "#64748B",          # slate grey
+    "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
-# The same reading indoors, in its complementary hue (opposite on the colour wheel, as a painter pairs them): red with
-# peacock teal, blue with amber, teal with apricot, tangerine with azure.
+# Indoors: red with peacock teal, blue with amber, teal with apricot, tangerine with azure.
 INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#F5A524", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
@@ -91,11 +86,12 @@ TITLE_WEIGHT = "semibold" if any(f.name == FONT and f.weight in (600, "semibold"
                                  for f in font_manager.fontManager.ttflist) else "bold"
 
 
-def _colour(label: str, i: int, reading: str = "") -> str:
-    """A reading's own hue (indoors, its complement); else the line's name, else the next fallback."""
+def _colour(line: Line, i: int, reading: str = "") -> str:
+    """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback."""
+    reading = line.reading or reading
     if base := READING_COLOURS.get(reading):
-        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if label == "Indoor" else base
-    return COLOURS.get(label, FALLBACK[i % len(FALLBACK)])
+        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if line.label == "Indoor" else base
+    return FALLBACK[i % len(FALLBACK)]
 
 
 def _mix(colour: str, share: float) -> str:
@@ -169,7 +165,7 @@ def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: i
     the line; `first` is the colour index of the first line. `polish`: a soft glow under the line and a dot on its end."""
     to_dt, drawn = _to_dt(tz), []
     for i, s in enumerate(lines, first):
-        colour = _colour(s.label, i, reading)
+        colour = _colour(s, i, reading)
         xs, ys = mdates.date2num([to_dt(t) for t in s.x]), np.asarray(s.y, dtype=float)
         if s.low:
             ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=band_z)
@@ -515,7 +511,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(p.lines) > 1:
         _end_labels(ax, drawn)
-    entries = [(_colour(s.label, first + i, p.reading), s.label) for i, s in enumerate(p.lines)]
+    entries = [(_colour(s, first + i, p.reading), s.label) for i, s in enumerate(p.lines)]
     if len(entries) + bool(p.bars) > 1:
         legend = entries + ([(RAIN, p.bars.label)] if p.bars else [])
         _legend_dots(ax, [c for c, _ in legend], [label for _, label in legend], loc="lower right",

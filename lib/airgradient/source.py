@@ -350,7 +350,7 @@ class AirGradient:
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}), plotted
+        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name), plotted
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
