@@ -21,6 +21,12 @@ def test_case_ids_are_unique_and_every_case_expects_something():
     assert len({c.id for c in CASES}) == len(CASES) and all(c.expect for c in CASES)
 
 
+def test_every_kind_of_question_metric_and_chart_has_a_saved_case():
+    covered = {tag for c in CASES for tag in c.covers}
+    assert covered <= set(evalkit.COVERAGE), f"unknown tags: {covered - set(evalkit.COVERAGE)}"
+    assert not set(evalkit.COVERAGE) - covered, f"no case for: {sorted(set(evalkit.COVERAGE) - covered)}"
+
+
 def test_the_call_checker_reports_what_is_wrong():
     expect = {"tools": ["weather_days"], "first_tool": "weather_days",
               "args": {"weather_days": {"start_date": "2026-09-05", "where": {"absent": True}, "sort_by": {"any_of": ["temp_max"]}}}}

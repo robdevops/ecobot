@@ -23,6 +23,24 @@ NOW = datetime(2026, 9, 29, 14, 5)  # a Tuesday: dates in the cases are relative
 CANNED = json.dumps({"note": "(evaluation run: no data is available; say so in one short sentence)"})
 
 
+# Every kind of question, metric and chart the bot handles needs at least one saved case (see Case.covers). One case
+# per kind is the aim: when a new kind is added, add it here and a case for it; a redundant case can go.
+COVERAGE = {
+    "q:current": "current conditions", "q:forecast": "will it rain / looking ahead", "q:summary": "a period's highs and lows",
+    "q:average": "averages", "q:record": "records (highest, fastest, all time)", "q:rank-days": "ranking or listing days",
+    "q:known-day": "a question about one named day", "q:describe-day": "describing a day or a hypothetical",
+    "q:correlation": "does one reading go with another", "q:follow-up": "a follow-up that keeps the subject",
+    "q:correction": "the person says the answer was wrong", "q:about-the-bot": "questions about the bot itself",
+    "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report",
+    "q:detail-level": "asking for a finer data resolution",
+    "m:temperature": "temperature", "m:humidity": "humidity", "m:pressure": "pressure", "m:wind-speed": "wind speed and gusts",
+    "m:wind-direction": "wind direction", "m:rain": "rain", "m:air-quality": "air quality",
+    "c:line": "a line chart of one reading", "c:daily-band": "a long chart: daily mean with its range",
+    "c:stack": "several readings stacked", "c:link": "pressure (or another reading) against rain",
+    "c:wind-compass": "wind speed with the compass", "c:air-single": "one air-quality metric", "c:air-panels": "all air-quality metrics",
+}
+
+
 @dataclass
 class Case:
     id: str
@@ -32,6 +50,7 @@ class Case:
     note: str = ""
     history: list = field(default_factory=list)   # earlier turns [{"role": "user"|"assistant", "content"}], for follow-ups
     xfail: str = ""                  # known gap: the case says what SHOULD happen; the reason it doesn't yet
+    covers: list = field(default_factory=list)    # which kinds of question, metric and chart this case stands for (COVERAGE)
 
 
 def load_cases(path: Path = CASES) -> list[Case]:

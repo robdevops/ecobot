@@ -20,7 +20,11 @@
      "average": true
     }
    }
-  }
+  },
+  "covers": [
+   "q:average",
+   "m:temperature"
+  ]
  },
  {
   "id": "3m-wind-chart",
@@ -37,7 +41,11 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "m:wind-direction",
+   "c:wind-compass"
+  ]
  },
  {
   "id": "temperature-and-rain",
@@ -61,7 +69,12 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "c:stack",
+   "m:temperature",
+   "m:rain"
+  ]
  },
  {
   "id": "humidity-chart",
@@ -72,7 +85,11 @@
    "tools": [
     "weather_history"
    ]
-  }
+  },
+  "covers": [
+   "m:humidity",
+   "c:line"
+  ]
  },
  {
   "id": "pressure-rain-correlation",
@@ -86,7 +103,12 @@
    "not_tools": [
     "weather_days"
    ]
-  }
+  },
+  "covers": [
+   "q:correlation",
+   "m:pressure",
+   "m:rain"
+  ]
  },
  {
   "id": "pressure-vs-rain-graph",
@@ -95,7 +117,12 @@
    "tools": [
     "weather_link"
    ]
-  }
+  },
+  "covers": [
+   "c:link",
+   "m:pressure",
+   "m:rain"
+  ]
  },
  {
   "id": "public-holidays",
@@ -115,7 +142,11 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:rank-days",
+   "m:temperature"
+  ]
  },
  {
   "id": "hottest-day-that-rained",
@@ -136,7 +167,12 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:rank-days",
+   "m:temperature",
+   "m:rain"
+  ]
  },
  {
   "id": "wind-direction-week",
@@ -152,7 +188,10 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "m:wind-direction"
+  ]
  },
  {
   "id": "will-it-rain",
@@ -162,7 +201,11 @@
    "tools": [
     "weather_now"
    ]
-  }
+  },
+  "covers": [
+   "q:forecast",
+   "m:rain"
+  ]
  },
  {
   "id": "air-now",
@@ -171,22 +214,11 @@
    "fast": {
     "tool": "air_quality"
    }
-  }
- },
- {
-  "id": "aq-week",
-  "ask": "aq week",
-  "expect": {
-   "fast": {
-    "tool": "air_quality",
-    "args": {
-     "chart": true,
-     "start_date": {
-      "regex": "^2026-09-23"
-     }
-    }
-   }
-  }
+  },
+  "covers": [
+   "q:current",
+   "m:air-quality"
+  ]
  },
  {
   "id": "weather-week",
@@ -201,17 +233,11 @@
      }
     }
    }
-  }
- },
- {
-  "id": "highest-wind-this-week",
-  "ask": "highest wind this week",
-  "expect": {
-   "fast": null,
-   "tools": [
-    "weather_history"
-   ]
-  }
+  },
+  "covers": [
+   "q:summary",
+   "m:temperature"
+  ]
  },
  {
   "id": "hello",
@@ -225,37 +251,10 @@
     "weather_link",
     "air_quality"
    ]
-  }
- },
- {
-  "id": "aq-1m",
-  "ask": "aq 1m",
-  "note": "period short forms on air quality",
-  "expect": {
-   "fast": {
-    "tool": "air_quality",
-    "args": {
-     "chart": true,
-     "start_date": {
-      "regex": "^2026-08-31"
-     }
-    }
-   }
-  }
- },
- {
-  "id": "aq-bare",
-  "ask": "aq",
-  "expect": {
-   "fast": {
-    "tool": "air_quality",
-    "args": {
-     "chart": {
-      "absent": true
-     }
-    }
-   }
-  }
+  },
+  "covers": [
+   "q:chat"
+  ]
  },
  {
   "id": "chart-pm10-week",
@@ -270,23 +269,11 @@
      ]
     }
    }
-  }
- },
- {
-  "id": "weather-1m",
-  "ask": "weather 1m",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "chart": true,
-     "groups": "outdoor,indoor",
-     "start_date": {
-      "regex": "^2026-08-31"
-     }
-    }
-   }
-  }
+  },
+  "covers": [
+   "c:air-single",
+   "m:air-quality"
+  ]
  },
  {
   "id": "weather-4-months",
@@ -302,7 +289,12 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:summary",
+   "m:temperature",
+   "c:daily-band"
+  ]
  },
  {
   "id": "chart-indoors",
@@ -315,53 +307,11 @@
      "chart": true
     }
    }
-  }
- },
- {
-  "id": "chart-outdoors-only",
-  "ask": "chart the past week outdoors only",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "groups": "outdoor",
-     "chart": true
-    }
-   }
-  }
- },
- {
-  "id": "temp-3m",
-  "ask": "temp 3m",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "chart": true,
-     "start_date": {
-      "regex": "^2026-07-01"
-     }
-    }
-   }
-  }
- },
- {
-  "id": "high-low-week",
-  "ask": "High and low for week",
-  "note": "a bare 'week' is this week",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "start_date": {
-      "regex": "^2026-09-23"
-     }
-    }
-   },
-   "hints": [
-    "\"week\" = last 7 days: 2026-09-23"
-   ]
-  }
+  },
+  "covers": [
+   "c:line",
+   "m:temperature"
+  ]
  },
  {
   "id": "pressure-week",
@@ -383,28 +333,11 @@
      }
     }
    }
-  }
- },
- {
-  "id": "humidity-3m",
-  "ask": "humidity 3m",
-  "expect": {
-   "fast": null,
-   "chart_field": "humidity",
-   "hints": [
-    "\"3m\" = last 3 months: 2026-07-01"
-   ],
-   "tools": [
-    "weather_history"
-   ],
-   "args": {
-    "weather_history": {
-     "start_date": {
-      "regex": "^2026-07-0[1-2]"
-     }
-    }
-   }
-  }
+  },
+  "covers": [
+   "m:pressure",
+   "c:line"
+  ]
  },
  {
   "id": "wind-3m",
@@ -428,57 +361,11 @@
      }
     }
    }
-  }
- },
- {
-  "id": "wind-direction-plot-90d",
-  "ask": "wind direction plot 90d",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "groups": "wind",
-     "chart": true,
-     "start_date": {
-      "regex": "^2026-07-02"
-     }
-    }
-   }
-  }
- },
- {
-  "id": "wind-direction-plot-1y",
-  "ask": "wind direction plot 1y",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "groups": "wind",
-     "chart": true,
-     "start_date": {
-      "regex": "^2025-09-30"
-     }
-    }
-   }
-  }
- },
- {
-  "id": "rain-and-pressure-one-graph",
-  "ask": "plot rain and pressure on the same graph for 90d",
-  "note": "one graph, a panel each",
-  "expect": {
-   "chart_fields": [
-    "rain",
-    "pressure"
-   ],
-   "hints": [
-    "\"90d\" = last 90 days"
-   ],
-   "any_tools": [
-    "weather_history",
-    "weather_link"
-   ]
-  }
+  },
+  "covers": [
+   "m:wind-speed",
+   "c:line"
+  ]
  },
  {
   "id": "hottest-weekends",
@@ -498,7 +385,10 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:rank-days"
+  ]
  },
  {
   "id": "windiest-day-on-record",
@@ -515,7 +405,12 @@
      "sort_by": "wind_gust"
     }
    }
-  }
+  },
+  "covers": [
+   "q:rank-days",
+   "q:record",
+   "m:wind-speed"
+  ]
  },
  {
   "id": "rainy-days-in-september",
@@ -532,22 +427,11 @@
      }
     }
    }
-  }
- },
- {
-  "id": "hottest-coldest-on-record",
-  "ask": "hottest and coldest on record",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "chart": true,
-     "start_date": {
-      "regex": "^2022-10"
-     }
-    }
-   }
-  }
+  },
+  "covers": [
+   "q:rank-days",
+   "m:rain"
+  ]
  },
  {
   "id": "a-day-in-2023",
@@ -571,7 +455,11 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:known-day",
+   "m:temperature"
+  ]
  },
  {
   "id": "cold-innit",
@@ -582,17 +470,11 @@
     "weather_now",
     "weather_history"
    ]
-  }
- },
- {
-  "id": "todays-weather",
-  "ask": "What was today's weather",
-  "expect": {
-   "any_tools": [
-    "weather_now",
-    "weather_history"
-   ]
-  }
+  },
+  "covers": [
+   "q:current",
+   "m:temperature"
+  ]
  },
  {
   "id": "weather-on-june-11",
@@ -608,7 +490,10 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:describe-day"
+  ]
  },
  {
   "id": "what-it-would-have-been-like",
@@ -625,23 +510,10 @@
      }
     }
    }
-  }
- },
- {
-  "id": "compliment",
-  "ask": "you're a good bot",
-  "expect": {
-   "needs_data": false,
-   "fast": null,
-   "effort": "none",
-   "not_tools": [
-    "weather_now",
-    "weather_history",
-    "weather_days",
-    "weather_link",
-    "air_quality"
-   ]
-  }
+  },
+  "covers": [
+   "q:describe-day"
+  ]
  },
  {
   "id": "add-an-alert",
@@ -656,7 +528,10 @@
     "weather_link",
     "air_quality"
    ]
-  }
+  },
+  "covers": [
+   "q:command"
+  ]
  },
  {
   "id": "metrics-bare",
@@ -671,67 +546,10 @@
     "weather_link",
     "air_quality"
    ]
-  }
- },
- {
-  "id": "list-our-metrics",
-  "ask": "list our metrics from both sources",
-  "note": "the model fetched current readings; a question about the bot is answered from what it knows",
-  "expect": {
-   "needs_data": false,
-   "not_tools": [
-    "weather_now",
-    "weather_history",
-    "weather_days",
-    "weather_link",
-    "air_quality"
-   ],
-   "about_the_bot": true
-  }
- },
- {
-  "id": "colder-in-2025",
-  "ask": "wasn't it colder on Tue 19 Aug 2025?",
-  "expect": {
-   "any_tools": [
-    "weather_days",
-    "weather_history"
-   ]
-  }
- },
- {
-  "id": "humidity-granular",
-  "ask": "plot humidity using granular data not averages",
-  "expect": {
-   "chart_field": "humidity",
-   "tools": [
-    "weather_history"
-   ],
-   "args": {
-    "weather_history": {
-     "average": {
-      "absent": true
-     }
-    }
-   }
-  }
- },
- {
-  "id": "coldest-days-jja",
-  "ask": "Coldest days in June, July, August 2026",
-  "expect": {
-   "tools": [
-    "weather_days"
-   ],
-   "args": {
-    "weather_days": {
-     "sort_by": "temp_min",
-     "order": "asc",
-     "start_date": "2026-06-01",
-     "end_date": "2026-08-31"
-    }
-   }
-  }
+  },
+  "covers": [
+   "q:about-the-bot"
+  ]
  },
  {
   "id": "most-rain-days-jja",
@@ -747,23 +565,11 @@
      "end_date": "2026-08-31"
     }
    }
-  }
- },
- {
-  "id": "wind-direction-year-chart",
-  "ask": "most common wind direction this year with chart",
-  "expect": {
-   "fast": {
-    "tool": "weather_history",
-    "args": {
-     "groups": "wind",
-     "chart": true,
-     "start_date": {
-      "regex": "^2026-01-01"
-     }
-    }
-   }
-  }
+  },
+  "covers": [
+   "q:rank-days",
+   "m:rain"
+  ]
  },
  {
   "id": "fastest-gust",
@@ -773,7 +579,11 @@
     "weather_history",
     "weather_days"
    ]
-  }
+  },
+  "covers": [
+   "q:record",
+   "m:wind-speed"
+  ]
  },
  {
   "id": "chart-all-airgradient-week",
@@ -785,7 +595,11 @@
      "chart": true
     }
    }
-  }
+  },
+  "covers": [
+   "c:air-panels",
+   "m:air-quality"
+  ]
  },
  {
   "id": "rain-on-a-named-day",
@@ -810,7 +624,11 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:known-day",
+   "m:rain"
+  ]
  },
  {
   "id": "pushback-cooler-this-week",
@@ -837,7 +655,10 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:correction"
+  ]
  },
  {
   "id": "all-time-follow-up",
@@ -866,55 +687,10 @@
      }
     }
    }
-  }
- },
- {
-  "id": "past-year-follow-up",
-  "ask": "in the past year?",
-  "history": [
-   {
-    "role": "user",
-    "content": "hottest and coldest on record"
-   },
-   {
-    "role": "assistant",
-    "content": "On record: hottest 47.4°C indoor, coldest -1.3°C outdoor"
-   }
-  ],
-  "expect": {
-   "hints": [],
-   "tools": [
-    "weather_history"
-   ],
-   "args": {
-    "weather_history": {
-     "start_date": {
-      "regex": "^2025-09-3|^2025-10"
-     }
-    }
-   }
-  }
- },
- {
-  "id": "what-about-the-hottest",
-  "ask": "gosh. what about the hottest?",
-  "history": [
-   {
-    "role": "user",
-    "content": "What was the coldest day on record"
-   },
-   {
-    "role": "assistant",
-    "content": "The coldest day on record was Sat 30 Aug 2025, at -1.3°C."
-   }
-  ],
-  "note": "a follow-up that changes one word",
-  "expect": {
-   "any_tools": [
-    "weather_days",
-    "weather_history"
-   ]
-  }
+  },
+  "covers": [
+   "q:follow-up"
+  ]
  },
  {
   "id": "typo-win-direction",
@@ -935,40 +711,10 @@
      }
     }
    }
-  }
- },
- {
-  "id": "typo-humidy",
-  "ask": "lowest and highest humidy",
-  "expect": {
-   "tools": [
-    "weather_history"
-   ],
-   "args": {
-    "weather_history": {
-     "groups": {
-      "regex": "outdoor"
-     }
-    }
-   }
-  }
- },
- {
-  "id": "average-all-time",
-  "ask": "average temperatures all time",
-  "expect": {
-   "hints": [
-    "\"all time\" = on record"
-   ],
-   "tools": [
-    "weather_history"
-   ],
-   "args": {
-    "weather_history": {
-     "average": true
-    }
-   }
-  }
+  },
+  "covers": [
+   "m:wind-direction"
+  ]
  },
  {
   "id": "hottest-coldest-this-month",
@@ -982,7 +728,11 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:summary",
+   "m:temperature"
+  ]
  },
  {
   "id": "high-low-all-time",
@@ -996,7 +746,11 @@
      }
     }
    }
-  }
+  },
+  "covers": [
+   "q:record",
+   "m:temperature"
+  ]
  },
  {
   "id": "use-five-minute-data",
@@ -1016,7 +770,12 @@
    "tools": [
     "weather_history"
    ]
-  }
+  },
+  "covers": [
+   "q:detail-level",
+   "q:record",
+   "m:temperature"
+  ]
  },
  {
   "id": "report",
@@ -1028,24 +787,19 @@
     "weather_now",
     "air_quality"
    ]
-  }
- },
- {
-  "id": "status",
-  "ask": "status",
-  "expect": {
-   "report": true,
-   "tools": [
-    "weather_now",
-    "air_quality"
-   ]
-  }
+  },
+  "covers": [
+   "q:report"
+  ]
  },
  {
   "id": "weather-report-for-a-day",
   "ask": "weather report for Tuesday",
   "expect": {
    "report": false
-  }
+  },
+  "covers": [
+   "q:summary"
+  ]
  }
 ]
