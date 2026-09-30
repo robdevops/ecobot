@@ -17,7 +17,7 @@ from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
-from ..timeutil import local_date, local_epoch, now_local, rolling_range, to_local
+from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
 from .link import rain_bars, rain_slots
@@ -25,7 +25,6 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
-RIBBON_HOURS = 6                # a chart of a few days shades the lowest to highest within this many hours of each point
 DAILY_CHART_DAYS = 7            # a chart longer than this is one point a day: the mean, with the day's low-to-high band
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
@@ -564,24 +563,24 @@ class HistoryQuery:
             got = self._series_entry(k)
             if got is None:
                 continue
-            entry, cycle, rolling = got
+            entry, cycle = got
             resolution = resolution or names.get(cycle, cycle)
             rec = self.overall.get(k, {})
             entry["records"] = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec}
             if "low" in entry:
-                ranged = "rolling" if rolling else True
+                ranged = True
             series.append(entry)
         if not series:
             return None
         return {"kind": "line", "title": field.replace("_", " ").capitalize(),
                 "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
-                            + (f", {RIBBON_HOURS}-hour range shaded" if ranged == "rolling" else ", range shaded" if ranged else "")
+                            + (", range shaded" if ranged else "")
                             + ("  ·  records marked" if any(x["records"] for x in series) else ""),
                 "unit": unit, "series": series}
 
-    def _series_entry(self, k: str, label: str | None = None) -> tuple[dict, str, bool] | None:
-        """One series as a chart line (x, y, and low/high where it has a range), its resolution and whether the range is
-        the rolling ribbon; None if there is too little to draw."""
+    def _series_entry(self, k: str, label: str | None = None) -> tuple[dict, str] | None:
+        """One series as a chart line (x, y, and low/high where each point has its own range) and its resolution;
+        None if there is too little to draw."""
         pts = {t: r for t, r in self.store[k]["pts"].items() if "value" in r}
         if not pts:
             return None
@@ -589,16 +588,11 @@ class HistoryQuery:
         xs = sorted(line)
         if len(xs) < 2:
             return None
-        rolling = cycle in ("5min", "30min") and self.span > timedelta(days=1)
-        if rolling:  # a few days of readings: the line stays detailed, with a ribbon of the range around each point
-            ts = sorted(pts)
-            lows, highs = rolling_range(xs, ts, [_low(pts[t]) for t in ts], [_high(pts[t]) for t in ts], RIBBON_HOURS * 1800)
-            band = dict(zip(xs, zip(lows, highs)))
         entry = {"label": label or k.split(".", 1)[0].replace("_", " ").capitalize(), "x": xs, "y": [line[t] for t in xs]}
-        if len(band) >= len(xs) // 2:  # bucketed data: the range of each bucket, behind its average
+        if cycle not in ("5min", "30min") and len(band) >= len(xs) // 2:  # an average over a long bucket: its low and high around it
             entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
             entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
-        return entry, cycle, rolling
+        return entry, cycle
 
     async def _rain_bars(self) -> dict:
         """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
