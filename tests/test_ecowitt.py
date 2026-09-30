@@ -467,7 +467,11 @@ async def test_a_direction_chart_is_a_heatmap_over_time(tmp_path, archived_cache
     assert all(len(col) == 16 for col in spec["columns"]) and sum(map(sum, spec["columns"])) > 0
     north = sum(col[0] for col in spec["columns"])
     assert north == sum(map(sum, spec["columns"]))                # the fake wind swings 350, 0, 10: all in the N cell
-    assert "share of readings from each direction, per hour" in spec["subtitle"]
+    assert "left: share of readings per hour" in spec["subtitle"] and "right: whole period, by speed" in spec["subtitle"]
+    rose = spec["rose"]
+    assert len(rose) == 16 and sum(map(sum, rose)) == sum(map(sum, spec["columns"]))   # the same readings as the heatmap
+    assert sum(r[0] for r in rose) == 0 and sum(r[1] for r in rose) > 0 and sum(r[2] for r in rose) > 0   # 10 km/h and 25 km/h
+    assert sum(rose[0]) == sum(map(sum, rose))                                            # all of it from the N wedge
     png = render(specs[1], eco.tz)
     assert png[:4] == b"\x89PNG"
     (tmp_path / "direction.png").write_bytes(png)
@@ -675,4 +679,25 @@ def test_the_direction_heatmap_renders_for_two_days_and_a_year():
         readings = [(int((first + timedelta(minutes=30 * i)).replace(tzinfo=TZ).timestamp()), (i * 37) % 360, True)
                     for i in range(days * 48)]
         spec = {"kind": "direction", "title": "Wind direction", "subtitle": "test", **grid(readings, TZ, first, last)}
+        assert render(spec, TZ)[:4] == b"\x89PNG"
+
+
+def test_the_rose_counts_by_wind_speed_and_wraps_at_north():
+    from lib.ecowitt.direction import rose
+    readings = [(1, 359.0, True, 5.0), (2, 1.0, True, 15.0), (3, 0.0, True, 40.0), (4, 180.0, True, None), (5, 90.0, True, 10.0)]
+    out = rose(readings)
+    assert out[0] == [1, 1, 1] and out[8] == [1, 0, 0] and out[4] == [0, 1, 0] and sum(map(sum, out)) == 5
+
+
+def test_the_heatmap_and_rose_render_with_and_without_speed():
+    from lib.charts import render
+    from lib.ecowitt.direction import grid, rose
+    from tests.fakes import TZ
+    first = datetime(2026, 1, 1)
+    readings = [(int((first + timedelta(minutes=30 * i)).replace(tzinfo=TZ).timestamp()), (i * 37) % 360, True) for i in range(96 * 4)]
+    base = {"kind": "direction", "title": "Wind direction", "subtitle": "test", **grid(readings, TZ, first, first + timedelta(days=4))}
+    with_speed = {**base, "speeds": True, "speed_steps": [10, 20],
+                  "rose": rose([(t, d, x, (t % 30)) for t, d, x in readings])}
+    without = {**base, "speeds": False, "rose": rose([(t, d, x, None) for t, d, x in readings])}
+    for spec in (with_speed, without, base):                       # a spec with no rose is still drawn (heatmap only)
         assert render(spec, TZ)[:4] == b"\x89PNG"

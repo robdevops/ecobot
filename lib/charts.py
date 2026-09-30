@@ -7,9 +7,10 @@ and sends them with it. One line per reading type (e.g. outdoor and indoor):
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
                "low": [float], "high": [float]}]}      (low/high optional: each point's range, drawn as a band)
 
-Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up):
+Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up) beside a
+wind rose of the whole period, stacked by wind speed:
   {"kind": "direction", "title", "subtitle", "start": epoch of the first column, "step": seconds per column,
-   "columns": [[16 counts, N first], ...]}
+   "columns": [[16 counts, N first], ...], "rose": [[light, middle, strong] x 16], "speeds": bool, "speed_steps": [10, 20]}
 
 Rendered at exactly 1280x720, the size Telegram displays photos at, so nothing is
 rescaled and the chart stays sharp.
@@ -116,17 +117,18 @@ def _pill(ax, x, y, text, colour, above: bool, ha: str = "center"):
                 bbox={"boxstyle": "round,pad=0.35,rounding_size=0.8", "fc": colour, "ec": "none"}, zorder=6)
 
 
-def _frame(fig, ax, spec: dict, labels: list[str], colours: list[str]):
-    """Title, subtitle, dot legend and axis styling shared by both chart kinds."""
+def _frame(fig, ax, spec: dict, labels: list[str], colours: list[str], legend: bool = True):
+    """Title, subtitle, dot legend and axis styling shared by the chart kinds."""
     unit = spec.get("unit", "")
     title = spec.get("title", "")
     if unit and _deg(unit) != "\u00b0":  # non-degree units go in the title; ticks stay plain numbers
         title = f"{title} ({unit})"
     fig.text(AX_RECT[0], 0.925, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
     fig.text(AX_RECT[0], 0.855, spec.get("subtitle", ""), fontsize=8.5, color=MUTED, va="center")
-    handles = [Line2D([], [], marker="o", linestyle="", markersize=6, color=c) for c in colours]
-    fig.legend(handles, labels, loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 0.925), ncol=len(labels),
-               frameon=False, fontsize=8.5, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1)
+    if legend:
+        handles = [Line2D([], [], marker="o", linestyle="", markersize=6, color=c) for c in colours]
+        fig.legend(handles, labels, loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 0.925), ncol=len(labels),
+                   frameon=False, fontsize=8.5, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1)
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(AXIS)
@@ -262,13 +264,45 @@ def _render_direction(fig, ax, spec: dict, tz: tzinfo):
     if keep.any():
         ax.scatter(centres[keep], np.nanargmax(np.nan_to_num(share[:, keep], nan=-1), axis=0), s=8, color=TEXT,
                    alpha=0.75, linewidths=0, zorder=4)
-    _frame(fig, ax, {**spec, "unit": ""}, [spec.get("label", "Wind direction")], [_colour("Outdoor", 0)])
+    _frame(fig, ax, {**spec, "unit": ""}, [], [], legend=False)
     ax.grid(False)
     ax.set_xlim(x0, x0 + n * width)
     ax.set_ylim(-0.5, 15.5)
     ax.set_yticks([0, 4, 8, 12])
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: {0: "N", 4: "E", 8: "S", 12: "W"}.get(int(round(v)), "")))
     _time_axis(ax, n * width)
+    if "rose" in spec:
+        ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
+        _render_rose(fig, spec)
+
+
+WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
+
+
+def _render_rose(fig, spec: dict):
+    """The whole period as a wind rose (N up, clockwise): each of the 16 wedges is the share of readings from that
+    way, stacked by wind speed. The heatmap beside it shows how that changed over time."""
+    counts = np.asarray(spec["rose"], dtype=float)                        # 16 compass points x 3 speed steps
+    ax = fig.add_axes([0.685, 0.12, 0.27, 0.62], projection="polar")
+    theta = np.deg2rad(np.arange(16) * 22.5)
+    percent = counts / max(counts.sum(), 1) * 100
+    bottom = np.zeros(16)
+    for i, colour in enumerate(WIND_STEPS):
+        ax.bar(theta, percent[:, i], width=np.deg2rad(20), bottom=bottom, color=colour, edgecolor=BG, linewidth=0.4)
+        bottom += percent[:, i]
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_xticks(np.deg2rad([0, 90, 180, 270]))
+    ax.set_xticklabels(["N", "E", "S", "W"], color=MUTED, fontsize=8)
+    ax.set_yticklabels([])
+    ax.grid(color=GRID, linewidth=0.6)
+    ax.spines["polar"].set_visible(False)
+    ax.set_facecolor(BG)
+    if spec.get("speeds"):
+        a, b = spec.get("speed_steps", (10, 20))
+        fig.legend([Line2D([], [], marker="s", linestyle="", markersize=6, color=c) for c in WIND_STEPS],
+                   [f"under {a}", f"{a}–{b}", f"{b}+ km/h"], loc="lower right", bbox_to_anchor=(0.985, 0.0), ncol=3,
+                   frameon=False, fontsize=7, labelcolor=MUTED, handletextpad=0.2, columnspacing=0.9)
 
 
 def _render_panels(spec: dict, tz: tzinfo):

@@ -19,7 +19,7 @@ from typing import NamedTuple
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
-from .direction import grid as direction_grid, summarise as summarise_direction
+from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
@@ -350,7 +350,9 @@ class HistoryQuery:
             result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31), len(calm))
             if not result:
                 continue
-            self.direction_grid = direction_grid(counted, self.tz, first, self.end)
+            self.direction_grid = {**direction_grid(counted, self.tz, first, self.end), "speed_steps": list(SPEED_STEPS),
+                                   "speeds": any(t in speeds for t, _, _ in counted),
+                                   "rose": direction_rose([(t, d, x, speeds.get(t)) for t, d, x in counted])}
             self.direction_period = (first, self.end)
             if self.start < first:
                 result["note_period"] = f"covers only the last {DIRECTION_DAYS} days of the period"
@@ -481,8 +483,10 @@ class HistoryQuery:
             if self.direction_grid:
                 unit = self.direction_grid["unit"]
                 holder.append({"kind": "direction", "title": "Wind direction", **self.direction_grid,
-                               "subtitle": f"{_period(*self.direction_period)}  ·  share of readings from each direction, "
-                                           f"per {unit}  ·  dots: most common"})
+                               "subtitle": f"{_period(*self.direction_period)}  ·  left: share of readings per {unit}  ·  "
+                                           "right: whole period, by speed" if self.direction_grid["speeds"] else
+                                           f"{_period(*self.direction_period)}  ·  left: share of readings per {unit}  ·  "
+                                           "right: whole period"})
                 out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
                                 if spec else DIRECTION_CHART_HINT)
         if f.errors:

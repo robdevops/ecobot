@@ -20,6 +20,7 @@ def point(degrees: float) -> str:
 # The heatmap's columns: the smallest time step that keeps a period to about this many columns
 BIN_STEPS = ((3600, "hour"), (6 * 3600, "6 hours"), (86400, "day"), (7 * 86400, "week"))
 MAX_COLUMNS = 130
+SPEED_STEPS = (10, 20)  # km/h: the rose's light, middle and strong wind (under 10, 10 to 20, 20 and over)
 
 
 def _share(n: int, total: int) -> str:
@@ -88,3 +89,13 @@ def grid(readings: list[tuple[int, float, bool]], tz: tzinfo, first: datetime, l
         if 0 <= k < len(columns):
             columns[k][sector(degrees)] += 1
     return {"step": step, "unit": unit, "start": local_epoch(origin, tz), "columns": columns}
+
+
+def rose(readings: list[tuple[int, float, bool, float | None]]) -> list[list[int]]:
+    """Counts for the wind rose: for each of the 16 compass points [light, middle, strong] by wind speed
+    (readings are (epoch, degrees, exact, km/h or None); a reading with no speed counts as light)."""
+    out = [[0, 0, 0] for _ in range(16)]
+    for _, degrees, _, speed in readings:
+        step = 0 if speed is None else sum(speed >= s for s in SPEED_STEPS)
+        out[sector(degrees)][step] += 1
+    return out

@@ -53,8 +53,9 @@ def direction(ts: int) -> float:
 
 @lru_cache(maxsize=None)  # pure and called for every sample of every request
 def wind_speed(ts: int) -> float:
-    """Calm from midnight to 6am local, 10 km/h otherwise."""
-    return 0.0 if datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ).hour < 6 else 10.0
+    """Calm from midnight to 6am local, 10 km/h to 6pm, then 25 km/h."""
+    hour = datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ).hour
+    return 0.0 if hour < 6 else 10.0 if hour < 18 else 25.0
 
 
 class FakeEcowitt:
