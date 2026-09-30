@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from lib.alerts import AirMonitor, AlertState, Notifier, WeatherMonitor, with_footer
-from lib.alerts import weather
+from lib.ecowitt import outlook
 from tests.fakes import TZ
 
 T0 = int(datetime(2026, 9, 29, 13, 0, tzinfo=TZ).timestamp())  # 1pm Melbourne, a settled day
@@ -66,11 +66,11 @@ async def test_a_dry_gap_shorter_than_30_minutes_does_not_flap(tmp_path):
 
 
 def test_the_status_outlook_says_raining_now_or_likely_soon_or_nothing():
-    assert weather.rain_outlook(rain(0, 0, 1), TZ, 145.0) == "raining now (1.2 mm/h)"
-    assert weather.rain_outlook(rain(0, 0, 0), TZ, 145.0) is None
-    likely = weather.rain_outlook(pressure_rows(4.0, 14), TZ, 145.0)
+    assert outlook.rain_outlook(rain(0, 0, 1), TZ, 145.0) == "raining now (1.2 mm/h)"
+    assert outlook.rain_outlook(rain(0, 0, 0), TZ, 145.0) is None
+    likely = outlook.rain_outlook(pressure_rows(4.0, 14), TZ, 145.0)
     assert likely.startswith("rain looks likely soon: pressure down") and "not an official forecast" in likely
-    assert weather.rain_outlook(pressure_rows(0.2, 14), TZ, 145.0) is None
+    assert outlook.rain_outlook(pressure_rows(0.2, 14), TZ, 145.0) is None
 
 
 def gusts(*values):
@@ -118,20 +118,20 @@ def pressure_rows(drop, hour_local, hum=93.0, dew_rise=0.0, temp=15.0):
 
 
 def test_daytime_fall_with_humid_air_predicts_rain():
-    out = weather.assess_rain(pressure_rows(3.2, 15), TZ, 145.0)
-    assert out and out.score >= weather.PREDICT_MIN_SCORE and not out.night
+    out = outlook.assess_rain(pressure_rows(3.2, 15), TZ, 145.0)
+    assert out and out.score >= outlook.PREDICT_MIN_SCORE and not out.night
 
 
 def test_the_overnight_pressure_dip_and_cooling_are_not_rain():
     # ~4am: pressure sags with the daily tide and the air sits near its dew point, as every night
     for drop in (0.5, 1.2, 1.6):
-        out = weather.assess_rain(pressure_rows(drop, 4), TZ, 145.0)
-        assert out is None or out.score < weather.PREDICT_MIN_SCORE, (drop, out)
+        out = outlook.assess_rain(pressure_rows(drop, 4), TZ, 145.0)
+        assert out is None or out.score < outlook.PREDICT_MIN_SCORE, (drop, out)
 
 
 def test_a_real_night_front_still_counts():
-    out = weather.assess_rain(pressure_rows(4.5, 3, dew_rise=2.5), TZ, 145.0)
-    assert out and out.night and out.score >= weather.PREDICT_MIN_SCORE
+    out = outlook.assess_rain(pressure_rows(4.5, 3, dew_rise=2.5), TZ, 145.0)
+    assert out and out.night and out.score >= outlook.PREDICT_MIN_SCORE
 
 
 async def test_rain_likely_alerts_at_most_every_6_hours(tmp_path):

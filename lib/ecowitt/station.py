@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..config import Config
 from ..timeutil import now_local
-from ..alerts.weather import rain_outlook
+from .outlook import rain_outlook
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .api import EcowittAPI, GROUPS, UNITS
