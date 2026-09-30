@@ -41,13 +41,14 @@ class Offline(httpx.AsyncBaseTransport):
 
 def questions(now: datetime) -> list[tuple[str, str, dict, dict]]:
     """(name, tool, arguments, what the person's words set on the Turn)."""
-    end = datetime.combine(now.date(), datetime.min.time()) - timedelta(seconds=1)  # the end of yesterday: today's tail would need the network
+    # The end of the last day the caches treat as final (a day is final an hour after it ends): a still-settling day would need the network
+    end = datetime.combine((now - timedelta(hours=25)).date(), datetime.min.time()) + timedelta(days=1) - timedelta(seconds=1)
 
     def back(days: float) -> dict:
         return {"start_date": (end - timedelta(days=days) + timedelta(seconds=1)).strftime(FMT), "end_date": end.strftime(FMT)}
 
-    def days(n: int) -> dict:  # whole days ending yesterday, for the tools that take dates
-        return {"start_date": (now - timedelta(days=n)).strftime("%Y-%m-%d"), "end_date": (now - timedelta(days=1)).strftime("%Y-%m-%d")}
+    def days(n: int) -> dict:  # n whole days ending on that last final day, for the tools that take dates
+        return {"start_date": (end.date() - timedelta(days=n - 1)).strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}
 
     eco = lambda name, tool, **a: (name, tool, a, {})
     return [

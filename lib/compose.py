@@ -263,7 +263,7 @@ class Composer:
                 highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
             line = driver_series(values, self.tz, first, last, label, lows, highs, keep_band=name == "wind")
             facts = {"series": name, **self._stats(values, unit)}
-            return (Panel(label, unit, [line]) if line else None), facts
+            return (Panel(label, unit, [line], reading=name) if line else None), facts
         if data is None:
             *data, more = await self.air_slots(name, first, last)
             notes.update(more)
@@ -281,7 +281,7 @@ class Composer:
         line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
         if line is None:
             return None, {}
-        return (Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name])),
+        return (Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]), reading=name),
                 {"series": name, **self._stats(values, CHART_UNITS[name])})
 
     @staticmethod

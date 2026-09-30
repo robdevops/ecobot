@@ -12,6 +12,8 @@ built, not when it is drawn."""
 from dataclasses import dataclass, field
 from datetime import date
 
+from .series import RAIN_WITH
+
 
 @dataclass
 class Line:
@@ -70,6 +72,7 @@ class Panel:
     bars: Bars | None = None                           # behind the lines if there are any (rain), else the panel itself
     shares: Shares | None = None
     zones: tuple[float, float] | None = None           # good and poor limits, shaded behind a single rated reading
+    reading: str = ""                                  # which reading this is ("humidity", "pressure" ...), for the rain rule
 
     def __post_init__(self):
         if not (self.lines or self.bars or self.shares):
@@ -111,10 +114,23 @@ class Chart:
             raise ValueError("a compass goes beside a single line panel")
 
 
+def period_text(a: date, b: date) -> str:
+    """'Tue 30 Sep 2026', 'Wed 24 – Tue 30 Sep 2026', 'Thu 27 Aug – Tue 30 Sep 2026'; the year goes on both dates when it differs."""
+    if a == b:
+        return f"{a:%a} {a.day} {a:%b %Y}"
+    if (a.year, a.month) == (b.year, b.month):
+        return f"{a:%a} {a.day} – {b:%a} {b.day} {b:%b %Y}"
+    if a.year == b.year:
+        return f"{a:%a} {a.day} {a:%b} – {b:%a} {b.day} {b:%b %Y}"
+    return f"{a:%a} {a.day} {a:%b %Y} – {b:%a} {b.day} {b:%b %Y}"
+
+
 def rain_behind(panels: list[Panel]) -> list[Panel]:
-    """A rain panel goes behind the first line panel (the first bars-only panel is drawn there, on its own right-hand
-    axis), so the rain lines up with the reading. With no line panel it stays a panel of its own."""
-    line_panel = next((p for p in panels if p.lines and not p.bars and not p.right), None)
+    """A rain panel goes behind a line panel (the first bars-only panel is drawn there, on its own right-hand axis), so the
+    rain lines up with the reading: the one series.RAIN_WITH names first, else the first line. With no line panel it
+    stays a panel of its own."""
+    lines = [p for p in panels if p.lines and not p.bars and not p.right]
+    line_panel = next((p for name in RAIN_WITH for p in lines if p.reading == name), lines[0] if lines else None)
     bars_panel = next((p for p in panels if p.bars and not p.lines), None)
     if not (line_panel and bars_panel):
         return panels
@@ -126,5 +142,5 @@ def stack(panels: list[Panel], first: date, last: date) -> Chart:
     """A chart of these panels for the days first to last, rain behind the first line; what a bar covers goes into the
     subtitle."""
     per = next((b.per for p in panels for b in (p.bars, p.shares) if b and b.per), "")
-    text = f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}"
-    return Chart(" and ".join(p.label for p in panels), text + (f"  ·  per {per}" if per else ""), rain_behind(panels))
+    return Chart(" and ".join(p.label for p in panels), period_text(first, last) + (f"  ·  per {per}" if per else ""),
+                 rain_behind(panels))

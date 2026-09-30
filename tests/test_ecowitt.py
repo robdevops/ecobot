@@ -452,7 +452,7 @@ async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path
     spec = specs[0]
     line = spec.panels[0].lines[0]
     assert spec.title == "Wind" and "shaded up to the gusts" in spec.subtitle and line.low
-    assert "compass: wind direction" in spec.subtitle and "records marked" not in spec.subtitle and spec.compass.speeds is True
+    assert "records marked" not in spec.subtitle and spec.compass.speeds is True
     rose = spec.compass.rose
     assert len(rose) == 16 and sum(rose[0]) == sum(map(sum, rose)) > 0                  # the fake wind swings 350, 0, 10: all in N
     assert sum(r[0] for r in rose) == 0 and sum(r[1] for r in rose) > 0 and sum(r[2] for r in rose) > 0   # 10 km/h and 25 km/h

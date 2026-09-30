@@ -50,6 +50,39 @@ def test_rain_goes_behind_the_first_line_and_stays_a_panel_when_there_is_no_line
     assert [p.label for p in rain_behind([Panel("Rain", "mm", bars=bars()), Panel("Wind", "km/h", [line("W")])])] == ["Wind"]
 
 
+def test_rain_goes_behind_humidity_or_pressure_before_the_first_line_and_the_order_is_kept():
+    panels = lambda *readings: [Panel(r.capitalize(), "", [line(r)], reading=r) for r in readings] + [Panel("Rain", "mm", bars=bars())]
+    got = rain_behind(panels("temperature", "humidity", "wind"))
+    assert [p.label for p in got] == ["Temperature", "Humidity", "Wind"] and got[1].bars and not got[0].bars   # order as asked
+    got = rain_behind(panels("temperature", "pressure", "humidity"))                                            # humidity outranks pressure
+    assert got[2].bars and not got[1].bars
+    got = rain_behind(panels("temperature", "pressure"))
+    assert got[1].bars
+    got = rain_behind(panels("temperature", "wind"))                                                            # neither: the first line
+    assert got[0].bars
+    assert rain_behind([Panel("Only", "", [line("o")], reading="pm2_5"), Panel("Rain", "mm", bars=bars())])[0].bars
+
+
+def test_a_period_shows_the_year_on_both_dates_when_it_spans_years():
+    from lib.specs import period_text
+    assert period_text(date(2026, 9, 30), date(2026, 9, 30)) == "Wed 30 Sep 2026"
+    assert period_text(date(2026, 9, 24), date(2026, 9, 30)) == "Thu 24 – Wed 30 Sep 2026"
+    assert period_text(date(2026, 8, 27), date(2026, 9, 30)) == "Thu 27 Aug – Wed 30 Sep 2026"
+    assert period_text(date(2025, 8, 27), date(2026, 9, 30)) == "Wed 27 Aug 2025 – Wed 30 Sep 2026"
+
+
+def test_a_reading_that_cannot_be_negative_is_not_drawn_below_zero_and_temperature_may_be():
+    import matplotlib
+    from lib import charts
+    ax = matplotlib.pyplot.figure().add_axes([0, 0, 1, 1])
+    charts._pad_limits(ax, 0.0, 8.0, floor=0)
+    assert ax.get_ylim()[0] == 0
+    charts._pad_limits(ax, 0.0, 8.0)
+    assert ax.get_ylim()[0] < 0
+    charts._pad_limits(ax, -4.0, 8.0, floor=0)                                    # real negatives keep their room
+    assert ax.get_ylim()[0] < -4
+
+
 def test_every_layout_renders_including_a_second_axis_and_rain_behind_the_line():
     for chart in (Chart("One", "x", [Panel("One", "°C", [line("Outdoor"), line("Indoor")])]),
                   Chart("Two axes", "x", [Panel("Two", "", [line("CO₂")], right=[line("VOC index")])]),   # one panel, another unit

@@ -20,7 +20,7 @@ from ..lines import build_line
 from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, local_date, now_local
 from ..series import WEATHER
-from ..specs import Bars, Chart, Compass, Line, Panel, rain_behind
+from ..specs import Bars, Chart, Compass, Line, Panel, period_text, rain_behind
 from .api import CYCLE_SECONDS, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
@@ -317,7 +317,6 @@ class HistoryQuery:
             wind = spec if spec and spec.title == "Wind" else self._chart_spec(plottable, "wind_gust")
             if wind:
                 wind.compass = self.compass
-                wind.subtitle += "  ·  compass: wind direction"
                 if wind is not spec:
                     holder.append(wind)
                 out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
@@ -372,7 +371,7 @@ class HistoryQuery:
         if not lines:
             return None
         title = "Wind" if wind else field.replace("_", " ").capitalize()
-        subtitle = (f"{_period(self.start, self.end)}  ·  {resolution}"
+        subtitle = (f"{period_text(self.start.date(), self.end.date())}  ·  {resolution}"
                     + (", shaded up to the gusts" if wind and ranged else ", range shaded" if ranged else "")
                     + ("  ·  records marked" if any(x.records for x in lines) and not wind else ""))
         return Chart(title, subtitle, [Panel(title, unit, lines)])
@@ -423,22 +422,11 @@ class HistoryQuery:
             if lines:
                 if len(lines) == 1 and name != "temperature":
                     lines[0].label = label
-                panels.append(Panel(label, unit, lines))
+                panels.append(Panel(label, unit, lines, reading=name))
         if len(panels) < 2:
             return None
         rain = self.rain_bars.per if any(p.bars for p in panels) else None
         return Chart(" and ".join(p.label for p in panels),
-                     f"{_period(self.start, self.end)}" + (f"  ·  rain per {rain}" if rain else "")
+                     f"{period_text(self.start.date(), self.end.date())}" + (f"  ·  rain per {rain}" if rain else "")
                      + ("  ·  shaded: range" if any(s.low for p in panels for s in p.lines) else ""),
                      rain_behind(panels))
-
-
-def _period(start: datetime, end: datetime) -> str:
-    a, b = start.date(), end.date()
-    if a == b:
-        return f"{a:%a} {a.day} {a:%b %Y}"
-    if (a.year, a.month) == (b.year, b.month):
-        return f"{a:%a} {a.day} – {b:%a} {b.day} {b:%b %Y}"
-    if a.year == b.year:
-        return f"{a:%a} {a.day} {a:%b} – {b:%a} {b.day} {b:%b %Y}"
-    return f"{a:%a} {a.day} {a:%b %Y} – {b:%a} {b.day} {b:%b %Y}"

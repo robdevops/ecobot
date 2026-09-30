@@ -60,7 +60,7 @@ def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, fir
     line = driver_series(driver, tz, first, last, name.capitalize(), lows, highs)
     if line is None:
         return None
-    return stack([Panel(name.capitalize(), unit, [line]), Panel("Rain", "mm", bars=rain_bars(rain, tz, first, last))], first, last)
+    return stack([Panel(name.capitalize(), unit, [line], reading=name), Panel("Rain", "mm", bars=rain_bars(rain, tz, first, last))], first, last)
 
 
 def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -> tuple[dict, Chart | None, date | None, date | None]:

@@ -140,9 +140,11 @@ def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float):
             ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=0)
 
 
-def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16):
+def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16, floor: float | None = None):
+    """Room above and below the data; `floor`: the axis does not go below it when the data does not (no negative wind)."""
     span = max(hi - lo, 1.0)
-    ax.set_ylim(lo - span * bottom, hi + span * top)
+    y0 = lo - span * bottom
+    ax.set_ylim(y0 if floor is None or lo < floor else max(y0, floor), hi + span * top)
 
 
 def _extent(lines: list[Line], extra: list[float] = ()) -> tuple[float, float]:
@@ -174,8 +176,9 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     ax2.bar(bx, bars.y, width=bars.width / 86400 * 0.85, align="edge", color=RAIN, alpha=0.55, linewidth=0, zorder=1)
     top = max([*bars.y, 1.0])
     ax2.set_ylim(0, top / BARS_SHARE)
-    ax2.yaxis.set_major_locator(FixedLocator([top]))
-    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g} {bars.unit}"))
+    ax2.axhline(top, color=RAIN, linewidth=0.7, linestyle=(0, (1, 2)), alpha=0.8, zorder=1)  # the top of the rain scale, on its own
+    ax2.yaxis.set_major_locator(FixedLocator([0, top]))
+    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g} {bars.unit}" if v else "0"))
     for side in ("top", "right", "left", "bottom"):
         ax2.spines[side].set_visible(False)
     ax2.tick_params(axis="y", length=0, labelsize=7, labelcolor=RAIN, pad=4)
@@ -241,7 +244,8 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     panel = chart.panels[0]
     lines = panel.lines
     ax = fig.add_axes([*AX_RECT[:2], _axes_width(chart), AX_RECT[3]], facecolor=BG)
-    _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()]), top=0.26, bottom=0.26)  # room for pills
+    _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()]), top=0.26, bottom=0.26,  # room for pills
+                floor=None if any("low" in s.records for s in lines) else 0)
     ybottom = ax.get_ylim()[0]
     x_min, x_max = min(t for s in lines for t in s.x), max(t for s in lines for t in s.x)
     dense = max(len(s.x) for s in lines) > 200
@@ -303,7 +307,8 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
                  bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / H_IN), ncol=len(legend), fontsize=8.5)
     _style_axis(ax)
     tick_unit = "°" if _deg(panel.unit) == "°" else ""
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}{tick_unit}"))
+    nonneg = _extent(lines)[0] >= 0  # padding below zero is room, not a scale: no negative labels on a reading that cannot be
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: "" if nonneg and v < 0 else f"{v:g}{tick_unit}"))
     ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]))
     if chart.compass:  # beside the line
         ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
@@ -377,7 +382,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first)
     marked = len(p.lines) + len(p.right) == 1 and bool(p.lines[0].records)  # a lone line has its records labelled
     _pad_limits(ax, *_extent(p.lines, [float(r[1]) for r in p.lines[0].records.values()] if marked else []),
-                top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12)
+                top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12,
+                floor=None if marked and "low" in p.lines[0].records else 0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
     if p.right:

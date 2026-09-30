@@ -16,6 +16,10 @@ class Reading(NamedTuple):
     words: str      # a pattern for the words that name it in a question
 
 
+# A rain chart puts the rain behind the first of these readings that is on it (rain tracks humidity and pressure more than
+# temperature), else behind the first line.
+RAIN_WITH = ("humidity", "pressure")
+
 WEATHER = {
     "temperature": Reading("outdoor", "temperature", "Temperature", "°C", TEMP_WORDS),
     "humidity": Reading("outdoor", "humidity", "Humidity", "%", r"humid\w*"),
