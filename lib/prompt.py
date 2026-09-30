@@ -3,6 +3,7 @@ units, wording of times) is decided in code and handed over ready-made."""
 
 from datetime import datetime
 
+from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS
 from .intent import period_ranges
 
 PROMPT = """\
@@ -11,7 +12,7 @@ People ask about the owner's personal weather station and air-quality sensor: cu
 
 DATA SOURCES (already discovered - no lookup needed)
 {sources}
-
+{capabilities}
 TIME PERIODS
 - A day runs from midnight to midnight local time. Weeks start on Monday.
 - "This week" (especially in past tense) means the last 7 days: today plus the previous 6 days.
@@ -34,6 +35,7 @@ AIR QUALITY
 - Put each metric's ready-made rating ("\U0001f7e2 good", "\U0001f7e1 poor" or "\U0001f534 very poor") next to it, copied exactly: e.g. "• PM2.5: 0.0 µg/m³ \U0001f7e2 good (AQI 0)". For history, use high_rating and average_rating. Add a short practical tip when anything isn't good.
 
 HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more than one, then answer)
+- If a tool returns an error, a note saying it can't do something, or no data, read it and correct the call once (the note usually says how) rather than answering from nothing. Never invent readings to fill a gap.
 - Always fetch fresh data for every question, even if the same or a similar question was answered earlier in this conversation. Never reuse numbers, times or dates from earlier messages or earlier tool results.
 - For any past period (highs/lows, records, daily summaries, "this week" etc.): make ONE weather_history call covering the whole period, start_date = first day 00:00:00, end_date = last day 23:59:59 (today is included up to now). Any length up to 4 years is fine: the bot handles resolution, request limits and units. Don't split it yourself and don't add weather_now calls.
 - To plot several readings together ("plot temperature and rain", "humidity and wind"), set chart_fields to them, in order (temperature, humidity, pressure, wind, rain): one chart, a panel each, on one time axis. Never say it can't combine them.
@@ -133,9 +135,34 @@ def date_ranges(now: datetime) -> str:
     return "\n".join(lines)
 
 
+def capabilities(sources: list[str]) -> str:
+    """What the bot can and can't do, for questions about the bot itself ("what metrics do you have?") and so the model
+    knows what is possible before it says something can't be done. Built from the code's own lists."""
+    have = " ".join(sources)
+    lines = ["\nWHAT THIS BOT CAN AND CAN'T DO (answer questions about the bot from this, with no tool call)"]
+    if "Ecowitt" in have:
+        lines.append("- Weather station: outdoor and indoor temperature and humidity, dew point, feels-like, pressure, wind speed, "
+                     "gust and direction, rain (daily total and rate). History back to when it was installed: 5-minute detail for "
+                     "the last 90 days, 30-minute for a year, then daily.")
+    if "AirGradient" in have:
+        lines.append("- Air quality (outdoor AirGradient): " + ", ".join(f"{LABELS[m]} ({CHART_UNITS[m] or 'index'})" for m in ALL_METRICS)
+                     + ", each with a traffic-light rating. History about a year.")
+    lines.append("- Tools: weather_now (current), weather_history (highs, lows, averages, charts), weather_days (find, rank and "
+                 "count days, holidays, weekends), weather_link (does rain come with a pressure, humidity or wind change), "
+                 "air_quality.")
+    lines.append("- Charts: any one reading, or several readings together on one time axis (temperature, humidity, pressure, wind, "
+                 "rain); wind direction as a heatmap with a rose; air quality with ratings.")
+    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, indoor/outdoor temperature "
+                 "crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts (\"tell me when winds reach 100\") "
+                 "can't be added: say so.")
+    lines.append("- Not available: solar and UV, lightning, soil or extra sensor channels, indoor air quality, forecasts (only a "
+                 "short read of the pressure trend), other stations or places.")
+    return "\n".join(lines) + "\n"
+
+
 def build(now: datetime, sources: list[str], hints: list[str] = ()) -> str:
     text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
-                         sources="\n".join(f"- {s}" for s in sources) or "(none)")
+                         sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
     if hints:  # decided in code, for this question only
         text += ("\nTHE PERSON'S WORDS NAME THESE PERIODS (use exactly these start_date/end_date values; do not "
                  "reinterpret them):\n" + "\n".join(f"- {h}" for h in hints) + "\n")
