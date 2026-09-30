@@ -363,6 +363,13 @@ def _render_rose(fig, compass: Compass):
 
 
 # ---------- several panels on one time axis ----------
+def _extreme(line: Line, want: str, to_dt) -> tuple[float, float]:
+    """Where the line itself is highest (or lowest): a label sits on the drawn line, not on a raw reading the averaged line
+    never reaches (that record is in the answer's text)."""
+    i = int(np.argmax(line.y) if want == "high" else np.argmin(line.y))
+    return float(mdates.date2num(to_dt(line.x[i]))), float(line.y[i])
+
+
 def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: float, lows: bool):
     """A small labelled dot on each line's highest reading (and, for a lone line, its lowest unless that is the floor).
     Labels that would touch are stacked."""
@@ -373,7 +380,7 @@ def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: 
         for want, above in (("high", True), ("low", False)):
             if want not in line.records or (want == "low" and not lows):
                 continue
-            mx, my = mdates.date2num(to_dt(line.records[want][0])), float(line.records[want][1])
+            mx, my = _extreme(line, want, to_dt)
             if want == "low" and (my - y_lo) < 0.08 * (y_hi - y_lo):
                 continue  # a low on the floor says nothing
             above = above or (my - y_lo) < 0.16 * (y_hi - y_lo)  # a low near the floor: label above
@@ -397,7 +404,7 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: fl
     peaks = []
     for line, colour in marks:
         if "high" in line.records:
-            mx, my = mdates.date2num(to_dt(line.records["high"][0])), float(line.records["high"][1])
+            mx, my = _extreme(line, "high", to_dt)
             peaks.append((mx, my, colour, (my - y_lo) / (y_hi - y_lo) * height_pt))
     placed = []                                            # (x, where its label sits, in points up the panel)
     for mx, my, colour, y_pt in sorted(peaks, key=lambda p: -p[3]):
@@ -455,7 +462,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True)
     lone = len(p.lines) == 1 and not p.right
     marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records] if not p.right else []  # highs labelled; a lone line's lows too
-    _pad_limits(ax, *_extent(p.lines, [float(r[1]) for s, _ in marks for w, r in s.records.items() if lone or w == "high"]),
+    _pad_limits(ax, *_extent(p.lines),
                 top=(0.3 if lone else 0.18) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
