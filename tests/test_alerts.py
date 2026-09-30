@@ -65,6 +65,14 @@ async def test_a_dry_gap_shorter_than_30_minutes_does_not_flap(tmp_path):
     assert len(sent) == 1 and "started" in sent[0]
 
 
+def test_the_status_outlook_says_raining_now_or_likely_soon_or_nothing():
+    assert weather.rain_outlook(rain(0, 0, 1), TZ, 145.0) == "raining now (1.2 mm/h)"
+    assert weather.rain_outlook(rain(0, 0, 0), TZ, 145.0) is None
+    likely = weather.rain_outlook(pressure_rows(4.0, 14), TZ, 145.0)
+    assert likely.startswith("rain looks likely soon: pressure down") and "not an official forecast" in likely
+    assert weather.rain_outlook(pressure_rows(0.2, 14), TZ, 145.0) is None
+
+
 def gusts(*values):
     return [(T0 + i * 300, {"wind.wind_gust": v}) for i, v in enumerate(values)]
 

@@ -601,6 +601,27 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
     await eco.close()
 
 
+async def test_weather_now_carries_the_rain_outlook_when_it_is_raining_or_likely(tmp_path, monkeypatch):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    now = int(datetime.now(eco.tz).timestamp())
+    wet = [(now - 300 * i, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0}) for i in range(2, -1, -1)]
+    dry = [(now - 300 * i, {"rainfall.rain_rate": 0.0, "rainfall.daily": 2.0}) for i in range(2, -1, -1)]
+    rows = {"value": wet}
+
+    async def recent(hours):
+        return rows["value"]
+    monkeypatch.setattr(eco, "recent", recent)
+    out = json.loads(await eco.tools[0].handler({"groups": "outdoor,rainfall"}))
+    assert out["rain_outlook"] == "raining now (1.5 mm/h)"
+    rows["value"] = dry
+    assert "rain_outlook" not in json.loads(await eco.tools[0].handler({"groups": "outdoor,rainfall"}))
+    rows["value"] = wet
+    assert "rain_outlook" not in json.loads(await eco.tools[0].handler({"groups": "outdoor"}))     # no rain group asked for
+    await eco.close()
+
+
 async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
     from lib.ecowitt import history
     seen = []

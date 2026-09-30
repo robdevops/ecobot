@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..config import Config
 from ..timeutil import now_local
+from ..alerts.weather import rain_outlook
 from ..tools import Tool
 from ..warm import Warmer
 from .api import EcowittAPI, GROUPS, UNITS
@@ -142,7 +143,8 @@ class Ecowitt:
         return await link_tool(self.cache, self.mac, self.tz, args)
 
     async def _realtime(self, args: dict) -> str:
-        data = await self.api.realtime(self.mac, ",".join(parse_groups(args.get("groups"))))
+        groups = parse_groups(args.get("groups"))
+        data = await self.api.realtime(self.mac, ",".join(groups))
         out, newest, emoji = {}, 0, {}
         for grp, fields in data.items():
             for name, obj in (fields.items() if isinstance(fields, dict) else ()):
@@ -158,7 +160,17 @@ class Ecowitt:
                     except (TypeError, ValueError):
                         pass
         when = datetime.fromtimestamp(newest, timezone.utc).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
-        return json.dumps({"time": when, **out, **({"emoji": emoji} if emoji else {})}, ensure_ascii=False, separators=(",", ":"))
+        outlook = await self._rain_outlook() if "rainfall" in groups else None
+        return json.dumps({"time": when, **out, **({"rain_outlook": outlook} if outlook else {}), **({"emoji": emoji} if emoji else {})},
+                          ensure_ascii=False, separators=(",", ":"))
+
+    async def _rain_outlook(self) -> str | None:
+        """Raining now, or likely soon (the same rules as the alerts), from the last 3 hours of readings."""
+        try:
+            return rain_outlook(await self.recent(3), self.tz, self.longitude)
+        except Exception as e:  # the current reading is still worth sending without it
+            log.warning("Rain outlook unavailable: %s", e)
+            return None
 
     # ---------- keeping warm ----------
     async def warm(self, fresh: bool = True) -> str:

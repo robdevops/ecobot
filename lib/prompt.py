@@ -177,7 +177,7 @@ Weather station
 • Indoor: temperature, humidity
 • Wind: speed and direction, gust
 • Pressure: hPa
-• Rain today: mm (month total mm)
+• Rain today: mm (month total mm); if weather_now has "rain_outlook", say it here (raining now, or rain likely soon)
 
 Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI

@@ -132,6 +132,19 @@ def assess_rain(rows: Rows, tz, longitude: float) -> Outlook | None:
     return Outlook(score, reasons, raw_drop, drop, night)
 
 
+def rain_outlook(rows: Rows, tz, longitude: float) -> str | None:
+    """"Raining now" or "rain likely soon", in words for a status report, by the same rules as the alerts; None when neither."""
+    wet = wet_flags(rows)
+    if any(w for _, w, _ in wet[-2:]):
+        rate = max(r for _, w, r in wet[-2:] if w)
+        return "raining now" + (f" ({rate:g} mm/h)" if rate > 0 else "")
+    outlook = assess_rain(rows, tz, longitude)
+    if outlook and outlook.score >= PREDICT_MIN_SCORE:
+        return ("rain looks likely soon: " + ", ".join(outlook.reasons[:3]) +
+                " (an estimate from the station's readings, not an official forecast)")
+    return None
+
+
 def side(r: dict) -> str | None:
     """Is outdoor clearly warmer or cooler than indoor in this reading?"""
     o, i = r.get("outdoor.temperature"), r.get("indoor.temperature")
