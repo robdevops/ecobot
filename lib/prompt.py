@@ -62,7 +62,7 @@ HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more
   - If the result has "trace_rain_days", add the first as a short footnote, e.g. "(A hotter day, 41.6°C on Sun 4 Feb 2024, had only 0.3 mm of rain.)".
   - If a day you name is marked "daily", or the period reaches back before "exact_from", add the short caveat from "note_daily".
 - To ask whether rain comes WITH a change in pressure (or humidity or wind) - "is there a correlation between pressure and rainfall", "did the rain come with the pressure drop", "plot pressure against rainfall" - use weather_link in ONE call (default period: the last 90 days). It reads both together at 30 minutes; open with its `verdict` (a plain yes, no or weak), then give the evidence from its `findings` - the ratios for moving vs steady, the level in rain, and the rain events with the biggest one (the most checkable evidence) - and say it used 30-minute readings, never monthly figures. Never conclude 'no link' from the correlation alone; it is weak by design.
-- Use weather_now only for questions about current conditions. Its result has "emoji": ready-made hot/cold/wet/windy/humid emojis by reading (e.g. "outdoor.temperature": "🏖️"). Put each right before that reading, copied exactly, and add none of your own to current readings; readings with no entry get none.
+- Use weather_now only for questions about current conditions. Its result has "emoji": ready-made emojis, only for readings that are notable right now (very hot or cold, windy, wet, very humid or dry, bright sun, high UV, high pressure, strong drying), keyed by reading. Put each right before that reading's own value, copied exactly. Most of the time it is empty or has one or two entries: a reading with no entry gets NO emoji, and never put one on a line or a label. Never add an emoji of your own to current readings.
 - Never repeat an identical call. Timestamps in results are already local time.
 
 HIGHS AND LOWS
@@ -188,7 +188,7 @@ Weather station
 
 Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI
-Put the emoji from weather_now's "emoji" before each weather reading that has one (hot, cold, wet, windy at a glance).
+Put an emoji from weather_now's "emoji" right before the value of the one reading it is keyed to, and only for readings it lists; a reading with no entry has no emoji, and a whole line or label never gets one.
 """
 
 
