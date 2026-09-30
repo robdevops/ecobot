@@ -254,6 +254,8 @@ class HistoryQuery:
         f = self.f
         wanted = self.args.get("include_derived") or []
         wanted = {wanted} if isinstance(wanted, str) else set(wanted)
+        asked = [self.turn.chart_field or self.args.get("chart_field"), *(STACK[n][1] for n in stack_names(self.args, self.turn))]
+        wanted |= {f for f in asked if f in DERIVED}   # charting one of them brings it into the result
         if "app_temp" in wanted:
             wanted.add("app_tempin")  # indoor's name for apparent temperature
         series_out = {key: self._result(key, ext) for key, ext in self.overall.items()
@@ -354,7 +356,10 @@ class HistoryQuery:
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
         wanted = str(field or self.turn.chart_field or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
-        keys = [k for k in series_out if k.endswith("." + wanted)] or [k for k in series_out if k.endswith(".temperature")]
+        keys = [k for k in series_out if k.endswith("." + wanted)]
+        if not keys and wanted in DERIVED:  # asked for on its own and not there: no chart, rather than a temperature one
+            return None
+        keys = keys or [k for k in series_out if k.endswith(".temperature")]
         if not keys:  # nothing to match: the wind chart when wind direction was counted, else the first field
             field = "wind_gust" if self.compass and any(k.endswith(".wind_gust") for k in series_out) else next(iter(series_out)).split(".", 1)[-1]
             keys = [k for k in series_out if k.endswith("." + field)]

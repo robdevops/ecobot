@@ -959,3 +959,16 @@ async def test_rain_on_its_own_is_drawn_as_daily_columns_not_as_the_running_coun
     assert chart.title == "Rain" and chart.panels[0].bars and not chart.panels[0].lines and "rain per" in chart.subtitle
     assert "rain_total_mm" in out
     await eco.close()
+
+
+async def test_a_dew_point_chart_plots_the_dew_point_and_never_quietly_a_temperature(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    turn = Turn(chart_field="dew_point")
+    out = json.loads(await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+                                                 "start_date": f"{today - timedelta(days=9)} 00:00:00",
+                                                 "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn))
+    assert turn.charts and turn.charts[0].title == "Dew point" and "outdoor.dew_point" in out["series"]
+    await eco.close()

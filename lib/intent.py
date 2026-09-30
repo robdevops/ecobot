@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from .series import PRESSURE_WORDS, TEMP_WORDS, WEATHER as WEATHER_READINGS
+from .series import PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
 
 log = logging.getLogger(__name__)
 
@@ -255,16 +255,24 @@ READINGS = {name: (r.words, None if name == "temperature" else r.field) for name
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 
 
+def _named(text: str) -> dict[str, int]:
+    """The readings a question names, with where. "dew point temperature" names the dew point, not also the temperature."""
+    found = {name: m.start() for name, (words, _) in READINGS.items() if (m := re.search(rf"\b({words})\b", text, I))}
+    if "temperature" in found and any(name in found for name in SPECIFIC):
+        del found["temperature"]
+    return found
+
+
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
-    found = {name: m.start() for name, (words, _) in READINGS.items() if (m := re.search(rf"\b({words})\b", text, I))}
+    found = _named(text)
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
 def chart_field(text: str) -> str | None:
     """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
     is about temperature, several readings, or none in particular."""
-    found = [name for name, (words, _) in READINGS.items() if re.search(rf"\b({words})\b", text, I)]
+    found = list(_named(text))
     return READINGS[found[0]][1] if len(found) == 1 else None
 
 

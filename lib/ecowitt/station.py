@@ -55,7 +55,7 @@ HISTORY_PARAMS = {
         "end_date": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM:SS' local time (today is fine: up to now)."},
         "groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. Add 'rainfall', "
                                                     "'wind' or 'pressure' only if needed. Plain group names, not dotted fields."},
-        "chart_fields": {"type": "array", "items": {"type": "string", "enum": ["temperature", "humidity", "pressure", "wind", "rain"]},
+        "chart_fields": {"type": "array", "items": {"type": "string", "enum": list(STACK)},
                          "description": "To plot SEVERAL readings together ('plot temperature and rain'): which, in order, "
                                         "one panel each on a shared time axis. The groups they need are fetched for you."},
         "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
