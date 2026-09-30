@@ -7,16 +7,16 @@ from .series import WEATHER
 from .specs import Bars, Line, Panel
 
 
-def panel_for(name: str, lines: list[Line] = (), bars: Bars | None = None, label: str | None = None) -> Panel:
+def panel_for(name: str, lines: list[Line] | None = None, bars: Bars | None = None) -> Panel:
     """The panel for a weather reading ("humidity", "rain" ...) or an air-quality metric ("pm2_5" ...); with no lines, just its bars."""
+    lines = lines or []
     if name in WEATHER:
         reading = WEATHER[name]
-        return Panel(label or reading.label, reading.unit, list(lines), bars=bars, reading=name)
-    return Panel(label or LABELS[name], CHART_UNITS[name], list(lines), bars=bars, reading=name,
-                 zones=tuple(RATINGS[name]) if len(lines) == 1 else None)
+        return Panel(reading.label, reading.unit, lines, bars=bars, reading=name)
+    return Panel(LABELS[name], CHART_UNITS[name], lines, bars=bars, reading=name, zones=tuple(RATINGS[name]) if len(lines) == 1 else None)
 
 
 def air_group_panel(names: list[str], lines: list[Line]) -> Panel:
     """Several air metrics on one axis (the particles): their names as the title, peaks labelled beside the lines."""
-    return Panel(", ".join(LABELS[n] for n in names), CHART_UNITS[names[0]], list(lines),
+    return Panel(", ".join(LABELS[n] for n in names), CHART_UNITS[names[0]], lines,
                  zones=tuple(RATINGS[names[0]]) if len(names) == 1 else None, aside=len(names) > 1)

@@ -14,7 +14,7 @@ import io
 import math
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone, tzinfo
+from datetime import tzinfo
 
 import matplotlib
 
@@ -30,6 +30,7 @@ from matplotlib.patches import Polygon  # noqa: E402
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: E402
 
 from .specs import Chart, Compass, Line, Panel  # noqa: E402
+from .timeutil import to_local  # noqa: E402
 
 # Palette. Slate neutrals for the furniture; one hue per reading (weather and air quality, kept clear of the green/yellow/red
 # rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
@@ -71,7 +72,7 @@ class Look:
     pill_dot: float
     pill_rim: float
     pill_lift: float
-    pill_box: tuple
+    pill_box: tuple[float, float]
     pill_z: int
     pitch: float             # the stacked pills beside several lines: row spacing (pt)
     pad: float               # room above and below the data for pills, as a share of its span
@@ -142,7 +143,18 @@ def _dot(ax, x: float, y: float, colour: str, size: float = 12, edge: float = 0.
 
 def _to_dt(tz: tzinfo):
     """A function turning an epoch into a naive local datetime, for matplotlib's date axis."""
-    return lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    return lambda t: to_local(t, tz).replace(tzinfo=None)
+
+
+def _nums(tz: tzinfo, epochs) -> np.ndarray:
+    """Epochs as matplotlib date numbers (local time)."""
+    to_dt = _to_dt(tz)
+    return mdates.date2num([to_dt(t) for t in epochs])
+
+
+def _end_of(bx, width: float, default: float) -> float:
+    """Where the last bar ends on the date axis (`width` in seconds), else `default` when there are no bars."""
+    return float(bx.max() + width / 86400) if len(bx) else default
 
 
 def _style_axis(ax, size: float = 7.5, pad: float = 5, grid: float = 0.8, below: bool = True):
@@ -191,14 +203,14 @@ def _gradient_under(ax, xs, ys, colour: str, ybottom: float, alpha: float = 0.22
 def _draw_lines(ax, lines: list[Line], tz: tzinfo, look: Look, first: int = 0, reading: str = "") -> list[tuple]:
     """Each line's low-to-high range behind it, then the line with a soft glow and a dot on its end: [(colour, xs, ys)].
     `first` is the colour index of the first line (the fallback colours cycle across a stack's panels)."""
-    to_dt, drawn = _to_dt(tz), []
+    drawn = []
     dense = max(len(s.x) for s in lines) > 200
     for i, s in enumerate(lines, first):
         colour = _colour(s, i, reading)
-        xs, ys = mdates.date2num([to_dt(t) for t in s.x]), np.asarray(s.y, dtype=float)
+        xs, ys = _nums(tz, s.x), np.asarray(s.y, dtype=float)
         if s.low:
             ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=3)
-        w = 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2
+        w = 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2   # thinner where there are many lines, a band or many points
         (line,) = ax.plot(xs, ys, color=colour, linewidth=w, solid_capstyle="round", solid_joinstyle="round", zorder=4)
         line.set_path_effects([pe.Stroke(linewidth=w + 2.5, foreground=colour, alpha=0.10), pe.Normal()])
         _dot(ax, xs[-1], ys[-1], colour, look.end_dot, look.end_rim, 5)
@@ -219,8 +231,7 @@ def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: fl
 def _bars_behind(ax, bars, tz: tzinfo) -> float:
     """Bars (rain) on their own right-hand axis, behind the panel's lines and never taller than BARS_SHARE of it. Returns
     where the last bar ends (matplotlib date number)."""
-    to_dt = _to_dt(tz)
-    bx = mdates.date2num([to_dt(t) for t in bars.x])
+    bx = _nums(tz, bars.x)
     ax2 = ax.twinx()
     weight = ax.yaxis.get_gridlines()[0].get_linewidth() if ax.yaxis.get_gridlines() else 0.8
     ax.grid(False)       # the grid is drawn by an axes of its own under the rain (sharing this one's scale): grid, rain, lines
@@ -243,7 +254,7 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     ax.set_zorder(ax2.get_zorder() + 1)  # the lines above the bars
     ax.patch.set_visible(False)
     ax2.patch.set_visible(False)     # so the grid beneath shows between the bars (set last: the line above re-shows it)
-    return float(bx.max() + bars.width / 86400) if len(bx) else 0.0
+    return _end_of(bx, bars.width, 0.0)
 
 
 def _axes_width(chart: Chart) -> float:
@@ -284,7 +295,7 @@ def _legend_dots(ax_or_fig, colours: list[str], labels: list[str], **kw):
     ax_or_fig.legend(handles, labels, frameon=False, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1, **kw)
 
 
-def _pills(ax, lines: list[Line], drawn: list[tuple], to_dt, x0: float, x1: float, look: Look, deg: str = ""):
+def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1: float, look: Look, deg: str = ""):
     """A dot on the highest and the lowest point of each line with a pill of its value above or below it. The point is the top
     (bottom) of the line's band when it has one, else its true record at its actual time (a dotted stem joins it to a line that
     does not reach it), else the line's own extreme. A low on the floor says nothing and is not labelled; pills that land close
@@ -295,9 +306,9 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], to_dt, x0: float, x1: floa
     for s, (colour, xs, ys) in zip(lines, drawn):
         for want, above in (("high", True), ("low", False)):
             if want in s.records and s.low is not None:  # a banded line: the label sits on the top (bottom) of its band
-                rx, ry = _extreme(s, want, to_dt)
+                rx, ry = _extreme(s, want, xs)
             elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
-                rx, ry = mdates.date2num(to_dt(s.records[want][0])), float(s.records[want][1])
+                rx, ry = float(_nums(tz, [s.records[want][0]])[0]), float(s.records[want][1])
                 rx = min(max(rx, x0), x1)
             elif s.records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
                 continue
@@ -355,26 +366,26 @@ def _render_rose(fig, compass: Compass):
 
 
 # ---------- several panels on one time axis ----------
-def _extreme(line: Line, want: str, to_dt) -> tuple[float, float]:
+def _extreme(line: Line, want: str, xs) -> tuple[float, float]:
     """Where the drawn line is highest (or lowest): the top (bottom) of its band when it has one, else the line itself. A
-    label sits on what is drawn, never on a raw reading the chart does not reach."""
+    label sits on what is drawn, never on a raw reading the chart does not reach. `xs` are the line's x as date numbers."""
     ys = (line.high if want == "high" else line.low) if line.low is not None else line.y
     i = int(np.argmax(ys) if want == "high" else np.argmin(ys))
-    return float(mdates.date2num(to_dt(line.x[i]))), float(ys[i])
+    return float(xs[i]), float(ys[i])
 
 
-def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinfo, x0: float, x1: float, look: Look):
+def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float, look: Look):
     """The peak of each line in a multi-line panel: a dot on the peak, and its value in a pill placed in empty space (the
-    top of the panel where no line reaches, else the margin) joined to the dot by a thin dotted line."""
-    to_dt = _to_dt(tz)
+    top of the panel where no line reaches, else the margin) joined to the dot by a thin dotted line. `lines` and `drawn` are
+    the lines with a peak record and what was drawn for them."""
     y_lo, y_hi = ax.get_ylim()
     box = ax.get_position()
     height_pt = box.height * ax.figure.get_figheight() * 72
     per_pt = (y_hi - y_lo) / height_pt                                    # data units in one point
     peaks = []
-    for line, colour in marks:
+    for line, (colour, xs, _) in zip(lines, drawn):
         if "high" in line.records:
-            mx, my = _extreme(line, "high", to_dt)
+            mx, my = _extreme(line, "high", xs)
             peaks.append((mx, my, colour))
     peaks.sort(key=lambda p: -p[1])                                       # the highest peak gets the top pill
     size, pitch = look.pill_font, look.pitch                              # the pills' font and row spacing, in points
@@ -384,8 +395,8 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
         near.append(peak) if near else groups.append([peak])
     block = (10 + pitch * max(len(g) for g in groups)) * per_pt if groups else 0   # the height the tallest stack of pills needs
     reach = 0.06 * (x1 - x0)                                              # half a pill's width, in x units
-    tops = [(np.array([mdates.date2num(to_dt(t)) for t in line.x]), np.asarray(line.high if line.low is not None else line.y, float))
-            for line, _ in marks]                                         # what is drawn, bands included
+    tops = [(xs, np.asarray(line.high if line.low is not None else line.y, float))
+            for line, (_, xs, _) in zip(lines, drawn)]                    # what is drawn, bands included
     free = []
     for k in range(3, 98, 2):                                             # candidate columns across the panel
         cx = x0 + (x1 - x0) * k / 100
@@ -439,10 +450,9 @@ def _end_labels(ax, drawn: list[tuple]):
 def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look: Look):
     """One panel: lines (with bands and zones, peaks labelled, rain behind them), rain on its own, or shares. Returns the
     number of colours used, where the drawing ends on the x axis and the legend's entries (colour, name)."""
-    to_dt = _to_dt(tz)
     if p.shares:
         s = p.shares  # the share of each bar's time in good / poor / very poor: traffic-light bars stacked to 100%
-        bx = mdates.date2num([to_dt(t) for t in s.x])
+        bx = _nums(tz, s.x)
         base = np.zeros(len(bx))
         for column, colour in zip((s.good, s.poor, s.very_poor), ZONE_COLOURS):
             ax.bar(bx, column, bottom=base, width=s.width / 86400 * 0.85, align="edge", color=colour, linewidth=0, zorder=3)
@@ -451,19 +461,19 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         ax.legend([Line2D([], [], marker="s", linestyle="", markersize=5, color=c) for c in ZONE_COLOURS],
                   ["good", "poor", "very poor"], loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
                   labelcolor=TEXT, ncol=3, handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
-        return 0, float(bx.max() + s.width / 86400) if len(bx) else x1, []
+        return 0, _end_of(bx, s.width, x1), []
     if not p.lines:  # rain on its own
         b = p.bars
-        bx = mdates.date2num([to_dt(t) for t in b.x])
+        bx = _nums(tz, b.x)
         top = max([*b.y, 1.0]) * 1.15
         _draw_bars(ax, bx, b.y, b.width / 86400 * 0.85, top, 3, alpha=0.75)
         ax.set_ylim(0, top)
-        return 0, float(bx.max() + b.width / 86400) if len(bx) else x1, []
+        return 0, _end_of(bx, b.width, x1), []
     lines = p.lines
     marked = [i for i, s in enumerate(lines) if look.label_all or s.records]  # peaks labelled: beside the lines (aside), else as pills
     pilled = bool(marked) and not p.aside
     _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()] if pilled else []),
-                top=look.pad if pilled else 0.18 if marked else 0.12, bottom=look.pad if pilled else 0.12 if not marked else 0.12,
+                top=look.pad if pilled else 0.18 if marked else 0.12, bottom=look.pad if pilled else 0.12,
                 floor=0)
     ybottom, ytop = ax.get_ylim()
     drawn = _draw_lines(ax, lines, tz, look, first, p.reading)
@@ -474,9 +484,9 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
             _gradient_under(ax, xs, ys, colour, ybottom)
     ax.set_ylim(ybottom, ytop)
     if marked and p.aside:
-        _mark_highs(ax, [(lines[i], drawn[i][0]) for i in marked], drawn, tz, x0, x1, look)
+        _mark_highs(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look)
     elif marked:
-        _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], to_dt, x0, x1, look, _deg(p.unit))
+        _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], tz, x0, x1, look, _deg(p.unit))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(lines) > 1:
@@ -488,7 +498,6 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
 def _render(chart: Chart, tz: tzinfo) -> bytes:
     """The panels top to bottom on one time axis, so the rain (or another reading) lines up with what the others were doing.
     A chart of one panel of lines is the same thing drawn BIG (and with its wind rose beside it, when it has one)."""
-    to_dt = _to_dt(tz)
     panels, n = chart.panels, len(chart.panels)
     big = n == 1 and bool(panels[0].lines)
     look = BIG if big else SMALL
@@ -500,8 +509,8 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
         body = height - HEAD_IN - FOOT_IN
         gap = 0.27 if n > 2 else 0.22
         each = (body - gap * (n - 1)) / n
-        xs = [mdates.date2num(to_dt(t)) for p in panels for t in p.xs]
-        x0, x1 = min(xs), max(xs)
+        xs = _nums(tz, [t for p in panels for t in p.xs])
+        x0, x1 = float(xs.min()), float(xs.max())
         axes, used = [], 0
         for i, p in enumerate(panels):
             bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
@@ -522,7 +531,8 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
                     dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
                 _legend_dots(fig if big else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
                              fontsize=look.legend_font, **key)
-            tick_unit = "°" if _deg(p.unit) == "°" else ""
+            deg = _deg(p.unit)
+            tick_unit = deg if deg == "°" else ""
             ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10]))
             ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _, u=tick_unit: f"{v:g}{u}"))
             if not big:

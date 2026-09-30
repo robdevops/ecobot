@@ -35,6 +35,16 @@ WEATHER = {
 SPECIFIC = ("dew_point", "feels_like", "vpd")   # kinds of temperature and humidity, named on their own: they outrank "temperature" in a question
 
 
+def find_name(name: str) -> str | None:
+    """The name of a reading given its name ("uv", "pressure") or the field it plots ("uvi", "relative"); None if neither."""
+    return name if name in WEATHER else next((n for n, r in WEATHER.items() if r.field == name), None)
+
+
 def find(name: str) -> Reading | None:
-    """A reading by its name ("uv", "pressure") or by the field it plots ("uvi", "relative")."""
-    return WEATHER.get(name) or next((r for r in WEATHER.values() if r.field == name), None)
+    """A reading by its name or by the field it plots."""
+    return WEATHER[n] if (n := find_name(name)) else None
+
+
+def field_of(name: str) -> str:
+    """The field a chart of this reading plots ("uv" -> "uvi"); a name that is not a reading comes back as it is."""
+    return r.field if (r := find(name)) else name

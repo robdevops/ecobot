@@ -72,6 +72,7 @@ def test_vpd_reported_in_inhg_is_stored_and_read_in_kpa_and_old_rows_are_convert
     old = now - 5 * 86400
     cache.db.execute("INSERT INTO fields VALUES ('M','30min','outdoor','vpd','inHg')")
     cache.db.execute("INSERT INTO points VALUES ('M','30min','outdoor','vpd',?, '0.261')", (old,))
+    cache.db.execute("DELETE FROM meta WHERE key = 'unit_fixes'")                # as a cache from before the fix
     cache.db.commit()
     cache.close()
     again = make(tmp_path)                                                      # opened again: the old rows are converted once

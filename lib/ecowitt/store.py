@@ -99,13 +99,18 @@ class HistoryCache:
         self.db.commit()
 
     def _convert_units(self):
-        """Readings stored before a unit fix (api.UNIT_FIXES) are converted once, in place."""
+        """Readings stored before a unit fix (api.UNIT_FIXES) are converted once, in place (remembered in meta, so later opens
+        do not look again)."""
+        done = repr(sorted(UNIT_FIXES.items()))
+        if (row := self.db.execute("SELECT value FROM meta WHERE key = 'unit_fixes'").fetchone()) and row[0] == done:
+            return
         for (prefix, old), (unit, factor) in UNIT_FIXES.items():
             for key in self.db.execute("SELECT mac, cycle, grp, field FROM fields WHERE unit = ? AND (field = ? OR substr(field, 1, ?) = ?)",
                                        (old, prefix, len(prefix) + 1, prefix + "_")).fetchall():
                 self.db.execute("UPDATE points SET value = printf('%.3f', CAST(value AS REAL) * ?) "
                                 "WHERE mac=? AND cycle=? AND grp=? AND field=?", (factor, *key))
                 self.db.execute("UPDATE fields SET unit = ? WHERE mac=? AND cycle=? AND grp=? AND field=?", (unit, *key))
+        self.db.execute("INSERT OR REPLACE INTO meta VALUES ('unit_fixes', ?)", (done,))
 
     def close(self):
         with self._lock:
@@ -142,11 +147,12 @@ class HistoryCache:
         """(lows, highs) for 30-minute readings that have no range of their own (dew point, feels-like, VPD, solar, UV,
         pressure ...): the lowest and highest of the cached 5-minute readings inside each slot (and the slot's own value).
         Only what the cache holds; slots with fewer than two 5-minute readings get none."""
-        (fine,) = self.slots(mac, "5min", grp, [field], start, end)
-        times = sorted(fine)
+        rows = self._query("SELECT ts, CAST(value AS REAL) FROM points WHERE mac=? AND cycle='5min' AND grp=? AND field=? "
+                           "AND ts BETWEEN ? AND ? ORDER BY ts", mac, grp, field, start, end)
+        times, fine = [ts for ts, _ in rows], [v for _, v in rows]
         lows, highs = {}, {}
         for t, v in values.items():
-            inside = [fine[x] for x in times[bisect_left(times, t):bisect_left(times, t + SLOT)]]
+            inside = fine[bisect_left(times, t):bisect_left(times, t + SLOT)]
             if len(inside) >= 2:
                 lows[t], highs[t] = min(inside + [v]), max(inside + [v])
         return lows, highs

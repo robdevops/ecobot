@@ -137,12 +137,12 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 40 days: 4-hour buckets
     assert line.low is not None and max(line.y) < 305.0 and max(line.high) == 305.0
-    assert _extreme(line, "high", lambda t: datetime.fromtimestamp(t, TZ))[1] == 305.0   # the label is the true peak, at the band's top
+    assert _extreme(line, "high", range(len(line.x)))[1] == 305.0   # the label is the true peak, at the band's top
     five = [{"ts": ts[0] + i * 300, "pm2_5": 5.0 + i % 7, "co2": 450.0 + i % 11} for i in range(288)]   # a day of 5-minute readings
     assert air._chart(["pm2_5"], five, "period").panels[0].lines[0].low is None                            # the readings themselves: no band
     rows = [dict(r, co2=450.0 + (t - ts[7000]) // 60 % 97) for r, t in zip(rows, ts)]
     co2 = air._chart(["co2"], rows, "period").panels[0].lines[0]
-    assert co2.low is not None and _extreme(co2, "low", lambda t: datetime.fromtimestamp(t, TZ))[1] == min(co2.low)
+    assert co2.low is not None and _extreme(co2, "low", range(len(co2.x)))[1] == min(co2.low)
     await air.close()
 
 

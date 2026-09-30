@@ -256,7 +256,8 @@ class Composer:
         """(the panel, its figures for the caption); the panel is None when there is nothing to draw. `data` is an air series
         already loaded (values, lows, highs)."""
         if name in ECOWITT:
-            group, field, label, unit = ECOWITT[name][:4]
+            reading = ECOWITT[name]
+            group, field, label, unit = reading.group, reading.field, reading.label, reading.unit
             values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
                 bars = rain_bars(rain_slots(values), self.tz, first, last)
