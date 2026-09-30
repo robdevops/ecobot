@@ -2,7 +2,7 @@
 reading always gets the same emoji; the model just copies it next to the reading."""
 
 # (lowest value that gets it, emoji), highest first
-TEMPERATURE = ((35, "🔥"), (30, "🥵"), (22, "😎"), (16, "🙂"), (8, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors
+TEMPERATURE = ((35, "🔥"), (30, "🥵"), (22, "😎"), (16, "🙂"), (8, "🧣"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors: a scarf when it's cold out
 INDOOR_TEMPERATURE = ((35, "🔥"), (28, "🥵"), (24, "😎"), (20, "🙂"), (16, "🧥"), (10, "🥶"), (float("-inf"), "🧊"))  # indoors
 WIND = ((50, "🌪️"), (30, "💨"), (15, "🍃"))       # km/h; lighter than that gets none
 HUMIDITY_HIGH, HUMIDITY_LOW = 85, 30              # % : muggy or dry; in between gets none
