@@ -179,7 +179,7 @@ in parallel, then list EVERYTHING from both devices, no summary sentence, in thi
 Current report (day date time):
 
 Weather station
-• Outdoor: temperature, humidity, dew point
+• Outdoor: temperature, humidity, dew point, VPD (kPa)
 • Indoor: temperature, humidity
 • Wind: speed and direction, gust
 • Pressure: hPa

@@ -199,4 +199,4 @@ def test_the_full_report_asks_for_and_lists_solar_radiation_and_uv():
     from datetime import datetime
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station", "AirGradient outdoor sensor"], report=True)
-    assert "solar_and_uvi" in text and "• Sun: solar radiation W/m², UV index" in text
+    assert "solar_and_uvi" in text and "• Sun: solar radiation W/m², UV index" in text and "dew point, VPD (kPa)" in text
