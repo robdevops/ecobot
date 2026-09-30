@@ -16,11 +16,17 @@ I = re.IGNORECASE
 # ---------- reasoning and fetching ----------
 EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_FORECAST = "none", "low", "medium"
 
+# The words that name each reading, shared by every pattern below
+_TEMP = r"temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|heat\w*|freez\w*|degrees?|celsius"
+_WIND = r"wind\w*|gusts?|breez\w*"
+_PRESSURE = r"pressure|barometer|barometric"
+_OTHER_THAN_AIR = r"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather"  # a question that is not (only) about the air
+
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
 WEATHER = re.compile(
-    r"\b(weather|temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|heat\w*|freez\w*|frost\w*|degrees?|celsius|"
-    r"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
-    r"wind\w*|gusts?|breez\w*|humid\w*|dew|pressure|barometer|forecast\w*|umbrella|"
+    rf"\b(weather|{_TEMP}|frost\w*|"
+    rf"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
+    rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"
     r"indoors?|outdoors?|inside|outside|conditions|feels?|today|tonight|tomorrow|yesterday|"
     r"week|month|year|now|currently|current|air|aqi|pm ?2\.?5|pm ?10|co2|voc\w*|nox|smok\w*|pollut\w*|stuffy)\b|°|"
@@ -53,17 +59,23 @@ LINK = re.compile(
     r"(does|do|did|is|are)\b.*\b(affect\w*|influence\w*|predict\w*|cause\w*)\b.*\b(rain|pressure|humidity|wind|temperature)\w*)\b", I)
 
 
+EFFORT_RULES = ((EFFORT_FORECAST, (FORECAST, LINK)), (EFFORT_DESCRIBE, (ANALYSIS, DESCRIBE)))
+
+
 def reasoning_effort(text: str) -> str:
     """Thinking is for judgement calls only: predictions and how one reading relates to another (medium), and
     analysis across days or readings or describing a day (low). Lookups get none."""
-    if FORECAST.search(text) or LINK.search(text):
-        return EFFORT_FORECAST
-    return EFFORT_DESCRIBE if ANALYSIS.search(text) or DESCRIBE.search(text) else EFFORT_DEFAULT
+    return next((effort for effort, patterns in EFFORT_RULES if any(p.search(text) for p in patterns)), EFFORT_DEFAULT)
+
+
+def _only(words: str, lead: str = "") -> str:
+    """A pattern for a message that is just these words (optionally with please, a lead-in and punctuation)."""
+    return rf"^\s*(please\s+)?{lead}({words})(\s+please)?\s*[?.!]*\s*$"
 
 
 # "status", "report": the whole current picture from both devices (a period word or a subject makes it something else)
-REPORT = re.compile(r"^\s*(please\s+)?((give me|show me|show|get|what's|whats)\s+)?(the\s+)?(a\s+)?(full\s+|current\s+|complete\s+)?"
-                    r"(status|report|overview|dashboard|summary|everything|what you'?ve got)(\s+please)?\s*[?.!]*\s*$", I)
+REPORT = re.compile(_only(r"status|report|overview|dashboard|summary|everything|what you'?ve got",
+                          r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?(a\s+)?(full\s+|current\s+|complete\s+)?"), I)
 
 
 def wants_report(text: str) -> bool:
@@ -74,7 +86,7 @@ def wants_report(text: str) -> bool:
 ABOUT_THE_BOT = re.compile(
     r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"
     r"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b|"
-    r"^\s*(please\s+)?((our|the|my|available|all)\s+)*(metrics?|sensors?|sources?|devices?)(\s+please)?\s*[?.!]*\s*$", I)
+    + _only(r"metrics?|sensors?|sources?|devices?", r"((our|the|my|available|all)\s+)*"), I)
 
 
 def about_the_bot(text: str) -> bool:
@@ -165,24 +177,8 @@ def numbered_span(count: str, unit: str, now: datetime) -> tuple[str, datetime, 
     return f"last {n} {label[:-1] if n == 1 else label}", start, datetime.combine(now.date(), datetime.max.time()).replace(microsecond=0)
 
 
-def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
-    """Every distinct period the text names, as (name, start, end)."""
-    found: dict = {}
-    for phrase, name in PERIOD_PHRASES:
-        if re.search(rf"\b({phrase})\b", text, I):
-            found.setdefault(span(name, now), name)
-    for m in NUMBERED_PERIOD.finditer(text):
-        if numbered := numbered_span(m.group(1), m.group(2), now):
-            found.setdefault(numbered[1:], numbered[0])
-    if not found and (bare := BARE_PERIOD.search(text)):  # "weather week", "aq month": as if "this ..."
-        name = BARE_PERIODS[bare.group(1).lower()]
-        found[span(name, now)] = name
-    return [(name, *window) for window, name in found.items()]
-
-
-def period_hints(text: str, now: datetime) -> list[str]:
-    """One line per period the person's words name, with its exact dates, for the model: "3m" = the last 3 months:
-    2026-07-01 00:00:00 to 2026-09-30 23:59:59. The model otherwise guesses short forms (3m has been read as 3 days)."""
+def _periods(text: str, now: datetime) -> dict[tuple[datetime, datetime], tuple[str, str]]:
+    """{(start, end): (the words said, the period's name)} for every distinct period the text names."""
     found: dict = {}
     for phrase, name in PERIOD_PHRASES:
         if m := re.search(rf"\b({phrase})\b", text, I):
@@ -190,11 +186,22 @@ def period_hints(text: str, now: datetime) -> list[str]:
     for m in NUMBERED_PERIOD.finditer(text):
         if numbered := numbered_span(m.group(1), m.group(2), now):
             found.setdefault(numbered[1:], (m.group(0), numbered[0]))
-    if not found and (bare := BARE_PERIOD.search(text)):  # "humidity week", "aq month": as if "this ..."
+    if not found and (bare := BARE_PERIOD.search(text)):  # "weather week", "aq month": as if "this ..."
         name = BARE_PERIODS[bare.group(1).lower()]
         found[span(name, now)] = (bare.group(0), name)
+    return found
+
+
+def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
+    """Every distinct period the text names, as (name, start, end)."""
+    return [(name, *window) for window, (_, name) in _periods(text, now).items()]
+
+
+def period_hints(text: str, now: datetime) -> list[str]:
+    """One line per period the person's words name, with its exact dates, for the model: "3m" = the last 3 months:
+    2026-07-01 00:00:00 to 2026-09-30 23:59:59. The model otherwise guesses short forms (3m has been read as 3 days)."""
     return [f'"{said}" = {name}: {start:%Y-%m-%d %H:%M:%S} to {end:%Y-%m-%d %H:%M:%S}'
-            for (start, end), (said, name) in found.items()]
+            for (start, end), (said, name) in _periods(text, now).items()]
 
 
 # ---------- weather fast path ----------
@@ -202,16 +209,16 @@ EXTREMES = re.compile(r"\b(hottest|coldest|warmest|coolest|highest|lowest|highs?
                       r"extremes?|temperatures?|temps?)\b", I)
 GRAPH = re.compile(r"\b(graph\w*|chart\w*|plot\w*|trend\w*|visuali[sz]\w*)\b", I)
 # Anything that needs other data, a judgement, or a comparison goes the normal way
-NOT_SIMPLE = re.compile(r"\b(rain\w*|wind\w*|gusts?|pressure|humid\w*|uv|solar|lightning|pm ?2\.?5|pm2|pm ?10|pm ?1|"
-                        r"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|airgradient|"
-                        r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
-                        r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now)\b", I)
+_NOT_SIMPLE = (r"rain\w*|pressure|humid\w*|uv|solar|lightning|pm ?2\.?5|pm2|pm ?10|pm ?1|"
+               r"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|airgradient|"
+               r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
+               r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now")
+NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
 # Wind is fine for the fast path when it is a plain chart request ("wind direction plot 3m")
-WIND = re.compile(r"\b(wind\w*|gusts?|breez\w*)\b", I)
-NOT_SIMPLE_WIND_OK = re.compile(NOT_SIMPLE.pattern.replace(r"wind\w*|gusts?|", ""), I)
+WIND = re.compile(rf"\b({_WIND})\b", I)
+NOT_SIMPLE_WIND_OK = re.compile(rf"\b({_NOT_SIMPLE})\b", I)
 # What a chart request with no period must name to default to a week ("chart it" refers back instead)
-WEATHER_SUBJECT = re.compile(r"\b(weather|temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|highs?|lows?|indoors?|outdoors?|"
-                             r"inside|outside|station)\b", I)
+WEATHER_SUBJECT = re.compile(rf"\b(weather|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
 WEATHER_WORD = re.compile(r"\b(weather|conditions)\b", I)
 # A period named on its own ("weather week", "aq month") counts as "this week/month/year"
 BARE_PERIODS = {"week": "last 7 days", "month": "this month", "year": "this year"}
@@ -236,36 +243,24 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     return spans[0] if len(spans) == 1 else None  # none, or several ("this week vs last week"): the model decides
 
 
-# What a chart plots when the question is about one reading other than temperature: keyword -> field name
-CHART_FIELDS = {r"humid\w*": "humidity", r"pressure|barometer|barometric": "relative", r"gusts?|wind": "wind_gust",
-                r"rain\w*": "daily"}
-TEMPERATURE_WORDS = re.compile(r"\b(temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|heat\w*|degrees?|celsius|freez\w*)\b", I)
-
+# The readings a chart can plot: name -> (the words that name it, the field it plots when it is the only one asked about)
+READINGS = {"temperature": (_TEMP, None), "humidity": (r"humid\w*", "humidity"), "pressure": (_PRESSURE, "relative"),
+            "wind": (r"gusts?|wind\w*", "wind_gust"), "rain": (r"rain\w*|precip\w*", "daily")}
 
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
+
+
+def chart_fields(text: str) -> list[str]:
+    """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
+    found = {name: m.start() for name, (words, _) in READINGS.items() if (m := re.search(rf"\b({words})\b", text, I))}
+    return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
 def chart_field(text: str) -> str | None:
     """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
     is about temperature, several readings, or none in particular."""
-    if TEMPERATURE_WORDS.search(text):
-        return None
-    found = {field for pattern, field in CHART_FIELDS.items() if re.search(rf"\b({pattern})\b", text, I)}
-    return found.pop() if len(found) == 1 else None
-
-
-# The readings a chart can put side by side, in the words that name them
-STACK_WORDS = {"temperature": r"temp\w*|hot\w*|cold\w*|warm\w*|celsius|degrees?", "humidity": r"humid\w*",
-               "pressure": r"pressure|barometer|barometric", "wind": r"gusts?|wind\w*", "rain": r"rain\w*|precip\w*"}
-
-
-def chart_fields(text: str) -> list[str]:
-    """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
-    found = {}
-    for name, words in STACK_WORDS.items():
-        if m := re.search(rf"\b({words})\b", text, I):
-            found[name] = m.start()
-    return sorted(found, key=found.get) if len(found) >= 2 else []
+    found = [name for name, (words, _) in READINGS.items() if re.search(rf"\b({words})\b", text, I)]
+    return READINGS[found[0]][1] if len(found) == 1 else None
 
 
 def weather_groups(text: str) -> str:
@@ -285,9 +280,8 @@ AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"
     r"compare\w*|vs|versus|than|graph\w*|chart\w*|plot\w*|why|forecast\w*|tomorrow|tonight|later|will|"
     r"average|highest|lowest|peak|max\w*|min\w*|record\w*|"
-    r"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather)\b", I)
-AIR_CHART_NOT = re.compile(r"\b(compare\w*|vs|versus|than|why|forecast\w*|tomorrow|will|"
-                           r"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather)\b", I)
+    rf"{_OTHER_THAN_AIR})\b", I)
+AIR_CHART_NOT = re.compile(rf"\b(compare\w*|vs|versus|than|why|forecast\w*|tomorrow|will|{_OTHER_THAN_AIR})\b", I)
 AIR_METRICS = [  # word -> metric; checked in order, so PM10 wins over PM1
     (r"pm ?2\.?5|pm25", "pm2_5"), (r"pm ?10", "pm10"), (r"pm ?1(?![0-9])", "pm1"), (r"co2|co₂", "co2"),
     (r"voc\w*", "voc_index"), (r"nox", "nox_index"),
