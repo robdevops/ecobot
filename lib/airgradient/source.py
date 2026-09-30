@@ -372,5 +372,12 @@ class AirGradient:
         if "x" not in series:
             line = downsample(pts)
             series.update(x=[t for t, _ in line], y=[v for _, v in line])
+            if pts[-1][0] - pts[0][0] > 86400:  # more than a day of readings: each day's range shaded behind the line
+                by_day: dict = {}
+                for t, v in pts:
+                    by_day.setdefault(local_date(t, self.tz), []).append(v)
+                series.update(low=[min(by_day[local_date(t, self.tz)]) for t, _ in line],
+                              high=[max(by_day[local_date(t, self.tz)]) for t, _ in line], step=True)
+                subtitle = f"{period}  ·  AirGradient readings, each day's range shaded"
         return {"kind": "line", "title": label, "subtitle": subtitle, "unit": CHART_UNITS[name],
                 "zones": list(RATINGS[name]), "series": [series]}

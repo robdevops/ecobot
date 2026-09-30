@@ -544,6 +544,15 @@ class HistoryQuery:
             xs = sorted(line)
             if len(xs) < 2:
                 continue
+            stepped = cycle in ("5min", "30min") and self.span > timedelta(days=1)
+            if stepped:  # a few days of readings: the line stays detailed, and each day's range is shaded behind it
+                lows: dict = {}
+                highs: dict = {}
+                for t, r in pts.items():
+                    d = local_date(t, self.tz)
+                    lows[d] = min(lows.get(d, _low(r)), _low(r))
+                    highs[d] = max(highs.get(d, _high(r)), _high(r))
+                band = {t: (lows[local_date(t, self.tz)], highs[local_date(t, self.tz)]) for t in xs}
             resolution = resolution or names.get(cycle, cycle)
             rec = self.overall.get(k, {})
             records = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec}
@@ -552,13 +561,14 @@ class HistoryQuery:
             if len(band) >= len(xs) // 2:  # bucketed data: the range of each bucket, behind its average
                 entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
                 entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
-                ranged = True
+                entry["step"] = stepped  # each day's range is one flat block
+                ranged = "day" if stepped else True
             series.append(entry)
         if not series:
             return None
         return {"kind": "line", "title": field.replace("_", " ").capitalize(),
                 "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
-                            + (", range shaded" if ranged else "")
+                            + (", each day's range shaded" if ranged == "day" else ", range shaded" if ranged else "")
                             + ("  ·  records marked" if any(x["records"] for x in series) else ""),
                 "unit": unit, "series": series}
 

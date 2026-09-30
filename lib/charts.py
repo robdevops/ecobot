@@ -5,7 +5,8 @@ bot) when a chart was asked for; the bot renders them after the answer is writte
 and sends them with it. One line per reading type (e.g. outdoor and indoor):
   {"kind": "line", "title", "subtitle", "unit",
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
-               "low": [float], "high": [float]}]}      (low/high optional: each point's range, drawn as a band)
+               "low": [float], "high": [float], "step": bool}]}   (low/high optional: each point's range, drawn as a band;
+                                                                     step: flat blocks, one per day)
 
 Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up) beside a
 wind rose of the whole period, stacked by wind speed:
@@ -163,7 +164,8 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
         xs = mdates.date2num([to_dt(t) for t in s["x"]])
         ys = np.asarray(s["y"], dtype=float)
         if s.get("low"):  # each bucket's low-to-high range behind its average: the chart shows the full swing
-            ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=3)
+            ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=3,
+                            step="post" if s.get("step") else None)
         elif len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
             poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
             ax.add_patch(poly)

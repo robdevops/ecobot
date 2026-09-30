@@ -549,6 +549,11 @@ async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
     assert len(week["low"]) == len(week["high"]) == len(week["y"])
     assert all(lo <= y <= hi for lo, y, hi in zip(week["low"], week["y"], week["high"]))
     assert "range shaded" in (await spec_for(8))["subtitle"]
+    few = await spec_for(4)                                        # four days: 5- or 30-minute readings, each day's range shaded
+    line = few["series"][0]
+    assert line["step"] is True and "each day's range shaded" in few["subtitle"] and len(line["x"]) > 100
+    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
+    assert len(set(line["high"])) <= 5 and len(set(line["low"])) <= 5             # one flat block per day
     await eco.close()
 
 

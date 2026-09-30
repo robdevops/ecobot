@@ -228,7 +228,8 @@ async def test_air_charts_over_a_week_are_a_daily_mean_with_the_range_shaded(tmp
         finally:
             CHART_REQUESTS.reset(token)
     short = (await specs(3, ["pm2_5"]))[0]["series"][0]
-    assert "low" not in short and len(short["x"]) > 20                          # a few days: the readings themselves
+    assert len(short["x"]) > 20 and short["step"] is True                       # a few days: the readings, each day's range shaded
+    assert all(lo <= y <= hi for lo, y, hi in zip(short["low"], short["y"], short["high"]))
     week = (await specs(10, ["pm2_5"]))[0]
     line = week["series"][0]
     assert "daily averages, range shaded" in week["subtitle"] and 8 <= len(line["x"]) <= 12
