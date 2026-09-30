@@ -7,6 +7,10 @@ and sends them with it. One line per reading type (e.g. outdoor and indoor):
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
                "low": [float], "high": [float]}]}   (low/high optional: each point's range, drawn as a band)
 
+Rain against another reading (weather_link):
+  {"kind": "pair", "title", "subtitle", "top": {"label", "unit", "x", "y"[, "low", "high"]},
+   "bottom": {"label", "unit", "x": [bar start epoch], "y": [mm], "width": seconds}}
+
 Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up) beside a
 wind rose of the whole period, stacked by wind speed:
   {"kind": "direction", "title", "subtitle", "start": epoch of the first column, "step": seconds per column,
@@ -61,6 +65,9 @@ AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, s
                       "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
                       "\"average\" field, and its low and high in brackets. Lead with the average: that is what was asked. "
                       "Don't mention or describe the chart.")
+LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading as a line and rain as bars below it, so keep "
+                   "it short: the period, then the finding in one or two lines (how much of the rain fell while the reading "
+                   "was falling, and the correlation), citing the numbers. Don't mention or describe the chart.")
 DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction over time, so keep it short: "
                         "the period, then the most common direction and how steady it was. Don't mention or describe the chart.")
 
@@ -276,6 +283,44 @@ def _render_direction(fig, ax, spec: dict, tz: tzinfo):
         _render_rose(fig, spec)
 
 
+def _render_pair(fig, spec: dict, tz: tzinfo):
+    """A reading as a line (with its daily range shaded when it is one point a day) above rain as bars, on one time
+    axis: the rain lines up with what the reading was doing at that moment."""
+    to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    top, bottom = spec["top"], spec["bottom"]
+    left, width = AX_RECT[0], AX_RECT[2]
+    ax = fig.add_axes([left, 0.36, width, 0.40], facecolor=BG)
+    axr = fig.add_axes([left, 0.13, width, 0.19], facecolor=BG, sharex=ax)
+    colour = _colour(top["label"], 0)
+    xs = mdates.date2num([to_dt(t) for t in top["x"]])
+    ys = np.asarray(top["y"], dtype=float)
+    if top.get("low"):
+        ax.fill_between(xs, top["low"], top["high"], color=colour, alpha=0.2, linewidth=0, zorder=2)
+    ax.plot(xs, ys, color=colour, linewidth=1.5, solid_joinstyle="round", zorder=3)
+    _pad_limits(ax, float(min(top.get("low") or ys)), float(max(top.get("high") or ys)), top=0.12, bottom=0.12)
+    rain_colour = "#0EA5E9"
+    if bottom["x"]:
+        bx = mdates.date2num([to_dt(t) for t in bottom["x"]])
+        axr.bar(bx, bottom["y"], width=bottom["width"] / 86400 * 0.85, align="edge", color=rain_colour, linewidth=0, zorder=3)
+    axr.set_ylim(0, max([*bottom["y"], 1.0]) * 1.15)
+    x0, x1 = min(xs.min(), mdates.date2num(to_dt(bottom["x"][0])) if bottom["x"] else xs.min()), xs.max()
+    axr.set_xlim(x0, x1 + (bottom["width"] / 86400 if bottom["x"] else 0))
+    _frame(fig, ax, {**spec, "unit": ""}, [], [], legend=False)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.set_title(f"{top['label']} ({top['unit']})", loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
+    plt.setp(ax.get_xticklabels(), visible=False)
+    for a in (axr,):
+        for side in ("top", "right", "left"):
+            a.spines[side].set_visible(False)
+        a.spines["bottom"].set_color(AXIS)
+        a.tick_params(axis="both", length=0, labelsize=7.5, labelcolor=MUTED, pad=5)
+        a.grid(axis="y", color=GRID, linewidth=0.8)
+        a.set_axisbelow(True)
+        a.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3))
+    axr.set_title(f"{bottom['label']} ({bottom['unit']})", loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
+    _time_axis(axr, x1 - x0)
+
+
 WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
 
 
@@ -384,7 +429,10 @@ def render(spec: dict, tz: tzinfo) -> bytes:
     fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI, facecolor=BG)
     ax = fig.add_axes(AX_RECT, facecolor=BG)
     try:
-        if spec["kind"] == "direction":
+        if spec["kind"] == "pair":
+            fig.delaxes(ax)
+            _render_pair(fig, spec, tz)
+        elif spec["kind"] == "direction":
             _render_direction(fig, ax, spec, tz)
         else:
             _render_line(fig, ax, spec, tz)

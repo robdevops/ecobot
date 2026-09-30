@@ -46,6 +46,12 @@ def gust(ts: int) -> float:
 
 
 @lru_cache(maxsize=None)  # pure and called for every sample of every request
+@lru_cache(maxsize=None)
+def pressure(ts: int) -> float:
+    """Relative pressure: a slow swing over about a week, with a small twice-daily tide."""
+    return 1015 + 8 * math.sin(ts / 86400 / 1.1) + 0.7 * math.sin(ts / 3600 / 12 * 2 * math.pi)
+
+
 def direction(ts: int) -> float:
     """Wind direction that keeps crossing north: 350, 0, 10 degrees in turn (a plain average would say south)."""
     return (350 + ts // 300 % 3 * 10) % 360
@@ -93,7 +99,7 @@ class FakeEcowitt:
         first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            named = {"rainfall": [("daily", rain_day)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)]}
+            named = {"rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)]):
                 for ts in range(first, end + 1, step):

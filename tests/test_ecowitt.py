@@ -719,3 +719,76 @@ def test_the_rolling_range_is_the_lowest_and_highest_within_the_window():
     assert (lo, hi) == ([9], [10])
     lo, hi = rolling_range([100000], x, low, high, 1800)       # a time with no readings near it still returns something sane
     assert len(lo) == len(hi) == 1
+
+
+# ---------- weather_link: rain against pressure, read together ----------
+def test_rain_per_slot_comes_from_the_rise_in_the_daily_total_and_its_midnight_reset():
+    from lib.ecowitt.link import rain_slots
+    daily = {0: 0.0, 1800: 0.4, 3600: 0.4, 5400: 1.0, 7200: 0.2, 20000: 0.7}     # 7200 is after the reset; 20000 follows a hole
+    assert rain_slots(daily) == {1800: 0.4, 3600: 0.0, 5400: 0.6, 7200: 0.2}
+
+
+def synthetic_days(falling_rain: bool):
+    """Ten days of 30-minute slots: pressure falls 4 hPa over 6 hours then recovers; rain falls in the last hours of
+    each fall (or, when falling_rain is False, in the recovery)."""
+    driver, daily, total = {}, {}, 0.0
+    for i in range(10 * 48):
+        t = 1_780_000_000 + i * 1800
+        phase = i % 24                                       # a 12-hour cycle
+        driver[t] = 1015 - (phase * 4 / 12 if phase < 12 else (24 - phase) * 4 / 12)
+        wet = (8 <= phase < 12) if falling_rain else (16 <= phase < 20)
+        if i % 48 == 0:
+            total = 0.0
+        total += 0.6 if wet else 0.0
+        daily[t] = total
+    return driver, daily
+
+
+def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is_not():
+    from lib.ecowitt.link import analyse, rain_slots
+    from tests.fakes import TZ
+    driver, daily = synthetic_days(True)
+    out = analyse(driver, rain_slots(daily), 1.0, TZ)
+    fell = out["by_change_before"]["falling"]
+    fell_correlation = out["correlation_change_vs_rain_next_3h"]
+    assert int(fell["share_of_rain"].rstrip("%")) > 60 and fell_correlation < -0.2
+    assert out["rain_events"]["count"] >= 8 and out["rain_events"]["started_after_a_fall"] >= 8
+    assert out["average_level"]["during_rain"] < out["average_level"]["dry"]
+    driver, daily = synthetic_days(False)                      # rain in the recovery: pressure is rising when it falls
+    out = analyse(driver, rain_slots(daily), 1.0, TZ)
+    assert (int(out["by_change_before"]["rising"]["share_of_rain"].rstrip("%")) >
+            int(out["by_change_before"]["falling"]["share_of_rain"].rstrip("%")))     # the mirror image: rain in the recovery
+    assert out["correlation_change_vs_rain_next_3h"] > fell_correlation and analyse({}, {}, 1.0, TZ) == {}
+
+
+async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_reading(tmp_path, archived_cache):
+    from lib.charts import render
+    eco, fake = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    token = CHART_REQUESTS.set([])
+    try:
+        out = json.loads(await eco.tools[3].handler({"start_date": f"{today - timedelta(days=20)}",
+                                                     "end_date": f"{today - timedelta(days=2)}"}))
+        specs = CHART_REQUESTS.get()
+    finally:
+        CHART_REQUESTS.reset(token)
+    assert fake.calls == [] and out["resolution"].startswith("30-minute") and out["slots"] > 500
+    assert set(out["by_change_before"]) == {"falling", "steady", "rising"} and "chart" in out
+    assert len(specs) == 1 and specs[0]["kind"] == "pair" and specs[0]["bottom"]["width"] == 6 * 3600
+    assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
+    assert "error" in json.loads(await eco.tools[3].handler({"driver": "nonsense"}))
+    await eco.close()
+
+
+def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
+    from lib.charts import render
+    from lib.ecowitt.link import chart_spec
+    from tests.fakes import TZ
+    for days in (2, 30, 92, 365):
+        first = (datetime(2026, 1, 1)).date()
+        last = first + timedelta(days=days - 1)
+        base = int(datetime(2026, 1, 1, tzinfo=TZ).timestamp())
+        driver = {base + i * 1800: 1015 + 6 * ((i / 200) % 2 - 1) for i in range(days * 48)}
+        rain = {t: (0.4 if (i // 30) % 5 == 0 else 0.0) for i, t in enumerate(driver)}
+        spec = chart_spec(driver, rain, TZ, first, last, "pressure", "hPa")
+        assert spec["bottom"]["width"] in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
