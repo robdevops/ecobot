@@ -228,3 +228,11 @@ def test_the_model_is_told_the_exact_dates_of_any_period_the_words_name():
     assert len(intent.period_hints("compare this week and last week highs", NOW)) == 2
     assert any("last 2 weeks" in h for h in intent.period_hints("weather 2 weeks", NOW))
     assert intent.period_hints("hello", NOW) == [] and intent.period_hints("use 30 minute data", NOW) == []
+
+
+def test_readings_named_together_are_charted_together():
+    assert intent.chart_fields("plot temperature and rain") == ["temperature", "rain"]
+    assert intent.chart_fields("graph rain, pressure and humidity for 3m") == ["rain", "pressure", "humidity"]
+    assert intent.chart_fields("wind vs temp this week") == ["wind", "temperature"]
+    for text in ("plot the temperature", "will it rain", "hottest day this year", "hello"):
+        assert intent.chart_fields(text) == [], text

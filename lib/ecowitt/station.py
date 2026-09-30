@@ -15,7 +15,7 @@ from .api import EcowittAPI, GROUPS, UNITS
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
-from .history import Fetcher, HistoryQuery
+from .history import STACK, Fetcher, HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
 
 log = logging.getLogger(__name__)
@@ -52,6 +52,9 @@ HISTORY_PARAMS = {
         "end_date": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM:SS' local time (today is fine: up to now)."},
         "groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. Add 'rainfall', "
                                                     "'wind' or 'pressure' only if needed. Plain group names, not dotted fields."},
+        "chart_fields": {"type": "array", "items": {"type": "string", "enum": ["temperature", "humidity", "pressure", "wind", "rain"]},
+                         "description": "To plot SEVERAL readings together ('plot temperature and rain'): which, in order, "
+                                        "one panel each on a shared time axis. The groups they need are fetched for you."},
         "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
                                                       "period's average (and per day or month). Highs and lows are the default."},
         "chart_field": {"type": "string", "description": "What the chart should plot when the question is about something other "
@@ -126,7 +129,9 @@ class Ecowitt:
 
     # ---------- tools ----------
     async def _history(self, args: dict) -> str:
-        return await HistoryQuery(self.fetcher(parse_groups(args.get("groups"))), args).run()
+        groups = parse_groups(args.get("groups"))
+        groups += [g for n in stack_names(args) if (g := STACK[n][0]) not in groups]  # what "plot temperature and rain" needs
+        return await HistoryQuery(self.fetcher(groups), args).run()
 
     async def _days(self, args: dict) -> str:
         return await days_tool(self.cache, self.mac, self.tz, args)

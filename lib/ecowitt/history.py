@@ -16,10 +16,11 @@ import logging
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
-from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
+from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import local_date, local_epoch, now_local, rolling_range, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
+from .link import rain_bars, rain_slots
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,19 @@ CACHED_DETAILED_DAYS = 365
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
 # question asks for them, so an "averaged data" note can't be misapplied elsewhere.
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
+
+
+# What "plot X and Y" can put on one chart: name -> (group, field, label, unit)
+STACK = {"temperature": ("outdoor", "temperature", "Temperature", "°C"), "humidity": ("outdoor", "humidity", "Humidity", "%"),
+         "pressure": ("pressure", "relative", "Pressure", "hPa"), "wind": ("wind", "wind_gust", "Wind gust", "km/h"),
+         "rain": ("rainfall", "daily", "Rain", "mm")}
+
+
+def stack_names(args: dict) -> list[str]:
+    """The readings to put side by side (from the person's words, else the model's chart_fields), two or more."""
+    raw = CHART_STACK.get() or args.get("chart_fields") or []
+    names = [n for n in dict.fromkeys(str(x).strip().lower() for x in raw) if n in STACK]
+    return names if len(names) >= 2 else []
 
 
 # ---------- fetching ----------
@@ -253,6 +267,7 @@ class HistoryQuery:
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
         self.direction_period = (None, None)               # what the counted readings actually span
+        self.rain_bars: dict = {"x": [], "y": [], "width": 86400, "per": "day"}   # for a stacked chart with rain
         self.direction_grid: dict = {}                     # counts per compass point per time step, for the heatmap
 
     async def run(self) -> str:
@@ -271,6 +286,8 @@ class HistoryQuery:
             self.span <= timedelta(days=CACHED_DETAILED_DAYS) and await self._cached_locally())
 
         await self._fetch_period()
+        if stack_names(self.args) and "rain" in stack_names(self.args):
+            self.rain_bars = await self._rain_bars()
         await self._summarise_direction()
         if not self.store and not self.direction:
             return "Error: no history data returned." + (
@@ -477,10 +494,16 @@ class HistoryQuery:
         holder = CHART_REQUESTS.get()
         plottable = {k: v for k, v in series_out.items() if k in self.store}
         if wants_chart(self.args, self.start, self.end) and holder is not None:
-            spec = self._chart_spec(plottable) if plottable else None
+            spec = self._stack_spec(stack_names(self.args)) if stack_names(self.args) else None
             if spec:
+                out["rain_total_mm"] = round(sum(self.rain_bars["y"]), 1) if self.rain_bars["x"] else None
                 holder.append(spec)
-                out["chart"] = AVERAGE_CHART_HINT if AVERAGE_ASKED.get() else CHART_HINT
+                out["chart"] = STACK_CHART_HINT
+            else:
+                spec = self._chart_spec(plottable) if plottable else None
+                if spec:
+                    holder.append(spec)
+                    out["chart"] = AVERAGE_CHART_HINT if AVERAGE_ASKED.get() else CHART_HINT
             if self.direction_grid:
                 unit = self.direction_grid["unit"]
                 holder.append({"kind": "direction", "title": "Wind direction", **self.direction_grid,
@@ -538,26 +561,14 @@ class HistoryQuery:
                  "1day": "daily averages"}
         series, resolution, ranged = [], None, False
         for k in keys:
-            pts = {t: r for t, r in self.store[k]["pts"].items() if "value" in r}
-            if not pts:
+            got = self._series_entry(k)
+            if got is None:
                 continue
-            cycle, line, band = self._line(pts)
-            xs = sorted(line)
-            if len(xs) < 2:
-                continue
-            rolling = cycle in ("5min", "30min") and self.span > timedelta(days=1)
-            if rolling:  # a few days of readings: the line stays detailed, with a ribbon of the range around each point
-                ts = sorted(pts)
-                lows, highs = rolling_range(xs, ts, [_low(pts[t]) for t in ts], [_high(pts[t]) for t in ts], RIBBON_HOURS * 1800)
-                band = dict(zip(xs, zip(lows, highs)))
+            entry, cycle, rolling = got
             resolution = resolution or names.get(cycle, cycle)
             rec = self.overall.get(k, {})
-            records = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec}
-            entry = {"label": k.split(".", 1)[0].replace("_", " ").capitalize(),
-                     "x": xs, "y": [line[t] for t in xs], "records": records}
-            if len(band) >= len(xs) // 2:  # bucketed data: the range of each bucket, behind its average
-                entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
-                entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
+            entry["records"] = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec}
+            if "low" in entry:
                 ranged = "rolling" if rolling else True
             series.append(entry)
         if not series:
@@ -567,6 +578,57 @@ class HistoryQuery:
                             + (f", {RIBBON_HOURS}-hour range shaded" if ranged == "rolling" else ", range shaded" if ranged else "")
                             + ("  ·  records marked" if any(x["records"] for x in series) else ""),
                 "unit": unit, "series": series}
+
+    def _series_entry(self, k: str, label: str | None = None) -> tuple[dict, str, bool] | None:
+        """One series as a chart line (x, y, and low/high where it has a range), its resolution and whether the range is
+        the rolling ribbon; None if there is too little to draw."""
+        pts = {t: r for t, r in self.store[k]["pts"].items() if "value" in r}
+        if not pts:
+            return None
+        cycle, line, band = self._line(pts)
+        xs = sorted(line)
+        if len(xs) < 2:
+            return None
+        rolling = cycle in ("5min", "30min") and self.span > timedelta(days=1)
+        if rolling:  # a few days of readings: the line stays detailed, with a ribbon of the range around each point
+            ts = sorted(pts)
+            lows, highs = rolling_range(xs, ts, [_low(pts[t]) for t in ts], [_high(pts[t]) for t in ts], RIBBON_HOURS * 1800)
+            band = dict(zip(xs, zip(lows, highs)))
+        entry = {"label": label or k.split(".", 1)[0].replace("_", " ").capitalize(), "x": xs, "y": [line[t] for t in xs]}
+        if len(band) >= len(xs) // 2:  # bucketed data: the range of each bucket, behind its average
+            entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
+            entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
+        return entry, cycle, rolling
+
+    async def _rain_bars(self) -> dict:
+        """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
+        lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
+        found = await asyncio.to_thread(self.f.cache.load_fields, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
+        daily = {int(t): float(v) for t, v in found.get("daily", {"list": {}})["list"].items()}
+        return rain_bars(rain_slots(daily), self.tz, self.start.date(), self.end.date())
+
+    def _stack_spec(self, names: list[str]) -> dict | None:
+        """The readings asked for, one panel each on a shared time axis; None if fewer than two can be drawn."""
+        panels = []
+        for name in names:
+            group, field, label, unit = STACK[name]
+            if name == "rain":
+                if self.rain_bars["x"]:
+                    panels.append({"label": label, "unit": unit, "bars": {k: v for k, v in self.rain_bars.items() if k != "per"}})
+                continue
+            entries = [e[0] for k in sorted(self.store) if k.split(".", 1)[-1] == field and (
+                       group == "outdoor" and k.split(".")[0] in ("outdoor", "indoor") or k.startswith(group + "."))
+                       and (e := self._series_entry(k)) is not None]
+            if entries:
+                panels.append({"label": label, "unit": unit, "series": entries if len(entries) > 1 or name == "temperature"
+                               else [{**entries[0], "label": label}]})
+        if len(panels) < 2:
+            return None
+        rain = self.rain_bars["per"] if any("bars" in p for p in panels) else None
+        return {"kind": "stack", "title": " and ".join(p["label"] for p in panels),
+                "subtitle": f"{_period(self.start, self.end)}" + (f"  ·  rain per {rain}" if rain else "")
+                            + ("  ·  shaded: range" if any(s.get("low") for p in panels for s in p.get("series", [])) else ""),
+                "panels": panels}
 
     def _line(self, pts: dict) -> tuple[str, dict, dict]:
         """(cycle, {ts: value}, {ts: (low, high)}) for one series, at a single consistent resolution. The band is

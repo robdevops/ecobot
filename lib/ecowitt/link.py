@@ -124,25 +124,9 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                                          "lowest_during": round(e["lowest"], 1)} for e in top]}}
 
 
-def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,
-               name: str, unit: str) -> dict | None:
-    """Two panels on one time axis: the reading (a line, at 30 minutes up to a month, else a daily mean with its range)
-    above the rain (bars: hourly, 6-hourly or daily by length of period)."""
+def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> dict:
+    """Rain summed into bars: hourly up to 4 days, 6-hourly up to a month, daily beyond."""
     days = (last - first).days + 1
-    if len(driver) < 2:
-        return None
-    ts = sorted(driver)
-    top = {"label": name.capitalize(), "unit": unit}
-    if days <= 31:
-        top.update(x=ts, y=[driver[t] for t in ts])
-    else:
-        by_day: dict = {}
-        for t in ts:
-            by_day.setdefault(local_date(t, tz), []).append(driver[t])
-        ds = sorted(by_day)
-        noon = lambda d: int(datetime.combine(d, time(12)).replace(tzinfo=tz).timestamp())
-        top.update(x=[noon(d) for d in ds], y=[sum(by_day[d]) / len(by_day[d]) for d in ds],
-                   low=[min(by_day[d]) for d in ds], high=[max(by_day[d]) for d in ds])
     width = next(w for limit, w in CHART_BARS if days <= limit)
     origin = int(datetime.combine(first, time()).replace(tzinfo=tz).timestamp())
     bars: dict[int, float] = {}
@@ -151,10 +135,37 @@ def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, fir
             k = origin + (t - origin) // width * width
             bars[k] = bars.get(k, 0.0) + mm
     xs = sorted(bars)
-    unit_word = {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width]
-    return {"kind": "pair", "title": f"{name.capitalize()} and rain",
-            "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}  ·  rain per {unit_word}",
-            "top": top, "bottom": {"label": "Rain", "unit": "mm", "x": xs, "y": [round(bars[k], 2) for k in xs], "width": width}}
+    return {"x": xs, "y": [round(bars[k], 2) for k in xs], "width": width,
+            "per": {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width]}
+
+
+def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str) -> dict | None:
+    """The reading as a line: 30-minute readings up to a month, else a daily mean with its range shaded."""
+    if len(driver) < 2:
+        return None
+    ts = sorted(driver)
+    if (last - first).days + 1 <= 31:
+        return {"label": label, "x": ts, "y": [driver[t] for t in ts]}
+    by_day: dict = {}
+    for t in ts:
+        by_day.setdefault(local_date(t, tz), []).append(driver[t])
+    ds = sorted(by_day)
+    noon = lambda d: int(datetime.combine(d, time(12)).replace(tzinfo=tz).timestamp())
+    return {"label": label, "x": [noon(d) for d in ds], "y": [sum(by_day[d]) / len(by_day[d]) for d in ds],
+            "low": [min(by_day[d]) for d in ds], "high": [max(by_day[d]) for d in ds]}
+
+
+def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,
+               name: str, unit: str) -> dict | None:
+    """Two panels on one time axis: the reading above the rain."""
+    line = driver_series(driver, tz, first, last, name.capitalize())
+    if line is None:
+        return None
+    bars = rain_bars(rain, tz, first, last)
+    return {"kind": "stack", "title": f"{name.capitalize()} and rain",
+            "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}  ·  rain per {bars.pop('per')}",
+            "panels": [{"label": name.capitalize(), "unit": unit, "series": [line]},
+                       {"label": "Rain", "unit": "mm", "bars": bars}]}
 
 
 def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -> tuple[dict, dict | None, date | None, date | None]:

@@ -220,6 +220,20 @@ def chart_field(text: str) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
+# The readings a chart can put side by side, in the words that name them
+STACK_WORDS = {"temperature": r"temp\w*|hot\w*|cold\w*|warm\w*|celsius|degrees?", "humidity": r"humid\w*",
+               "pressure": r"pressure|barometer|barometric", "wind": r"gusts?|wind\w*", "rain": r"rain\w*|precip\w*"}
+
+
+def chart_fields(text: str) -> list[str]:
+    """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
+    found = {}
+    for name, words in STACK_WORDS.items():
+        if m := re.search(rf"\b({words})\b", text, I):
+            found[name] = m.start()
+    return sorted(found, key=found.get) if len(found) >= 2 else []
+
+
 def weather_groups(text: str) -> str:
     """Just indoor or just outdoor if only one is asked about, otherwise both. A wind chart is just wind."""
     if WIND.search(text):

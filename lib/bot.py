@@ -20,7 +20,7 @@ from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, Messag
 
 from . import intent, prompt
 from .alerts import AlertState, with_footer
-from .charts import AVERAGE_ASKED, CHART_ASKED, CHART_FIELD, CHART_REQUESTS, render as render_chart
+from .charts import AVERAGE_ASKED, CHART_ASKED, CHART_FIELD, CHART_REQUESTS, CHART_STACK, render as render_chart
 from .config import Config
 from .timeutil import now_local
 from .llm import Agent, strip_tool_turns, trim_history
@@ -292,6 +292,7 @@ class Bot:
             ok, charts, photos = True, [], []
             chart_token = CHART_REQUESTS.set(charts)  # the history tools add chart specs here
             average_token = AVERAGE_ASKED.set(bool(intent.AVERAGE.search(text)))
+            stack_token = CHART_STACK.set(intent.chart_fields(text))  # "temperature and rain": one chart, a panel each
             field_token = CHART_FIELD.set(intent.chart_field(text))  # humidity questions get a humidity chart
             asked_token = CHART_ASKED.set(bool(intent.GRAPH.search(text)))  # "plot" means a chart, whatever the model calls
             try:
@@ -313,6 +314,7 @@ class Bot:
                 CHART_REQUESTS.reset(chart_token)
                 CHART_ASKED.reset(asked_token)
                 CHART_FIELD.reset(field_token)
+                CHART_STACK.reset(stack_token)
                 AVERAGE_ASKED.reset(average_token)
                 stop_typing.set()
                 await typing  # wait for any in-flight "typing" so none is sent after the reply

@@ -774,7 +774,7 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
         CHART_REQUESTS.reset(token)
     assert fake.calls == [] and out["resolution"].startswith("30-minute") and out["slots"] > 500
     assert set(out["by_change_before"]) == {"falling", "steady", "rising"} and "chart" in out
-    assert len(specs) == 1 and specs[0]["kind"] == "pair" and specs[0]["bottom"]["width"] == 6 * 3600
+    assert len(specs) == 1 and specs[0]["kind"] == "stack" and specs[0]["panels"][1]["bars"]["width"] == 6 * 3600
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
     assert "error" in json.loads(await eco.tools[3].handler({"driver": "nonsense"}))
     await eco.close()
@@ -791,7 +791,7 @@ def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
         driver = {base + i * 1800: 1015 + 6 * ((i / 200) % 2 - 1) for i in range(days * 48)}
         rain = {t: (0.4 if (i // 30) % 5 == 0 else 0.0) for i, t in enumerate(driver)}
         spec = chart_spec(driver, rain, TZ, first, last, "pressure", "hPa")
-        assert spec["bottom"]["width"] in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
+        assert spec["panels"][1]["bars"]["width"] in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
 
 
 async def test_weather_link_says_which_series_is_missing(tmp_path):
@@ -801,4 +801,38 @@ async def test_weather_link_says_which_series_is_missing(tmp_path):
     today = datetime.now(eco.tz).date()
     out = json.loads(await eco.tools[3].handler({"start_date": str(today - timedelta(days=9)), "end_date": str(today - timedelta(days=2))}))
     assert "pressure (pressure.relative) or rainfall (rainfall.daily)" in out["note"] and "chart" not in out
+    await eco.close()
+
+
+async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, archived_cache):
+    from lib.charts import CHART_STACK, render
+    eco, fake = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=20)} 00:00:00",
+            "end_date": f"{today - timedelta(days=2)} 23:59:59", "chart": True}
+
+    async def ask_chart(**extra):
+        token = CHART_REQUESTS.set([])
+        try:
+            out = json.loads(await eco.tools[1].handler({**args, **extra}))
+            return out, CHART_REQUESTS.get()
+        finally:
+            CHART_REQUESTS.reset(token)
+    out, specs = await ask_chart(chart_fields=["temperature", "rain"])              # the model's choice; rain's group is added for it
+    assert len(specs) == 1 and specs[0]["kind"] == "stack" and [p["label"] for p in specs[0]["panels"]] == ["Temperature", "Rain"]
+    assert "bars" in specs[0]["panels"][1] and out["rain_total_mm"] > 0 and "rain_total_mm" in out["chart"]
+    assert render(specs[0], eco.tz)[:4] == b"\x89PNG" and fake.calls == []            # cache only
+    out, specs = await ask_chart(chart_fields=["pressure", "humidity", "wind", "rain", "temperature"], groups="outdoor,indoor")
+    assert [p["label"] for p in specs[0]["panels"]][0] == "Pressure" and len(specs[0]["panels"]) >= 4
+    temperature = next(p for p in specs[0]["panels"] if p["label"] == "Temperature")
+    assert [s["label"] for s in temperature["series"]] == ["Indoor", "Outdoor"]        # both lines in one panel
+    assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
+    token = CHART_STACK.set(["rain", "wind"])                                          # from the person's words: beats nothing else
+    try:
+        out, specs = await ask_chart()
+    finally:
+        CHART_STACK.reset(token)
+    assert [p["label"] for p in specs[0]["panels"]] == ["Rain", "Wind gust"]
+    out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
+    assert specs[0]["kind"] == "line"
     await eco.close()

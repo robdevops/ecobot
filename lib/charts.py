@@ -7,9 +7,10 @@ and sends them with it. One line per reading type (e.g. outdoor and indoor):
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
                "low": [float], "high": [float]}]}   (low/high optional: each point's range, drawn as a band)
 
-Rain against another reading (weather_link):
-  {"kind": "pair", "title", "subtitle", "top": {"label", "unit", "x", "y"[, "low", "high"]},
-   "bottom": {"label", "unit", "x": [bar start epoch], "y": [mm], "width": seconds}}
+Several readings on one time axis, a panel each (weather_link, and "plot temperature and rain"):
+  {"kind": "stack", "title", "subtitle", "panels": [
+     {"label", "unit", "series": [{"label", "x", "y"[, "low", "high"]}]}      a line per series, or
+     {"label", "unit", "bars": {"x": [bar start epoch], "y": [value], "width": seconds}}]}
 
 Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up) beside a
 wind rose of the whole period, stacked by wind speed:
@@ -45,6 +46,8 @@ CHART_ASKED: ContextVar[bool] = ContextVar("chart_asked", default=False)
 
 # The reading a chart should plot, from the person's words ("humidity"); None means temperature
 CHART_FIELD: ContextVar[str | None] = ContextVar("chart_field", default=None)
+# The readings the person's words ask to see together ("plot temperature and rain"); empty means the usual chart
+CHART_STACK: ContextVar[list] = ContextVar("chart_stack", default=[])
 # True when the person asked for an average ("average temp 3m"): the caption then leads with the average
 AVERAGE_ASKED: ContextVar[bool] = ContextVar("average_asked", default=False)
 CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
@@ -68,6 +71,9 @@ AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, s
 LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading as a line and rain as bars below it, so keep "
                    "it short: the period, then the finding in one or two lines (how much of the rain fell while the reading "
                    "was falling, and the correlation), citing the numbers. Don't mention or describe the chart.")
+STACK_CHART_HINT = ("Your reply becomes the caption of a chart with these readings on one time axis, so keep it short: the "
+                    "period, then one line per reading: temperature and other readings with their high and low (or their "
+                    "average if that was asked), rain with its total (\"rain_total_mm\"). Don't mention or describe the chart.")
 DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction over time, so keep it short: "
                         "the period, then the most common direction and how steady it was. Don't mention or describe the chart.")
 
@@ -283,42 +289,61 @@ def _render_direction(fig, ax, spec: dict, tz: tzinfo):
         _render_rose(fig, spec)
 
 
-def _render_pair(fig, spec: dict, tz: tzinfo):
-    """A reading as a line (with its daily range shaded when it is one point a day) above rain as bars, on one time
-    axis: the rain lines up with what the reading was doing at that moment."""
+def _render_stack(fig, spec: dict, tz: tzinfo):
+    """Several readings on one time axis, one panel each, top to bottom: lines (with a shaded range where there is
+    one) or bars (rain). The rain lines up with what the other readings were doing at that moment."""
     to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
-    top, bottom = spec["top"], spec["bottom"]
-    left, width = AX_RECT[0], AX_RECT[2]
-    ax = fig.add_axes([left, 0.36, width, 0.40], facecolor=BG)
-    axr = fig.add_axes([left, 0.13, width, 0.19], facecolor=BG, sharex=ax)
-    colour = _colour(top["label"], 0)
-    xs = mdates.date2num([to_dt(t) for t in top["x"]])
-    ys = np.asarray(top["y"], dtype=float)
-    if top.get("low"):
-        ax.fill_between(xs, top["low"], top["high"], color=colour, alpha=0.2, linewidth=0, zorder=2)
-    ax.plot(xs, ys, color=colour, linewidth=1.5, solid_joinstyle="round", zorder=3)
-    _pad_limits(ax, float(min(top.get("low") or ys)), float(max(top.get("high") or ys)), top=0.12, bottom=0.12)
-    rain_colour = "#0EA5E9"
-    if bottom["x"]:
-        bx = mdates.date2num([to_dt(t) for t in bottom["x"]])
-        axr.bar(bx, bottom["y"], width=bottom["width"] / 86400 * 0.85, align="edge", color=rain_colour, linewidth=0, zorder=3)
-    axr.set_ylim(0, max([*bottom["y"], 1.0]) * 1.15)
-    x0, x1 = min(xs.min(), mdates.date2num(to_dt(bottom["x"][0])) if bottom["x"] else xs.min()), xs.max()
-    axr.set_xlim(x0, x1 + (bottom["width"] / 86400 if bottom["x"] else 0))
-    _frame(fig, ax, {**spec, "unit": ""}, [], [], legend=False)
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-    ax.set_title(f"{top['label']} ({top['unit']})", loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
-    plt.setp(ax.get_xticklabels(), visible=False)
-    for a in (axr,):
+    panels = spec["panels"]
+    n = len(panels)
+    left, width, bottom, top = AX_RECT[0], AX_RECT[2], 0.13, 0.75
+    gap = 0.075 if n > 2 else 0.06
+    height = (top - bottom - gap * (n - 1)) / n
+    xs_all = [mdates.date2num(to_dt(t)) for p in panels for s in (p.get("series") or [p["bars"]]) for t in s["x"]]
+    x0, x1 = min(xs_all), max(xs_all)
+    axes = []
+    for i, p in enumerate(panels):
+        ax = fig.add_axes([left, top - (i + 1) * height - i * gap, width, height], facecolor=BG,
+                          sharex=axes[0] if axes else None)
+        axes.append(ax)
+        handles = []
+        if "bars" in p:
+            bars = p["bars"]
+            bx = mdates.date2num([to_dt(t) for t in bars["x"]])
+            ax.bar(bx, bars["y"], width=bars["width"] / 86400 * 0.85, align="edge", color="#0EA5E9", linewidth=0, zorder=3)
+            ax.set_ylim(0, max([*bars["y"], 1.0]) * 1.15)
+            x1 = max(x1, (bx.max() + bars["width"] / 86400) if len(bx) else x1)
+        else:
+            lows = highs = None
+            for j, s in enumerate(p["series"]):
+                colour = _colour(s["label"], i)
+                xs = mdates.date2num([to_dt(t) for t in s["x"]])
+                if s.get("low"):
+                    ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=2)
+                ax.plot(xs, s["y"], color=colour, linewidth=1.5, solid_joinstyle="round", zorder=3)
+                lows = min(lows if lows is not None else 1e18, min(s.get("low") or s["y"]))
+                highs = max(highs if highs is not None else -1e18, max(s.get("high") or s["y"]))
+                handles.append(Line2D([], [], marker="o", linestyle="", markersize=5, color=colour))
+            _pad_limits(ax, float(lows), float(highs), top=0.12, bottom=0.12)
+            if len(p["series"]) > 1:
+                ax.legend(handles, [s["label"] for s in p["series"]], loc="upper right", frameon=False, fontsize=7,
+                          labelcolor=TEXT, ncol=len(handles), handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
         for side in ("top", "right", "left"):
-            a.spines[side].set_visible(False)
-        a.spines["bottom"].set_color(AXIS)
-        a.tick_params(axis="both", length=0, labelsize=7.5, labelcolor=MUTED, pad=5)
-        a.grid(axis="y", color=GRID, linewidth=0.8)
-        a.set_axisbelow(True)
-        a.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3))
-    axr.set_title(f"{bottom['label']} ({bottom['unit']})", loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
-    _time_axis(axr, x1 - x0)
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(AXIS)
+        ax.tick_params(axis="both", length=0, labelsize=7.5, labelcolor=MUTED, pad=5)
+        ax.grid(axis="y", color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+        ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3 if n > 2 else 4))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.set_title(f"{p['label']} ({p['unit']})" if p.get("unit") else p["label"], loc="left", fontsize=8.5,
+                     fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
+        if i < n - 1:
+            plt.setp(ax.get_xticklabels(), visible=False)
+    axes[0].set_xlim(x0, x1)
+    _frame(fig, axes[0], {**spec, "unit": ""}, [], [], legend=False)
+    axes[0].grid(axis="y", color=GRID, linewidth=0.8)
+    axes[0].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    _time_axis(axes[-1], x1 - x0)
 
 
 WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
@@ -429,9 +454,9 @@ def render(spec: dict, tz: tzinfo) -> bytes:
     fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI, facecolor=BG)
     ax = fig.add_axes(AX_RECT, facecolor=BG)
     try:
-        if spec["kind"] == "pair":
+        if spec["kind"] == "stack":
             fig.delaxes(ax)
-            _render_pair(fig, spec, tz)
+            _render_stack(fig, spec, tz)
         elif spec["kind"] == "direction":
             _render_direction(fig, ax, spec, tz)
         else:
