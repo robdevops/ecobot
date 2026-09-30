@@ -936,6 +936,8 @@ def test_current_readings_get_a_hot_cold_wet_windy_emoji_from_their_values():
     assert [glance("wind", "wind_speed", v) for v in (60, 35, 20, 5)] == ["🌪️", "💨", "🍃", ""]
     assert glance("rainfall", "rain_rate", 1.2) == "🌧️" and glance("rainfall", "rain_rate", 0) == ""
     assert glance("rainfall", "daily", 3.0) == "☔" and glance("rainfall", "daily", 0) == "" and glance("pressure", "relative", 1010) == ""
+    assert glance("solar_and_uvi", "solar", 420.0) == "☀️" and glance("solar_and_uvi", "uvi", 6) == "😎"
+    assert glance("solar_and_uvi", "solar", 0) == "" and glance("solar_and_uvi", "uvi", 0) == ""        # none at night
 
 
 async def test_weather_now_carries_the_emoji_next_to_the_readings(tmp_path):

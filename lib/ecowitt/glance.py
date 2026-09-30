@@ -1,4 +1,4 @@
-"""One emoji per current reading so hot, cold, wet and windy show at a glance. Decided here, from the values, so the same
+"""One emoji per current reading so hot, cold, wet, windy and sunny show at a glance. Decided here, from the values, so the same
 reading always gets the same emoji; the model just copies it next to the reading."""
 
 # (lowest value that gets it, emoji), highest first
@@ -25,4 +25,8 @@ def glance(group: str, field: str, value: float) -> str:
         return "🌧️" if value > 0 else ""
     if name in ("daily", "rain_daily", "rain_today"):
         return "☔" if value > 0 else ""
+    if name == "solar":
+        return "☀️" if value > 0 else ""      # none at night
+    if name == "uvi":
+        return "😎" if value > 0 else ""
     return ""
