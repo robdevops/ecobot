@@ -43,7 +43,8 @@ lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases
 scripts/                cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
-                        sent to the model for a question), check_rain.py (are rain totals trustworthy?)
+                        sent to the model for a question), check_rain.py (are rain totals trustworthy?),
+                        dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
 ```
 
 Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.
