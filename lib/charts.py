@@ -77,11 +77,13 @@ class Look:
     pad: float               # room above and below the data for pills, as a share of its span
     label_all: bool          # label every line's peaks, not just the lines that carry records
     legend_font: float
+    key_from: int            # the colour key is drawn from this many entries (a big chart's names its one line too)
+    units: bool              # pills carry a decimal and the unit; a stacked panel's are the bare number (its title has the unit)
     nbins: int               # about how many y ticks
 
 
-BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, True, 8.5, 5)
-SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, False, 7, 4)
+BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, True, 8.5, 1, True, 5)
+SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, False, 7, 2, False, 4)
 
 
 def _setup_fonts() -> str:
@@ -309,7 +311,7 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], to_dt, x0: float, x1: floa
                 ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
                           linewidth=1.2, alpha=0.8, zorder=3)
             _dot(ax, rx, ry, colour, look.pill_dot, look.pill_rim, look.pill_z)
-            text = f"{ry:.1f}{deg}"
+            text = f"{ry:.1f}{deg}" if look.units else f"{round(ry, 1):g}"
             pills.append([rx, ry, text, colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
     for a in range(len(pills)):
         for b in range(a + 1, len(pills)):
@@ -515,7 +517,7 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
             _style_axis(ax, grid=0 if p.bars and p.lines else 0.8)   # with rain behind, the grid is drawn under it (_bars_behind)
             count, x1, entries = _draw_panel(ax, p, tz, used, x0, x1, look)
             used += count
-            if len(entries) > 1:   # the colour key: beside the headline for a big chart, above the panel in a stack
+            if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
                 key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / height)) if big else \
                     dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
                 _legend_dots(fig if big else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
@@ -533,7 +535,7 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
         _time_axis(axes[-1], x1 - x0)
         if chart.compass:  # beside the wind line
             pos = axes[0].get_position()
-            axes[0].set_position([pos.x0, pos.y0, 0.57 - pos.x0, pos.height])
+            axes[0].set_position([pos.x0, pos.y0, 0.57, pos.height])
             _render_rose(fig, chart.compass)
     except Exception:
         plt.close(fig)
