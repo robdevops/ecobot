@@ -22,7 +22,7 @@ import httpx
 from .. import intent
 from ..charts import CHART_HINT, CHART_REQUESTS, wants_chart
 from ..config import Config
-from ..timeutil import local_date, now_local, to_local
+from ..timeutil import local_date, now_local, rolling_range, to_local
 from ..tools import Tool
 from ..warm import Warmer
 from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
@@ -42,6 +42,7 @@ BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some da
 BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a long recent outage isn't the start)
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
+RIBBON_HOURS = 6                  # a chart of a few days shades the lowest to highest within this many hours of each point
 DAILY_CHART_DAYS = 7              # a chart longer than this is one point a day, with each day's range shaded
 CHART_POINTS = 1500               # long charts are averaged down to about this many points
 
@@ -372,12 +373,10 @@ class AirGradient:
         if "x" not in series:
             line = downsample(pts)
             series.update(x=[t for t, _ in line], y=[v for _, v in line])
-            if pts[-1][0] - pts[0][0] > 86400:  # more than a day of readings: each day's range shaded behind the line
-                by_day: dict = {}
-                for t, v in pts:
-                    by_day.setdefault(local_date(t, self.tz), []).append(v)
-                series.update(low=[min(by_day[local_date(t, self.tz)]) for t, _ in line],
-                              high=[max(by_day[local_date(t, self.tz)]) for t, _ in line], step=True)
-                subtitle = f"{period}  ·  AirGradient readings, each day's range shaded"
+            if pts[-1][0] - pts[0][0] > 86400:  # more than a day of readings: the range within a few hours of each point, shaded
+                ts, vs = [t for t, _ in pts], [v for _, v in pts]
+                lows, highs = rolling_range(series["x"], ts, vs, vs, RIBBON_HOURS * 1800)
+                series.update(low=lows, high=highs)
+                subtitle = f"{period}  ·  AirGradient readings, {RIBBON_HOURS}-hour range shaded"
         return {"kind": "line", "title": label, "subtitle": subtitle, "unit": CHART_UNITS[name],
                 "zones": list(RATINGS[name]), "series": [series]}

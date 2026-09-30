@@ -17,13 +17,14 @@ from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
-from ..timeutil import local_date, local_epoch, now_local, to_local
+from ..timeutil import local_date, local_epoch, now_local, rolling_range, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
+RIBBON_HOURS = 6                # a chart of a few days shades the lowest to highest within this many hours of each point
 DAILY_CHART_DAYS = 7            # a chart longer than this is one point a day: the mean, with the day's low-to-high band
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
@@ -544,15 +545,11 @@ class HistoryQuery:
             xs = sorted(line)
             if len(xs) < 2:
                 continue
-            stepped = cycle in ("5min", "30min") and self.span > timedelta(days=1)
-            if stepped:  # a few days of readings: the line stays detailed, and each day's range is shaded behind it
-                lows: dict = {}
-                highs: dict = {}
-                for t, r in pts.items():
-                    d = local_date(t, self.tz)
-                    lows[d] = min(lows.get(d, _low(r)), _low(r))
-                    highs[d] = max(highs.get(d, _high(r)), _high(r))
-                band = {t: (lows[local_date(t, self.tz)], highs[local_date(t, self.tz)]) for t in xs}
+            rolling = cycle in ("5min", "30min") and self.span > timedelta(days=1)
+            if rolling:  # a few days of readings: the line stays detailed, with a ribbon of the range around each point
+                ts = sorted(pts)
+                lows, highs = rolling_range(xs, ts, [_low(pts[t]) for t in ts], [_high(pts[t]) for t in ts], RIBBON_HOURS * 1800)
+                band = dict(zip(xs, zip(lows, highs)))
             resolution = resolution or names.get(cycle, cycle)
             rec = self.overall.get(k, {})
             records = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec}
@@ -561,14 +558,13 @@ class HistoryQuery:
             if len(band) >= len(xs) // 2:  # bucketed data: the range of each bucket, behind its average
                 entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
                 entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
-                entry["step"] = stepped  # each day's range is one flat block
-                ranged = "day" if stepped else True
+                ranged = "rolling" if rolling else True
             series.append(entry)
         if not series:
             return None
         return {"kind": "line", "title": field.replace("_", " ").capitalize(),
                 "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
-                            + (", each day's range shaded" if ranged == "day" else ", range shaded" if ranged else "")
+                            + (f", {RIBBON_HOURS}-hour range shaded" if ranged == "rolling" else ", range shaded" if ranged else "")
                             + ("  ·  records marked" if any(x["records"] for x in series) else ""),
                 "unit": unit, "series": series}
 

@@ -551,9 +551,9 @@ async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
     assert "range shaded" in (await spec_for(8))["subtitle"]
     few = await spec_for(4)                                        # four days: 5- or 30-minute readings, each day's range shaded
     line = few["series"][0]
-    assert line["step"] is True and "each day's range shaded" in few["subtitle"] and len(line["x"]) > 100
+    assert "6-hour range shaded" in few["subtitle"] and len(line["x"]) > 100
     assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
-    assert len(set(line["high"])) <= 5 and len(set(line["low"])) <= 5             # one flat block per day
+    assert len(set(line["high"])) > 20                                            # a ribbon that follows the line, not flat blocks
     await eco.close()
 
 
@@ -706,3 +706,16 @@ def test_the_heatmap_and_rose_render_with_and_without_speed():
     without = {**base, "speeds": False, "rose": rose([(t, d, x, None) for t, d, x in readings])}
     for spec in (with_speed, without, base):                       # a spec with no rose is still drawn (heatmap only)
         assert render(spec, TZ)[:4] == b"\x89PNG"
+
+
+def test_the_rolling_range_is_the_lowest_and_highest_within_the_window():
+    from lib.timeutil import rolling_range
+    x = [0, 1800, 3600, 5400, 7200, 9000]                      # 30-minute readings
+    low = [10, 12, 9, 15, 20, 21]
+    high = [11, 13, 10, 16, 21, 22]
+    lo, hi = rolling_range(x, x, low, high, 3600)              # one hour either side
+    assert lo == [9, 9, 9, 9, 9, 15] and hi == [13, 16, 21, 22, 22, 22]
+    lo, hi = rolling_range([3600], x, low, high, 0)            # no window: just that reading
+    assert (lo, hi) == ([9], [10])
+    lo, hi = rolling_range([100000], x, low, high, 1800)       # a time with no readings near it still returns something sane
+    assert len(lo) == len(hi) == 1
