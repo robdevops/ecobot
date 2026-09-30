@@ -40,8 +40,10 @@ class Offline(httpx.AsyncBaseTransport):
 
 def questions(now: datetime) -> list[tuple[str, str, dict, dict]]:
     """(name, tool, arguments, what the person's words set on the Turn)."""
+    end = datetime.combine(now.date(), datetime.min.time()) - timedelta(seconds=1)  # the end of yesterday: today's tail would need the network
+
     def back(days: float) -> dict:
-        return {"start_date": (now - timedelta(days=days)).strftime(FMT), "end_date": now.strftime(FMT)}
+        return {"start_date": (end - timedelta(days=days) + timedelta(seconds=1)).strftime(FMT), "end_date": end.strftime(FMT)}
 
     def days(n: int) -> dict:  # whole days ending yesterday, for the tools that take dates
         return {"start_date": (now - timedelta(days=n)).strftime("%Y-%m-%d"), "end_date": (now - timedelta(days=1)).strftime("%Y-%m-%d")}
