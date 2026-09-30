@@ -38,6 +38,9 @@ def merge_data(into: dict, new: dict, window: tuple[int, int] | None = None):
                 entry["list"][ts] = value
 
 
+REJECTIONS_STOP = 2             # requests Ecowitt refuses in one job before the rest are not sent
+
+
 class Fetcher:
     """History for one job (a question, a refresh, an alert check): from the disk cache where
     possible, recent readings from memory if fresh, the rest from Ecowitt."""
@@ -90,6 +93,8 @@ class Fetcher:
 
     async def _fetch(self, cycle: str, start: datetime, end: datetime, groups: list[str]) -> dict | None:
         """One Ecowitt request: its data ({} if none), or None if it failed."""
+        if self.rejected >= REJECTIONS_STOP:   # Ecowitt keeps saying no (a bad parameter): stop asking for the rest of this job
+            return None
         self.calls += 1
         try:
             return await self.api.history(self.mac, cycle, start, end, ",".join(groups))

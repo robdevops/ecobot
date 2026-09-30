@@ -18,6 +18,7 @@ from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
 from .fetch import Fetcher
+from ..series import WEATHER
 from .query import STACK, HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
 
@@ -26,10 +27,17 @@ log = logging.getLogger(__name__)
 DEFAULT_GROUPS = "outdoor,indoor"
 
 
+READING_GROUPS = {name: r.group for name, r in WEATHER.items()} | {r.field: r.group for r in WEATHER.values()}
+
+
 def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
-    """'outdoor, indoor' or ['outdoor', 'indoor'] -> ['outdoor', 'indoor'] (plain group names only)."""
+    """'outdoor, indoor' or ['outdoor', 'indoor'] -> ['outdoor', 'indoor'] (plain group names only). A reading named instead of
+    its group ("humidity", "dew_point", "rain") becomes its group; a name Ecowitt has no such group for is dropped, since one
+    bad name fails the whole request."""
     parts = value if isinstance(value, list) else str(value or default).split(",")
-    return list(dict.fromkeys(p.split(".")[0].strip() for p in parts if p.strip())) or default.split(",")
+    named = (p.split(".")[0].strip().lower() for p in parts if p.strip())
+    groups = (g if g in GROUPS else READING_GROUPS.get(g) for g in named)
+    return list(dict.fromkeys(g for g in groups if g)) or default.split(",")
 
 
 def readings(data: dict) -> list[tuple[int, dict]]:

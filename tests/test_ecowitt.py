@@ -986,3 +986,31 @@ async def test_weather_all_week_is_a_stack_of_every_reading_the_station_has(tmp_
     chart = turn.charts[0]
     assert len(chart.panels) >= 3 and {"Temperature", "Dew point"} <= {p.label for p in chart.panels}
     await eco.close()
+
+
+def test_a_reading_named_as_a_group_becomes_its_group_and_an_unknown_name_is_dropped():
+    from lib.ecowitt.station import parse_groups
+    assert parse_groups("pressure,humidity") == ["pressure", "outdoor"]
+    assert parse_groups("rain, dew_point, wind, outdoor") == ["rainfall", "outdoor", "wind"]
+    assert parse_groups("outdoor.temperature,bogus") == ["outdoor"] and parse_groups("bogus") == ["outdoor", "indoor"]
+    assert parse_groups(["indoor", "rainfall_piezo"]) == ["indoor", "rainfall_piezo"]
+
+
+async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
+    from lib.ecowitt.api import EcowittError
+    from lib.ecowitt.fetch import Fetcher
+    from tests.fakes import TZ
+    from lib.ecowitt.store import HistoryCache, HotStore
+
+    class Refusing:
+        calls = 0
+
+        async def history(self, *a):
+            Refusing.calls += 1
+            raise EcowittError("humidity is invalid", transient=False)
+
+    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    f = Fetcher(Refusing(), cache, HotStore(), "AA:BB", ["pressure"], TZ)
+    for day in range(6):
+        await f.get("30min", datetime(2026, 9, 1 + day), datetime(2026, 9, 1 + day, 23, 59))
+    assert Refusing.calls == 2 and f.rejected == 2 and len(f.errors) == 2
