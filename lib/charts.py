@@ -115,12 +115,6 @@ def _dot(ax, x: float, y: float, colour: str, size: float = 12, edge: float = 0.
     ax.scatter([x], [y], s=size, color=colour, edgecolors="white", linewidths=edge, zorder=z)
 
 
-def _pill(ax, x, y, text, colour, above: bool, ha: str = "center"):
-    ax.annotate(text, (x, y), xytext=(0, 9 if above else -9), textcoords="offset points",
-                ha=ha, va="bottom" if above else "top", fontsize=7.5, fontweight="bold", color="white",
-                bbox=_box(colour, 0.35, 0.8), zorder=6)
-
-
 def _to_dt(tz: tzinfo):
     """A function turning an epoch into a naive local datetime, for matplotlib's date axis."""
     return lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
@@ -266,6 +260,51 @@ def _legend_dots(ax_or_fig, colours: list[str], labels: list[str], **kw):
     ax_or_fig.legend(handles, labels, frameon=False, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1, **kw)
 
 
+def _pills(ax, lines: list[Line], drawn: list[tuple], to_dt, x0: float, x1: float, big: bool, deg: str = ""):
+    """A dot on the highest and the lowest point of each line with a pill of its value above or below it. The point is the top
+    (bottom) of the line's band when it has one, else its true record at its actual time (a dotted stem joins it to a line that
+    does not reach it), else the line's own extreme. A low on the floor says nothing and is not labelled; pills that land close
+    together go side by side. `big`: the single chart's size, else the smaller one of a stacked panel."""
+    font, dot, lift, box, z = (7.5, (18, 1.2), 9, (0.35, 0.8), 6) if big else (6.5, (12, 0.8), 5, (0.25, 0.6), 4)
+    y_lo, y_hi = ax.get_ylim()
+    edge = lambda x: "left" if (x - x0) / (x1 - x0) < 0.06 else "right" if (x - x0) / (x1 - x0) > 0.94 else "center"
+    pills = []
+    for s, (colour, xs, ys) in zip(lines, drawn):
+        for want, above in (("high", True), ("low", False)):
+            if want in s.records and s.low is not None:  # a banded line: the label sits on the top (bottom) of its band
+                rx, ry = _extreme(s, want, to_dt)
+            elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
+                rx, ry = mdates.date2num(to_dt(s.records[want][0])), float(s.records[want][1])
+                rx = min(max(rx, x0), x1)
+            elif s.records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
+                continue
+            else:
+                idx = int(ys.argmax() if above else ys.argmin())
+                rx, ry = xs[idx], ys[idx]
+            if want == "low" and (ry - y_lo) < 0.08 * (y_hi - y_lo):
+                continue  # a low on the floor (0 mm, 0 km/h) says nothing
+            line_y = float(np.interp(rx, xs, ys))
+            if abs(ry - line_y) > (0.005 * (y_hi - y_lo) if s.smoothed else 1e-6) and not s.low:
+                ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
+                          linewidth=1.2, alpha=0.8, zorder=3)
+            _dot(ax, rx, ry, colour, *dot, z)
+            text = f"{ry:.1f}{deg}" if big else f"{round(ry, 1):g}"
+            pills.append([rx, ry, text, colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
+    for a in range(len(pills)):
+        for b in range(a + 1, len(pills)):
+            p, q = pills[a], pills[b]
+            if p[4] == q[4] and abs(p[0] - q[0]) < (x1 - x0) * 0.08 and abs(p[1] - q[1]) < (y_hi - y_lo) * 0.15:
+                left, right = (p, q) if p[0] <= q[0] else (q, p)
+                if (left[0] - x0) / (x1 - x0) < 0.12 or (x1 - right[0]) / (x1 - x0) < 0.12:  # no room to push sideways
+                    (p if p[1] <= q[1] else q)[4] = False  # the lower one's pill goes below its point
+                else:
+                    left[5], right[5] = "right", "left"
+    for rx, ry, text, colour, above, ha in pills:
+        ax.annotate(text, (rx, ry), xytext=(0, lift if above else -lift), textcoords="offset points", ha=ha,
+                    va="bottom" if above else "top", fontsize=font, fontweight="bold", color="white", bbox=_box(colour, *box),
+                    zorder=z + 1)
+
+
 # ---------- one panel of lines, drawn large ----------
 def _render_single(fig, chart: Chart, tz: tzinfo):
     """The whole chart is one line panel: records as pills on the line, an end dot, a soft fill under one or two lines."""
@@ -280,49 +319,13 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     dense = max(len(s.x) for s in lines) > 200
     width = lambda s: 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2
     drawn = _draw_lines(ax, lines, tz, width, 3, 4, reading=panel.reading)
-    pills = []
     x0, x1 = mdates.date2num(to_dt(x_min)), mdates.date2num(to_dt(x_max))
-    edge = lambda x: "left" if (x - x0) / (x1 - x0) < 0.06 else "right" if (x - x0) / (x1 - x0) > 0.94 else "center"
-    deg = _deg(panel.unit)
     for s, (colour, xs, ys) in zip(lines, drawn):
         if not s.low and len(lines) <= 2:  # soft gradient fill under the line (muddy with more lines)
             _gradient_under(ax, xs, ys, colour, ybottom)
         _dot(ax, xs[-1], ys[-1], colour, 30, 1.5, 5)
-        if panel.aside:
-            continue
-        for want, above in (("high", True), ("low", False)):
-            if want in s.records and s.low is not None:  # a banded line: the label sits on the top (bottom) of its band
-                rx, ry = _extreme(s, want, to_dt)
-            elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
-                rx, ry = mdates.date2num(to_dt(s.records[want][0])), float(s.records[want][1])
-                rx = min(max(rx, x0), x1)
-            elif s.records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
-                continue
-            else:
-                idx = int(ys.argmax() if above else ys.argmin())
-                rx, ry = xs[idx], ys[idx]
-            y_lo, y_hi = ax.get_ylim()
-            if want == "low" and (ry - y_lo) < 0.08 * (y_hi - y_lo):
-                continue  # a low on the floor (0 mm, 0 km/h) says nothing
-            line_y = float(np.interp(rx, xs, ys))
-            if abs(ry - line_y) > (0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) if s.smoothed else 1e-6) and not s.low:
-                ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
-                          linewidth=1.2, alpha=0.8, zorder=3)
-            _dot(ax, rx, ry, colour, 18, 1.2, 6)
-            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
-    # Records that land close together (e.g. outdoor and indoor on the same hot day) go side by side
-    y_lo, y_hi = ax.get_ylim()
-    for a in range(len(pills)):
-        for b in range(a + 1, len(pills)):
-            p, q = pills[a], pills[b]
-            if p[4] == q[4] and abs(p[0] - q[0]) < (x1 - x0) * 0.08 and abs(p[1] - q[1]) < (y_hi - y_lo) * 0.15:
-                left, right = (p, q) if p[0] <= q[0] else (q, p)
-                if (left[0] - x0) / (x1 - x0) < 0.12 or (x1 - right[0]) / (x1 - x0) < 0.12:  # no room to push sideways
-                    (p if p[1] <= q[1] else q)[4] = False  # the lower one's pill goes below its point
-                else:
-                    left[5], right[5] = "right", "left"
-    for rx, ry, text, colour, above, ha in pills:
-        _pill(ax, rx, ry, text, colour, above=above, ha=ha)
+    if not panel.aside:
+        _pills(ax, lines, drawn, to_dt, x0, x1, big=True, deg=_deg(panel.unit))
     if panel.aside:
         _mark_highs(ax, [(s, c) for s, (c, _, _) in zip(lines, drawn) if "high" in s.records], drawn, tz, x0, x1, big=True)
     if panel.bars:
@@ -380,30 +383,6 @@ def _extreme(line: Line, want: str, to_dt) -> tuple[float, float]:
     ys = (line.high if want == "high" else line.low) if line.low is not None else line.y
     i = int(np.argmax(ys) if want == "high" else np.argmin(ys))
     return float(mdates.date2num(to_dt(line.x[i]))), float(ys[i])
-
-
-def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: float, lows: bool):
-    """A small labelled dot on each line's highest reading (and, for a lone line, its lowest unless that is the floor).
-    Labels that would touch are stacked."""
-    to_dt = _to_dt(tz)
-    y_lo, y_hi = ax.get_ylim()
-    placed = []
-    for line, colour in marks:
-        for want, above in (("high", True), ("low", False)):
-            if want not in line.records or (want == "low" and not lows):
-                continue
-            mx, my = _extreme(line, want, to_dt)
-            if want == "low" and (my - y_lo) < 0.08 * (y_hi - y_lo):
-                continue  # a low on the floor says nothing
-            above = above or (my - y_lo) < 0.16 * (y_hi - y_lo)  # a low near the floor: label above
-            stacked = sum(1 for px, py, pa in placed if pa == above and abs(px - mx) < 0.1 * (x1 - x0) and abs(py - my) < 0.2 * (y_hi - y_lo))
-            placed.append((mx, my, above))
-            lift = 5 + 11 * stacked
-            frac = (mx - x0) / max(x1 - x0, 1e-9)
-            _dot(ax, mx, my, colour)
-            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, lift if above else -lift), textcoords="offset points",
-                        ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
-                        fontsize=6.5, fontweight="bold", color="white", zorder=5, bbox=_box(colour))
 
 
 def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinfo, x0: float, x1: float, big: bool = False):
@@ -504,17 +483,19 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         return 0, float(bx.max() + b.width / 86400) if len(bx) else x1
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True, reading=p.reading)
     lone = len(p.lines) == 1
-    marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records]  # highs labelled; a lone line's lows too
-    _pad_limits(ax, *_extent(p.lines),
-                top=(0.3 if lone else 0.18) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
+    marked = [i for i, s in enumerate(p.lines) if s.records]   # peaks labelled: beside the lines (aside), else as pills on them
+    pilled = bool(marked) and not p.aside
+    _pad_limits(ax, *_extent(p.lines), top=0.3 if pilled else 0.18 if marked else 0.12, bottom=0.3 if pilled else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
     if lone and not p.lines[0].low and not p.zones:  # a lone line fades softly to the floor
         ylim = ax.get_ylim()
         _gradient_under(ax, drawn[0][1], drawn[0][2], drawn[0][0], ylim[0])
         ax.set_ylim(ylim)
-    if marks:
-        (_mark_records(ax, marks, tz, x0, x1, lows=True) if lone else _mark_highs(ax, marks, drawn, tz, x0, x1))
+    if marked and p.aside:
+        _mark_highs(ax, [(p.lines[i], drawn[i][0]) for i in marked], drawn, tz, x0, x1)
+    elif marked:
+        _pills(ax, [p.lines[i] for i in marked], [drawn[i] for i in marked], to_dt, x0, x1, big=False)
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(p.lines) > 1:
