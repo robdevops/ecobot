@@ -57,7 +57,7 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
                "35°C\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
                "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest). Returns the total of matching "
-               "days and the top ones. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
+               "days and the top ones. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
 def load_cached(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: int, end: int) -> dict:

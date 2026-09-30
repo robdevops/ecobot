@@ -218,3 +218,14 @@ async def test_a_missing_holidays_package_is_explained_not_guessed(station, monk
     monkeypatch.setattr(calendar, "holidays", None)
     out = await ask(eco, start_date="2026-01-01", end_date="2026-02-01", only="public_holiday")
     assert "pip install holidays" in out["error"]
+
+
+async def test_one_known_day_can_be_looked_up_with_no_conditions(station):
+    """'Did it rain on Sat 5 Sep?': the day's own figures, not a search of the month that says nothing about it."""
+    eco, _ = station
+    day = datetime.now(eco.tz).date() - timedelta(days=6)
+    out = await ask(eco, start_date=str(day), end_date=str(day))
+    assert out["days_checked"] == out["matching_days"] == 1 and len(out["days"]) == 1
+    row = out["days"][0]
+    assert row["date"] == label(day) and {"temp_max", "temp_min", "rain"} <= set(row)
+    assert row["rain"] == truth(day)[1] and row["temp_max"] == round(truth(day)[0], 1)
