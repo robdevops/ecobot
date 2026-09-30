@@ -1014,3 +1014,18 @@ async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
     for day in range(6):
         await f.get("30min", datetime(2026, 9, 1 + day), datetime(2026, 9, 1 + day, 23, 59))
     assert Refusing.calls == 2 and f.rejected == 2 and len(f.errors) == 2
+
+
+async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_readings_hue(tmp_path):
+    from lib.charts import READING_COLOURS, _colour
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    for field, reading in (("wind_gust", "wind"), ("dew_point", "dew_point"), ("relative", "pressure")):
+        turn = Turn(chart_field=field)
+        await eco.tools[1].handler({"groups": "outdoor,wind,pressure", "chart": True, "start_date": f"{today - timedelta(days=9)} 00:00:00",
+                                    "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
+        panel = turn.charts[0].panels[0]
+        assert panel.reading == reading and _colour(panel.lines[0].label, 0, panel.reading) == READING_COLOURS[reading]
+    await eco.close()

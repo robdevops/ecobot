@@ -214,6 +214,15 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     to_dt = _to_dt(tz)
     bx = mdates.date2num([to_dt(t) for t in bars.x])
     ax2 = ax.twinx()
+    weight = ax.yaxis.get_gridlines()[0].get_linewidth() if ax.yaxis.get_gridlines() else 0.8
+    ax.grid(False)       # the grid is drawn by an axes of its own under the rain (sharing this one's scale): grid, rain, lines
+    under = ax.figure.add_axes(ax.get_position(), sharex=ax, sharey=ax, facecolor=ax.get_facecolor())
+    for side in ("top", "right", "left", "bottom"):
+        under.spines[side].set_visible(False)
+    under.tick_params(axis="both", length=0, labelleft=False, labelbottom=False)
+    under.grid(axis="y", color=GRID, linewidth=weight)
+    under.set_axisbelow(True)
+    under.set_zorder(ax2.get_zorder() - 1)
     top = max([*bars.y, 1.0])
     _draw_bars(ax2, bx, bars.y, bars.width / 86400 * 0.85, top / BARS_SHARE, 1)
     ax2.set_ylim(0, top / BARS_SHARE)
