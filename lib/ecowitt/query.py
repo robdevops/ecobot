@@ -386,7 +386,8 @@ class HistoryQuery:
         subtitle = (f"{period_text(self.start.date(), self.end.date())}  ·  {resolution}"
                     + (", shaded up to the gusts" if wind and ranged else ", range shaded" if ranged else "")
                     + ("  ·  records marked" if any(x.records for x in lines) and not wind else ""))
-        return Chart(title, subtitle, [Panel(title, unit, lines)])
+        reading = next((n for n, r in WEATHER.items() if r.field == field), "")
+        return Chart(title, subtitle, [Panel(title, unit, lines, reading=reading)])
 
     def _series_readings(self, k: str) -> list:
         """One series as readings for lines.build_line. Wind is one series: the average speed, shaded up to the gusts."""

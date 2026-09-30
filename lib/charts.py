@@ -67,11 +67,14 @@ COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            # air-quality metrics (kept clear of the green/yellow/red rating zones)
            "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
            "VOC index": "#D97706", "NOx index": "#DB2777"}
+# One hue per weather reading, outdoors; the same reading indoors is that hue lightened.
+READING_COLOURS = {"temperature": "#F97316", "humidity": "#06B6D4", "pressure": "#6366F1", "wind": "#65A30D",
+                   "dew_point": "#14B8A6", "feels_like": "#F43F5E", "vpd": "#A855F7"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#1E3A8A"                 # deep navy: the rain sits behind the lines and stays clear of every reading's colour
 CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
-WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
+WIND_STEPS = ("#D9F99D", "#A3E635", "#4D7C0F")  # light, middle and strong wind (the wind hue)
 W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
@@ -105,8 +108,16 @@ TITLE_WEIGHT = "semibold" if any(f.name == FONT and f.weight in (600, "semibold"
                                  for f in font_manager.fontManager.ttflist) else "bold"
 
 
-def _colour(label: str, i: int) -> str:
+def _colour(label: str, i: int, reading: str = "") -> str:
+    """A reading's own hue (indoors, a lighter one); else the line's name, else the next fallback."""
+    if base := READING_COLOURS.get(reading):
+        return _mix(base, 0.4) if label == "Indoor" else base
     return COLOURS.get(label, FALLBACK[i % len(FALLBACK)])
+
+
+def _mix(colour: str, share: float) -> str:
+    """The colour with this share of white blended in."""
+    return "#" + "".join(f"{round(255 * share + c * 255 * (1 - share)):02X}" for c in to_rgb(colour))
 
 
 def _deg(unit: str) -> str:
@@ -168,12 +179,13 @@ def _gradient_under(ax, xs, ys, colour: str, ybottom: float, alpha: float = 0.22
     img.set_clip_path(poly)
 
 
-def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: int, first: int = 0, polish: bool = False) -> list[tuple]:
+def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: int, first: int = 0, polish: bool = False,
+                reading: str = "") -> list[tuple]:
     """Each line's low-to-high range behind it, then the line: [(colour, xs, ys)]. `width` is a number or a function of
     the line; `first` is the colour index of the first line. `polish`: a soft glow under the line and a dot on its end."""
     to_dt, drawn = _to_dt(tz), []
     for i, s in enumerate(lines, first):
-        colour = _colour(s.label, i)
+        colour = _colour(s.label, i, reading)
         xs, ys = mdates.date2num([to_dt(t) for t in s.x]), np.asarray(s.y, dtype=float)
         if s.low:
             ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=band_z)
@@ -278,7 +290,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     x_min, x_max = min(t for s in lines for t in s.x), max(t for s in lines for t in s.x)
     dense = max(len(s.x) for s in lines) > 200
     width = lambda s: 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2
-    drawn = _draw_lines(ax, lines, tz, width, 3, 4)
+    drawn = _draw_lines(ax, lines, tz, width, 3, 4, reading=panel.reading)
     pills = []
     x0, x1 = mdates.date2num(to_dt(x_min)), mdates.date2num(to_dt(x_max))
     edge = lambda x: "left" if (x - x0) / (x1 - x0) < 0.06 else "right" if (x - x0) / (x1 - x0) > 0.94 else "center"
@@ -503,7 +515,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         _draw_bars(ax, bx, b.y, b.width / 86400 * 0.85, top, 3, alpha=0.75)
         ax.set_ylim(0, top)
         return 0, float(bx.max() + b.width / 86400) if len(bx) else x1
-    drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True)
+    drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True, reading=p.reading)
     lone = len(p.lines) == 1 and not p.right
     marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records] if not p.right else []  # highs labelled; a lone line's lows too
     _pad_limits(ax, *_extent(p.lines),
@@ -524,7 +536,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(p.lines) > 1 and not p.right:
         _end_labels(ax, drawn)
-    entries = [(_colour(s.label, first + i), s.label) for i, s in enumerate((*p.lines, *p.right))]
+    entries = [(_colour(s.label, first + i, p.reading), s.label) for i, s in enumerate((*p.lines, *p.right))]
     if len(entries) + bool(p.bars) > 1:
         legend = entries + ([(RAIN, p.bars.label)] if p.bars else [])
         _legend_dots(ax, [c for c, _ in legend], [label for _, label in legend], loc="lower right",
