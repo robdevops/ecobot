@@ -81,10 +81,17 @@ class Look:
     key_from: int            # the colour key is drawn from this many entries (a big chart's names its one line too)
     units: bool              # pills carry a decimal and the unit; a stacked panel's are the bare number (its title has the unit)
     nbins: int               # about how many y ticks
+    card: bool               # a faint tint behind the panel (a stack's panels; a chart of one panel is on white)
+    in_headline: bool        # the panel's name and unit are the figure's headline, and its colour key sits beside it
 
 
-BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, True, 8.5, 1, True, 5)
-SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, False, 7, 2, False, 4)
+BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, True, 8.5, 1, True, 5, False, True)
+SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, False, 7, 2, False, 4, True, False)
+
+
+def _look_for(chart: Chart) -> Look:
+    """A chart of one panel of lines is drawn BIG; anything else (a stack, rain alone) SMALL."""
+    return BIG if len(chart.panels) == 1 and chart.panels[0].lines else SMALL
 
 
 def _setup_fonts() -> str:
@@ -499,12 +506,11 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
     """The panels top to bottom on one time axis, so the rain (or another reading) lines up with what the others were doing.
     A chart of one panel of lines is the same thing drawn BIG (and with its wind rose beside it, when it has one)."""
     panels, n = chart.panels, len(chart.panels)
-    big = n == 1 and bool(panels[0].lines)
-    look = BIG if big else SMALL
+    look = _look_for(chart)
     height = H_IN if n <= 2 else H_IN + PANEL_IN * (n - 2)
     fig = plt.figure(figsize=(W_IN, height), dpi=DPI, facecolor=BG)
     try:
-        _headline(fig, panels[0].label if big else chart.title, chart.subtitle, height, panels[0].unit if big else "")
+        _headline(fig, panels[0].label if look.in_headline else chart.title, chart.subtitle, height, panels[0].unit if look.in_headline else "")
         width = _axes_width(chart)
         body = height - HEAD_IN - FOOT_IN
         gap = 0.27 if n > 2 else 0.22
@@ -515,27 +521,27 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
         for i, p in enumerate(panels):
             bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
             rect = [AX_RECT[0], bottom, width, each / height]
-            if not big:
+            if look.card:
                 card = fig.add_axes(rect, facecolor=CARD, zorder=-1)  # the faint tint behind the panel
                 card.set_xticks([])
                 card.set_yticks([])
                 for side in card.spines.values():
                     side.set_visible(False)
-            ax = fig.add_axes(rect, facecolor=BG if big else "none", sharex=axes[0] if axes else None)
+            ax = fig.add_axes(rect, facecolor="none" if look.card else BG, sharex=axes[0] if axes else None)
             axes.append(ax)
             _style_axis(ax, grid=0 if p.bars and p.lines else 0.8)   # with rain behind, the grid is drawn under it (_bars_behind)
             count, x1, entries = _draw_panel(ax, p, tz, used, x0, x1, look)
             used += count
             if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
-                key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / height)) if big else \
+                key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / height)) if look.in_headline else \
                     dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
-                _legend_dots(fig if big else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
+                _legend_dots(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
                              fontsize=look.legend_font, **key)
             deg = _deg(p.unit)
             tick_unit = deg if deg == "°" else ""
             ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10]))
             ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _, u=tick_unit: f"{v:g}{u}"))
-            if not big:
+            if not look.in_headline:
                 title = f"{p.label} ({p.unit})" if p.unit and not tick_unit else p.label
                 ax.set_title(title, loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
             if i < n - 1:
