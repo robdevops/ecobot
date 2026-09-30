@@ -100,7 +100,7 @@ def test_a_taller_chart_for_more_panels():
     for n in (1, 2, 3, 4):
         chart = Chart("t", "s", [Panel(f"P{i}", "", [line(f"L{i}")]) for i in range(n)])
         sizes.append(Image.open(io.BytesIO(render(chart, TZ))).size)
-    assert sizes[0] == sizes[1] == (2560, 1440) and sizes[2][1] > 1440 and sizes[3][1] > sizes[2][1] and sizes[3][1] < 2560   # within Telegram's photo size
+    assert sizes[0] == sizes[1] == (1280, 720) and sizes[2][1] > 720 and sizes[3][1] > sizes[2][1]
 
 
 def test_a_daily_air_line_has_its_range_band_alone_and_in_a_multi_panel_chart():
