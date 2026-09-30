@@ -18,10 +18,10 @@ from typing import NamedTuple
 
 from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
+from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
-from .link import rain_bars, rain_slots
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from lib.charts import render
 from lib.tools import Turn
 from lib.compose import MAX_PANELS, SERIES, Composer, rating_shares
-from lib.ecowitt.link import analyse_air
+from lib.analysis.pairs import analyse_air
 from tests.fakes import TZ, archived_station
 
 

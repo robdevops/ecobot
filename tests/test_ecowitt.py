@@ -743,7 +743,7 @@ def test_the_wind_line_and_compass_render_with_and_without_speed():
 
 # ---------- weather_link: rain against pressure, read together ----------
 def test_rain_per_slot_comes_from_the_rise_in_the_daily_total_and_its_midnight_reset():
-    from lib.ecowitt.link import rain_slots
+    from lib.rain import rain_slots
     daily = {0: 0.0, 1800: 0.4, 3600: 0.4, 5400: 1.0, 7200: 0.2, 20000: 0.7}     # 7200 is after the reset; 20000 follows a hole
     assert rain_slots(daily) == {1800: 0.4, 3600: 0.0, 5400: 0.6, 7200: 0.2}
 
@@ -765,13 +765,14 @@ def synthetic_days(falling_rain: bool):
 
 
 def test_the_verdict_is_a_plain_call_from_moving_against_steady():
-    from lib.ecowitt.link import verdict
+    from lib.analysis.pairs import verdict
     assert verdict(1.4, 0.6).startswith("Yes - a moderate") and verdict(1.8, 0.4).startswith("Yes - a clear")
     assert verdict(1.0, 1.0).startswith("No") and verdict(1.3, 0.95).startswith("Weak") and verdict(None, 0.5) is None
 
 
 def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is_not():
-    from lib.ecowitt.link import analyse, rain_slots
+    from lib.analysis.pairs import analyse
+    from lib.rain import rain_slots
     from tests.fakes import TZ
     driver, daily = synthetic_days(True)
     out = analyse(driver, rain_slots(daily), 1.0, TZ)

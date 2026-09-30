@@ -11,9 +11,11 @@ import logging
 from datetime import date, datetime, time, tzinfo
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
-from . import correlate
+from .analysis import scan
+from .analysis.pairs import analyse_air
 from .charts import COMPOSED_CHART_HINT, stack_spec, wants_chart
-from .ecowitt.link import analyse_air, bar_layout, driver_series, rain_bars, rain_slots
+from .ecowitt.link import driver_series
+from .rain import bar_layout, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
 from .tools import Tool, Turn
 
@@ -230,8 +232,8 @@ class Composer:
         weather_names = {**{k: (v[2], v[3]) for k, v in SCAN_WEATHER.items()}, "pressure_change": ("3-hour pressure change", "hPa"),
                          "rain": ("rain", "mm")}
         origin, days = day_bounds(first, self.tz)[0], (last - first).days + 1
-        result = await asyncio.to_thread(correlate.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days)
-        summary = correlate.summarise(result, air_names, weather_names)
+        result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days)
+        summary = scan.summarise(result, air_names, weather_names)
         strongest = summary.pop("strongest")
         out = {"period": f"{first} to {last}", "resolution": "30-minute slots; each pair compared within the day and day to day",
                "how_to_read": ("Open with `verdict`, then the relationships in `findings`, strongest first. These go together; they "

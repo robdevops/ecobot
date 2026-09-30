@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from lib import correlate
+from lib.analysis import scan as correlate
 from lib.tools import Turn
 from tests.fakes import TZ
 from tests.test_compose import composer

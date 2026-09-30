@@ -12,7 +12,7 @@ import warnings
 
 import numpy as np
 
-from .timeutil import MIN_DAY_SLOTS, SLOT
+from ..timeutil import MIN_DAY_SLOTS, SLOT
 
 PER_DAY = 48
 LAGS = range(13)              # the weather leads the air by 0 to 6 hours
