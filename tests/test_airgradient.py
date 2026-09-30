@@ -35,7 +35,7 @@ async def test_history_summary_and_chart(tmp_path):
                                        "metrics": ["pm2_5", "co2"]}, turn))
     assert out["pm2_5"]["high"] >= out["pm2_5"]["low"] and "high_aqi_us" in out["pm2_5"]
     (chart,) = turn.charts
-    assert chart.title == "Air quality" and [p.label for p in chart.panels] == ["CO₂", "PM2.5"]   # the metrics asked for, in panel order
+    assert chart.title == "Air quality" and [p.label for p in chart.panels] == ["PM2.5", "CO₂"]   # the metrics asked for, in panel order
     await air.close()
 
 
