@@ -22,7 +22,7 @@ import httpx
 from .. import intent
 from ..charts import CHART_HINT, CHART_REQUESTS, wants_chart
 from ..config import Config
-from ..timeutil import local_date, now_local, to_local
+from ..timeutil import daily_summary, local_date, now_local, to_local
 from ..tools import Tool
 from ..warm import Warmer
 from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
@@ -360,14 +360,12 @@ class AirGradient:
         series = {"label": label, "records": {"low": [lo[0], lo[1]], "high": [hi[0], hi[1]]}}
         subtitle = f"{period}  ·  AirGradient readings"
         if daily:
-            by_day: dict = {}
-            for t, v in pts:
-                by_day.setdefault(local_date(t, self.tz), []).append(v)
+            by_day = daily_summary(((t, v, v, v, True) for t, v in pts), self.tz)
             days = sorted(by_day)
             if len(days) >= 2:
                 noon = lambda d: int(datetime.combine(d, datetime.min.time()).replace(hour=12, tzinfo=self.tz).timestamp())
-                series.update(x=[noon(d) for d in days], y=[sum(by_day[d]) / len(by_day[d]) for d in days],
-                              low=[min(by_day[d]) for d in days], high=[max(by_day[d]) for d in days])
+                series.update(x=[noon(d) for d in days], y=[by_day[d][0] for d in days],
+                              low=[by_day[d][1] for d in days], high=[by_day[d][2] for d in days])
                 subtitle = f"{period}  ·  daily averages, range shaded  ·  records marked"
         if "x" not in series:
             line = downsample(pts)

@@ -13,11 +13,11 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 import asyncio
 import json
 import logging
-from datetime import datetime, time, timedelta, timezone, tzinfo
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
-from ..timeutil import local_date, local_epoch, now_local, to_local
+from ..timeutil import daily_summary, local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
 from .link import rain_bars, rain_slots
@@ -221,6 +221,12 @@ def _low(rec: dict) -> float:
 
 def _high(rec: dict) -> float:
     return rec["high"][0] if "high" in rec else rec["value"][0]
+
+
+def _readings(pts: dict, before: date | None = None, tz: tzinfo | None = None) -> list[tuple]:
+    """(ts, value, low, high, fine) for the 5- and 30-minute readings (those before `before`), for daily_summary."""
+    return [(t, r["value"][0], _low(r), _high(r), r["cycle"] == "5min") for t, r in pts.items()
+            if r["cycle"] != "1day" and "value" in r and (before is None or local_date(t, tz) < before)]
 
 
 def _clock(dt: datetime) -> str:
@@ -519,13 +525,8 @@ class HistoryQuery:
 
     def _daily_means(self, pts: dict) -> dict:
         """{local date: mean of that day's readings}: from 5- or 30-minute readings where held, else the daily bucket."""
-        sub, daily = {}, {}
-        for ts, rec in pts.items():
-            if "value" not in rec:
-                continue
-            (daily if rec["cycle"] == "1day" else sub).setdefault(local_date(ts, self.tz), []).append(rec["value"][0])
-        means = {d: sum(v) / len(v) for d, v in daily.items()}
-        means.update({d: sum(v) / len(v) for d, v in sub.items()})  # exact local days win over 10am-10am buckets
+        means = {local_date(ts, self.tz): rec["value"][0] for ts, rec in pts.items() if rec.get("cycle") == "1day" and "value" in rec}
+        means.update({d: mean for d, (mean, _, _) in daily_summary(_readings(pts), self.tz).items()})  # exact local days win over 10am-10am buckets
         return means
 
     def _add_averages(self, entry: dict, means: dict):
@@ -650,27 +651,16 @@ class HistoryQuery:
     def _daily_line(self, pts: dict) -> tuple[str, dict, dict]:
         """One point a day: Ecowitt's daily buckets for the older part, and for days we hold at 5 or 30 minutes
         their own mean, low and high over the local day (so those days are exact). Today is left out until it is over."""
-        today = now_local(self.tz).date()
-        by_day: dict = {}
-        for t, r in pts.items():
-            if r["cycle"] != "1day" and (d := local_date(t, self.tz)) < today:
-                by_day.setdefault(d, []).append((t, r))
+        days = daily_summary(_readings(pts, now_local(self.tz).date(), self.tz), self.tz)
         line, band = {}, {}
         for t, r in pts.items():
-            if r["cycle"] == "1day" and local_date(t, self.tz) not in by_day and "value" in r:
+            if r["cycle"] == "1day" and local_date(t, self.tz) not in days and "value" in r:
                 line[t] = r["value"][0]
                 if "low" in r and "high" in r:
                     band[t] = (_low(r), _high(r))
-        for d, recs in by_day.items():
+        for d, (mean, low, high) in days.items():
             at = int(datetime.combine(d, datetime.min.time()).replace(hour=10, tzinfo=self.tz).timestamp())
-            slots: dict = {}  # a stretch held at 5 minutes must not outweigh the same stretch held at 30: one value per slot
-            for t, r in recs:
-                if "value" in r:
-                    slots.setdefault(t // 1800, {}).setdefault(r["cycle"] == "5min", []).append(r["value"][0])
-            if slots:
-                means = [sum(v) / len(v) for v in ((g.get(True) or g[False]) for g in slots.values())]
-                line[at] = sum(means) / len(means)
-                band[at] = (min(_low(r) for _, r in recs), max(_high(r) for _, r in recs))
+            line[at], band[at] = mean, (low, high)
         return "1day", line, band
 
 

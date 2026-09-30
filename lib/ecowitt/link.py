@@ -15,7 +15,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 import numpy as np
 
 from ..charts import CHART_REQUESTS, LINK_CHART_HINT, wants_chart
-from ..timeutil import local_date, now_local, to_local
+from ..timeutil import daily_summary, local_date, now_local, to_local
 from .store import HistoryCache
 
 log = logging.getLogger(__name__)
@@ -205,16 +205,11 @@ def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date,
     if (last - first).days + 1 <= 31:
         return {"label": label, "x": ts, "y": [driver[t] for t in ts]}
     lows, highs = lows or {}, highs or {}
-    by_day: dict = {}
-    for t in ts:
-        day = by_day.setdefault(local_date(t, tz), {"mean": [], "low": [], "high": []})
-        day["mean"].append(driver[t])
-        day["low"].append(lows.get(t, driver[t]))
-        day["high"].append(highs.get(t, driver[t]))
+    by_day = daily_summary(((t, driver[t], lows.get(t, driver[t]), highs.get(t, driver[t]), False) for t in ts), tz)
     ds = sorted(by_day)
     noon = lambda d: int(datetime.combine(d, time(12)).replace(tzinfo=tz).timestamp())
-    return {"label": label, "x": [noon(d) for d in ds], "y": [sum(by_day[d]["mean"]) / len(by_day[d]["mean"]) for d in ds],
-            "low": [min(by_day[d]["low"]) for d in ds], "high": [max(by_day[d]["high"]) for d in ds]}
+    return {"label": label, "x": [noon(d) for d in ds], "y": [by_day[d][0] for d in ds],
+            "low": [by_day[d][1] for d in ds], "high": [by_day[d][2] for d in ds]}
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,

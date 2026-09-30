@@ -803,6 +803,19 @@ def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_st
     assert list(line.values()) == [pytest.approx((40 * 10 + 8 * 20) / 48)] and list(band.values()) == [(8.0, 20.0)]
 
 
+def test_daily_summary_is_one_mean_and_true_extremes_per_local_day():
+    from lib.timeutil import daily_summary
+    from tests.fakes import TZ
+    t0 = int(datetime(2026, 5, 1, tzinfo=TZ).timestamp())
+    day1 = [(t0 + i * 1800, 10.0, 8.0, 12.0, False) for i in range(48)]
+    day1 += [(t0 + 20 * 3600 + i * 300, 20.0, 20.0, 20.0, True) for i in range(48)]       # the last 4 hours also at 5 minutes
+    day2 = [(t0 + 86400 + i * 1800, 5.0, 5.0, 5.0, False) for i in range(48)]              # no separate lows/highs: the value
+    out = daily_summary(day1 + day2, TZ)
+    assert set(out) == {datetime(2026, 5, 1).date(), datetime(2026, 5, 2).date()}
+    assert out[datetime(2026, 5, 1).date()] == pytest.approx(((40 * 10 + 8 * 20) / 48, 8.0, 20.0))
+    assert out[datetime(2026, 5, 2).date()] == (5.0, 5.0, 5.0) and daily_summary([], TZ) == {}
+
+
 def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
     from lib.charts import render
     from lib.ecowitt.link import chart_spec
