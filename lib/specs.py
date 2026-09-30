@@ -143,5 +143,5 @@ def stack(panels: list[Panel], first: date, last: date) -> Chart:
     """A chart of these panels for the days first to last, rain behind the first line; what a bar covers goes into the
     subtitle."""
     per = next((b.per for p in panels for b in (p.bars, p.shares) if b and b.per), "")
-    return Chart(" and ".join(p.label for p in panels), period_text(first, last) + (f"  ·  per {per}" if per else ""),
+    return Chart(", ".join(p.label for p in panels), period_text(first, last) + (f"  ·  per {per}" if per else ""),
                  rain_behind(panels))

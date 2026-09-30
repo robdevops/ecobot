@@ -47,7 +47,7 @@ async def test_a_reading_with_its_zones_over_rain_is_one_stacked_chart(tmp_path,
     comp, eco = await composer(tmp_path, archived_cache)
     out, specs = await plot(comp, panels=[{"series": "pm2_5"}, {"series": "rain"}])
     spec = specs[0]
-    assert len(specs) == 1 and spec.title == "PM2.5 and Rain" and "chart" in out
+    assert len(specs) == 1 and spec.title == "PM2.5, Rain" and "chart" in out
     (line,) = spec.panels                                                                    # the rain is behind the line
     assert line.zones == (9.0, 55.4) and len(line.lines[0].x) > 20
     assert line.bars.width == 6 * 3600 and all(v >= 0 for v in line.bars.y)                  # thirty days: a bar per 6 hours
@@ -137,6 +137,6 @@ async def test_air_link_reports_a_verdict_and_can_chart_the_reading_over_rain(tm
     specs = turn.charts
     assert out["verdict"] and out["findings"] and "how_to_read" in out and out["metric"].startswith("PM2.5")
     assert len(specs) == 1 and [p.label for p in specs[0].panels] == ["PM2.5"] and specs[0].panels[0].zones == (9.0, 55.4)
-    assert specs[0].title == "PM2.5 and Rain" and specs[0].panels[0].bars                     # the rain is behind the reading
+    assert specs[0].title == "PM2.5, Rain" and specs[0].panels[0].bars                     # the rain is behind the reading
     assert "error" in json.loads(await comp.air_link({"metric": "co2"}))
     await eco.close()

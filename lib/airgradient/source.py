@@ -373,7 +373,7 @@ class AirGradient:
             members = left + right
             units = [CHART_UNITS[m] for m in members]
             names_ = [f"{LABELS[m]} ({u})" if u and len(set(units)) > 1 else LABELS[m] for m, u in zip(members, units)]
-            label = ", ".join(names_[:-1]) + " and " + names_[-1] if len(names_) > 1 else names_[0]
+            label = ", ".join(names_)
             panels.append(Panel(label, units[0] if len({CHART_UNITS[m] for m in left}) == 1 and not right else "",
                                 [drawn[m][0] for m in left], right=[drawn[m][0] for m in right],
                                 zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(left) > 1))

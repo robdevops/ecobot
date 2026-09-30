@@ -808,7 +808,7 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
     specs = turn.charts
     assert fake.calls == [] and out["resolution"].startswith("30-minute") and out["slots"] > 500
     assert set(out["by_change_before"]) == {"falling", "steady", "rising"} and "chart" in out
-    assert len(specs) == 1 and specs[0].title == "Pressure and Rain" and specs[0].panels[0].bars.width == 6 * 3600
+    assert len(specs) == 1 and specs[0].title == "Pressure, Rain" and specs[0].panels[0].bars.width == 6 * 3600
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
     assert "error" in json.loads(await eco.tools[3].handler({"driver": "nonsense"}))
     await eco.close()
@@ -910,7 +910,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
         out = json.loads(await eco.tools[1].handler({**args, **extra}, turn))
         return out, turn.charts
     out, specs = await ask_chart(chart_fields=["temperature", "rain"])              # the model's choice; rain's group is added for it
-    assert len(specs) == 1 and specs[0].title == "Temperature and Rain" and [p.label for p in specs[0].panels] == ["Temperature"]
+    assert len(specs) == 1 and specs[0].title == "Temperature, Rain" and [p.label for p in specs[0].panels] == ["Temperature"]
     assert specs[0].panels[0].bars and out["rain_total_mm"] > 0 and "rain_total_mm" in out["chart"]     # the rain is behind the line
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG" and fake.calls == []            # cache only
     out, specs = await ask_chart(chart_fields=["pressure", "humidity", "wind", "rain", "temperature"], groups="outdoor,indoor")
@@ -920,7 +920,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
     assert [s.label for s in temperature.lines] == ["Indoor", "Outdoor"]              # both lines in one panel
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
     out, specs = await ask_chart(["rain", "wind"])
-    assert specs[0].title == "Rain and Wind" and [p.label for p in specs[0].panels] == ["Wind"] and specs[0].panels[0].bars
+    assert specs[0].title == "Rain, Wind" and [p.label for p in specs[0].panels] == ["Wind"] and specs[0].panels[0].bars
     out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
     assert len(specs[0].panels) == 1 and not specs[0].panels[0].bars
     await eco.close()

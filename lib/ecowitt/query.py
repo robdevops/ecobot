@@ -441,7 +441,7 @@ class HistoryQuery:
         if len(panels) < 2:
             return None
         rain = self.rain_bars.per if any(p.bars for p in panels) else None
-        return Chart(" and ".join(p.label for p in panels),
+        return Chart(", ".join(p.label for p in panels),
                      f"{period_text(self.start.date(), self.end.date())}" + (f"  ·  rain per {rain}" if rain else "")
                      + ("  ·  shaded: range" if any(s.low for p in panels for s in p.lines) else ""),
                      rain_behind(panels))

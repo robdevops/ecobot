@@ -87,12 +87,12 @@ def test_charts_render_for_both_datasets():
         line("Outdoor", [10 + i % 9 for i in range(96)], records={"high": (ts[8], 19), "low": (ts[0], 10)}),
         line("Indoor", [20 + (i % 3) / 2 for i in range(96)])])])
     rain = Bars("Rain", "mm", ts[::12], [0.4 * (i % 3) for i in range(8)], 6 * 3600, "6 hours")
-    behind = Chart("Pressure and Rain", "y", [Panel("Pressure", "hPa", [line("Pressure", [1010 + i % 5 for i in range(96)])], bars=rain)])
+    behind = Chart("Pressure, Rain", "y", [Panel("Pressure", "hPa", [line("Pressure", [1010 + i % 5 for i in range(96)])], bars=rain)])
     shares = Shares("PM2.5 rating", ts[::12], 6 * 3600, [100.0] * 8, [0.0] * 8, [0.0] * 8, "6 hours")
-    rated = Chart("PM2.5 rating and Rain", "z", [Panel("PM2.5 rating", "%", shares=shares), Panel("Rain", "mm", bars=rain)])
+    rated = Chart("PM2.5 rating, Rain", "z", [Panel("PM2.5 rating", "%", shares=shares), Panel("Rain", "mm", bars=rain)])
     air = Chart("Air quality", "w", [
         Panel("CO₂ (ppm) and VOC index", "", [line("CO₂", [450 + i for i in range(96)])], right=[line("VOC index", [100 + i % 20 for i in range(96)])]),
-        Panel("PM1, PM2.5 and PM10", "µg/m³", [line("PM1", [3 + i % 4 for i in range(96)]), line("PM2.5", [5 + i % 7 for i in range(96)]),
+        Panel("PM1, PM2.5, PM10", "µg/m³", [line("PM1", [3 + i % 4 for i in range(96)]), line("PM2.5", [5 + i % 7 for i in range(96)]),
                                                line("PM10", [8 + i % 9 for i in range(96)])]),
         Panel("NOx index", "", [line("NOx index", [1 + i % 3 for i in range(96)])], zones=(20, 150))])
     for spec in (single, behind, rated, air):
