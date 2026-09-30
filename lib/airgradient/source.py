@@ -23,7 +23,8 @@ import httpx
 from .. import intent
 from ..charts import CHART_HINT, wants_chart
 from ..config import Config
-from ..timeutil import BAND_FROM, WIDTH_NAMES, WIDTHS, bucket_width, bucketed, local_date, now_local, to_local
+from ..lines import build_line
+from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
@@ -43,7 +44,6 @@ BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some da
 BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a long recent outage isn't the start)
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
-CHART_POINTS = 1500               # long charts are averaged down to about this many points
 
 PARAMETERS = {
     "type": "object",
@@ -62,17 +62,6 @@ DESCRIPTION = ("Air quality from the owner's AirGradient outdoor sensor: PM2.5 (
                "PM1, CO2, VOC and NOx indexes, each with a traffic-light rating. No dates: the current reading. "
                "With start_date/end_date (up to about a year): lowest, highest and average of each, with when they "
                "happened. chart=true sends a graph.")
-
-
-def downsample(pts: list[tuple[int, float]], target: int = CHART_POINTS) -> list[tuple[int, float]]:
-    """Average long series into about `target` points (the true peak is drawn separately)."""
-    if len(pts) <= target:
-        return pts
-    width = max(1, (pts[-1][0] - pts[0][0]) // target)
-    bins: dict = {}
-    for t, v in pts:
-        bins.setdefault(t // width, []).append((t, v))
-    return [(sum(t for t, _ in b) // len(b), sum(v for _, v in b) / len(b)) for _, b in sorted(bins.items())]
 
 
 class AirGradient:
@@ -364,19 +353,12 @@ class AirGradient:
         label = LABELS[name]
         series = {"label": label, "records": {"low": [lo[0], lo[1]], "high": [hi[0], hi[1]]}}
         subtitle = f"{period}  ·  AirGradient readings"
-        gap = statistics.median(b[0] - a[0] for a, b in zip(pts, pts[1:]))
-        width = bucket_width(pts[-1][0] - pts[0][0], gap)
-        if width >= WIDTHS[1] and width > gap * 1.5:  # more readings than the chart can show: buckets
-            xs, mean, low, high = bucketed(((t, v, v, v, True) for t, v in pts), self.tz, width)
-            if len(xs) >= 2:
-                series.update(x=xs, y=mean)
-                subtitle = f"{period}  ·  {WIDTH_NAMES[width]} averages"
-                if width >= BAND_FROM:  # a day's range around its mean
-                    series.update(low=low, high=high)
-                    subtitle += ", range shaded"
-                subtitle += "  ·  records marked"
-        if "x" not in series:
-            line = downsample(pts)
-            series.update(x=[t for t, _ in line], y=[v for _, v in line])
+        gap = max(60, round(statistics.median(b[0] - a[0] for a, b in zip(pts, pts[1:]))))
+        line = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+        if line is None:
+            return None
+        series.update(line.spec(label))
+        if not line.raw:
+            subtitle = f"{period}  ·  {line.name}" + (", range shaded" if line.low else "") + "  ·  records marked"
         return {"kind": "line", "title": label, "subtitle": subtitle, "unit": CHART_UNITS[name],
                 "zones": list(RATINGS[name]), "series": [series]}

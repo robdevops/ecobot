@@ -123,7 +123,7 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
     spec = air._chart_spec("pm2_5", rows, "period")
     line = spec["series"][0]
-    assert len(line["x"]) <= source.CHART_POINTS + 50
+    assert len(line["x"]) <= 500
     assert line["records"]["high"] == [ts[5000], 305.0] and line["records"]["low"][1] == 5.0
     await air.close()
 

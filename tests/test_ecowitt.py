@@ -824,15 +824,16 @@ def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_
 
 
 def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_stretch_at_30():
-    from types import SimpleNamespace
-    from lib.ecowitt.history import HistoryQuery
+    from lib.lines import build_line
     from tests.fakes import TZ
     day = (datetime.now(TZ) - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
     t0 = int(day.timestamp())
     pts = {t0 + i * 1800: {"cycle": "30min", "value": (10.0, "10"), "low": (8.0, "8"), "high": (12.0, "12")} for i in range(48)}
     pts.update({t0 + 20 * 3600 + i * 300: {"cycle": "5min", "value": (20.0, "20")} for i in range(48)})   # the last 4 hours also at 5 minutes
-    _, line, band = HistoryQuery._daily_line(SimpleNamespace(tz=TZ), pts)
-    assert list(line.values()) == [pytest.approx((40 * 10 + 8 * 20) / 48)] and list(band.values()) == [(8.0, 20.0)]
+    readings = [(t, r["value"][0], r["value"][0] if "low" not in r else r["low"][0], r["value"][0] if "high" not in r else r["high"][0],
+                 300 if r["cycle"] == "5min" else 1800) for t, r in pts.items()]
+    line = build_line(readings + [(t0 - 86400, 5.0, 4.0, 6.0, 1800), (t0 + 86400, 5.0, 4.0, 6.0, 1800)], TZ, 3 * 86400, force_daily=True)
+    assert line.y[1] == pytest.approx((40 * 10 + 8 * 20) / 48) and (line.low[1], line.high[1]) == (8.0, 20.0)
 
 
 def test_the_bucket_widens_as_the_period_grows_and_never_goes_below_the_readings():

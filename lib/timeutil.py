@@ -59,7 +59,7 @@ POINT_BUDGET = 500                                  # about as many points as a 
 SLOT = 1800                                         # the 30-minute slots both devices are lined up on
 MIN_DAY_SLOTS = 24                                  # a day counts for a daily comparison with at least 12 hours of readings
 WIDTHS = (300, SLOT, 3600, 7200, 14400, 86400)      # bucket sizes a chart line can be drawn at: 5 min ... a day
-WIDTH_NAMES = {1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}
+WIDTH_NAMES = {300: "5-minute", 1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}
 BAND_FROM = 86400                                   # only a day's low-to-high is worth shading around its mean; shorter buckets hug the line
 
 

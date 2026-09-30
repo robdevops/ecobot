@@ -17,7 +17,8 @@ from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
-from ..timeutil import WIDTH_NAMES, WIDTHS, bucket_width, bucketed, daily_summary, local_date, local_epoch, now_local, rolling_mean, to_local
+from ..lines import build_line
+from ..timeutil import daily_summary, local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .link import rain_bars, rain_slots
@@ -37,7 +38,6 @@ DETAILED_DAYS = 93
 # Slow readings, by "group.field": a 5-minute line of these is lightly smoothed (wind, rain and the rest are not)
 SMOOTH_SERIES = {f"{g}.{f}" for g in ("outdoor", "indoor") for f in ("temperature", "humidity", "dew_point", "feels_like")} | {
     "pressure.relative", "pressure.absolute"}
-SMOOTH_POINTS = 3               # each drawn point is the mean of this many 5-minute readings (a 15-minute window)
 MAX_ROWS = 500_000              # readings loaded per question from the cache: days x 48 x groups x FIELDS_PER_GROUP
 FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a group has
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
@@ -560,8 +560,6 @@ class HistoryQuery:
             keys = [k for k in series_out if k.endswith("." + field)]
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
-        names = {"5min": "5-minute readings", "30min": "30-minute readings", "4hour": "4-hour averages",
-                 "1day": "daily averages"}
         series, resolution, ranged = [], None, False
         wind = field == "wind_gust" and "wind.wind_speed" in self.store  # average speed, shaded up to the gusts
         for k in keys:
@@ -569,7 +567,7 @@ class HistoryQuery:
             if got is None:
                 continue
             entry, cycle = got
-            resolution = resolution or names.get(cycle, cycle)
+            resolution = resolution or cycle
             rec = self.overall.get(k, {})
             entry["records"] = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec and (w == "high" or not wind)}
             if "low" in entry:
@@ -583,41 +581,30 @@ class HistoryQuery:
                             + ("  ·  records marked" if any(x["records"] for x in series) and not wind else ""),
                 "unit": unit, "series": series}
 
-    def _wind_pts(self) -> dict:
-        """The wind as one series: the average speed, whose band runs up to the strongest gust at that moment."""
-        speed = self.store["wind.wind_speed"]["pts"]
-        gust = self.store["wind.wind_gust"]["pts"]
-        out = {}
+    def _series_readings(self, k: str) -> list:
+        """One series as readings for lines.build_line. Wind is one series: the average speed, shaded up to the gusts."""
+        wind = k == "wind.wind_gust" and "wind.wind_speed" in self.store
+        speed = self.store["wind.wind_speed" if wind else k]["pts"]
+        gust = self.store["wind.wind_gust"]["pts"] if wind else {}
+        out = []
         for t, r in speed.items():
             if "value" in r:
-                peak = _high(gust[t]) if t in gust and "value" in gust[t] else _high(r)
-                out[t] = {"cycle": r["cycle"], "value": r["value"], "low": (_low(r), ""), "high": (max(peak, r["value"][0]), "")}
+                v = r["value"][0]
+                low, high = (r["low"][0] if "low" in r else None), (r["high"][0] if "high" in r else None)
+                if wind:
+                    low, high = _low(r), max(_high(gust[t]) if t in gust and "value" in gust[t] else _high(r), v)
+                out.append((t, v, low, high, CYCLE_SECONDS[r["cycle"]]))
         return out
 
     def _series_entry(self, k: str, label: str | None = None) -> tuple[dict, str] | None:
-        """One series as a chart line (x, y, and low/high where each point has its own range) and its resolution;
+        """One series as a chart line (x, y, and low/high where each point has its own range) and how it was drawn;
         None if there is too little to draw."""
-        pts = {t: r for t, r in self.store[k]["pts"].items() if "value" in r}
         windy = k == "wind.wind_gust" and "wind.wind_speed" in self.store
-        if windy:
-            pts = self._wind_pts()
-        if not pts:
+        line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES, native_band=windy,
+                          force_daily=self.turn.average_asked, until=now_local(self.tz).date())
+        if line is None:
             return None
-        cycle, line, band = self._line(pts, keep_band=windy)
-        smooth = cycle == "5min" and k in SMOOTH_SERIES  # only the drawn line: records and figures use the raw readings
-        if smooth:
-            raw, line = line, rolling_mean(line, CYCLE_SECONDS[cycle] * SMOOTH_POINTS // 2)  # finite readings only
-            if line:
-                line[max(line)] = raw[max(line)]  # the end dot is the latest reading
-        xs = sorted(line)
-        if len(xs) < 2:
-            return None
-        entry = {"label": label or k.split(".", 1)[0].replace("_", " ").capitalize(), "x": xs, "y": [line[t] for t in xs],
-                 **({"smoothed": True} if smooth else {})}
-        if len(band) >= len(xs) // 2:  # an average over a bucket: its low and high around it
-            entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
-            entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
-        return entry, cycle
+        return line.spec(label or k.split(".", 1)[0].replace("_", " ").capitalize()), line.name
 
     async def _rain_bars(self) -> dict:
         """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
@@ -647,45 +634,6 @@ class HistoryQuery:
                 "subtitle": f"{_period(self.start, self.end)}" + (f"  ·  rain per {rain}" if rain else "")
                             + ("  ·  shaded: range" if any(s.get("low") for p in panels for s in p.get("series", [])) else ""),
                 "panels": panels}
-
-    def _line(self, pts: dict, keep_band: bool = False) -> tuple[str, dict, dict]:
-        """(cycle, {ts: value}, {ts: (low, high)}) for one series, drawn at one resolution. Readings are drawn as they
-        are while they fit the point budget; otherwise they are bucketed (30 minutes ... 4 hours: the mean, still a
-        plain line; a day: the mean with its true low and high shaded as the band). keep_band keeps each point's own
-        low and high as the band at every width (wind: the speed, shaded up to the gusts)."""
-        counts: dict = {}
-        for r in pts.values():
-            counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
-        sub_daily = [c for c in ("5min", "30min") if c in counts]
-        if sub_daily:
-            source = CYCLE_SECONDS[sub_daily[0]]
-            width = 86400 if "1day" in counts or self.turn.average_asked else bucket_width(self.span.total_seconds(), source)
-            if width >= 86400:
-                return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
-            if width > source or len(sub_daily) > 1:  # 5-minute weeks next to 30-minute ones also come out as one resolution
-                width = max(width, WIDTHS[1])
-                xs, mean, low, high = bucketed(_readings(pts), self.tz, width)
-                return f"{WIDTH_NAMES[width]} averages", dict(zip(xs, mean)), dict(zip(xs, zip(low, high))) if keep_band else {}
-        cycle = max(counts, key=counts.get)
-        line = {t: pts[t]["value"][0] for t in pts if pts[t]["cycle"] == cycle}
-        band = {} if cycle in ("5min", "30min") and not keep_band else {
-            t: (_low(pts[t]), _high(pts[t])) for t in line if "low" in pts[t] and "high" in pts[t]}
-        return cycle, line, band
-
-    def _daily_line(self, pts: dict) -> tuple[str, dict, dict]:
-        """One point a day: Ecowitt's daily buckets for the older part, and for days we hold at 5 or 30 minutes
-        their own mean, low and high over the local day (so those days are exact). Today is left out until it is over."""
-        days = daily_summary(_readings(pts, now_local(self.tz).date(), self.tz), self.tz)
-        line, band = {}, {}
-        for t, r in pts.items():
-            if r["cycle"] == "1day" and local_date(t, self.tz) not in days and "value" in r:
-                line[t] = r["value"][0]
-                if "low" in r and "high" in r:
-                    band[t] = (_low(r), _high(r))
-        for d, (mean, low, high) in days.items():
-            at = local_epoch(datetime.combine(d, time(10)), self.tz)
-            line[at], band[at] = mean, (low, high)
-        return "1day", line, band
 
 
 def _period(start: datetime, end: datetime) -> str:

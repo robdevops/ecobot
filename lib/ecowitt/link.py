@@ -17,7 +17,8 @@ import numpy as np
 from ..airgradient.metrics import ZONES, zone
 from ..charts import LINK_CHART_HINT, stack_spec, wants_chart
 from ..correlate import rank
-from ..timeutil import BAND_FROM, MIN_DAY_SLOTS, SLOT, bucket_width, bucketed, day_bounds, local_date, now_local, parse_period, to_local
+from ..lines import build_line, slot_readings
+from ..timeutil import MIN_DAY_SLOTS, SLOT, day_bounds, local_date, now_local, parse_period, to_local
 from .store import HistoryCache
 
 log = logging.getLogger(__name__)
@@ -279,20 +280,10 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> di
 
 def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
                   lows: dict[int, float] | None = None, highs: dict[int, float] | None = None, keep_band: bool = False) -> dict | None:
-    """The reading as a line: the 30-minute readings while they fit the point budget, else bucketed (hourly ... daily);
-    a day's mean has its range shaded, from Ecowitt's own 30-minute lows and highs where the cache holds them."""
-    if len(driver) < 2:
-        return None
-    ts = sorted(driver)
-    width = bucket_width(((last - first).days + 1) * 86400, SLOT)
-    if width <= SLOT and not keep_band:
-        return {"label": label, "x": ts, "y": [driver[t] for t in ts]}
-    if width <= SLOT:  # a band at every width (wind: the speed, shaded up to the gusts)
-        return {"label": label, "x": ts, "y": [driver[t] for t in ts], "low": [(lows or {}).get(t, driver[t]) for t in ts],
-                "high": [max((highs or {}).get(t, driver[t]), driver[t]) for t in ts]}
-    lows, highs = lows or {}, highs or {}
-    xs, mean, low, high = bucketed(((t, driver[t], lows.get(t, driver[t]), highs.get(t, driver[t]), False) for t in ts), tz, width)
-    return {"label": label, "x": xs, "y": mean, **({"low": low, "high": high} if width >= BAND_FROM or keep_band else {})}
+    """The reading as a line (see lines.build_line); a day's mean has its range shaded, from Ecowitt's own 30-minute
+    lows and highs where the cache holds them. keep_band: the range at every width (wind: the speed, up to the gusts)."""
+    line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400, native_band=keep_band)
+    return line.spec(label) if line else None
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,
