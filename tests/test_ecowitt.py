@@ -884,7 +884,7 @@ def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
         base = int(datetime(2026, 1, 1, tzinfo=TZ).timestamp())
         driver = {base + i * 1800: 1015 + 6 * ((i / 200) % 2 - 1) for i in range(days * 48)}
         rain = {t: (0.4 if (i // 30) % 5 == 0 else 0.0) for i, t in enumerate(driver)}
-        spec = chart_spec(driver, rain, TZ, first, last, "pressure", "hPa")
+        spec = chart_spec(driver, rain, TZ, first, last, "pressure")
         assert spec.panels[0].bars.width in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
 
 
@@ -1067,7 +1067,7 @@ async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):
         turn = Turn()
         await eco.tools[1].handler({"groups": "outdoor,pressure", "chart": True, "chart_field": said,
                                     "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
-        assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Relative"), said
+        assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Pressure"), said
     await eco.close()
 
 

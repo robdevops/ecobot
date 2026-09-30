@@ -16,6 +16,7 @@ from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series
 from .series import WEATHER
+from .panels import panel_for
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
@@ -208,7 +209,7 @@ class Composer:
                **({"notes": notes} if notes else {})}
         bars = rain_bars(rain, self.tz, first, last)
         if result and air_panel and bars.x and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
-            self._add_chart(out, [air_panel, Panel("Rain", "mm", bars=bars)], first, last, turn)
+            self._add_chart(out, [air_panel, panel_for("rain", bars=bars)], first, last, turn)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     async def air_scan(self, args: dict, turn: Turn | None = None) -> str:
@@ -259,14 +260,14 @@ class Composer:
             values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
                 bars = rain_bars(rain_slots(values), self.tz, first, last)
-                return (Panel(label, unit, bars=bars) if bars.x else None,
+                return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
             if name == "wind":
                 gust, _, gust_high = self.weather_band(group, "wind_gust", first, last)
                 highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
             line = driver_series(values, self.tz, first, last, label, lows, highs)
             facts = {"series": name, **self._stats(values, unit)}
-            return (Panel(label, unit, [line], reading=name) if line else None), facts
+            return (panel_for(name, [line]) if line else None), facts
         if data is None:
             *data, more = await self.air_slots(name, first, last)
             notes.update(more)
@@ -284,8 +285,7 @@ class Composer:
         line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
         if line is None:
             return None, {}
-        return (Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]), reading=name),
-                {"series": name, **self._stats(values, CHART_UNITS[name])})
+        return panel_for(name, [line]), {"series": name, **self._stats(values, CHART_UNITS[name])}
 
     @staticmethod
     def _stats(values: dict, unit: str) -> dict:

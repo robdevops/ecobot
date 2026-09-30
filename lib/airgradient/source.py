@@ -24,11 +24,12 @@ from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..lines import Plotted, build_line
-from ..specs import Chart, Line, Panel
+from ..panels import air_group_panel, panel_for
+from ..specs import Chart, Line
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
-from .metrics import AIR_PANELS, ALL_METRICS, CHART_UNITS, MARK_LOW, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
+from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -362,12 +363,11 @@ class AirGradient:
             (name, (line, plotted)), = drawn.items()
             subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
-            return Chart(LABELS[name], subtitle, [Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]))])
+            return Chart(LABELS[name], subtitle, [panel_for(name, [line])])
         panels = []
         for group in AIR_PANELS:
             members = [m for m in group if m in drawn]
             if members:
-                panels.append(Panel(", ".join(LABELS[m] for m in members), CHART_UNITS[members[0]], [drawn[m][0] for m in members],
-                                    zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(members) > 1))
+                panels.append(air_group_panel(members, [drawn[m][0] for m in members]))
         return Chart("Air quality", f"{period}  ·  AirGradient readings"
                      + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)

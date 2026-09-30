@@ -20,6 +20,7 @@ from ..lines import build_line
 from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, local_date, now_local
 from ..series import WEATHER, find
+from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, rain_behind
 from .api import CYCLE_SECONDS, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
@@ -383,7 +384,7 @@ class HistoryQuery:
             keys = [k for k in series_out if k.endswith("." + field)]
         if keys[0] == "rainfall.daily" and self.rain_bars.x:  # the day's counter is a running total: draw what fell, as columns
             return Chart("Rain", f"{period_text(self.start.date(), self.end.date())}  ·  rain per {self.rain_bars.per}",
-                         [Panel("Rain", "mm", bars=self.rain_bars)])
+                         [panel_for("rain", bars=self.rain_bars)])
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
         lines, resolution, ranged = [], None, False
@@ -404,8 +405,9 @@ class HistoryQuery:
         subtitle = (f"{period_text(self.start.date(), self.end.date())}  ·  {resolution}"
                     + (", shaded up to the gusts" if wind and ranged else ", range shaded" if ranged else "")
                     + ("  ·  records marked" if any(x.records for x in lines) and not wind else ""))
-        reading = next((n for n, r in WEATHER.items() if r.field == field), "")
-        return Chart(title, subtitle, [Panel(title, unit, lines, reading=reading)])
+        known = find(field)
+        panel = panel_for(next(n for n, r in WEATHER.items() if r is known), lines) if known else Panel(title, unit, lines)
+        return Chart(panel.label, subtitle, [panel])
 
     def _series_readings(self, k: str) -> list:
         """One series as readings for lines.build_line. Wind is one series: the average speed, shaded up to the gusts."""
@@ -444,7 +446,7 @@ class HistoryQuery:
             group, field, label, unit = WEATHER[name][:4]
             if name == "rain":
                 if self.rain_bars.x:
-                    panels.append(Panel(label, unit, bars=self.rain_bars))
+                    panels.append(panel_for("rain", bars=self.rain_bars))
                 continue
             lines = [e[0] for k in sorted(self.store) if k.split(".", 1)[-1] == field and (
                      group == "outdoor" and k.split(".")[0] in ("outdoor", "indoor") or k.startswith(group + "."))
@@ -452,7 +454,7 @@ class HistoryQuery:
             if lines:
                 if len(lines) == 1 and name != "temperature":
                     lines[0].label = label
-                panels.append(Panel(label, unit, lines, reading=name))
+                panels.append(panel_for(name, lines))
         if len(panels) < 2:
             return None
         rain = self.rain_bars.per if any(p.bars for p in panels) else None
