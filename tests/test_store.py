@@ -48,3 +48,15 @@ def test_hot_store_reuses_fresh_responses_up_to_now():
     hot.put("M", "5min", "outdoor", now - 3600, now, {"f": 1})
     assert hot.get("M", "5min", "outdoor", now - 1800, now + 100) == {"f": 1}   # reaches the present
     assert hot.get("M", "5min", "outdoor", now - 7200, now) is None            # starts before what we hold
+
+
+def test_a_metric_ecowitt_adds_later_makes_the_days_held_be_fetched_again(tmp_path):
+    cache, now = make(tmp_path), int(time.time())
+    old = now - 10 * 86400
+    cache.store("M", "30min", ["outdoor"], data(old), old, old + 3600)
+    assert cache.missing("M", "30min", "outdoor", old, old + 3600) == []                 # held
+    cache.store("M", "30min", ["outdoor"], data(old + 7200, field="temperature") | {"outdoor": {
+        **data(old + 7200)["outdoor"], "vpd": {"unit": "kPa", "list": {str(old + 7200): "0.8"}}}}, old + 7200, old + 7300)
+    assert cache.missing("M", "30min", "outdoor", old, old + 3600)                       # the new metric: the earlier days are asked for again
+    cache.store("M", "30min", ["outdoor"], data(old), old, old + 3600)
+    assert cache.missing("M", "30min", "outdoor", old, old + 3600) == []                 # and once the vpd-less response repeats, no loop

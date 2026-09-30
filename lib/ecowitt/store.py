@@ -162,10 +162,17 @@ class HistoryCache:
             elif reached is not None:
                 covered.append((grp, min(limit, reached + BUCKET_SECONDS[cycle] - 1)))
         with self._lock:
+            grown = set()   # groups that now carry a reading the cache has never had (Ecowitt added a metric)
+            for _, _, grp, field, _ in units:
+                known = {r[0] for r in self.db.execute("SELECT field FROM fields WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))}
+                if known and field not in known:
+                    grown.add(grp)
+            if grown:
+                log.info("Ecowitt added a metric to %s (%s): its history is fetched again to fill it in", ", ".join(sorted(grown)), cycle)
             self.db.executemany("INSERT OR REPLACE INTO points VALUES (?,?,?,?,?,?)", rows)
             self.db.executemany("INSERT OR REPLACE INTO fields VALUES (?,?,?,?,?)", units)
             for grp, cov_end in covered:
-                existing = self.db.execute(
+                existing = [] if grp in grown else self.db.execute(   # the days held so far lack it: they are asked for again
                     "SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp)).fetchall()
                 self.db.execute("DELETE FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))
                 self.db.executemany("INSERT INTO coverage VALUES (?,?,?,?,?)",

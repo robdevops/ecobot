@@ -144,7 +144,8 @@ def _style_axis(ax, size: float = 7.5, pad: float = 5, grid: float = 0.8, below:
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(AXIS)
     ax.tick_params(axis="both", length=0, labelsize=size, labelcolor=MUTED, pad=pad)
-    ax.grid(axis="y", color=GRID, linewidth=grid)
+    if grid:
+        ax.grid(axis="y", color=GRID, linewidth=grid)
     if below:
         ax.set_axisbelow(True)
 
@@ -200,9 +201,10 @@ def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: i
 
 
 def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: float = 0.5):
-    """Rain bars: a translucent body with a brighter cap, so each reads as a solid little column."""
+    """Rain bars: a pale body (RAIN blended with white by `alpha`, so solid and nothing behind it shows through) with a
+    brighter cap, so each reads as a little column."""
     ys = np.asarray(ys, dtype=float)
-    ax.bar(bx, ys, width=width, align="edge", color=RAIN, alpha=alpha, linewidth=0, zorder=zorder)
+    ax.bar(bx, ys, width=width, align="edge", color=_mix(RAIN, 1 - alpha), linewidth=0, zorder=zorder)
     cap = axis_top * 0.014
     ax.bar(bx, np.minimum(cap, ys), bottom=np.maximum(ys - cap, 0), width=width, align="edge", color=RAIN, alpha=0.95,
            linewidth=0, zorder=zorder)
@@ -234,6 +236,7 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     ax2.tick_params(axis="y", length=0, labelsize=7, labelcolor=RAIN_TEXT, pad=4)
     ax.set_zorder(ax2.get_zorder() + 1)  # the lines above the bars
     ax.patch.set_visible(False)
+    ax2.patch.set_visible(False)     # so the grid beneath shows between the bars (set last: the line above re-shows it)
     return float(bx.max() + bars.width / 86400) if len(bx) else 0.0
 
 
@@ -358,7 +361,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     legend = [(c, s.label) for (c, _, _), s in zip(drawn, lines)] + ([(RAIN, panel.bars.label)] if panel.bars else [])
     _legend_dots(fig, [c for c, _ in legend], [label for _, label in legend], loc="center right",
                  bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / H_IN), ncol=len(legend), fontsize=8.5)
-    _style_axis(ax)
+    _style_axis(ax, grid=0 if panel.bars else 0.8)   # with rain behind, the grid is drawn under it (_bars_behind)
     tick_unit = "°" if _deg(panel.unit) == "°" else ""
     nonneg = _extent(lines)[0] >= 0  # padding below zero is room, not a scale: no negative labels on a reading that cannot be
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: "" if nonneg and v < 0 else f"{v:g}{tick_unit}"))
