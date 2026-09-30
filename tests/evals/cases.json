@@ -946,15 +946,15 @@
   {
     "id": "think-hottest-week",
     "ask": "think: hottest day this week",
-    "note": "asking to think gives medium reasoning to a lookup",
+    "note": "asking to think gives medium reasoning to a lookup; the hottest day of a period with when it was is weather_history (a record), not weather_days",
     "expect": {
       "effort": "medium",
       "tools": [
-        "weather_days"
+        "weather_history"
       ]
     },
     "covers": [
-      "q:rank-days",
+      "q:record",
       "m:temperature"
     ]
   }
