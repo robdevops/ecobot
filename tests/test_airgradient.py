@@ -124,7 +124,9 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]
     assert len(line.x) <= 500
-    assert line.records["high"] == (ts[5000], 305.0) and line.records["low"][1] == 5.0
+    assert line.records["high"] == (ts[5000], 305.0) and "low" not in line.records          # PM's lowest is often 0: not marked
+    rows = [{"ts": t, "co2": 450.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
+    assert air._chart(["co2"], rows, "period").panels[0].lines[0].records["low"][1] == 450.0   # CO2's lowest is
     await air.close()
 
 
@@ -225,13 +227,13 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_only_da
     week = (await specs(30, ["pm2_5"]))[0]
     line = week.panels[0].lines[0]
     assert "-hour averages" in week.subtitle and "range shaded" not in week.subtitle and 150 <= len(line.x) <= 500
-    assert line.low is None and set(line.records) == {"low", "high"}
+    assert line.low is None and set(line.records) == {"high"}
     base = int(now.timestamp()) // 3600 * 3600
     hourly = [{"ts": base - i * 3600, "pm2_5": 5 + (i % 24) / 2} for i in range(120 * 24, 0, -1)]   # 120 days of hourly readings
     season = air._chart(["pm2_5"], hourly, "the period")
     line = season.panels[0].lines[0]
     assert "daily averages, range shaded" in season.subtitle and 110 <= len(line.x) <= 122
-    assert all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high)) and set(line.records) == {"low", "high"}
+    assert all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high)) and set(line.records) == {"high"}
     panels = (await specs(30, ["pm2_5", "co2"]))[0]
     assert len(panels.panels) == 2 and all(p.lines[0].records for p in panels.panels)
     from lib.charts import render

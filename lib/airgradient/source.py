@@ -28,7 +28,7 @@ from ..specs import Chart, Line, Panel
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
-from .metrics import AIR_PANELS, ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
+from .metrics import AIR_PANELS, ALL_METRICS, CHART_UNITS, MARK_LOW, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -350,7 +350,7 @@ class AirGradient:
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        return plotted.spec(LABELS[name], {"low": lo, "high": hi}), plotted
+        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}), plotted
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a

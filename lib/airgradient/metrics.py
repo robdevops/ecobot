@@ -29,6 +29,9 @@ LABELS = {"pm2_5": "PM2.5", "pm10": "PM10", "pm1": "PM1", "co2": "CO₂",
 CHART_UNITS = {"pm2_5": "µg/m³", "pm10": "µg/m³", "pm1": "µg/m³", "co2": "ppm",
                "voc_index": "", "nox_index": ""}
 ALL_METRICS = list(LABELS)
+# Only these have a lowest reading worth marking on a chart: CO2 never falls to zero (it has an outdoor floor near 400 ppm),
+# the others are often 0 or at their baseline, so their lowest says nothing.
+MARK_LOW = ("co2",)
 # Metrics charted together, one panel each on a shared time axis, top to bottom, as (left axis, right axis): the particles
 # on one axis, then CO2, VOC and NOx each on its own (their scales differ too much to share an axis honestly). A panel with
 # none of the requested metrics is left out; if only its right-hand metrics were asked for, they take the left axis.
