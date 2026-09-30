@@ -219,7 +219,7 @@ def test_a_particular_date_or_time_goes_to_the_model_not_a_whole_period():
 def test_a_question_about_one_reading_charts_that_reading():
     assert intent.chart_field("lowest and highest humidity") == "humidity"
     assert intent.chart_field("plot pressure this week") == "relative"
-    assert intent.chart_field("highest wind gust this year") == "wind_gust"
+    assert intent.chart_field("highest wind gust this year") == "wind_speed"   # the mean, shaded up to the gusts
     for text in ("hottest day this year", "humidity and temperature this week", "wind and rain", "weather week", "how hot was it"):
         assert intent.chart_field(text) is None, text
 
@@ -297,3 +297,9 @@ def test_solar_radiation_and_uv_are_charted_readings_and_a_weekday_is_not_solar(
 def test_sun_and_uvi_is_two_stacked_readings_but_a_sunday_or_a_dated_sun_is_not_solar():
     assert intent.chart_fields("sun + uvi one month") == ["solar", "uv"]
     assert intent.chart_field("sun 5 jan") is None and intent.chart_field("was it hot on sunday") is None
+
+
+def test_a_readings_band_field_still_names_it_and_only_plain_readings_derive_a_range():
+    from lib.series import derives_range, field_of, find_name
+    assert find_name("wind_gust") == find_name("wind_speed") == find_name("wind") == "wind" and field_of("wind_gust") == "wind_speed"
+    assert derives_range("dew_point") and derives_range("solar") and not derives_range("wind_speed") and not derives_range("wind_direction")

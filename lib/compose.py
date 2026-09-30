@@ -15,7 +15,7 @@ from .analysis import scan
 from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series
-from .series import WEATHER
+from .series import WEATHER, derives_range
 from .panels import panel_for
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, rain_bars, rain_slots
@@ -27,8 +27,7 @@ log = logging.getLogger(__name__)
 MAX_PANELS = 4
 DEFAULT_DAYS = 30
 # Weather station series: name -> (group, field, label, unit); the composer draws the wind as its average speed
-ECOWITT = {**WEATHER, "wind": WEATHER["wind"]._replace(field="wind_speed")}   # the plotted wind is the average speed
-SERIES = [*ECOWITT, *ALL_METRICS]
+SERIES = [*WEATHER, *ALL_METRICS]
 STYLES = ("line", "bars", "rating")
 
 PLOT_DESCRIPTION = (
@@ -130,7 +129,7 @@ class Composer:
         lo, hi = day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
         fields = [field, field + "_low", field + "_high"] if bands else [field]
         values, lows, highs = [*self.eco.cache.slots(self.eco.mac, "30min", group, fields, lo, hi), {}, {}][:3]
-        if bands and group != "wind" and not (lows or highs):   # no range of its own: from the cached 5-minute readings
+        if bands and derives_range(field) and not (lows or highs):   # no range of its own: from the cached 5-minute readings
             lows, highs = self.eco.cache.slot_ranges(self.eco.mac, group, field, values, lo, hi)
         return values, lows, highs
 
@@ -255,16 +254,16 @@ class Composer:
                      data: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
         """(the panel, its figures for the caption); the panel is None when there is nothing to draw. `data` is an air series
         already loaded (values, lows, highs)."""
-        if name in ECOWITT:
-            reading = ECOWITT[name]
+        if name in WEATHER:
+            reading = WEATHER[name]
             group, field, label, unit = reading.group, reading.field, reading.label, reading.unit
             values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
                 bars = rain_bars(rain_slots(values), self.tz, first, last)
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
-            if name == "wind":
-                gust, _, gust_high = self.weather_band(group, "wind_gust", first, last)
+            if reading.band_field:  # a mean shaded up to another field (wind: the gusts)
+                gust, _, gust_high = self.weather_band(group, reading.band_field, first, last)
                 highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
             line = driver_series(values, self.tz, first, last, label, lows, highs)
             facts = {"series": name, **self._stats(values, unit)}
