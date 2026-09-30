@@ -12,12 +12,12 @@ import warnings
 
 import numpy as np
 
-SLOT = 1800
+from .timeutil import MIN_DAY_SLOTS, SLOT
+
 PER_DAY = 48
 LAGS = range(13)              # the weather leads the air by 0 to 6 hours
 MIN_DAYS = 21
 MIN_DAILY = 14                # days with enough readings for the day-to-day view
-MIN_DAY_SLOTS = 24            # a day counts with at least 12 hours of readings
 MIN_OVERLAP = 200             # slots two series must share for a within-day comparison
 PERMUTATIONS = 300
 DAILY_PERMUTATIONS = 2000
@@ -34,7 +34,7 @@ def rank(x: np.ndarray) -> np.ndarray:
     ok = ~np.isnan(x)
     values = x[ok]
     order = np.argsort(values, kind="mergesort")
-    uniq, inverse, counts = np.unique(values[order], return_inverse=True, return_counts=True)
+    _, inverse, counts = np.unique(values[order], return_inverse=True, return_counts=True)
     ends = np.cumsum(counts)
     ranks = np.empty(len(values))
     ranks[order] = ((ends - counts + 1) + ends)[inverse] / 2
@@ -85,11 +85,22 @@ def centred_ranks(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return np.nan_to_num(r - np.nanmean(r)), (~np.isnan(r)).astype(float)
 
 
-def _lag_corr(x: np.ndarray, mx: np.ndarray, y: np.ndarray, my: np.ndarray) -> np.ndarray:
-    """For each row of x (P shuffles of the weather; mx marks the readings), the correlation with y at every lag, over the
-    slots where both have a reading: (P, len(LAGS)). The weather leads the air by L slots: x[:n-L] against y[L:]."""
+def _ranked(grid: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(anomaly ranks centred, mask, their squares): what a series contributes to every pair it is in."""
+    x, m = centred_ranks(anomalies(grid))
+    return x, m, x * x
+
+
+def _shuffled(x: np.ndarray, permutations: np.ndarray) -> np.ndarray:
+    """One row per permutation: whole days of the series moved around."""
+    return x.reshape(len(x) // PER_DAY, PER_DAY)[permutations].reshape(len(permutations), -1)
+
+
+def _lag_corr(x: np.ndarray, xx: np.ndarray, mx: np.ndarray, y: np.ndarray, yy: np.ndarray, my: np.ndarray) -> np.ndarray:
+    """For each row of x (P shuffles of the weather; xx its squares, mx marks the readings), the correlation with y at
+    every lag, over the slots where both have a reading: (P, len(LAGS)). The weather leads the air by L slots:
+    x[:n-L] against y[L:]."""
     n = x.shape[1]
-    xx, yy = x * x, y * y
     out = np.zeros((x.shape[0], len(LAGS)))
     for j, lag in enumerate(LAGS):
         m = n - lag
@@ -99,44 +110,43 @@ def _lag_corr(x: np.ndarray, mx: np.ndarray, y: np.ndarray, my: np.ndarray) -> n
     return out
 
 
-def within_day(weather: np.ndarray, air: np.ndarray, permutations: np.ndarray) -> tuple[float, int, float] | None:
+def within_day(weather: tuple, air: tuple, shuffled: tuple) -> tuple[float, int, float] | None:
     """(correlation at the best lag, that lag in slots, p) of the weather's and air's anomalies; p by shuffling days. None
-    when they share too few readings."""
-    x, mx = centred_ranks(anomalies(weather))
-    y, my = centred_ranks(anomalies(air))
+    when they share too few readings. `weather` and `air` are _ranked results; `shuffled` is the weather's (x, xx, mx)
+    with its days shuffled."""
+    (x, mx, xx), (y, my, yy) = weather, air
     if mx @ my < MIN_OVERLAP:
         return None
-    days = len(x) // PER_DAY
-    observed = _lag_corr(x[None, :], mx[None, :], y, my)[0]
+    observed = _lag_corr(x[None, :], xx[None, :], mx[None, :], y, yy, my)[0]
     best = int(np.abs(observed).argmax())
-    order = permutations
-    xs = x.reshape(days, PER_DAY)[order].reshape(len(order), -1)
-    ms = mx.reshape(days, PER_DAY)[order].reshape(len(order), -1)
-    shuffled = np.abs(_lag_corr(xs, ms, y, my)).max(axis=1)
-    return float(observed[best]), best, (1 + int((shuffled >= abs(observed[best])).sum())) / (len(order) + 1)
+    strongest = np.abs(_lag_corr(*shuffled, y, yy, my)).max(axis=1)
+    return float(observed[best]), best, (1 + int((strongest >= abs(observed[best])).sum())) / (len(strongest) + 1)
+
+
+def daily_means(grid: np.ndarray) -> np.ndarray:
+    """One mean per day (NaN for a day with under 12 hours of readings)."""
+    counts = (~np.isnan(grid)).reshape(-1, PER_DAY).sum(axis=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        means = np.nanmean(grid.reshape(-1, PER_DAY), axis=1)
+    return np.where(counts >= MIN_DAY_SLOTS, means, np.nan)
 
 
 def day_to_day(weather: np.ndarray, air: np.ndarray, rng: np.random.Generator,
                shuffles: int = DAILY_PERMUTATIONS) -> tuple[float | None, int, float | None]:
-    """(correlation of the daily means, days used, p by shuffling days), or (None, days, None) with too few days."""
-    def daily(a):
-        counts = (~np.isnan(a)).reshape(-1, PER_DAY).sum(axis=1)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            means = np.nanmean(a.reshape(-1, PER_DAY), axis=1)
-        return np.where(counts >= MIN_DAY_SLOTS, means, np.nan)
-    w, a = daily(weather), daily(air)
-    both = ~np.isnan(w) & ~np.isnan(a)
+    """(correlation of the daily means, days used, p by shuffling days), or (None, days, None) with too few days.
+    `weather` and `air` are daily_means results."""
+    both = ~np.isnan(weather) & ~np.isnan(air)
     if both.sum() < MIN_DAILY:
         return None, int(both.sum()), None
-    x, y = rank(w[both]), rank(a[both])
+    x, y = rank(weather[both]), rank(air[both])
     x, y = x - x.mean(), y - y.mean()
     if not x.any() or not y.any():
         return None, int(both.sum()), None
     corr = lambda xs: xs @ y / (np.sqrt((xs * xs).sum(axis=-1)) * np.sqrt((y * y).sum()) + 1e-12)
     observed = float(corr(x))
-    shuffled = np.abs(corr(x[np.array([rng.permutation(len(x)) for _ in range(shuffles)])]))
-    return observed, int(both.sum()), (1 + int((shuffled >= abs(observed)).sum())) / (shuffles + 1)
+    strongest = np.abs(corr(rng.permuted(np.tile(x, (shuffles, 1)), axis=1)))
+    return observed, int(both.sum()), (1 + int((strongest >= abs(observed)).sum())) / (shuffles + 1)
 
 
 def direction_effect(air: np.ndarray, direction: np.ndarray, speed: np.ndarray, permutations: np.ndarray) -> dict | None:
@@ -145,24 +155,25 @@ def direction_effect(air: np.ndarray, direction: np.ndarray, speed: np.ndarray, 
     a = anomalies(air)
     usable = ~np.isnan(direction) & ~np.isnan(speed) & (speed >= CALM_KMH)
     sectors = np.where(usable, ((np.nan_to_num(direction) % 360 + 22.5) // 45).astype(int) % 8, -1)   # N covers 337.5 to 22.5
-    valid = ~np.isnan(a) & (sectors >= 0)
+    known = ~np.isnan(a)
 
-    def spread(secs: np.ndarray) -> tuple[float, dict]:
-        means = {}
-        for k in range(8):
-            take = valid & (secs == k)
-            if take.sum() >= MIN_SECTOR_SLOTS:
-                means[k] = float(a[take].mean())
-        return (max(means.values()) - min(means.values()), means) if len(means) >= 2 else (0.0, means)
-    observed, means = spread(sectors)
-    if len(means) < 2:
+    def means(secs: np.ndarray) -> np.ndarray:
+        take = known & (secs >= 0)
+        counts = np.bincount(secs[take], minlength=8)
+        sums = np.bincount(secs[take], weights=a[take], minlength=8)
+        return np.where(counts >= MIN_SECTOR_SLOTS, sums / np.maximum(counts, 1), np.nan)
+
+    def spread(secs: np.ndarray) -> float:
+        m = means(secs)
+        return float(np.nanmax(m) - np.nanmin(m)) if np.isfinite(m).sum() >= 2 else 0.0
+    by_sector = means(sectors)
+    if np.isfinite(by_sector).sum() < 2:
         return None
-    days = len(a) // PER_DAY
-    by_day = sectors.reshape(days, PER_DAY)
-    exceed = sum(spread(by_day[perm].reshape(-1))[0] >= observed for perm in permutations)
-    high, low = max(means, key=means.get), min(means, key=means.get)
+    observed = spread(sectors)
+    exceed = sum(spread(shuffled) >= observed for shuffled in _shuffled(sectors, permutations))
+    high, low = int(np.nanargmax(by_sector)), int(np.nanargmin(by_sector))
     return {"spread": observed, "p": (1 + exceed) / (len(permutations) + 1), "highest": SECTORS[high], "lowest": SECTORS[low],
-            "highest_by": means[high], "lowest_by": means[low]}
+            "highest_by": float(by_sector[high]), "lowest_by": float(by_sector[low])}
 
 
 def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]], direction: dict[int, float] | None,
@@ -177,11 +188,19 @@ def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]],
         return {"tests": [], "directions": [], "note": f"Only {overlap} days have enough air-quality readings; at least {MIN_DAYS} are needed."}
     rng = np.random.default_rng(seed)
     permutations = np.array([rng.permutation(days) for _ in range(shuffles)])
+    # what each series contributes to every pair, worked out once
+    air_ranked = {k: _ranked(g) for k, g in grids.items()}
+    air_daily = {k: daily_means(g) for k, g in grids.items()}
+    weather_prepared = {}
+    for k, g in wgrids.items():
+        ranked = _ranked(g)
+        xs, ms = _shuffled(ranked[0], permutations), _shuffled(ranked[1], permutations)
+        weather_prepared[k] = (ranked, (xs, xs * xs, ms), daily_means(g))
     tests = []
-    for a_name, a in grids.items():
-        for w_name, w in wgrids.items():
-            inside = within_day(w, a, permutations)
-            r_daily, n_days, p_daily = day_to_day(w, a, rng, DAILY_PERMUTATIONS * shuffles // PERMUTATIONS)
+    for a_name in grids:
+        for w_name, (ranked, shuffled, w_daily) in weather_prepared.items():
+            inside = within_day(ranked, air_ranked[a_name], shuffled)
+            r_daily, n_days, p_daily = day_to_day(w_daily, air_daily[a_name], rng, DAILY_PERMUTATIONS * shuffles // PERMUTATIONS)
             if inside is None and p_daily is None:
                 continue
             r, lag, p = inside or (None, 0, 1.0)

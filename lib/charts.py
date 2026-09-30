@@ -53,6 +53,19 @@ AVERAGE_ASKED: ContextVar[bool] = ContextVar("average_asked", default=False)
 CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
 
 
+def stack_spec(panels: list[dict], first, last) -> dict:
+    """A stacked chart of these panels for the days first to last. What a bar covers (a "per" in a bars or shares panel)
+    goes into the subtitle, not the panel."""
+    per = None
+    for p in panels:
+        for kind in ("bars", "shares"):
+            if kind in p:
+                per = p[kind].pop("per", per)
+    return {"kind": "stack", "title": " and ".join(p["label"] for p in panels),
+            "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}" + (f"  ·  per {per}" if per else ""),
+            "panels": panels}
+
+
 def wants_chart(args: dict, start: datetime | None = None, end: datetime | None = None) -> bool:
     """The model asked for one, the person's words did, or the period (naive local start/end) spans 3+ days."""
     long = bool(start and end and (end.date() - start.date()).days >= CHART_MIN_DAYS - 1)

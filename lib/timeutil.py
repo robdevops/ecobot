@@ -44,8 +44,21 @@ def rolling_mean(values: dict[int, float], half_window: int) -> dict[int, float]
     return out
 
 
+def parse_period(args: dict, today: date, default_days: int) -> tuple[date, date] | str:
+    """(first, last) day from start_date / end_date, or an error text. The last day is at most yesterday: today is still
+    settling. A missing start is default_days before the end."""
+    try:
+        last = min(date.fromisoformat(str(args["end_date"])[:10]), today - timedelta(days=1)) if args.get("end_date") else today - timedelta(days=1)
+        first = date.fromisoformat(str(args["start_date"])[:10]) if args.get("start_date") else last - timedelta(days=default_days - 1)
+    except ValueError as e:
+        return f"bad date ({e}); use 'YYYY-MM-DD'"
+    return (first, last) if first <= last else "start_date must be before end_date (today isn't final, so the latest day is yesterday)"
+
+
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
-WIDTHS = (300, 1800, 3600, 7200, 14400, 86400)      # bucket sizes a chart line can be drawn at: 5 min ... a day
+SLOT = 1800                                         # the 30-minute slots both devices are lined up on
+MIN_DAY_SLOTS = 24                                  # a day counts for a daily comparison with at least 12 hours of readings
+WIDTHS = (300, SLOT, 3600, 7200, 14400, 86400)      # bucket sizes a chart line can be drawn at: 5 min ... a day
 WIDTH_NAMES = {1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}
 BAND_FROM = 86400                                   # only a day's low-to-high is worth shading around its mean; shorter buckets hug the line
 
@@ -64,7 +77,7 @@ def _summarise(points, key) -> dict:
     extremes: dict = {}
     for ts, value, low, high, fine in points:
         k = key(ts)
-        slots.setdefault((k, ts // 1800), {}).setdefault(fine, []).append(value)
+        slots.setdefault((k, ts // SLOT), {}).setdefault(fine, []).append(value)
         lo, hi = extremes.get(k, (low, high))
         extremes[k] = (min(lo, low), max(hi, high))
     means: dict = {}
@@ -84,13 +97,13 @@ def bucket_summary(points, width: int) -> dict[int, tuple[float, float, float]]:
     return _summarise(points, lambda ts: ts // width * width)
 
 
-def bucketed(points, tz: tzinfo, width: int, at_hour: int = 12) -> tuple[list[int], list[float], list[float], list[float]]:
-    """(x, mean, low, high) lists for a chart line in buckets of this width: local days (drawn at at_hour) for a day,
+def bucketed(points, tz: tzinfo, width: int) -> tuple[list[int], list[float], list[float], list[float]]:
+    """(x, mean, low, high) lists for a chart line in buckets of this width: local days (drawn at noon) for a day,
     otherwise epoch-aligned buckets (drawn at their middle)."""
     if width >= 86400:
         days = daily_summary(points, tz)
         keys = sorted(days)
-        xs = [int(datetime.combine(d, time(at_hour)).replace(tzinfo=tz).timestamp()) for d in keys]
+        xs = [local_epoch(datetime.combine(d, time(12)), tz) for d in keys]
         rows = [days[d] for d in keys]
     else:
         buckets = bucket_summary(points, width)

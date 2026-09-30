@@ -10,17 +10,18 @@ before and the rain after; and the biggest rain spells with the change that prec
 import asyncio
 import json
 import logging
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import date, datetime, time, tzinfo
 
 import numpy as np
 
-from ..charts import CHART_REQUESTS, LINK_CHART_HINT, wants_chart
-from ..timeutil import BAND_FROM, bucket_width, bucketed, local_date, now_local, to_local
+from ..airgradient.metrics import ZONES, zone
+from ..charts import CHART_REQUESTS, LINK_CHART_HINT, stack_spec, wants_chart
+from ..correlate import rank
+from ..timeutil import BAND_FROM, MIN_DAY_SLOTS, SLOT, bucket_width, bucketed, day_bounds, local_date, now_local, parse_period, to_local
 from .store import HistoryCache
 
 log = logging.getLogger(__name__)
 
-SLOT = 1800                    # 30-minute data
 LOOKBACK = 6                   # slots: the change is measured over the previous 3 hours
 AHEAD = 6                      # slots: and the rain counted over the next 3 hours
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
@@ -185,7 +186,6 @@ WASH_SLOTS = 12       # air quality in the 6 hours before a rain event starts is
 MIN_WASH_SLOTS = 6    # ... needing at least 3 hours of readings on each side
 CLEANED = 0.9         # "cleaner afterwards": the mean after is at most this share of the mean before (worse: 1 / this)
 MIN_EVENTS = 3
-MIN_DAY_SLOTS = 24    # a day counts for the daily comparison with at least 12 hours of air readings
 
 
 def air_verdict(events: int, cleaned: int, worse: int, ratio: float | None) -> str:
@@ -205,18 +205,6 @@ def air_verdict(events: int, cleaned: int, worse: int, ratio: float | None) -> s
     return "Weak or mixed - not a consistent link"
 
 
-def _ranks(values: list[float]) -> np.ndarray:
-    """Ranks with ties averaged (1 = smallest)."""
-    order = np.argsort(values, kind="stable")
-    ranks = np.empty(len(values))
-    ranks[order] = np.arange(1, len(values) + 1)
-    for v in set(values):
-        same = [i for i, x in enumerate(values) if x == v]
-        if len(same) > 1:
-            ranks[same] = ranks[same].mean()
-    return ranks
-
-
 def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[float, float], tz: tzinfo, label: str) -> dict:
     """Does rain go with cleaner air? `values` (an air reading) and `rain` are {epoch: value} at 30-minute slots. `limits`
     are the good and poor limits of the reading, to say what rating a level falls in."""
@@ -225,7 +213,7 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
         return {}
     wet, dry = [t for t in slots if rain[t] > 0], [t for t in slots if rain[t] <= 0]
     mean = lambda ts: float(np.mean([values[t] for t in ts])) if ts else None
-    word = lambda v: "good" if v <= limits[0] else "poor" if v <= limits[1] else "very poor"
+    word = lambda v: ZONES[zone(v, limits)]
     wet_level, dry_level = mean(wet), mean(dry)
     events = []
     for s in rain_spells(rain, wet):
@@ -247,7 +235,7 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
     dry_days = [float(np.mean(v["air"])) for v in days.values() if v["rain"] == 0]
     r = None
     if len(days) >= 10:
-        rain_ranks, air_ranks = _ranks([v["rain"] for v in days.values()]), _ranks([float(np.mean(v["air"])) for v in days.values()])
+        rain_ranks, air_ranks = (rank(np.array(x)) for x in ([v["rain"] for v in days.values()], [float(np.mean(v["air"])) for v in days.values()]))
         if rain_ranks.std() > 0 and air_ranks.std() > 0:
             r = round(float(np.corrcoef(rain_ranks, air_ranks)[0, 1]), 2)
     findings = []
@@ -273,7 +261,7 @@ def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
     """(origin epoch, seconds per bar, what a bar covers) for a bar chart of this period: hourly up to 4 days, 6-hourly
     up to a month, daily beyond. Bars start at local midnight of the first day."""
     width = next(w for limit, w in CHART_BARS if (last - first).days + 1 <= limit)
-    return (int(datetime.combine(first, time()).replace(tzinfo=tz).timestamp()), width,
+    return (day_bounds(first, tz)[0], width,
             {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
 
 
@@ -313,34 +301,22 @@ def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, fir
     line = driver_series(driver, tz, first, last, name.capitalize(), lows, highs)
     if line is None:
         return None
-    bars = rain_bars(rain, tz, first, last)
-    return {"kind": "stack", "title": f"{name.capitalize()} and rain",
-            "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}  ·  rain per {bars.pop('per')}",
-            "panels": [{"label": name.capitalize(), "unit": unit, "series": [line]},
-                       {"label": "Rain", "unit": "mm", "bars": bars}]}
+    return stack_spec([{"label": name.capitalize(), "unit": unit, "series": [line]},
+                       {"label": "Rain", "unit": "mm", "bars": rain_bars(rain, tz, first, last)}], first, last)
 
 
 def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -> tuple[dict, dict | None, date | None, date | None]:
     """(result for the model, chart spec or None, first day, last day)."""
-    today = now.date()
-    try:
-        last = min(date.fromisoformat(str(args["end_date"])[:10]), today - timedelta(days=1)) if args.get("end_date") \
-            else today - timedelta(days=1)
-        first = date.fromisoformat(str(args["start_date"])[:10]) if args.get("start_date") else last - timedelta(days=DEFAULT_DAYS - 1)
-    except ValueError as e:
-        return {"error": f"bad date ({e}); use 'YYYY-MM-DD'"}, None, None, None
-    if first > last:
-        return {"error": "start_date must be before end_date (today isn't final, so the latest day is yesterday)"}, None, None, None
+    if isinstance(period := parse_period(args, now.date(), DEFAULT_DAYS), str):
+        return {"error": period}, None, None, None
+    first, last = period
     name = args.get("driver") or "pressure"
     if name not in DRIVERS:
         return {"error": f"driver must be one of {', '.join(DRIVERS)}"}, None, None, None
     group, field, unit, threshold = DRIVERS[name]
-    lo = int(datetime.combine(first, time()).replace(tzinfo=tz).timestamp())
-    hi = int(datetime.combine(last, time(23, 59, 59)).replace(tzinfo=tz).timestamp())
-    def pick(g: str, *fields: str) -> list[dict[int, float]]:
-        got = cache.load_fields(mac, "30min", g, list(fields), lo, hi)
-        return [{int(t): float(v) for t, v in got.get(f, {"list": {}})["list"].items()} for f in fields]
-    (driver, lows, highs), (daily,) = pick(group, field, field + "_low", field + "_high"), pick("rainfall", "daily")
+    lo, hi = day_bounds(first, tz)[0], day_bounds(last, tz, last_second=True)[1]
+    driver, lows, highs = cache.slots(mac, "30min", group, [field, field + "_low", field + "_high"], lo, hi)
+    (daily,) = cache.slots(mac, "30min", "rainfall", ["daily"], lo, hi)
     rain = rain_slots(daily)
     out = {"period": f"{first:%a} {first.day} {first:%b %Y} - {last:%a} {last.day} {last:%b %Y}", "driver": f"{name} ({unit})",
            "resolution": "30-minute readings (not averaged to days)",

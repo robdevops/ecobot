@@ -41,12 +41,21 @@ PM25_AQI = [
 ]
 
 
+ZONES = ("good", "poor", "very poor")
+_ZONE_EMOJI = ("\U0001f7e2", "\U0001f7e1", "\U0001f534")
+
+
+def zone(value: float, limits: tuple[float, float]) -> int:
+    """0 good, 1 poor, 2 very poor."""
+    return 0 if value <= limits[0] else 1 if value <= limits[1] else 2
+
+
 def rating(name: str, value: float) -> str | None:
     limits = RATINGS.get(name)
     if limits is None:
         return None
-    good, poor = limits
-    return "\U0001f7e2 good" if value <= good else "\U0001f7e1 poor" if value <= poor else "\U0001f534 very poor"
+    z = zone(value, limits)
+    return f"{_ZONE_EMOJI[z]} {ZONES[z]}"
 
 
 def pm25_aqi(conc: float) -> tuple[int, str]:

@@ -622,8 +622,7 @@ class HistoryQuery:
     async def _rain_bars(self) -> dict:
         """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
-        found = await asyncio.to_thread(self.f.cache.load_fields, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
-        daily = {int(t): float(v) for t, v in found.get("daily", {"list": {}})["list"].items()}
+        (daily,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
         return rain_bars(rain_slots(daily), self.tz, self.start.date(), self.end.date())
 
     def _stack_spec(self, names: list[str]) -> dict | None:
@@ -684,7 +683,7 @@ class HistoryQuery:
                 if "low" in r and "high" in r:
                     band[t] = (_low(r), _high(r))
         for d, (mean, low, high) in days.items():
-            at = int(datetime.combine(d, datetime.min.time()).replace(hour=10, tzinfo=self.tz).timestamp())
+            at = local_epoch(datetime.combine(d, time(10)), self.tz)
             line[at], band[at] = mean, (low, high)
         return "1day", line, band
 

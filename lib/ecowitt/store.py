@@ -125,6 +125,11 @@ class HistoryCache:
                 out.setdefault(field, {"unit": units.get(field, ""), "list": {}})["list"][str(ts)] = value
         return out
 
+    def slots(self, mac: str, cycle: str, grp: str, fields: list[str], start: int, end: int) -> list[dict[int, float]]:
+        """Each field as {epoch: float}, in the order asked (empty for a field the cache lacks)."""
+        got = self.load_fields(mac, cycle, grp, fields, start, end)
+        return [{int(t): float(v) for t, v in got.get(f, {"list": {}})["list"].items()} for f in fields]
+
     def days_held(self, mac: str, cycle: str, groups: list[str]) -> int:
         """Days of history stored at this resolution (the least any of the groups has)."""
         held = []
