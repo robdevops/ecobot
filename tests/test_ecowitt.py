@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from lib import intent
 from lib.tools import Turn
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
@@ -971,4 +972,17 @@ async def test_a_dew_point_chart_plots_the_dew_point_and_never_quietly_a_tempera
                                                  "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                                  "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn))
     assert turn.charts and turn.charts[0].title == "Dew point" and "outdoor.dew_point" in out["series"]
+    await eco.close()
+
+
+async def test_weather_all_week_is_a_stack_of_every_reading_the_station_has(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    turn = Turn(chart_asked=True, chart_fields=intent.chart_fields("weather all week"))
+    await eco.tools[1].handler({"groups": "outdoor,indoor", "chart": True, "start_date": f"{today - timedelta(days=7)} 00:00:00",
+                                "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
+    chart = turn.charts[0]
+    assert len(chart.panels) >= 3 and {"Temperature", "Dew point"} <= {p.label for p in chart.panels}
     await eco.close()

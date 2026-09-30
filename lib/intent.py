@@ -253,6 +253,7 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
 # The readings a chart can plot: name -> (the words that name it, the field it plots when it is the only one asked about)
 READINGS = {name: (r.words, None if name == "temperature" else r.field) for name, r in WEATHER_READINGS.items()}
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
+ALL = re.compile(r"\b(all|every\w*|each)\b", I)
 
 
 def _named(text: str) -> dict[str, int]:
@@ -266,6 +267,8 @@ def _named(text: str) -> dict[str, int]:
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
+    if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
+        return list(WEATHER_READINGS)
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
@@ -318,7 +321,7 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
 
 
 def air_metrics(text: str) -> list[str]:
-    metrics = [m for _, m in AIR_METRICS] if re.search(r"\b(all|every\w*|each)\b", text, I) else []
+    metrics = [m for _, m in AIR_METRICS] if ALL.search(text) else []
     for pattern, metric in AIR_METRICS:
         if re.search(rf"\b({pattern})", text, I) and metric not in metrics:
             metrics.append(metric)

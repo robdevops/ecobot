@@ -281,3 +281,9 @@ def test_dew_point_feels_like_and_vpd_are_charted_readings_that_outrank_temperat
     assert intent.chart_field("graph the vpd this week") == "vpd"
     assert intent.chart_fields("plot dew point and humidity") == ["dew_point", "humidity"]
     assert intent.chart_field("how hot was it") is None
+
+
+def test_weather_all_week_is_every_reading_stacked_and_feel_is_the_feels_like_reading():
+    assert intent.chart_fields("weather all week") == ["temperature", "humidity", "pressure", "wind", "rain", "dew_point", "feels_like", "vpd"]
+    assert intent.chart_fields("weather this week") == [] and intent.chart_fields("all the rain last week") == []
+    assert intent.chart_field("feels 90d") == intent.chart_field("feel 90d") == intent.chart_field("feels-like 90d") == "feels_like"
