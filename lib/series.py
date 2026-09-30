@@ -26,7 +26,7 @@ WEATHER = {
     "pressure": Reading("pressure", "relative", "Pressure", "hPa", PRESSURE_WORDS),
     "wind": Reading("wind", "wind_gust", "Wind", "km/h", r"gusts?|wind\w*"),
     "rain": Reading("rainfall", "daily", "Rain", "mm", r"rain\w*|precip\w*"),
-    "dew_point": Reading("outdoor", "dew_point", "Dew point", "°C", r"dew ?points?|dewpoints?"),
+    "dew_point": Reading("outdoor", "dew_point", "Dew point", "°C", r"dew\w*"),
     "feels_like": Reading("outdoor", "feels_like", "Feels like", "°C", r"feels?[ -]?like|apparent"),
     "vpd": Reading("outdoor", "vpd", "VPD", "kPa", r"vpd|vapou?r pressure deficit"),
 }

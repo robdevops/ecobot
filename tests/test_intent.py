@@ -276,7 +276,7 @@ def test_a_bare_status_or_report_asks_for_everything_and_nothing_else_does():
 
 
 def test_dew_point_feels_like_and_vpd_are_charted_readings_that_outrank_temperature():
-    assert intent.chart_field("dew point 90d") == "dew_point"
+    assert intent.chart_field("dew point 90d") == intent.chart_field("dew piont 90d") == intent.chart_field("dewpoint 90d") == "dew_point"
     assert intent.chart_field("feels like temperature last month") == "feels_like"
     assert intent.chart_field("graph the vpd this week") == "vpd"
     assert intent.chart_fields("plot dew point and humidity") == ["dew_point", "humidity"]
