@@ -29,4 +29,6 @@ def glance(group: str, field: str, value: float) -> str:
         return "☀️" if value > 0 else ""      # none at night
     if name == "uvi":
         return "😎" if value > 0 else ""
+    if name == "vpd":
+        return "🧽"      # how hard the air is drying things out
     return ""
