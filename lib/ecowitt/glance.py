@@ -12,7 +12,7 @@ def _step(value: float, table: tuple) -> str:
     return next((emoji for floor, emoji in table if value >= floor), "")
 
 
-def glance(group: str, field: str, value: float, kilometres_per_hour: bool = True) -> str:
+def glance(group: str, field: str, value: float) -> str:
     """The emoji for one reading, or "" when it is unremarkable."""
     name = field.lower()
     if name in ("temperature", "temp") or name.startswith(("feels_like", "app_temp")):

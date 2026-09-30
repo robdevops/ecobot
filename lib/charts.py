@@ -130,6 +130,36 @@ def _pill(ax, x, y, text, colour, above: bool, ha: str = "center"):
                 bbox={"boxstyle": "round,pad=0.35,rounding_size=0.8", "fc": colour, "ec": "none"}, zorder=6)
 
 
+def _to_dt(tz: tzinfo):
+    """A function turning an epoch into a naive local datetime, for matplotlib's date axis."""
+    return lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+
+
+def _style_axis(ax, size: float = 7.5, pad: float = 5, grid: float = 0.8, below: bool = True):
+    """The plain look shared by every chart: no frame but the baseline, faint horizontal grid, small muted ticks."""
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(AXIS)
+    ax.tick_params(axis="both", length=0, labelsize=size, labelcolor=MUTED, pad=pad)
+    ax.grid(axis="y", color=GRID, linewidth=grid)
+    if below:
+        ax.set_axisbelow(True)
+
+
+def _band(ax, xs, s: dict, colour: str, zorder: int):
+    """A series' low-to-high range shaded behind its line, where it has one."""
+    if s.get("low"):
+        ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=zorder)
+
+
+def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float):
+    """Faint rating zones behind a line: good up to z1, poor up to z2, very poor above."""
+    z1, z2 = zones
+    for lo, hi, colour in ((ybottom, z1, ZONE_COLOURS[0]), (z1, z2, ZONE_COLOURS[1]), (z2, ytop, ZONE_COLOURS[2])):
+        if hi > ybottom and lo < ytop:
+            ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=0)
+
+
 def _frame(fig, ax, spec: dict, labels: list[str], colours: list[str], legend: bool = True):
     """Title, subtitle, dot legend and axis styling shared by the chart kinds."""
     unit = spec.get("unit", "")
@@ -142,12 +172,7 @@ def _frame(fig, ax, spec: dict, labels: list[str], colours: list[str], legend: b
         handles = [Line2D([], [], marker="o", linestyle="", markersize=6, color=c) for c in colours]
         fig.legend(handles, labels, loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 0.925), ncol=len(labels),
                    frameon=False, fontsize=8.5, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(AXIS)
-    ax.tick_params(axis="both", length=0, labelsize=7.5, labelcolor=MUTED, pad=5)
-    ax.grid(axis="y", color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
+    _style_axis(ax)
     tick_unit = "\u00b0" if _deg(unit) == "\u00b0" else ""
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}{tick_unit}"))
     ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]))
@@ -159,7 +184,7 @@ def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16
 
 
 def _render_line(fig, ax, spec: dict, tz: tzinfo):
-    to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    to_dt = _to_dt(tz)
     series = spec["series"]
     rec_vals = [float(r[1]) for s in series for r in (s.get("records") or {}).values()]
     lo = min([min(s.get("low") or s["y"]) for s in series] + rec_vals)
@@ -175,9 +200,8 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
         labels.append(s["label"]); colours.append(colour)
         xs = mdates.date2num([to_dt(t) for t in s["x"]])
         ys = np.asarray(s["y"], dtype=float)
-        if s.get("low"):  # each bucket's low-to-high range behind its average: the chart shows the full swing
-            ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=3)
-        elif len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
+        _band(ax, xs, s, colour, 3)  # each bucket's low-to-high range behind its average: the chart shows the full swing
+        if not s.get("low") and len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
             poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
             ax.add_patch(poly)
             rgba = np.zeros((256, 1, 4))
@@ -224,11 +248,8 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
         _pill(ax, rx, ry, text, colour, above=above, ha=ha)
     ax.set_xlim(x0 - (x1 - x0) * 0.015, x1 + (x1 - x0) * 0.015)  # room for the end dot
     ytop = ax.get_ylim()[1]
-    if spec.get("zones"):  # faint rating zones behind the line: good up to z1, poor up to z2, very poor above
-        z1, z2 = spec["zones"]
-        for lo_z, hi_z, colour in ((ybottom, z1, ZONE_COLOURS[0]), (z1, z2, ZONE_COLOURS[1]), (z2, ytop, ZONE_COLOURS[2])):
-            if hi_z > ybottom and lo_z < ytop:
-                ax.axhspan(max(lo_z, ybottom), min(hi_z, ytop), color=colour, alpha=0.07, linewidth=0, zorder=0)
+    if spec.get("zones"):
+        _shade_zones(ax, spec["zones"], ybottom, ytop, 0.07)
     ax.set_ylim(ybottom, ytop)
     _time_axis(ax, (x_max - x_min) / 86400)
     _frame(fig, ax, spec, labels, colours)
@@ -265,7 +286,7 @@ def _render_direction(fig, ax, spec: dict, tz: tzinfo):
     counts = np.asarray(spec["columns"], dtype=float).T                  # 16 compass points x time steps
     totals = counts.sum(axis=0)
     share = np.where(totals >= MIN_READINGS, counts / np.maximum(totals, 1), np.nan)
-    to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    to_dt = _to_dt(tz)
     x0 = mdates.date2num(to_dt(spec["start"]))
     width = spec["step"] / 86400
     n = share.shape[1]
@@ -292,7 +313,7 @@ def _render_direction(fig, ax, spec: dict, tz: tzinfo):
 def _render_stack(fig, spec: dict, tz: tzinfo):
     """Several readings on one time axis, one panel each, top to bottom: lines (with a shaded range where there is
     one) or bars (rain). The rain lines up with what the other readings were doing at that moment."""
-    to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    to_dt = _to_dt(tz)
     panels = spec["panels"]
     n = len(panels)
     left, width, bottom, top = AX_RECT[0], AX_RECT[2], 0.13, 0.75
@@ -314,11 +335,10 @@ def _render_stack(fig, spec: dict, tz: tzinfo):
             x1 = max(x1, (bx.max() + bars["width"] / 86400) if len(bx) else x1)
         else:
             lows = highs = None
-            for j, s in enumerate(p["series"]):
+            for s in p["series"]:
                 colour = _colour(s["label"], i)
                 xs = mdates.date2num([to_dt(t) for t in s["x"]])
-                if s.get("low"):
-                    ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=2)
+                _band(ax, xs, s, colour, 2)
                 ax.plot(xs, s["y"], color=colour, linewidth=1.5, solid_joinstyle="round", zorder=3)
                 lows = min(lows if lows is not None else 1e18, min(s.get("low") or s["y"]))
                 highs = max(highs if highs is not None else -1e18, max(s.get("high") or s["y"]))
@@ -327,12 +347,7 @@ def _render_stack(fig, spec: dict, tz: tzinfo):
             if len(p["series"]) > 1:
                 ax.legend(handles, [s["label"] for s in p["series"]], loc="upper right", frameon=False, fontsize=7,
                           labelcolor=TEXT, ncol=len(handles), handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
-        for side in ("top", "right", "left"):
-            ax.spines[side].set_visible(False)
-        ax.spines["bottom"].set_color(AXIS)
-        ax.tick_params(axis="both", length=0, labelsize=7.5, labelcolor=MUTED, pad=5)
-        ax.grid(axis="y", color=GRID, linewidth=0.8)
-        ax.set_axisbelow(True)
+        _style_axis(ax)
         ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3 if n > 2 else 4))
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
         ax.set_title(f"{p['label']} ({p['unit']})" if p.get("unit") else p["label"], loc="left", fontsize=8.5,
@@ -378,7 +393,7 @@ def _render_rose(fig, spec: dict):
 def _render_panels(spec: dict, tz: tzinfo):
     """Several metrics in one image: a small line chart each (own axis and units), in one
     column for up to 3, otherwise two columns. Rating zones and each panel's peak shown."""
-    to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    to_dt = _to_dt(tz)
     panels = spec["panels"]
     n = len(panels)
     cols = 1 if n <= 3 else 2
@@ -398,12 +413,8 @@ def _render_panels(spec: dict, tz: tzinfo):
         span = max(hi - lo, 1.0)
         ybottom, ytop = lo - span * 0.3, hi + span * 0.35
         if p.get("zones"):
-            z1, z2 = p["zones"]
-            for a, b, zc in ((ybottom, z1, ZONE_COLOURS[0]), (z1, z2, ZONE_COLOURS[1]), (z2, ytop, ZONE_COLOURS[2])):
-                if b > ybottom and a < ytop:
-                    ax.axhspan(max(a, ybottom), min(b, ytop), color=zc, alpha=0.08, linewidth=0, zorder=0)
-        if p.get("low"):  # each day's low-to-high range behind its mean
-            ax.fill_between(xs, p["low"], p["high"], color=colour, alpha=0.2, linewidth=0, zorder=2)
+            _shade_zones(ax, p["zones"], ybottom, ytop, 0.08)
+        _band(ax, xs, p, colour, 2)  # each day's low-to-high range behind its mean
         ax.plot(xs, ys, color=colour, linewidth=1.2, solid_joinstyle="round", zorder=3)
         records = p.get("records") or {}
         marks = [(mdates.date2num(to_dt(records[w][0])), float(records[w][1]), above) for w, above in
@@ -423,11 +434,7 @@ def _render_panels(spec: dict, tz: tzinfo):
         unit = p.get("unit", "")
         ax.set_title(f"{p['label']} ({unit})" if unit else p["label"], loc="left", fontsize=8.5,
                      fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
-        for side in ("top", "right", "left"):
-            ax.spines[side].set_visible(False)
-        ax.spines["bottom"].set_color(AXIS)
-        ax.tick_params(axis="both", length=0, labelsize=6.5, labelcolor=MUTED, pad=3)
-        ax.grid(axis="y", color=GRID, linewidth=0.6)
+        _style_axis(ax, size=6.5, pad=3, grid=0.6, below=False)
         ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3))
         days = (p["x"][-1] - p["x"][0]) / 86400
         if days <= 1.5:
