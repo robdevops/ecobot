@@ -27,7 +27,7 @@ MAX_SPAN = {"5min": timedelta(days=1), "30min": timedelta(days=7),
 CYCLE_SECONDS = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
 # What the bot keeps cached and warm (the extras feed the rain alerts and predictions). One list, so the
 # warm-up and the archive fetch the same thing and can reuse each other's data.
-GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo"]
+GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo", "solar_and_uvi"]
 
 # Metric units. The names are what the cache remembers (it is cleared if they change);
 # UNIT_IDS are Ecowitt's numeric ids for them.

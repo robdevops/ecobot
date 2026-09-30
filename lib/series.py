@@ -29,5 +29,7 @@ WEATHER = {
     "dew_point": Reading("outdoor", "dew_point", "Dew point", "°C", r"dew\w*"),
     "feels_like": Reading("outdoor", "feels_like", "Feels like", "°C", r"feel\w*|apparent"),
     "vpd": Reading("outdoor", "vpd", "VPD", "kPa", r"vpd|vapou?r pressure deficit"),
+    "solar": Reading("solar_and_uvi", "solar", "Solar radiation", "W/m²", r"solar\w*|radiation|sunshine"),
+    "uv": Reading("solar_and_uvi", "uvi", "UV index", "", r"uvi?|ultraviolet"),
 }
 SPECIFIC = ("dew_point", "feels_like", "vpd")   # kinds of temperature and humidity, named on their own: they outrank "temperature" in a question

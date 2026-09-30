@@ -68,14 +68,24 @@ COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
            "VOC index": "#D97706", "NOx index": "#DB2777"}
 # One hue per weather reading, outdoors; the same reading indoors is that hue lightened.
-READING_COLOURS = {"temperature": "#EF4B4B", "humidity": "#1E40AF", "pressure": "#7C3AED", "wind": "#6B7280",
-                   "dew_point": "#14B8A6", "feels_like": "#FB923C", "vpd": "#84CC16"}
+READING_COLOURS = {
+    "temperature": "#F2545B",   # coral red
+    "feels_like": "#E5408F",    # raspberry
+    "solar": "#F5B83D",         # golden
+    "uv": "#C04CE8",            # orchid
+    "pressure": "#6A3FE0",      # deep violet
+    "vpd": "#9A7BF7",           # lavender
+    "humidity": "#2747C9",      # deep blue
+    "rain": "#7CC3F7",          # light blue (also the rain bars, RAIN)
+    "dew_point": "#13B8A6",     # teal
+    "wind": "#64748B",          # slate grey
+}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
-RAIN = "#5BB6F5"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
-RAIN_TEXT = "#2B7FC0"            # the same blue, darker, for the rain scale's text
+RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
+RAIN_TEXT = "#2F86C8"            # the same blue, darker, for the rain scale's text
 CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
-WIND_STEPS = ("#D1D5DB", "#9CA3AF", "#4B5563")  # light, middle and strong wind (the wind hue)
+WIND_STEPS = ("#CBD5E1", "#94A3B8", "#475569")  # light, middle and strong wind (the wind hue)
 W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)

@@ -66,7 +66,7 @@ async def test_requests_use_metric_unit_ids(station):
     eco, fake = station
     await eco.recent(1)
     assert fake.calls[-1]["temp_unitid"] == "1" and fake.calls[-1]["rainfall_unitid"] == "12"
-    assert fake.calls[-1]["call_back"] == "outdoor,indoor,pressure,wind,rainfall,rainfall_piezo"  # what the archive keeps too
+    assert fake.calls[-1]["call_back"] == "outdoor,indoor,pressure,wind,rainfall,rainfall_piezo,solar_and_uvi"  # what the archive keeps too
 
 
 async def test_realtime_is_compact_and_local(station):
