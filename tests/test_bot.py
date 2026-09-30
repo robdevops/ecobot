@@ -48,3 +48,17 @@ async def test_a_failing_shortcut_falls_back_to_the_model(monkeypatch):
     agent = AnsweringAgent()
     assert await ask(agent, "weather last 99999 years") == ["It is 12 degrees."]
     assert agent.first_call is None
+
+
+def test_a_reply_carries_the_message_it_replies_to_in_private_chats_too():
+    from types import SimpleNamespace as NS
+    bot = Bot(NS(tz=TZ), None, [], None)
+    mine = NS(text="Absolute pressure\n• Low: 992.9 hPa at 2:20pm on Sat 5 Sep", caption=None, from_user=NS(id=99, full_name="Bot"))
+    theirs = NS(text="lovely day", caption=None, from_user=NS(id=7, full_name="Ann"))
+    private = NS(chat=NS(type="private"), from_user=NS(full_name="Rob"), reply_to_message=mine)
+    assert bot._content(private, "did it rain on the lowest day", 99) == (
+        '(replying to your earlier message: "Absolute pressure\n• Low: 992.9 hPa at 2:20pm on Sat 5 Sep") did it rain on the lowest day')
+    assert bot._content(NS(**{**private.__dict__, "reply_to_message": None}), "hello", 99) == "hello"
+    group = NS(chat=NS(type="group"), from_user=NS(full_name="Rob"), reply_to_message=theirs)
+    assert bot._content(group, "same here", 99) == 'Rob (replying to Ann: "lovely day"): same here'
+    assert bot._content(NS(**{**group.__dict__, "reply_to_message": None}), "hi", 99) == "Rob: hi"

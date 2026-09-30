@@ -249,15 +249,17 @@ class Bot:
             await self.respond(update, context, mention.sub("", msg.text))
 
     def _content(self, msg: Message, text: str, bot_id: int) -> str:
-        """The user turn: in groups, prefixed with the sender's name (and the message replied to)."""
+        """The user turn: the message replied to (in any chat: "the lowest day" means the one in that answer), and
+        in groups the sender's name."""
+        quoted, reply = msg.reply_to_message, ""
+        if quoted and (qtext := (quoted.text or quoted.caption or "")[:1000]):
+            who = "your earlier message" if quoted.from_user and quoted.from_user.id == bot_id else (
+                quoted.from_user.full_name if quoted.from_user else "someone")
+            reply = f'replying to {who}: "{qtext}"'
         if msg.chat.type == ChatType.PRIVATE:
-            return text
+            return f"({reply}) {text}" if reply else text
         sender = msg.from_user.full_name if msg.from_user else "Someone"
-        quoted = msg.reply_to_message
-        if quoted and quoted.from_user and quoted.from_user.id != bot_id:
-            if qtext := (quoted.text or quoted.caption or "")[:1000]:
-                return f"{sender} (replying to {quoted.from_user.full_name}: \"{qtext}\"): {text}"
-        return f"{sender}: {text}"
+        return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
 
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         msg = update.effective_message
