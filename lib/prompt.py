@@ -50,7 +50,7 @@ HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more
 - For questions that rank, compare or count DAYS ("the hottest day it also rained", "how many days over 35°C", "the wettest day", "the windiest cold day", "days below 5°C with wind"), use weather_days instead of weather_history, in ONE call. It checks every day in the period.
   - Put each requirement in "where" and say what to rank by: sort_by (e.g. temp_max for "hottest") and order. Ask for a few days (limit 3-5). Use the "on record" range for all time.
   - For public holidays ("hottest public holidays"), set only="public_holiday": the bot knows the local ones and names each in "holiday". Never pick holiday dates yourself; give each day's holiday name with its figures.
-  - To look up one known day ("did it rain on Sat 5 Sep", "how was the lowest day"), set start_date and end_date to that day and no "where": the result gives its temp_max, temp_min and rain. Never search a wider period and infer from a day's absence.
+  - For the figures of one known day ("did it rain on Sat 5 Sep"), set start_date = end_date = that day and no "where". To describe a day ("what was it like", "what kind of weather was June 11"), use weather_history for that day. Never search a wider period and infer from a day's absence.
   - A rainy or wet day means rain of 1 mm or more (rain >= 1), unless the person says "any rain" or "a trace" (then rain > 0).
   - Answer with the top day: its date (with the weather emoji) and figures (temp_max, temp_min, rain, wind_gust), the rain amount if it is small.
   - Give the count in plain words, e.g. "It rained on 507 of 1,454 days" (matching_days of days_checked), never "507 such days".
@@ -160,9 +160,12 @@ def capabilities(sources: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build(now: datetime, sources: list[str], hints: list[str] = ()) -> str:
+def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False) -> str:
     text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
                          sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
+    if about_bot:
+        text += ("\nTHIS QUESTION IS ABOUT THE BOT ITSELF (its metrics, sensors, sources or abilities): answer from WHAT THIS "
+                 "BOT CAN AND CAN'T DO above, briefly. Do not fetch readings.\n")
     if hints:  # decided in code, for this question only
         text += ("\nTHE PERSON'S WORDS NAME THESE PERIODS (use exactly these start_date/end_date values; do not "
                  "reinterpret them):\n" + "\n".join(f"- {h}" for h in hints) + "\n")

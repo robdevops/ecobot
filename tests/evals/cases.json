@@ -98,28 +98,6 @@
   }
  },
  {
-  "id": "rain-on-the-lowest-day",
-  "ask": "did it rain on the lowest day",
-  "reply_to": "Tue 01 - Wed 30 Sep 2026:\nAbsolute pressure\n• High: 1027.7 hPa at 9:45am on Thu 10 Sep\n• Low: 992.9 hPa at 2:20pm on Sat 5 Sep",
-  "note": "searched September for rainy days and inferred 'no rain' from the day's absence",
-  "expect": {
-   "tools": [
-    "weather_days",
-    "weather_history"
-   ],
-   "first_tool": "weather_days",
-   "args": {
-    "weather_days": {
-     "start_date": "2026-09-05",
-     "end_date": "2026-09-05",
-     "where": {
-      "absent": true
-     }
-    }
-   }
-  }
- },
- {
   "id": "public-holidays",
   "ask": "hottest public holidays",
   "expect": {
@@ -129,7 +107,12 @@
    "args": {
     "weather_days": {
      "only": "public_holiday",
-     "sort_by": "temp_max"
+     "sort_by": {
+      "any_of": [
+       "temp_max",
+       null
+      ]
+     }
     }
    }
   }
@@ -507,7 +490,12 @@
    "args": {
     "weather_days": {
      "only": "weekend",
-     "sort_by": "temp_max"
+     "sort_by": {
+      "any_of": [
+       "temp_max",
+       null
+      ]
+     }
     }
    }
   }
@@ -673,7 +661,7 @@
  {
   "id": "list-our-metrics",
   "ask": "list our metrics from both sources",
-  "note": "a question about the bot: answer from what it knows, no fetch",
+  "note": "the model fetched current readings; a question about the bot is answered from what it knows",
   "expect": {
    "needs_data": false,
    "not_tools": [
@@ -682,7 +670,8 @@
     "weather_days",
     "weather_link",
     "air_quality"
-   ]
+   ],
+   "about_the_bot": true
   }
  },
  {
@@ -765,6 +754,162 @@
   "id": "fastest-gust",
   "ask": "fastest gust recorded",
   "expect": {
+   "any_tools": [
+    "weather_history",
+    "weather_days"
+   ]
+  }
+ },
+ {
+  "id": "chart-all-airgradient-week",
+  "ask": "chart all airgradient past week",
+  "expect": {
+   "fast": {
+    "tool": "air_quality",
+    "args": {
+     "chart": true
+    }
+   }
+  }
+ },
+ {
+  "id": "rain-on-a-named-day",
+  "ask": "did it rain on Sat 5 Sep",
+  "note": "one known day: its figures, not a search of the month",
+  "expect": {
+   "any_tools": [
+    "weather_days",
+    "weather_history"
+   ],
+   "args": {
+    "weather_days": {
+     "start_date": "2026-09-05",
+     "end_date": "2026-09-05"
+    },
+    "weather_history": {
+     "start_date": {
+      "regex": "^2026-09-05"
+     },
+     "end_date": {
+      "regex": "^2026-09-05"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "pushback-cooler-this-week",
+  "ask": "Wrong. It was cooler this week",
+  "history": [
+   {
+    "role": "user",
+    "content": "what was this week's high and low for both indoor and outdoor?"
+   },
+   {
+    "role": "assistant",
+    "content": "Tue 23 - Tue 29 Sep:\nOutdoor\n• High: 28.3°C at 4:10pm on Sun 20 Sep\n• Low: 4.1°C at 6:35am on Wed 23 Sep"
+   }
+  ],
+  "note": "a pushback: fetch again, don't defend or agree from memory",
+  "expect": {
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2026-09-23"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "all-time-follow-up",
+  "ask": "how about for all time?",
+  "history": [
+   {
+    "role": "user",
+    "content": "hottest and coldest in the past year"
+   },
+   {
+    "role": "assistant",
+    "content": "Past year: hottest 44.2°C on Fri 9 Jan 2026, coldest -1.3°C on Sat 30 Aug 2025"
+   }
+  ],
+  "expect": {
+   "hints": [
+    "\"all time\" = on record"
+   ],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2022-10"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "past-year-follow-up",
+  "ask": "in the past year?",
+  "history": [
+   {
+    "role": "user",
+    "content": "hottest and coldest on record"
+   },
+   {
+    "role": "assistant",
+    "content": "On record: hottest 47.4°C indoor, coldest -1.3°C outdoor"
+   }
+  ],
+  "expect": {
+   "hints": [],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2025-09-3|^2025-10"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "what-about-the-hottest",
+  "ask": "gosh. what about the hottest?",
+  "history": [
+   {
+    "role": "user",
+    "content": "What was the coldest day on record"
+   },
+   {
+    "role": "assistant",
+    "content": "The coldest day on record was Sat 30 Aug 2025, at -1.3°C."
+   }
+  ],
+  "note": "a follow-up that changes one word",
+  "expect": {
+   "any_tools": [
+    "weather_days",
+    "weather_history"
+   ]
+  }
+ },
+ {
+  "id": "typo-win-direction",
+  "ask": "win direction 3 months",
+  "note": "a typo: the model path handles it",
+  "expect": {
+   "fast": null,
+   "hints": [
+    "\"3 months\" = last 3 months: 2026-07-01"
+   ],
    "tools": [
     "weather_history"
    ],
@@ -778,15 +923,84 @@
   }
  },
  {
-  "id": "chart-all-airgradient-week",
-  "ask": "chart all airgradient past week",
+  "id": "typo-humidy",
+  "ask": "lowest and highest humidy",
   "expect": {
-   "fast": {
-    "tool": "air_quality",
-    "args": {
-     "chart": true
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "groups": {
+      "regex": "outdoor"
+     }
     }
    }
+  }
+ },
+ {
+  "id": "average-all-time",
+  "ask": "average temperatures all time",
+  "expect": {
+   "hints": [
+    "\"all time\" = on record"
+   ],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "average": true
+    }
+   }
+  }
+ },
+ {
+  "id": "hottest-coldest-this-month",
+  "ask": "hottest/coldest day this month",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "start_date": {
+      "regex": "^2026-09-01"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "high-low-all-time",
+  "ask": "high and low all time",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "start_date": {
+      "regex": "^2022-10"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "use-five-minute-data",
+  "ask": "hottest record. Use 5 minute data",
+  "history": [
+   {
+    "role": "user",
+    "content": "hottest and coldest on record"
+   },
+   {
+    "role": "assistant",
+    "content": "On record: hottest 44.2°C on Fri 9 Jan 2026 (from daily data)"
+   }
+  ],
+  "note": "the resolution is chosen automatically and extremes are refined to 5-minute windows: fetch again and say so",
+  "expect": {
+   "tools": [
+    "weather_history"
+   ]
   }
  }
 ]

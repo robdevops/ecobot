@@ -42,7 +42,7 @@ class Agent:
         return content, calls, elapsed
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
-                  first_call: tuple[str, dict] | None = None, require_tool: bool = True) -> str:
+                  first_call: tuple[str, dict] | None = None, require_tool: bool = True, no_tools: bool = False) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
@@ -78,7 +78,8 @@ class Agent:
                           "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
                 if self.tools.schemas:
                     kwargs["tools"] = self.tools.schemas
-                    kwargs["tool_choice"] = "none" if final else "required" if step == 0 and require_tool else "auto"
+                    kwargs["tool_choice"] = ("none" if final or no_tools else
+                                             "required" if step == 0 and require_tool else "auto")
                 if final:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)
                     kwargs["messages"].append({"role": "user", "content": LIMIT_NOTICE})

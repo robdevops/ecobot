@@ -164,3 +164,15 @@ def test_the_prompt_says_what_the_bot_can_and_cannot_do_for_the_sources_it_has()
     weather_only = prompt.build(now, ["Ecowitt weather station"])
     assert "Weather station:" in weather_only and "Air quality (outdoor AirGradient)" not in weather_only
     assert "Weather station:" not in prompt.build(now, ["AirGradient outdoor sensor"])
+
+
+async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
+    from datetime import datetime
+    from lib import prompt
+    t, seen = tools()
+    client = FakeLLM(["I track temperature, humidity..."])
+    reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "list our metrics"}], "sys", "none",
+                                                require_tool=False, no_tools=True)
+    assert reply.startswith("I track") and client.requests[0]["tool_choice"] == "none" and seen == []
+    now = datetime(2026, 9, 29, 14, 5)
+    assert "ABOUT THE BOT ITSELF" in prompt.build(now, ["Ecowitt"], [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, ["Ecowitt"])

@@ -297,9 +297,9 @@ class Bot:
             asked_token = CHART_ASKED.set(bool(intent.GRAPH.search(text)))  # "plot" means a chart, whatever the model calls
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources],
-                                      intent.period_hints(text, now))
+                                      intent.period_hints(text, now), intent.about_the_bot(text))
                 reply = await self.agent.run(working, system, effort, first_call=fast[:2] if fast else None,
-                                             require_tool=intent.needs_data(text))
+                                             require_tool=intent.needs_data(text), no_tools=intent.about_the_bot(text))
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:

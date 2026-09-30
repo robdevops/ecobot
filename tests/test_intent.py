@@ -245,3 +245,12 @@ def test_a_bare_period_is_hinted_and_a_command_to_the_bot_is_not_a_request_for_r
         assert not intent.needs_data(text), text
     for text in ("will the wind reach 100 km/h", "what was the addition of rain", "how windy is it"):
         assert intent.needs_data(text), text
+
+
+def test_questions_about_the_bot_are_recognised_and_readings_questions_are_not():
+    for text in ("list our metrics from both sources", "what metrics do you have?", "which sensors do you use", "what can you do",
+                 "what do you measure", "what can I ask"):
+        assert intent.about_the_bot(text) and not intent.needs_data(text), text
+    for text in ("what was the hottest day", "list rainy days in september", "what's the temperature", "show the past week",
+                 "what was the pressure last month", "how's the air?"):
+        assert not intent.about_the_bot(text), text

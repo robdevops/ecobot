@@ -8,7 +8,7 @@ tests/evals/cases.json holds the questions (real ones from the logs). Two kinds 
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +30,7 @@ class Case:
     expect: dict
     reply_to: str = ""               # the message being replied to, if any
     note: str = ""
+    history: list = field(default_factory=list)   # earlier turns [{"role": "user"|"assistant", "content"}], for follow-ups
     xfail: str = ""                  # known gap: the case says what SHOULD happen; the reason it doesn't yet
 
 
@@ -124,6 +125,8 @@ def deterministic(case: Case) -> list[str]:
         fails.append(f"chart_fields {intent.chart_fields(text)}, expected {e['chart_fields']}")
     if "chart_field" in e and intent.chart_field(text) != e["chart_field"]:
         fails.append(f"chart_field {intent.chart_field(text)}, expected {e['chart_field']}")
+    if "about_the_bot" in e and intent.about_the_bot(text) != e["about_the_bot"]:
+        fails.append(f"about_the_bot {intent.about_the_bot(text)}, expected {e['about_the_bot']}")
     if "needs_data" in e and intent.needs_data(text) != e["needs_data"]:
         fails.append(f"needs_data {intent.needs_data(text)}, expected {e['needs_data']}")
     for name in e.get("tools", []) + e.get("any_tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):
@@ -136,12 +139,13 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     """Ask the real model; returns the tool calls it made and its final reply."""
     calls: list[tuple[str, dict]] = []
     text = case.ask
-    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], intent.period_hints(text, NOW))
+    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], intent.period_hints(text, NOW),
+                          intent.about_the_bot(text))
     fast = intent.fast_call(text, NOW, True, True)
-    messages = [{"role": "user", "content": content(case)}]
+    messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
         messages, system, effort or intent.reasoning_effort(text), first_call=fast[:2] if fast else None,
-        require_tool=intent.needs_data(text))
+        require_tool=intent.needs_data(text), no_tools=intent.about_the_bot(text))
     if fast:
         calls.insert(0, (fast[0], fast[1]))  # the bot ran it itself, before the model
     return calls, reply

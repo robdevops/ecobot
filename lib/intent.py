@@ -54,12 +54,22 @@ def reasoning_effort(text: str) -> str:
     return EFFORT_DESCRIBE if ANALYSIS.search(text) or DESCRIBE.search(text) else EFFORT_DEFAULT
 
 
+# Questions about the bot itself ("what metrics do you have", "list our sources"): answered from what it knows, no fetch
+ABOUT_THE_BOT = re.compile(
+    r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"
+    r"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b", I)
+
+
+def about_the_bot(text: str) -> bool:
+    return bool(ABOUT_THE_BOT.search(text)) and not TIME_WORDS.search(text)
+
+
 # Asking the bot to DO something ("add an alert if winds reach 100 km/h") is not a request for readings
 COMMAND = re.compile(r"^\s*(please\s+)?(add|set( up)?|create|remind|schedule|turn (on|off)|enable|disable|mute|unmute|subscribe)\b", I)
 
 
 def needs_data(text: str) -> bool:
-    return bool(WEATHER.search(text)) and not COMMAND.search(text)
+    return bool(WEATHER.search(text)) and not COMMAND.search(text) and not about_the_bot(text)
 
 
 # ---------- periods ----------
