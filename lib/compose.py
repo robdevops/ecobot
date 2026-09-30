@@ -182,11 +182,6 @@ class Composer:
     def _add_chart(self, out: dict, panels: list[Panel], first: date, last: date, turn: Turn):
         """Send the panels as one chart (rain behind the first line) and tell the model what its reply is for."""
         chart = stack(panels, first, last)
-        if len(chart.panels) > 1:                 # a range shaded behind several panels' lines looks blurry: single panels only
-            for panel in chart.panels:
-                if panel.reading in ALL_METRICS:
-                    for line in panel.lines:
-                        line.low = line.high = None
         turn.charts.append(chart)
         out["chart"] = COMPOSED_CHART_HINT
 

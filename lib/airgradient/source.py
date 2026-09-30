@@ -392,8 +392,6 @@ class AirGradient:
             panels.append(Panel(label, units[0] if len({CHART_UNITS[m] for m in left}) == 1 and not right else "",
                                 [drawn[m][0] for m in left], right=[drawn[m][0] for m in right],
                                 zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(left) > 1))
-        for panel in panels:                     # a range shaded behind several panels' lines looks blurry: single charts only
-            for line in (*panel.lines, *panel.right):
-                line.low = line.high = None
         averaged = any(not plotted.raw for _, plotted in drawn.values())
-        return Chart("Air quality", f"{period}  ·  AirGradient readings" + ("  ·  labels: highest average" if averaged else ""), panels)
+        return Chart("Air quality", f"{period}  ·  AirGradient readings" + ("  ·  labels: highest average" if averaged else "")
+                     + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)
