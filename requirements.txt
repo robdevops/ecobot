@@ -1,3 +1,4 @@
+holidays
 httpx
 matplotlib
 numpy

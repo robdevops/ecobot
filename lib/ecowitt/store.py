@@ -17,6 +17,8 @@ import sqlite3
 import threading
 import time
 
+from .api import UNIT_FIXES
+
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1"
@@ -91,20 +93,52 @@ class HistoryCache:
             log.warning("History cache settings changed - clearing %s", path)
             self.db.executescript("DELETE FROM points; DELETE FROM fields; DELETE FROM coverage;")
         self.db.execute("INSERT OR REPLACE INTO meta VALUES ('signature', ?)", (signature,))
+        self._convert_units()
         self.db.commit()
-        n = self.db.execute("SELECT COUNT(*) FROM points").fetchone()[0]
-        log.info("History cache %s: %d readings stored", path, n)
+
+    def _convert_units(self):
+        """Readings stored before a unit fix (api.UNIT_FIXES) are converted once, in place."""
+        for (prefix, old), (unit, factor) in UNIT_FIXES.items():
+            for key in self.db.execute("SELECT mac, cycle, grp, field FROM fields WHERE unit = ? AND (field = ? OR substr(field, 1, ?) = ?)",
+                                       (old, prefix, len(prefix) + 1, prefix + "_")).fetchall():
+                self.db.execute("UPDATE points SET value = printf('%.3f', CAST(value AS REAL) * ?) "
+                                "WHERE mac=? AND cycle=? AND grp=? AND field=?", (factor, *key))
+                self.db.execute("UPDATE fields SET unit = ? WHERE mac=? AND cycle=? AND grp=? AND field=?", (unit, *key))
 
     def close(self):
         with self._lock:
             self.db.close()
 
-    def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
+    def _query(self, sql: str, *args) -> list:
         with self._lock:
-            rows = self.db.execute(
-                "SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=? AND end>=? AND start<=?",
-                (mac, cycle, grp, start, end)).fetchall()
-        return subtract((start, end), rows)
+            return self.db.execute(sql, args).fetchall()
+
+    def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
+        """Every time range held for this group at this resolution (merged, oldest first)."""
+        return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
+
+    def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
+        return subtract((start, end), self.coverage(mac, cycle, grp))
+
+    def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str] | None, start: int, end: int) -> dict:
+        """A group's fields (all of them if `fields` is None) in Ecowitt's response shape: {field: {unit, list}}."""
+        pick = f" AND field IN ({','.join('?' * len(fields))})" if fields is not None else ""
+        args = (mac, cycle, grp, *(fields or ()))
+        units = dict(self._query(f"SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=?{pick}", *args))
+        out: dict = {}
+        for field, ts, value in self._query(f"SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=?{pick} "
+                                            "AND ts BETWEEN ? AND ? ORDER BY ts", *args, start, end):
+            out.setdefault(field, {"unit": units.get(field, ""), "list": {}})["list"][str(ts)] = value
+        return out
+
+    def slots(self, mac: str, cycle: str, grp: str, fields: list[str], start: int, end: int) -> list[dict[int, float]]:
+        """Each field as {epoch: float}, in the order asked (empty for a field the cache lacks)."""
+        got = self.load_fields(mac, cycle, grp, fields, start, end)
+        return [{int(t): float(v) for t, v in got.get(f, {"list": {}})["list"].items()} for f in fields]
+
+    def days_held(self, mac: str, cycle: str, groups: list[str]) -> int:
+        """Days of history stored at this resolution (the least any of the groups has)."""
+        return min((sum(e - s + 1 for s, e in self.coverage(mac, cycle, grp)) // 86400 for grp in groups), default=0)
 
     def store(self, mac: str, cycle: str, groups: list[str], data: dict, start: int, end: int):
         """Save the final readings of one response and mark what was fetched, per group.
@@ -140,10 +174,17 @@ class HistoryCache:
             elif reached is not None:
                 covered.append((grp, min(limit, reached + BUCKET_SECONDS[cycle] - 1)))
         with self._lock:
+            grown = set()   # groups that now carry a reading the cache has never had (Ecowitt added a metric)
+            for _, _, grp, field, _ in units:
+                known = {r[0] for r in self.db.execute("SELECT field FROM fields WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))}
+                if known and field not in known:
+                    grown.add(grp)
+            if grown:
+                log.info("Ecowitt added a metric to %s (%s): its history is fetched again to fill it in", ", ".join(sorted(grown)), cycle)
             self.db.executemany("INSERT OR REPLACE INTO points VALUES (?,?,?,?,?,?)", rows)
             self.db.executemany("INSERT OR REPLACE INTO fields VALUES (?,?,?,?,?)", units)
             for grp, cov_end in covered:
-                existing = self.db.execute(
+                existing = [] if grp in grown else self.db.execute(   # the days held so far lack it: they are asked for again
                     "SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp)).fetchall()
                 self.db.execute("DELETE FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))
                 self.db.executemany("INSERT INTO coverage VALUES (?,?,?,?,?)",
@@ -152,17 +193,8 @@ class HistoryCache:
 
     def load(self, mac: str, cycle: str, groups: list[str], start: int, end: int) -> dict:
         """Cached readings in Ecowitt's response shape: {grp: {field: {unit, list}}}."""
-        out: dict = {}
-        with self._lock:
-            for grp in groups:
-                units = dict(self.db.execute(
-                    "SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp)).fetchall())
-                for field, ts, value in self.db.execute(
-                        "SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=? AND ts BETWEEN ? AND ? "
-                        "ORDER BY ts", (mac, cycle, grp, start, end)):
-                    entry = out.setdefault(grp, {}).setdefault(field, {"unit": units.get(field, ""), "list": {}})
-                    entry["list"][str(ts)] = value
-        return out
+        got = {grp: self.load_fields(mac, cycle, grp, None, start, end) for grp in groups}
+        return {grp: fields for grp, fields in got.items() if fields}
 
 
 class HotStore:

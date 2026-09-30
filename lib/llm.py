@@ -7,7 +7,7 @@ import time
 
 from openai import AsyncOpenAI
 
-from .tools import Tools
+from .tools import Tools, Turn
 
 log = logging.getLogger(__name__)
 
@@ -31,18 +31,19 @@ class Agent:
         calls = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                  for tc in msg.tool_calls or []]
         content = msg.content or ""
-        detail = "no usage reported"
+        detail = "no usage"
         if usage := resp.usage:
             cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
             thought = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
-            detail = (f"input {usage.prompt_tokens} tok (cached {cached if cached is not None else 'n/a'}), "
-                      f"output {usage.completion_tokens} tok (reasoning {thought if thought is not None else 'n/a'})")
-        log.info("LLM call %d (%s): %.1fs, %s, %d tool call(s), %d chars answer",
-                 call_no, kwargs["extra_body"]["reasoning_effort"], elapsed, detail, len(calls), len(content))
+            detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached), "
+                      f"out {usage.completion_tokens} ({'?' if thought is None else thought} thinking)")
+        log.info("LLM %d (%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
+                 elapsed, detail, len(calls), len(content))
         return content, calls, elapsed
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
-                  first_call: tuple[str, dict] | None = None, require_tool: bool = True) -> str:
+                  first_call: tuple[str, dict] | None = None, require_tool: bool = True, no_tools: bool = False,
+                  turn: Turn | None = None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
@@ -53,7 +54,7 @@ class Agent:
 
         async def call(name: str, args: str) -> str:
             if (name, args) not in cache:
-                cache[(name, args)] = asyncio.ensure_future(self.tools.call(name, args))
+                cache[(name, args)] = asyncio.ensure_future(self.tools.call(name, args, turn))
                 return await cache[(name, args)]
             log.info("Tool call %s served from cache (repeat)", name)
             return ("[You already made this exact call - same result as before. Don't repeat it; "
@@ -78,7 +79,8 @@ class Agent:
                           "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
                 if self.tools.schemas:
                     kwargs["tools"] = self.tools.schemas
-                    kwargs["tool_choice"] = "none" if final else "required" if step == 0 and require_tool else "auto"
+                    kwargs["tool_choice"] = ("none" if final or no_tools else
+                                             "required" if step == 0 and require_tool else "auto")
                 if final:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)
                     kwargs["messages"].append({"role": "user", "content": LIMIT_NOTICE})

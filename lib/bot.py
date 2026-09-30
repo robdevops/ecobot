@@ -20,8 +20,10 @@ from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, Messag
 
 from . import intent, prompt
 from .alerts import AlertState, with_footer
-from .charts import CHART_REQUESTS, render as render_chart
+from .charts import render as render_chart
+from .tools import Turn
 from .config import Config
+from .timeutil import now_local
 from .llm import Agent, strip_tool_turns, trim_history
 
 log = logging.getLogger(__name__)
@@ -29,11 +31,13 @@ log = logging.getLogger(__name__)
 TG_LIMIT = 4000
 CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
+TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
+WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
-        "/alerts manages weather alerts (on/off for this chat).\n"
+        "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, indoor/outdoor "
+ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, indoor/outdoor "
                "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
                "Use /alerts {other} to turn them {other}.")
 
@@ -42,6 +46,17 @@ ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain l
 class ChatState:
     history: list[dict] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+async def watchdog(label: str, seconds: float):
+    """Log every task's stack if the question is still running after `seconds`: a hang says where it waits."""
+    await asyncio.sleep(seconds)
+    stacks = []
+    for task in asyncio.all_tasks():
+        frames = task.get_stack(limit=4)
+        if frames:
+            stacks.append(f"{task.get_name()}: " + " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames)))
+    log.warning("Still working after %ds on %s; tasks waiting:\n  %s", seconds, label, "\n  ".join(stacks) or "(none)")
 
 
 def _short(text: str, limit: int = 200) -> str:
@@ -159,6 +174,7 @@ class Bot:
 
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
+        app.add_handler(CommandHandler("reset", self.on_reset))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
@@ -200,6 +216,22 @@ class Bot:
         on = self.state.alerts_on(chat.id)
         await msg.reply_text(ALERTS_TEXT.format(on="on" if on else "off", other="off" if on else "on"))
 
+    @staticmethod
+    def _thread(msg: Message):
+        """The forum topic a message is in (None outside topics); each topic is its own conversation."""
+        return msg.message_thread_id if msg.is_topic_message else None
+
+    @classmethod
+    def _key(cls, msg: Message) -> tuple:
+        return (msg.chat_id, cls._thread(msg))
+
+    async def on_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/reset: forget this chat's conversation."""
+        msg = update.effective_message
+        self.chats.pop(self._key(msg), None)
+        log.info("/reset in %s", describe_source(update))
+        await msg.reply_text("Conversation memory cleared.")
+
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.remember_chat(update)
         log.info("/start in %s", describe_source(update))
@@ -231,64 +263,72 @@ class Bot:
             await self.respond(update, context, mention.sub("", msg.text))
 
     def _content(self, msg: Message, text: str, bot_id: int) -> str:
-        """The user turn: in groups, prefixed with the sender's name (and the message replied to)."""
+        """The user turn: the message replied to (in any chat: "the lowest day" means the one in that answer), and
+        in groups the sender's name."""
+        quoted, reply = msg.reply_to_message, ""
+        if quoted and (qtext := (quoted.text or quoted.caption or "")[:1000]):
+            who = "your earlier message" if quoted.from_user and quoted.from_user.id == bot_id else (
+                quoted.from_user.full_name if quoted.from_user else "someone")
+            reply = f'replying to {who}: "{qtext}"'
         if msg.chat.type == ChatType.PRIVATE:
-            return text
+            return f"({reply}) {text}" if reply else text
         sender = msg.from_user.full_name if msg.from_user else "Someone"
-        quoted = msg.reply_to_message
-        if quoted and quoted.from_user and quoted.from_user.id != bot_id:
-            if qtext := (quoted.text or quoted.caption or "")[:1000]:
-                return f"{sender} (replying to {quoted.from_user.full_name}: \"{qtext}\"): {text}"
-        return f"{sender}: {text}"
+        return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
 
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         msg = update.effective_message
         text = text.strip()
         if not text:
             return
-        effort = intent.reasoning_effort(text)
-        log.info("%s %s%s", describe_source(update), f"(reasoning: {effort}) " if effort != intent.EFFORT_DEFAULT else "",
+        now = now_local(self.cfg.tz)
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
+        log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  _short(text))
         for source in self.sources:  # fetch recent readings while the model thinks
             if source.wants(text):
                 source.poke()
-        now = datetime.now(self.cfg.tz).replace(tzinfo=None)
-        fast = intent.fast_call(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
-        if fast:
-            log.info("Fast path: %s", fast[2])
+        if read.fast:
+            log.info("Fast path: %s", read.fast[2])
 
-        chat = self.chats[(msg.chat_id, msg.message_thread_id if msg.is_topic_message else None)]
-        thread_id = msg.message_thread_id if msg.is_topic_message else None
+        chat = self.chats[self._key(msg)]
+        thread_id = self._thread(msg)
         started = time.monotonic()
         async with chat.lock:
             stop_typing = asyncio.Event()
             typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
+            stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
-            ok, charts, photos = True, [], []
-            chart_token = CHART_REQUESTS.set(charts)  # the history tools add chart specs here
+            ok, photos = True, []
+            turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                        average_asked=read.average_asked)
             try:
-                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources])
-                reply = await self.agent.run(working, system, effort, first_call=fast[:2] if fast else None,
-                                             require_tool=intent.needs_data(text))
+                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
+                                      read.about_the_bot, read.report)
+                reply = await asyncio.wait_for(
+                    self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
+                                   require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn), TURN_SECONDS)
                 chat.history = trim_history(strip_tool_turns(working))
-                for spec in charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
+                for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
                         photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
+            except asyncio.TimeoutError:
+                log.error("Gave up after %ds on: %s", TURN_SECONDS, _short(text, 60))
+                ok, reply = False, "Sorry, that took too long. Please try again in a moment."
             except Exception as e:
                 log.exception("Agent error")
-                ok, reply = False, f"Sorry, something went wrong: {type(e).__name__}: {e}"
+                # The details (which can include provider error bodies) go to the log, not the chat
+                ok, reply = False, f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment."
             finally:
-                CHART_REQUESTS.reset(chart_token)
+                stuck.cancel()
                 stop_typing.set()
                 await typing  # wait for any in-flight "typing" so none is sent after the reply
 
         used = [m for m in working[new_from:] if m["role"] == "tool"]
-        log.info("%s chat %s in %.1fs, %d tool call(s), %d chars, %d chart(s): %s",
-                 "Replied to" if ok else "Error reply to", msg.chat_id, time.monotonic() - started,
-                 len(used), len(reply), len(photos), _short(reply, 120))
+        log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
+                 time.monotonic() - started, len(used), len(photos), len(reply), _short(reply, 30))
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")

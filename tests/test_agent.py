@@ -25,7 +25,7 @@ class FakeLLM:
 def tools():
     seen = []
 
-    async def handler(args):
+    async def handler(args, turn=None):
         seen.append(args)
         return json.dumps({"ok": True})
     return Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)]), seen
@@ -79,12 +79,117 @@ def test_chart_captions_lose_chart_talk_and_long_text_splits():
 
 def test_charts_render_for_both_datasets():
     ts = [1_780_000_000 + i * 1800 for i in range(96)]
-    line = {"kind": "line", "title": "Temperature", "subtitle": "x", "unit": "°C", "series": [
-        {"label": "Outdoor", "x": ts, "y": [10 + i % 9 for i in range(96)], "records": {"high": [ts[8], 19], "low": [ts[0], 10]}},
-        {"label": "Indoor", "x": ts, "y": [20 + (i % 3) / 2 for i in range(96)]}]}
-    air = {"kind": "panels", "title": "Air quality", "subtitle": "y", "panels": [
-        {"label": "PM2.5", "unit": "µg/m³", "zones": [9, 55.4], "x": ts, "y": [5 + i % 7 for i in range(96)]},
-        {"label": "CO₂", "unit": "ppm", "zones": [799, 1499], "x": ts, "y": [450 + i for i in range(96)]}]}
     from zoneinfo import ZoneInfo
-    for spec in (line, air):
+
+    from lib.specs import Bars, Chart, Line, Panel, Shares
+    line = lambda label, ys, **kw: Line(label, ts, ys, **kw)
+    single = Chart("Temperature", "x", [Panel("Temperature", "°C", [
+        line("Outdoor", [10 + i % 9 for i in range(96)], records={"high": (ts[8], 19), "low": (ts[0], 10)}),
+        line("Indoor", [20 + (i % 3) / 2 for i in range(96)])])])
+    rain = Bars("Rain", "mm", ts[::12], [0.4 * (i % 3) for i in range(8)], 6 * 3600, "6 hours")
+    behind = Chart("Pressure, Rain", "y", [Panel("Pressure", "hPa", [line("Pressure", [1010 + i % 5 for i in range(96)])], bars=rain)])
+    shares = Shares("PM2.5 rating", ts[::12], 6 * 3600, [100.0] * 8, [0.0] * 8, [0.0] * 8, "6 hours")
+    rated = Chart("PM2.5 rating, Rain", "z", [Panel("PM2.5 rating", "%", shares=shares), Panel("Rain", "mm", bars=rain)])
+    air = Chart("Air quality", "w", [
+        Panel("CO₂ (ppm) and VOC index", "", [line("CO₂", [450 + i for i in range(96)])], right=[line("VOC index", [100 + i % 20 for i in range(96)])]),
+        Panel("PM1, PM2.5, PM10", "µg/m³", [line("PM1", [3 + i % 4 for i in range(96)]), line("PM2.5", [5 + i % 7 for i in range(96)]),
+                                               line("PM10", [8 + i % 9 for i in range(96)])]),
+        Panel("NOx index", "", [line("NOx index", [1 + i % 3 for i in range(96)])], zones=(20, 150))])
+    for spec in (single, behind, rated, air):
         assert charts.render(spec, ZoneInfo("Australia/Melbourne"))[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+async def test_reset_forgets_only_that_chat():
+    from lib.bot import Bot
+    sent = []
+
+    async def reply_text(text, **kw):
+        sent.append(text)
+    bot = Bot(None, None, [], None)
+    bot.chats[(1, None)].history.append({"role": "user", "content": "hi"})
+    bot.chats[(2, None)].history.append({"role": "user", "content": "other chat"})
+    bot.chats[(1, 7)].history.append({"role": "user", "content": "topic 7"})
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text)
+    update = NS(effective_message=msg, effective_chat=NS(type="private", title=None),
+                effective_user=NS(username="rob", full_name="Rob"))
+    await bot.on_reset(update, None)
+    assert (1, None) not in bot.chats and bot.chats[(2, None)].history and bot.chats[(1, 7)].history
+    assert sent == ["Conversation memory cleared."]
+    topic = NS(chat_id=1, message_thread_id=7, is_topic_message=True, reply_text=reply_text)
+    await bot.on_reset(NS(effective_message=topic, effective_chat=update.effective_chat,
+                          effective_user=update.effective_user), None)
+    assert (1, 7) not in bot.chats and bot.chats[(2, None)].history
+
+
+def test_the_prompt_defines_a_rainy_day_and_how_to_phrase_the_count():
+    from datetime import datetime
+    from lib import prompt
+    from lib.ecowitt import days
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    assert "rain >= 1" in text and "any rain" in text and "It rained on 507 of 1,454 days" in text
+    assert "1 mm or more" in days.DESCRIPTION
+
+
+def test_the_prompt_asks_for_a_footnote_about_hotter_trace_days():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    assert "trace_rain_days" in text and "footnote" in text
+
+
+def test_the_day_tool_schema_agrees_with_the_prompt_about_a_rainy_day():
+    from lib.ecowitt import days
+    where = days.PARAMETERS["properties"]["where"]["description"]
+    assert "rain >= 1" in where and "rain > 0" not in where
+
+
+def test_the_day_tool_rules_are_short_separate_bullets():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    block = text[text.index("- For questions that rank, compare or count DAYS"):text.index("- Use weather_now")]
+    bullets = [line for line in block.splitlines() if line.startswith("  - ")]
+    assert len(bullets) == 9 and all(len(b) < 300 for b in bullets)
+    for needle in ("sort_by", "rain >= 1", "It rained on 507 of 1,454 days", "trace_rain_days", "note_daily", "on record", "public_holiday", "known day", "RECORD"):
+        assert sum(needle in b for b in bullets) == 1, needle   # each rule lives in exactly one bullet
+
+
+def test_the_system_prompt_carries_the_period_hints_only_when_there_are_some():
+    from datetime import datetime
+    from lib import intent, prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    with_hint = prompt.build(now, ["Ecowitt"], intent.period_hints("average temp 3m", now))
+    assert "THE PERSON'S WORDS NAME THESE PERIODS" in with_hint and '"3m" = last 3 months: 2026-07-01' in with_hint
+    assert "THE PERSON'S WORDS NAME" not in prompt.build(now, ["Ecowitt"], intent.period_hints("hello", now))
+
+
+def test_the_prompt_says_what_the_bot_can_and_cannot_do_for_the_sources_it_has():
+    from datetime import datetime
+    from lib import prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    both = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor"])
+    assert "WHAT THIS BOT CAN AND CAN'T DO" in both and "PM2.5 (µg/m³)" in both and "weather_link" in both
+    assert "Custom alerts" in both and "solar radiation and UV index" in both and "Not available: lightning" in both and "correct the call once" in both
+    weather_only = prompt.build(now, ["Ecowitt weather station"])
+    assert "Weather station:" in weather_only and "Air quality (outdoor AirGradient)" not in weather_only
+    assert "Weather station:" not in prompt.build(now, ["AirGradient outdoor sensor"])
+
+
+async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
+    from datetime import datetime
+    from lib import prompt
+    t, seen = tools()
+    client = FakeLLM(["I track temperature, humidity..."])
+    reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "list our metrics"}], "sys", "none",
+                                                require_tool=False, no_tools=True)
+    assert reply.startswith("I track") and client.requests[0]["tool_choice"] == "none" and seen == []
+    now = datetime(2026, 9, 29, 14, 5)
+    assert "ABOUT THE BOT ITSELF" in prompt.build(now, ["Ecowitt"], [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, ["Ecowitt"])
+
+
+def test_the_full_report_instructions_are_added_only_for_a_report_request():
+    from datetime import datetime
+    from lib import prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    assert "FULL CURRENT REPORT" in prompt.build(now, ["Ecowitt"], report=True) and "air_quality (no dates)" in prompt.build(now, ["Ecowitt"], report=True)
+    assert "FULL CURRENT REPORT" not in prompt.build(now, ["Ecowitt"])
