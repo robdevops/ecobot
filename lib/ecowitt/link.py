@@ -13,7 +13,7 @@ import logging
 from datetime import date, datetime, time, tzinfo
 
 from ..analysis.pairs import analyse
-from ..charts import LINK_CHART_HINT, wants_chart
+from ..captions import LINK_CHART_HINT, wants_chart
 from ..lines import build_line, slot_readings
 from ..rain import rain_bars, rain_slots
 from ..specs import Chart, Line, Panel, stack

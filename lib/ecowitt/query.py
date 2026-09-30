@@ -16,7 +16,7 @@ import json
 import logging
 from datetime import datetime, time, timedelta, timezone
 
-from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
+from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
 from ..rain import rain_bars, rain_slots
 from ..timeutil import SLOT, daily_summary, local_date, now_local

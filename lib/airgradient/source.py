@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from .. import intent
-from ..charts import CHART_HINT, wants_chart
+from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..lines import Plotted, build_line
 from ..specs import Chart, Line, Panel

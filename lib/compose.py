@@ -13,7 +13,7 @@ from datetime import date, datetime, time, tzinfo
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
 from .analysis import scan
 from .analysis.pairs import analyse_air
-from .charts import COMPOSED_CHART_HINT, wants_chart
+from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series
 from .series import WEATHER
 from .specs import Panel, Shares, stack

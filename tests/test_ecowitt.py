@@ -665,7 +665,7 @@ async def test_averages_come_with_the_answer(tmp_path, archived_cache):
 
 
 async def test_an_average_question_gets_a_caption_that_leads_with_the_average_and_a_daily_range_chart(tmp_path, archived_cache):
-    from lib.charts import AVERAGE_CHART_HINT
+    from lib.captions import AVERAGE_CHART_HINT
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor,indoor", "start_date": f"{today - timedelta(days=90)} 00:00:00",
