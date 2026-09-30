@@ -62,3 +62,28 @@ def test_a_reply_carries_the_message_it_replies_to_in_private_chats_too():
     group = NS(chat=NS(type="group"), from_user=NS(full_name="Rob"), reply_to_message=theirs)
     assert bot._content(group, "same here", 99) == 'Rob (replying to Ann: "lovely day"): same here'
     assert bot._content(NS(**{**group.__dict__, "reply_to_message": None}), "hi", 99) == "Rob: hi"
+
+
+async def test_a_hung_question_is_given_up_on_so_the_next_one_in_the_chat_is_answered(monkeypatch, caplog):
+    import asyncio
+    from lib import bot
+
+    class Hanging:
+        async def run(self, *a, **k):
+            await asyncio.sleep(3600)
+
+    monkeypatch.setattr(bot, "TURN_SECONDS", 0.3)
+    monkeypatch.setattr(bot, "WATCHDOG_SECONDS", 0.1)
+    with caplog.at_level("WARNING"):
+        replies = await ask(Hanging())
+    assert len(replies) == 1 and "took too long" in replies[0]
+    assert "Still working" in caplog.text and "Gave up" in caplog.text
+
+
+async def test_charts_are_drawn_one_at_a_time_from_any_thread():
+    import asyncio
+    from lib.charts import render
+    from lib.specs import Chart, Line, Panel
+    chart = Chart("t", "s", [Panel("P", "", [Line("L", [1_780_000_000 + i * 600 for i in range(30)], [float(i % 5) for i in range(30)])])])
+    pngs = await asyncio.gather(*(asyncio.to_thread(render, chart, TZ) for _ in range(6)))
+    assert all(p[:4] == b"\x89PNG" for p in pngs) and len({len(p) for p in pngs}) == 1

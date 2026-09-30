@@ -13,6 +13,7 @@ axis of its own.
 import glob
 import io
 import math
+import threading
 from datetime import datetime, timezone, tzinfo
 
 import matplotlib
@@ -574,8 +575,16 @@ def _png(fig) -> bytes:
         plt.close(fig)
 
 
+_DRAWING = threading.Lock()   # pyplot keeps global state (current figure, rcParams): one chart is drawn at a time
+
+
 def render(chart: Chart, tz: tzinfo) -> bytes:
-    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller)."""
+    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads."""
+    with _DRAWING:
+        return _render(chart, tz)
+
+
+def _render(chart: Chart, tz: tzinfo) -> bytes:
     first = chart.panels[0]
     single = len(chart.panels) == 1 and bool(first.lines) and not first.right
     height = H_IN if single or len(chart.panels) <= 2 else H_IN + PANEL_IN * (len(chart.panels) - 2)

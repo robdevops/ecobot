@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 TG_LIMIT = 4000
 CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
+TURN_SECONDS = 180           # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
+WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
@@ -44,6 +46,17 @@ ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain l
 class ChatState:
     history: list[dict] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+async def watchdog(label: str, seconds: float):
+    """Log every task's stack if the question is still running after `seconds`: a hang says where it waits."""
+    await asyncio.sleep(seconds)
+    stacks = []
+    for task in asyncio.all_tasks():
+        frames = task.get_stack(limit=4)
+        if frames:
+            stacks.append(f"{task.get_name()}: " + " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames)))
+    log.warning("Still working after %ds on %s; tasks waiting:\n  %s", seconds, label, "\n  ".join(stacks) or "(none)")
 
 
 def _short(text: str, limit: int = 200) -> str:
@@ -283,6 +296,7 @@ class Bot:
         async with chat.lock:
             stop_typing = asyncio.Event()
             typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
+            stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             ok, photos = True, []
@@ -291,19 +305,24 @@ class Bot:
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
                                       read.about_the_bot, read.report)
-                reply = await self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
-                                             require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn)
+                reply = await asyncio.wait_for(
+                    self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
+                                   require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn), TURN_SECONDS)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
                         photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
+            except asyncio.TimeoutError:
+                log.error("Gave up after %ds on: %s", TURN_SECONDS, _short(text, 60))
+                ok, reply = False, "Sorry, that took too long. Please try again in a moment."
             except Exception as e:
                 log.exception("Agent error")
                 # The details (which can include provider error bodies) go to the log, not the chat
                 ok, reply = False, f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment."
             finally:
+                stuck.cancel()
                 stop_typing.set()
                 await typing  # wait for any in-flight "typing" so none is sent after the reply
 
