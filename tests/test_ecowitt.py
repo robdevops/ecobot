@@ -777,6 +777,32 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
     await eco.close()
 
 
+def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_them():
+    from lib.ecowitt.link import driver_series
+    from tests.fakes import TZ
+    first, last = datetime(2026, 1, 1).date(), datetime(2026, 3, 15).date()
+    base = int(datetime(2026, 1, 1, tzinfo=TZ).timestamp())
+    driver = {base + i * 1800: 1015.0 for i in range(74 * 48)}
+    lows = {t: v - 2.5 for t, v in driver.items()}
+    highs = {t: v + 1.5 for t, v in driver.items()}
+    with_true = driver_series(driver, TZ, first, last, "Pressure", lows, highs)
+    assert with_true["low"][0] == 1012.5 and with_true["high"][0] == 1016.5 and with_true["y"][0] == 1015.0
+    without = driver_series(driver, TZ, first, last, "Pressure")               # no lows or highs cached: the readings' own range
+    assert without["low"][0] == without["high"][0] == 1015.0
+
+
+def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_stretch_at_30():
+    from types import SimpleNamespace
+    from lib.ecowitt.history import HistoryQuery
+    from tests.fakes import TZ
+    day = (datetime.now(TZ) - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
+    t0 = int(day.timestamp())
+    pts = {t0 + i * 1800: {"cycle": "30min", "value": (10.0, "10"), "low": (8.0, "8"), "high": (12.0, "12")} for i in range(48)}
+    pts.update({t0 + 20 * 3600 + i * 300: {"cycle": "5min", "value": (20.0, "20")} for i in range(48)})   # the last 4 hours also at 5 minutes
+    _, line, band = HistoryQuery._daily_line(SimpleNamespace(tz=TZ), pts)
+    assert list(line.values()) == [pytest.approx((40 * 10 + 8 * 20) / 48)] and list(band.values()) == [(8.0, 20.0)]
+
+
 def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
     from lib.charts import render
     from lib.ecowitt.link import chart_spec

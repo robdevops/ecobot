@@ -654,7 +654,7 @@ class HistoryQuery:
         by_day: dict = {}
         for t, r in pts.items():
             if r["cycle"] != "1day" and (d := local_date(t, self.tz)) < today:
-                by_day.setdefault(d, []).append(r)
+                by_day.setdefault(d, []).append((t, r))
         line, band = {}, {}
         for t, r in pts.items():
             if r["cycle"] == "1day" and local_date(t, self.tz) not in by_day and "value" in r:
@@ -663,10 +663,14 @@ class HistoryQuery:
                     band[t] = (_low(r), _high(r))
         for d, recs in by_day.items():
             at = int(datetime.combine(d, datetime.min.time()).replace(hour=10, tzinfo=self.tz).timestamp())
-            values = [r["value"][0] for r in recs if "value" in r]
-            if values:
-                line[at] = sum(values) / len(values)
-                band[at] = (min(_low(r) for r in recs), max(_high(r) for r in recs))
+            slots: dict = {}  # a stretch held at 5 minutes must not outweigh the same stretch held at 30: one value per slot
+            for t, r in recs:
+                if "value" in r:
+                    slots.setdefault(t // 1800, {}).setdefault(r["cycle"] == "5min", []).append(r["value"][0])
+            if slots:
+                means = [sum(v) / len(v) for v in ((g.get(True) or g[False]) for g in slots.values())]
+                line[at] = sum(means) / len(means)
+                band[at] = (min(_low(r) for _, r in recs), max(_high(r) for _, r in recs))
         return "1day", line, band
 
 

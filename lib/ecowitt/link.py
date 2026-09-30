@@ -195,26 +195,32 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> di
             "per": {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width]}
 
 
-def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str) -> dict | None:
-    """The reading as a line: 30-minute readings up to a month, else a daily mean with its range shaded."""
+def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
+                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> dict | None:
+    """The reading as a line: 30-minute readings up to a month, else a daily mean with its range shaded. The range
+    is the day's lowest and highest of Ecowitt's own 30-minute lows and highs where the cache holds them."""
     if len(driver) < 2:
         return None
     ts = sorted(driver)
     if (last - first).days + 1 <= 31:
         return {"label": label, "x": ts, "y": [driver[t] for t in ts]}
+    lows, highs = lows or {}, highs or {}
     by_day: dict = {}
     for t in ts:
-        by_day.setdefault(local_date(t, tz), []).append(driver[t])
+        day = by_day.setdefault(local_date(t, tz), {"mean": [], "low": [], "high": []})
+        day["mean"].append(driver[t])
+        day["low"].append(lows.get(t, driver[t]))
+        day["high"].append(highs.get(t, driver[t]))
     ds = sorted(by_day)
     noon = lambda d: int(datetime.combine(d, time(12)).replace(tzinfo=tz).timestamp())
-    return {"label": label, "x": [noon(d) for d in ds], "y": [sum(by_day[d]) / len(by_day[d]) for d in ds],
-            "low": [min(by_day[d]) for d in ds], "high": [max(by_day[d]) for d in ds]}
+    return {"label": label, "x": [noon(d) for d in ds], "y": [sum(by_day[d]["mean"]) / len(by_day[d]["mean"]) for d in ds],
+            "low": [min(by_day[d]["low"]) for d in ds], "high": [max(by_day[d]["high"]) for d in ds]}
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,
-               name: str, unit: str) -> dict | None:
+               name: str, unit: str, lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> dict | None:
     """Two panels on one time axis: the reading above the rain."""
-    line = driver_series(driver, tz, first, last, name.capitalize())
+    line = driver_series(driver, tz, first, last, name.capitalize(), lows, highs)
     if line is None:
         return None
     bars = rain_bars(rain, tz, first, last)
@@ -241,9 +247,10 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
     group, field, unit, threshold = DRIVERS[name]
     lo = int(datetime.combine(first, time()).replace(tzinfo=tz).timestamp())
     hi = int(datetime.combine(last, time(23, 59, 59)).replace(tzinfo=tz).timestamp())
-    pick = lambda g, f: {int(t): float(v) for t, v in
-                         cache.load_fields(mac, "30min", g, [f], lo, hi).get(f, {"list": {}})["list"].items()}
-    driver, daily = pick(group, field), pick("rainfall", "daily")
+    def pick(g: str, *fields: str) -> list[dict[int, float]]:
+        got = cache.load_fields(mac, "30min", g, list(fields), lo, hi)
+        return [{int(t): float(v) for t, v in got.get(f, {"list": {}})["list"].items()} for f in fields]
+    (driver, lows, highs), (daily,) = pick(group, field, field + "_low", field + "_high"), pick("rainfall", "daily")
     rain = rain_slots(daily)
     out = {"period": f"{first:%a} {first.day} {first:%b %Y} - {last:%a} {last.day} {last:%b %Y}", "driver": f"{name} ({unit})",
            "resolution": "30-minute readings (not averaged to days)",
@@ -263,7 +270,7 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
         return out, None, first, last
     out.update(result)
     out["days_with_data"] = len({local_date(t, tz) for t in rain})
-    spec = chart_spec(driver, rain, tz, first, last, name, unit)
+    spec = chart_spec(driver, rain, tz, first, last, name, unit, lows, highs)
     return out, spec, first, last
 
 
