@@ -143,3 +143,12 @@ def test_the_day_tool_rules_are_short_separate_bullets():
     assert len(bullets) == 7 and all(len(b) < 300 for b in bullets)
     for needle in ("sort_by", "rain >= 1", "It rained on 507 of 1,454 days", "trace_rain_days", "note_daily", "on record", "public_holiday"):
         assert sum(needle in b for b in bullets) == 1, needle   # each rule lives in exactly one bullet
+
+
+def test_the_system_prompt_carries_the_period_hints_only_when_there_are_some():
+    from datetime import datetime
+    from lib import intent, prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    with_hint = prompt.build(now, ["Ecowitt"], intent.period_hints("average temp 3m", now))
+    assert "THE PERSON'S WORDS NAME THESE PERIODS" in with_hint and '"3m" = last 3 months: 2026-07-01' in with_hint
+    assert "THE PERSON'S WORDS NAME" not in prompt.build(now, ["Ecowitt"], intent.period_hints("hello", now))

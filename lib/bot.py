@@ -293,7 +293,8 @@ class Bot:
             field_token = CHART_FIELD.set(intent.chart_field(text))  # humidity questions get a humidity chart
             asked_token = CHART_ASKED.set(bool(intent.GRAPH.search(text)))  # "plot" means a chart, whatever the model calls
             try:
-                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources])
+                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources],
+                                      intent.period_hints(text, now))
                 reply = await self.agent.run(working, system, effort, first_call=fast[:2] if fast else None,
                                              require_tool=intent.needs_data(text))
                 chat.history = trim_history(strip_tool_turns(working))

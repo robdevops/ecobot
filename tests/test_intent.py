@@ -218,3 +218,13 @@ def test_average_questions_are_recognised():
     for text in ("average temp 3m", "what was the mean humidity", "avg wind this week"):
         assert intent.AVERAGE.search(text), text
     assert not intent.AVERAGE.search("hottest day this year")
+
+
+def test_the_model_is_told_the_exact_dates_of_any_period_the_words_name():
+    hints = intent.period_hints("average temp 3m", NOW)
+    assert hints == ['"3m" = last 3 months: 2026-07-01 00:00:00 to 2026-09-29 23:59:59']      # never 3 days
+    assert intent.period_hints("wind direction 1y", NOW)[0].startswith('"1y" = last 1 year: 2025-09-30')
+    assert intent.period_hints("humidity 24h", NOW) == ['"24h" = last 24 hours: 2026-09-28 14:05:00 to 2026-09-29 14:05:00']
+    assert len(intent.period_hints("compare this week and last week highs", NOW)) == 2
+    assert any("last 2 weeks" in h for h in intent.period_hints("weather 2 weeks", NOW))
+    assert intent.period_hints("hello", NOW) == [] and intent.period_hints("use 30 minute data", NOW) == []

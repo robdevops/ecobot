@@ -82,8 +82,9 @@ async def main():
                    Tool("weather_history", station.HISTORY_DESCRIPTION, station.HISTORY_PARAMS, unavailable),
                    Tool("weather_days", days.DESCRIPTION, days.PARAMETERS, days_handler),
                    Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable)])
-    system = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"])
     text = args.question
+    system = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"],
+                          intent.period_hints(text, now.replace(tzinfo=None)))
     effort, fast = intent.reasoning_effort(text), intent.fast_call(text, now.replace(tzinfo=None), True, True)
     call = json.loads(args.call) if args.call else default_call(now.date())
 

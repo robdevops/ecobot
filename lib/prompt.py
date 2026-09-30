@@ -129,6 +129,10 @@ def date_ranges(now: datetime) -> str:
     return "\n".join(lines)
 
 
-def build(now: datetime, sources: list[str]) -> str:
-    return PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
+def build(now: datetime, sources: list[str], hints: list[str] = ()) -> str:
+    text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
                          sources="\n".join(f"- {s}" for s in sources) or "(none)")
+    if hints:  # decided in code, for this question only
+        text += ("\nTHE PERSON'S WORDS NAME THESE PERIODS (use exactly these start_date/end_date values; do not "
+                 "reinterpret them):\n" + "\n".join(f"- {h}" for h in hints) + "\n")
+    return text

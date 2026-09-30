@@ -149,6 +149,20 @@ def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
     return [(name, *window) for window, name in found.items()]
 
 
+def period_hints(text: str, now: datetime) -> list[str]:
+    """One line per period the person's words name, with its exact dates, for the model: "3m" = the last 3 months:
+    2026-07-01 00:00:00 to 2026-09-30 23:59:59. The model otherwise guesses short forms (3m has been read as 3 days)."""
+    found: dict = {}
+    for phrase, name in PERIOD_PHRASES:
+        if m := re.search(rf"\b({phrase})\b", text, I):
+            found.setdefault(span(name, now), (m.group(0), name))
+    for m in NUMBERED_PERIOD.finditer(text):
+        if numbered := numbered_span(m.group(1), m.group(2), now):
+            found.setdefault(numbered[1:], (m.group(0), numbered[0]))
+    return [f'"{said}" = {name}: {start:%Y-%m-%d %H:%M:%S} to {end:%Y-%m-%d %H:%M:%S}'
+            for (start, end), (said, name) in found.items()]
+
+
 # ---------- weather fast path ----------
 EXTREMES = re.compile(r"\b(hottest|coldest|warmest|coolest|highest|lowest|highs?|lows?|max(imum)?|min(imum)?|"
                       r"extremes?|temperatures?|temps?)\b", I)
