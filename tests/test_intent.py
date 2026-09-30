@@ -292,3 +292,8 @@ def test_weather_all_week_is_every_reading_stacked_and_feel_is_the_feels_like_re
 def test_solar_radiation_and_uv_are_charted_readings_and_a_weekday_is_not_solar():
     assert intent.chart_field("solar 30d") == "solar" and intent.chart_field("uv 7d") == "uvi" == intent.chart_field("uvi last week")
     assert intent.chart_field("sun 5 jan") is None and intent.chart_field("how hot was sunday") is None
+
+
+def test_sun_and_uvi_is_two_stacked_readings_but_a_sunday_or_a_dated_sun_is_not_solar():
+    assert intent.chart_fields("sun + uvi one month") == ["solar", "uv"]
+    assert intent.chart_field("sun 5 jan") is None and intent.chart_field("was it hot on sunday") is None

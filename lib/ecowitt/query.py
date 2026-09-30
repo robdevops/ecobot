@@ -44,6 +44,7 @@ MAX_ROWS = 500_000              # readings loaded per question from the cache: d
 FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a group has
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
 # question asks for them, so an "averaged data" note can't be misapplied elsewhere.
+KNOWN_FIELDS = {r.field for r in WEATHER.values()}     # the fields a chart of one reading can be about
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
 
 
@@ -306,6 +307,7 @@ class HistoryQuery:
         """The chart for this answer: the readings side by side, else one line per group; a compass goes beside the wind."""
         holder = self.turn.charts
         spec = self._stack_spec(names) if (names := stack_names(self.args, self.turn)) else None
+        stacked = spec is not None
         if spec:
             out["rain_total_mm"] = round(sum(self.rain_bars.y), 1) if self.rain_bars.x else None
             holder.append(spec)
@@ -319,7 +321,7 @@ class HistoryQuery:
                     out["chart"] = STACK_CHART_HINT
                 else:
                     out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
-        if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
+        if self.compass and not stacked:  # wind direction was counted: the compass goes beside the wind speed line (a stack has no room for it)
             wind = spec if spec and spec.title == "Wind" else self._chart_spec(plottable, "wind_gust")
             if wind:
                 wind.compass = self.compass
@@ -355,9 +357,10 @@ class HistoryQuery:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
-        wanted = str(field or self.turn.chart_field or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
+        asked = field or self.turn.chart_field or self.args.get("chart_field")
+        wanted = str(asked or "temperature").strip().lower().replace(" ", "_")
         keys = [k for k in series_out if k.endswith("." + wanted)]
-        if not keys and wanted in DERIVED:  # asked for on its own and not there: no chart, rather than a temperature one
+        if not keys and (wanted in DERIVED or asked and wanted in KNOWN_FIELDS):  # asked for on its own and not there: no chart, rather than a temperature one
             return None
         keys = keys or [k for k in series_out if k.endswith(".temperature")]
         if not keys:  # nothing to match: the wind chart when wind direction was counted, else the first field

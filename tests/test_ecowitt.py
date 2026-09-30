@@ -983,6 +983,7 @@ async def test_weather_all_week_is_a_stack_of_every_reading_the_station_has(tmp_
     turn = Turn(chart_asked=True, chart_fields=intent.chart_fields("weather all week"))
     await eco.tools[1].handler({"groups": "outdoor,indoor", "chart": True, "start_date": f"{today - timedelta(days=7)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
+    assert len(turn.charts) == 1                                       # one image: no separate wind chart with the compass
     chart = turn.charts[0]
     assert len(chart.panels) >= 3 and {"Temperature", "Dew point"} <= {p.label for p in chart.panels}
     await eco.close()

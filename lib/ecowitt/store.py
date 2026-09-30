@@ -17,6 +17,8 @@ import sqlite3
 import threading
 import time
 
+from .api import UNIT_FIXES
+
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1"
@@ -91,7 +93,17 @@ class HistoryCache:
             log.warning("History cache settings changed - clearing %s", path)
             self.db.executescript("DELETE FROM points; DELETE FROM fields; DELETE FROM coverage;")
         self.db.execute("INSERT OR REPLACE INTO meta VALUES ('signature', ?)", (signature,))
+        self._convert_units()
         self.db.commit()
+
+    def _convert_units(self):
+        """Readings stored before a unit fix (api.UNIT_FIXES) are converted once, in place."""
+        for (prefix, old), (unit, factor) in UNIT_FIXES.items():
+            for key in self.db.execute("SELECT mac, cycle, grp, field FROM fields WHERE unit = ? AND (field = ? OR substr(field, 1, ?) = ?)",
+                                       (old, prefix, len(prefix) + 1, prefix + "_")).fetchall():
+                self.db.execute("UPDATE points SET value = printf('%.3f', CAST(value AS REAL) * ?) "
+                                "WHERE mac=? AND cycle=? AND grp=? AND field=?", (factor, *key))
+                self.db.execute("UPDATE fields SET unit = ? WHERE mac=? AND cycle=? AND grp=? AND field=?", (unit, *key))
 
     def close(self):
         with self._lock:

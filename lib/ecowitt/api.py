@@ -40,6 +40,36 @@ RETRY_ON = ("busy", "too frequent")
 FMT = "%Y-%m-%d %H:%M:%S"
 
 
+# Fields Ecowitt reports in a unit we do not use: (field prefix, its unit) -> (the unit kept, the factor). The vapour pressure
+# deficit comes back in inHg whatever the pressure unit asked for; it is stored and charted in kPa.
+UNIT_FIXES = {("vpd", "inHg"): ("kPa", 3.38639)}
+
+
+def fix_units(data) -> dict:
+    """The response with any field in UNIT_FIXES converted (readings and unit), in place."""
+    for fields in data.values() if isinstance(data, dict) else ():
+        for name, obj in (fields.items() if isinstance(fields, dict) else ()):
+            if not isinstance(obj, dict):
+                continue
+            unit, factor = next(((u, f) for (prefix, old), (u, f) in UNIT_FIXES.items()
+                                 if name.split("_")[0] == prefix and obj.get("unit") == old), (None, None))
+            if unit:
+                obj["unit"] = unit
+                if isinstance(obj.get("list"), dict):
+                    obj["list"] = {ts: f"{float(v) * factor:.3f}" if _number(v) else v for ts, v in obj["list"].items()}
+                elif _number(obj.get("value")):
+                    obj["value"] = f"{float(obj['value']) * factor:.3f}"
+    return data
+
+
+def _number(v) -> bool:
+    try:
+        float(v)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 class EcowittError(Exception):
     """transient: a passing problem (network, timeout, rate limit), not Ecowitt rejecting the request."""
 
@@ -103,10 +133,10 @@ class EcowittAPI:
         return data.get("list", []) if isinstance(data, dict) else []
 
     async def realtime(self, mac: str, groups: str) -> dict:
-        return await self._get("real_time", mac=mac, call_back=groups, **UNIT_IDS)
+        return fix_units(await self._get("real_time", mac=mac, call_back=groups, **UNIT_IDS))
 
     async def history(self, mac: str, cycle: str, start: datetime, end: datetime, groups: str) -> dict:
         """{group: {field: {"unit", "list": {epoch: value}}}}; empty when there is no data."""
         data = await self._get("history", mac=mac, call_back=groups, cycle_type=cycle,
                                start_date=start.strftime(FMT), end_date=end.strftime(FMT), **UNIT_IDS)
-        return data if isinstance(data, dict) else {}
+        return fix_units(data) if isinstance(data, dict) else {}

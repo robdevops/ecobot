@@ -144,6 +144,9 @@ class Ecowitt:
         turn = turn or Turn()
         groups = parse_groups(args.get("groups"))
         groups += [g for n in stack_names(args, turn) if (g := STACK[n][0]) not in groups]  # what "plot temperature and rain" needs
+        named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
+        if (g := READING_GROUPS.get(named)) and g not in groups:
+            groups.append(g)
         return await HistoryQuery(self.fetcher(groups), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
