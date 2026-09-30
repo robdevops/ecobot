@@ -12,6 +12,7 @@ axis of its own.
 
 import glob
 import io
+import math
 from datetime import datetime, timezone, tzinfo
 
 import matplotlib
@@ -245,7 +246,7 @@ def _time_axis(ax, span_days: float):
         ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 12]))
         fmt = "%a %-I%p"
     elif span_days <= 45:
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, round(span_days / 10))))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, math.ceil(span_days / 8))))
         fmt = "%a\n%-d %b"
     elif span_days <= 400:
         ax.xaxis.set_major_locator(mdates.MonthLocator())
@@ -269,7 +270,8 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     panel = chart.panels[0]
     lines = panel.lines
     ax = fig.add_axes([*AX_RECT[:2], _axes_width(chart), AX_RECT[3]], facecolor=BG)
-    _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()]), top=0.26, bottom=0.26, floor=0)  # room for pills
+    _pad_limits(ax, *_extent(lines, [] if panel.aside else [float(r[1]) for s in lines for r in s.records.values()]),
+                top=0.18 if panel.aside else 0.26, bottom=0.12 if panel.aside else 0.26, floor=0)  # room for pills
     ybottom = ax.get_ylim()[0]
     x_min, x_max = min(t for s in lines for t in s.x), max(t for s in lines for t in s.x)
     dense = max(len(s.x) for s in lines) > 200
@@ -283,6 +285,8 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
         if not s.low and len(lines) <= 2:  # soft gradient fill under the line (muddy with more lines)
             _gradient_under(ax, xs, ys, colour, ybottom)
         ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
+        if panel.aside:
+            continue
         for want, above in (("high", True), ("low", False)):
             if want in s.records:  # the true record, at its actual time (may sit off an averaged line)
                 rx, ry = mdates.date2num(to_dt(s.records[want][0])), float(s.records[want][1])
@@ -314,6 +318,8 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
                     left[5], right[5] = "right", "left"
     for rx, ry, text, colour, above, ha in pills:
         _pill(ax, rx, ry, text, colour, above=above, ha=ha)
+    if panel.aside:
+        _mark_highs(ax, [(s, c) for s, (c, _, _) in zip(lines, drawn) if "high" in s.records], drawn, tz, x0, x1, big=True)
     if panel.bars:
         x1 = max(x1, _bars_behind(ax, panel.bars, tz))
     ax.set_xlim(x0 - (x1 - x0) * 0.015, x1 + (x1 - x0) * 0.015)  # room for the end dot
@@ -395,7 +401,7 @@ def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: 
                         bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
 
 
-def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinfo, x0: float, x1: float):
+def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinfo, x0: float, x1: float, big: bool = False):
     """The peak of each line in a multi-line panel: a dot on the peak, and its value in a pill placed in empty space (the
     top of the panel where no line reaches, else the margin) joined to the dot by a thin dotted line."""
     to_dt = _to_dt(tz)
@@ -409,14 +415,15 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
             mx, my = _extreme(line, "high", to_dt)
             peaks.append((mx, my, colour))
     peaks.sort(key=lambda p: -p[1])                                       # the highest peak gets the top pill
-    block = (10 + 12 * len(peaks)) * per_pt                               # the height the stacked pills need
+    size, pitch = (7.5, 15) if big else (6.5, 12)                           # the pills' font and spacing, in points
+    block = (10 + pitch * len(peaks)) * per_pt                            # the height the stacked pills need
     reach = 0.06 * (x1 - x0)                                              # half a pill's width, in x units
     mean_x = sum(p[0] for p in peaks) / len(peaks) if peaks else x0
     free = []
     for k in range(3, 98, 2):                                             # candidate columns across the panel
         cx = x0 + (x1 - x0) * k / 100
         highest = max((float(np.max(ys[(xs > cx - reach) & (xs < cx + reach)], initial=y_lo)) for _, xs, ys in drawn), default=y_lo)
-        if highest < y_hi - block - 4 * per_pt:
+        if highest < y_hi - block - 4 * per_pt and abs(cx - mean_x) > 0.12 * (x1 - x0):  # clear of the peaks, so the leaders slope
             free.append(cx)
     arrow = lambda colour: {"arrowstyle": "-", "color": colour, "linewidth": 0.8, "linestyle": (0, (1, 2)), "shrinkA": 1, "shrinkB": 2}
     pill = {"boxstyle": "round,pad=0.25,rounding_size=0.6", "ec": "none"}
@@ -424,17 +431,17 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
         cx = min(free, key=lambda c: abs(c - mean_x))
         for i, (mx, my, colour) in enumerate(peaks):
             ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
-            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(cx, y_hi - (10 + 12 * i) * per_pt), textcoords="data", ha="center",
-                        va="center", fontsize=6.5, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
+            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(cx, y_hi - (10 + pitch * i) * per_pt), textcoords="data", ha="center",
+                        va="center", fontsize=size, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
                         bbox={**pill, "fc": colour})
         return
     placed = []                                                           # no empty column: the right margin, at the peaks' heights
     for mx, my, colour in peaks:
-        ly = min(my, placed[-1] - 12 * per_pt) if placed else my
+        ly = min(my, placed[-1] - pitch * per_pt) if placed else my
         placed.append(ly)
         ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
         ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(1.03, ly), textcoords=("axes fraction", "data"), ha="left", va="center",
-                    fontsize=6.5, fontweight="bold", color="white", zorder=5, annotation_clip=False, arrowprops=arrow(colour),
+                    fontsize=size, fontweight="bold", color="white", zorder=5, annotation_clip=False, arrowprops=arrow(colour),
                     bbox={**pill, "fc": colour})
 
 

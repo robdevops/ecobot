@@ -378,5 +378,5 @@ class AirGradient:
             label = ", ".join(names_[:-1]) + " and " + names_[-1] if len(names_) > 1 else names_[0]
             panels.append(Panel(label, units[0] if len({CHART_UNITS[m] for m in left}) == 1 and not right else "",
                                 [drawn[m][0] for m in left], right=[drawn[m][0] for m in right],
-                                zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None))
+                                zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(left) > 1))
         return Chart("Air quality", f"{period}  ·  AirGradient readings", panels)
