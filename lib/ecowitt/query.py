@@ -424,7 +424,7 @@ class HistoryQuery:
 
     def _series_entry(self, k: str, label: str | None = None) -> tuple[Line, str] | None:
         """One series as a chart line and how it was drawn; None if there is too little to draw."""
-        line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES, native_band=True,
+        line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES,
                           force_daily=self.turn.average_asked, until=now_local(self.tz).date())
         if line is None:
             return None

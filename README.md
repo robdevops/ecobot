@@ -11,7 +11,7 @@ and unhealthy air (with when it is safe again). `/alerts off` mutes a chat.
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python ecobot.py          # with the variables below in the environment
 ```
-Under systemd see `ecobot.service` (it loads the environment file).
+Under systemd see `ecobot.service` (it loads the environment file; the clone's location is its one `WorkingDirectory` line, the rest is relative).
 
 | Variable | Purpose |
 |---|---|
@@ -37,13 +37,14 @@ lib/rain.py             rain per slot, spells and bars from the daily total
 lib/analysis/           pairs (rain vs a reading, rain vs air quality), scan (air quality vs everything)
 lib/compose.py          plot_chart / air_link / air_scan: any series on one time axis
 lib/specs.py            what a chart is (typed: Chart > Panel > Line/Bars/Shares), validated when built
-lib/charts.py           the one renderer: panels on a shared time axis, a second y axis, rain behind the lines
+lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading
+lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
 lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
                         days (rank/count days), outlook (raining / likely soon), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases
-scripts/                cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
+scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
                         sent to the model for a question), check_rain.py (are rain totals trustworthy?),
                         dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
 ```

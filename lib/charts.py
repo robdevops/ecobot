@@ -105,10 +105,20 @@ def _deg(unit: str) -> str:
     return "°" if unit.replace("º", "°") in ("°C", "°F", "°") else f" {unit}"
 
 
+def _box(colour: str, pad: float = 0.25, rounding: float = 0.6) -> dict:
+    """The rounded coloured box behind a value label."""
+    return {"boxstyle": f"round,pad={pad},rounding_size={rounding}", "fc": colour, "ec": "none"}
+
+
+def _dot(ax, x: float, y: float, colour: str, size: float = 12, edge: float = 0.8, z: int = 4):
+    """A small dot with a white rim, marking a point on a line."""
+    ax.scatter([x], [y], s=size, color=colour, edgecolors="white", linewidths=edge, zorder=z)
+
+
 def _pill(ax, x, y, text, colour, above: bool, ha: str = "center"):
     ax.annotate(text, (x, y), xytext=(0, 9 if above else -9), textcoords="offset points",
                 ha=ha, va="bottom" if above else "top", fontsize=7.5, fontweight="bold", color="white",
-                bbox={"boxstyle": "round,pad=0.35,rounding_size=0.8", "fc": colour, "ec": "none"}, zorder=6)
+                bbox=_box(colour, 0.35, 0.8), zorder=6)
 
 
 def _to_dt(tz: tzinfo):
@@ -277,7 +287,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     for s, (colour, xs, ys) in zip(lines, drawn):
         if not s.low and len(lines) <= 2:  # soft gradient fill under the line (muddy with more lines)
             _gradient_under(ax, xs, ys, colour, ybottom)
-        ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
+        _dot(ax, xs[-1], ys[-1], colour, 30, 1.5, 5)
         if panel.aside:
             continue
         for want, above in (("high", True), ("low", False)):
@@ -298,7 +308,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
             if abs(ry - line_y) > (0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) if s.smoothed else 1e-6) and not s.low:
                 ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
                           linewidth=1.2, alpha=0.8, zorder=3)
-            ax.scatter([rx], [ry], s=18, color=colour, edgecolors="white", linewidths=1.2, zorder=6)
+            _dot(ax, rx, ry, colour, 18, 1.2, 6)
             pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
     # Records that land close together (e.g. outdoor and indoor on the same hot day) go side by side
     y_lo, y_hi = ax.get_ylim()
@@ -390,11 +400,10 @@ def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: 
             placed.append((mx, my, above))
             lift = 5 + 11 * stacked
             frac = (mx - x0) / max(x1 - x0, 1e-9)
-            ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+            _dot(ax, mx, my, colour)
             ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, lift if above else -lift), textcoords="offset points",
                         ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
-                        fontsize=6.5, fontweight="bold", color="white", zorder=5,
-                        bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
+                        fontsize=6.5, fontweight="bold", color="white", zorder=5, bbox=_box(colour))
 
 
 def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinfo, x0: float, x1: float, big: bool = False):
@@ -427,7 +436,6 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
         if highest < y_hi - block - 4 * per_pt:
             free.append(cx)
     arrow = lambda colour: {"arrowstyle": "-", "color": colour, "linewidth": 0.8, "linestyle": (0, (1, 2)), "shrinkA": 1, "shrinkB": 2}
-    pill = {"boxstyle": "round,pad=0.25,rounding_size=0.6", "ec": "none"}
     columns, taken = [], []                                               # each group in the empty column nearest its own peaks
     for g in groups:
         mx = sum(p[0] for p in g) / len(g)
@@ -439,19 +447,19 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
     if len(columns) == len(groups):
         for g, cx in zip(groups, columns):
             for i, (mx, my, colour) in enumerate(g):
-                ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+                _dot(ax, mx, my, colour)
                 ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(cx, y_hi - (10 + pitch * i) * per_pt), textcoords="data", ha="center",
                             va="center", fontsize=size, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
-                            bbox={**pill, "fc": colour})
+                            bbox=_box(colour))
         return
     placed = []                                                           # no empty column: the right margin, at the peaks' heights
     for mx, my, colour in peaks:
         ly = min(my, placed[-1] - pitch * per_pt) if placed else my
         placed.append(ly)
-        ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+        _dot(ax, mx, my, colour)
         ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(1.03, ly), textcoords=("axes fraction", "data"), ha="left", va="center",
                     fontsize=size, fontweight="bold", color="white", zorder=5, annotation_clip=False, arrowprops=arrow(colour),
-                    bbox={**pill, "fc": colour})
+                    bbox=_box(colour))
 
 
 def _end_labels(ax, drawn: list[tuple]):
