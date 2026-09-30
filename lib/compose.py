@@ -10,8 +10,8 @@ import logging
 from datetime import date, datetime, time, timedelta, tzinfo
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS
-from .charts import CHART_REQUESTS, COMPOSED_CHART_HINT
-from .ecowitt.link import bar_layout, driver_series, rain_bars, rain_slots
+from .charts import CHART_REQUESTS, COMPOSED_CHART_HINT, wants_chart
+from .ecowitt.link import analyse_air, bar_layout, driver_series, rain_bars, rain_slots
 from .timeutil import now_local
 from .tools import Tool
 
@@ -49,6 +49,24 @@ PLOT_PARAMETERS = {
 }
 
 
+LINK_DAYS = 60
+LINK_METRICS = ("pm2_5", "pm10")
+LINK_DESCRIPTION = (
+    "Does rain go with cleaner air? Reads the air-quality sensor (PM2.5 by default) and the weather station's rain together at "
+    "30-minute resolution and reports whether the air was cleaner in the hours after rain than before it, its level in wet and "
+    "dry periods, and wet days against dry days, with a plain verdict. Use it for 'is there a correlation between air quality "
+    "and rainfall', 'does rain clear the air'. Default period: the last 60 days.")
+LINK_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "metric": {"type": "string", "enum": list(LINK_METRICS), "description": "The air reading. Default pm2_5."},
+        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 60 days before the end."},
+        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        "chart": {"type": "boolean", "description": "Set true for a chart: the reading (with its rating zones) over rain bars."},
+    },
+}
+
+
 def _error(text: str) -> str:
     return json.dumps({"error": text}, ensure_ascii=False)
 
@@ -76,14 +94,15 @@ class Composer:
 
     def __init__(self, eco, air):
         self.eco, self.air, self.tz = eco, air, eco.tz
-        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart)]
+        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart),
+                      Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link)]
 
-    def period(self, args: dict) -> tuple[date, date] | str:
+    def period(self, args: dict, default_days: int = DEFAULT_DAYS) -> tuple[date, date] | str:
         """(first, last) day, or an error text. The last day is at most yesterday: today is still settling."""
         yesterday = now_local(self.tz).date() - timedelta(days=1)
         try:
             last = min(date.fromisoformat(str(args["end_date"])[:10]), yesterday) if args.get("end_date") else yesterday
-            first = date.fromisoformat(str(args["start_date"])[:10]) if args.get("start_date") else last - timedelta(days=DEFAULT_DAYS - 1)
+            first = date.fromisoformat(str(args["start_date"])[:10]) if args.get("start_date") else last - timedelta(days=default_days - 1)
         except ValueError as e:
             return f"bad date ({e}); use 'YYYY-MM-DD'"
         return (first, last) if first <= last else "start_date must be before end_date (the latest day is yesterday)"
@@ -133,19 +152,48 @@ class Composer:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
-        per = next((p["bars"]["per"] for p in built if "bars" in p), next((p["shares"]["per"] for p in built if "shares" in p), None))
-        for p in built:
+        out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
+        self._add_chart(out, built, first, last)
+        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+    def _add_chart(self, out: dict, panels: list[dict], first: date, last: date):
+        """Send the panels as one stacked chart (when this question can have one) and tell the model what its reply is for."""
+        holder = CHART_REQUESTS.get()
+        if holder is None:
+            return
+        per = next((p[kind]["per"] for p in panels for kind in ("bars", "shares") if kind in p), None)
+        for p in panels:
             for kind in ("bars", "shares"):
                 if kind in p:
                     p[kind].pop("per", None)
-        spec = {"kind": "stack", "title": " and ".join(p["label"] for p in built),
-                "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}" + (f"  ·  per {per}" if per else ""),
-                "panels": built}
-        out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
-        holder = CHART_REQUESTS.get()
-        if holder is not None:
-            holder.append(spec)
-            out["chart"] = COMPOSED_CHART_HINT
+        holder.append({"kind": "stack", "title": " and ".join(p["label"] for p in panels),
+                       "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}" + (f"  ·  per {per}" if per else ""),
+                       "panels": panels})
+        out["chart"] = COMPOSED_CHART_HINT
+
+    async def air_link(self, args: dict) -> str:
+        metric = args.get("metric") or "pm2_5"
+        if metric not in LINK_METRICS:
+            return _error(f"metric must be one of {', '.join(LINK_METRICS)}")
+        if isinstance(period := self.period(args, LINK_DAYS), str):
+            return _error(period)
+        first, last = period
+        notes: dict = {}
+        air_panel, _ = await self._panel(metric, "line", first, last, notes)
+        daily, _, _ = self.weather("rainfall", "daily", first, last)
+        rain = rain_slots(daily)
+        values, _, _, _ = await self.air_slots(metric, first, last)
+        result = analyse_air(values, rain, RATINGS[metric], self.tz, LABELS[metric])
+        out = {"period": f"{first} to {last}", "metric": f"{LABELS[metric]} ({CHART_UNITS[metric]})",
+               "resolution": "30-minute slots (air readings averaged, rain from the weather station's cache)",
+               "how_to_read": ("Open with `verdict`, then the evidence in `findings`. Rain and clean air share weather (wind, fronts), "
+                               "so say the air goes with rain or not, never that rain causes it. A rank correlation near 0 is a "
+                               "rough guide, not proof of no link."),
+               **(result or {"note": "No overlapping air-quality and rain readings for this period. Say exactly that."}),
+               **({"notes": notes} if notes else {})}
+        bars = rain_bars(rain, self.tz, first, last)
+        if result and air_panel and bars["x"] and wants_chart(args, datetime.combine(first, time()), datetime.combine(last, time())):
+            self._add_chart(out, [air_panel, {"label": "Rain", "unit": "mm", "bars": bars}], first, last)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     async def _panel(self, name: str, style: str, first: date, last: date, notes: dict) -> tuple[dict | None, dict]:

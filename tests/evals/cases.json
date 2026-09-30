@@ -801,5 +801,37 @@
   "covers": [
    "q:summary"
   ]
+ },
+ {
+  "id": "air-quality-vs-rain",
+  "ask": "Is there a correlation between air quality and precipitation",
+  "note": "AirGradient and Ecowitt are separate tools: needs the cross-source link",
+  "expect": {
+   "effort": "medium",
+   "fast": null,
+   "tools": [
+    "air_link"
+   ]
+  },
+  "covers": [
+   "q:cross-source",
+   "m:air-quality",
+   "m:rain"
+  ]
+ },
+ {
+  "id": "rating-against-rainfall",
+  "ask": "plot the traffic light rating of air quality against rainfall for the last 30 days",
+  "note": "a new kind of chart: the rating over rain",
+  "expect": {
+   "fast": null,
+   "tools": [
+    "plot_chart"
+   ]
+  },
+  "covers": [
+   "c:rating-strip",
+   "c:composed"
+  ]
  }
 ]

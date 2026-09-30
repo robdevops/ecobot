@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from lib.charts import CHART_REQUESTS, render
 from lib.compose import MAX_PANELS, SERIES, Composer, rating_shares
+from lib.ecowitt.link import analyse_air
 from tests.fakes import TZ, archived_station
 
 
@@ -36,9 +37,9 @@ async def plot(comp, **args):
         CHART_REQUESTS.reset(token)
 
 
-async def test_the_composer_offers_one_chart_tool_with_the_series_it_knows(tmp_path, archived_cache):
+async def test_the_composer_offers_the_chart_tool_and_the_air_link_tool(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
-    assert [t.name for t in comp.tools] == ["plot_chart"]
+    assert [t.name for t in comp.tools] == ["plot_chart", "air_link"]
     schema = comp.tools[0].parameters["properties"]["panels"]
     assert schema["maxItems"] == MAX_PANELS and schema["items"]["properties"]["series"]["enum"] == SERIES
     await eco.close()
@@ -95,4 +96,50 @@ async def test_the_last_day_is_yesterday_at_most(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
     first, last = comp.period({"end_date": str(datetime.now(TZ).date() + timedelta(days=5))})
     assert last == datetime.now(TZ).date() - timedelta(days=1) and (last - first).days == 29
+    await eco.close()
+
+
+def synthetic(days, air_after_rain, events_every=3):
+    """30-minute slots for `days` days: a 3-hour rain spell every few days; the air is `air_after_rain(wet_or_after)`."""
+    base = int(datetime(2026, 5, 1, tzinfo=TZ).timestamp())
+    rain, air = {}, {}
+    for i in range(days * 48):
+        t = base + i * 1800
+        day, slot = divmod(i, 48)
+        rain[t] = 0.5 if day % events_every == 1 and 20 <= slot < 26 else 0.0
+        washed = day % events_every == 1 and 20 <= slot < 38                      # during the rain and the 6 hours after
+        air[t] = air_after_rain(washed)
+    return air, rain
+
+
+def test_air_that_clears_after_every_rain_is_a_yes_and_air_that_ignores_rain_is_a_no():
+    limits = (9.0, 55.4)
+    air, rain = synthetic(60, lambda washed: 10.0 if washed else 30.0)
+    out = analyse_air(air, rain, limits, TZ, "PM2.5")
+    assert out["verdict"].startswith("Yes - rain clears") and out["events"]["cleaner_after"] == out["events"]["count"] >= 15
+    assert "PM2.5" in out["findings"][0] and "poor" in out["findings"][0]
+    assert out["rank_correlation_daily_rain_vs_air"] is not None and out["days_compared"] == 60
+    air, rain = synthetic(60, lambda washed: 20.0)
+    assert analyse_air(air, rain, limits, TZ, "PM2.5")["verdict"].startswith("No")
+    air, rain = synthetic(60, lambda washed: 40.0 if washed else 20.0)                # the air is worse around rain
+    assert analyse_air(air, rain, limits, TZ, "PM2.5")["verdict"].startswith("Yes, the other way")
+
+
+def test_too_few_rain_events_or_no_overlap_says_so():
+    air, rain = synthetic(7, lambda washed: 10.0 if washed else 30.0)              # two events in a week
+    assert analyse_air(air, rain, (9.0, 55.4), TZ, "PM2.5")["verdict"].startswith("Not enough")
+    assert analyse_air({}, rain, (9.0, 55.4), TZ, "PM2.5") == {}
+
+
+async def test_air_link_reports_a_verdict_and_can_chart_the_reading_over_rain(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    token = CHART_REQUESTS.set([])
+    try:
+        out = json.loads(await comp.air_link({"chart": True}))
+        specs = CHART_REQUESTS.get()
+    finally:
+        CHART_REQUESTS.reset(token)
+    assert out["verdict"] and out["findings"] and "how_to_read" in out and out["metric"].startswith("PM2.5")
+    assert len(specs) == 1 and [p["label"] for p in specs[0]["panels"]] == ["PM2.5", "Rain"] and specs[0]["panels"][0]["zones"] == [9.0, 55.4]
+    assert "error" in json.loads(await comp.air_link({"metric": "co2"}))
     await eco.close()

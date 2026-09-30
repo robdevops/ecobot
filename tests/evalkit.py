@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from lib import intent, prompt
+from lib import compose, intent, prompt
 from lib.airgradient import source as air
 from lib.ecowitt import days, link, station
 from lib.llm import Agent
@@ -32,12 +32,13 @@ COVERAGE = {
     "q:correlation": "does one reading go with another", "q:follow-up": "a follow-up that keeps the subject",
     "q:correction": "the person says the answer was wrong", "q:about-the-bot": "questions about the bot itself",
     "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report",
-    "q:detail-level": "asking for a finer data resolution",
+    "q:detail-level": "asking for a finer data resolution", "q:cross-source": "a question that needs both devices together",
     "m:temperature": "temperature", "m:humidity": "humidity", "m:pressure": "pressure", "m:wind-speed": "wind speed and gusts",
     "m:wind-direction": "wind direction", "m:rain": "rain", "m:air-quality": "air quality",
     "c:line": "a line chart of one reading", "c:daily-band": "a long chart: daily mean with its range",
     "c:stack": "several readings stacked", "c:link": "pressure (or another reading) against rain",
-    "c:wind-compass": "wind speed with the compass", "c:air-single": "one air-quality metric", "c:air-panels": "all air-quality metrics",
+    "c:wind-compass": "wind speed with the compass", "c:rating-strip": "air-quality traffic-light ratings over time",
+    "c:composed": "a chart the model composes from series and styles", "c:air-single": "one air-quality metric", "c:air-panels": "all air-quality metrics",
 }
 
 
@@ -58,7 +59,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
 
 
 def tool_names() -> list[str]:
-    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality"]
+    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link"]
 
 
 def make_tools(calls: list) -> Tools:
@@ -72,7 +73,9 @@ def make_tools(calls: list) -> Tools:
             ("weather_history", station.HISTORY_DESCRIPTION, station.HISTORY_PARAMS),
             ("weather_days", days.DESCRIPTION, days.PARAMETERS),
             ("weather_link", link.DESCRIPTION, link.PARAMETERS),
-            ("air_quality", air.DESCRIPTION, air.PARAMETERS)]
+            ("air_quality", air.DESCRIPTION, air.PARAMETERS),
+            ("plot_chart", compose.PLOT_DESCRIPTION, compose.PLOT_PARAMETERS),
+            ("air_link", compose.LINK_DESCRIPTION, compose.LINK_PARAMETERS)]
     return Tools([Tool(n, d, p, recorder(n)) for n, d, p in defs])
 
 

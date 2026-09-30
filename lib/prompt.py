@@ -151,6 +151,12 @@ def capabilities(sources: list[str]) -> str:
     lines.append("- Tools: weather_now (current), weather_history (highs, lows, averages, charts), weather_days (find, rank and "
                  "count days, holidays, weekends), weather_link (does rain come with a pressure, humidity or wind change), "
                  "air_quality.")
+    if "Ecowitt" in have and "AirGradient" in have:
+        lines.append("- Across both devices: plot_chart draws readings from both on one chart, up to 4 panels (series: temperature, "
+                     "humidity, pressure, wind, rain, pm2_5, pm10, pm1, co2, voc_index, nox_index; styles: line, bars for rain, "
+                     "rating = the traffic-light share of time, air series only), and air_link answers whether rain goes with "
+                     "cleaner air. Use them for \"plot X against Y\" and \"does rain affect air quality\"; a series or style "
+                     "not listed can't be plotted: say so.")
     lines.append("- Charts: any one reading, or several readings together on one time axis (temperature, humidity, pressure, wind, "
                  "rain); wind as average speed with gusts beside a compass rose of directions; air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, "

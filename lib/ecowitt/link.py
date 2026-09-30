@@ -122,6 +122,19 @@ def _summary(table: dict, level: dict, events: list[dict], threshold: float, uni
     return out, call
 
 
+def rain_spells(rain: dict[int, float], wet: list[int]) -> list[list[int]]:
+    """The wet slots grouped into spells (3 dry hours end one); only spells of at least SPELL_MM count as events."""
+    spells, current = [], []
+    for t in wet:
+        if current and t - current[-1] > SPELL_GAP * SLOT:
+            spells.append(current)
+            current = []
+        current.append(t)
+    if current:
+        spells.append(current)
+    return [s for s in spells if sum(rain[t] for t in s) >= SPELL_MM]
+
+
 def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, tz: tzinfo, unit: str = "") -> dict:
     """The numbers for the answer. `driver` and `rain` are {epoch: value} at 30-minute slots."""
     slots = sorted(t for t in rain if t in driver)
@@ -153,20 +166,8 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
         a, b = np.array(pairs).T
         if a.std() > 0 and b.std() > 0:
             r = round(float(np.corrcoef(a, b)[0, 1]), 2)
-    spells, current = [], []
-    for t in wet:
-        if current and t - current[-1] > SPELL_GAP * SLOT:
-            spells.append(current)
-            current = []
-        current.append(t)
-    if current:
-        spells.append(current)
-    events = []
-    for s in spells:
-        mm = sum(rain[t] for t in s)
-        if mm >= SPELL_MM:
-            events.append({"start": s[0], "end": s[-1], "mm": round(mm, 1), "change": change_before(driver, s[0]),
-                           "lowest": min(driver[t] for t in s if t in driver)})
+    events = [{"start": s[0], "end": s[-1], "mm": round(sum(rain[t] for t in s), 1), "change": change_before(driver, s[0]),
+               "lowest": min(driver[t] for t in s if t in driver)} for s in rain_spells(rain, wet)]
     fell = sum(1 for e in events if e["change"] is not None and e["change"] <= -threshold)
     rose = sum(1 for e in events if e["change"] is not None and e["change"] >= threshold)
     clock = lambda ts: (lambda dt: f"{dt:%a} {dt.day} {dt:%b} {dt.strftime('%-I:%M%p').lower()}")(to_local(ts, tz))
@@ -178,6 +179,94 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                             "biggest": [{"start": clock(e["start"]), "mm": e["mm"], "hours": round((e["end"] - e["start"]) / 3600 + 0.5, 1),
                                          "change_in_3h_before": None if e["change"] is None else round(e["change"], 1),
                                          "lowest_during": round(e["lowest"], 1)} for e in top]}}
+
+
+WASH_SLOTS = 12       # air quality in the 6 hours before a rain event starts is compared with the 6 hours after it ends
+MIN_WASH_SLOTS = 6    # ... needing at least 3 hours of readings on each side
+CLEANED = 0.9         # "cleaner afterwards": the mean after is at most this share of the mean before (worse: 1 / this)
+MIN_EVENTS = 3
+MIN_DAY_SLOTS = 24    # a day counts for the daily comparison with at least 12 hours of air readings
+
+
+def air_verdict(events: int, cleaned: int, worse: int, ratio: float | None) -> str:
+    """A plain call on whether rain goes with cleaner air, from the events and the wet-vs-dry level (a ratio of the
+    averages). Not from the daily correlation, which is a rough guide."""
+    if events < MIN_EVENTS or ratio is None:
+        return "Not enough rain events with air readings around them to say"
+    share, bad = cleaned / events, worse / events
+    if share >= 0.7 and ratio <= 0.8:
+        return "Yes - rain clears the air"
+    if share >= 0.55 and ratio <= 0.95:
+        return "Yes - a moderate link: the air tends to be cleaner after rain"
+    if bad >= 0.55 and ratio >= 1.05:
+        return "Yes, the other way - the air was worse around rain"
+    if 0.9 <= ratio <= 1.1 and share <= 0.4 and bad <= 0.4:
+        return "No - air quality looked much the same wet and dry"
+    return "Weak or mixed - not a consistent link"
+
+
+def _ranks(values: list[float]) -> np.ndarray:
+    """Ranks with ties averaged (1 = smallest)."""
+    order = np.argsort(values, kind="stable")
+    ranks = np.empty(len(values))
+    ranks[order] = np.arange(1, len(values) + 1)
+    for v in set(values):
+        same = [i for i, x in enumerate(values) if x == v]
+        if len(same) > 1:
+            ranks[same] = ranks[same].mean()
+    return ranks
+
+
+def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[float, float], tz: tzinfo, label: str) -> dict:
+    """Does rain go with cleaner air? `values` (an air reading) and `rain` are {epoch: value} at 30-minute slots. `limits`
+    are the good and poor limits of the reading, to say what rating a level falls in."""
+    slots = sorted(t for t in rain if t in values)
+    if not slots:
+        return {}
+    wet, dry = [t for t in slots if rain[t] > 0], [t for t in slots if rain[t] <= 0]
+    mean = lambda ts: float(np.mean([values[t] for t in ts])) if ts else None
+    word = lambda v: "good" if v <= limits[0] else "poor" if v <= limits[1] else "very poor"
+    wet_level, dry_level = mean(wet), mean(dry)
+    events = []
+    for s in rain_spells(rain, wet):
+        before = [values[t] for t in range(s[0] - WASH_SLOTS * SLOT, s[0], SLOT) if t in values]
+        after = [values[t] for t in range(s[-1] + SLOT, s[-1] + (WASH_SLOTS + 1) * SLOT, SLOT) if t in values]
+        if len(before) >= MIN_WASH_SLOTS and len(after) >= MIN_WASH_SLOTS:
+            events.append({"start": s[0], "mm": round(sum(rain[t] for t in s), 1), "before": float(np.mean(before)),
+                           "after": float(np.mean(after))})
+    cleaned = sum(1 for e in events if e["after"] <= CLEANED * e["before"])
+    worse = sum(1 for e in events if e["after"] * CLEANED >= e["before"])
+    ratio = wet_level / dry_level if wet_level is not None and dry_level else None
+    days: dict = {}
+    for t in slots:
+        day = days.setdefault(local_date(t, tz), {"rain": 0.0, "air": []})
+        day["rain"] += rain[t]
+        day["air"].append(values[t])
+    days = {d: v for d, v in days.items() if len(v["air"]) >= MIN_DAY_SLOTS}
+    wet_days = [float(np.mean(v["air"])) for v in days.values() if v["rain"] >= SPELL_MM]
+    dry_days = [float(np.mean(v["air"])) for v in days.values() if v["rain"] == 0]
+    r = None
+    if len(days) >= 10:
+        rain_ranks, air_ranks = _ranks([v["rain"] for v in days.values()]), _ranks([float(np.mean(v["air"])) for v in days.values()])
+        if rain_ranks.std() > 0 and air_ranks.std() > 0:
+            r = round(float(np.corrcoef(rain_ranks, air_ranks)[0, 1]), 2)
+    findings = []
+    if wet_level is not None and dry_level is not None:
+        findings.append(f"Average {label} {wet_level:.1f} in wet half-hours ({word(wet_level)}) against {dry_level:.1f} when dry "
+                        f"({word(dry_level)}): {ratio:.2f}x")
+    if events:
+        findings.append(f"Over {len(events)} rain events (1 mm or more) with readings around them: {cleaned} left the air cleaner "
+                        f"in the 6 hours after than the 6 before, {worse} worse and {len(events) - cleaned - worse} about the same")
+    if wet_days and dry_days:
+        findings.append(f"Daily average {label} on wet days {np.mean(wet_days):.1f} ({len(wet_days)} days) against "
+                        f"{np.mean(dry_days):.1f} on dry days ({len(dry_days)} days)")
+    biggest = max(events, key=lambda e: e["mm"], default=None)
+    if biggest:
+        findings.append(f"The biggest event, {biggest['mm']:g} mm: {biggest['before']:.1f} in the 6 hours before, "
+                        f"{biggest['after']:.1f} in the 6 hours after")
+    return {"verdict": air_verdict(len(events), cleaned, worse, ratio), "findings": findings, "slots": len(slots),
+            "wet_slots": len(wet), "events": {"count": len(events), "cleaner_after": cleaned, "worse_after": worse},
+            "days_compared": len(days), "rank_correlation_daily_rain_vs_air": r}
 
 
 def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
