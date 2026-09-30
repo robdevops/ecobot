@@ -28,6 +28,25 @@ def day_bounds(day: date, tz: tzinfo, last_second: bool = False) -> tuple[int, i
     return int(start.timestamp()), int((start + timedelta(days=1)).timestamp()) - last_second
 
 
+def rolling_mean(values: dict[int, float], half_window: int = 450) -> dict[int, float]:
+    """Each reading replaced by the mean of the readings within half_window seconds either side of it (itself included):
+    a light smoothing of the drawn line. Timestamps are unchanged, nothing is interpolated, and a gap only means fewer
+    readings in the window."""
+    ts = sorted(values)
+    out: dict[int, float] = {}
+    lo = hi = 0
+    total = 0.0
+    for t in ts:
+        while hi < len(ts) and ts[hi] <= t + half_window:
+            total += values[ts[hi]]
+            hi += 1
+        while ts[lo] < t - half_window:
+            total -= values[ts[lo]]
+            lo += 1
+        out[t] = total / (hi - lo)
+    return out
+
+
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
 WIDTHS = (300, 1800, 3600, 7200, 14400, 86400)      # bucket sizes a chart line can be drawn at: 5 min ... a day
 WIDTH_NAMES = {1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}

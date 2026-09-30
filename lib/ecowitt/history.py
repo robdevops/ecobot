@@ -17,7 +17,7 @@ from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
-from ..timeutil import WIDTH_NAMES, WIDTHS, bucket_width, bucketed, daily_summary, local_date, local_epoch, now_local, to_local
+from ..timeutil import WIDTH_NAMES, WIDTHS, bucket_width, bucketed, daily_summary, local_date, local_epoch, now_local, rolling_mean, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .link import rain_bars, rain_slots
@@ -34,6 +34,7 @@ MAX_MONTH_REFINE_WINDOWS = 24
 # date are exact even at month boundaries. Longer periods use daily data (10am-10am buckets), unless
 # the cache already holds the 30-minute data (the archive does), in which case up to a year is detailed.
 DETAILED_DAYS = 93
+SMOOTH_FIELDS = ("temperature", "humidity", "relative", "absolute", "dew_point", "feels_like")  # slow readings: a 5-minute line is lightly smoothed
 MAX_ROWS = 500_000              # readings loaded per question from the cache: days x 48 x groups x FIELDS_PER_GROUP
 FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a group has
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
@@ -600,6 +601,8 @@ class HistoryQuery:
         if not pts:
             return None
         cycle, line, band = self._line(pts, keep_band=windy)
+        if cycle == "5min" and k.split(".")[-1] in SMOOTH_FIELDS:  # only the drawn line: records and figures use the raw readings
+            line = rolling_mean(line)
         xs = sorted(line)
         if len(xs) < 2:
             return None

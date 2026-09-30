@@ -622,6 +622,42 @@ async def test_weather_now_carries_the_rain_outlook_when_it_is_raining_or_likely
     await eco.close()
 
 
+def test_the_rolling_mean_smooths_a_staircase_without_moving_timestamps_or_crossing_gaps():
+    from lib.timeutil import rolling_mean
+    assert rolling_mean({0: 5.0, 300: 5.0, 600: 5.0}) == {0: 5.0, 300: 5.0, 600: 5.0}
+    stairs = {i * 300: 10 + 0.1 * (i // 3) + (0.1 if i % 2 else 0.0) for i in range(30)}                 # 0.1-degree steps with jitter
+    out = rolling_mean(stairs)
+    assert list(out) == list(stairs)                                       # the same timestamps
+    turns = lambda d: sum(1 for a, b, c in zip(list(d.values()), list(d.values())[1:], list(d.values())[2:]) if (b - a) * (c - b) < 0)
+    assert turns(out) < turns(stairs)
+    assert out[0] == (stairs[0] + stairs[300]) / 2                         # the ends use the shorter window
+    gap = rolling_mean({0: 0.0, 300: 0.0, 3600: 10.0, 3900: 10.0})         # an hour apart: neither side pulls on the other
+    assert gap == {0: 0.0, 300: 0.0, 3600: 10.0, 3900: 10.0}
+
+
+async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_stay_raw(tmp_path, archived_cache, monkeypatch):
+    from lib.ecowitt import history
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    day = datetime.now(eco.tz).date() - timedelta(days=2)
+    args = {"groups": "outdoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
+
+    async def chart():
+        token = CHART_REQUESTS.set([])
+        try:
+            out = json.loads(await eco.tools[1].handler(args))
+            return out, CHART_REQUESTS.get()[0]
+        finally:
+            CHART_REQUESTS.reset(token)
+    out, smooth = await chart()
+    monkeypatch.setattr(history, "SMOOTH_FIELDS", ())
+    _, raw = await chart()
+    a, b = smooth["series"][0], raw["series"][0]
+    assert "5-minute" in smooth["subtitle"] and a["x"] == b["x"] and a["y"] != b["y"]
+    assert max(a["y"]) <= max(b["y"]) + 1e-6 and min(a["y"]) >= min(b["y"]) - 1e-6         # smoothing never goes past the readings
+    assert a["records"] == b["records"] and a["records"]["high"][1] == float(out["series"]["outdoor.temperature"]["high"].split()[0])
+    await eco.close()
+
+
 async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
     from lib.ecowitt import history
     seen = []
