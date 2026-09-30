@@ -130,6 +130,23 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     await air.close()
 
 
+async def test_an_averaged_chart_tells_the_caption_which_peak_it_labels_and_a_raw_one_does_not(tmp_path):
+    air, _ = await make(tmp_path)
+    ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))
+    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
+    chart = air._chart(["pm2_5"], rows, "period")
+    line, entry = chart.panels[0].lines[0], {"high": 305.0}
+    air._chart_peak(entry, line)
+    assert entry["chart_peak"]["value"] == max(line.y) < 305.0 and entry["chart_peak"]["averaged_over"].endswith("averages")
+    short = air._chart(["pm2_5"], rows[:600], "period").panels[0].lines[0]          # 10 hours: the readings themselves
+    entry = {}
+    air._chart_peak(entry, short)
+    assert "chart_peak" not in entry
+    several = air._chart(["pm2_5", "co2"], [dict(r, co2=450.0) for r in rows], "period")
+    assert several.subtitle.endswith("labels: highest average")
+    await air.close()
+
+
 def await_days(air, days_ago):
     """Readings stored for the local day this many days ago (0 if none or not fetched)."""
     day = datetime.now(TZ).date() - timedelta(days=days_ago)

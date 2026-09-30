@@ -64,3 +64,4 @@ in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
 
 Air quality is four panels, top to bottom: the particles, CO2, VOC and NOx, each on its own scale (`AIR_PANELS` in `airgradient/metrics.py`). Charts render at 2560 px wide (Telegram keeps photos up to 2560 px on the long side).
 Air-quality lines get the shaded low-to-high range when the points go daily, in single charts only (not in multi-panel charts).
+On an averaged air chart the labelled peak is the highest average, so the tool result adds `chart_peak` (value, time, averaging) beside the true `high`; `AIR_CHART_HINT` has the caption quote `chart_peak` and mention `high` only as a brief spike well above it.

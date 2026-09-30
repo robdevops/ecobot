@@ -44,6 +44,12 @@ CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep i
               "per series with its high and low, or its average if that is what was asked (for weather, one line each for Outdoor and Indoor when both were "
               "fetched; for air quality, the peak). No other lists or breakdowns; don't mention or describe the chart.")
 
+AIR_CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line per "
+                  "metric with its peak. A metric with \"chart_peak\" is drawn as averages and the chart labels that peak, so "
+                  "quote chart_peak as the peak and name its averaging (\"averaged_over\"). Mention the record \"high\" only "
+                  "when it is at least 25% above chart_peak, in a few words, as a brief single-reading spike; never list both "
+                  "as two peaks. No other lists or breakdowns; don't mention or describe the chart.")
+
 AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
                       "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
                       "\"average\" field, and its low and high in brackets. Lead with the average: that is what was asked. "

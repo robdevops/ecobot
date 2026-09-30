@@ -21,11 +21,11 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from .. import intent
-from ..charts import CHART_HINT, wants_chart
+from ..charts import AIR_CHART_HINT, wants_chart
 from ..config import Config
 from ..lines import Plotted, build_line
 from ..specs import Chart, Line, Panel
-from ..timeutil import local_date, now_local, to_local
+from ..timeutil import WIDTH_NAMES, local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .metrics import AIR_PANELS, ALL_METRICS, CHART_UNITS, MARK_LOW, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
@@ -335,8 +335,23 @@ class AirGradient:
             chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"])
             if chart_spec:
                 turn.charts.append(chart_spec)
-                out["chart"] = CHART_HINT
+                out["chart"] = AIR_CHART_HINT
+                for panel in chart_spec.panels:
+                    for line in panel.lines:
+                        self._chart_peak(out.get(next(n for n, label in LABELS.items() if label == line.label)), line)
         return out
+
+    def _chart_peak(self, entry: dict | None, line: Line):
+        """On an averaged line the chart labels its highest average, not the highest reading: say which, so the caption can
+        quote what the chart shows."""
+        if entry is None or "high" not in line.records:
+            return
+        i = max(range(len(line.y)), key=line.y.__getitem__)
+        if line.y[i] == line.records["high"][1]:
+            return  # the readings themselves: the record is the peak drawn
+        width = line.x[1] - line.x[0]
+        entry["chart_peak"] = {"value": round(line.y[i], 1), "time": self._when(line.x[i]),
+                               "averaged_over": f"{WIDTH_NAMES.get(width, 'daily')} averages"}
 
     def _line(self, name: str, rows: list[dict]) -> tuple[Line, Plotted] | None:
         """One metric as a chart line, in its own units, and how it was drawn. The record high/low are the true readings.
@@ -380,4 +395,5 @@ class AirGradient:
         for panel in panels:                     # a range shaded behind several panels' lines looks blurry: single charts only
             for line in (*panel.lines, *panel.right):
                 line.low = line.high = None
-        return Chart("Air quality", f"{period}  ·  AirGradient readings", panels)
+        averaged = any(not plotted.raw for _, plotted in drawn.values())
+        return Chart("Air quality", f"{period}  ·  AirGradient readings" + ("  ·  labels: highest average" if averaged else ""), panels)
