@@ -935,10 +935,11 @@ def test_current_readings_get_a_hot_cold_wet_windy_emoji_from_their_values():
     assert glance("outdoor", "humidity", 90) == "💦" and glance("outdoor", "humidity", 20) == "🏜️" and glance("outdoor", "humidity", 55) == ""
     assert [glance("wind", "wind_speed", v) for v in (60, 35, 20, 5)] == ["🌪️", "💨", "🍃", ""]
     assert glance("rainfall", "rain_rate", 1.2) == "🌧️" and glance("rainfall", "rain_rate", 0) == ""
-    assert glance("rainfall", "daily", 3.0) == "☔" and glance("rainfall", "daily", 0) == "" and glance("pressure", "relative", 1010) == "🗜️" and glance("pressure", "absolute", 1000) == "🗜️"
-    assert glance("solar_and_uvi", "solar", 420.0) == "☀️" and glance("solar_and_uvi", "uvi", 6) == "😎"
-    assert glance("solar_and_uvi", "solar", 0) == "" and glance("solar_and_uvi", "uvi", 0) == ""        # none at night
-    assert glance("outdoor", "vpd", 0.88) == "🧽"
+    assert glance("rainfall", "daily", 3.0) == "☔" and glance("rainfall", "daily", 0) == ""
+    assert glance("solar_and_uvi", "solar", 700.0) == "☀️" and glance("solar_and_uvi", "solar", 400.0) == "" and glance("solar_and_uvi", "uvi", 6) == "😎"
+    assert glance("solar_and_uvi", "uvi", 3) == "" and glance("solar_and_uvi", "solar", 0.4) == ""            # only when the level is high
+    assert glance("outdoor", "vpd", 1.5) == "🧽" and glance("outdoor", "vpd", 0.85) == ""
+    assert glance("pressure", "relative", 1030) == "🗜️" and glance("pressure", "relative", 1020.9) == "" and glance("pressure", "absolute", 1030) == ""
 
 
 async def test_weather_now_carries_the_emoji_next_to_the_readings(tmp_path):
