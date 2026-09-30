@@ -754,6 +754,9 @@ def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is
     assert int(fell["share_of_rain"].rstrip("%")) > 60 and fell_correlation < -0.2
     assert out["rain_events"]["count"] >= 8 and out["rain_events"]["started_after_a_fall"] >= 8
     assert out["average_level"]["during_rain"] < out["average_level"]["dry"]
+    assert float(fell["rain_vs_fair_share"].rstrip("x")) > 1.5                # the ratio the answer leads with
+    assert any("lower level" in f or "during rain vs" in f for f in out["findings"]) and \
+        any("began after a fall" in f for f in out["findings"]) and any("fair share" in f for f in out["findings"])
     driver, daily = synthetic_days(False)                      # rain in the recovery: pressure is rising when it falls
     out = analyse(driver, rain_slots(daily), 1.0, TZ)
     assert (int(out["by_change_before"]["rising"]["share_of_rain"].rstrip("%")) >

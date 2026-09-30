@@ -70,7 +70,29 @@ def change_before(driver: dict[int, float], t: int) -> float | None:
     return None if then is None or now is None else now - then
 
 
-def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, tz: tzinfo) -> dict:
+def _summary(table: dict, level: dict, events: int, fell: int, rose: int, unit: str) -> list[str]:
+    """The findings in words, decided here so the answer can't lean on the correlation alone (it is weak by
+    construction: most slots are dry, and rain after a fall and after a rise cancel in a signed correlation)."""
+    out = []
+    parts = [f"{n} {g['rain_vs_fair_share']} ({g['share_of_rain']} of the rain in {g['share_of_time']} of the time)"
+             for n, g in table.items() if g["rain_vs_fair_share"]]
+    if parts:
+        out.append("Rain against its fair share of time, by the reading's change in the previous 3 hours (1.0x = no "
+                   "difference): " + "; ".join(parts))
+    moving = sum(float(table[n]["rain_mm"]) for n in ("falling", "rising"))
+    every = sum(float(g["rain_mm"]) for g in table.values())
+    if every:
+        out.append(f"{100 * moving / every:.0f}% of the rain fell while the reading was moving either way, "
+                   f"{100 - 100 * moving / every:.0f}% while it was steady")
+    if level["during_rain"] is not None and level["dry"] is not None:
+        out.append(f"Average level {level['during_rain']:g} {unit} during rain vs {level['dry']:g} when dry "
+                   f"({level['during_rain'] - level['dry']:+.1f})")
+    if events:
+        out.append(f"{fell} of {events} rain events (1 mm or more) began after a fall and {rose} after a rise")
+    return out
+
+
+def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, tz: tzinfo, unit: str = "") -> dict:
     """The numbers for the answer. `driver` and `rain` are {epoch: value} at 30-minute slots."""
     slots = sorted(t for t in rain if t in driver)
     if not slots:
@@ -85,8 +107,11 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
     table = {}
     for name, ts in groups.items():
         mm = sum(rain[t] for t in ts)
-        table[name] = {"slots": len(ts), "share_of_time": f"{100 * len(ts) / max(sum(map(len, groups.values())), 1):.0f}%",
-                       "rain_mm": round(mm, 1), "share_of_rain": f"{100 * mm / total:.0f}%" if total else "0%",
+        time_share = len(ts) / max(sum(map(len, groups.values())), 1)
+        rain_share = mm / total if total else 0.0
+        table[name] = {"slots": len(ts), "share_of_time": f"{100 * time_share:.0f}%",
+                       "rain_mm": round(mm, 1), "share_of_rain": f"{100 * rain_share:.0f}%",
+                       "rain_vs_fair_share": f"{rain_share / time_share:.1f}x" if time_share else None,
                        "wet_share": f"{100 * sum(1 for t in ts if rain[t] > 0) / max(len(ts), 1):.0f}%"}
     dry = [t for t in slots if rain[t] <= 0]
     level = {"during_rain": round(float(np.mean([driver[t] for t in wet])), 1) if wet else None,
@@ -114,9 +139,10 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                            "lowest": min(driver[t] for t in s if t in driver)})
     fell = sum(1 for e in events if e["change"] is not None and e["change"] <= -threshold)
     rose = sum(1 for e in events if e["change"] is not None and e["change"] >= threshold)
+    summary = _summary(table, level, len(events), fell, rose, unit)
     clock = lambda ts: (lambda dt: f"{dt:%a} {dt.day} {dt:%b} {dt.strftime('%-I:%M%p').lower()}")(to_local(ts, tz))
     top = sorted(events, key=lambda e: -e["mm"])[:5]
-    return {"slots": len(slots), "rain_mm": round(total, 1), "wet_slots": len(wet), "by_change_before": table,
+    return {"slots": len(slots), "rain_mm": round(total, 1), "wet_slots": len(wet), "findings": summary, "by_change_before": table,
             "average_level": level, "correlation_change_vs_rain_next_3h": r,
             "rain_events": {"count": len(events), "started_after_a_fall": fell, "started_after_a_rise": rose,
                             "biggest": [{"start": clock(e["start"]), "mm": e["mm"], "hours": round((e["end"] - e["start"]) / 3600 + 0.5, 1),
@@ -193,10 +219,11 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
            "resolution": "30-minute readings (not averaged to days)",
            "how_to_read": ("by_change_before groups each 30-minute slot by how the reading had changed over the previous 3 "
                            f"hours: falling = down {threshold:g} {unit} or more, rising = up {threshold:g} or more. share_of_rain "
-                           "is the share of all the rain that fell in that group; compare it with share_of_time. "
-                           "correlation is between that 3-hour change and the rain in the next 3 hours: near 0 = "
-                           "no link, negative = falling reading goes with rain.")}
-    result = analyse(driver, rain, threshold, tz)
+                           "is the share of all the rain that fell in that group and rain_vs_fair_share compares it with share_of_time. "
+                           "Lead with `findings`. The correlation (3-hour change against the next 3 hours' rain) is weak by "
+                           "construction, so a small value is NOT evidence of no link: say 'no link' only if findings show it "
+                           "too (every group near 1.0x, no lower level in rain).")}
+    result = analyse(driver, rain, threshold, tz, unit)
     log.info("Link %s to %s (%s): %d %s readings, %d rain readings, %d slots in common", first, last, name, len(driver),
              field, len(daily), len(set(rain) & set(driver)))
     if not result:
