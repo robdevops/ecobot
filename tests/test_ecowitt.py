@@ -519,12 +519,12 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
         finally:
             CHART_REQUESTS.reset(token)
     assert (await chart_of())["title"] == "Temperature"                       # the default
-    assert (await chart_of(chart_field="wind_gust", groups="wind"))["title"] == "Wind gust"
+    assert (await chart_of(chart_field="wind_gust", groups="wind"))["title"] == "Wind"
     assert (await chart_of(chart_field="Nonsense"))["title"] == "Temperature"  # unknown: fall back, never fail
     from lib.charts import CHART_FIELD
     token = CHART_FIELD.set("wind_gust")                                       # from the person's words: beats the model's choice
     try:
-        assert (await chart_of(groups="outdoor,wind", chart_field="temperature"))["title"] == "Wind gust"
+        assert (await chart_of(groups="outdoor,wind", chart_field="temperature"))["title"] == "Wind"
     finally:
         CHART_FIELD.reset(token)
     await eco.close()
@@ -578,6 +578,30 @@ async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year
     days_seen = {datetime.fromtimestamp(t, eco.tz).date() for t in line["x"]}
     assert len(days_seen) == len(line["x"])                      # never two points for one day
     assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
+    await eco.close()
+
+
+async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_path, archived_cache):
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+
+    async def wind_chart(days, **extra):
+        token = CHART_REQUESTS.set([])
+        try:
+            await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind_gust",
+                                        "start_date": f"{today - timedelta(days=days)} 00:00:00",
+                                        "end_date": f"{today - timedelta(days=1)} 23:59:59", **extra})
+            return CHART_REQUESTS.get()[0]
+        finally:
+            CHART_REQUESTS.reset(token)
+    raw = await wind_chart(4)                                       # readings themselves: the band is speed up to gust
+    line = raw["series"][0]
+    assert raw["title"] == "Wind" and line["label"] == "Wind" and "shaded up to the gusts" in raw["subtitle"]
+    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
+    assert any(hi > y + 0.5 for y, hi in zip(line["y"], line["high"])) and set(line["records"]) == {"high"}   # gusts above the speed
+    season = (await wind_chart(90))["series"][0]                    # daily: the day's lull to its peak gust
+    assert len(season["low"]) == len(season["high"]) == len(season["y"]) and all(lo <= y <= hi for lo, y, hi in zip(season["low"], season["y"], season["high"]))
+    assert max(season["high"]) >= max(line["high"]) * 0.9
     await eco.close()
 
 
@@ -914,7 +938,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
         out, specs = await ask_chart()
     finally:
         CHART_STACK.reset(token)
-    assert [p["label"] for p in specs[0]["panels"]] == ["Rain", "Wind gust"]
+    assert [p["label"] for p in specs[0]["panels"]] == ["Rain", "Wind"]
     out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
     assert specs[0]["kind"] == "line"
     await eco.close()

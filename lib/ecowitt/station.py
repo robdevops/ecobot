@@ -59,7 +59,8 @@ HISTORY_PARAMS = {
         "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
                                                       "period's average (and per day or month). Highs and lows are the default."},
         "chart_field": {"type": "string", "description": "What the chart should plot when the question is about something other "
-                                                         "than temperature: the field name, e.g. 'humidity', 'pressure' or 'wind_gust'. "
+                                                         "than temperature: the field name, e.g. 'humidity', 'pressure' or 'wind_gust' "
+                                                         "(a wind chart shows the average speed shaded up to the gusts). "
                                                          "Omit for temperature."},
         "chart": {"type": "boolean", "description": "Set true to send a chart with the answer: for trends over several "
                                                     "days or longer, or when a graph/chart is asked for."},

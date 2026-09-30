@@ -220,6 +220,8 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
             if want in records:  # the true record, at its actual time (may sit off an averaged line)
                 rx, ry = mdates.date2num(to_dt(records[want][0])), float(records[want][1])
                 rx = min(max(rx, x0), x1)
+            elif records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
+                continue
             else:
                 idx = int(ys.argmax() if above else ys.argmin())
                 rx, ry = xs[idx], ys[idx]
