@@ -944,3 +944,18 @@ async def test_weather_now_carries_the_emoji_next_to_the_readings(tmp_path):
     out = json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
     assert out["emoji"] == {"outdoor.temperature": "🧥"}                       # the fake station reports 12.3 degrees
     await eco.close()
+
+
+async def test_rain_on_its_own_is_drawn_as_daily_columns_not_as_the_running_counter(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    turn = Turn()
+    out = json.loads(await eco.tools[1].handler({"groups": "rainfall", "chart": True,
+                                                 "start_date": f"{today - timedelta(days=9)} 00:00:00",
+                                                 "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn))
+    (chart,) = turn.charts
+    assert chart.title == "Rain" and chart.panels[0].bars and not chart.panels[0].lines and "rain per" in chart.subtitle
+    assert "rain_total_mm" in out
+    await eco.close()

@@ -92,7 +92,7 @@ class HistoryQuery:
         self.detailed = self.held or self.span <= timedelta(days=DETAILED_DAYS)
 
         await self._fetch_period()
-        if "rain" in stack_names(self.args, self.turn):
+        if "rain" in stack_names(self.args, self.turn) or "rainfall.daily" in self.store:   # rain alone is drawn as bars too
             self.rain_bars = await self._rain_bars()
         await self._summarise_direction()
         if not self.store and not self.direction:
@@ -312,7 +312,11 @@ class HistoryQuery:
             spec = self._chart_spec(plottable) if plottable else None
             if spec:
                 holder.append(spec)
-                out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
+                if spec.panels[0].bars:
+                    out["rain_total_mm"] = round(sum(self.rain_bars.y), 1)
+                    out["chart"] = STACK_CHART_HINT
+                else:
+                    out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
         if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
             wind = spec if spec and spec.title == "Wind" else self._chart_spec(plottable, "wind_gust")
             if wind:
@@ -354,6 +358,9 @@ class HistoryQuery:
         if not keys:  # nothing to match: the wind chart when wind direction was counted, else the first field
             field = "wind_gust" if self.compass and any(k.endswith(".wind_gust") for k in series_out) else next(iter(series_out)).split(".", 1)[-1]
             keys = [k for k in series_out if k.endswith("." + field)]
+        if keys[0] == "rainfall.daily" and self.rain_bars.x:  # the day's counter is a running total: draw what fell, as columns
+            return Chart("Rain", f"{period_text(self.start.date(), self.end.date())}  ·  rain per {self.rain_bars.per}",
+                         [Panel("Rain", "mm", bars=self.rain_bars)])
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
         lines, resolution, ranged = [], None, False
