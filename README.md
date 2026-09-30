@@ -1,4 +1,4 @@
-# envirobot
+# ecobot
 
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
@@ -9,9 +9,9 @@ and unhealthy air (with when it is safe again). `/alerts off` mutes a chat.
 
 ```
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python envirobot.py          # with the variables below in the environment
+.venv/bin/python ecobot.py          # with the variables below in the environment
 ```
-Under systemd see `envirobot.service` (it loads the environment file).
+Under systemd see `ecobot.service` (it loads the environment file).
 
 | Variable | Purpose |
 |---|---|
@@ -25,7 +25,7 @@ Under systemd see `envirobot.service` (it loads the environment file).
 ## Layout
 
 ```
-envirobot.py            wiring and lifecycle
+ecobot.py            wiring and lifecycle
 lib/config.py           settings
 lib/bot.py              Telegram handlers and replies
 lib/llm.py, prompt.py   tool-calling loop; system prompt

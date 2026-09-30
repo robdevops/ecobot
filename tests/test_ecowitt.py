@@ -1063,3 +1063,15 @@ async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):
                                     "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Relative"), said
     await eco.close()
+
+
+async def test_keep_warm_fetches_every_resolution_for_every_group(tmp_path):
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    fake.calls.clear()
+    await eco.warm(fresh=True)
+    asked = {(c["cycle_type"], c["call_back"]) for c in fake.calls if c["path"] == "history"}
+    assert {cycle for cycle, _ in asked} == {"5min", "30min", "4hour", "1day"}
+    assert {groups for _, groups in asked} == {",".join(ecowitt_api.GROUPS)}         # all metrics, every time
+    await eco.close()

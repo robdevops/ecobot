@@ -27,7 +27,7 @@ from lib.warm import REFRESH_SECONDS, every, safely
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
-log = logging.getLogger("envirobot")
+log = logging.getLogger("ecobot")
 
 
 async def start_sources(cfg: Config) -> list:
@@ -53,7 +53,7 @@ def version() -> str:
 
 
 async def main():
-    log.info("Starting envirobot %s", version())
+    log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
     sources = await start_sources(cfg)
     if not sources:

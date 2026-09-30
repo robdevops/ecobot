@@ -17,7 +17,7 @@ from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
-from .fetch import Fetcher
+from .fetch import Fetcher, spans
 from ..series import WEATHER
 from .query import STACK, HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
@@ -187,13 +187,20 @@ class Ecowitt:
 
     # ---------- keeping warm ----------
     async def warm(self, fresh: bool = True) -> str:
-        """The last 7 days at 30 minutes (only the unsettled tail goes to Ecowitt) and today at 5 minutes."""
+        """Every resolution's newest readings for every group: the last 7 days at 30 minutes, yesterday and today at
+        5 minutes, the last 3 days at 4 hours and daily (only the unsettled tails go to Ecowitt; the archive keeps the
+        settled history)."""
         now = self.now()
         today = datetime.combine(now.date(), datetime.min.time())
-        f30, f5 = self.fetcher(self.groups), self.fetcher(self.groups)
-        await asyncio.gather(f30.get("30min", today - timedelta(days=6), now, refresh=fresh, load=False),
-                             f5.get("5min", today, now, refresh=fresh, load=False))
-        return f"Ecowitt {f30.calls + f5.calls} req"
+        windows = {"30min": today - timedelta(days=6), "5min": today - timedelta(days=1),
+                   "4hour": today - timedelta(days=3), "1day": today - timedelta(days=3)}
+        fetchers = {cycle: self.fetcher(self.groups) for cycle in windows}
+
+        async def one(cycle: str):
+            for start, end in spans(cycle, windows[cycle], now):   # each piece fits Ecowitt's per-request limit
+                await fetchers[cycle].get(cycle, start, end, refresh=fresh, load=False)
+        await asyncio.gather(*(one(cycle) for cycle in windows))
+        return f"Ecowitt {sum(f.calls for f in fetchers.values())} req"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Weather data is used by nearly all."""

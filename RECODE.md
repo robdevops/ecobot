@@ -15,7 +15,7 @@
    203 lib/ecowitt/station.py
    200 lib/prompt.py
    190 lib/ecowitt/days.py
-   160 envirobot.py
+   160 ecobot.py
    137 lib/ecowitt/archive.py
    121 lib/llm.py
    113 lib/timeutil.py
