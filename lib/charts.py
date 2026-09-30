@@ -69,8 +69,8 @@ COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            "VOC index": "#D97706", "NOx index": "#DB2777"}
 # One hue per weather reading, outdoors; the same reading indoors is that hue lightened.
 READING_COLOURS = {
-    "temperature": "#F2545B",   # coral red
-    "feels_like": "#E5408F",    # raspberry
+    "temperature": "#E5383B",   # crimson
+    "feels_like": "#FF8C42",    # tangerine (beside the crimson, as blue sits beside violet)
     "solar": "#F5B83D",         # golden
     "uv": "#8B5CF6",            # violet
     "pressure": "#C04CE8",      # orchid
@@ -81,8 +81,8 @@ READING_COLOURS = {
     "wind": "#64748B",          # slate grey
 }
 # The same reading indoors, in its complementary hue (opposite on the colour wheel, as a painter pairs them): red with
-# peacock teal, blue with amber, teal with apricot, raspberry with green.
-INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#F5A524", "dew_point": "#F28C3C", "feels_like": "#2FB872"}
+# peacock teal, blue with amber, teal with apricot, tangerine with azure.
+INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#F5A524", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
