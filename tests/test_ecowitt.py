@@ -757,6 +757,8 @@ def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is
     assert float(fell["rain_vs_fair_share"].rstrip("x")) > 1.5                # the ratio the answer leads with
     assert any("lower level" in f or "during rain vs" in f for f in out["findings"]) and \
         any("began after a fall" in f for f in out["findings"]) and any("fair share" in f for f in out["findings"])
+    assert any(f.startswith("Moving either way") and "x; steady:" in f for f in out["findings"])
+    assert any("the biggest was" in f for f in out["findings"]) and "raining in" in out["findings"][0]
     driver, daily = synthetic_days(False)                      # rain in the recovery: pressure is rising when it falls
     out = analyse(driver, rain_slots(daily), 1.0, TZ)
     assert (int(out["by_change_before"]["rising"]["share_of_rain"].rstrip("%")) >

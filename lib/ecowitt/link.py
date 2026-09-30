@@ -70,25 +70,35 @@ def change_before(driver: dict[int, float], t: int) -> float | None:
     return None if then is None or now is None else now - then
 
 
-def _summary(table: dict, level: dict, events: int, fell: int, rose: int, unit: str) -> list[str]:
+def _summary(table: dict, level: dict, events: list[dict], threshold: float, unit: str, clock) -> list[str]:
     """The findings in words, decided here so the answer can't lean on the correlation alone (it is weak by
     construction: most slots are dry, and rain after a fall and after a rise cancel in a signed correlation)."""
     out = []
-    parts = [f"{n} {g['rain_vs_fair_share']} ({g['share_of_rain']} of the rain in {g['share_of_time']} of the time)"
-             for n, g in table.items() if g["rain_vs_fair_share"]]
+    parts = [f"{n} {g['rain_vs_fair_share']} ({g['share_of_rain']} of the rain in {g['share_of_time']} of the time, "
+             f"raining in {g['wet_share']} of its half-hours)" for n, g in table.items() if g["rain_vs_fair_share"]]
     if parts:
         out.append("Rain against its fair share of time, by the reading's change in the previous 3 hours (1.0x = no "
                    "difference): " + "; ".join(parts))
-    moving = sum(float(table[n]["rain_mm"]) for n in ("falling", "rising"))
-    every = sum(float(g["rain_mm"]) for g in table.values())
-    if every:
-        out.append(f"{100 * moving / every:.0f}% of the rain fell while the reading was moving either way, "
-                   f"{100 - 100 * moving / every:.0f}% while it was steady")
+    slots = sum(g["slots"] for g in table.values())
+    rain = sum(g["rain_mm"] for g in table.values())
+    if slots and rain:
+        move_slots = table["falling"]["slots"] + table["rising"]["slots"]
+        move_rain = table["falling"]["rain_mm"] + table["rising"]["rain_mm"]
+        steady = table["steady"]
+        out.append(f"Moving either way (a change of {threshold:g} {unit} or more): {100 * move_rain / rain:.0f}% of the rain "
+                   f"in {100 * move_slots / slots:.0f}% of the time"
+                   + (f" = {(move_rain / rain) / (move_slots / slots):.1f}x" if move_slots else "")
+                   + f"; steady: {steady['rain_vs_fair_share'] or 'n/a'}")
     if level["during_rain"] is not None and level["dry"] is not None:
         out.append(f"Average level {level['during_rain']:g} {unit} during rain vs {level['dry']:g} when dry "
                    f"({level['during_rain'] - level['dry']:+.1f})")
     if events:
-        out.append(f"{fell} of {events} rain events (1 mm or more) began after a fall and {rose} after a rise")
+        fell = sum(1 for e in events if e["change"] is not None and e["change"] <= -threshold)
+        rose = sum(1 for e in events if e["change"] is not None and e["change"] >= threshold)
+        big = max(events, key=lambda e: e["mm"])
+        before = "" if big["change"] is None else f", after a change of {big['change']:+.1f} {unit}"
+        out.append(f"{fell} of {len(events)} rain events (1 mm or more) began after a fall and {rose} after a rise; "
+                   f"the biggest was {big['mm']:g} mm from {clock(big['start'])}{before}")
     return out
 
 
@@ -139,8 +149,8 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                            "lowest": min(driver[t] for t in s if t in driver)})
     fell = sum(1 for e in events if e["change"] is not None and e["change"] <= -threshold)
     rose = sum(1 for e in events if e["change"] is not None and e["change"] >= threshold)
-    summary = _summary(table, level, len(events), fell, rose, unit)
     clock = lambda ts: (lambda dt: f"{dt:%a} {dt.day} {dt:%b} {dt.strftime('%-I:%M%p').lower()}")(to_local(ts, tz))
+    summary = _summary(table, level, events, threshold, unit, clock)
     top = sorted(events, key=lambda e: -e["mm"])[:5]
     return {"slots": len(slots), "rain_mm": round(total, 1), "wet_slots": len(wet), "findings": summary, "by_change_before": table,
             "average_level": level, "correlation_change_vs_rain_next_3h": r,
