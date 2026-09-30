@@ -116,7 +116,8 @@ def within_day(weather: np.ndarray, air: np.ndarray, permutations: np.ndarray) -
     return float(observed[best]), best, (1 + int((shuffled >= abs(observed[best])).sum())) / (len(order) + 1)
 
 
-def day_to_day(weather: np.ndarray, air: np.ndarray, rng: np.random.Generator) -> tuple[float | None, int, float | None]:
+def day_to_day(weather: np.ndarray, air: np.ndarray, rng: np.random.Generator,
+               shuffles: int = DAILY_PERMUTATIONS) -> tuple[float | None, int, float | None]:
     """(correlation of the daily means, days used, p by shuffling days), or (None, days, None) with too few days."""
     def daily(a):
         counts = (~np.isnan(a)).reshape(-1, PER_DAY).sum(axis=1)
@@ -134,8 +135,8 @@ def day_to_day(weather: np.ndarray, air: np.ndarray, rng: np.random.Generator) -
         return None, int(both.sum()), None
     corr = lambda xs: xs @ y / (np.sqrt((xs * xs).sum(axis=-1)) * np.sqrt((y * y).sum()) + 1e-12)
     observed = float(corr(x))
-    shuffled = np.abs(corr(x[np.array([rng.permutation(len(x)) for _ in range(DAILY_PERMUTATIONS)])]))
-    return observed, int(both.sum()), (1 + int((shuffled >= abs(observed)).sum())) / (DAILY_PERMUTATIONS + 1)
+    shuffled = np.abs(corr(x[np.array([rng.permutation(len(x)) for _ in range(shuffles)])]))
+    return observed, int(both.sum()), (1 + int((shuffled >= abs(observed)).sum())) / (shuffles + 1)
 
 
 def direction_effect(air: np.ndarray, direction: np.ndarray, speed: np.ndarray, permutations: np.ndarray) -> dict | None:
@@ -165,7 +166,7 @@ def direction_effect(air: np.ndarray, direction: np.ndarray, speed: np.ndarray, 
 
 
 def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]], direction: dict[int, float] | None,
-         speed: dict[int, float] | None, origin: int, days: int, seed: int = 1) -> dict:
+         speed: dict[int, float] | None, origin: int, days: int, seed: int = 1, shuffles: int = PERMUTATIONS) -> dict:
     """The whole scan. `air` and `weather` map a name to {epoch: value} at 30-minute slots; `origin` is the epoch of the
     first slot and `days` the number of days. Returns {"tests": [...], "directions": [...], "note"?: ...} where each test
     is {air, weather, r, lag_hours, r_daily, days, p, survives}."""
@@ -175,12 +176,12 @@ def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]],
     if overlap < MIN_DAYS:
         return {"tests": [], "directions": [], "note": f"Only {overlap} days have enough air-quality readings; at least {MIN_DAYS} are needed."}
     rng = np.random.default_rng(seed)
-    permutations = np.array([rng.permutation(days) for _ in range(PERMUTATIONS)])
+    permutations = np.array([rng.permutation(days) for _ in range(shuffles)])
     tests = []
     for a_name, a in grids.items():
         for w_name, w in wgrids.items():
             inside = within_day(w, a, permutations)
-            r_daily, n_days, p_daily = day_to_day(w, a, rng)
+            r_daily, n_days, p_daily = day_to_day(w, a, rng, DAILY_PERMUTATIONS * shuffles // PERMUTATIONS)
             if inside is None and p_daily is None:
                 continue
             r, lag, p = inside or (None, 0, 1.0)

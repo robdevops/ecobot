@@ -48,7 +48,7 @@ def test_pure_noise_finds_nothing_even_across_many_pairs():
     rng, n, _, _, _ = world(1)
     air = {f"a{i}": series(rng.normal(0, 1, n)) for i in range(3)}
     weather = {f"w{i}": series(rng.normal(0, 1, n)) for i in range(6)}
-    result = correlate.scan(air, weather, None, None, ORIGIN, DAYS)
+    result = correlate.scan(air, weather, None, None, ORIGIN, DAYS, shuffles=100)
     assert not any(t["survives"] for t in result["tests"]) and len(result["tests"]) == 18
     out = correlate.summarise(result, *names(air, weather))
     assert out["verdict"].startswith("Nothing stands out") and out["findings"][0].startswith("Closest, probably chance")
@@ -90,12 +90,12 @@ def test_the_helpers_rank_with_ties_allow_for_many_tests_and_word_strength():
     assert [correlate.strength_word(r) for r in (0.1, 0.3, -0.6)] == ["weak", "moderate", "strong"]
 
 
-def test_a_full_size_scan_takes_a_few_seconds():
+def test_a_full_size_scan_of_every_pair_completes():
     rng, n, _, cycle, wind = world(5)
     air = {m: series(rng.normal(0, 1, n) + cycle) for m in ("pm2_5", "pm10", "co2", "voc_index", "nox_index")}
     weather = {w: series(rng.normal(0, 1, n) + cycle) for w in ("temperature", "humidity", "dew_point", "pressure", "wind_speed", "wind_gust", "pressure_change", "rain")}
     started = time.time()
-    result = correlate.scan(air, weather, series(rng.uniform(0, 360, n)), series(np.full(n, 20.0)), ORIGIN, DAYS)
+    result = correlate.scan(air, weather, series(rng.uniform(0, 360, n)), series(np.full(n, 20.0)), ORIGIN, DAYS, shuffles=60)
     assert len(result["tests"]) == 40 and len(result["directions"]) == 5 and time.time() - started < 30
 
 

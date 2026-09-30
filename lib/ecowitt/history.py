@@ -606,8 +606,9 @@ class HistoryQuery:
         cycle, line, band = self._line(pts, keep_band=windy)
         smooth = cycle == "5min" and k in SMOOTH_SERIES  # only the drawn line: records and figures use the raw readings
         if smooth:
-            newest = max(line)
-            line = {**rolling_mean(line, CYCLE_SECONDS[cycle] * SMOOTH_POINTS // 2), newest: line[newest]}  # the end dot is the latest reading
+            raw, line = line, rolling_mean(line, CYCLE_SECONDS[cycle] * SMOOTH_POINTS // 2)  # finite readings only
+            if line:
+                line[max(line)] = raw[max(line)]  # the end dot is the latest reading
         xs = sorted(line)
         if len(xs) < 2:
             return None
