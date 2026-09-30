@@ -252,44 +252,13 @@ class HistoryQuery:
         return refined
 
     def _answer(self, refined: int) -> str:
-        tz, f = self.tz, self.f
+        f = self.f
         wanted = self.args.get("include_derived") or []
         wanted = {wanted} if isinstance(wanted, str) else set(wanted)
         if "app_temp" in wanted:
             wanted.add("app_tempin")  # indoor's name for apparent temperature
-        series_out = {}
-        for key, ext in self.overall.items():
-            name = key.split(".", 1)[-1]
-            if name in DERIVED and name not in wanted:
-                continue  # still fetched and cached; just not sent unless asked for
-            entry = {"unit": self.store[key]["unit"]}
-            for want in ("low", "high"):
-                e = ext[want]
-                entry[want] = e.raw
-                entry[f"{want}_time"], entry[f"{want}_when"], entry[f"{want}_date"] = describe_time(e.ts, e.cycle, tz)
-                if not e.exact:
-                    entry[f"{want}_note"] = "from averaged data; the real value may be more extreme"
-            if self.span <= timedelta(days=31):
-                days: dict = {}
-                for ts, rec in self.store[key]["pts"].items():
-                    if rec["cycle"] != "1day":  # sub-daily points give correct local days
-                        fold(days.setdefault(local_date(ts, self.tz), {}), ts, rec)
-                entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)}
-            else:
-                entry["monthly"] = {}
-                for month, d in self.monthly.get(key, {}).items():
-                    if self.detailed:  # each month's low/high with when and date
-                        entry["monthly"][month] = {}
-                        for want, e in d.items():
-                            entry["monthly"][month][want] = e.raw
-                            _, entry["monthly"][month][f"{want}_when"], entry["monthly"][month][f"{want}_date"] = \
-                                describe_time(e.ts, e.cycle, tz)
-                    else:  # long periods: values only, to keep the result small
-                        entry["monthly"][month] = {w: e.raw for w, e in d.items()}
-            if (self.args.get("average") or self.turn.average_asked) and not key.startswith("rainfall"):  # a rain total has no mean
-                self._add_averages(entry, self._daily_means(self.store[key]["pts"]))
-            series_out[key] = entry
-
+        series_out = {key: self._result(key, ext) for key, ext in self.overall.items()
+                      if key.split(".", 1)[-1] not in DERIVED or key.split(".", 1)[-1] in wanted}  # the rest: cached, not sent
         series_out.update(self.direction)
         log.info("%s to %s: %d ranges, %d cached, %d in mem, %d req%s, %d series, %d refined",
                  f"{self.start:%Y-%m-%d}", f"{self.end:%m-%d %H:%M}", f.ranges, f.from_cache, f.from_memory, f.calls,
@@ -298,31 +267,61 @@ class HistoryQuery:
         if self.monthly and not self.detailed:
             out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
-        holder = self.turn.charts
-        plottable = {k: v for k, v in series_out.items() if k in self.store}
         if wants_chart(self.args, self.turn, self.start, self.end):
-            spec = self._stack_spec(names) if (names := stack_names(self.args, self.turn)) else None
-            if spec:
-                out["rain_total_mm"] = round(sum(self.rain_bars["y"]), 1) if self.rain_bars["x"] else None
-                holder.append(spec)
-                out["chart"] = STACK_CHART_HINT
-            else:
-                spec = self._chart_spec(plottable) if plottable else None
-                if spec:
-                    holder.append(spec)
-                    out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
-            if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
-                wind = spec if spec and spec["title"] == "Wind" else self._chart_spec(plottable, "wind_gust")
-                if wind:
-                    wind.update(self.compass, subtitle=wind["subtitle"] + "  ·  compass: wind direction")
-                    if wind is not spec:
-                        holder.append(wind)
-                    out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
-                                    if spec and wind is not spec else DIRECTION_CHART_HINT)
+            self._add_charts(out, {k: v for k, v in series_out.items() if k in self.store})
         if f.errors:
             out["missing"] = f.errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+    def _result(self, key: str, ext: dict) -> dict:
+        """One series as the model sees it: its records with when they happened, and a daily or monthly breakdown."""
+        tz = self.tz
+        entry = {"unit": self.store[key]["unit"]}
+        for want in ("low", "high"):
+            e = ext[want]
+            entry[want] = e.raw
+            entry[f"{want}_time"], entry[f"{want}_when"], entry[f"{want}_date"] = describe_time(e.ts, e.cycle, tz)
+            if not e.exact:
+                entry[f"{want}_note"] = "from averaged data; the real value may be more extreme"
+        if self.span <= timedelta(days=31):
+            days: dict = {}
+            for ts, rec in self.store[key]["pts"].items():
+                if rec["cycle"] != "1day":  # sub-daily points give correct local days
+                    fold(days.setdefault(local_date(ts, tz), {}), ts, rec)
+            entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)}
+        else:
+            entry["monthly"] = {}
+            for month, d in self.monthly.get(key, {}).items():
+                row = entry["monthly"][month] = {w: e.raw for w, e in d.items()}  # long periods: values only, to keep it small
+                if self.detailed:  # each month's low/high with when and date
+                    for w, e in d.items():
+                        _, row[f"{w}_when"], row[f"{w}_date"] = describe_time(e.ts, e.cycle, tz)
+        if (self.args.get("average") or self.turn.average_asked) and not key.startswith("rainfall"):  # a rain total has no mean
+            self._add_averages(entry, self._daily_means(self.store[key]["pts"]))
+        return entry
+
+    def _add_charts(self, out: dict, plottable: dict):
+        """The chart for this answer: the readings side by side, else one line per group; a compass goes beside the wind."""
+        holder = self.turn.charts
+        spec = self._stack_spec(names) if (names := stack_names(self.args, self.turn)) else None
+        if spec:
+            out["rain_total_mm"] = round(sum(self.rain_bars["y"]), 1) if self.rain_bars["x"] else None
+            holder.append(spec)
+            out["chart"] = STACK_CHART_HINT
+        else:
+            spec = self._chart_spec(plottable) if plottable else None
+            if spec:
+                holder.append(spec)
+                out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
+        if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
+            wind = spec if spec and spec["title"] == "Wind" else self._chart_spec(plottable, "wind_gust")
+            if wind:
+                wind.update(self.compass, subtitle=wind["subtitle"] + "  ·  compass: wind direction")
+                if wind is not spec:
+                    holder.append(wind)
+                out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
+                                if spec and wind is not spec else DIRECTION_CHART_HINT)
 
     def _daily_means(self, pts: dict) -> dict:
         """{local date: mean of that day's readings}: from 5- or 30-minute readings where held, else the daily bucket."""
