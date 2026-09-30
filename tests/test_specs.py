@@ -103,7 +103,7 @@ def test_a_taller_chart_for_more_panels():
     assert sizes[0] == sizes[1] == (1280, 720) and sizes[2][1] > 720 and sizes[3][1] > sizes[2][1]
 
 
-def test_air_metrics_are_grouped_into_three_panels_with_a_second_axis_for_the_other_unit():
+def test_air_metrics_are_grouped_into_two_panels_with_nox_on_a_right_hand_axis():
     class Air:
         tz = TZ
         _line = AirGradient._line
@@ -111,15 +111,16 @@ def test_air_metrics_are_grouped_into_three_panels_with_a_second_axis_for_the_ot
 
     rows = [{"ts": TS[0] + i * 300, "co2": 500.0 + i % 9, "voc_index": 100.0 + i % 7, "pm1": 2.0, "pm2_5": 5.0 + i % 3, "pm10": 9.0,
              "nox_index": 1.0 + i % 4} for i in range(60)]
-    everything = [m for group in AIR_PANELS for m in group]
+    everything = [m for on_left, on_right in AIR_PANELS for m in (*on_left, *on_right)]
     chart = Air()._chart(everything, rows, "period")
-    assert [p.label for p in chart.panels] == ["CO₂ (ppm) and VOC index", "PM1, PM2.5 and PM10", "NOx index"]
-    co2, particles, nox = chart.panels
-    assert [s.label for s in co2.lines] == ["CO₂"] and [s.label for s in co2.right] == ["VOC index"] and co2.zones is None
+    assert [p.label for p in chart.panels] == ["CO₂ (ppm), VOC index and NOx index", "PM1, PM2.5 and PM10"]
+    gases, particles = chart.panels
+    assert [s.label for s in gases.lines] == ["CO₂", "VOC index"] and [s.label for s in gases.right] == ["NOx index"] and gases.zones is None
     assert [s.label for s in particles.lines] == ["PM1", "PM2.5", "PM10"] and particles.unit == "µg/m³" and particles.zones is None
-    assert nox.zones == (20.0, 150.0)                                                # a single reading keeps its rating zones
     assert render(chart, TZ)[:4] == b"\x89PNG"
     only = Air()._chart(["pm10", "co2"], rows, "period")                             # asked-for metrics only, in panel order
     assert [p.label for p in only.panels] == ["CO₂", "PM10"]
+    nox = Air()._chart(["nox_index", "pm10"], rows, "period")                        # NOx alone in its panel: the left axis, with its zones
+    assert [p.label for p in nox.panels] == ["NOx index", "PM10"] and nox.panels[0].zones == (20.0, 150.0) and not nox.panels[0].right
     single = Air()._chart(["pm2_5"], rows, "period")                                 # one metric: the large chart with its zones
     assert len(single.panels) == 1 and single.title == "PM2.5" and single.panels[0].zones == (9.0, 55.4)

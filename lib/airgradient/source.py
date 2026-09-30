@@ -354,8 +354,7 @@ class AirGradient:
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (CO2 with VOC, the particles together, NOx alone); the reading that
-        shares a panel in another unit gets a right-hand axis."""
+        shared time axis, grouped by AIR_PANELS (CO2 and VOC with NOx on a right-hand axis, the particles together)."""
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None
@@ -365,18 +364,17 @@ class AirGradient:
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
             return Chart(LABELS[name], subtitle, [Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]))])
         panels = []
-        for group in AIR_PANELS:
-            members = [m for m in group if m in drawn]
-            if not members:
+        for on_left, on_right in AIR_PANELS:
+            left, right = [m for m in on_left if m in drawn], [m for m in on_right if m in drawn]
+            if not left:  # only the right-hand readings were asked for: they take the left axis
+                left, right = right, []
+            if not left:
                 continue
-            lines = [drawn[m][0] for m in members]
+            members = left + right
             units = [CHART_UNITS[m] for m in members]
             names_ = [f"{LABELS[m]} ({u})" if u and len(set(units)) > 1 else LABELS[m] for m, u in zip(members, units)]
             label = ", ".join(names_[:-1]) + " and " + names_[-1] if len(names_) > 1 else names_[0]
-            if len(members) == 1:
-                panels.append(Panel(label, units[0], lines, zones=tuple(RATINGS[members[0]])))
-            elif len(set(units)) == 1:  # one unit: the lines share the axis
-                panels.append(Panel(label, units[0], lines))
-            else:  # another unit: the first on the left, the rest on the right
-                panels.append(Panel(label, "", lines[:1], right=lines[1:]))
+            panels.append(Panel(label, units[0] if len({CHART_UNITS[m] for m in left}) == 1 and not right else "",
+                                [drawn[m][0] for m in left], right=[drawn[m][0] for m in right],
+                                zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None))
         return Chart("Air quality", f"{period}  ·  AirGradient readings", panels)

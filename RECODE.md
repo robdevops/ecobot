@@ -61,3 +61,5 @@ are one renderer. Rain sits behind the first line panel on its own right-hand ax
 no line is there to sit behind). A panel can carry a second y axis for a reading in another unit. Air quality is three
 panels: CO2 with VOC, PM1/PM2.5/PM10, NOx. Line data is unchanged: on the test fixture caches, every x/y/low/high/bars array
 in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
+
+Air quality is two panels: CO2 and VOC on the left axis with NOx on a right-hand axis, and the particles (`AIR_PANELS` in `airgradient/metrics.py`).
