@@ -21,6 +21,7 @@ import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib import font_manager  # noqa: E402
+from matplotlib import patheffects as pe  # noqa: E402
 from matplotlib.colors import to_rgb  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon  # noqa: E402
@@ -62,11 +63,12 @@ DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: aver
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
 COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            # air-quality metrics (kept clear of the green/yellow/red rating zones)
-           "PM2.5": "#7C3AED", "PM10": "#92400E", "PM1": "#14B8A6", "CO₂": "#475569",
-           "VOC index": "#D97706", "NOx index": "#DB2777"}
+           "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
+           "VOC index": "#059669", "NOx index": "#DB2777"}   # VOC green and NOx pink: complements, sharing one panel
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
-RAIN = "#0EA5E9"                 # blue is the rain's alone: no reading is drawn in it
+RAIN = "#1E3A8A"                 # deep navy: the rain sits behind the lines and stays clear of every reading's colour
+CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
 WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
 W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
@@ -152,19 +154,42 @@ def _extent(lines: list[Line], extra: list[float] = ()) -> tuple[float, float]:
     return (min([min(s.low or s.y) for s in lines] + list(extra)), max([max(s.high or s.y) for s in lines] + list(extra)))
 
 
-def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: int, first: int = 0) -> list[tuple]:
+def _gradient_under(ax, xs, ys, colour: str, ybottom: float, alpha: float = 0.22):
+    """A soft fade from the line down to the floor."""
+    poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
+    ax.add_patch(poly)
+    rgba = np.zeros((256, 1, 4))
+    rgba[..., :3] = to_rgb(colour)
+    rgba[..., 3] = np.linspace(alpha, 0.0, 256)[:, None]
+    img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
+    img.set_clip_path(poly)
+
+
+def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: int, first: int = 0, polish: bool = False) -> list[tuple]:
     """Each line's low-to-high range behind it, then the line: [(colour, xs, ys)]. `width` is a number or a function of
-    the line; `first` is the colour index of the first line."""
+    the line; `first` is the colour index of the first line. `polish`: a soft glow under the line and a dot on its end."""
     to_dt, drawn = _to_dt(tz), []
     for i, s in enumerate(lines, first):
         colour = _colour(s.label, i)
         xs, ys = mdates.date2num([to_dt(t) for t in s.x]), np.asarray(s.y, dtype=float)
         if s.low:
             ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=band_z)
-        ax.plot(xs, ys, color=colour, linewidth=width(s) if callable(width) else width, solid_capstyle="round",
-                solid_joinstyle="round", zorder=line_z)
+        w = width(s) if callable(width) else width
+        (line,) = ax.plot(xs, ys, color=colour, linewidth=w, solid_capstyle="round", solid_joinstyle="round", zorder=line_z)
+        if polish:
+            line.set_path_effects([pe.Stroke(linewidth=w + 2.5, foreground=colour, alpha=0.10), pe.Normal()])
+            ax.scatter([xs[-1]], [ys[-1]], s=20, color=colour, edgecolors="white", linewidths=1.2, zorder=line_z + 1)
         drawn.append((colour, xs, ys))
     return drawn
+
+
+def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: float = 0.5):
+    """Rain bars: a translucent body with a brighter cap, so each reads as a solid little column."""
+    ys = np.asarray(ys, dtype=float)
+    ax.bar(bx, ys, width=width, align="edge", color=RAIN, alpha=alpha, linewidth=0, zorder=zorder)
+    cap = axis_top * 0.014
+    ax.bar(bx, np.minimum(cap, ys), bottom=np.maximum(ys - cap, 0), width=width, align="edge", color=RAIN, alpha=0.95,
+           linewidth=0, zorder=zorder)
 
 
 def _bars_behind(ax, bars, tz: tzinfo) -> float:
@@ -173,8 +198,8 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     to_dt = _to_dt(tz)
     bx = mdates.date2num([to_dt(t) for t in bars.x])
     ax2 = ax.twinx()
-    ax2.bar(bx, bars.y, width=bars.width / 86400 * 0.85, align="edge", color=RAIN, alpha=0.55, linewidth=0, zorder=1)
     top = max([*bars.y, 1.0])
+    _draw_bars(ax2, bx, bars.y, bars.width / 86400 * 0.85, top / BARS_SHARE, 1)
     ax2.set_ylim(0, top / BARS_SHARE)
     ax2.axhline(top, color=RAIN, linewidth=0.7, linestyle=(0, (1, 2)), alpha=0.8, zorder=1)  # the top of the rain scale, on its own
     ax2.yaxis.set_major_locator(FixedLocator([0, top]))
@@ -201,7 +226,7 @@ def _right_axis(ax, lines: list[Line], tz: tzinfo, first: int):
 
 def _axes_width(chart: Chart) -> float:
     """The plot's width: narrower when a panel has a right-hand axis, to leave room for its labels."""
-    return AX_RECT[2] - (0.07 if any(p.right or (p.lines and p.bars) for p in chart.panels) else 0)
+    return AX_RECT[2] - (0.07 if any(p.right or (p.lines and p.bars) or len(p.lines) > 1 for p in chart.panels) else 0)
 
 
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
@@ -256,13 +281,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
     deg = _deg(panel.unit)
     for s, (colour, xs, ys) in zip(lines, drawn):
         if not s.low and len(lines) <= 2:  # soft gradient fill under the line (muddy with more lines)
-            poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
-            ax.add_patch(poly)
-            rgba = np.zeros((256, 1, 4))
-            rgba[..., :3] = to_rgb(colour)
-            rgba[..., 3] = np.linspace(0.22, 0.0, 256)[:, None]
-            img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
-            img.set_clip_path(poly)
+            _gradient_under(ax, xs, ys, colour, ybottom)
         ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
         for want, above in (("high", True), ("low", False)):
             if want in s.records:  # the true record, at its actual time (may sit off an averaged line)
@@ -359,6 +378,21 @@ def _mark_records(ax, line: Line, colour: str, tz: tzinfo, x0: float, x1: float)
                     bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
 
 
+def _end_labels(ax, drawn: list[tuple]):
+    """The latest value of each line in the margin beside it, nudged apart where they would touch."""
+    y_lo, y_hi = ax.get_ylim()
+    height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
+    gap = 8 * (y_hi - y_lo) / height_pt                     # 8 points, in data units
+    placed = []
+    for colour, xs, ys in sorted(drawn, key=lambda d: d[2][-1]):
+        y = max(ys[-1], placed[-1] + gap) if placed else ys[-1]
+        placed.append(y)
+        ax.annotate(f"{ys[-1]:.3g}", (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
+                    fontsize=7, fontweight="bold", color=colour, annotation_clip=False,
+                    arrowprops={"arrowstyle": "-", "color": colour, "linewidth": 0.6, "alpha": 0.6, "shrinkA": 0, "shrinkB": 2},
+                    bbox={"boxstyle": "round,pad=0.15", "fc": "none", "ec": "none"})
+
+
 def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     """One panel of a stack: lines (with bands, zones, a right-hand axis), rain behind them, or shares. Returns the
     number of colours used and where the drawing ends on the x axis."""
@@ -378,15 +412,20 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     if not p.lines:  # rain on its own
         b = p.bars
         bx = mdates.date2num([to_dt(t) for t in b.x])
-        ax.bar(bx, b.y, width=b.width / 86400 * 0.85, align="edge", color=RAIN, linewidth=0, zorder=3)
-        ax.set_ylim(0, max([*b.y, 1.0]) * 1.15)
+        top = max([*b.y, 1.0]) * 1.15
+        _draw_bars(ax, bx, b.y, b.width / 86400 * 0.85, top, 3, alpha=0.75)
+        ax.set_ylim(0, top)
         return 0, float(bx.max() + b.width / 86400) if len(bx) else x1
-    drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first)
+    drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True)
     marked = len(p.lines) + len(p.right) == 1 and bool(p.lines[0].records)  # a lone line has its records labelled
     _pad_limits(ax, *_extent(p.lines, [float(r[1]) for r in p.lines[0].records.values()] if marked else []),
                 top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
+    if len(p.lines) == 1 and not p.right and not p.lines[0].low and not p.zones:  # a lone line fades softly to the floor
+        ylim = ax.get_ylim()
+        _gradient_under(ax, drawn[0][1], drawn[0][2], drawn[0][0], ylim[0])
+        ax.set_ylim(ylim)
     if p.right:
         _right_axis(ax, p.right, tz, first + len(p.lines))
         if len(p.lines) == 1:
@@ -395,6 +434,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         _mark_records(ax, p.lines[0], drawn[0][0], tz, x0, x1)
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
+    if len(p.lines) > 1 and not p.right:
+        _end_labels(ax, drawn)
     entries = [(_colour(s.label, first + i), s.label) for i, s in enumerate((*p.lines, *p.right))]
     if len(entries) + bool(p.bars) > 1:
         legend = entries + ([(RAIN, p.bars.label)] if p.bars else [])
@@ -417,7 +458,13 @@ def _render_stack(fig, chart: Chart, tz: tzinfo, height: float):
     axes, used = [], 0
     for i, p in enumerate(panels):
         bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
-        ax = fig.add_axes([AX_RECT[0], bottom, width, each / height], facecolor=BG, sharex=axes[0] if axes else None)
+        rect = [AX_RECT[0], bottom, width, each / height]
+        card = fig.add_axes(rect, facecolor=CARD, zorder=-1)  # the faint tint behind the panel
+        card.set_xticks([])
+        card.set_yticks([])
+        for side in card.spines.values():
+            side.set_visible(False)
+        ax = fig.add_axes(rect, facecolor="none", sharex=axes[0] if axes else None)
         axes.append(ax)
         _style_axis(ax)
         count, x1 = _draw_panel(ax, p, tz, used, x0, x1)
