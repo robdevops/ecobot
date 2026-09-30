@@ -341,7 +341,7 @@ class AirGradient:
     def _line(self, name: str, rows: list[dict]) -> tuple[Line, Plotted] | None:
         """One metric as a chart line, in its own units, and how it was drawn. The record high/low are the true readings.
         The readings themselves while they fit the point budget; more than that are bucketed (30 minutes ... a day): each
-        bucket's mean, its range shaded."""
+        bucket's mean (no shaded range: air-quality lines are plain)."""
         pts = [(r["ts"], r[name]) for r in rows if name in r]
         if len(pts) < 2:
             return None
@@ -350,7 +350,9 @@ class AirGradient:
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}), plotted
+        line = plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})})
+        line.low = line.high = None  # air-quality lines are drawn plain: no shaded range, even around a day's mean
+        return line, plotted
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
@@ -360,7 +362,7 @@ class AirGradient:
             return None
         if len(drawn) == 1:
             (name, (line, plotted)), = drawn.items()
-            subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
+            subtitle = (f"{period}  ·  {plotted.name}" + "  ·  records marked"
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
             return Chart(LABELS[name], subtitle, [Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]))])
         panels = []

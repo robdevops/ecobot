@@ -281,6 +281,7 @@ class Composer:
         line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
         if line is None:
             return None, {}
+        line.low = line.high = None  # air-quality lines are plain: no shaded range
         return (Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]), reading=name),
                 {"series": name, **self._stats(values, CHART_UNITS[name])})
 

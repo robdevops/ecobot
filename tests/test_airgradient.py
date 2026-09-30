@@ -232,8 +232,8 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_only_da
     hourly = [{"ts": base - i * 3600, "pm2_5": 5 + (i % 24) / 2} for i in range(120 * 24, 0, -1)]   # 120 days of hourly readings
     season = air._chart(["pm2_5"], hourly, "the period")
     line = season.panels[0].lines[0]
-    assert "daily averages, range shaded" in season.subtitle and 110 <= len(line.x) <= 122
-    assert all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high)) and set(line.records) == {"high"}
+    assert "daily averages" in season.subtitle and "range shaded" not in season.subtitle and 110 <= len(line.x) <= 122
+    assert line.low is None and line.high is None and set(line.records) == {"high"}      # air-quality lines carry no band, even daily
     panels = (await specs(30, ["pm2_5", "co2"]))[0]
     assert len(panels.panels) == 2 and all(p.lines[0].records for p in panels.panels)
     from lib.charts import render
