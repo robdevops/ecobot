@@ -12,13 +12,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import intent, prompt
-from .airgradient import source as air
-from .ecowitt import days, link, station
-from .llm import Agent
-from .tools import Tool, Tools
+from lib import intent, prompt
+from lib.airgradient import source as air
+from lib.ecowitt import days, link, station
+from lib.llm import Agent
+from lib.tools import Tool, Tools
 
-CASES = Path(__file__).resolve().parent.parent / "tests" / "evals" / "cases.json"
+CASES = Path(__file__).resolve().parent / "evals" / "cases.json"
 NOW = datetime(2026, 9, 29, 14, 5)  # a Tuesday: dates in the cases are relative to this
 CANNED = json.dumps({"note": "(evaluation run: no data is available; say so in one short sentence)"})
 

@@ -16,7 +16,7 @@ import sys
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 
-from lib import evalkit  # noqa: E402
+from tests import evalkit  # noqa: E402
 
 
 async def main() -> int:

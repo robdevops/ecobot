@@ -3,7 +3,7 @@
 
 import pytest
 
-from lib import evalkit
+from tests import evalkit
 
 CASES = evalkit.load_cases()
 
