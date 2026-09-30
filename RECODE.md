@@ -65,4 +65,4 @@ in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
 Air quality is four panels, top to bottom: the particles, CO2, VOC and NOx, each on its own scale (`AIR_PANELS` in `airgradient/metrics.py`). Charts render at 1280x720.
 Air-quality lines get the shaded low-to-high range at every bucket width, in single and multi-panel charts alike.
 Every line carries its shaded low-to-high range wherever the readings have one or are bucketed (air quality at every bucket width, weather from the cache's per-slot lows and highs); a peak label sits on the top of the band.
-Each weather reading has its own hue (`READING_COLOURS` in `charts.py`: temperature orange, humidity cyan, pressure indigo, wind lime, dew point teal, feels-like rose, VPD purple); the indoor line of a reading is that hue lightened, rain stays navy.
+Each weather reading has its own hue (`READING_COLOURS` in `charts.py`: temperature red, humidity dark blue, pressure violet, wind grey, dew point teal, feels-like orange, VPD lime); the indoor line of a reading is that hue lightened, and rain is light blue.

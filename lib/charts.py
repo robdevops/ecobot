@@ -68,13 +68,14 @@ COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
            "VOC index": "#D97706", "NOx index": "#DB2777"}
 # One hue per weather reading, outdoors; the same reading indoors is that hue lightened.
-READING_COLOURS = {"temperature": "#F97316", "humidity": "#06B6D4", "pressure": "#6366F1", "wind": "#65A30D",
-                   "dew_point": "#14B8A6", "feels_like": "#F43F5E", "vpd": "#A855F7"}
+READING_COLOURS = {"temperature": "#EF4B4B", "humidity": "#1E40AF", "pressure": "#7C3AED", "wind": "#6B7280",
+                   "dew_point": "#14B8A6", "feels_like": "#FB923C", "vpd": "#84CC16"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
-RAIN = "#1E3A8A"                 # deep navy: the rain sits behind the lines and stays clear of every reading's colour
+RAIN = "#5BB6F5"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
+RAIN_TEXT = "#2B7FC0"            # the same blue, darker, for the rain scale's text
 CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
-WIND_STEPS = ("#D9F99D", "#A3E635", "#4D7C0F")  # light, middle and strong wind (the wind hue)
+WIND_STEPS = ("#D1D5DB", "#9CA3AF", "#4B5563")  # light, middle and strong wind (the wind hue)
 W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
@@ -221,7 +222,7 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g} {bars.unit}" if v else "0"))
     for side in ("top", "right", "left", "bottom"):
         ax2.spines[side].set_visible(False)
-    ax2.tick_params(axis="y", length=0, labelsize=7, labelcolor=RAIN, pad=4)
+    ax2.tick_params(axis="y", length=0, labelsize=7, labelcolor=RAIN_TEXT, pad=4)
     ax.set_zorder(ax2.get_zorder() + 1)  # the lines above the bars
     ax.patch.set_visible(False)
     return float(bx.max() + bars.width / 86400) if len(bx) else 0.0
