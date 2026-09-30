@@ -250,15 +250,13 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     return spans[0] if len(spans) == 1 else None  # none, or several ("this week vs last week"): the model decides
 
 
-# The readings a chart can plot: name -> (the words that name it, the field it plots when it is the only one asked about)
-READINGS = {name: (r.words, None if name == "temperature" else r.field) for name, r in WEATHER_READINGS.items()}
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 ALL = re.compile(r"\b(all|every\w*|each)\b", I)
 
 
 def _named(text: str) -> dict[str, int]:
     """The readings a question names, with where. "dew point temperature" names the dew point, not also the temperature."""
-    found = {name: m.start() for name, (words, _) in READINGS.items() if (m := re.search(rf"\b({words})\b", text, I))}
+    found = {name: m.start() for name, r in WEATHER_READINGS.items() if (m := re.search(rf"\b({r.words})\b", text, I))}
     if "temperature" in found and any(name in found for name in SPECIFIC):
         del found["temperature"]
     return found
@@ -276,7 +274,7 @@ def chart_field(text: str) -> str | None:
     """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
     is about temperature, several readings, or none in particular."""
     found = list(_named(text))
-    return READINGS[found[0]][1] if len(found) == 1 else None
+    return WEATHER_READINGS[found[0]].field if len(found) == 1 and found[0] != "temperature" else None
 
 
 def weather_groups(text: str) -> str:

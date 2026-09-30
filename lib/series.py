@@ -33,3 +33,8 @@ WEATHER = {
     "uv": Reading("solar_and_uvi", "uvi", "UV index", "", r"uvi?|ultraviolet"),
 }
 SPECIFIC = ("dew_point", "feels_like", "vpd")   # kinds of temperature and humidity, named on their own: they outrank "temperature" in a question
+
+
+def find(name: str) -> Reading | None:
+    """A reading by its name ("uv", "pressure") or by the field it plots ("uvi", "relative")."""
+    return WEATHER.get(name) or next((r for r in WEATHER.values() if r.field == name), None)

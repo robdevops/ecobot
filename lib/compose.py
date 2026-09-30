@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 MAX_PANELS = 4
 DEFAULT_DAYS = 30
 # Weather station series: name -> (group, field, label, unit); the composer draws the wind as its average speed
-ECOWITT = {**{n: (r.group, r.field, r.label, r.unit) for n, r in WEATHER.items()}, "wind": ("wind", "wind_speed", "Wind", "km/h")}
+ECOWITT = {**WEATHER, "wind": WEATHER["wind"]._replace(field="wind_speed")}   # the plotted wind is the average speed
 SERIES = [*ECOWITT, *ALL_METRICS]
 STYLES = ("line", "bars", "rating")
 
@@ -253,7 +253,7 @@ class Composer:
         """(the panel, its figures for the caption); the panel is None when there is nothing to draw. `data` is an air series
         already loaded (values, lows, highs)."""
         if name in ECOWITT:
-            group, field, label, unit = ECOWITT[name]
+            group, field, label, unit = ECOWITT[name][:4]
             values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
                 bars = rain_bars(rain_slots(values), self.tz, first, last)

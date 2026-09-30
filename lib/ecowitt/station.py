@@ -18,16 +18,13 @@ from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
 from .fetch import Fetcher, spans
-from ..series import WEATHER
-from .query import STACK, HistoryQuery, stack_names
+from ..series import WEATHER, find
+from .query import HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
 
 log = logging.getLogger(__name__)
 
 DEFAULT_GROUPS = "outdoor,indoor"
-
-
-READING_GROUPS = {name: r.group for name, r in WEATHER.items()} | {r.field: r.group for r in WEATHER.values()}
 
 
 def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
@@ -36,7 +33,7 @@ def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
     bad name fails the whole request."""
     parts = value if isinstance(value, list) else str(value or default).split(",")
     named = (p.split(".")[0].strip().lower() for p in parts if p.strip())
-    groups = (g if g in GROUPS else READING_GROUPS.get(g) for g in named)
+    groups = (g if g in GROUPS else (r.group if (r := find(g)) else None) for g in named)
     return list(dict.fromkeys(g for g in groups if g)) or default.split(",")
 
 
@@ -63,7 +60,7 @@ HISTORY_PARAMS = {
         "end_date": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM:SS' local time (today is fine: up to now)."},
         "groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. Add 'rainfall', "
                                                     "'wind' or 'pressure' only if needed. Plain group names, not dotted fields."},
-        "chart_fields": {"type": "array", "items": {"type": "string", "enum": list(STACK)},
+        "chart_fields": {"type": "array", "items": {"type": "string", "enum": list(WEATHER)},
                          "description": "To plot SEVERAL readings together ('plot temperature and rain'): which, in order, "
                                         "one panel each on a shared time axis. The groups they need are fetched for you."},
         "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
@@ -143,10 +140,10 @@ class Ecowitt:
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
         turn = turn or Turn()
         groups = parse_groups(args.get("groups"))
-        groups += [g for n in stack_names(args, turn) if (g := STACK[n][0]) not in groups]  # what "plot temperature and rain" needs
+        groups += [g for n in stack_names(args, turn) if (g := WEATHER[n].group) not in groups]  # what "plot temperature and rain" needs
         named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
-        if (g := READING_GROUPS.get(named)) and g not in groups:
-            groups.append(g)
+        if (r := find(named)) and r.group not in groups:
+            groups.append(r.group)
         return await HistoryQuery(self.fetcher(groups), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
