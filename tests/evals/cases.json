@@ -927,5 +927,20 @@
       "q:summary",
       "m:temperature"
     ]
+  },
+  {
+    "id": "sitrep",
+    "ask": "sitrep",
+    "note": "sitrep is a synonym of status: the full current report",
+    "expect": {
+      "report": true,
+      "tools": [
+        "weather_now",
+        "air_quality"
+      ]
+    },
+    "covers": [
+      "q:report"
+    ]
   }
 ]

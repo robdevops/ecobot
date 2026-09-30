@@ -83,7 +83,7 @@ def _only(words: str, lead: str = "") -> str:
 
 
 # "status", "report": the whole current picture from both devices (a period word or a subject makes it something else)
-REPORT = re.compile(_only(r"status|report|overview|dashboard|summary|everything|what you'?ve got",
+REPORT = re.compile(_only(r"status|report|sitrep|overview|dashboard|summary|everything|what you'?ve got",
                           r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?(a\s+)?(full\s+|current\s+|complete\s+)?"), I)
 
 

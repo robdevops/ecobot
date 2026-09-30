@@ -268,9 +268,9 @@ def test_questions_about_the_bot_are_recognised_and_readings_questions_are_not()
 
 def test_a_bare_status_or_report_asks_for_everything_and_nothing_else_does():
     for text in ("status", "report", "Report please", "give me the full report", "current report", "show what you've got",
-                 "overview", "everything?", "what's the status"):
+                 "overview", "everything?", "what's the status", "sitrep", "SITREP please", "give me the sitrep"):
         assert intent.wants_report(text), text
-    for text in ("weather report for Tuesday", "report the humidity", "status of the rain alert", "report last week", "hello",
+    for text in ("weather report for Tuesday", "report the humidity", "status of the rain alert", "report last week", "sitrep last week", "hello",
                  "how's the air?"):
         assert not intent.wants_report(text), text
 

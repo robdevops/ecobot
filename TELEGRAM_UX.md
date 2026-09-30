@@ -16,7 +16,7 @@ A command or a button never does work of its own. It is turned into the plain se
 | `/weather [period]` | the weather now, or a summary with a chart for a period | `weather now`, `weather 7d` |
 | `/air [period]` | air quality now, or a chart for a period | `air quality now`, `ag 7d` |
 | `/chart <reading> [period]` | one reading as a chart; `<reading>` is any weather or air name | `chart dew point 7d` |
-| `/status`, `/report` | the full current report (synonyms, one handler registered for both names) | `report` |
+| `/status`, `/report`, `/sitrep` | the full current report (synonyms, one handler registered for all three names) | `report` |
 | `/alerts [on\|off]` | as today | (unchanged) |
 | `/reset` | as today | (unchanged) |
 | `/help` | the command list | (unchanged) |
@@ -38,7 +38,7 @@ A `CallbackQueryHandler` parses `callback_data` (kept under 64 bytes, for exampl
 Typing `@ecobot` in any chat and picking a result (the current reading, a chart). It needs inline mode switched on in BotFather, a result cache and answers produced without the per-chat queue, so it is a separate piece of work.
 
 ## Testing
-- `command_to_text` is a pure function: a table-driven test, including `/status` == `/report` == the report sentence and the defaults.
+- `command_to_text` is a pure function: a table-driven test, including `/status` == `/report` == `/sitrep` == the report sentence and the defaults.
 - Handler tests use the fake update objects already in `tests/test_bot.py`: a command produces one reply through the same path as typed text.
 - The eval cases already cover the sentences the commands produce.
 
