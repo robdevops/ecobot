@@ -26,11 +26,14 @@ EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_FORECAST = "none", "low", "medium"
 _TEMP = TEMP_WORDS
 _WIND = r"wind\w*|gusts?|breez\w*"
 _PRESSURE = PRESSURE_WORDS
-_OTHER_THAN_AIR = r"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather"  # a question that is not (only) about the air
+# The two devices by name: "ecowitt" is the weather, "ag" / "airgradient" / "air gradient" the air quality
+_ECOWITT = r"ecowitt"
+_AG = r"air ?gradient|ag"
+_OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather|{_ECOWITT}"  # a question that is not (only) about the air
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
 WEATHER = re.compile(
-    rf"\b(weather|{_TEMP}|frost\w*|"
+    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP}|frost\w*|"
     rf"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
     rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"
@@ -91,7 +94,7 @@ def wants_report(text: str) -> bool:
 # Questions about the bot itself ("what metrics do you have", "list our sources"): answered from what it knows, no fetch
 ABOUT_THE_BOT = re.compile(
     r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"
-    r"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b|"
+    rf"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b|\bwhat (does|do) ({_ECOWITT}|{_AG}) (measure|track|have|report|tell)\b|"
     + _only(r"metrics?|sensors?|sources?|devices?", r"((our|the|my|available|all)\s+)*"), I)
 
 
@@ -216,7 +219,7 @@ EXTREMES = re.compile(r"\b(hottest|coldest|warmest|coolest|highest|lowest|highs?
 GRAPH = re.compile(r"\b(graph\w*|chart\w*|plot\w*|trend\w*|visuali[sz]\w*)\b", I)
 # Anything that needs other data, a judgement, or a comparison goes the normal way
 _NOT_SIMPLE = (r"rain\w*|pressure|humid\w*|uv|solar|lightning|pm ?2\.?5|pm2|pm ?10|pm ?1|"
-               r"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|airgradient|"
+               rf"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|{_AG}|"
                r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
                r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now")
 NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
@@ -224,8 +227,8 @@ NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
 WIND = re.compile(rf"\b({_WIND})\b", I)
 NOT_SIMPLE_WIND_OK = re.compile(rf"\b({_NOT_SIMPLE})\b", I)
 # What a chart request with no period must name to default to a week ("chart it" refers back instead)
-WEATHER_SUBJECT = re.compile(rf"\b(weather|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
-WEATHER_WORD = re.compile(r"\b(weather|conditions)\b", I)
+WEATHER_SUBJECT = re.compile(rf"\b(weather|{_ECOWITT}|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
+WEATHER_WORD = re.compile(rf"\b(weather|{_ECOWITT}|conditions)\b", I)
 # A period named on its own ("weather week", "aq month") is the rolling week, month or year ending today, not the calendar
 # one (on the 1st, "month" must not be just today)
 BARE_PERIODS = {"week": "last 7 days", "month": "past month", "year": "past year"}
@@ -288,7 +291,7 @@ def weather_groups(text: str) -> str:
 # ---------- air-quality fast path ----------
 # "how's the air?", "what's the AQI", "report my airgradient aq". History, comparisons and mixed
 # weather questions go the normal way.
-AIR = re.compile(r"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|airgradient)\b", I)
+AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|{_AG})\b", I)
 AIR_QUALITY = re.compile(r"\bair quality\b", I)
 AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"

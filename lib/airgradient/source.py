@@ -94,7 +94,7 @@ class AirGradient:
             log.warning("AirGradient location %s not readable yet: %s", self.loc, e)
 
     def describe(self) -> str:
-        return f"AirGradient outdoor air-quality sensor (location {self.loc})"
+        return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Only air-quality questions."""

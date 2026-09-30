@@ -303,3 +303,16 @@ def test_a_readings_band_field_still_names_it_and_only_plain_readings_derive_a_r
     from lib.series import derives_range, field_of, find_name
     assert find_name("wind_gust") == find_name("wind_speed") == find_name("wind") == "wind" and field_of("wind_gust") == "wind_speed"
     assert derives_range("dew_point") and derives_range("solar") and not derives_range("wind_speed") and not derives_range("wind_direction")
+
+
+def test_ecowitt_means_the_weather_and_ag_or_airgradient_means_the_air_quality():
+    assert call("ecowitt week")[0] == "weather_history" and call("ecowitt week") == call("weather week") and call("ecowitt week")[1]["chart"]
+    for text in ("ag 7d", "airgradient 7d", "air gradient 7d", "AG 7d"):
+        name, args, _ = call(text)
+        assert name == "air_quality" and args["chart"] is True and args["metrics"] == ["pm2_5"], text
+    assert call("ag now")[0] == "air_quality" and call("air gradient")[0] == "air_quality" and not call("ag now")[1]
+    assert call("ag and ecowitt 7d") is None                                          # both devices: the model decides
+    assert intent.chart_fields("ecowitt all week") == intent.chart_fields("weather all week") and intent.chart_fields("ecowitt all week")
+    assert intent.air_metrics("ag all week") == ["pm2_5", "pm10", "pm1", "co2", "voc_index", "nox_index"] or len(intent.air_metrics("ag all week")) == 6
+    assert intent.needs_data("ecowitt") and intent.needs_data("ag") and intent.about_the_bot("what does ecowitt measure") and intent.about_the_bot("what does ag measure")
+    assert not intent.needs_data("that was a nice sag in the road") and not intent.needs_data("thanks")

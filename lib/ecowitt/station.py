@@ -129,7 +129,7 @@ class Ecowitt:
 
     def describe(self) -> str:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""
-        return f"Ecowitt weather station '{self.station_name}'{created}"
+        return f"Ecowitt weather station '{self.station_name}'{created} (people say \"ecowitt\" or \"weather\")"
 
     def fetcher(self, groups: list[str]) -> Fetcher:
         return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz)

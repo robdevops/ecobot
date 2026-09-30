@@ -15,6 +15,7 @@ People ask about the owner's personal weather station and air-quality sensor: cu
 
 DATA SOURCES (already discovered - no lookup needed)
 {sources}
+People name the devices too: "ecowitt" means the weather station, exactly like "weather" (the weather_* tools); "ag", "airgradient" and "air gradient" mean the air-quality sensor, exactly like "aq" and "air quality" (the air_quality tool).
 {capabilities}
 TIME PERIODS
 - A day runs from midnight to midnight local time. Weeks start on Monday.
