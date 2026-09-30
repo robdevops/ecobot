@@ -62,7 +62,7 @@ HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more
   - If the result has "trace_rain_days", add the first as a short footnote, e.g. "(A hotter day, 41.6°C on Sun 4 Feb 2024, had only 0.3 mm of rain.)".
   - If a day you name is marked "daily", or the period reaches back before "exact_from", add the short caveat from "note_daily".
 - To ask whether rain comes WITH a change in pressure (or humidity or wind) - "is there a correlation between pressure and rainfall", "did the rain come with the pressure drop", "plot pressure against rainfall" - use weather_link in ONE call (default period: the last 90 days). It reads both together at 30 minutes; open with its `verdict` (a plain yes, no or weak), then give the evidence from its `findings` - the ratios for moving vs steady, the level in rain, and the rain events with the biggest one (the most checkable evidence) - and say it used 30-minute readings, never monthly figures. Never conclude 'no link' from the correlation alone; it is weak by design.
-- Use weather_now only for questions about current conditions. Its result has "emoji": ready-made hot/cold/wet/windy/humid emojis by reading (e.g. "outdoor.temperature": "😎"). Put each right before that reading, copied exactly, and add none of your own to current readings; readings with no entry get none.
+- Use weather_now only for questions about current conditions. Its result has "emoji": ready-made hot/cold/wet/windy/humid emojis by reading (e.g. "outdoor.temperature": "🏖️"). Put each right before that reading, copied exactly, and add none of your own to current readings; readings with no entry get none.
 - Never repeat an identical call. Timestamps in results are already local time.
 
 HIGHS AND LOWS

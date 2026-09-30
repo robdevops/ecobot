@@ -928,10 +928,10 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
 
 def test_current_readings_get_a_hot_cold_wet_windy_emoji_from_their_values():
     from lib.ecowitt.glance import glance
-    assert [glance("outdoor", "temperature", t) for t in (38, 31, 24, 16, 9, 3, -2)] == ["🔥", "🥵", "😎", "🙂", "🧥", "🥶", "🧊"]
+    assert [glance("outdoor", "temperature", t) for t in (38, 31, 24, 16, 9, 3, -2)] == ["🔥", "🥵", "🏖️", "🙂", "🧥", "🥶", "🧊"]
     assert glance("outdoor", "temperature", 15.9) == "🧥" and glance("outdoor", "temperature", 16) == "🙂"       # happy from 16 outside
     assert glance("indoor", "temperature", 19.9) == "🧥" and glance("indoor", "temperature", 20) == "🙂"          # and from 20 inside
-    assert [glance("indoor", "temperature", t) for t in (36, 29, 25, 21, 17, 12, 8)] == ["🔥", "🥵", "😎", "🙂", "🧥", "🥶", "🧊"]
+    assert [glance("indoor", "temperature", t) for t in (36, 29, 25, 21, 17, 12, 8)] == ["🔥", "🥵", "🏖️", "🙂", "🧥", "🥶", "🧊"]
     assert glance("outdoor", "humidity", 90) == "💦" and glance("outdoor", "humidity", 20) == "🏜️" and glance("outdoor", "humidity", 55) == ""
     assert [glance("wind", "wind_speed", v) for v in (60, 35, 20, 5)] == ["🌪️", "💨", "🍃", ""]
     assert glance("rainfall", "rain_rate", 1.2) == "🌧️" and glance("rainfall", "rain_rate", 0) == ""
