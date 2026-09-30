@@ -5,11 +5,13 @@ from the caches, puts it on one time axis and hands the chart to the renderer. T
 drawing code, so a chart the bot has never drawn before is still made from checked data. Only the cached readings are
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
+import asyncio
 import json
 import logging
 from datetime import date, datetime, time, timedelta, tzinfo
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS
+from . import correlate
 from .charts import CHART_REQUESTS, COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import analyse_air, bar_layout, driver_series, rain_bars, rain_slots
 from .timeutil import now_local
@@ -49,6 +51,27 @@ PLOT_PARAMETERS = {
 }
 
 
+SCAN_DAYS = 90
+SCAN_AIR = ("pm2_5", "pm10", "co2", "voc_index", "nox_index")
+# What the scan compares the air with: name -> (group, field, label, unit)
+SCAN_WEATHER = {"temperature": ("outdoor", "temperature", "temperature", "°C"), "humidity": ("outdoor", "humidity", "humidity", "%"),
+                "dew_point": ("outdoor", "dew_point", "dew point", "°C"), "pressure": ("pressure", "relative", "pressure", "hPa"),
+                "wind_speed": ("wind", "wind_speed", "wind speed", "km/h"), "wind_gust": ("wind", "wind_gust", "wind gusts", "km/h")}
+SCAN_DESCRIPTION = (
+    "Which readings go with air quality? Scans every air-quality metric (PM2.5, PM10, CO2, VOC, NOx) against the weather "
+    "(temperature, humidity, dew point, pressure and its 3-hour change, wind speed, gusts, wind direction, rain), allowing for "
+    "the daily cycle and for chance, and reports only the relationships that stand out, with a plain verdict. Use it for 'is "
+    "there a correlation between air quality and other metrics', 'what affects air quality'. For rain alone use air_link. "
+    "Default period: the last 90 days.")
+SCAN_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "metric": {"type": "string", "enum": ["all", *SCAN_AIR], "description": "One air reading, or all (default)."},
+        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 90 days before the end."},
+        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        "chart": {"type": "boolean", "description": "Set true for a chart of the strongest relationship found."},
+    },
+}
 LINK_DAYS = 60
 LINK_METRICS = ("pm2_5", "pm10")
 LINK_DESCRIPTION = (
@@ -95,7 +118,8 @@ class Composer:
     def __init__(self, eco, air):
         self.eco, self.air, self.tz = eco, air, eco.tz
         self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart),
-                      Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link)]
+                      Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link),
+                      Tool("air_scan", SCAN_DESCRIPTION, SCAN_PARAMETERS, self.air_scan)]
 
     def period(self, args: dict, default_days: int = DEFAULT_DAYS) -> tuple[date, date] | str:
         """(first, last) day, or an error text. The last day is at most yesterday: today is still settling."""
@@ -118,20 +142,29 @@ class Composer:
         pick = lambda f: {int(t): float(v) for t, v in got.get(f, {"list": {}})["list"].items()}
         return pick(field), pick(field + "_low"), pick(field + "_high")
 
-    async def air_slots(self, metric: str, first: date, last: date) -> tuple[dict, dict, dict, dict]:
-        """(values, lows, highs, notes): the sensor's readings averaged into 30-minute slots, with each slot's range."""
+    async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:
+        """({metric: (values, lows, highs)}, notes): the sensor's readings averaged into 30-minute slots, with each slot's
+        range, from one load of the period."""
         rows, hourly, skipped = await self.air.rows(datetime.combine(first, time()), datetime.combine(last, time(23, 59, 59)))
-        slots: dict[int, list[float]] = {}
-        for r in rows:
-            if metric in r:
-                slots.setdefault(r["ts"] // SLOT * SLOT, []).append(r[metric])
+        out = {}
+        for metric in metrics:
+            slots: dict[int, list[float]] = {}
+            for r in rows:
+                if metric in r:
+                    slots.setdefault(r["ts"] // SLOT * SLOT, []).append(r[metric])
+            out[metric] = ({t: sum(v) / len(v) for t, v in slots.items()}, {t: min(v) for t, v in slots.items()},
+                           {t: max(v) for t, v in slots.items()})
         notes = {}
         if skipped:
             notes["missing"] = f"{len(skipped)} older day(s) aren't in the bot's cache yet and were left out"
         if hourly:
             notes["resolution"] = f"{hourly} day(s) only exist as hourly averages"
-        return ({t: sum(v) / len(v) for t, v in slots.items()}, {t: min(v) for t, v in slots.items()},
-                {t: max(v) for t, v in slots.items()}, notes)
+        return out, notes
+
+    async def air_slots(self, metric: str, first: date, last: date) -> tuple[dict, dict, dict, dict]:
+        """(values, lows, highs, notes) for one air metric; see air_series."""
+        series, notes = await self.air_series([metric], first, last)
+        return (*series[metric], notes)
 
     async def plot_chart(self, args: dict) -> str:
         panels = args.get("panels")
@@ -194,6 +227,44 @@ class Composer:
         bars = rain_bars(rain, self.tz, first, last)
         if result and air_panel and bars["x"] and wants_chart(args, datetime.combine(first, time()), datetime.combine(last, time())):
             self._add_chart(out, [air_panel, {"label": "Rain", "unit": "mm", "bars": bars}], first, last)
+        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+    async def air_scan(self, args: dict) -> str:
+        metric = args.get("metric") or "all"
+        if metric != "all" and metric not in SCAN_AIR:
+            return _error(f"metric must be all or one of {', '.join(SCAN_AIR)}")
+        if isinstance(period := self.period(args, SCAN_DAYS), str):
+            return _error(period)
+        first, last = period
+        air, notes = await self.air_series(list(SCAN_AIR) if metric == "all" else [metric], first, last)
+        weather = {}
+        for name, (group, field, _, _) in SCAN_WEATHER.items():
+            if values := self.weather(group, field, first, last)[0]:
+                weather[name] = values
+        if "pressure" in weather:  # falling pressure often comes with stagnant or changing air
+            weather["pressure_change"] = {t: v - weather["pressure"][t - 6 * SLOT] for t, v in weather["pressure"].items()
+                                          if t - 6 * SLOT in weather["pressure"]}
+        rain = rain_slots(self.weather("rainfall", "daily", first, last)[0])
+        if rain:
+            weather["rain"] = rain
+        direction, speed = self.weather("wind", "wind_direction", first, last)[0], weather.get("wind_speed")
+        air_names = {m: (LABELS[m], CHART_UNITS[m]) for m in air}
+        weather_names = {**{k: (v[2], v[3]) for k, v in SCAN_WEATHER.items()}, "pressure_change": ("3-hour pressure change", "hPa"),
+                         "rain": ("rain", "mm")}
+        origin, days = self._bounds(first, last)[0], (last - first).days + 1
+        result = await asyncio.to_thread(correlate.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days)
+        summary = correlate.summarise(result, air_names, weather_names)
+        strongest = summary.pop("strongest")
+        out = {"period": f"{first} to {last}", "resolution": "30-minute slots; each pair compared within the day and day to day",
+               "how_to_read": ("Open with `verdict`, then the relationships in `findings`, strongest first. These go together; they "
+                               "do not cause each other (shared weather and season). If nothing stands out, say so and that the "
+                               "closest are probably chance."), **summary, **({"notes": notes} if notes else {})}
+        if strongest and wants_chart(args, datetime.combine(first, time()), datetime.combine(last, time())):
+            drawn = [n for n in (strongest["air"], {"wind_speed": "wind"}.get(strongest["weather"], strongest["weather"])) if n in SERIES]
+            if len(drawn) == 2:
+                panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, {}))[0] for n in drawn]
+                if all(panels):
+                    self._add_chart(out, panels, first, last)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     async def _panel(self, name: str, style: str, first: date, last: date, notes: dict) -> tuple[dict | None, dict]:

@@ -833,5 +833,24 @@
    "c:rating-strip",
    "c:composed"
   ]
+ },
+ {
+  "id": "air-quality-vs-everything",
+  "ask": "Is there a correlation between air quality and other metrics",
+  "note": "needs a scan of every pair, not one lookup",
+  "expect": {
+   "effort": "medium",
+   "fast": null,
+   "tools": [
+    "air_scan"
+   ],
+   "not_tools": [
+    "air_link"
+   ]
+  },
+  "covers": [
+   "q:scan",
+   "m:air-quality"
+  ]
  }
 ]

@@ -33,6 +33,7 @@ COVERAGE = {
     "q:correction": "the person says the answer was wrong", "q:about-the-bot": "questions about the bot itself",
     "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report",
     "q:detail-level": "asking for a finer data resolution", "q:cross-source": "a question that needs both devices together",
+    "q:scan": "which readings go with which (every pair)",
     "m:temperature": "temperature", "m:humidity": "humidity", "m:pressure": "pressure", "m:wind-speed": "wind speed and gusts",
     "m:wind-direction": "wind direction", "m:rain": "rain", "m:air-quality": "air quality",
     "c:line": "a line chart of one reading", "c:daily-band": "a long chart: daily mean with its range",
@@ -59,7 +60,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
 
 
 def tool_names() -> list[str]:
-    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link"]
+    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link", "air_scan"]
 
 
 def make_tools(calls: list) -> Tools:
@@ -75,7 +76,8 @@ def make_tools(calls: list) -> Tools:
             ("weather_link", link.DESCRIPTION, link.PARAMETERS),
             ("air_quality", air.DESCRIPTION, air.PARAMETERS),
             ("plot_chart", compose.PLOT_DESCRIPTION, compose.PLOT_PARAMETERS),
-            ("air_link", compose.LINK_DESCRIPTION, compose.LINK_PARAMETERS)]
+            ("air_link", compose.LINK_DESCRIPTION, compose.LINK_PARAMETERS),
+            ("air_scan", compose.SCAN_DESCRIPTION, compose.SCAN_PARAMETERS)]
     return Tools([Tool(n, d, p, recorder(n)) for n, d, p in defs])
 
 

@@ -37,9 +37,9 @@ async def plot(comp, **args):
         CHART_REQUESTS.reset(token)
 
 
-async def test_the_composer_offers_the_chart_tool_and_the_air_link_tool(tmp_path, archived_cache):
+async def test_the_composer_offers_the_chart_tool_and_the_two_air_tools(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
-    assert [t.name for t in comp.tools] == ["plot_chart", "air_link"]
+    assert [t.name for t in comp.tools] == ["plot_chart", "air_link", "air_scan"]
     schema = comp.tools[0].parameters["properties"]["panels"]
     assert schema["maxItems"] == MAX_PANELS and schema["items"]["properties"]["series"]["enum"] == SERIES
     await eco.close()
