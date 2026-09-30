@@ -501,7 +501,7 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
     await eco.close()
 
 
-async def test_a_chart_is_bucketed_to_the_point_budget_and_only_daily_buckets_carry_a_range(tmp_path):
+async def test_a_chart_is_bucketed_to_the_point_budget_and_every_bucket_carries_a_range(tmp_path):
     transport, _ = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
@@ -513,18 +513,18 @@ async def test_a_chart_is_bucketed_to_the_point_budget_and_only_daily_buckets_ca
                                     "start_date": f"{today - timedelta(days=days_back)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         return turn.charts[0]
-    ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: plain line
-    assert "range shaded" not in ten.subtitle and ten.panels[0].lines[0].low is None
-    fortnight = await spec_for(20)                                 # twenty days: hourly averages, a plain line (a band there would hug it)
+    ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: the readings, each with its own low and high
+    assert "range shaded" in ten.subtitle and ten.panels[0].lines[0].low is not None
+    fortnight = await spec_for(20)                                 # twenty days: hourly averages, with their range
     line = fortnight.panels[0].lines[0]
-    assert "hourly averages" in fortnight.subtitle and "range shaded" not in fortnight.subtitle
-    assert 300 < len(line.x) <= 500 and line.low is None
+    assert "hourly averages, range shaded" in fortnight.subtitle
+    assert 300 < len(line.x) <= 500 and all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high))
     season = (await spec_for(90)).panels[0].lines[0]               # ninety days: a point a day, each with its low and high
     assert 80 <= len(season.x) <= 92 and len(season.low) == len(season.high) == len(season.y)
     assert all(lo <= y <= hi for lo, y, hi in zip(season.low, season.y, season.high))
-    few = await spec_for(4)                                        # four days: the readings themselves, no rolling ribbon
+    few = await spec_for(4)                                        # four days: the readings themselves, each with its own low and high
     line = few.panels[0].lines[0]
-    assert "range shaded" not in few.subtitle and len(line.x) > 100 and line.low is None   # a band only around an average
+    assert "range shaded" in few.subtitle and len(line.x) > 100 and line.low is not None
     await eco.close()
 
 

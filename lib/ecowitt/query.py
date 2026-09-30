@@ -393,8 +393,7 @@ class HistoryQuery:
 
     def _series_entry(self, k: str, label: str | None = None) -> tuple[Line, str] | None:
         """One series as a chart line and how it was drawn; None if there is too little to draw."""
-        windy = k == "wind.wind_gust" and "wind.wind_speed" in self.store
-        line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES, native_band=windy,
+        line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES, native_band=True,
                           force_daily=self.turn.average_asked, until=now_local(self.tz).date())
         if line is None:
             return None

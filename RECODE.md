@@ -64,4 +64,4 @@ in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
 
 Air quality is four panels, top to bottom: the particles, CO2, VOC and NOx, each on its own scale (`AIR_PANELS` in `airgradient/metrics.py`). Charts render at 1280x720.
 Air-quality lines get the shaded low-to-high range at every bucket width, in single and multi-panel charts alike.
-Air lines carry the shaded low-to-high range at every bucket width (not on the readings themselves), and a peak label sits on the top of the band, so it is the true peak the caption quotes.
+Every line carries its shaded low-to-high range wherever the readings have one or are bucketed (air quality at every bucket width, weather from the cache's per-slot lows and highs); a peak label sits on the top of the band.

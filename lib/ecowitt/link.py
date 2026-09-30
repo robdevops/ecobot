@@ -47,10 +47,10 @@ DESCRIPTION = ("Does rain come WITH a change in pressure (or humidity or wind)? 
 
 
 def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
-                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None, keep_band: bool = False) -> Line | None:
+                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> Line | None:
     """The reading as a line (see lines.build_line); a day's mean has its range shaded, from Ecowitt's own 30-minute
-    lows and highs where the cache holds them. keep_band: the range at every width (wind: the speed, up to the gusts)."""
-    line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400, native_band=keep_band)
+    lows and highs where the cache holds them."""
+    line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400, native_band=True)
     return line.spec(label) if line else None
 
 

@@ -262,7 +262,7 @@ class Composer:
             if name == "wind":
                 gust, _, gust_high = self.weather_band(group, "wind_gust", first, last)
                 highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
-            line = driver_series(values, self.tz, first, last, label, lows, highs, keep_band=name == "wind")
+            line = driver_series(values, self.tz, first, last, label, lows, highs)
             facts = {"series": name, **self._stats(values, unit)}
             return (Panel(label, unit, [line], reading=name) if line else None), facts
         if data is None:
