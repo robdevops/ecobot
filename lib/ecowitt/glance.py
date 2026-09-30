@@ -2,7 +2,8 @@
 reading always gets the same emoji; the model just copies it next to the reading."""
 
 # (lowest value that gets it, emoji), highest first
-TEMPERATURE = ((35, "🔥"), (30, "🥵"), (22, "😎"), (14, "🙂"), (7, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))
+TEMPERATURE = ((35, "🔥"), (30, "🥵"), (22, "😎"), (16, "🙂"), (8, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors
+INDOOR_TEMPERATURE = ((35, "🔥"), (28, "🥵"), (24, "😎"), (20, "🙂"), (16, "🧥"), (10, "🥶"), (float("-inf"), "🧊"))  # indoors
 WIND = ((50, "🌪️"), (30, "💨"), (15, "🍃"))       # km/h; lighter than that gets none
 HUMIDITY_HIGH, HUMIDITY_LOW = 85, 30              # % : muggy or dry; in between gets none
 
@@ -15,7 +16,7 @@ def glance(group: str, field: str, value: float, kilometres_per_hour: bool = Tru
     """The emoji for one reading, or "" when it is unremarkable."""
     name = field.lower()
     if name in ("temperature", "temp") or name.startswith(("feels_like", "app_temp")):
-        return _step(value, TEMPERATURE)
+        return _step(value, INDOOR_TEMPERATURE if group == "indoor" else TEMPERATURE)
     if name.startswith("humidity"):
         return "💦" if value >= HUMIDITY_HIGH else "🏜️" if value <= HUMIDITY_LOW else ""
     if name in ("wind_speed", "wind_gust") or name.endswith("wind_speed"):
