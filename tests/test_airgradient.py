@@ -130,20 +130,19 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     await air.close()
 
 
-async def test_an_averaged_chart_tells_the_caption_which_peak_it_labels_and_a_raw_one_does_not(tmp_path):
+async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_top(tmp_path):
+    from lib.charts import _extreme
     air, _ = await make(tmp_path)
     ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
-    chart = air._chart(["pm2_5"], rows, "period")
-    line, entry = chart.panels[0].lines[0], {"high": 305.0}
-    air._chart_peak(entry, line)
-    assert entry["chart_peak"]["value"] == max(line.y) < 305.0 and entry["chart_peak"]["averaged_over"].endswith("averages")
-    short = air._chart(["pm2_5"], rows[:600], "period").panels[0].lines[0]          # 10 hours: the readings themselves
-    entry = {}
-    air._chart_peak(entry, short)
-    assert "chart_peak" not in entry
-    several = air._chart(["pm2_5", "co2"], [dict(r, co2=450.0) for r in rows], "period")
-    assert several.subtitle.endswith("labels: highest average")
+    line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 40 days: 4-hour buckets
+    assert line.low is not None and max(line.y) < 305.0 and max(line.high) == 305.0
+    assert _extreme(line, "high", lambda t: datetime.fromtimestamp(t, TZ))[1] == 305.0   # the label is the true peak, at the band's top
+    five = [{"ts": ts[0] + i * 300, "pm2_5": 5.0 + i % 7, "co2": 450.0 + i % 11} for i in range(288)]   # a day of 5-minute readings
+    assert air._chart(["pm2_5"], five, "period").panels[0].lines[0].low is None                            # the readings themselves: no band
+    rows = [dict(r, co2=450.0 + (t - ts[7000]) // 60 % 97) for r, t in zip(rows, ts)]
+    co2 = air._chart(["co2"], rows, "period").panels[0].lines[0]
+    assert co2.low is not None and _extreme(co2, "low", lambda t: datetime.fromtimestamp(t, TZ))[1] == min(co2.low)
     await air.close()
 
 
@@ -229,7 +228,7 @@ async def test_a_gap_after_data_longer_than_the_limit_is_taken_as_the_start(tmp_
     await air.close()
 
 
-async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_only_daily_ones_carry_a_range(tmp_path):
+async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_carry_a_range(tmp_path):
     air, _ = await make(tmp_path)
     now = datetime.now(TZ)
     fmt = "%Y-%m-%d %H:%M:%S"
@@ -243,8 +242,8 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_only_da
     assert len(short.x) > 20 and short.low is None                                # a few days: the readings themselves, no band
     week = (await specs(30, ["pm2_5"]))[0]
     line = week.panels[0].lines[0]
-    assert "-hour averages" in week.subtitle and "range shaded" not in week.subtitle and 150 <= len(line.x) <= 500
-    assert line.low is None and set(line.records) == {"high"}
+    assert "-hour averages" in week.subtitle and "range shaded" in week.subtitle and 150 <= len(line.x) <= 500
+    assert line.low is not None and set(line.records) == {"high"}
     base = int(now.timestamp()) // 3600 * 3600
     hourly = [{"ts": base - i * 3600, "pm2_5": 5 + (i % 24) / 2} for i in range(120 * 24, 0, -1)]   # 120 days of hourly readings
     season = air._chart(["pm2_5"], hourly, "the period")

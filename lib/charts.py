@@ -42,13 +42,7 @@ def wants_chart(args: dict, turn, start: datetime | None = None, end: datetime |
 # Added to a tool result when a chart was made, so the reply becomes a good caption
 CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
               "per series with its high and low, or its average if that is what was asked (for weather, one line each for Outdoor and Indoor when both were "
-              "fetched; for air quality, the peak). No other lists or breakdowns; don't mention or describe the chart.")
-
-AIR_CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line per "
-                  "metric with its peak. A metric with \"chart_peak\" is drawn as averages and the chart labels that peak, so "
-                  "quote chart_peak as the peak and name its averaging (\"averaged_over\"). Mention the record \"high\" only "
-                  "when it is at least 25% above chart_peak, in a few words, as a brief single-reading spike; never list both "
-                  "as two peaks. No other lists or breakdowns; don't mention or describe the chart.")
+              "fetched; for air quality, the peak with its ready-made rating copied exactly, emoji included: \"high_rating\"). No other lists or breakdowns; don't mention or describe the chart.")
 
 AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
                       "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
@@ -295,7 +289,9 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
         if panel.aside:
             continue
         for want, above in (("high", True), ("low", False)):
-            if want in s.records:  # the true record, at its actual time (may sit off an averaged line)
+            if want in s.records and s.low is not None:  # a banded line: the label sits on the top (bottom) of its band
+                rx, ry = _extreme(s, want, to_dt)
+            elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
                 rx, ry = mdates.date2num(to_dt(s.records[want][0])), float(s.records[want][1])
                 rx = min(max(rx, x0), x1)
             elif s.records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
@@ -377,10 +373,11 @@ def _render_rose(fig, compass: Compass):
 
 # ---------- several panels on one time axis ----------
 def _extreme(line: Line, want: str, to_dt) -> tuple[float, float]:
-    """Where the line itself is highest (or lowest): a label sits on the drawn line, not on a raw reading an averaged line
-    never reaches (that record is in the answer's text)."""
-    i = int(np.argmax(line.y) if want == "high" else np.argmin(line.y))
-    return float(mdates.date2num(to_dt(line.x[i]))), float(line.y[i])
+    """Where the drawn line is highest (or lowest): the top (bottom) of its band when it has one, else the line itself. A
+    label sits on what is drawn, never on a raw reading the chart does not reach."""
+    ys = (line.high if want == "high" else line.low) if line.low is not None else line.y
+    i = int(np.argmax(ys) if want == "high" else np.argmin(ys))
+    return float(mdates.date2num(to_dt(line.x[i]))), float(ys[i])
 
 
 def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: float, lows: bool):
