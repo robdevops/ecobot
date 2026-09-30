@@ -226,8 +226,9 @@ NOT_SIMPLE_WIND_OK = re.compile(rf"\b({_NOT_SIMPLE})\b", I)
 # What a chart request with no period must name to default to a week ("chart it" refers back instead)
 WEATHER_SUBJECT = re.compile(rf"\b(weather|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
 WEATHER_WORD = re.compile(r"\b(weather|conditions)\b", I)
-# A period named on its own ("weather week", "aq month") counts as "this week/month/year"
-BARE_PERIODS = {"week": "last 7 days", "month": "this month", "year": "this year"}
+# A period named on its own ("weather week", "aq month") is the rolling week, month or year ending today, not the calendar
+# one (on the 1st, "month" must not be just today)
+BARE_PERIODS = {"week": "last 7 days", "month": "past month", "year": "past year"}
 BARE_PERIOD = re.compile(r"\b(week|month|year)\b", I)
 INDOOR = re.compile(r"\b(indoors?|inside)\b", I)
 OUTDOOR = re.compile(r"\b(outdoors?|outside)\b", I)

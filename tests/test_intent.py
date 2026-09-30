@@ -64,7 +64,7 @@ def test_weather_plus_a_period_is_a_summary_request():
     for text in ("weather week", "weather this week", "weather yesterday", "what was the weather last month"):
         assert call(text) and call(text)[0] == "weather_history", text
     assert call("weather week")[1]["start_date"] == "2026-09-23 00:00:00" and call("weather week")[1]["chart"]
-    assert call("hottest day of the month")[1]["start_date"] == "2026-09-01 00:00:00"
+    assert call("hottest day of the month")[1]["start_date"] == "2026-08-31 00:00:00"   # the rolling month, not the calendar one
 
 
 def test_weather_now_and_open_questions_still_go_to_the_model():
@@ -145,8 +145,8 @@ def test_1m_means_one_month():
 
 
 def test_a_bare_week_month_or_year_charts_for_air_quality_too():
-    for text, start in (("aq week", "2026-09-23 00:00:00"), ("air quality month", "2026-09-01 00:00:00"),
-                        ("aq year", "2026-01-01 00:00:00"), ("pm2.5 week", "2026-09-23 00:00:00")):
+    for text, start in (("aq week", "2026-09-23 00:00:00"), ("air quality month", "2026-08-31 00:00:00"),
+                        ("aq year", "2025-09-30 00:00:00"), ("pm2.5 week", "2026-09-23 00:00:00")):
         name, args, label = call(text)
         assert name == "air_quality" and args["chart"] and args["start_date"] == start, text
     assert call("aq")[:2] == ("air_quality", {})   # no period at all: the current reading
