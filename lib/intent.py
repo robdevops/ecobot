@@ -8,8 +8,12 @@
     normal path, so strictness is the point.
 """
 
+import logging
 import re
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+
+log = logging.getLogger(__name__)
 
 I = re.IGNORECASE
 
@@ -337,3 +341,29 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
         return "weather_history", {"groups": weather_groups(text), "chart": chart, "start_date": start.strftime(FMT),
                                    "end_date": end.strftime(FMT)}, f"weather history, {name}"
     return None
+
+
+@dataclass
+class Reading:
+    """Everything decided about one message before the model sees it."""
+    effort: str = EFFORT_DEFAULT
+    needs_data: bool = False              # the model must call a tool first
+    about_the_bot: bool = False           # answered without tools
+    report: bool = False                  # "status": the full report
+    hints: list[str] = field(default_factory=list)   # what the period words in the message mean
+    fast: tuple[str, dict, str] | None = None        # (tool, arguments, what it is): fetched here, before the model
+    chart_asked: bool = False             # "plot" means a chart, whatever the model calls
+    chart_field: str | None = None        # humidity questions get a humidity chart
+    chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
+    average_asked: bool = False
+
+
+def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Reading:
+    """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
+    try:
+        fast = fast_call(text, now, ecowitt, air)
+    except Exception:
+        log.exception("Fast path failed; using the normal path")
+        fast = None
+    return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), wants_report(text), period_hints(text, now),
+                   fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)))

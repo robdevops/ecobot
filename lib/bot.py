@@ -267,20 +267,15 @@ class Bot:
         text = text.strip()
         if not text:
             return
-        effort = intent.reasoning_effort(text)
-        log.info("%s %s%s", describe_source(update), f"(reasoning: {effort}) " if effort != intent.EFFORT_DEFAULT else "",
+        now = now_local(self.cfg.tz)
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
+        log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  _short(text))
         for source in self.sources:  # fetch recent readings while the model thinks
             if source.wants(text):
                 source.poke()
-        now = now_local(self.cfg.tz)
-        try:
-            fast = intent.fast_call(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
-        except Exception:  # never lose a reply to a shortcut: let the model handle it
-            log.exception("Fast path failed; using the normal path")
-            fast = None
-        if fast:
-            log.info("Fast path: %s", fast[2])
+        if read.fast:
+            log.info("Fast path: %s", read.fast[2])
 
         chat = self.chats[self._key(msg)]
         thread_id = self._thread(msg)
@@ -291,16 +286,13 @@ class Bot:
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             ok, photos = True, []
-            turn = Turn(chart_asked=bool(intent.GRAPH.search(text)),   # "plot" means a chart, whatever the model calls
-                        chart_field=intent.chart_field(text),          # humidity questions get a humidity chart
-                        chart_fields=intent.chart_fields(text),        # "temperature and rain": one chart, a panel each
-                        average_asked=bool(intent.AVERAGE.search(text)))
+            turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                        average_asked=read.average_asked)
             try:
-                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources],
-                                      intent.period_hints(text, now), intent.about_the_bot(text),
-                                      intent.wants_report(text))
-                reply = await self.agent.run(working, system, effort, first_call=fast[:2] if fast else None,
-                                             require_tool=intent.needs_data(text), no_tools=intent.about_the_bot(text), turn=turn)
+                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
+                                      read.about_the_bot, read.report)
+                reply = await self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
+                                             require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:

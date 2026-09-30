@@ -129,10 +129,11 @@ def deterministic(case: Case) -> list[str]:
     """Failures of the decisions made in code (no model): reasoning effort, fast path, hints, chart choices."""
     e, fails = case.expect, []
     text = case.ask
-    if "effort" in e and intent.reasoning_effort(text) != e["effort"]:
-        fails.append(f"effort {intent.reasoning_effort(text)}, expected {e['effort']}")
+    r = intent.read(text, NOW)
+    if "effort" in e and r.effort != e["effort"]:
+        fails.append(f"effort {r.effort}, expected {e['effort']}")
     if "fast" in e:
-        fast = intent.fast_call(text, NOW, True, True)
+        fast = r.fast
         if e["fast"] is None:
             if fast:
                 fails.append(f"took the fast path ({fast[0]}) but should go to the model")
@@ -143,18 +144,12 @@ def deterministic(case: Case) -> list[str]:
                 fails.append(f"fast path tool {fast[0]}, expected {e['fast'].get('tool')}")
             fails += [f"fast path {f}" for f in check_args(fast[1], e["fast"].get("args", {}))]
     if "hints" in e:
-        hints = " | ".join(intent.period_hints(text, NOW))
+        hints = " | ".join(r.hints)
         fails += [f"period hints lack {h!r} (got: {hints or 'none'})" for h in e["hints"] if h not in hints]
-    if "chart_fields" in e and intent.chart_fields(text) != e["chart_fields"]:
-        fails.append(f"chart_fields {intent.chart_fields(text)}, expected {e['chart_fields']}")
-    if "chart_field" in e and intent.chart_field(text) != e["chart_field"]:
-        fails.append(f"chart_field {intent.chart_field(text)}, expected {e['chart_field']}")
-    if "report" in e and intent.wants_report(text) != e["report"]:
-        fails.append(f"wants_report {intent.wants_report(text)}, expected {e['report']}")
-    if "about_the_bot" in e and intent.about_the_bot(text) != e["about_the_bot"]:
-        fails.append(f"about_the_bot {intent.about_the_bot(text)}, expected {e['about_the_bot']}")
-    if "needs_data" in e and intent.needs_data(text) != e["needs_data"]:
-        fails.append(f"needs_data {intent.needs_data(text)}, expected {e['needs_data']}")
+    for key, got in (("chart_fields", r.chart_fields), ("chart_field", r.chart_field), ("report", r.report),
+                     ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data)):
+        if key in e and got != e[key]:
+            fails.append(f"{key} {got}, expected {e[key]}")
     for name in e.get("tools", []) + e.get("any_tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):
         if name not in tool_names():
             fails.append(f"unknown tool {name!r} in the case")
@@ -165,13 +160,13 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     """Ask the real model; returns the tool calls it made and its final reply."""
     calls: list[tuple[str, dict]] = []
     text = case.ask
-    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], intent.period_hints(text, NOW),
-                          intent.about_the_bot(text), intent.wants_report(text))
-    fast = intent.fast_call(text, NOW, True, True)
+    r = intent.read(text, NOW)
+    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], r.hints, r.about_the_bot, r.report)
+    fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
-        messages, system, effort or intent.reasoning_effort(text), first_call=fast[:2] if fast else None,
-        require_tool=intent.needs_data(text), no_tools=intent.about_the_bot(text))
+        messages, system, effort or r.effort, first_call=fast[:2] if fast else None, require_tool=r.needs_data,
+        no_tools=r.about_the_bot)
     if fast:
         calls.insert(0, (fast[0], fast[1]))  # the bot ran it itself, before the model
     return calls, reply

@@ -1,6 +1,5 @@
 from datetime import datetime
 
-import pytest
 
 from lib.lines import build_line, slot_readings
 from tests.fakes import TZ

@@ -83,19 +83,19 @@ async def main():
                    Tool("weather_days", days.DESCRIPTION, days.PARAMETERS, days_handler),
                    Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable)])
     text = args.question
-    system = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"],
-                          intent.period_hints(text, now.replace(tzinfo=None)))
-    effort, fast = intent.reasoning_effort(text), intent.fast_call(text, now.replace(tzinfo=None), True, True)
+    r = intent.read(text, now.replace(tzinfo=None))
+    system = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], r.hints)
+    effort, fast = r.effort, r.fast
     call = json.loads(args.call) if args.call else default_call(now.date())
 
     client = Recorder([call, "(the model's answer goes here)"])
     messages = [{"role": "user", "content": text}]
     await Agent(client, "grok-4.3", tools).run(messages, system, effort, first_call=fast[:2] if fast else None,
-                                               require_tool=intent.needs_data(text))
+                                               require_tool=r.needs_data)
 
     banner("DECISIONS MADE IN CODE")
     print(f"reasoning effort: {effort}   fast path: {fast[2] if fast else 'no (the model chooses the tool)'}   "
-          f"must call a tool first: {intent.needs_data(text)}")
+          f"must call a tool first: {r.needs_data}")
     first = client.requests[0]
     banner("REQUEST 1: settings")
     print(json.dumps({k: v for k, v in first.items() if k not in ("messages", "tools")}, indent=2))
