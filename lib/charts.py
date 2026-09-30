@@ -163,6 +163,26 @@ def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float):
             ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=0)
 
 
+def _draw_lines(ax, series: list[dict], tz: tzinfo, width, band_z: int, line_z: int, colour_of=None) -> list[tuple]:
+    """Each series' low-to-high range behind its line, then the line: [(colour, xs, ys)]. `width` is a number or a
+    function of the series."""
+    to_dt, drawn = _to_dt(tz), []
+    for i, s in enumerate(series):
+        colour = colour_of(s, i) if colour_of else _colour(s["label"], i)
+        xs, ys = mdates.date2num([to_dt(t) for t in s["x"]]), np.asarray(s["y"], dtype=float)
+        _band(ax, xs, s, colour, band_z)
+        ax.plot(xs, ys, color=colour, linewidth=width(s) if callable(width) else width, solid_capstyle="round",
+                solid_joinstyle="round", zorder=line_z)
+        drawn.append((colour, xs, ys))
+    return drawn
+
+
+def _extent(series: list[dict], extra: list[float] = ()) -> tuple[float, float]:
+    """The lowest and highest value drawn: the bands where there are any, else the lines (and `extra`, the records)."""
+    return (min([min(s.get("low") or s["y"]) for s in series] + list(extra)),
+            max([max(s.get("high") or s["y"]) for s in series] + list(extra)))
+
+
 def _frame(fig, ax, spec: dict, labels: list[str], colours: list[str], legend: bool = True):
     """Title, subtitle, dot legend and axis styling shared by the chart kinds."""
     unit = spec.get("unit", "")
@@ -189,21 +209,16 @@ def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16
 def _render_line(fig, ax, spec: dict, tz: tzinfo):
     to_dt = _to_dt(tz)
     series = spec["series"]
-    rec_vals = [float(r[1]) for s in series for r in (s.get("records") or {}).values()]
-    lo = min([min(s.get("low") or s["y"]) for s in series] + rec_vals)
-    hi = max([max(s.get("high") or s["y"]) for s in series] + rec_vals)
-    _pad_limits(ax, lo, hi, top=0.26, bottom=0.26)  # room for pills
+    _pad_limits(ax, *_extent(series, [float(r[1]) for s in series for r in (s.get("records") or {}).values()]),
+                top=0.26, bottom=0.26)  # room for pills
     ybottom = ax.get_ylim()[0]
     x_min = min(min(s["x"]) for s in series)
     x_max = max(max(s["x"]) for s in series)
-    labels, colours, pills = [], [], []
     dense = max(len(s["x"]) for s in series) > 200
-    for i, s in enumerate(series):
-        colour = _colour(s["label"], i)
-        labels.append(s["label"]); colours.append(colour)
-        xs = mdates.date2num([to_dt(t) for t in s["x"]])
-        ys = np.asarray(s["y"], dtype=float)
-        _band(ax, xs, s, colour, 3)  # each bucket's low-to-high range behind its average: the chart shows the full swing
+    width = lambda s: 1.3 if len(series) > 2 or s.get("low") else 1.5 if dense else 2.2
+    drawn = _draw_lines(ax, series, tz, width, 3, 4)
+    labels, colours, pills = [s["label"] for s in series], [c for c, _, _ in drawn], []
+    for s, (colour, xs, ys) in zip(series, drawn):
         if not s.get("low") and len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
             poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
             ax.add_patch(poly)
@@ -212,8 +227,6 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
             rgba[..., 3] = np.linspace(0.22, 0.0, 256)[:, None]
             img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
             img.set_clip_path(poly)
-        width = 1.3 if len(series) > 2 or s.get("low") else 1.5 if dense else 2.2
-        ax.plot(xs, ys, color=colour, linewidth=width, solid_capstyle="round", solid_joinstyle="round", zorder=4)
         ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
         deg = _deg(spec.get("unit", ""))
         x0, x1 = mdates.date2num(to_dt(x_min)), mdates.date2num(to_dt(x_max))
@@ -298,7 +311,6 @@ def _render_stack(fig, spec: dict, tz: tzinfo):
         ax = fig.add_axes([left, top - (i + 1) * height - i * gap, width, height], facecolor=BG,
                           sharex=axes[0] if axes else None)
         axes.append(ax)
-        handles = []
         if "bars" in p:
             bars = p["bars"]
             bx = mdates.date2num([to_dt(t) for t in bars["x"]])
@@ -319,16 +331,9 @@ def _render_stack(fig, spec: dict, tz: tzinfo):
                       labelcolor=TEXT, ncol=3, handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
             x1 = max(x1, (bx.max() + shares["width"] / 86400) if len(bx) else x1)
         else:
-            lows = highs = None
-            for s in p["series"]:
-                colour = _colour(s["label"], i)
-                xs = mdates.date2num([to_dt(t) for t in s["x"]])
-                _band(ax, xs, s, colour, 2)
-                ax.plot(xs, s["y"], color=colour, linewidth=1.5, solid_joinstyle="round", zorder=3)
-                lows = min(lows if lows is not None else 1e18, min(s.get("low") or s["y"]))
-                highs = max(highs if highs is not None else -1e18, max(s.get("high") or s["y"]))
-                handles.append(Line2D([], [], marker="o", linestyle="", markersize=5, color=colour))
-            _pad_limits(ax, float(lows), float(highs), top=0.12, bottom=0.12)
+            drawn = _draw_lines(ax, p["series"], tz, 1.5, 2, 3, lambda s, _: _colour(s["label"], i))
+            handles = [Line2D([], [], marker="o", linestyle="", markersize=5, color=c) for c, _, _ in drawn]
+            _pad_limits(ax, *_extent(p["series"]), top=0.12, bottom=0.12)
             if p.get("zones"):  # an air-quality reading: its good / poor / very poor zones behind the line
                 _shade_zones(ax, p["zones"], *ax.get_ylim(), 0.07)
             if len(p["series"]) > 1:
@@ -393,16 +398,12 @@ def _render_panels(spec: dict, tz: tzinfo):
                             hspace=0.85, wspace=0.22)
     for i, p in enumerate(panels):
         ax = fig.add_subplot(grid[i // cols, i % cols], facecolor=BG)
-        colour = _colour(p["label"], i)
-        xs = mdates.date2num([to_dt(t) for t in p["x"]])
-        ys = np.asarray(p["y"], dtype=float)
-        lo, hi = float(min(p.get("low") or ys)), float(max(p.get("high") or ys))
+        lo, hi = _extent([p])
         span = max(hi - lo, 1.0)
         ybottom, ytop = lo - span * 0.3, hi + span * 0.35
         if p.get("zones"):
             _shade_zones(ax, p["zones"], ybottom, ytop, 0.08)
-        _band(ax, xs, p, colour, 2)  # each day's low-to-high range behind its mean
-        ax.plot(xs, ys, color=colour, linewidth=1.2, solid_joinstyle="round", zorder=3)
+        ((colour, xs, ys),) = _draw_lines(ax, [p], tz, 1.2, 2, 3, lambda s, _: _colour(s["label"], i))  # each day's range behind its mean
         records = p.get("records") or {}
         marks = [(mdates.date2num(to_dt(records[w][0])), float(records[w][1]), above) for w, above in
                  (("high", True), ("low", False)) if w in records]
@@ -435,29 +436,30 @@ def _render_panels(spec: dict, tz: tzinfo):
     return fig
 
 
-def render(spec: dict, tz: tzinfo) -> bytes:
-    """PNG bytes for one chart spec (1280x720, or taller for several panels)."""
-    if spec["kind"] == "panels":
-        fig = _render_panels(spec, tz)
-        try:
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
-            return buf.getvalue()
-        finally:
-            plt.close(fig)
-    fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI, facecolor=BG)
-    ax = fig.add_axes(AX_RECT, facecolor=BG)
+def _png(fig) -> bytes:
     try:
-        if spec["kind"] == "stack":
-            fig.delaxes(ax)
-            _render_stack(fig, spec, tz)
-        else:
-            _render_line(fig, ax, spec, tz)
-            if "rose" in spec:  # the compass beside the line
-                ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
-                _render_rose(fig, spec)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
         return buf.getvalue()
     finally:
         plt.close(fig)
+
+
+def render(spec: dict, tz: tzinfo) -> bytes:
+    """PNG bytes for one chart spec (1280x720, or taller for several panels)."""
+    if spec["kind"] == "panels":
+        return _png(_render_panels(spec, tz))
+    fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI, facecolor=BG)
+    try:
+        if spec["kind"] == "stack":
+            _render_stack(fig, spec, tz)
+        else:
+            ax = fig.add_axes(AX_RECT, facecolor=BG)
+            _render_line(fig, ax, spec, tz)
+            if "rose" in spec:  # the compass beside the line
+                ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
+                _render_rose(fig, spec)
+    except Exception:
+        plt.close(fig)
+        raise
+    return _png(fig)
