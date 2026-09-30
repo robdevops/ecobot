@@ -56,7 +56,7 @@ Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close
 
 ## How it stays fast and cheap
 
-- The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict or estimate.
+- The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
   model is called once, at the end, just to word the answer.
 - Recent readings are prefetched when a question arrives and refreshed every 4 minutes.
