@@ -193,3 +193,10 @@ def test_the_full_report_instructions_are_added_only_for_a_report_request():
     now = datetime(2026, 9, 29, 14, 5)
     assert "FULL CURRENT REPORT" in prompt.build(now, ["Ecowitt"], report=True) and "air_quality (no dates)" in prompt.build(now, ["Ecowitt"], report=True)
     assert "FULL CURRENT REPORT" not in prompt.build(now, ["Ecowitt"])
+
+
+def test_the_full_report_asks_for_and_lists_solar_radiation_and_uv():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station", "AirGradient outdoor sensor"], report=True)
+    assert "solar_and_uvi" in text and "• Sun: solar radiation W/m², UV index" in text

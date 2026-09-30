@@ -174,7 +174,7 @@ def capabilities(sources: list[str]) -> str:
 
 
 REPORT_SECTION = """
-THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "outdoor,indoor,pressure,wind,rainfall") and air_quality (no dates)
+THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi") and air_quality (no dates)
 in parallel, then list EVERYTHING from both devices, no summary sentence, in this layout (values from the tools):
 Current report (day date time):
 
@@ -184,6 +184,7 @@ Weather station
 • Wind: speed and direction, gust
 • Pressure: hPa
 • Rain today: mm (month total mm); if weather_now has "rain_outlook", say it here (raining now, or rain likely soon)
+• Sun: solar radiation W/m², UV index
 
 Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI
