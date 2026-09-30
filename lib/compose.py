@@ -125,10 +125,12 @@ class Composer:
         return self.weather_band(group, field, first, last, bands=False)[0]
 
     def weather_band(self, group: str, field: str, first: date, last: date, bands: bool = True) -> tuple[dict, dict, dict]:
-        """(values, lows, highs) per 30-minute slot; lows and highs are Ecowitt's own where it gives them."""
+        """(values, lows, highs) per 30-minute slot; lows and highs are Ecowitt's own where it gives them, else the cached 5-minute readings'."""
         lo, hi = day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
         fields = [field, field + "_low", field + "_high"] if bands else [field]
         values, lows, highs = [*self.eco.cache.slots(self.eco.mac, "30min", group, fields, lo, hi), {}, {}][:3]
+        if bands and group != "wind" and not (lows or highs):   # no range of its own: from the cached 5-minute readings
+            lows, highs = self.eco.cache.slot_ranges(self.eco.mac, group, field, values, lo, hi)
         return values, lows, highs
 
     async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:

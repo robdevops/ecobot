@@ -1032,15 +1032,20 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
     await eco.close()
 
 
-async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings():
+async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings(tmp_path):
+    import time as _time
     from types import SimpleNamespace as NS
     from lib.ecowitt.query import HistoryQuery
+    from lib.ecowitt.store import HistoryCache
     from tests.fakes import TZ
-    base = 1_780_000_200 - 1_780_000_200 % 1800
-    fine = {base + 300 * i: 10.0 + i for i in range(12)}                      # two slots of six 5-minute readings
-    cache = NS(slots=lambda mac, cycle, grp, fields, lo, hi: [fine])
-    q = HistoryQuery(NS(tz=TZ, epoch=lambda d: 0, cache=cache, mac="M"), {}, Turn())
-    q.start = q.end = datetime(2026, 1, 1)
+    base = int(_time.time()) - 10 * 86400
+    base -= base % 1800
+    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    five = {"solar_and_uvi": {"solar": {"unit": "W/m2", "list": {str(base + 300 * i): str(10.0 + i) for i in range(12)}}}}   # two slots of six
+    cache.store("M", "5min", ["solar_and_uvi"], five, base, base + 3600)
+    start, end = datetime(2026, 1, 1), datetime(2026, 1, 2)
+    q = HistoryQuery(NS(tz=TZ, epoch=lambda d: base if d == start else base + 7200, cache=cache, mac="M"), {}, Turn())
+    q.start, q.end = start, end
     q.store = {"solar_and_uvi.solar": {"unit": "W/m²", "pts": {base: {"cycle": "30min", "value": (12.0, "12")},
                                                                base + 1800: {"cycle": "30min", "value": (18.0, "18")}}},
                "outdoor.temperature": {"unit": "C", "pts": {base: {"cycle": "30min", "value": (12.0, "12"), "low": (9.0, "9"), "high": (16.0, "16")}}},
@@ -1050,6 +1055,7 @@ async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_fi
     assert (first["low"][0], first["high"][0]) == (10.0, 15.0) and q.store["solar_and_uvi.solar"]["pts"][base + 1800]["high"][0] == 21.0
     assert q.store["outdoor.temperature"]["pts"][base]["low"][0] == 9.0      # its own range is kept
     assert "low" not in q.store["wind.wind_speed"]["pts"][base]              # wind has its own band
+    cache.close()
 
 
 async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):

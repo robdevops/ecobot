@@ -16,7 +16,9 @@ import logging
 import sqlite3
 import threading
 import time
+from bisect import bisect_left
 
+from ..timeutil import SLOT
 from .api import UNIT_FIXES
 
 log = logging.getLogger(__name__)
@@ -135,6 +137,19 @@ class HistoryCache:
         """Each field as {epoch: float}, in the order asked (empty for a field the cache lacks)."""
         got = self.load_fields(mac, cycle, grp, fields, start, end)
         return [{int(t): float(v) for t, v in got.get(f, {"list": {}})["list"].items()} for f in fields]
+
+    def slot_ranges(self, mac: str, grp: str, field: str, values: dict[int, float], start: int, end: int) -> tuple[dict, dict]:
+        """(lows, highs) for 30-minute readings that have no range of their own (dew point, feels-like, VPD, solar, UV,
+        pressure ...): the lowest and highest of the cached 5-minute readings inside each slot (and the slot's own value).
+        Only what the cache holds; slots with fewer than two 5-minute readings get none."""
+        (fine,) = self.slots(mac, "5min", grp, [field], start, end)
+        times = sorted(fine)
+        lows, highs = {}, {}
+        for t, v in values.items():
+            inside = [fine[x] for x in times[bisect_left(times, t):bisect_left(times, t + SLOT)]]
+            if len(inside) >= 2:
+                lows[t], highs[t] = min(inside + [v]), max(inside + [v])
+        return lows, highs
 
     def days_held(self, mac: str, cycle: str, groups: list[str]) -> int:
         """Days of history stored at this resolution (the least any of the groups has)."""
