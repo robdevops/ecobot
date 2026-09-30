@@ -29,16 +29,21 @@ envirobot.py            wiring and lifecycle
 lib/config.py           settings
 lib/bot.py              Telegram handlers and replies
 lib/llm.py, prompt.py   tool-calling loop; system prompt
-lib/intent.py           reasoning effort, "needs data?", fast path
-lib/tools.py, warm.py   tool registry; keep-warm helper shared by both sources
-lib/ecowitt/            api, store (SQLite + memory), history, days (rank/count days), station, nightly archive
+lib/intent.py           intent.read(text) -> one Reading: effort, needs data, fast path, chart asks, period hints
+lib/tools.py, warm.py   tool registry and the per-question Turn; keep-warm helper shared by both sources
+lib/series.py           the weather readings a chart can plot (one table)
+lib/lines.py            the one rule that turns readings into a chart line (raw, bucketed, daily band, smoothing)
+lib/rain.py             rain per slot, spells and bars from the daily total
+lib/analysis/           pairs (rain vs a reading, rain vs air quality), scan (air quality vs everything)
+lib/compose.py          plot_chart / air_link / air_scan: any series on one time axis
+lib/charts.py           chart renderer (shared theme, one line drawer)
+lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
+                        days (rank/count days), outlook (raining / likely soon), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air
-lib/charts.py           chart renderer (shared theme)
-tests/                  pytest, against fake Ecowitt/AirGradient/Telegram
-scripts/                cache_status.py (is everything cached?), benchmark_history.py (30-minute vs daily),
-                        show_request.py (exactly what is sent to the model for a question),
-                        check_rain.py (are rain totals trustworthy at each resolution?)
+tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases
+scripts/                cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
+                        sent to the model for a question), check_rain.py (are rain totals trustworthy?)
 ```
 
 Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.

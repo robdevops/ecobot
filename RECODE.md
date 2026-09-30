@@ -35,3 +35,22 @@
      4 lib/airgradient/__init__.py
      0 lib/__init__.py
 ```
+
+# Outcome (recode branch)
+
+The behaviour, tool contracts and cache schemas are unchanged (245 tests and the 42 routing cases pass; old-version cache
+fixtures still load). The core did not get smaller: 5,505 -> 5,602 lines, because the pieces that now exist once
+(lines, series, rain, Reading, Turn) replaced repeats that were short, while the structure got clearer.
+
+What did change:
+- per-question state travels in a `Turn`, not module-level ContextVars;
+- one line builder (`lines.build_line`) replaced five copies of "raw / bucket / daily band / smooth";
+- `history.py` (699) is `fetch`, `extremes` and `query`; `link.py` (349) is the tool only, with the analysis in
+  `analysis/pairs.py` and the rain helpers in `rain.py`; `correlate.py` is `analysis/scan.py`;
+- one weather-series table (`series.py`) feeds the stack chart, the composer and the question recogniser;
+- `intent.read` returns one `Reading` used by the bot, the evals and `show_request`;
+- the station no longer imports the alert module (the rain outlook lives in `ecowitt/outlook.py`);
+- the renderer draws bands and lines in one place.
+
+Left as they were, on purpose: typed chart specs (dict specs are read by many tests and the tools), the alert rules
+(already one small method each on a shared rain helper), the SQLite layout (only the reads were tidied).
