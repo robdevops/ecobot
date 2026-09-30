@@ -72,9 +72,9 @@ READING_COLOURS = {
     "temperature": "#F2545B",   # coral red
     "feels_like": "#E5408F",    # raspberry
     "solar": "#F5B83D",         # golden
-    "uv": "#C04CE8",            # orchid
-    "pressure": "#6A3FE0",      # deep violet
-    "vpd": "#9A7BF7",           # lavender
+    "uv": "#8B5CF6",            # violet
+    "pressure": "#C04CE8",      # orchid
+    "vpd": "#06B6D4",           # cyan
     "humidity": "#2747C9",      # deep blue
     "rain": "#7CC3F7",          # light blue (also the rain bars, RAIN)
     "dew_point": "#13B8A6",     # teal
