@@ -254,3 +254,12 @@ def test_questions_about_the_bot_are_recognised_and_readings_questions_are_not()
     for text in ("what was the hottest day", "list rainy days in september", "what's the temperature", "show the past week",
                  "what was the pressure last month", "how's the air?"):
         assert not intent.about_the_bot(text), text
+
+
+def test_a_bare_status_or_report_asks_for_everything_and_nothing_else_does():
+    for text in ("status", "report", "Report please", "give me the full report", "current report", "show what you've got",
+                 "overview", "everything?", "what's the status"):
+        assert intent.wants_report(text), text
+    for text in ("weather report for Tuesday", "report the humidity", "status of the rain alert", "report last week", "hello",
+                 "how's the air?"):
+        assert not intent.wants_report(text), text

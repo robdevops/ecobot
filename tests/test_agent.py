@@ -176,3 +176,11 @@ async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
     assert reply.startswith("I track") and client.requests[0]["tool_choice"] == "none" and seen == []
     now = datetime(2026, 9, 29, 14, 5)
     assert "ABOUT THE BOT ITSELF" in prompt.build(now, ["Ecowitt"], [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, ["Ecowitt"])
+
+
+def test_the_full_report_instructions_are_added_only_for_a_report_request():
+    from datetime import datetime
+    from lib import prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    assert "FULL CURRENT REPORT" in prompt.build(now, ["Ecowitt"], report=True) and "air_quality (no dates)" in prompt.build(now, ["Ecowitt"], report=True)
+    assert "FULL CURRENT REPORT" not in prompt.build(now, ["Ecowitt"])

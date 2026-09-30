@@ -125,6 +125,8 @@ def deterministic(case: Case) -> list[str]:
         fails.append(f"chart_fields {intent.chart_fields(text)}, expected {e['chart_fields']}")
     if "chart_field" in e and intent.chart_field(text) != e["chart_field"]:
         fails.append(f"chart_field {intent.chart_field(text)}, expected {e['chart_field']}")
+    if "report" in e and intent.wants_report(text) != e["report"]:
+        fails.append(f"wants_report {intent.wants_report(text)}, expected {e['report']}")
     if "about_the_bot" in e and intent.about_the_bot(text) != e["about_the_bot"]:
         fails.append(f"about_the_bot {intent.about_the_bot(text)}, expected {e['about_the_bot']}")
     if "needs_data" in e and intent.needs_data(text) != e["needs_data"]:
@@ -140,7 +142,7 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     calls: list[tuple[str, dict]] = []
     text = case.ask
     system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], intent.period_hints(text, NOW),
-                          intent.about_the_bot(text))
+                          intent.about_the_bot(text), intent.wants_report(text))
     fast = intent.fast_call(text, NOW, True, True)
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(

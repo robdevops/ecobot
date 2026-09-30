@@ -54,6 +54,15 @@ def reasoning_effort(text: str) -> str:
     return EFFORT_DESCRIBE if ANALYSIS.search(text) or DESCRIBE.search(text) else EFFORT_DEFAULT
 
 
+# "status", "report": the whole current picture from both devices (a period word or a subject makes it something else)
+REPORT = re.compile(r"^\s*(please\s+)?((give me|show me|show|get|what's|whats)\s+)?(the\s+)?(a\s+)?(full\s+|current\s+|complete\s+)?"
+                    r"(status|report|overview|dashboard|summary|everything|what you'?ve got)(\s+please)?\s*[?.!]*\s*$", I)
+
+
+def wants_report(text: str) -> bool:
+    return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
+
+
 # Questions about the bot itself ("what metrics do you have", "list our sources"): answered from what it knows, no fetch
 ABOUT_THE_BOT = re.compile(
     r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"

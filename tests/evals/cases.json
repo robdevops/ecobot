@@ -1002,5 +1002,35 @@
     "weather_history"
    ]
   }
+ },
+ {
+  "id": "report",
+  "ask": "report",
+  "note": "only the weather station was fetched; the older answer listed everything from both devices",
+  "expect": {
+   "report": true,
+   "tools": [
+    "weather_now",
+    "air_quality"
+   ]
+  }
+ },
+ {
+  "id": "status",
+  "ask": "status",
+  "expect": {
+   "report": true,
+   "tools": [
+    "weather_now",
+    "air_quality"
+   ]
+  }
+ },
+ {
+  "id": "weather-report-for-a-day",
+  "ask": "weather report for Tuesday",
+  "expect": {
+   "report": false
+  }
  }
 ]

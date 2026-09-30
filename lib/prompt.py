@@ -161,9 +161,28 @@ def capabilities(sources: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False) -> str:
+REPORT_SECTION = """
+THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "outdoor,indoor,pressure,wind,rainfall") and air_quality (no dates)
+in parallel, then list EVERYTHING from both devices, no summary sentence, in this layout (values from the tools):
+Current report (day date time):
+
+Weather station
+• Outdoor: temperature, humidity, dew point
+• Indoor: temperature, humidity
+• Wind: speed and direction, gust
+• Pressure: hPa
+• Rain today: mm (month total mm)
+
+Air quality
+• PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI
+"""
+
+
+def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, report: bool = False) -> str:
     text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
                          sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
+    if report:
+        text += REPORT_SECTION
     if about_bot:
         text += ("\nTHIS QUESTION IS ABOUT THE BOT ITSELF (its metrics, sensors, sources or abilities): answer from WHAT THIS "
                  "BOT CAN AND CAN'T DO above, briefly. Do not fetch readings.\n")
