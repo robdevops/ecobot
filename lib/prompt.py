@@ -152,7 +152,7 @@ def capabilities(sources: list[str]) -> str:
                  "count days, holidays, weekends), weather_link (does rain come with a pressure, humidity or wind change), "
                  "air_quality.")
     lines.append("- Charts: any one reading, or several readings together on one time axis (temperature, humidity, pressure, wind, "
-                 "rain); wind direction as a heatmap with a rose; air quality with ratings.")
+                 "rain); wind as average speed with gusts beside a compass rose of directions; air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, "
                  "indoor/outdoor temperature crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")

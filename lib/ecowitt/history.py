@@ -19,7 +19,7 @@ from typing import NamedTuple
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import WIDTH_NAMES, WIDTHS, bucket_width, bucketed, daily_summary, local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
-from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
+from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .link import rain_bars, rain_slots
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
@@ -272,9 +272,8 @@ class HistoryQuery:
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
-        self.direction_period = (None, None)               # what the counted readings actually span
         self.rain_bars: dict = {"x": [], "y": [], "width": 86400, "per": "day"}   # for a stacked chart with rain
-        self.direction_grid: dict = {}                     # counts per compass point per time step, for the heatmap
+        self.compass: dict = {}                            # the wind rose (counts per compass point by speed), drawn beside the wind chart
 
     async def run(self) -> str:
         today = self.now.date()
@@ -376,10 +375,8 @@ class HistoryQuery:
             result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31), len(calm))
             if not result:
                 continue
-            self.direction_grid = {**direction_grid(counted, self.tz, first, self.end), "speed_steps": list(SPEED_STEPS),
-                                   "speeds": any(t in speeds for t, _, _ in counted),
-                                   "rose": direction_rose([(t, d, x, speeds.get(t)) for t, d, x in counted])}
-            self.direction_period = (first, self.end)
+            self.compass = {"rose": direction_rose([(t, d, x, speeds.get(t)) for t, d, x in counted]),
+                            "speeds": any(t in speeds for t, _, _ in counted), "speed_steps": list(SPEED_STEPS)}
             if self.start < first:
                 result["note_period"] = f"covers only the last {DIRECTION_DAYS} days of the period"
             self.direction[key] = result
@@ -512,15 +509,14 @@ class HistoryQuery:
                 if spec:
                     holder.append(spec)
                     out["chart"] = AVERAGE_CHART_HINT if AVERAGE_ASKED.get() else CHART_HINT
-            if self.direction_grid:
-                unit = self.direction_grid["unit"]
-                holder.append({"kind": "direction", "title": "Wind direction", **self.direction_grid,
-                               "subtitle": f"{_period(*self.direction_period)}  ·  left: share of readings per {unit}  ·  "
-                                           "right: whole period, by speed" if self.direction_grid["speeds"] else
-                                           f"{_period(*self.direction_period)}  ·  left: share of readings per {unit}  ·  "
-                                           "right: whole period"})
-                out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
-                                if spec else DIRECTION_CHART_HINT)
+            if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
+                wind = spec if spec and spec["title"] == "Wind" else self._chart_spec(plottable, "wind_gust")
+                if wind:
+                    wind.update(self.compass, subtitle=wind["subtitle"] + "  ·  compass: wind direction")
+                    if wind is not spec:
+                        holder.append(wind)
+                    out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
+                                    if spec and wind is not spec else DIRECTION_CHART_HINT)
         if f.errors:
             out["missing"] = f.errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."
@@ -549,14 +545,14 @@ class HistoryQuery:
                 if values:
                     row["avg"] = fmt(sum(values) / len(values))
 
-    def _chart_spec(self, series_out: dict) -> dict | None:
-        """Line chart: one line per group for the field asked about (chart_field; temperature by default,
+    def _chart_spec(self, series_out: dict, field: str | None = None) -> dict | None:
+        """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
-        wanted = str(CHART_FIELD.get() or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
+        wanted = str(field or CHART_FIELD.get() or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
         keys = [k for k in series_out if k.endswith("." + wanted)] or [k for k in series_out if k.endswith(".temperature")]
-        if not keys:
-            field = next(iter(series_out)).split(".", 1)[-1]
+        if not keys:  # nothing to match: the wind chart when wind direction was counted, else the first field
+            field = "wind_gust" if self.compass and any(k.endswith(".wind_gust") for k in series_out) else next(iter(series_out)).split(".", 1)[-1]
             keys = [k for k in series_out if k.endswith("." + field)]
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
@@ -580,7 +576,7 @@ class HistoryQuery:
         return {"kind": "line", "title": "Wind" if wind else field.replace("_", " ").capitalize(),
                 "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
                             + (", shaded up to the gusts" if wind and ranged else ", range shaded" if ranged else "")
-                            + ("  ·  records marked" if any(x["records"] for x in series) else ""),
+                            + ("  ·  records marked" if any(x["records"] for x in series) and not wind else ""),
                 "unit": unit, "series": series}
 
     def _wind_pts(self) -> dict:

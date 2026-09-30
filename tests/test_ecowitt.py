@@ -448,7 +448,7 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     await eco.close()
 
 
-async def test_a_direction_chart_is_a_heatmap_over_time(tmp_path, archived_cache):
+async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path, archived_cache):
     from lib.charts import render
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
@@ -460,21 +460,17 @@ async def test_a_direction_chart_is_a_heatmap_over_time(tmp_path, archived_cache
         specs = CHART_REQUESTS.get()
     finally:
         CHART_REQUESTS.reset(token)
-    kinds = [s["kind"] for s in specs]
-    assert kinds == ["line", "direction"] and "wind direction" in out["chart"]     # gusts still get their line
-    spec = specs[1]
-    assert spec["step"] == 3600 and spec["unit"] == "hour" and len(spec["columns"]) <= 130    # five days: hourly columns
-    assert all(len(col) == 16 for col in spec["columns"]) and sum(map(sum, spec["columns"])) > 0
-    north = sum(col[0] for col in spec["columns"])
-    assert north == sum(map(sum, spec["columns"]))                # the fake wind swings 350, 0, 10: all in the N cell
-    assert "left: share of readings per hour" in spec["subtitle"] and "right: whole period, by speed" in spec["subtitle"]
+    assert [s["kind"] for s in specs] == ["line"] and "compass" in out["chart"]     # one image: speed line and compass
+    spec = specs[0]
+    line = spec["series"][0]
+    assert spec["title"] == "Wind" and "shaded up to the gusts" in spec["subtitle"] and "low" in line
+    assert "compass: wind direction" in spec["subtitle"] and "records marked" not in spec["subtitle"] and spec["speeds"] is True
     rose = spec["rose"]
-    assert len(rose) == 16 and sum(map(sum, rose)) == sum(map(sum, spec["columns"]))   # the same readings as the heatmap
+    assert len(rose) == 16 and sum(rose[0]) == sum(map(sum, rose)) > 0                  # the fake wind swings 350, 0, 10: all in N
     assert sum(r[0] for r in rose) == 0 and sum(r[1] for r in rose) > 0 and sum(r[2] for r in rose) > 0   # 10 km/h and 25 km/h
-    assert sum(rose[0]) == sum(map(sum, rose))                                            # all of it from the N wedge
-    png = render(specs[1], eco.tz)
+    png = render(spec, eco.tz)
     assert png[:4] == b"\x89PNG"
-    (tmp_path / "direction.png").write_bytes(png)
+    (tmp_path / "wind.png").write_bytes(png)
     await eco.close()
 
 
@@ -493,7 +489,7 @@ async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model
     short = {"groups": "wind", "chart": False, "start_date": f"{today - timedelta(days=3)} 00:00:00",
              "end_date": f"{today - timedelta(days=2)} 23:59:59"}   # two days
     long = {**short, "start_date": f"{today - timedelta(days=5)} 00:00:00"}   # four days: always a chart
-    for args, asked, expected in ((short, False, 0), (short, True, 2), (long, False, 2)):
+    for args, asked, expected in ((short, False, 0), (short, True, 1), (long, False, 1)):     # one wind chart: line and compass
         holder, asked_token = CHART_REQUESTS.set([]), CHART_ASKED.set(asked)
         try:
             await eco.tools[1].handler(args)
@@ -709,50 +705,27 @@ async def test_resolution_follows_the_length_of_the_period(tmp_path):
     assert seen[300]["1day"] >= 1 and seen[300].get("30min", 0) <= 6   # not a year of 30-minute weeks
 
 
-def test_the_heatmap_steps_follow_the_length_of_the_period_and_never_wrap_at_north():
-    from lib.ecowitt.direction import grid, sector
-    from tests.fakes import TZ
-    first = datetime(2026, 1, 1, 0, 0)
-    for days, unit, step in ((2, "hour", 3600), (20, "6 hours", 21600), (100, "day", 86400), (300, "week", 604800)):
-        g = grid([], TZ, first, first + timedelta(days=days))
-        assert g["unit"] == unit and g["step"] == step and 1 <= len(g["columns"]) <= 130, days
-    assert sector(359) == sector(1) == sector(0) == 0 and sector(11.2) == 0 and sector(11.3) == 1 and sector(348.8) == 0
-    base = int(datetime(2026, 1, 1, 12, tzinfo=TZ).timestamp())
-    g = grid([(base, 359.0, True), (base + 60, 1.0, True), (base + 7200, 180.0, True)], TZ, first, first + timedelta(days=2))
-    assert g["columns"][12][0] == 2 and g["columns"][14][8] == 1 and sum(map(sum, g["columns"])) == 3
-
-
-def test_the_direction_heatmap_renders_for_two_days_and_a_year():
-    from lib.charts import render
-    from lib.ecowitt.direction import grid
-    from tests.fakes import TZ
-    first = datetime(2026, 1, 1)
-    for days in (2, 92, 365):
-        last = first + timedelta(days=days)
-        readings = [(int((first + timedelta(minutes=30 * i)).replace(tzinfo=TZ).timestamp()), (i * 37) % 360, True)
-                    for i in range(days * 48)]
-        spec = {"kind": "direction", "title": "Wind direction", "subtitle": "test", **grid(readings, TZ, first, last)}
-        assert render(spec, TZ)[:4] == b"\x89PNG"
-
-
 def test_the_rose_counts_by_wind_speed_and_wraps_at_north():
-    from lib.ecowitt.direction import rose
+    from lib.ecowitt.direction import rose, sector
+    assert sector(359) == sector(1) == sector(0) == 0 and sector(11.2) == 0 and sector(11.3) == 1 and sector(348.8) == 0
     readings = [(1, 359.0, True, 5.0), (2, 1.0, True, 15.0), (3, 0.0, True, 40.0), (4, 180.0, True, None), (5, 90.0, True, 10.0)]
     out = rose(readings)
     assert out[0] == [1, 1, 1] and out[8] == [1, 0, 0] and out[4] == [0, 1, 0] and sum(map(sum, out)) == 5
 
 
-def test_the_heatmap_and_rose_render_with_and_without_speed():
+def test_the_wind_line_and_compass_render_with_and_without_speed():
     from lib.charts import render
-    from lib.ecowitt.direction import grid, rose
+    from lib.ecowitt.direction import rose
     from tests.fakes import TZ
     first = datetime(2026, 1, 1)
     readings = [(int((first + timedelta(minutes=30 * i)).replace(tzinfo=TZ).timestamp()), (i * 37) % 360, True) for i in range(96 * 4)]
-    base = {"kind": "direction", "title": "Wind direction", "subtitle": "test", **grid(readings, TZ, first, first + timedelta(days=4))}
-    with_speed = {**base, "speeds": True, "speed_steps": [10, 20],
-                  "rose": rose([(t, d, x, (t % 30)) for t, d, x in readings])}
-    without = {**base, "speeds": False, "rose": rose([(t, d, x, None) for t, d, x in readings])}
-    for spec in (with_speed, without, base):                       # a spec with no rose is still drawn (heatmap only)
+    x = [t for t, _, _ in readings]
+    y = [10 + 5 * ((i % 48) / 48) for i in range(len(x))]
+    line = {"kind": "line", "title": "Wind", "subtitle": "test", "unit": "km/h",
+            "series": [{"label": "Wind", "x": x, "y": y, "low": y, "high": [v + 8 for v in y], "records": {"high": [x[5], y[5] + 8]}}]}
+    with_speed = {**line, "speeds": True, "speed_steps": [10, 20], "rose": rose([(t, d, e, (t % 30)) for t, d, e in readings])}
+    without = {**line, "speeds": False, "rose": rose([(t, d, e, None) for t, d, e in readings])}
+    for spec in (with_speed, without, line):                       # a spec with no rose is just the line
         assert render(spec, TZ)[:4] == b"\x89PNG"
 
 

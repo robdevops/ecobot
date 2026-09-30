@@ -12,10 +12,9 @@ Several readings on one time axis, a panel each (weather_link, and "plot tempera
      {"label", "unit", "series": [{"label", "x", "y"[, "low", "high"]}]}      a line per series, or
      {"label", "unit", "bars": {"x": [bar start epoch], "y": [value], "width": seconds}}]}
 
-Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up) beside a
-wind rose of the whole period, stacked by wind speed:
-  {"kind": "direction", "title", "subtitle", "start": epoch of the first column, "step": seconds per column,
-   "columns": [[16 counts, N first], ...], "rose": [[light, middle, strong] x 16], "speeds": bool, "speed_steps": [10, 20]}
+A wind chart is a line spec that also carries the compass, a wind rose of the whole period drawn beside the line,
+stacked by wind speed:
+  {"kind": "line", ..., "rose": [[light, middle, strong] x 16, N first], "speeds": bool, "speed_steps": [10, 20]}
 
 Rendered at exactly 1280x720, the size Telegram displays photos at, so nothing is
 rescaled and the chart stays sharp.
@@ -74,8 +73,9 @@ LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading a
 STACK_CHART_HINT = ("Your reply becomes the caption of a chart with these readings on one time axis, so keep it short: the "
                     "period, then one line per reading: temperature and other readings with their high and low (or their "
                     "average if that was asked), rain with its total (\"rain_total_mm\"). Don't mention or describe the chart.")
-DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction over time, so keep it short: "
-                        "the period, then the most common direction and how steady it was. Don't mention or describe the chart.")
+DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: average speed with the gusts, and a compass of "
+                        "where the wind came from. Keep it short: the period, the average speed and strongest gust, then the "
+                        "most common direction and how steady it was. Don't mention or describe the chart.")
 
 # Palette (slate neutrals, warm outdoor, cool indoor)
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
@@ -278,40 +278,6 @@ def _time_axis(ax, span_days: float):
         lambda v, _: mdates.num2date(v).strftime(fmt).replace("AM", "am").replace("PM", "pm")))
 
 
-WIND_RAMP = ("#FFFFFF", "#FED7AA", "#FB923C", "#EA580C", "#9A3412")  # white to deep orange: more readings from that way
-MIN_READINGS = 2  # a time step with fewer readings than this (2: even hourly steps of 30-minute data) is left blank rather than drawn from noise
-
-
-def _render_direction(fig, ax, spec: dict, tz: tzinfo):
-    """Wind direction over time as a heatmap: time across, the 16 compass points up (N at the bottom, so nothing
-    wraps), shade = that step's share of readings from each direction. Dots mark each step's most common direction."""
-    counts = np.asarray(spec["columns"], dtype=float).T                  # 16 compass points x time steps
-    totals = counts.sum(axis=0)
-    share = np.where(totals >= MIN_READINGS, counts / np.maximum(totals, 1), np.nan)
-    to_dt = _to_dt(tz)
-    x0 = mdates.date2num(to_dt(spec["start"]))
-    width = spec["step"] / 86400
-    n = share.shape[1]
-    cmap = matplotlib.colors.LinearSegmentedColormap.from_list("wind", WIND_RAMP).with_extremes(bad=BG)
-    ax.imshow(np.ma.masked_invalid(share), aspect="auto", origin="lower", cmap=cmap, vmin=0, vmax=0.5,
-              interpolation="nearest", extent=[x0, x0 + n * width, -0.5, 15.5], zorder=2)
-    keep = totals >= MIN_READINGS
-    centres = x0 + (np.arange(n) + 0.5) * width
-    if keep.any():
-        ax.scatter(centres[keep], np.nanargmax(np.nan_to_num(share[:, keep], nan=-1), axis=0), s=8, color=TEXT,
-                   alpha=0.75, linewidths=0, zorder=4)
-    _frame(fig, ax, {**spec, "unit": ""}, [], [], legend=False)
-    ax.grid(False)
-    ax.set_xlim(x0, x0 + n * width)
-    ax.set_ylim(-0.5, 15.5)
-    ax.set_yticks([0, 4, 8, 12])
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: {0: "N", 4: "E", 8: "S", 12: "W"}.get(int(round(v)), "")))
-    _time_axis(ax, n * width)
-    if "rose" in spec:
-        ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
-        _render_rose(fig, spec)
-
-
 def _render_stack(fig, spec: dict, tz: tzinfo):
     """Several readings on one time axis, one panel each, top to bottom: lines (with a shaded range where there is
     one) or bars (rain). The rain lines up with what the other readings were doing at that moment."""
@@ -368,7 +334,7 @@ WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
 
 def _render_rose(fig, spec: dict):
     """The whole period as a wind rose (N up, clockwise): each of the 16 wedges is the share of readings from that
-    way, stacked by wind speed. The heatmap beside it shows how that changed over time."""
+    way, stacked by wind speed. It sits beside the wind speed line."""
     counts = np.asarray(spec["rose"], dtype=float)                        # 16 compass points x 3 speed steps
     ax = fig.add_axes([0.685, 0.12, 0.27, 0.62], projection="polar")
     theta = np.deg2rad(np.arange(16) * 22.5)
@@ -466,10 +432,11 @@ def render(spec: dict, tz: tzinfo) -> bytes:
         if spec["kind"] == "stack":
             fig.delaxes(ax)
             _render_stack(fig, spec, tz)
-        elif spec["kind"] == "direction":
-            _render_direction(fig, ax, spec, tz)
         else:
             _render_line(fig, ax, spec, tz)
+            if "rose" in spec:  # the compass beside the line
+                ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
+                _render_rose(fig, spec)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
         return buf.getvalue()

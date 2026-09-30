@@ -4,9 +4,9 @@ wind blew from each of the 16 compass points, plus a vector mean and how steady 
 
 import math
 from collections import Counter
-from datetime import datetime, time, tzinfo
+from datetime import tzinfo
 
-from ..timeutil import local_date, local_epoch, to_local
+from ..timeutil import local_date
 
 POINTS = ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
 TOP = 3  # compass points listed, most common first
@@ -17,9 +17,6 @@ def point(degrees: float) -> str:
     return POINTS[int((degrees % 360 + 11.25) // 22.5) % 16]
 
 
-# The heatmap's columns: the smallest time step that keeps a period to about this many columns
-BIN_STEPS = ((3600, "hour"), (6 * 3600, "6 hours"), (86400, "day"), (7 * 86400, "week"))
-MAX_COLUMNS = 130
 SPEED_STEPS = (10, 20)  # km/h: the rose's light, middle and strong wind (under 10, 10 to 20, 20 and over)
 
 
@@ -74,21 +71,6 @@ def summarise(readings: list[tuple[int, float, bool]], tz: tzinfo, by_day: bool,
 def sector(degrees: float) -> int:
     """0-15, N is 0 and covers 348.75 to 11.25 degrees: 359 and 1 are in the same one."""
     return int((degrees % 360 + 11.25) // 22.5) % 16
-
-
-def grid(readings: list[tuple[int, float, bool]], tz: tzinfo, first: datetime, last: datetime) -> dict:
-    """Counts per compass point per time step, for the heatmap: {"step": seconds, "unit": "day", "start": epoch of
-    the first column, "columns": [[16 counts], ...]}. The step follows the length of the period; steps of 6 hours
-    or more start at local midnight, hours at the hour."""
-    span = (last - first).total_seconds()
-    step, unit = next(((s, u) for s, u in BIN_STEPS if span / s <= MAX_COLUMNS), BIN_STEPS[-1])
-    origin = first.replace(minute=0, second=0, microsecond=0) if step == 3600 else datetime.combine(first.date(), time())
-    columns = [[0] * 16 for _ in range(max(1, int(-(-(last - origin).total_seconds() // step))))]
-    for ts, degrees, _ in readings:
-        k = int((to_local(ts, tz).replace(tzinfo=None) - origin).total_seconds() // step)
-        if 0 <= k < len(columns):
-            columns[k][sector(degrees)] += 1
-    return {"step": step, "unit": unit, "start": local_epoch(origin, tz), "columns": columns}
 
 
 def rose(readings: list[tuple[int, float, bool, float | None]]) -> list[list[int]]:
