@@ -292,13 +292,15 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
             else:
                 idx = int(ys.argmax() if above else ys.argmin())
                 rx, ry = xs[idx], ys[idx]
+            y_lo, y_hi = ax.get_ylim()
+            if want == "low" and (ry - y_lo) < 0.08 * (y_hi - y_lo):
+                continue  # a low on the floor (0 mm, 0 km/h) says nothing
             line_y = float(np.interp(rx, xs, ys))
             if abs(ry - line_y) > (0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) if s.smoothed else 1e-6) and not s.low:
                 ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
                           linewidth=1.2, alpha=0.8, zorder=3)
             ax.scatter([rx], [ry], s=18, color=colour, edgecolors="white", linewidths=1.2, zorder=6)
-            y_lo, y_hi = ax.get_ylim()
-            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low at the floor: pill above
+            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
     # Records that land close together (e.g. outdoor and indoor on the same hot day) go side by side
     y_lo, y_hi = ax.get_ylim()
     for a in range(len(pills)):
@@ -361,26 +363,36 @@ def _render_rose(fig, compass: Compass):
 
 
 # ---------- several panels on one time axis ----------
-def _mark_records(ax, line: Line, colour: str, tz: tzinfo, x0: float, x1: float):
-    """A small labelled dot on each true record of a line."""
+def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: float, lows: bool):
+    """A small labelled dot on each line's highest reading (and, for a lone line, its lowest unless that is the floor).
+    Labels that would touch are stacked."""
     to_dt = _to_dt(tz)
-    for want, above in (("high", True), ("low", False)):
-        if want not in line.records:
-            continue
-        mx, my = mdates.date2num(to_dt(line.records[want][0])), float(line.records[want][1])
-        frac = (mx - x0) / max(x1 - x0, 1e-9)
-        y_lo, y_hi = ax.get_ylim()
-        above = above or (my - y_lo) < 0.16 * (y_hi - y_lo)  # a low at the floor: label above
-        ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
-        ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, 5 if above else -5), textcoords="offset points",
-                    ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
-                    fontsize=6.5, fontweight="bold", color="white", zorder=5,
-                    bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
+    y_lo, y_hi = ax.get_ylim()
+    placed = []
+    for line, colour in marks:
+        for want, above in (("high", True), ("low", False)):
+            if want not in line.records or (want == "low" and not lows):
+                continue
+            mx, my = mdates.date2num(to_dt(line.records[want][0])), float(line.records[want][1])
+            if want == "low" and (my - y_lo) < 0.08 * (y_hi - y_lo):
+                continue  # a low on the floor says nothing
+            above = above or (my - y_lo) < 0.16 * (y_hi - y_lo)  # a low near the floor: label above
+            stacked = sum(1 for px, py, pa in placed if pa == above and abs(px - mx) < 0.1 * (x1 - x0) and abs(py - my) < 0.2 * (y_hi - y_lo))
+            placed.append((mx, my, above))
+            lift = 5 + 11 * stacked
+            frac = (mx - x0) / max(x1 - x0, 1e-9)
+            ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, lift if above else -lift), textcoords="offset points",
+                        ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
+                        fontsize=6.5, fontweight="bold", color="white", zorder=5,
+                        bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
 
 
 def _end_labels(ax, drawn: list[tuple]):
     """The latest value of each line in the margin beside it, nudged apart where they would touch."""
     y_lo, y_hi = ax.get_ylim()
+    if max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
+        return  # everything sits on the floor: nothing to read off
     height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
     gap = 8 * (y_hi - y_lo) / height_pt                     # 8 points, in data units
     placed = []
@@ -417,9 +429,10 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         ax.set_ylim(0, top)
         return 0, float(bx.max() + b.width / 86400) if len(bx) else x1
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True)
-    marked = len(p.lines) + len(p.right) == 1 and bool(p.lines[0].records)  # a lone line has its records labelled
-    _pad_limits(ax, *_extent(p.lines, [float(r[1]) for r in p.lines[0].records.values()] if marked else []),
-                top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12, floor=0)
+    lone = len(p.lines) == 1 and not p.right
+    marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records] if not p.right else []  # highs labelled; a lone line's lows too
+    _pad_limits(ax, *_extent(p.lines, [float(r[1]) for s, _ in marks for w, r in s.records.items() if lone or w == "high"]),
+                top=(0.3 if lone else 0.5) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
     if len(p.lines) == 1 and not p.right and not p.lines[0].low and not p.zones:  # a lone line fades softly to the floor
@@ -430,8 +443,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         _right_axis(ax, p.right, tz, first + len(p.lines))
         if len(p.lines) == 1:
             ax.tick_params(axis="y", labelcolor=drawn[0][0])
-    if marked:
-        _mark_records(ax, p.lines[0], drawn[0][0], tz, x0, x1)
+    if marks:
+        _mark_records(ax, marks, tz, x0, x1, lows=lone)
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(p.lines) > 1 and not p.right:
