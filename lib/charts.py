@@ -342,8 +342,7 @@ def _render_single(fig, chart: Chart, tz: tzinfo):
                  bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / H_IN), ncol=len(legend), fontsize=8.5)
     _style_axis(ax, grid=0 if panel.bars else 0.8)   # with rain behind, the grid is drawn under it (_bars_behind)
     tick_unit = "°" if _deg(panel.unit) == "°" else ""
-    nonneg = _extent(lines)[0] >= 0  # padding below zero is room, not a scale: no negative labels on a reading that cannot be
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: "" if nonneg and v < 0 else f"{v:g}{tick_unit}"))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}{tick_unit}"))
     ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]))
     if chart.compass:  # beside the line
         ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])

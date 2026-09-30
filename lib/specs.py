@@ -137,8 +137,9 @@ def rain_behind(panels: list[Panel]) -> list[Panel]:
 
 
 def stack(panels: list[Panel], first: date, last: date) -> Chart:
-    """A chart of these panels for the days first to last, rain behind the first line; what a bar covers goes into the
-    subtitle."""
-    per = next((b.per for p in panels for b in (p.bars, p.shares) if b and b.per), "")
-    return Chart(", ".join(p.label for p in panels), period_text(first, last) + (f"  ·  per {per}" if per else ""),
-                 rain_behind(panels))
+    """A chart of these panels for the days first to last, rain behind the first line. The subtitle says what a bar covers and
+    whether a range is shaded. Every producer of a stacked chart goes through here, so they all read alike."""
+    per = next((f"{'rain' if b is p.bars else 'rating'} per {b.per}" for p in panels for b in (p.bars, p.shares) if b and b.per), "")
+    shaded = any(s.low is not None for p in panels for s in p.lines)
+    return Chart(", ".join(p.label for p in panels),
+                 "  ·  ".join(filter(None, [period_text(first, last), per, "range shaded" if shaded else ""])), rain_behind(panels))

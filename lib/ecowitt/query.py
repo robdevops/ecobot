@@ -21,7 +21,7 @@ from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, local_date, now_local
 from ..series import WEATHER, find
 from ..panels import panel_for
-from ..specs import Bars, Chart, Compass, Line, Panel, period_text, rain_behind
+from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
 from .api import CYCLE_SECONDS, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
@@ -457,8 +457,4 @@ class HistoryQuery:
                 panels.append(panel_for(name, lines))
         if len(panels) < 2:
             return None
-        rain = self.rain_bars.per if any(p.bars for p in panels) else None
-        return Chart(", ".join(p.label for p in panels),
-                     f"{period_text(self.start.date(), self.end.date())}" + (f"  ·  rain per {rain}" if rain else "")
-                     + ("  ·  shaded: range" if any(s.low for p in panels for s in p.lines) else ""),
-                     rain_behind(panels))
+        return stack(panels, self.start.date(), self.end.date())

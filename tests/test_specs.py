@@ -138,3 +138,11 @@ def test_air_metrics_are_grouped_into_four_panels_each_reading_with_its_own_scal
     assert [p.label for p in voc.panels] == ["PM10", "VOC index"] and [s.label for s in voc.panels[1].lines] == ["VOC index"]
     single = Air()._chart(["pm2_5"], rows, "period")                                 # one metric: the large chart with its zones
     assert len(single.panels) == 1 and single.title == "PM2.5" and single.panels[0].zones == (9.0, 55.4)
+
+
+def test_a_stacked_charts_subtitle_says_what_a_bar_covers_and_whether_a_range_is_shaded():
+    banded = Panel("Humidity", "%", [line("H", low=[0.0] * 48, high=[9.0] * 48)], reading="humidity")
+    chart = stack([banded, Panel("Rain", "mm", bars=bars())], date(2026, 9, 1), date(2026, 9, 7))
+    assert chart.subtitle == "Tue 1 – Mon 7 Sep 2026  ·  rain per hour  ·  range shaded"
+    rating = Panel("Rating", "%", shares=Shares("Rating", TS[:2], 3600, [1.0, 1.0], [0.0, 0.0], [0.0, 0.0], "hour"))
+    assert stack([Panel("T", "°C", [line("T")]), rating], date(2026, 9, 1), date(2026, 9, 1)).subtitle == "Tue 1 Sep 2026  ·  rating per hour"
