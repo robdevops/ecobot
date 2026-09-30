@@ -420,7 +420,11 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
             peaks.append((mx, my, colour))
     peaks.sort(key=lambda p: -p[1])                                       # the highest peak gets the top pill
     size, pitch = (7.5, 15) if big else (6.5, 12)                           # the pills' font and spacing, in points
-    block = (10 + pitch) * per_pt                                         # the height one row of pills needs
+    groups = []                                                           # peaks at about the same time share a column, stacked
+    for peak in peaks:                                                    # (highest first)
+        near = next((g for g in groups if abs(g[0][0] - peak[0]) < 0.05 * (x1 - x0)), None)
+        near.append(peak) if near else groups.append([peak])
+    block = (10 + pitch * max(len(g) for g in groups)) * per_pt if groups else 0   # the height the tallest stack of pills needs
     reach = 0.06 * (x1 - x0)                                              # half a pill's width, in x units
     tops = [(np.array([mdates.date2num(to_dt(t)) for t in line.x]), np.asarray(line.high if line.low is not None else line.y, float))
             for line, _ in marks]                                         # what is drawn, bands included
@@ -432,19 +436,21 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
             free.append(cx)
     arrow = lambda colour: {"arrowstyle": "-", "color": colour, "linewidth": 0.8, "linestyle": (0, (1, 2)), "shrinkA": 1, "shrinkB": 2}
     pill = {"boxstyle": "round,pad=0.25,rounding_size=0.6", "ec": "none"}
-    columns, taken = {}, []                                               # each pill in the empty column nearest its own peak, side by side
-    for mx, my, colour in peaks:
+    columns, taken = [], []                                               # each group in the empty column nearest its own peaks
+    for g in groups:
+        mx = sum(p[0] for p in g) / len(g)
         options = [c for c in free if abs(c - mx) > LEADER_CLEARANCE * (x1 - x0) and all(abs(c - t) > 2.2 * reach for t in taken)]
         if not options:
             break
-        columns[colour] = min(options, key=lambda c: abs(c - mx))
-        taken.append(columns[colour])
-    if len(columns) == len(peaks):
-        for mx, my, colour in peaks:
-            ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
-            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(columns[colour], y_hi - 10 * per_pt), textcoords="data", ha="center",
-                        va="center", fontsize=size, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
-                        bbox={**pill, "fc": colour})
+        columns.append(min(options, key=lambda c: abs(c - mx)))
+        taken.append(columns[-1])
+    if len(columns) == len(groups):
+        for g, cx in zip(groups, columns):
+            for i, (mx, my, colour) in enumerate(g):
+                ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+                ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(cx, y_hi - (10 + pitch * i) * per_pt), textcoords="data", ha="center",
+                            va="center", fontsize=size, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
+                            bbox={**pill, "fc": colour})
         return
     placed = []                                                           # no empty column: the right margin, at the peaks' heights
     for mx, my, colour in peaks:
