@@ -15,6 +15,7 @@ from .api import EcowittAPI, GROUPS, UNITS
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
+from .glance import glance
 from .history import STACK, Fetcher, HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
 
@@ -141,17 +142,22 @@ class Ecowitt:
 
     async def _realtime(self, args: dict) -> str:
         data = await self.api.realtime(self.mac, ",".join(parse_groups(args.get("groups"))))
-        out, newest = {}, 0
+        out, newest, emoji = {}, 0, {}
         for grp, fields in data.items():
             for name, obj in (fields.items() if isinstance(fields, dict) else ()):
                 if isinstance(obj, dict) and "value" in obj:
                     out.setdefault(grp, {})[name] = f"{obj['value']} {obj.get('unit', '')}".strip()
                     try:
+                        if tag := glance(grp, name, float(obj["value"])):
+                            emoji[f"{grp}.{name}"] = tag
+                    except (TypeError, ValueError):
+                        pass
+                    try:
                         newest = max(newest, int(obj.get("time") or 0))
                     except (TypeError, ValueError):
                         pass
         when = datetime.fromtimestamp(newest, timezone.utc).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
-        return json.dumps({"time": when, **out}, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps({"time": when, **out, **({"emoji": emoji} if emoji else {})}, ensure_ascii=False, separators=(",", ":"))
 
     # ---------- keeping warm ----------
     async def warm(self, fresh: bool = True) -> str:

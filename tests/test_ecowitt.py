@@ -836,3 +836,21 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
     out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
     assert specs[0]["kind"] == "line"
     await eco.close()
+
+
+def test_current_readings_get_a_hot_cold_wet_windy_emoji_from_their_values():
+    from lib.ecowitt.glance import glance
+    assert [glance("outdoor", "temperature", t) for t in (38, 31, 24, 16, 9, 3, -2)] == ["🔥", "🥵", "😎", "🙂", "🧥", "🥶", "🧊"]
+    assert glance("outdoor", "humidity", 90) == "💦" and glance("outdoor", "humidity", 20) == "🏜️" and glance("outdoor", "humidity", 55) == ""
+    assert [glance("wind", "wind_speed", v) for v in (60, 35, 20, 5)] == ["🌪️", "💨", "🍃", ""]
+    assert glance("rainfall", "rain_rate", 1.2) == "🌧️" and glance("rainfall", "rain_rate", 0) == ""
+    assert glance("rainfall", "daily", 3.0) == "☔" and glance("rainfall", "daily", 0) == "" and glance("pressure", "relative", 1010) == ""
+
+
+async def test_weather_now_carries_the_emoji_next_to_the_readings(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    out = json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
+    assert out["emoji"] == {"outdoor.temperature": "🧥"}                       # the fake station reports 12.3 degrees
+    await eco.close()
