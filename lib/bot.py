@@ -34,7 +34,7 @@ MAX_CHARTS = 3
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, indoor/outdoor "
+ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, indoor/outdoor "
                "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
                "Use /alerts {other} to turn them {other}.")
 

@@ -153,9 +153,9 @@ def capabilities(sources: list[str]) -> str:
                  "air_quality.")
     lines.append("- Charts: any one reading, or several readings together on one time axis (temperature, humidity, pressure, wind, "
                  "rain); wind direction as a heatmap with a rose; air quality with ratings.")
-    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, indoor/outdoor temperature "
-                 "crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts (\"tell me when winds reach 100\") "
-                 "can't be added: say so.")
+    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, "
+                 "indoor/outdoor temperature crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts "
+                 "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
     lines.append("- Not available: solar and UV, lightning, soil or extra sensor channels, indoor air quality, forecasts (only a "
                  "short read of the pressure trend), other stations or places.")
     return "\n".join(lines) + "\n"

@@ -65,6 +65,40 @@ async def test_a_dry_gap_shorter_than_30_minutes_does_not_flap(tmp_path):
     assert len(sent) == 1 and "started" in sent[0]
 
 
+def gusts(*values):
+    return [(T0 + i * 300, {"wind.wind_gust": v}) for i, v in enumerate(values)]
+
+
+async def test_a_gust_over_40_alerts_once_and_again_only_after_an_hour_of_calm(tmp_path):
+    vals = [10, 12]
+    m, state, sent = monitor(tmp_path, gusts(*vals))
+
+    async def step(*more):
+        vals.extend(more)
+        m.station.data = gusts(*vals)
+        await m.check()
+    await m.check()                                             # the first look sets the mark: nothing to announce
+    await step(40)                                              # 40 is not over 40
+    assert sent == []
+    await step(41.6)
+    assert len(sent) == 1 and "42 km/h" in sent[0] and "1:15pm" in sent[0]
+    await step(55, 38)                                          # gusty spell continues: still the same alert
+    await step(*[20] * 11)                                      # under 55 minutes calm...
+    await step(45)                                              # ...then a gust: no second alert
+    assert len(sent) == 1
+    await step(*[20] * 12)                                      # a calm hour starts counting
+    await step(*[20] * 12)                                      # ...an hour of it re-arms the alert
+    assert len(sent) == 1
+    await step(48)
+    assert len(sent) == 2 and "48 km/h" in sent[1]
+
+
+async def test_old_gusts_are_not_announced_after_a_restart(tmp_path):
+    m, state, sent = monitor(tmp_path, gusts(60, 20, 20))
+    await m.check()
+    assert sent == []
+
+
 def pressure_rows(drop, hour_local, hum=93.0, dew_rise=0.0, temp=15.0):
     """3 hours of readings ending at the given local hour, pressure falling `drop` hPa in total."""
     end = int(datetime(2026, 9, 29, hour_local, 0, tzinfo=TZ).timestamp())

@@ -5,6 +5,8 @@
     "started". One rule both ways, so the alerts never contradict each other (no flapping).
   - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
     Melbourne (see assess_rain). At most once every 6 hours.
+  - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
+    it for an hour, so a blustery afternoon is one message, not twenty.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler) after the other way
     round held for 2+ days. A 0.3 degree margin stops sensor noise flip-flopping.
 """
@@ -13,6 +15,8 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
+
+from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +29,8 @@ TIDE_AMPLITUDE_HPA = 0.7
 NIGHT_HOURS = (20, 8)   # 8pm-8am: cooling alone brings the air close to its dew point
 CROSS_MIN_SECONDS = 2 * 86400
 CROSS_MARGIN = 0.3
+GUST_ALERT_KMH = 40
+GUST_REARM_SECONDS = 3600
 
 Rows = list[tuple[int, dict]]  # [(epoch, {"group.field": value})], oldest first
 
@@ -168,6 +174,7 @@ class WeatherMonitor:
             return
         await self._rain(rows)
         await self._rain_likely(rows)
+        await self._gusts(rows)
         await self._cross(rows)
         self.state.save()
 
@@ -210,6 +217,24 @@ class WeatherMonitor:
             m["last"] = latest_ts
             await self.notify("\U0001f326️ Rain looks likely soon: " + ", ".join(outlook.reasons[:3]) +
                               ". (An estimate from the station's readings, not an official forecast.)")
+
+    async def _gusts(self, rows: Rows):
+        """Only readings since the last check count, so a restart doesn't re-announce an old gust."""
+        m = self.state.monitor.setdefault("gust", {"active": False, "calm_since": None})
+        latest_ts = rows[-1][0]
+        seen, m["checked"] = m.get("checked", latest_ts), latest_ts
+        over = [(g, ts) for ts, r in rows if ts > seen and (g := r.get("wind.wind_gust")) is not None and g > GUST_ALERT_KMH]
+        if over:
+            m["calm_since"] = None
+            if not m["active"]:
+                m["active"] = True
+                gust, ts = max(over)
+                await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
+                                  + f" (alerts above {GUST_ALERT_KMH} km/h).")
+        elif m["active"]:
+            m["calm_since"] = m["calm_since"] or latest_ts
+            if latest_ts - m["calm_since"] >= GUST_REARM_SECONDS:
+                m.update(active=False, calm_since=None)
 
     async def _cross(self, rows: Rows):
         ts, r = rows[-1]
