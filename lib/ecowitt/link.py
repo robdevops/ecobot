@@ -186,13 +186,16 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
                            "correlation is between that 3-hour change and the rain in the next 3 hours: near 0 = "
                            "no link, negative = falling reading goes with rain.")}
     result = analyse(driver, rain, threshold, tz)
+    log.info("Link %s to %s (%s): %d %s readings, %d rain readings, %d slots in common", first, last, name, len(driver),
+             field, len(daily), len(set(rain) & set(driver)))
     if not result:
-        out["note"] = "No cached 30-minute readings of both for this period yet (the bot may still be downloading history)."
+        missing = [what for what, got in ((f"{name} ({group}.{field})", driver), ("rainfall (rainfall.daily)", daily)) if not got]
+        out["note"] = ("No cached 30-minute readings of " + " or ".join(missing) + " for this period." if missing else
+                       "The two series share no 30-minute readings in this period.") + " Say exactly that."
         return out, None, first, last
     out.update(result)
     out["days_with_data"] = len({local_date(t, tz) for t in rain})
     spec = chart_spec(driver, rain, tz, first, last, name, unit)
-    log.info("Link %s to %s: %s, %d slots, %d events", first, last, name, result["slots"], result["rain_events"]["count"])
     return out, spec, first, last
 
 

@@ -792,3 +792,13 @@ def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
         rain = {t: (0.4 if (i // 30) % 5 == 0 else 0.0) for i, t in enumerate(driver)}
         spec = chart_spec(driver, rain, TZ, first, last, "pressure", "hPa")
         assert spec["bottom"]["width"] in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
+
+
+async def test_weather_link_says_which_series_is_missing(tmp_path):
+    transport, fake = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)          # nothing cached at all
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    out = json.loads(await eco.tools[3].handler({"start_date": str(today - timedelta(days=9)), "end_date": str(today - timedelta(days=2))}))
+    assert "pressure (pressure.relative) or rainfall (rainfall.daily)" in out["note"] and "chart" not in out
+    await eco.close()
