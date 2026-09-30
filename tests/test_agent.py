@@ -140,8 +140,8 @@ def test_the_day_tool_rules_are_short_separate_bullets():
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
     block = text[text.index("- For questions that rank, compare or count DAYS"):text.index("- Use weather_now")]
     bullets = [line for line in block.splitlines() if line.startswith("  - ")]
-    assert len(bullets) == 8 and all(len(b) < 300 for b in bullets)
-    for needle in ("sort_by", "rain >= 1", "It rained on 507 of 1,454 days", "trace_rain_days", "note_daily", "on record", "public_holiday", "known day"):
+    assert len(bullets) == 9 and all(len(b) < 300 for b in bullets)
+    for needle in ("sort_by", "rain >= 1", "It rained on 507 of 1,454 days", "trace_rain_days", "note_daily", "on record", "public_holiday", "known day", "RECORD"):
         assert sum(needle in b for b in bullets) == 1, needle   # each rule lives in exactly one bullet
 
 
