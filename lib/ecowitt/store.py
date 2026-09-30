@@ -97,32 +97,26 @@ class HistoryCache:
         with self._lock:
             self.db.close()
 
-    def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
+    def _query(self, sql: str, *args) -> list:
         with self._lock:
-            rows = self.db.execute(
-                "SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=? AND end>=? AND start<=?",
-                (mac, cycle, grp, start, end)).fetchall()
-        return subtract((start, end), rows)
+            return self.db.execute(sql, args).fetchall()
 
     def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
         """Every time range held for this group at this resolution (merged, oldest first)."""
-        with self._lock:
-            rows = self.db.execute("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?",
-                                   (mac, cycle, grp)).fetchall()
-        return merge(rows)
+        return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
 
-    def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str], start: int, end: int) -> dict:
-        """Just some fields of a group, in Ecowitt's response shape: {field: {unit, list}}."""
+    def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
+        return subtract((start, end), self.coverage(mac, cycle, grp))
+
+    def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str] | None, start: int, end: int) -> dict:
+        """A group's fields (all of them if `fields` is None) in Ecowitt's response shape: {field: {unit, list}}."""
+        pick = f" AND field IN ({','.join('?' * len(fields))})" if fields is not None else ""
+        args = (mac, cycle, grp, *(fields or ()))
+        units = dict(self._query(f"SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=?{pick}", *args))
         out: dict = {}
-        marks = ",".join("?" * len(fields))
-        with self._lock:
-            units = dict(self.db.execute(
-                f"SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=? AND field IN ({marks})",
-                (mac, cycle, grp, *fields)).fetchall())
-            for field, ts, value in self.db.execute(
-                    f"SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=? AND field IN ({marks}) "
-                    "AND ts BETWEEN ? AND ?", (mac, cycle, grp, *fields, start, end)):
-                out.setdefault(field, {"unit": units.get(field, ""), "list": {}})["list"][str(ts)] = value
+        for field, ts, value in self._query(f"SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=?{pick} "
+                                            "AND ts BETWEEN ? AND ? ORDER BY ts", *args, start, end):
+            out.setdefault(field, {"unit": units.get(field, ""), "list": {}})["list"][str(ts)] = value
         return out
 
     def slots(self, mac: str, cycle: str, grp: str, fields: list[str], start: int, end: int) -> list[dict[int, float]]:
@@ -132,13 +126,7 @@ class HistoryCache:
 
     def days_held(self, mac: str, cycle: str, groups: list[str]) -> int:
         """Days of history stored at this resolution (the least any of the groups has)."""
-        held = []
-        with self._lock:
-            for grp in groups:
-                rows = self.db.execute("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?",
-                                       (mac, cycle, grp)).fetchall()
-                held.append(sum(e - s + 1 for s, e in merge(rows)) // 86400)
-        return min(held, default=0)
+        return min((sum(e - s + 1 for s, e in self.coverage(mac, cycle, grp)) // 86400 for grp in groups), default=0)
 
     def store(self, mac: str, cycle: str, groups: list[str], data: dict, start: int, end: int):
         """Save the final readings of one response and mark what was fetched, per group.
@@ -186,17 +174,8 @@ class HistoryCache:
 
     def load(self, mac: str, cycle: str, groups: list[str], start: int, end: int) -> dict:
         """Cached readings in Ecowitt's response shape: {grp: {field: {unit, list}}}."""
-        out: dict = {}
-        with self._lock:
-            for grp in groups:
-                units = dict(self.db.execute(
-                    "SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp)).fetchall())
-                for field, ts, value in self.db.execute(
-                        "SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=? AND ts BETWEEN ? AND ? "
-                        "ORDER BY ts", (mac, cycle, grp, start, end)):
-                    entry = out.setdefault(grp, {}).setdefault(field, {"unit": units.get(field, ""), "list": {}})
-                    entry["list"][str(ts)] = value
-        return out
+        got = {grp: self.load_fields(mac, cycle, grp, None, start, end) for grp in groups}
+        return {grp: fields for grp, fields in got.items() if fields}
 
 
 class HotStore:
