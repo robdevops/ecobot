@@ -11,6 +11,7 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 """
 
 import asyncio
+from bisect import bisect_left
 import json
 import logging
 from datetime import datetime, time, timedelta, timezone
@@ -18,7 +19,7 @@ from datetime import datetime, time, timedelta, timezone
 from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
 from ..rain import rain_bars, rain_slots
-from ..timeutil import daily_summary, local_date, now_local
+from ..timeutil import SLOT, daily_summary, local_date, now_local
 from ..series import WEATHER
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, rain_behind
 from .api import CYCLE_SECONDS, RETENTION
@@ -93,6 +94,7 @@ class HistoryQuery:
         self.detailed = self.held or self.span <= timedelta(days=DETAILED_DAYS)
 
         await self._fetch_period()
+        await self._fine_ranges()
         if "rain" in stack_names(self.args, self.turn) or "rainfall.daily" in self.store:   # rain alone is drawn as bars too
             self.rain_bars = await self._rain_bars()
         await self._summarise_direction()
@@ -103,6 +105,24 @@ class HistoryQuery:
         self.monthly = self._monthly_extremes() if self.span > timedelta(days=31) else {}
         refined = await self._refine()
         return self._answer(refined)
+
+    async def _fine_ranges(self):
+        """30-minute readings with no low and high of their own (dew point, feels-like, VPD, solar, UV, pressure ...) get the
+        lowest and highest of the cached 5-minute readings inside each slot, so their bands are real ranges. Only what the
+        cache already holds (no requests); wind keeps its own band (the speed up to the gusts)."""
+        lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
+        for key, series in self.store.items():
+            group, field = key.split(".", 1)
+            pts = series["pts"]
+            if group == "wind" or not pts or any(r["cycle"] != "30min" or "low" in r or "high" in r for r in pts.values()):
+                continue
+            (fine,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "5min", group, [field], lo, hi)
+            times = sorted(fine)
+            for t, rec in pts.items():
+                a, b = bisect_left(times, t), bisect_left(times, t + SLOT)
+                if b - a >= 2 and "value" in rec:
+                    values = [fine[x] for x in times[a:b]] + [rec["value"][0]]
+                    rec["low"], rec["high"] = ((v, str(v)) for v in (min(values), max(values)))
 
     async def _held_locally(self) -> bool:
         """Is the whole period already in the cache at 30 minutes (bar the newest day, which is still settling), and

@@ -1030,3 +1030,23 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
         panel = turn.charts[0].panels[0]
         assert panel.reading == reading and _colour(panel.lines[0].label, 0, panel.reading) == READING_COLOURS[reading]
     await eco.close()
+
+
+async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings():
+    from types import SimpleNamespace as NS
+    from lib.ecowitt.query import HistoryQuery
+    from tests.fakes import TZ
+    base = 1_780_000_200 - 1_780_000_200 % 1800
+    fine = {base + 300 * i: 10.0 + i for i in range(12)}                      # two slots of six 5-minute readings
+    cache = NS(slots=lambda mac, cycle, grp, fields, lo, hi: [fine])
+    q = HistoryQuery(NS(tz=TZ, epoch=lambda d: 0, cache=cache, mac="M"), {}, Turn())
+    q.start = q.end = datetime(2026, 1, 1)
+    q.store = {"solar_and_uvi.solar": {"unit": "W/m²", "pts": {base: {"cycle": "30min", "value": (12.0, "12")},
+                                                               base + 1800: {"cycle": "30min", "value": (18.0, "18")}}},
+               "outdoor.temperature": {"unit": "C", "pts": {base: {"cycle": "30min", "value": (12.0, "12"), "low": (9.0, "9"), "high": (16.0, "16")}}},
+               "wind.wind_speed": {"unit": "km/h", "pts": {base: {"cycle": "30min", "value": (12.0, "12")}}}}
+    await q._fine_ranges()
+    first = q.store["solar_and_uvi.solar"]["pts"][base]
+    assert (first["low"][0], first["high"][0]) == (10.0, 15.0) and q.store["solar_and_uvi.solar"]["pts"][base + 1800]["high"][0] == 21.0
+    assert q.store["outdoor.temperature"]["pts"][base]["low"][0] == 9.0      # its own range is kept
+    assert "low" not in q.store["wind.wind_speed"]["pts"][base]              # wind has its own band
