@@ -17,7 +17,7 @@ from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
-from ..timeutil import daily_summary, local_date, local_epoch, now_local, to_local
+from ..timeutil import WIDTH_NAMES, WIDTHS, bucket_width, bucketed, daily_summary, local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, grid as direction_grid, rose as direction_rose, summarise as summarise_direction
 from .link import rain_bars, rain_slots
@@ -25,7 +25,6 @@ from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
-DAILY_CHART_DAYS = 7            # a chart longer than this is one point a day: the mean, with the day's low-to-high band
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
@@ -590,7 +589,7 @@ class HistoryQuery:
         if len(xs) < 2:
             return None
         entry = {"label": label or k.split(".", 1)[0].replace("_", " ").capitalize(), "x": xs, "y": [line[t] for t in xs]}
-        if cycle not in ("5min", "30min") and len(band) >= len(xs) // 2:  # an average over a long bucket: its low and high around it
+        if len(band) >= len(xs) // 2:  # an average over a bucket: its low and high around it
             entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
             entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
         return entry, cycle
@@ -626,26 +625,25 @@ class HistoryQuery:
                 "panels": panels}
 
     def _line(self, pts: dict) -> tuple[str, dict, dict]:
-        """(cycle, {ts: value}, {ts: (low, high)}) for one series, at a single consistent resolution. The band is
-        each bucket's own low and high where Ecowitt gives them (30-minute and longer data)."""
+        """(cycle, {ts: value}, {ts: (low, high)}) for one series, drawn at one resolution. Readings are drawn as they
+        are while they fit the point budget; otherwise they are bucketed (30 minutes ... 4 hours: the mean, still a
+        plain line; a day: the mean with its true low and high shaded as the band)."""
         counts: dict = {}
         for r in pts.values():
             counts[r["cycle"]] = counts.get(r["cycle"], 0) + 1
         sub_daily = [c for c in ("5min", "30min") if c in counts]
-        if sub_daily and ("1day" in counts or AVERAGE_ASKED.get() or self.span > timedelta(days=DAILY_CHART_DAYS)):
-            return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
-
-        if len(sub_daily) > 1 and sum(counts[c] for c in sub_daily) >= counts.get("1day", 0):
-            # archived 5-minute weeks next to 30-minute weeks: average into 30-minute bins
-            bins: dict = {}
-            for t, r in pts.items():
-                if r["cycle"] in sub_daily:
-                    bins.setdefault(t // 1800 * 1800, []).append(r)
-            return "30min", {t: sum(x["value"][0] for x in v) / len(v) for t, v in bins.items()}, {
-                t: (min(_low(x) for x in v), max(_high(x) for x in v)) for t, v in bins.items()}
+        if sub_daily:
+            source = CYCLE_SECONDS[sub_daily[0]]
+            width = 86400 if "1day" in counts or AVERAGE_ASKED.get() else bucket_width(self.span.total_seconds(), source)
+            if width >= 86400:
+                return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
+            if width > source or len(sub_daily) > 1:  # 5-minute weeks next to 30-minute ones also come out as one resolution
+                width = max(width, WIDTHS[1])
+                xs, mean, _, _ = bucketed(_readings(pts), self.tz, width)
+                return f"{WIDTH_NAMES[width]} averages", dict(zip(xs, mean)), {}
         cycle = max(counts, key=counts.get)
         line = {t: pts[t]["value"][0] for t in pts if pts[t]["cycle"] == cycle}
-        band = {t: (_low(pts[t]), _high(pts[t])) for t in line if "low" in pts[t] and "high" in pts[t]}
+        band = {} if cycle in ("5min", "30min") else {t: (_low(pts[t]), _high(pts[t])) for t in line if "low" in pts[t] and "high" in pts[t]}
         return cycle, line, band
 
     def _daily_line(self, pts: dict) -> tuple[str, dict, dict]:

@@ -15,7 +15,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 import numpy as np
 
 from ..charts import CHART_REQUESTS, LINK_CHART_HINT, wants_chart
-from ..timeutil import daily_summary, local_date, now_local, to_local
+from ..timeutil import BAND_FROM, bucket_width, bucketed, local_date, now_local, to_local
 from .store import HistoryCache
 
 log = logging.getLogger(__name__)
@@ -197,19 +197,17 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> di
 
 def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
                   lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> dict | None:
-    """The reading as a line: 30-minute readings up to a month, else a daily mean with its range shaded. The range
-    is the day's lowest and highest of Ecowitt's own 30-minute lows and highs where the cache holds them."""
+    """The reading as a line: the 30-minute readings while they fit the point budget, else bucketed (hourly ... daily);
+    a day's mean has its range shaded, from Ecowitt's own 30-minute lows and highs where the cache holds them."""
     if len(driver) < 2:
         return None
     ts = sorted(driver)
-    if (last - first).days + 1 <= 31:
+    width = bucket_width(((last - first).days + 1) * 86400, SLOT)
+    if width <= SLOT:
         return {"label": label, "x": ts, "y": [driver[t] for t in ts]}
     lows, highs = lows or {}, highs or {}
-    by_day = daily_summary(((t, driver[t], lows.get(t, driver[t]), highs.get(t, driver[t]), False) for t in ts), tz)
-    ds = sorted(by_day)
-    noon = lambda d: int(datetime.combine(d, time(12)).replace(tzinfo=tz).timestamp())
-    return {"label": label, "x": [noon(d) for d in ds], "y": [by_day[d][0] for d in ds],
-            "low": [by_day[d][1] for d in ds], "high": [by_day[d][2] for d in ds]}
+    xs, mean, low, high = bucketed(((t, driver[t], lows.get(t, driver[t]), highs.get(t, driver[t]), False) for t in ts), tz, width)
+    return {"label": label, "x": xs, "y": mean, **({"low": low, "high": high} if width >= BAND_FROM else {})}
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,

@@ -530,7 +530,7 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
     await eco.close()
 
 
-async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
+async def test_a_chart_is_bucketed_to_the_point_budget_and_only_daily_buckets_carry_a_range(tmp_path):
     transport, _ = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
@@ -545,10 +545,15 @@ async def test_charts_of_bucketed_data_carry_each_buckets_range(tmp_path):
             return CHART_REQUESTS.get()[0]
         finally:
             CHART_REQUESTS.reset(token)
-    week = (await spec_for(8))["series"][0]                       # 30-minute data: each has a low and a high
-    assert len(week["low"]) == len(week["high"]) == len(week["y"])
-    assert all(lo <= y <= hi for lo, y, hi in zip(week["low"], week["y"], week["high"]))
-    assert "range shaded" in (await spec_for(8))["subtitle"]
+    ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: plain line
+    assert "range shaded" not in ten["subtitle"] and "low" not in ten["series"][0]
+    fortnight = await spec_for(20)                                 # twenty days: hourly averages, a plain line (a band there would hug it)
+    line = fortnight["series"][0]
+    assert "hourly averages" in fortnight["subtitle"] and "range shaded" not in fortnight["subtitle"]
+    assert 300 < len(line["x"]) <= 500 and "low" not in line
+    season = (await spec_for(90))["series"][0]                     # ninety days: a point a day, each with its low and high
+    assert 80 <= len(season["x"]) <= 92 and len(season["low"]) == len(season["high"]) == len(season["y"])
+    assert all(lo <= y <= hi for lo, y, hi in zip(season["low"], season["y"], season["high"]))
     few = await spec_for(4)                                        # four days: the readings themselves, no rolling ribbon
     line = few["series"][0]
     assert "range shaded" not in few["subtitle"] and len(line["x"]) > 100 and "low" not in line   # a band only around an average
@@ -780,9 +785,9 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
 def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_them():
     from lib.ecowitt.link import driver_series
     from tests.fakes import TZ
-    first, last = datetime(2026, 1, 1).date(), datetime(2026, 3, 15).date()
+    first, last = datetime(2026, 1, 1).date(), datetime(2026, 4, 15).date()      # 105 days: a point a day
     base = int(datetime(2026, 1, 1, tzinfo=TZ).timestamp())
-    driver = {base + i * 1800: 1015.0 for i in range(74 * 48)}
+    driver = {base + i * 1800: 1015.0 for i in range(105 * 48)}
     lows = {t: v - 2.5 for t, v in driver.items()}
     highs = {t: v + 1.5 for t, v in driver.items()}
     with_true = driver_series(driver, TZ, first, last, "Pressure", lows, highs)
@@ -801,6 +806,26 @@ def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_st
     pts.update({t0 + 20 * 3600 + i * 300: {"cycle": "5min", "value": (20.0, "20")} for i in range(48)})   # the last 4 hours also at 5 minutes
     _, line, band = HistoryQuery._daily_line(SimpleNamespace(tz=TZ), pts)
     assert list(line.values()) == [pytest.approx((40 * 10 + 8 * 20) / 48)] and list(band.values()) == [(8.0, 20.0)]
+
+
+def test_the_bucket_widens_as_the_period_grows_and_never_goes_below_the_readings():
+    from lib.timeutil import bucket_width
+    day = 86400
+    assert [bucket_width(d * day, 300) for d in (1, 1.7, 2)] == [300, 300, 1800]      # 5-minute readings, until they exceed the budget
+    assert [bucket_width(d * day, 1800) for d in (2, 10, 11, 20, 21, 41, 42, 83, 84, 1460)] == [
+        1800, 1800, 3600, 3600, 7200, 7200, 14400, 14400, 86400, 86400]
+    assert bucket_width(2 * day, 3600) == 3600 and bucket_width(day, 86400) == 86400   # hourly or daily source: never finer
+
+
+def test_bucket_summary_is_the_mean_and_true_extremes_per_epoch_aligned_bucket():
+    from lib.timeutil import bucket_summary, bucketed
+    from tests.fakes import TZ
+    t0 = int(datetime(2026, 5, 1, tzinfo=TZ).timestamp()) // 7200 * 7200
+    points = [(t0 + i * 1800, float(i), i - 0.5, i + 0.5, False) for i in range(8)]    # two 2-hour buckets of four 30-minute readings
+    out = bucket_summary(points, 7200)
+    assert out == {t0: (1.5, -0.5, 3.5), t0 + 7200: (5.5, 3.5, 7.5)}
+    xs, mean, low, high = bucketed(points, TZ, 7200)
+    assert xs == [t0 + 3600, t0 + 10800] and mean == [1.5, 5.5] and low == [-0.5, 3.5] and high == [3.5, 7.5]
 
 
 def test_daily_summary_is_one_mean_and_true_extremes_per_local_day():

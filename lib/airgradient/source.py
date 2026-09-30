@@ -12,6 +12,7 @@ where available, plus a US EPA AQI and band for PM2.5.
 """
 
 import asyncio
+import statistics
 import json
 import logging
 import time
@@ -22,7 +23,7 @@ import httpx
 from .. import intent
 from ..charts import CHART_HINT, CHART_REQUESTS, wants_chart
 from ..config import Config
-from ..timeutil import daily_summary, local_date, now_local, to_local
+from ..timeutil import BAND_FROM, WIDTH_NAMES, WIDTHS, bucket_width, bucketed, local_date, now_local, to_local
 from ..tools import Tool
 from ..warm import Warmer
 from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
@@ -42,7 +43,6 @@ BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some da
 BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a long recent outage isn't the start)
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
-DAILY_CHART_DAYS = 7              # a chart longer than this is one point a day, with each day's range shaded
 CHART_POINTS = 1500               # long charts are averaged down to about this many points
 
 PARAMETERS = {
@@ -337,8 +337,7 @@ class AirGradient:
         holder = CHART_REQUESTS.get()
         if chart and rows and holder is not None:
             wanted = [m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"]
-            daily = t1 - t0 > timedelta(days=DAILY_CHART_DAYS)  # over a week: a point a day (mean, low-to-high band)
-            specs = [sp for sp in (self._chart_spec(m, rows, out["period"], daily) for m in wanted) if sp]
+            specs = [sp for sp in (self._chart_spec(m, rows, out["period"]) for m in wanted) if sp]
             spec = specs[0] if len(specs) == 1 else {  # several metrics: one image, a panel each
                 "kind": "panels", "title": "Air quality", "subtitle": f"{out['period']}  ·  AirGradient readings",
                 "panels": [{"label": sp["title"], "unit": sp["unit"], "zones": sp["zones"], **{
@@ -349,9 +348,9 @@ class AirGradient:
                 out["chart"] = CHART_HINT
         return out
 
-    def _chart_spec(self, name: str, rows: list[dict], period: str, daily: bool = False) -> dict | None:
-        """One metric, in its own units. The record high/low are the true readings. A week or less is the readings
-        themselves (averaged down if there are very many); longer is a point a day: its mean, with the day's range shaded."""
+    def _chart_spec(self, name: str, rows: list[dict], period: str) -> dict | None:
+        """One metric, in its own units. The record high/low are the true readings. The readings themselves while they
+        fit the point budget; more than that are bucketed (30 minutes ... a day): each bucket's mean, its range shaded."""
         pts = [(r["ts"], r[name]) for r in rows if name in r]
         if len(pts) < 2:
             return None
@@ -359,14 +358,17 @@ class AirGradient:
         label = LABELS[name]
         series = {"label": label, "records": {"low": [lo[0], lo[1]], "high": [hi[0], hi[1]]}}
         subtitle = f"{period}  ·  AirGradient readings"
-        if daily:
-            by_day = daily_summary(((t, v, v, v, True) for t, v in pts), self.tz)
-            days = sorted(by_day)
-            if len(days) >= 2:
-                noon = lambda d: int(datetime.combine(d, datetime.min.time()).replace(hour=12, tzinfo=self.tz).timestamp())
-                series.update(x=[noon(d) for d in days], y=[by_day[d][0] for d in days],
-                              low=[by_day[d][1] for d in days], high=[by_day[d][2] for d in days])
-                subtitle = f"{period}  ·  daily averages, range shaded  ·  records marked"
+        gap = statistics.median(b[0] - a[0] for a, b in zip(pts, pts[1:]))
+        width = bucket_width(pts[-1][0] - pts[0][0], gap)
+        if width >= WIDTHS[1] and width > gap * 1.5:  # more readings than the chart can show: buckets
+            xs, mean, low, high = bucketed(((t, v, v, v, True) for t, v in pts), self.tz, width)
+            if len(xs) >= 2:
+                series.update(x=xs, y=mean)
+                subtitle = f"{period}  ·  {WIDTH_NAMES[width]} averages"
+                if width >= BAND_FROM:  # a day's range around its mean
+                    series.update(low=low, high=high)
+                    subtitle += ", range shaded"
+                subtitle += "  ·  records marked"
         if "x" not in series:
             line = downsample(pts)
             series.update(x=[t for t, _ in line], y=[v for _, v in line])
