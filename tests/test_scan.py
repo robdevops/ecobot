@@ -104,6 +104,6 @@ async def test_air_scan_answers_with_a_verdict_and_can_chart_the_strongest_pair(
     out = json.loads(await comp.air_scan({"metric": "pm2_5", "chart": True}, turn))
     specs = turn.charts
     assert out["verdict"] and out["findings"] and out["pairs_tested"] >= 6 and "how_to_read" in out
-    assert all(len(s["panels"]) == 2 for s in specs)                     # a chart only when a relationship stood out
+    assert all(len(s.panels) == 2 or s.panels[0].bars for s in specs)    # two readings (rain behind the other): only when a relationship stood out
     assert "error" in json.loads(await comp.air_scan({"metric": "pm1"}))
     await eco.close()

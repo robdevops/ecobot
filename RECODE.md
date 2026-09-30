@@ -54,3 +54,10 @@ What did change:
 
 Left as they were, on purpose: typed chart specs (dict specs are read by many tests and the tools), the alert rules
 (already one small method each on a shared rain helper), the SQLite layout (only the reads were tidied).
+
+## Charts (second pass)
+Every chart is now a `specs.Chart` of `Panel`s on one shared time axis; the three layouts (single, stack, per-panel grid)
+are one renderer. Rain sits behind the first line panel on its own right-hand axis (a rain panel stays separate only when
+no line is there to sit behind). A panel can carry a second y axis for a reading in another unit. Air quality is three
+panels: CO2 with VOC, PM1/PM2.5/PM10, NOx. Line data is unchanged: on the test fixture caches, every x/y/low/high/bars array
+in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).

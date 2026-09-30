@@ -23,11 +23,12 @@ import httpx
 from .. import intent
 from ..charts import CHART_HINT, wants_chart
 from ..config import Config
-from ..lines import build_line
+from ..lines import Plotted, build_line
+from ..specs import Chart, Line, Panel
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
-from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
+from .metrics import AIR_PANELS, ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -331,34 +332,51 @@ class AirGradient:
         if not rows:
             out["note"] = "No readings for this period."
         if chart and rows:
-            wanted = [m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"]
-            specs = [sp for sp in (self._chart_spec(m, rows, out["period"]) for m in wanted) if sp]
-            spec = specs[0] if len(specs) == 1 else {  # several metrics: one image, a panel each
-                "kind": "panels", "title": "Air quality", "subtitle": f"{out['period']}  ·  AirGradient readings",
-                "panels": [{"label": sp["title"], "unit": sp["unit"], "zones": sp["zones"], **{
-                                k: sp["series"][0][k] for k in ("x", "y", "low", "high", "records") if k in sp["series"][0]}}
-                           for sp in specs]} if specs else None
-            if spec:
-                turn.charts.append(spec)
+            chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"])
+            if chart_spec:
+                turn.charts.append(chart_spec)
                 out["chart"] = CHART_HINT
         return out
 
-    def _chart_spec(self, name: str, rows: list[dict], period: str) -> dict | None:
-        """One metric, in its own units. The record high/low are the true readings. The readings themselves while they
-        fit the point budget; more than that are bucketed (30 minutes ... a day): each bucket's mean, its range shaded."""
+    def _line(self, name: str, rows: list[dict]) -> tuple[Line, Plotted] | None:
+        """One metric as a chart line, in its own units, and how it was drawn. The record high/low are the true readings.
+        The readings themselves while they fit the point budget; more than that are bucketed (30 minutes ... a day): each
+        bucket's mean, its range shaded."""
         pts = [(r["ts"], r[name]) for r in rows if name in r]
         if len(pts) < 2:
             return None
-        lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        label = LABELS[name]
-        series = {"label": label, "records": {"low": [lo[0], lo[1]], "high": [hi[0], hi[1]]}}
-        subtitle = f"{period}  ·  AirGradient readings"
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in zip(pts, pts[1:]))))
-        line = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
-        if line is None:
+        plotted = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+        if plotted is None:
             return None
-        series.update(line.spec(label))
-        if not line.raw:
-            subtitle = f"{period}  ·  {line.name}" + (", range shaded" if line.low else "") + "  ·  records marked"
-        return {"kind": "line", "title": label, "subtitle": subtitle, "unit": CHART_UNITS[name],
-                "zones": list(RATINGS[name]), "series": [series]}
+        lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
+        return plotted.spec(LABELS[name], {"low": lo, "high": hi}), plotted
+
+    def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
+        """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
+        shared time axis, grouped by AIR_PANELS (CO2 with VOC, the particles together, NOx alone); the reading that
+        shares a panel in another unit gets a right-hand axis."""
+        drawn = {n: got for n in names if (got := self._line(n, rows))}
+        if not drawn:
+            return None
+        if len(drawn) == 1:
+            (name, (line, plotted)), = drawn.items()
+            subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
+                        if not plotted.raw else f"{period}  ·  AirGradient readings")
+            return Chart(LABELS[name], subtitle, [Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]))])
+        panels = []
+        for group in AIR_PANELS:
+            members = [m for m in group if m in drawn]
+            if not members:
+                continue
+            lines = [drawn[m][0] for m in members]
+            units = [CHART_UNITS[m] for m in members]
+            names_ = [f"{LABELS[m]} ({u})" if u and len(set(units)) > 1 else LABELS[m] for m, u in zip(members, units)]
+            label = ", ".join(names_[:-1]) + " and " + names_[-1] if len(names_) > 1 else names_[0]
+            if len(members) == 1:
+                panels.append(Panel(label, units[0], lines, zones=tuple(RATINGS[members[0]])))
+            elif len(set(units)) == 1:  # one unit: the lines share the axis
+                panels.append(Panel(label, units[0], lines))
+            else:  # another unit: the first on the left, the rest on the right
+                panels.append(Panel(label, "", lines[:1], right=lines[1:]))
+        return Chart("Air quality", f"{period}  ·  AirGradient readings", panels)

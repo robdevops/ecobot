@@ -34,7 +34,8 @@ async def test_history_summary_and_chart(tmp_path):
     out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59", "chart": True,
                                        "metrics": ["pm2_5", "co2"]}, turn))
     assert out["pm2_5"]["high"] >= out["pm2_5"]["low"] and "high_aqi_us" in out["pm2_5"]
-    assert turn.charts[0]["kind"] == "panels" and len(turn.charts[0]["panels"]) == 2
+    (chart,) = turn.charts
+    assert chart.title == "Air quality" and [p.label for p in chart.panels] == ["CO₂", "PM2.5"]   # the metrics asked for, in panel order
     await air.close()
 
 
@@ -121,10 +122,9 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     air, _ = await make(tmp_path)
     ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))  # 40 days at 1-minute readings
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
-    spec = air._chart_spec("pm2_5", rows, "period")
-    line = spec["series"][0]
-    assert len(line["x"]) <= 500
-    assert line["records"]["high"] == [ts[5000], 305.0] and line["records"]["low"][1] == 5.0
+    line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]
+    assert len(line.x) <= 500
+    assert line.records["high"] == (ts[5000], 305.0) and line.records["low"][1] == 5.0
     await air.close()
 
 
@@ -220,20 +220,20 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_only_da
         await air.handle({"start_date": (now - timedelta(days=days_back)).strftime(fmt), "end_date": now.strftime(fmt),
                           "chart": True, "metrics": metrics}, turn)
         return turn.charts
-    short = (await specs(3, ["pm2_5"]))[0]["series"][0]
-    assert len(short["x"]) > 20 and "low" not in short                            # a few days: the readings themselves, no band
+    short = (await specs(3, ["pm2_5"]))[0].panels[0].lines[0]
+    assert len(short.x) > 20 and short.low is None                                # a few days: the readings themselves, no band
     week = (await specs(30, ["pm2_5"]))[0]
-    line = week["series"][0]
-    assert "-hour averages" in week["subtitle"] and "range shaded" not in week["subtitle"] and 150 <= len(line["x"]) <= 500
-    assert "low" not in line and set(line["records"]) == {"low", "high"}
+    line = week.panels[0].lines[0]
+    assert "-hour averages" in week.subtitle and "range shaded" not in week.subtitle and 150 <= len(line.x) <= 500
+    assert line.low is None and set(line.records) == {"low", "high"}
     base = int(now.timestamp()) // 3600 * 3600
     hourly = [{"ts": base - i * 3600, "pm2_5": 5 + (i % 24) / 2} for i in range(120 * 24, 0, -1)]   # 120 days of hourly readings
-    season = air._chart_spec("pm2_5", hourly, "the period")
-    line = season["series"][0]
-    assert "daily averages, range shaded" in season["subtitle"] and 110 <= len(line["x"]) <= 122
-    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"])) and set(line["records"]) == {"low", "high"}
+    season = air._chart(["pm2_5"], hourly, "the period")
+    line = season.panels[0].lines[0]
+    assert "daily averages, range shaded" in season.subtitle and 110 <= len(line.x) <= 122
+    assert all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high)) and set(line.records) == {"low", "high"}
     panels = (await specs(30, ["pm2_5", "co2"]))[0]
-    assert panels["kind"] == "panels" and all("records" in p and "x" in p for p in panels["panels"])
+    assert len(panels.panels) == 2 and all(p.lines[0].records for p in panels.panels)
     from lib.charts import render
     assert render(panels, TZ)[:4] == b"\x89PNG" and render(week, TZ)[:4] == b"\x89PNG"
     await air.close()

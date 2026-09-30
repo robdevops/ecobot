@@ -29,6 +29,9 @@ LABELS = {"pm2_5": "PM2.5", "pm10": "PM10", "pm1": "PM1", "co2": "CO₂",
 CHART_UNITS = {"pm2_5": "µg/m³", "pm10": "µg/m³", "pm1": "µg/m³", "co2": "ppm",
                "voc_index": "", "nox_index": ""}
 ALL_METRICS = list(LABELS)
+# Metrics charted together, one panel each on a shared time axis: CO2 with VOC (two units, two axes), the particles
+# (one axis), NOx alone. A group with none of the requested metrics is left out.
+AIR_PANELS = (("co2", "voc_index"), ("pm1", "pm2_5", "pm10"), ("nox_index",))
 
 # US EPA 2024 PM2.5 breakpoints: (conc low, conc high, AQI low, AQI high, band)
 PM25_AQI = [

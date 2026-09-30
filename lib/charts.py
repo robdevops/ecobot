@@ -1,24 +1,13 @@
 """Charts sent alongside history answers, for both Ecowitt and AirGradient.
 
-A history tool adds a chart spec to turn.charts (the question's Turn, made by the
-bot) when a chart was asked for; the bot renders them after the answer is written
-and sends them with it. One line per reading type (e.g. outdoor and indoor):
-  {"kind": "line", "title", "subtitle", "unit",
-   "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
-               "low": [float], "high": [float]}]}   (low/high optional: each point's range, drawn as a band)
-
-Several readings on one time axis, a panel each (weather_link, plot_chart, and "plot temperature and rain"):
-  {"kind": "stack", "title", "subtitle", "panels": [
-     {"label", "unit", "series": [{"label", "x", "y"[, "low", "high"]}][, "zones": [good limit, poor limit]]}   lines, or
-     {"label", "unit", "bars": {"x": [bar start epoch], "y": [value], "width": seconds}}, or
-     {"label", "unit", "shares": {"x": [bar start epoch], "width": seconds, "good": [%], "poor": [%], "very poor": [%]}}]}
-
-A wind chart is a line spec that also carries the compass, a wind rose of the whole period drawn beside the line,
-stacked by wind speed:
-  {"kind": "line", ..., "rose": [[light, middle, strong] x 16, N first], "speeds": bool, "speed_steps": [10, 20]}
-
-Rendered at exactly 1280x720, the size Telegram displays photos at, so nothing is
-rescaled and the chart stays sharp.
+A history tool adds a specs.Chart to turn.charts (the question's Turn, made by the bot) when a chart was asked for; the
+bot renders them after the answer is written and sends them with it. Every chart is one or more panels on a shared time
+axis (see specs.py):
+  - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
+    at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
+  - several panels are stacked, the figure growing a little taller with each one past two.
+Rain (bars) sits behind the lines of the panel it belongs to, on its own right-hand axis; a second unit gets a right-hand
+axis of its own.
 """
 
 import glob
@@ -35,22 +24,11 @@ from matplotlib import font_manager  # noqa: E402
 from matplotlib.colors import to_rgb  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon  # noqa: E402
-from matplotlib.ticker import FuncFormatter  # noqa: E402
+from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: E402
+
+from .specs import Chart, Compass, Line, Panel  # noqa: E402
 
 CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
-
-
-def stack_spec(panels: list[dict], first, last) -> dict:
-    """A stacked chart of these panels for the days first to last. What a bar covers (a "per" in a bars or shares panel)
-    goes into the subtitle, not the panel."""
-    per = None
-    for p in panels:
-        for kind in ("bars", "shares"):
-            if kind in p:
-                per = p[kind].pop("per", per)
-    return {"kind": "stack", "title": " and ".join(p["label"] for p in panels),
-            "subtitle": f"{first:%a} {first.day} {first:%b} – {last:%a} {last.day} {last:%b %Y}" + (f"  ·  per {per}" if per else ""),
-            "panels": panels}
 
 
 def wants_chart(args: dict, turn, start: datetime | None = None, end: datetime | None = None) -> bool:
@@ -68,7 +46,7 @@ AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, s
                       "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
                       "\"average\" field, and its low and high in brackets. Lead with the average: that is what was asked. "
                       "Don't mention or describe the chart.")
-LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading as a line and rain as bars below it, so keep "
+LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading as a line and rain as bars behind it, so keep "
                    "it short: the period, then the finding in one or two lines (how much of the rain fell while the reading "
                    "was falling, and the correlation), citing the numbers. Don't mention or describe the chart.")
 STACK_CHART_HINT = ("Your reply becomes the caption of a chart with these readings on one time axis, so keep it short: the "
@@ -84,12 +62,17 @@ DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: aver
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
 COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            # air-quality metrics (kept clear of the green/yellow/red rating zones)
-           "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO\u2082": "#475569",
+           "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
            "VOC index": "#D97706", "NOx index": "#DB2777"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#0EA5E9"]
+RAIN = "#0EA5E9"
+WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
 W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
-AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction)
+AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
+PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
+HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
+BARS_SHARE = 0.3                 # rain behind a line never rises past this share of the panel's height
 
 
 def _setup_fonts() -> str:
@@ -149,12 +132,6 @@ def _style_axis(ax, size: float = 7.5, pad: float = 5, grid: float = 0.8, below:
         ax.set_axisbelow(True)
 
 
-def _band(ax, xs, s: dict, colour: str, zorder: int):
-    """A series' low-to-high range shaded behind its line, where it has one."""
-    if s.get("low"):
-        ax.fill_between(xs, s["low"], s["high"], color=colour, alpha=0.2, linewidth=0, zorder=zorder)
-
-
 def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float):
     """Faint rating zones behind a line: good up to z1, poor up to z2, very poor above."""
     z1, z2 = zones
@@ -163,114 +140,72 @@ def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float):
             ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=0)
 
 
-def _draw_lines(ax, series: list[dict], tz: tzinfo, width, band_z: int, line_z: int, colour_of=None) -> list[tuple]:
-    """Each series' low-to-high range behind its line, then the line: [(colour, xs, ys)]. `width` is a number or a
-    function of the series."""
+def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16):
+    span = max(hi - lo, 1.0)
+    ax.set_ylim(lo - span * bottom, hi + span * top)
+
+
+def _extent(lines: list[Line], extra: list[float] = ()) -> tuple[float, float]:
+    """The lowest and highest value drawn: the bands where there are any, else the lines (and `extra`, the records)."""
+    return (min([min(s.low or s.y) for s in lines] + list(extra)), max([max(s.high or s.y) for s in lines] + list(extra)))
+
+
+def _draw_lines(ax, lines: list[Line], tz: tzinfo, width, band_z: int, line_z: int, first: int = 0) -> list[tuple]:
+    """Each line's low-to-high range behind it, then the line: [(colour, xs, ys)]. `width` is a number or a function of
+    the line; `first` is the colour index of the first line."""
     to_dt, drawn = _to_dt(tz), []
-    for i, s in enumerate(series):
-        colour = colour_of(s, i) if colour_of else _colour(s["label"], i)
-        xs, ys = mdates.date2num([to_dt(t) for t in s["x"]]), np.asarray(s["y"], dtype=float)
-        _band(ax, xs, s, colour, band_z)
+    for i, s in enumerate(lines, first):
+        colour = _colour(s.label, i)
+        xs, ys = mdates.date2num([to_dt(t) for t in s.x]), np.asarray(s.y, dtype=float)
+        if s.low:
+            ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=band_z)
         ax.plot(xs, ys, color=colour, linewidth=width(s) if callable(width) else width, solid_capstyle="round",
                 solid_joinstyle="round", zorder=line_z)
         drawn.append((colour, xs, ys))
     return drawn
 
 
-def _extent(series: list[dict], extra: list[float] = ()) -> tuple[float, float]:
-    """The lowest and highest value drawn: the bands where there are any, else the lines (and `extra`, the records)."""
-    return (min([min(s.get("low") or s["y"]) for s in series] + list(extra)),
-            max([max(s.get("high") or s["y"]) for s in series] + list(extra)))
-
-
-def _frame(fig, ax, spec: dict, labels: list[str], colours: list[str], legend: bool = True):
-    """Title, subtitle, dot legend and axis styling shared by the chart kinds."""
-    unit = spec.get("unit", "")
-    title = spec.get("title", "")
-    if unit and _deg(unit) != "\u00b0":  # non-degree units go in the title; ticks stay plain numbers
-        title = f"{title} ({unit})"
-    fig.text(AX_RECT[0], 0.925, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
-    fig.text(AX_RECT[0], 0.855, spec.get("subtitle", ""), fontsize=8.5, color=MUTED, va="center")
-    if legend:
-        handles = [Line2D([], [], marker="o", linestyle="", markersize=6, color=c) for c in colours]
-        fig.legend(handles, labels, loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 0.925), ncol=len(labels),
-                   frameon=False, fontsize=8.5, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1)
-    _style_axis(ax)
-    tick_unit = "\u00b0" if _deg(unit) == "\u00b0" else ""
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}{tick_unit}"))
-    ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]))
-
-
-def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16):
-    span = max(hi - lo, 1.0)
-    ax.set_ylim(lo - span * bottom, hi + span * top)
-
-
-def _render_line(fig, ax, spec: dict, tz: tzinfo):
+def _bars_behind(ax, bars, tz: tzinfo) -> float:
+    """Bars (rain) on their own right-hand axis, behind the panel's lines and never taller than BARS_SHARE of it. Returns
+    where the last bar ends (matplotlib date number)."""
     to_dt = _to_dt(tz)
-    series = spec["series"]
-    _pad_limits(ax, *_extent(series, [float(r[1]) for s in series for r in (s.get("records") or {}).values()]),
-                top=0.26, bottom=0.26)  # room for pills
-    ybottom = ax.get_ylim()[0]
-    x_min = min(min(s["x"]) for s in series)
-    x_max = max(max(s["x"]) for s in series)
-    dense = max(len(s["x"]) for s in series) > 200
-    width = lambda s: 1.3 if len(series) > 2 or s.get("low") else 1.5 if dense else 2.2
-    drawn = _draw_lines(ax, series, tz, width, 3, 4)
-    labels, colours, pills = [s["label"] for s in series], [c for c, _, _ in drawn], []
-    for s, (colour, xs, ys) in zip(series, drawn):
-        if not s.get("low") and len(series) <= 2:  # soft gradient fill under the line (muddy with more lines)
-            poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
-            ax.add_patch(poly)
-            rgba = np.zeros((256, 1, 4))
-            rgba[..., :3] = to_rgb(colour)
-            rgba[..., 3] = np.linspace(0.22, 0.0, 256)[:, None]
-            img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
-            img.set_clip_path(poly)
-        ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
-        deg = _deg(spec.get("unit", ""))
-        x0, x1 = mdates.date2num(to_dt(x_min)), mdates.date2num(to_dt(x_max))
-        edge = lambda x: "left" if (x - x0) / (x1 - x0) < 0.06 else "right" if (x - x0) / (x1 - x0) > 0.94 else "center"
-        records = s.get("records") or {}
-        for want, above in (("high", True), ("low", False)):
-            if want in records:  # the true record, at its actual time (may sit off an averaged line)
-                rx, ry = mdates.date2num(to_dt(records[want][0])), float(records[want][1])
-                rx = min(max(rx, x0), x1)
-            elif records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
-                continue
-            else:
-                idx = int(ys.argmax() if above else ys.argmin())
-                rx, ry = xs[idx], ys[idx]
-            line_y = float(np.interp(rx, xs, ys))
-            if abs(ry - line_y) > (0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) if s.get("smoothed") else 1e-6) and not s.get("low"):  # well off the line: dotted stem back to it (not with a band: the band shows why)
-                ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),
-                          linewidth=1.2, alpha=0.8, zorder=3)
-            ax.scatter([rx], [ry], s=18, color=colour, edgecolors="white", linewidths=1.2, zorder=6)
-            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above, edge(rx)])
-    # Records that land close together (e.g. outdoor and indoor on the same hot day) go side by side
-    x0, x1 = mdates.date2num(to_dt(x_min)), mdates.date2num(to_dt(x_max))
-    y_lo, y_hi = ax.get_ylim()
-    for a in range(len(pills)):
-        for b in range(a + 1, len(pills)):
-            p, q = pills[a], pills[b]
-            if (p[4] == q[4] and abs(p[0] - q[0]) < (x1 - x0) * 0.08
-                    and abs(p[1] - q[1]) < (y_hi - y_lo) * 0.15):
-                left, right = (p, q) if p[0] <= q[0] else (q, p)
-                near_edge = (left[0] - x0) / (x1 - x0) < 0.12 or (x1 - right[0]) / (x1 - x0) < 0.12
-                if near_edge:  # no room to push sideways: put the lower one's pill below its point
-                    lower = p if p[1] <= q[1] else q
-                    lower[4] = False
-                else:
-                    left[5], right[5] = "right", "left"
-    for rx, ry, text, colour, above, ha in pills:
-        _pill(ax, rx, ry, text, colour, above=above, ha=ha)
-    ax.set_xlim(x0 - (x1 - x0) * 0.015, x1 + (x1 - x0) * 0.015)  # room for the end dot
-    ytop = ax.get_ylim()[1]
-    if spec.get("zones"):
-        _shade_zones(ax, spec["zones"], ybottom, ytop, 0.07)
-    ax.set_ylim(ybottom, ytop)
-    _time_axis(ax, (x_max - x_min) / 86400)
-    _frame(fig, ax, spec, labels, colours)
+    bx = mdates.date2num([to_dt(t) for t in bars.x])
+    ax2 = ax.twinx()
+    ax2.bar(bx, bars.y, width=bars.width / 86400 * 0.85, align="edge", color=RAIN, alpha=0.55, linewidth=0, zorder=1)
+    top = max([*bars.y, 1.0])
+    ax2.set_ylim(0, top / BARS_SHARE)
+    ax2.yaxis.set_major_locator(FixedLocator([top]))
+    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g} {bars.unit}"))
+    for side in ("top", "right", "left", "bottom"):
+        ax2.spines[side].set_visible(False)
+    ax2.tick_params(axis="y", length=0, labelsize=7, labelcolor=RAIN, pad=4)
+    ax.set_zorder(ax2.get_zorder() + 1)  # the lines above the bars
+    ax.patch.set_visible(False)
+    return float(bx.max() + bars.width / 86400) if len(bx) else 0.0
+
+
+def _right_axis(ax, lines: list[Line], tz: tzinfo, first: int):
+    """Lines in another unit on a right-hand axis; each axis takes the colour of its line when it has just one."""
+    ax2 = ax.twinx()
+    _draw_lines(ax2, lines, tz, 1.5, 2, 3, first)
+    _pad_limits(ax2, *_extent(lines), top=0.12, bottom=0.12)
+    for side in ("top", "right", "left", "bottom"):
+        ax2.spines[side].set_visible(False)
+    ax2.tick_params(axis="y", length=0, labelsize=7.5, labelcolor=_colour(lines[0].label, first) if len(lines) == 1 else MUTED, pad=5)
+    ax2.yaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+
+
+def _axes_width(chart: Chart) -> float:
+    """The plot's width: narrower when a panel has a right-hand axis, to leave room for its labels."""
+    return AX_RECT[2] - (0.07 if any(p.right or (p.lines and p.bars) for p in chart.panels) else 0)
+
+
+def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
+    """Title and subtitle at the top left; a unit that is not a degree goes in the title (ticks stay plain numbers)."""
+    title = f"{title} ({unit})" if unit and _deg(unit) != "°" else title
+    fig.text(AX_RECT[0], 1 - 0.27 / height, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
+    fig.text(AX_RECT[0], 1 - 0.52 / height, subtitle, fontsize=8.5, color=MUTED, va="center")
 
 
 def _time_axis(ax, span_days: float):
@@ -294,72 +229,91 @@ def _time_axis(ax, span_days: float):
         lambda v, _: mdates.num2date(v).strftime(fmt).replace("AM", "am").replace("PM", "pm")))
 
 
-def _render_stack(fig, spec: dict, tz: tzinfo):
-    """Several readings on one time axis, one panel each, top to bottom: lines (with a shaded range where there is
-    one, and rating zones for air quality), bars (rain) or traffic-light shares. The rain lines up with what the other
-    readings were doing at that moment."""
+def _legend_dots(ax_or_fig, colours: list[str], labels: list[str], **kw):
+    handles = [Line2D([], [], marker="o", linestyle="", markersize=6, color=c) for c in colours]
+    ax_or_fig.legend(handles, labels, frameon=False, labelcolor=TEXT, handletextpad=0.2, columnspacing=1.1, **kw)
+
+
+# ---------- one panel of lines, drawn large ----------
+def _render_single(fig, chart: Chart, tz: tzinfo):
+    """The whole chart is one line panel: records as pills on the line, an end dot, a soft fill under one or two lines."""
     to_dt = _to_dt(tz)
-    panels = spec["panels"]
-    n = len(panels)
-    left, width, bottom, top = AX_RECT[0], AX_RECT[2], 0.13, 0.75
-    gap = 0.075 if n > 2 else 0.06
-    height = (top - bottom - gap * (n - 1)) / n
-    xs_all = [mdates.date2num(to_dt(t)) for p in panels for s in (p.get("series") or [p.get("bars") or p["shares"]]) for t in s["x"]]
-    x0, x1 = min(xs_all), max(xs_all)
-    axes = []
-    for i, p in enumerate(panels):
-        ax = fig.add_axes([left, top - (i + 1) * height - i * gap, width, height], facecolor=BG,
-                          sharex=axes[0] if axes else None)
-        axes.append(ax)
-        if "bars" in p:
-            bars = p["bars"]
-            bx = mdates.date2num([to_dt(t) for t in bars["x"]])
-            ax.bar(bx, bars["y"], width=bars["width"] / 86400 * 0.85, align="edge", color="#0EA5E9", linewidth=0, zorder=3)
-            ax.set_ylim(0, max([*bars["y"], 1.0]) * 1.15)
-            x1 = max(x1, (bx.max() + bars["width"] / 86400) if len(bx) else x1)
-        elif "shares" in p:  # the share of each bar's time in good / poor / very poor: traffic-light bars stacked to 100%
-            shares = p["shares"]
-            bx = mdates.date2num([to_dt(t) for t in shares["x"]])
-            base = np.zeros(len(bx))
-            for key, colour in zip(("good", "poor", "very poor"), ZONE_COLOURS):
-                ax.bar(bx, shares[key], bottom=base, width=shares["width"] / 86400 * 0.85, align="edge", color=colour,
-                       linewidth=0, zorder=3)
-                base += np.asarray(shares[key], dtype=float)
-            ax.set_ylim(0, 100)
-            ax.legend([Line2D([], [], marker="s", linestyle="", markersize=5, color=c) for c in ZONE_COLOURS],
-                      ["good", "poor", "very poor"], loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
-                      labelcolor=TEXT, ncol=3, handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
-            x1 = max(x1, (bx.max() + shares["width"] / 86400) if len(bx) else x1)
-        else:
-            drawn = _draw_lines(ax, p["series"], tz, 1.5, 2, 3, lambda s, _: _colour(s["label"], i))
-            handles = [Line2D([], [], marker="o", linestyle="", markersize=5, color=c) for c, _, _ in drawn]
-            _pad_limits(ax, *_extent(p["series"]), top=0.12, bottom=0.12)
-            if p.get("zones"):  # an air-quality reading: its good / poor / very poor zones behind the line
-                _shade_zones(ax, p["zones"], *ax.get_ylim(), 0.07)
-            if len(p["series"]) > 1:
-                ax.legend(handles, [s["label"] for s in p["series"]], loc="upper right", frameon=False, fontsize=7,
-                          labelcolor=TEXT, ncol=len(handles), handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
-        _style_axis(ax)
-        ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3 if n > 2 else 4))
-        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-        ax.set_title(f"{p['label']} ({p['unit']})" if p.get("unit") else p["label"], loc="left", fontsize=8.5,
-                     fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
-        if i < n - 1:
-            plt.setp(ax.get_xticklabels(), visible=False)
-    axes[0].set_xlim(x0, x1)
-    _frame(fig, axes[0], {**spec, "unit": ""}, [], [], legend=False)
-    axes[0].grid(axis="y", color=GRID, linewidth=0.8)
-    axes[0].yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-    _time_axis(axes[-1], x1 - x0)
+    panel = chart.panels[0]
+    lines = panel.lines
+    ax = fig.add_axes([*AX_RECT[:2], _axes_width(chart), AX_RECT[3]], facecolor=BG)
+    _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()]), top=0.26, bottom=0.26)  # room for pills
+    ybottom = ax.get_ylim()[0]
+    x_min, x_max = min(t for s in lines for t in s.x), max(t for s in lines for t in s.x)
+    dense = max(len(s.x) for s in lines) > 200
+    width = lambda s: 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2
+    drawn = _draw_lines(ax, lines, tz, width, 3, 4)
+    pills = []
+    x0, x1 = mdates.date2num(to_dt(x_min)), mdates.date2num(to_dt(x_max))
+    edge = lambda x: "left" if (x - x0) / (x1 - x0) < 0.06 else "right" if (x - x0) / (x1 - x0) > 0.94 else "center"
+    deg = _deg(panel.unit)
+    for s, (colour, xs, ys) in zip(lines, drawn):
+        if not s.low and len(lines) <= 2:  # soft gradient fill under the line (muddy with more lines)
+            poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
+            ax.add_patch(poly)
+            rgba = np.zeros((256, 1, 4))
+            rgba[..., :3] = to_rgb(colour)
+            rgba[..., 3] = np.linspace(0.22, 0.0, 256)[:, None]
+            img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
+            img.set_clip_path(poly)
+        ax.scatter([xs[-1]], [ys[-1]], s=30, color=colour, edgecolors="white", linewidths=1.5, zorder=5)
+        for want, above in (("high", True), ("low", False)):
+            if want in s.records:  # the true record, at its actual time (may sit off an averaged line)
+                rx, ry = mdates.date2num(to_dt(s.records[want][0])), float(s.records[want][1])
+                rx = min(max(rx, x0), x1)
+            elif s.records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
+                continue
+            else:
+                idx = int(ys.argmax() if above else ys.argmin())
+                rx, ry = xs[idx], ys[idx]
+            line_y = float(np.interp(rx, xs, ys))
+            if abs(ry - line_y) > (0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) if s.smoothed else 1e-6) and not s.low:
+                ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
+                          linewidth=1.2, alpha=0.8, zorder=3)
+            ax.scatter([rx], [ry], s=18, color=colour, edgecolors="white", linewidths=1.2, zorder=6)
+            pills.append([rx, ry, f"{ry:.1f}{deg}", colour, above, edge(rx)])
+    # Records that land close together (e.g. outdoor and indoor on the same hot day) go side by side
+    y_lo, y_hi = ax.get_ylim()
+    for a in range(len(pills)):
+        for b in range(a + 1, len(pills)):
+            p, q = pills[a], pills[b]
+            if p[4] == q[4] and abs(p[0] - q[0]) < (x1 - x0) * 0.08 and abs(p[1] - q[1]) < (y_hi - y_lo) * 0.15:
+                left, right = (p, q) if p[0] <= q[0] else (q, p)
+                if (left[0] - x0) / (x1 - x0) < 0.12 or (x1 - right[0]) / (x1 - x0) < 0.12:  # no room to push sideways
+                    (p if p[1] <= q[1] else q)[4] = False  # the lower one's pill goes below its point
+                else:
+                    left[5], right[5] = "right", "left"
+    for rx, ry, text, colour, above, ha in pills:
+        _pill(ax, rx, ry, text, colour, above=above, ha=ha)
+    if panel.bars:
+        x1 = max(x1, _bars_behind(ax, panel.bars, tz))
+    ax.set_xlim(x0 - (x1 - x0) * 0.015, x1 + (x1 - x0) * 0.015)  # room for the end dot
+    ytop = ax.get_ylim()[1]
+    if panel.zones:
+        _shade_zones(ax, panel.zones, ybottom, ytop, 0.07)
+    ax.set_ylim(ybottom, ytop)
+    _time_axis(ax, (x_max - x_min) / 86400)
+    _headline(fig, panel.label, chart.subtitle, H_IN, panel.unit)
+    legend = [(c, s.label) for (c, _, _), s in zip(drawn, lines)] + ([(RAIN, panel.bars.label)] if panel.bars else [])
+    _legend_dots(fig, [c for c, _ in legend], [label for _, label in legend], loc="center right",
+                 bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / H_IN), ncol=len(legend), fontsize=8.5)
+    _style_axis(ax)
+    tick_unit = "°" if _deg(panel.unit) == "°" else ""
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}{tick_unit}"))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]))
+    if chart.compass:  # beside the line
+        ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
+        _render_rose(fig, chart.compass)
 
 
-WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
-
-
-def _render_rose(fig, spec: dict):
+def _render_rose(fig, compass: Compass):
     """The whole period as a wind rose (N up, clockwise): each of the 16 wedges is the share of readings from that
     way, stacked by wind speed. It sits beside the wind speed line."""
-    counts = np.asarray(spec["rose"], dtype=float)                        # 16 compass points x 3 speed steps
+    counts = np.asarray(compass.rose, dtype=float)                        # 16 compass points x 3 speed steps
     ax = fig.add_axes([0.685, 0.12, 0.27, 0.62], projection="polar")
     theta = np.deg2rad(np.arange(16) * 22.5)
     percent = counts / max(counts.sum(), 1) * 100
@@ -375,65 +329,99 @@ def _render_rose(fig, spec: dict):
     ax.grid(color=GRID, linewidth=0.6)
     ax.spines["polar"].set_visible(False)
     ax.set_facecolor(BG)
-    if spec.get("speeds"):
-        a, b = spec.get("speed_steps", (10, 20))
+    if compass.speeds:
+        a, b = compass.speed_steps
         fig.legend([Line2D([], [], marker="s", linestyle="", markersize=6, color=c) for c in WIND_STEPS],
                    [f"under {a}", f"{a}–{b}", f"{b}+ km/h"], loc="lower right", bbox_to_anchor=(0.985, 0.0), ncol=3,
                    frameon=False, fontsize=7, labelcolor=MUTED, handletextpad=0.2, columnspacing=0.9)
 
 
-def _render_panels(spec: dict, tz: tzinfo):
-    """Several metrics in one image: a small line chart each (own axis and units), in one
-    column for up to 3, otherwise two columns. Rating zones and each panel's peak shown."""
+# ---------- several panels on one time axis ----------
+def _mark_records(ax, line: Line, colour: str, tz: tzinfo, x0: float, x1: float):
+    """A small labelled dot on each true record of a line."""
     to_dt = _to_dt(tz)
-    panels = spec["panels"]
-    n = len(panels)
-    cols = 1 if n <= 3 else 2
-    rows = -(-n // cols)
-    height = 1.05 + rows * 1.7
-    fig = plt.figure(figsize=(W_IN, height), dpi=DPI, facecolor=BG)
-    fig.text(0.075, 1 - 0.38 / height, spec.get("title", ""), fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
-    fig.text(0.075, 1 - 0.68 / height, spec.get("subtitle", ""), fontsize=8.5, color=MUTED, va="center")
-    grid = fig.add_gridspec(rows, cols, left=0.085, right=0.975, top=1 - 1.05 / height, bottom=0.45 / height,
-                            hspace=0.85, wspace=0.22)
+    for want, above in (("high", True), ("low", False)):
+        if want not in line.records:
+            continue
+        mx, my = mdates.date2num(to_dt(line.records[want][0])), float(line.records[want][1])
+        frac = (mx - x0) / max(x1 - x0, 1e-9)
+        ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+        ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, 5 if above else -5), textcoords="offset points",
+                    ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
+                    fontsize=6.5, fontweight="bold", color="white", zorder=5,
+                    bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
+
+
+def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
+    """One panel of a stack: lines (with bands, zones, a right-hand axis), rain behind them, or shares. Returns the
+    number of colours used and where the drawing ends on the x axis."""
+    to_dt = _to_dt(tz)
+    if p.shares:
+        s = p.shares  # the share of each bar's time in good / poor / very poor: traffic-light bars stacked to 100%
+        bx = mdates.date2num([to_dt(t) for t in s.x])
+        base = np.zeros(len(bx))
+        for column, colour in zip((s.good, s.poor, s.very_poor), ZONE_COLOURS):
+            ax.bar(bx, column, bottom=base, width=s.width / 86400 * 0.85, align="edge", color=colour, linewidth=0, zorder=3)
+            base += np.asarray(column, dtype=float)
+        ax.set_ylim(0, 100)
+        ax.legend([Line2D([], [], marker="s", linestyle="", markersize=5, color=c) for c in ZONE_COLOURS],
+                  ["good", "poor", "very poor"], loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
+                  labelcolor=TEXT, ncol=3, handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
+        return 0, float(bx.max() + s.width / 86400) if len(bx) else x1
+    if not p.lines:  # rain on its own
+        b = p.bars
+        bx = mdates.date2num([to_dt(t) for t in b.x])
+        ax.bar(bx, b.y, width=b.width / 86400 * 0.85, align="edge", color=RAIN, linewidth=0, zorder=3)
+        ax.set_ylim(0, max([*b.y, 1.0]) * 1.15)
+        return 0, float(bx.max() + b.width / 86400) if len(bx) else x1
+    drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first)
+    marked = len(p.lines) + len(p.right) == 1 and bool(p.lines[0].records)  # a lone line has its records labelled
+    _pad_limits(ax, *_extent(p.lines, [float(r[1]) for r in p.lines[0].records.values()] if marked else []),
+                top=0.3 if marked else 0.12, bottom=0.3 if marked else 0.12)
+    if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
+        _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
+    if p.right:
+        _right_axis(ax, p.right, tz, first + len(p.lines))
+        if len(p.lines) == 1:
+            ax.tick_params(axis="y", labelcolor=drawn[0][0])
+    if marked:
+        _mark_records(ax, p.lines[0], drawn[0][0], tz, x0, x1)
+    if p.bars:
+        x1 = max(x1, _bars_behind(ax, p.bars, tz))
+    entries = [(_colour(s.label, first + i), s.label) for i, s in enumerate((*p.lines, *p.right))]
+    if len(entries) + bool(p.bars) > 1:
+        legend = entries + ([(RAIN, p.bars.label)] if p.bars else [])
+        _legend_dots(ax, [c for c, _ in legend], [label for _, label in legend], loc="lower right",
+                     bbox_to_anchor=(1.0, 1.0), ncol=len(legend), fontsize=7, borderaxespad=0.1)
+    return len(entries), x1
+
+
+def _render_stack(fig, chart: Chart, tz: tzinfo, height: float):
+    """The panels top to bottom on one time axis, so the rain (or another reading) lines up with what the others were doing."""
+    to_dt = _to_dt(tz)
+    panels, n = chart.panels, len(chart.panels)
+    _headline(fig, chart.title, chart.subtitle, height)
+    width = _axes_width(chart)
+    body = height - HEAD_IN - FOOT_IN
+    gap = 0.27 if n > 2 else 0.22
+    each = (body - gap * (n - 1)) / n
+    xs = [mdates.date2num(to_dt(t)) for p in panels for t in p.xs]
+    x0, x1 = min(xs), max(xs)
+    axes, used = [], 0
     for i, p in enumerate(panels):
-        ax = fig.add_subplot(grid[i // cols, i % cols], facecolor=BG)
-        lo, hi = _extent([p])
-        span = max(hi - lo, 1.0)
-        ybottom, ytop = lo - span * 0.3, hi + span * 0.35
-        if p.get("zones"):
-            _shade_zones(ax, p["zones"], ybottom, ytop, 0.08)
-        ((colour, xs, ys),) = _draw_lines(ax, [p], tz, 1.2, 2, 3, lambda s, _: _colour(s["label"], i))  # each day's range behind its mean
-        records = p.get("records") or {}
-        marks = [(mdates.date2num(to_dt(records[w][0])), float(records[w][1]), above) for w, above in
-                 (("high", True), ("low", False)) if w in records]
-        if not marks:  # no records given: the highest point of the line
-            h = int(ys.argmax())
-            marks = [(xs[h], ys[h], True)]
-        for mx, my, above in marks:
-            ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
-            frac = (mx - xs[0]) / max(xs[-1] - xs[0], 1e-9)
-            ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, 5 if above else -5), textcoords="offset points",
-                        ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center",
-                        va="bottom" if above else "top", fontsize=6.5, fontweight="bold", color="white", zorder=5,
-                        bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
-        ax.set_xlim(xs[0], xs[-1])
-        ax.set_ylim(ybottom, ytop)
-        unit = p.get("unit", "")
-        ax.set_title(f"{p['label']} ({unit})" if unit else p["label"], loc="left", fontsize=8.5,
-                     fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
-        _style_axis(ax, size=6.5, pad=3, grid=0.6, below=False)
-        ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(nbins=3))
-        days = (p["x"][-1] - p["x"][0]) / 86400
-        if days <= 1.5:
-            ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 6)))
-            fmt = "%-I%p"
-        else:
-            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, round(days / (4 if cols > 1 else 7)))))
-            fmt = "%a %-d"
-        ax.xaxis.set_major_formatter(FuncFormatter(
-            lambda v, _, f=fmt: mdates.num2date(v).strftime(f).replace("AM", "am").replace("PM", "pm")))
-    return fig
+        bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
+        ax = fig.add_axes([AX_RECT[0], bottom, width, each / height], facecolor=BG, sharex=axes[0] if axes else None)
+        axes.append(ax)
+        _style_axis(ax)
+        count, x1 = _draw_panel(ax, p, tz, used, x0, x1)
+        used += count
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else 4))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.set_title(f"{p.label} ({p.unit})" if p.unit else p.label, loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
+        if i < n - 1:
+            plt.setp(ax.get_xticklabels(), visible=False)
+    axes[0].set_xlim(x0, x1)
+    _time_axis(axes[-1], x1 - x0)
 
 
 def _png(fig) -> bytes:
@@ -445,20 +433,14 @@ def _png(fig) -> bytes:
         plt.close(fig)
 
 
-def render(spec: dict, tz: tzinfo) -> bytes:
-    """PNG bytes for one chart spec (1280x720, or taller for several panels)."""
-    if spec["kind"] == "panels":
-        return _png(_render_panels(spec, tz))
-    fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI, facecolor=BG)
+def render(chart: Chart, tz: tzinfo) -> bytes:
+    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller)."""
+    first = chart.panels[0]
+    single = len(chart.panels) == 1 and bool(first.lines) and not first.right
+    height = H_IN if single or len(chart.panels) <= 2 else H_IN + PANEL_IN * (len(chart.panels) - 2)
+    fig = plt.figure(figsize=(W_IN, height), dpi=DPI, facecolor=BG)
     try:
-        if spec["kind"] == "stack":
-            _render_stack(fig, spec, tz)
-        else:
-            ax = fig.add_axes(AX_RECT, facecolor=BG)
-            _render_line(fig, ax, spec, tz)
-            if "rose" in spec:  # the compass beside the line
-                ax.set_position([AX_RECT[0], AX_RECT[1], 0.57, AX_RECT[3]])
-                _render_rose(fig, spec)
+        (_render_single(fig, chart, tz) if single else _render_stack(fig, chart, tz, height))
     except Exception:
         plt.close(fig)
         raise

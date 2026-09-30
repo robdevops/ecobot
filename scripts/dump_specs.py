@@ -8,6 +8,7 @@ Run it before and after a change to the chart code, and compare the two folders 
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 import sqlite3
@@ -157,7 +158,7 @@ async def main():
             if not charts:
                 print(f"  none   {name}: no chart{note}")
                 continue
-            (out / f"{name}.json").write_text(json.dumps(charts, indent=1, default=str))
+            (out / f"{name}.json").write_text(json.dumps([dataclasses.asdict(c) for c in charts], indent=1, default=str))
             for i, spec in enumerate(charts):
                 (out / f"{name}{'' if i == 0 else f'_{i + 1}'}.png").write_bytes(render(spec, tz))
             try:

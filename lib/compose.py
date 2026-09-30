@@ -13,9 +13,10 @@ from datetime import date, datetime, time, tzinfo
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
 from .analysis import scan
 from .analysis.pairs import analyse_air
-from .charts import COMPOSED_CHART_HINT, stack_spec, wants_chart
+from .charts import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series
 from .series import WEATHER
+from .specs import Panel, Shares, stack
 from .rain import bar_layout, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
 from .tools import Tool, Turn
@@ -93,7 +94,7 @@ def _error(text: str) -> str:
     return json.dumps({"error": text}, ensure_ascii=False)
 
 
-def rating_shares(values: dict[int, float], limits: tuple[float, float], tz: tzinfo, first: date, last: date) -> dict:
+def rating_shares(values: dict[int, float], limits: tuple[float, float], tz: tzinfo, first: date, last: date, label: str) -> Shares:
     """Per bar (see bar_layout): the percentage of its 30-minute readings that were good, poor and very poor."""
     origin, width, per = bar_layout(tz, first, last)
     counts: dict[int, list[int]] = {}
@@ -102,8 +103,8 @@ def rating_shares(values: dict[int, float], limits: tuple[float, float], tz: tzi
         counts.setdefault(k, [0, 0, 0])[zone(v, limits)] += 1
     xs = sorted(counts)
     total = {k: sum(counts[k]) for k in xs}
-    return {"x": xs, "width": width, "per": per,
-            **{name: [round(100 * counts[k][i] / total[k], 1) for k in xs] for i, name in enumerate(ZONES)}}
+    good, poor, very_poor = ([round(100 * counts[k][i] / total[k], 1) for k in xs] for i in range(3))
+    return Shares(label, xs, width, good, poor, very_poor, per)
 
 
 class Composer:
@@ -178,9 +179,9 @@ class Composer:
         self._add_chart(out, built, first, last, turn)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
-    def _add_chart(self, out: dict, panels: list[dict], first: date, last: date, turn: Turn):
-        """Send the panels as one stacked chart and tell the model what its reply is for."""
-        turn.charts.append(stack_spec(panels, first, last))
+    def _add_chart(self, out: dict, panels: list[Panel], first: date, last: date, turn: Turn):
+        """Send the panels as one chart (rain behind the first line) and tell the model what its reply is for."""
+        turn.charts.append(stack(panels, first, last))
         out["chart"] = COMPOSED_CHART_HINT
 
     async def air_link(self, args: dict, turn: Turn | None = None) -> str:
@@ -203,8 +204,8 @@ class Composer:
                **(result or {"note": "No overlapping air-quality and rain readings for this period. Say exactly that."}),
                **({"notes": notes} if notes else {})}
         bars = rain_bars(rain, self.tz, first, last)
-        if result and air_panel and bars["x"] and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
-            self._add_chart(out, [air_panel, {"label": "Rain", "unit": "mm", "bars": bars}], first, last, turn)
+        if result and air_panel and bars.x and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
+            self._add_chart(out, [air_panel, Panel("Rain", "mm", bars=bars)], first, last, turn)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     async def air_scan(self, args: dict, turn: Turn | None = None) -> str:
@@ -247,7 +248,7 @@ class Composer:
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     async def _panel(self, name: str, style: str, first: date, last: date, notes: dict,
-                     data: tuple[dict, dict, dict] | None = None) -> tuple[dict | None, dict]:
+                     data: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
         """(the panel, its figures for the caption); the panel is None when there is nothing to draw. `data` is an air series
         already loaded (values, lows, highs)."""
         if name in ECOWITT:
@@ -255,14 +256,14 @@ class Composer:
             values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
                 bars = rain_bars(rain_slots(values), self.tz, first, last)
-                return ({"label": label, "unit": unit, "bars": bars} if bars["x"] else None,
-                        {"series": name, "total_mm": round(sum(bars["y"]), 1), "wet_bars": len(bars["y"])})
+                return (Panel(label, unit, bars=bars) if bars.x else None,
+                        {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
             if name == "wind":
                 gust, _, gust_high = self.weather_band(group, "wind_gust", first, last)
                 highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
             line = driver_series(values, self.tz, first, last, label, lows, highs, keep_band=name == "wind")
             facts = {"series": name, **self._stats(values, unit)}
-            return ({"label": label, "unit": unit, "series": [line]} if line else None), facts
+            return (Panel(label, unit, [line]) if line else None), facts
         if data is None:
             *data, more = await self.air_slots(name, first, last)
             notes.update(more)
@@ -270,16 +271,18 @@ class Composer:
         if len(values) < 2:
             return None, {}
         if style == "rating":
-            shares = rating_shares(values, RATINGS[name], self.tz, first, last)
+            shares = rating_shares(values, RATINGS[name], self.tz, first, last, f"{LABELS[name]} rating")
             totals = [0, 0, 0]
             for v in values.values():
                 totals[zone(v, RATINGS[name])] += 1
             overall = {k: round(100 * n / len(values), 1) for k, n in zip(ZONES, totals)}
-            return ({"label": f"{LABELS[name]} rating", "unit": "%", "shares": shares},
+            return (Panel(shares.label, "%", shares=shares),
                     {"series": name, "style": "rating", "share_of_time_percent": overall})
         line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
-        panel = {"label": LABELS[name], "unit": CHART_UNITS[name], "series": [line], "zones": list(RATINGS[name])}
-        return panel, {"series": name, **self._stats(values, CHART_UNITS[name])}
+        if line is None:
+            return None, {}
+        return (Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name])),
+                {"series": name, **self._stats(values, CHART_UNITS[name])})
 
     @staticmethod
     def _stats(values: dict, unit: str) -> dict:

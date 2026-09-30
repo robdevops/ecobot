@@ -3,6 +3,7 @@ spell, and the bars a chart draws. Shared by the analyses and the charts."""
 
 from datetime import date, tzinfo
 
+from .specs import Bars
 from .timeutil import SLOT, day_bounds
 
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
@@ -45,7 +46,7 @@ def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
             {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
 
 
-def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> dict:
+def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> Bars:
     """Rain summed into bars (see bar_layout)."""
     origin, width, per = bar_layout(tz, first, last)
     bars: dict[int, float] = {}
@@ -54,4 +55,4 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> di
             k = origin + (t - origin) // width * width
             bars[k] = bars.get(k, 0.0) + mm
     xs = sorted(bars)
-    return {"x": xs, "y": [round(bars[k], 2) for k in xs], "width": width, "per": per}
+    return Bars("Rain", "mm", xs, [round(bars[k], 2) for k in xs], width, per)

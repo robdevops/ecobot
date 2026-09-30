@@ -12,6 +12,7 @@ A source whose value is a mean and whose range is real (wind: the average speed,
 from dataclasses import dataclass
 from datetime import date, datetime, time
 
+from .specs import Line
 from .timeutil import SLOT, WIDTH_NAMES, bucket_width, bucketed, daily_summary, local_date, local_epoch, rolling_mean
 
 DAY = 86400
@@ -20,7 +21,7 @@ Reading = tuple[int, float, float | None, float | None, int]
 
 
 @dataclass
-class Line:
+class Plotted:
     x: list[int]
     y: list[float]
     width: int                   # seconds per point (the readings' own for a raw line)
@@ -36,14 +37,9 @@ class Line:
             return f"{WIDTH_NAMES.get(self.width, f'{self.width // 60}-minute')} readings"
         return f"{WIDTH_NAMES.get(self.width, 'daily')} averages"
 
-    def spec(self, label: str) -> dict:
-        """The line as the renderer takes it."""
-        out = {"label": label, "x": self.x, "y": self.y}
-        if self.low is not None:
-            out.update(low=self.low, high=self.high)
-        if self.smoothed:
-            out["smoothed"] = True
-        return out
+    def spec(self, label: str, records: dict | None = None) -> Line:
+        """The line as a chart draws it."""
+        return Line(label, self.x, self.y, self.low, self.high, self.smoothed, records or {})
 
 
 def slot_readings(values: dict[int, float], lows: dict[int, float] | None = None, highs: dict[int, float] | None = None,
@@ -58,7 +54,7 @@ def _own_range(r: Reading) -> tuple[float, float]:
 
 
 def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool = False, native_band: bool = False,
-               force_daily: bool = False, until: date | None = None) -> Line | None:
+               force_daily: bool = False, until: date | None = None) -> Plotted | None:
     """The line for these readings over a period of span_seconds; None when there is too little to draw.
     force_daily: one point a day whatever the length (an average was asked for). until: with daily records in the mix,
     days from this one on are not averaged from sub-daily readings (the day is not over)."""
@@ -73,7 +69,7 @@ def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool
         return _daily(fine, records, tz, until)
     if width > source or len({r[4] for r in fine}) > 1:  # too many for the chart, or two resolutions side by side
         xs, mean, low, high = bucketed([(r[0], r[1], *_own_range(r), r[4] < SLOT) for r in fine], tz, max(width, SLOT))
-        return Line(xs, mean, max(width, SLOT), False, *((low, high) if native_band else (None, None))) if len(xs) >= 2 else None
+        return Plotted(xs, mean, max(width, SLOT), False, *((low, high) if native_band else (None, None))) if len(xs) >= 2 else None
     line = _as_they_are([r for r in fine if r[4] == source], native_band=native_band or source > SLOT)
     if line and smooth and source == 300:  # slow readings come in 0.1-degree steps: a light average of the real readings
         smoothed = rolling_mean(dict(zip(line.x, line.y)), SMOOTH_POINTS * source // 2)
@@ -83,16 +79,16 @@ def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool
     return line
 
 
-def _as_they_are(rs: list[Reading], native_band: bool) -> Line | None:
+def _as_they_are(rs: list[Reading], native_band: bool) -> Plotted | None:
     if len(rs) < 2:
         return None
     ranges = [_own_range(r) for r in rs]
     ranged = native_band and sum(1 for r in rs if r[2] is not None or r[3] is not None) >= len(rs) // 2
-    return Line([r[0] for r in rs], [r[1] for r in rs], rs[0][4], True,
+    return Plotted([r[0] for r in rs], [r[1] for r in rs], rs[0][4], True,
                 [lo for lo, _ in ranges] if ranged else None, [hi for _, hi in ranges] if ranged else None)
 
 
-def _daily(fine: list[Reading], records: list[Reading], tz, until: date | None) -> Line | None:
+def _daily(fine: list[Reading], records: list[Reading], tz, until: date | None) -> Plotted | None:
     """One point a day. Days held as sub-daily readings get their own mean, lowest and highest over the local day; the
     older days come from the daily records, each with its own range."""
     keep = [r for r in fine if until is None or local_date(r[0], tz) < until]
@@ -106,6 +102,6 @@ def _daily(fine: list[Reading], records: list[Reading], tz, until: date | None) 
     if len(xs) < 2:
         return None
     ranged = sum(1 for t in xs if points[t][1] is not None) >= len(xs) // 2
-    return Line(xs, [points[t][0] for t in xs], DAY, False,
+    return Plotted(xs, [points[t][0] for t in xs], DAY, False,
                 [points[t][1] if points[t][1] is not None else points[t][0] for t in xs] if ranged else None,
                 [points[t][2] if points[t][2] is not None else points[t][0] for t in xs] if ranged else None)

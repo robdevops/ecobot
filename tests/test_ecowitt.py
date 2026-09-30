@@ -133,7 +133,7 @@ async def test_chart_request_adds_a_spec(station):
     turn = Turn()
     out = json.loads(await eco.tools[1].handler(
         {"groups": "outdoor,indoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, turn))
-    assert "chart" in out and turn.charts[0]["kind"] == "line" and {s["label"] for s in turn.charts[0]["series"]} == {"Outdoor", "Indoor"}
+    assert "chart" in out and len(turn.charts[0].panels) == 1 and {s.label for s in turn.charts[0].panels[0].lines} == {"Outdoor", "Indoor"}
 
 
 async def test_bad_dates_are_reported(station):
@@ -226,8 +226,9 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
     assert "monthly_note" not in json.loads(out) and fake.calls == []
-    assert "daily averages, range shaded" in spec["subtitle"]      # 200 days: a point a day from the cached 30-minute data
-    assert len(spec["series"][0]["x"]) > 150 and len(spec["series"][0]["low"]) == len(spec["series"][0]["x"])
+    assert "daily averages, range shaded" in spec.subtitle      # 200 days: a point a day from the cached 30-minute data
+    line = spec.panels[0].lines[0]
+    assert len(line.x) > 150 and len(line.low) == len(line.x)
     await eco.close()
 
 
@@ -447,12 +448,12 @@ async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path
     turn = Turn()
     out = json.loads(await eco.tools[1].handler(args, turn))
     specs = turn.charts
-    assert [s["kind"] for s in specs] == ["line"] and "compass" in out["chart"]     # one image: speed line and compass
+    assert len(specs) == 1 and specs[0].compass and "compass" in out["chart"]     # one image: speed line and compass
     spec = specs[0]
-    line = spec["series"][0]
-    assert spec["title"] == "Wind" and "shaded up to the gusts" in spec["subtitle"] and "low" in line
-    assert "compass: wind direction" in spec["subtitle"] and "records marked" not in spec["subtitle"] and spec["speeds"] is True
-    rose = spec["rose"]
+    line = spec.panels[0].lines[0]
+    assert spec.title == "Wind" and "shaded up to the gusts" in spec.subtitle and line.low
+    assert "compass: wind direction" in spec.subtitle and "records marked" not in spec.subtitle and spec.compass.speeds is True
+    rose = spec.compass.rose
     assert len(rose) == 16 and sum(rose[0]) == sum(map(sum, rose)) > 0                  # the fake wind swings 350, 0, 10: all in N
     assert sum(r[0] for r in rose) == 0 and sum(r[1] for r in rose) > 0 and sum(r[2] for r in rose) > 0   # 10 km/h and 25 km/h
     png = render(spec, eco.tz)
@@ -493,10 +494,10 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
         turn = Turn(chart_field=asked_field)                                   # asked_field: from the person's words
         await eco.tools[1].handler({**base, **extra}, turn)
         return turn.charts[0]
-    assert (await chart_of())["title"] == "Temperature"                       # the default
-    assert (await chart_of(chart_field="wind_gust", groups="wind"))["title"] == "Wind"
-    assert (await chart_of(chart_field="Nonsense"))["title"] == "Temperature"  # unknown: fall back, never fail
-    assert (await chart_of("wind_gust", groups="outdoor,wind", chart_field="temperature"))["title"] == "Wind"   # the words beat the model
+    assert (await chart_of()).title == "Temperature"                       # the default
+    assert (await chart_of(chart_field="wind_gust", groups="wind")).title == "Wind"
+    assert (await chart_of(chart_field="Nonsense")).title == "Temperature"  # unknown: fall back, never fail
+    assert (await chart_of("wind_gust", groups="outdoor,wind", chart_field="temperature")).title == "Wind"   # the words beat the model
     await eco.close()
 
 
@@ -513,17 +514,17 @@ async def test_a_chart_is_bucketed_to_the_point_budget_and_only_daily_buckets_ca
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         return turn.charts[0]
     ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: plain line
-    assert "range shaded" not in ten["subtitle"] and "low" not in ten["series"][0]
+    assert "range shaded" not in ten.subtitle and ten.panels[0].lines[0].low is None
     fortnight = await spec_for(20)                                 # twenty days: hourly averages, a plain line (a band there would hug it)
-    line = fortnight["series"][0]
-    assert "hourly averages" in fortnight["subtitle"] and "range shaded" not in fortnight["subtitle"]
-    assert 300 < len(line["x"]) <= 500 and "low" not in line
-    season = (await spec_for(90))["series"][0]                     # ninety days: a point a day, each with its low and high
-    assert 80 <= len(season["x"]) <= 92 and len(season["low"]) == len(season["high"]) == len(season["y"])
-    assert all(lo <= y <= hi for lo, y, hi in zip(season["low"], season["y"], season["high"]))
+    line = fortnight.panels[0].lines[0]
+    assert "hourly averages" in fortnight.subtitle and "range shaded" not in fortnight.subtitle
+    assert 300 < len(line.x) <= 500 and line.low is None
+    season = (await spec_for(90)).panels[0].lines[0]               # ninety days: a point a day, each with its low and high
+    assert 80 <= len(season.x) <= 92 and len(season.low) == len(season.high) == len(season.y)
+    assert all(lo <= y <= hi for lo, y, hi in zip(season.low, season.y, season.high))
     few = await spec_for(4)                                        # four days: the readings themselves, no rolling ribbon
-    line = few["series"][0]
-    assert "range shaded" not in few["subtitle"] and len(line["x"]) > 100 and "low" not in line   # a band only around an average
+    line = few.panels[0].lines[0]
+    assert "range shaded" not in few.subtitle and len(line.x) > 100 and line.low is None   # a band only around an average
     await eco.close()
 
 
@@ -535,13 +536,13 @@ async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year
                                 "start_date": f"{today - timedelta(days=540)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=1)} 00:00:00"}, turn)   # settled: no request in the small hours
     spec = turn.charts[0]
-    line = spec["series"][0]
+    line = spec.panels[0].lines[0]
     assert fake.calls == [], fake.calls                          # all from the cache
-    assert len(line["x"]) >= 500 and len(line["low"]) == len(line["x"])   # one point a day across the whole period
-    assert line["x"] == sorted(line["x"]) and len(set(line["x"])) == len(line["x"])
-    days_seen = {datetime.fromtimestamp(t, eco.tz).date() for t in line["x"]}
-    assert len(days_seen) == len(line["x"])                      # never two points for one day
-    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
+    assert len(line.x) >= 500 and len(line.low) == len(line.x)   # one point a day across the whole period
+    assert line.x == sorted(line.x) and len(set(line.x)) == len(line.x)
+    days_seen = {datetime.fromtimestamp(t, eco.tz).date() for t in line.x}
+    assert len(days_seen) == len(line.x)                         # never two points for one day
+    assert all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high))
     await eco.close()
 
 
@@ -556,13 +557,13 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59", **extra}, turn)
         return turn.charts[0]
     raw = await wind_chart(4)                                       # readings themselves: the band is speed up to gust
-    line = raw["series"][0]
-    assert raw["title"] == "Wind" and line["label"] == "Wind" and "shaded up to the gusts" in raw["subtitle"]
-    assert all(lo <= y <= hi for lo, y, hi in zip(line["low"], line["y"], line["high"]))
-    assert any(hi > y + 0.5 for y, hi in zip(line["y"], line["high"])) and set(line["records"]) == {"high"}   # gusts above the speed
-    season = (await wind_chart(90))["series"][0]                    # daily: the day's lull to its peak gust
-    assert len(season["low"]) == len(season["high"]) == len(season["y"]) and all(lo <= y <= hi for lo, y, hi in zip(season["low"], season["y"], season["high"]))
-    assert max(season["high"]) >= max(line["high"]) * 0.9
+    line = raw.panels[0].lines[0]
+    assert raw.title == "Wind" and line.label == "Wind" and "shaded up to the gusts" in raw.subtitle
+    assert all(lo <= y <= hi for lo, y, hi in zip(line.low, line.y, line.high))
+    assert any(hi > y + 0.5 for y, hi in zip(line.y, line.high)) and set(line.records) == {"high"}   # gusts above the speed
+    season = (await wind_chart(90)).panels[0].lines[0]              # daily: the day's lull to its peak gust
+    assert len(season.low) == len(season.high) == len(season.y) and all(lo <= y <= hi for lo, y, hi in zip(season.low, season.y, season.high))
+    assert max(season.high) >= max(line.high) * 0.9
     await eco.close()
 
 
@@ -614,11 +615,11 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
     out, smooth = await chart()
     monkeypatch.setattr(history, "SMOOTH_SERIES", set())
     _, raw = await chart()
-    a, b = smooth["series"][0], raw["series"][0]
-    assert "5-minute" in smooth["subtitle"] and a["x"] == b["x"] and a["y"] != b["y"]
-    assert max(a["y"]) <= max(b["y"]) + 1e-6 and min(a["y"]) >= min(b["y"]) - 1e-6         # smoothing never goes past the readings
-    assert a["smoothed"] and "smoothed" not in b and a["y"][-1] == b["y"][-1]          # the end dot is the latest reading, as it was
-    assert a["records"] == b["records"] and a["records"]["high"][1] == float(out["series"]["outdoor.temperature"]["high"].split()[0])
+    a, b = smooth.panels[0].lines[0], raw.panels[0].lines[0]
+    assert "5-minute" in smooth.subtitle and a.x == b.x and a.y != b.y
+    assert max(a.y) <= max(b.y) + 1e-6 and min(a.y) >= min(b.y) - 1e-6         # smoothing never goes past the readings
+    assert a.smoothed and not b.smoothed and a.y[-1] == b.y[-1]          # the end dot is the latest reading, as it was
+    assert a.records == b.records and a.records["high"][1] == float(out["series"]["outdoor.temperature"]["high"].split()[0])
     await eco.close()
 
 
@@ -675,7 +676,7 @@ async def test_an_average_question_gets_a_caption_that_leads_with_the_average_an
         spec = turn.charts[0]
         hints[asked] = out["chart"]
         assert ("average" in out["series"]["outdoor.temperature"]) is asked      # highs and lows by default
-        assert "daily averages, range shaded" in spec["subtitle"] and len(spec["series"][0]["x"]) > 80   # 90 days: a point a day
+        assert "daily averages, range shaded" in spec.subtitle and len(spec.panels[0].lines[0].x) > 80   # 90 days: a point a day
     assert hints[True] == AVERAGE_CHART_HINT and hints[False] != AVERAGE_CHART_HINT
     await eco.close()
 
@@ -689,7 +690,7 @@ async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(t
     for asked in (False, True):
         turn = Turn(average_asked=asked)
         await eco.tools[1].handler(args, turn)
-        subtitles[asked] = turn.charts[0]["subtitle"]
+        subtitles[asked] = turn.charts[0].subtitle
     assert "daily averages" not in subtitles[False] and "daily averages, range shaded" in subtitles[True]
     await eco.close()
 
@@ -728,16 +729,18 @@ def test_the_rose_counts_by_wind_speed_and_wraps_at_north():
 def test_the_wind_line_and_compass_render_with_and_without_speed():
     from lib.charts import render
     from lib.ecowitt.direction import rose
+    from lib.specs import Chart, Compass, Line, Panel
     from tests.fakes import TZ
     first = datetime(2026, 1, 1)
     readings = [(int((first + timedelta(minutes=30 * i)).replace(tzinfo=TZ).timestamp()), (i * 37) % 360, True) for i in range(96 * 4)]
     x = [t for t, _, _ in readings]
     y = [10 + 5 * ((i % 48) / 48) for i in range(len(x))]
-    line = {"kind": "line", "title": "Wind", "subtitle": "test", "unit": "km/h",
-            "series": [{"label": "Wind", "x": x, "y": y, "low": y, "high": [v + 8 for v in y], "records": {"high": [x[5], y[5] + 8]}}]}
-    with_speed = {**line, "speeds": True, "speed_steps": [10, 20], "rose": rose([(t, d, e, (t % 30)) for t, d, e in readings])}
-    without = {**line, "speeds": False, "rose": rose([(t, d, e, None) for t, d, e in readings])}
-    for spec in (with_speed, without, line):                       # a spec with no rose is just the line
+    def chart(compass=None):
+        wind = Line("Wind", x, y, y, [v + 8 for v in y], records={"high": (x[5], y[5] + 8)})
+        return Chart("Wind", "test", [Panel("Wind", "km/h", [wind])], compass)
+    with_speed = chart(Compass(rose([(t, d, e, (t % 30)) for t, d, e in readings]), True, (10, 20)))
+    without = chart(Compass(rose([(t, d, e, None) for t, d, e in readings]), False))
+    for spec in (with_speed, without, chart()):                    # a chart with no compass is just the line
         assert render(spec, TZ)[:4] == b"\x89PNG"
 
 
@@ -804,7 +807,7 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
     specs = turn.charts
     assert fake.calls == [] and out["resolution"].startswith("30-minute") and out["slots"] > 500
     assert set(out["by_change_before"]) == {"falling", "steady", "rising"} and "chart" in out
-    assert len(specs) == 1 and specs[0]["kind"] == "stack" and specs[0]["panels"][1]["bars"]["width"] == 6 * 3600
+    assert len(specs) == 1 and specs[0].title == "Pressure and Rain" and specs[0].panels[0].bars.width == 6 * 3600
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
     assert "error" in json.loads(await eco.tools[3].handler({"driver": "nonsense"}))
     await eco.close()
@@ -819,9 +822,9 @@ def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_
     lows = {t: v - 2.5 for t, v in driver.items()}
     highs = {t: v + 1.5 for t, v in driver.items()}
     with_true = driver_series(driver, TZ, first, last, "Pressure", lows, highs)
-    assert with_true["low"][0] == 1012.5 and with_true["high"][0] == 1016.5 and with_true["y"][0] == 1015.0
+    assert with_true.low[0] == 1012.5 and with_true.high[0] == 1016.5 and with_true.y[0] == 1015.0
     without = driver_series(driver, TZ, first, last, "Pressure")               # no lows or highs cached: the readings' own range
-    assert without["low"][0] == without["high"][0] == 1015.0
+    assert without.low[0] == without.high[0] == 1015.0
 
 
 def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_stretch_at_30():
@@ -881,7 +884,7 @@ def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
         driver = {base + i * 1800: 1015 + 6 * ((i / 200) % 2 - 1) for i in range(days * 48)}
         rain = {t: (0.4 if (i // 30) % 5 == 0 else 0.0) for i, t in enumerate(driver)}
         spec = chart_spec(driver, rain, TZ, first, last, "pressure", "hPa")
-        assert spec["panels"][1]["bars"]["width"] in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
+        assert spec.panels[0].bars.width in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
 
 
 async def test_weather_link_says_which_series_is_missing(tmp_path):
@@ -906,18 +909,19 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
         out = json.loads(await eco.tools[1].handler({**args, **extra}, turn))
         return out, turn.charts
     out, specs = await ask_chart(chart_fields=["temperature", "rain"])              # the model's choice; rain's group is added for it
-    assert len(specs) == 1 and specs[0]["kind"] == "stack" and [p["label"] for p in specs[0]["panels"]] == ["Temperature", "Rain"]
-    assert "bars" in specs[0]["panels"][1] and out["rain_total_mm"] > 0 and "rain_total_mm" in out["chart"]
+    assert len(specs) == 1 and specs[0].title == "Temperature and Rain" and [p.label for p in specs[0].panels] == ["Temperature"]
+    assert specs[0].panels[0].bars and out["rain_total_mm"] > 0 and "rain_total_mm" in out["chart"]     # the rain is behind the line
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG" and fake.calls == []            # cache only
     out, specs = await ask_chart(chart_fields=["pressure", "humidity", "wind", "rain", "temperature"], groups="outdoor,indoor")
-    assert [p["label"] for p in specs[0]["panels"]][0] == "Pressure" and len(specs[0]["panels"]) >= 4
-    temperature = next(p for p in specs[0]["panels"] if p["label"] == "Temperature")
-    assert [s["label"] for s in temperature["series"]] == ["Indoor", "Outdoor"]        # both lines in one panel
+    assert [p.label for p in specs[0].panels][0] == "Pressure" and len(specs[0].panels) >= 3
+    assert specs[0].panels[0].bars                                                     # rain goes behind the first line
+    temperature = next(p for p in specs[0].panels if p.label == "Temperature")
+    assert [s.label for s in temperature.lines] == ["Indoor", "Outdoor"]              # both lines in one panel
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
     out, specs = await ask_chart(["rain", "wind"])
-    assert [p["label"] for p in specs[0]["panels"]] == ["Rain", "Wind"]
+    assert specs[0].title == "Rain and Wind" and [p.label for p in specs[0].panels] == ["Wind"] and specs[0].panels[0].bars
     out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
-    assert specs[0]["kind"] == "line"
+    assert len(specs[0].panels) == 1 and not specs[0].panels[0].bars
     await eco.close()
 
 

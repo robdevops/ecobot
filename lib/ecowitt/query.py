@@ -20,6 +20,7 @@ from ..lines import build_line
 from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, local_date, now_local
 from ..series import WEATHER
+from ..specs import Bars, Chart, Compass, Line, Panel, rain_behind
 from .api import CYCLE_SECONDS, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
@@ -72,8 +73,8 @@ class HistoryQuery:
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
-        self.rain_bars: dict = {"x": [], "y": [], "width": 86400, "per": "day"}   # for a stacked chart with rain
-        self.compass: dict = {}                            # the wind rose (counts per compass point by speed), drawn beside the wind chart
+        self.rain_bars = Bars("Rain", "mm", [], [], 86400, "day")   # for a stacked chart with rain
+        self.compass: Compass | None = None                # the wind rose (counts per compass point by speed), drawn beside the wind chart
 
     async def run(self) -> str:
         today = self.now.date()
@@ -175,8 +176,8 @@ class HistoryQuery:
             result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31), len(calm))
             if not result:
                 continue
-            self.compass = {"rose": direction_rose([(t, d, x, speeds.get(t)) for t, d, x in counted]),
-                            "speeds": any(t in speeds for t, _, _ in counted), "speed_steps": list(SPEED_STEPS)}
+            self.compass = Compass(direction_rose([(t, d, x, speeds.get(t)) for t, d, x in counted]),
+                                   any(t in speeds for t, _, _ in counted), tuple(SPEED_STEPS))
             if self.start < first:
                 result["note_period"] = f"covers only the last {DIRECTION_DAYS} days of the period"
             self.direction[key] = result
@@ -304,7 +305,7 @@ class HistoryQuery:
         holder = self.turn.charts
         spec = self._stack_spec(names) if (names := stack_names(self.args, self.turn)) else None
         if spec:
-            out["rain_total_mm"] = round(sum(self.rain_bars["y"]), 1) if self.rain_bars["x"] else None
+            out["rain_total_mm"] = round(sum(self.rain_bars.y), 1) if self.rain_bars.x else None
             holder.append(spec)
             out["chart"] = STACK_CHART_HINT
         else:
@@ -313,9 +314,10 @@ class HistoryQuery:
                 holder.append(spec)
                 out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
         if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
-            wind = spec if spec and spec["title"] == "Wind" else self._chart_spec(plottable, "wind_gust")
+            wind = spec if spec and spec.title == "Wind" else self._chart_spec(plottable, "wind_gust")
             if wind:
-                wind.update(self.compass, subtitle=wind["subtitle"] + "  ·  compass: wind direction")
+                wind.compass = self.compass
+                wind.subtitle += "  ·  compass: wind direction"
                 if wind is not spec:
                     holder.append(wind)
                 out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
@@ -344,7 +346,7 @@ class HistoryQuery:
                 if values:
                     row["avg"] = fmt(sum(values) / len(values))
 
-    def _chart_spec(self, series_out: dict, field: str | None = None) -> dict | None:
+    def _chart_spec(self, series_out: dict, field: str | None = None) -> Chart | None:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
@@ -355,26 +357,25 @@ class HistoryQuery:
             keys = [k for k in series_out if k.endswith("." + field)]
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
-        series, resolution, ranged = [], None, False
+        lines, resolution, ranged = [], None, False
         wind = field == "wind_gust" and "wind.wind_speed" in self.store  # average speed, shaded up to the gusts
         for k in keys:
             got = self._series_entry(k)
             if got is None:
                 continue
-            entry, cycle = got
+            line, cycle = got
             resolution = resolution or cycle
             rec = self.overall.get(k, {})
-            entry["records"] = {w: [rec[w].ts, rec[w].value] for w in ("low", "high") if w in rec and (w == "high" or not wind)}
-            if "low" in entry:
-                ranged = True
-            series.append(entry)
-        if not series:
+            line.records = {w: (rec[w].ts, rec[w].value) for w in ("low", "high") if w in rec and (w == "high" or not wind)}
+            ranged = ranged or line.low is not None
+            lines.append(line)
+        if not lines:
             return None
-        return {"kind": "line", "title": "Wind" if wind else field.replace("_", " ").capitalize(),
-                "subtitle": f"{_period(self.start, self.end)}  ·  {resolution}"
-                            + (", shaded up to the gusts" if wind and ranged else ", range shaded" if ranged else "")
-                            + ("  ·  records marked" if any(x["records"] for x in series) and not wind else ""),
-                "unit": unit, "series": series}
+        title = "Wind" if wind else field.replace("_", " ").capitalize()
+        subtitle = (f"{_period(self.start, self.end)}  ·  {resolution}"
+                    + (", shaded up to the gusts" if wind and ranged else ", range shaded" if ranged else "")
+                    + ("  ·  records marked" if any(x.records for x in lines) and not wind else ""))
+        return Chart(title, subtitle, [Panel(title, unit, lines)])
 
     def _series_readings(self, k: str) -> list:
         """One series as readings for lines.build_line. Wind is one series: the average speed, shaded up to the gusts."""
@@ -391,9 +392,8 @@ class HistoryQuery:
                 out.append((t, v, low, high, CYCLE_SECONDS[r["cycle"]]))
         return out
 
-    def _series_entry(self, k: str, label: str | None = None) -> tuple[dict, str] | None:
-        """One series as a chart line (x, y, and low/high where each point has its own range) and how it was drawn;
-        None if there is too little to draw."""
+    def _series_entry(self, k: str, label: str | None = None) -> tuple[Line, str] | None:
+        """One series as a chart line and how it was drawn; None if there is too little to draw."""
         windy = k == "wind.wind_gust" and "wind.wind_speed" in self.store
         line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES, native_band=windy,
                           force_daily=self.turn.average_asked, until=now_local(self.tz).date())
@@ -401,34 +401,36 @@ class HistoryQuery:
             return None
         return line.spec(label or k.split(".", 1)[0].replace("_", " ").capitalize()), line.name
 
-    async def _rain_bars(self) -> dict:
+    async def _rain_bars(self) -> Bars:
         """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
         (daily,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
         return rain_bars(rain_slots(daily), self.tz, self.start.date(), self.end.date())
 
-    def _stack_spec(self, names: list[str]) -> dict | None:
-        """The readings asked for, one panel each on a shared time axis; None if fewer than two can be drawn."""
+    def _stack_spec(self, names: list[str]) -> Chart | None:
+        """The readings asked for, one panel each on a shared time axis (rain behind the first line); None if fewer than
+        two can be drawn."""
         panels = []
         for name in names:
             group, field, label, unit = STACK[name]
             if name == "rain":
-                if self.rain_bars["x"]:
-                    panels.append({"label": label, "unit": unit, "bars": {k: v for k, v in self.rain_bars.items() if k != "per"}})
+                if self.rain_bars.x:
+                    panels.append(Panel(label, unit, bars=self.rain_bars))
                 continue
-            entries = [e[0] for k in sorted(self.store) if k.split(".", 1)[-1] == field and (
-                       group == "outdoor" and k.split(".")[0] in ("outdoor", "indoor") or k.startswith(group + "."))
-                       and (e := self._series_entry(k)) is not None]
-            if entries:
-                panels.append({"label": label, "unit": unit, "series": entries if len(entries) > 1 or name == "temperature"
-                               else [{**entries[0], "label": label}]})
+            lines = [e[0] for k in sorted(self.store) if k.split(".", 1)[-1] == field and (
+                     group == "outdoor" and k.split(".")[0] in ("outdoor", "indoor") or k.startswith(group + "."))
+                     and (e := self._series_entry(k)) is not None]
+            if lines:
+                if len(lines) == 1 and name != "temperature":
+                    lines[0].label = label
+                panels.append(Panel(label, unit, lines))
         if len(panels) < 2:
             return None
-        rain = self.rain_bars["per"] if any("bars" in p for p in panels) else None
-        return {"kind": "stack", "title": " and ".join(p["label"] for p in panels),
-                "subtitle": f"{_period(self.start, self.end)}" + (f"  ·  rain per {rain}" if rain else "")
-                            + ("  ·  shaded: range" if any(s.get("low") for p in panels for s in p.get("series", [])) else ""),
-                "panels": panels}
+        rain = self.rain_bars.per if any(p.bars for p in panels) else None
+        return Chart(" and ".join(p.label for p in panels),
+                     f"{_period(self.start, self.end)}" + (f"  ·  rain per {rain}" if rain else "")
+                     + ("  ·  shaded: range" if any(s.low for p in panels for s in p.lines) else ""),
+                     rain_behind(panels))
 
 
 def _period(start: datetime, end: datetime) -> str:
