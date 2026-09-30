@@ -7,10 +7,11 @@ and sends them with it. One line per reading type (e.g. outdoor and indoor):
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
                "low": [float], "high": [float]}]}   (low/high optional: each point's range, drawn as a band)
 
-Several readings on one time axis, a panel each (weather_link, and "plot temperature and rain"):
+Several readings on one time axis, a panel each (weather_link, plot_chart, and "plot temperature and rain"):
   {"kind": "stack", "title", "subtitle", "panels": [
-     {"label", "unit", "series": [{"label", "x", "y"[, "low", "high"]}]}      a line per series, or
-     {"label", "unit", "bars": {"x": [bar start epoch], "y": [value], "width": seconds}}]}
+     {"label", "unit", "series": [{"label", "x", "y"[, "low", "high"]}][, "zones": [good limit, poor limit]]}   lines, or
+     {"label", "unit", "bars": {"x": [bar start epoch], "y": [value], "width": seconds}}, or
+     {"label", "unit", "shares": {"x": [bar start epoch], "width": seconds, "good": [%], "poor": [%], "very poor": [%]}}]}
 
 A wind chart is a line spec that also carries the compass, a wind rose of the whole period drawn beside the line,
 stacked by wind speed:
@@ -73,6 +74,8 @@ LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading a
 STACK_CHART_HINT = ("Your reply becomes the caption of a chart with these readings on one time axis, so keep it short: the "
                     "period, then one line per reading: temperature and other readings with their high and low (or their "
                     "average if that was asked), rain with its total (\"rain_total_mm\"). Don't mention or describe the chart.")
+COMPOSED_CHART_HINT = ("Your reply becomes the caption of a chart of these readings on one time axis, so keep it short: the "
+                       "period, then what the figures show about how they relate. Don't mention or describe the chart.")
 DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: average speed with the gusts, and a compass of "
                         "where the wind came from. Keep it short: the period, the average speed and strongest gust, then the "
                         "most common direction and how steady it was. Don't mention or describe the chart.")
@@ -280,14 +283,15 @@ def _time_axis(ax, span_days: float):
 
 def _render_stack(fig, spec: dict, tz: tzinfo):
     """Several readings on one time axis, one panel each, top to bottom: lines (with a shaded range where there is
-    one) or bars (rain). The rain lines up with what the other readings were doing at that moment."""
+    one, and rating zones for air quality), bars (rain) or traffic-light shares. The rain lines up with what the other
+    readings were doing at that moment."""
     to_dt = _to_dt(tz)
     panels = spec["panels"]
     n = len(panels)
     left, width, bottom, top = AX_RECT[0], AX_RECT[2], 0.13, 0.75
     gap = 0.075 if n > 2 else 0.06
     height = (top - bottom - gap * (n - 1)) / n
-    xs_all = [mdates.date2num(to_dt(t)) for p in panels for s in (p.get("series") or [p["bars"]]) for t in s["x"]]
+    xs_all = [mdates.date2num(to_dt(t)) for p in panels for s in (p.get("series") or [p.get("bars") or p["shares"]]) for t in s["x"]]
     x0, x1 = min(xs_all), max(xs_all)
     axes = []
     for i, p in enumerate(panels):
@@ -301,6 +305,19 @@ def _render_stack(fig, spec: dict, tz: tzinfo):
             ax.bar(bx, bars["y"], width=bars["width"] / 86400 * 0.85, align="edge", color="#0EA5E9", linewidth=0, zorder=3)
             ax.set_ylim(0, max([*bars["y"], 1.0]) * 1.15)
             x1 = max(x1, (bx.max() + bars["width"] / 86400) if len(bx) else x1)
+        elif "shares" in p:  # the share of each bar's time in good / poor / very poor: traffic-light bars stacked to 100%
+            shares = p["shares"]
+            bx = mdates.date2num([to_dt(t) for t in shares["x"]])
+            base = np.zeros(len(bx))
+            for key, colour in zip(("good", "poor", "very poor"), ZONE_COLOURS):
+                ax.bar(bx, shares[key], bottom=base, width=shares["width"] / 86400 * 0.85, align="edge", color=colour,
+                       linewidth=0, zorder=3)
+                base += np.asarray(shares[key], dtype=float)
+            ax.set_ylim(0, 100)
+            ax.legend([Line2D([], [], marker="s", linestyle="", markersize=5, color=c) for c in ZONE_COLOURS],
+                      ["good", "poor", "very poor"], loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
+                      labelcolor=TEXT, ncol=3, handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
+            x1 = max(x1, (bx.max() + shares["width"] / 86400) if len(bx) else x1)
         else:
             lows = highs = None
             for s in p["series"]:
@@ -312,6 +329,8 @@ def _render_stack(fig, spec: dict, tz: tzinfo):
                 highs = max(highs if highs is not None else -1e18, max(s.get("high") or s["y"]))
                 handles.append(Line2D([], [], marker="o", linestyle="", markersize=5, color=colour))
             _pad_limits(ax, float(lows), float(highs), top=0.12, bottom=0.12)
+            if p.get("zones"):  # an air-quality reading: its good / poor / very poor zones behind the line
+                _shade_zones(ax, p["zones"], *ax.get_ylim(), 0.07)
             if len(p["series"]) > 1:
                 ax.legend(handles, [s["label"] for s in p["series"]], loc="upper right", frameon=False, fontsize=7,
                           labelcolor=TEXT, ncol=len(handles), handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)

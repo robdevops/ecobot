@@ -20,6 +20,7 @@ from lib.bot import Bot, polling_error
 from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.llm import Agent
+from lib.compose import Composer
 from lib.tools import Tools
 from lib.warm import REFRESH_SECONDS, every, safely
 
@@ -60,7 +61,8 @@ async def main():
     eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
     air = next((s for s in sources if isinstance(s, AirGradient)), None)
 
-    tools = Tools([t for s in sources for t in s.tools])
+    composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
+    tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
     agent = Agent(AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url), cfg.xai_model, tools)
     state = AlertState(cfg.state_path)
     bot = Bot(cfg, agent, sources, state)

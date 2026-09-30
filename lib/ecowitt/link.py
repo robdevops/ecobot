@@ -180,34 +180,42 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                                          "lowest_during": round(e["lowest"], 1)} for e in top]}}
 
 
+def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
+    """(origin epoch, seconds per bar, what a bar covers) for a bar chart of this period: hourly up to 4 days, 6-hourly
+    up to a month, daily beyond. Bars start at local midnight of the first day."""
+    width = next(w for limit, w in CHART_BARS if (last - first).days + 1 <= limit)
+    return (int(datetime.combine(first, time()).replace(tzinfo=tz).timestamp()), width,
+            {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
+
+
 def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> dict:
-    """Rain summed into bars: hourly up to 4 days, 6-hourly up to a month, daily beyond."""
-    days = (last - first).days + 1
-    width = next(w for limit, w in CHART_BARS if days <= limit)
-    origin = int(datetime.combine(first, time()).replace(tzinfo=tz).timestamp())
+    """Rain summed into bars (see bar_layout)."""
+    origin, width, per = bar_layout(tz, first, last)
     bars: dict[int, float] = {}
     for t, mm in rain.items():
         if mm > 0:
             k = origin + (t - origin) // width * width
             bars[k] = bars.get(k, 0.0) + mm
     xs = sorted(bars)
-    return {"x": xs, "y": [round(bars[k], 2) for k in xs], "width": width,
-            "per": {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width]}
+    return {"x": xs, "y": [round(bars[k], 2) for k in xs], "width": width, "per": per}
 
 
 def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
-                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> dict | None:
+                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None, keep_band: bool = False) -> dict | None:
     """The reading as a line: the 30-minute readings while they fit the point budget, else bucketed (hourly ... daily);
     a day's mean has its range shaded, from Ecowitt's own 30-minute lows and highs where the cache holds them."""
     if len(driver) < 2:
         return None
     ts = sorted(driver)
     width = bucket_width(((last - first).days + 1) * 86400, SLOT)
-    if width <= SLOT:
+    if width <= SLOT and not keep_band:
         return {"label": label, "x": ts, "y": [driver[t] for t in ts]}
+    if width <= SLOT:  # a band at every width (wind: the speed, shaded up to the gusts)
+        return {"label": label, "x": ts, "y": [driver[t] for t in ts], "low": [(lows or {}).get(t, driver[t]) for t in ts],
+                "high": [max((highs or {}).get(t, driver[t]), driver[t]) for t in ts]}
     lows, highs = lows or {}, highs or {}
     xs, mean, low, high = bucketed(((t, driver[t], lows.get(t, driver[t]), highs.get(t, driver[t]), False) for t in ts), tz, width)
-    return {"label": label, "x": xs, "y": mean, **({"low": low, "high": high} if width >= BAND_FROM else {})}
+    return {"label": label, "x": xs, "y": mean, **({"low": low, "high": high} if width >= BAND_FROM or keep_band else {})}
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,

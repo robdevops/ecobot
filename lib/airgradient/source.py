@@ -282,17 +282,9 @@ class AirGradient:
             out["pm2_5"].update(aqi_us=aqi, band=band)
         return out
 
-    async def history(self, start: str | None, end: str | None, chart: bool = False,
-                      metrics: list[str] | None = None) -> dict:
-        now = self._now()
-        parse = lambda s, d: datetime.fromisoformat(str(s).replace("T", " ")) if s else d
-        t0, t1 = parse(start, now - timedelta(days=1)), min(parse(end, now), now)
-        trimmed = t0 < t1 - timedelta(days=MAX_DAYS)
-        t0 = max(t0, t1 - timedelta(days=MAX_DAYS))
-        if t0 >= t1:
-            return {"error": "start must be before end"}
-        chart = wants_chart({"chart": chart}, t0, t1)
-        before = self.requests
+    async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
+        """(readings in [t0, t1] (naive local times), days that only exist as hourly averages, older days still waiting for
+        the backfill and left out). Finished days not yet stored are fetched first, up to MAX_INLINE_DAYS."""
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
         held = await self._held(days)
         missing = [d for d in days if self._final(d) and held[d] is None]
@@ -305,7 +297,20 @@ class AirGradient:
         counts = await self._held([d for d in days if d not in skipped])
         hourly = sum(1 for c in counts.values() if c and c <= HOURLY_MAX_READINGS)
         lo_ts, hi_ts = t0.replace(tzinfo=self.tz).timestamp(), t1.replace(tzinfo=self.tz).timestamp()
-        rows = [r for r in rows if lo_ts <= r["ts"] <= hi_ts]
+        return [r for r in rows if lo_ts <= r["ts"] <= hi_ts], hourly, skipped
+
+    async def history(self, start: str | None, end: str | None, chart: bool = False,
+                      metrics: list[str] | None = None) -> dict:
+        now = self._now()
+        parse = lambda s, d: datetime.fromisoformat(str(s).replace("T", " ")) if s else d
+        t0, t1 = parse(start, now - timedelta(days=1)), min(parse(end, now), now)
+        trimmed = t0 < t1 - timedelta(days=MAX_DAYS)
+        t0 = max(t0, t1 - timedelta(days=MAX_DAYS))
+        if t0 >= t1:
+            return {"error": "start must be before end"}
+        chart = wants_chart({"chart": chart}, t0, t1)
+        before = self.requests
+        rows, hourly, skipped = await self.rows(t0, t1)
         log.info("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}", f"{t1:%m-%d %H:%M}", len(rows),
                  self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",
