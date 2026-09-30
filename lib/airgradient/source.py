@@ -354,7 +354,7 @@ class AirGradient:
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (CO2 and VOC with NOx on a right-hand axis, the particles together)."""
+        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None
@@ -364,18 +364,10 @@ class AirGradient:
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
             return Chart(LABELS[name], subtitle, [Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]))])
         panels = []
-        for on_left, on_right in AIR_PANELS:
-            left, right = [m for m in on_left if m in drawn], [m for m in on_right if m in drawn]
-            if not left:  # only the right-hand readings were asked for: they take the left axis
-                left, right = right, []
-            if not left:
-                continue
-            members = left + right
-            units = [CHART_UNITS[m] for m in members]
-            names_ = [f"{LABELS[m]} ({u})" if u and len(set(units)) > 1 else LABELS[m] for m, u in zip(members, units)]
-            label = ", ".join(names_)
-            panels.append(Panel(label, units[0] if len({CHART_UNITS[m] for m in left}) == 1 and not right else "",
-                                [drawn[m][0] for m in left], right=[drawn[m][0] for m in right],
-                                zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(left) > 1))
+        for group in AIR_PANELS:
+            members = [m for m in group if m in drawn]
+            if members:
+                panels.append(Panel(", ".join(LABELS[m] for m in members), CHART_UNITS[members[0]], [drawn[m][0] for m in members],
+                                    zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(members) > 1))
         return Chart("Air quality", f"{period}  ·  AirGradient readings"
                      + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)

@@ -91,7 +91,7 @@ def test_charts_render_for_both_datasets():
     shares = Shares("PM2.5 rating", ts[::12], 6 * 3600, [100.0] * 8, [0.0] * 8, [0.0] * 8, "6 hours")
     rated = Chart("PM2.5 rating, Rain", "z", [Panel("PM2.5 rating", "%", shares=shares), Panel("Rain", "mm", bars=rain)])
     air = Chart("Air quality", "w", [
-        Panel("CO₂ (ppm) and VOC index", "", [line("CO₂", [450 + i for i in range(96)])], right=[line("VOC index", [100 + i % 20 for i in range(96)])]),
+        Panel("CO₂, VOC index", "", [line("CO₂", [450 + i for i in range(96)]), line("VOC index", [100 + i % 20 for i in range(96)])]),
         Panel("PM1, PM2.5, PM10", "µg/m³", [line("PM1", [3 + i % 4 for i in range(96)]), line("PM2.5", [5 + i % 7 for i in range(96)]),
                                                line("PM10", [8 + i % 9 for i in range(96)])]),
         Panel("NOx index", "", [line("NOx index", [1 + i % 3 for i in range(96)])], zones=(20, 150))])

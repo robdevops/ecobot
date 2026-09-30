@@ -6,8 +6,7 @@ axis (see specs.py):
   - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
     at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
   - several panels are stacked, the figure growing a little taller with each one past two (four panels: 1280x1160).
-Rain (bars) sits behind the lines of the panel it belongs to, on its own right-hand axis; a second unit gets a right-hand
-axis of its own.
+Rain (bars) sits behind the lines of the panel it belongs to, on its own right-hand axis.
 """
 
 import glob
@@ -253,21 +252,9 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     return float(bx.max() + bars.width / 86400) if len(bx) else 0.0
 
 
-def _right_axis(ax, lines: list[Line], tz: tzinfo, first: int):
-    """Lines in another unit on a right-hand axis; each axis takes the colour of its line when it has just one."""
-    ax2 = ax.twinx()
-    _draw_lines(ax2, lines, tz, 1.5, 2, 3, first)
-    _pad_limits(ax2, *_extent(lines), top=0.12, bottom=0.12)
-    for side in ("top", "right", "left", "bottom"):
-        ax2.spines[side].set_visible(False)
-    ax2.tick_params(axis="y", length=0, labelsize=7.5, labelcolor=_colour(lines[0].label, first) if len(lines) == 1 else MUTED, pad=5)
-    ax2.yaxis.set_major_locator(MaxNLocator(nbins=4))
-    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
-
-
 def _axes_width(chart: Chart) -> float:
-    """The plot's width: narrower when a panel has a right-hand axis, to leave room for its labels."""
-    return AX_RECT[2] - (0.07 if any(p.right or (p.lines and p.bars) or len(p.lines) > 1 for p in chart.panels) else 0)
+    """The plot's width: narrower when a panel has rain's scale or end labels on its right, to leave room for them."""
+    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 for p in chart.panels) else 0)
 
 
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
@@ -519,7 +506,7 @@ def _end_labels(ax, drawn: list[tuple]):
 
 
 def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
-    """One panel of a stack: lines (with bands, zones, a right-hand axis), rain behind them, or shares. Returns the
+    """One panel of a stack: lines (with bands, zones), rain behind them, or shares. Returns the
     number of colours used and where the drawing ends on the x axis."""
     to_dt = _to_dt(tz)
     if p.shares:
@@ -542,27 +529,23 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         ax.set_ylim(0, top)
         return 0, float(bx.max() + b.width / 86400) if len(bx) else x1
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True, reading=p.reading)
-    lone = len(p.lines) == 1 and not p.right
-    marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records] if not p.right else []  # highs labelled; a lone line's lows too
+    lone = len(p.lines) == 1
+    marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records]  # highs labelled; a lone line's lows too
     _pad_limits(ax, *_extent(p.lines),
                 top=(0.3 if lone else 0.18) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
-    if len(p.lines) == 1 and not p.right and not p.lines[0].low and not p.zones:  # a lone line fades softly to the floor
+    if lone and not p.lines[0].low and not p.zones:  # a lone line fades softly to the floor
         ylim = ax.get_ylim()
         _gradient_under(ax, drawn[0][1], drawn[0][2], drawn[0][0], ylim[0])
         ax.set_ylim(ylim)
-    if p.right:
-        _right_axis(ax, p.right, tz, first + len(p.lines))
-        if len(p.lines) == 1:
-            ax.tick_params(axis="y", labelcolor=drawn[0][0])
     if marks:
         (_mark_records(ax, marks, tz, x0, x1, lows=True) if lone else _mark_highs(ax, marks, drawn, tz, x0, x1))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
-    if len(p.lines) > 1 and not p.right:
+    if len(p.lines) > 1:
         _end_labels(ax, drawn)
-    entries = [(_colour(s.label, first + i, p.reading), s.label) for i, s in enumerate((*p.lines, *p.right))]
+    entries = [(_colour(s.label, first + i, p.reading), s.label) for i, s in enumerate(p.lines)]
     if len(entries) + bool(p.bars) > 1:
         legend = entries + ([(RAIN, p.bars.label)] if p.bars else [])
         _legend_dots(ax, [c for c, _ in legend], [label for _, label in legend], loc="lower right",
@@ -624,7 +607,7 @@ def render(chart: Chart, tz: tzinfo) -> bytes:
 
 def _render(chart: Chart, tz: tzinfo) -> bytes:
     first = chart.panels[0]
-    single = len(chart.panels) == 1 and bool(first.lines) and not first.right
+    single = len(chart.panels) == 1 and bool(first.lines)
     height = H_IN if single or len(chart.panels) <= 2 else H_IN + PANEL_IN * (len(chart.panels) - 2)
     fig = plt.figure(figsize=(W_IN, height), dpi=DPI, facecolor=BG)
     try:

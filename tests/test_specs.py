@@ -33,8 +33,6 @@ def test_a_malformed_spec_fails_when_it_is_built_not_when_it_is_drawn():
     with pytest.raises(ValueError):
         Panel("both", "%", [line()], shares=Shares("s", TS[:2], 3600, [1.0, 1.0], [0.0, 0.0], [0.0, 0.0]))
     with pytest.raises(ValueError):
-        Panel("right needs left", "", right=[line()], bars=bars())
-    with pytest.raises(ValueError):
         Chart("no panels", "x", [])
     with pytest.raises(ValueError):
         Chart("compass on a stack", "x", [Panel("a", "", [line()]), Panel("b", "", [line("B")])], Compass([[0] * 3] * 16, False))
@@ -83,9 +81,8 @@ def test_a_reading_that_cannot_be_negative_is_not_drawn_below_zero_and_temperatu
     assert ax.get_ylim()[0] < -4
 
 
-def test_every_layout_renders_including_a_second_axis_and_rain_behind_the_line():
+def test_every_layout_renders_including_rain_behind_the_line():
     for chart in (Chart("One", "x", [Panel("One", "°C", [line("Outdoor"), line("Indoor")])]),
-                  Chart("Two axes", "x", [Panel("Two", "", [line("CO₂")], right=[line("VOC index")])]),   # one panel, another unit
                   Chart("Rain behind", "x", [Panel("Pressure", "hPa", [line("P")], bars=bars())]),
                   Chart("Rain alone", "x", [Panel("Rain", "mm", bars=bars())]),
                   Chart("Records", "x", [Panel("R", "", [line("A", records={"low": (TS[3], -1.0), "high": (TS[9], 9.0)})]),
@@ -126,12 +123,11 @@ def test_air_metrics_are_grouped_into_four_panels_each_reading_with_its_own_scal
 
     rows = [{"ts": TS[0] + i * 300, "co2": 500.0 + i % 9, "voc_index": 100.0 + i % 7, "pm1": 2.0, "pm2_5": 5.0 + i % 3, "pm10": 9.0,
              "nox_index": 1.0 + i % 4} for i in range(60)]
-    everything = [m for on_left, on_right in AIR_PANELS for m in (*on_left, *on_right)]
+    everything = [m for group in AIR_PANELS for m in group]
     chart = Air()._chart(everything, rows, "period")
     assert [p.label for p in chart.panels] == ["PM1, PM2.5, PM10", "CO₂", "VOC index", "NOx index"]
     particles, co2, voc, nox_panel = chart.panels
     assert co2.zones == (799.0, 1499.0) and nox_panel.zones == (20.0, 150.0) and voc.zones == (150.0, 250.0)   # each alone keeps its zones
-    assert not any(p.right for p in chart.panels)                                     # one scale per panel
     assert [s.label for s in particles.lines] == ["PM1", "PM2.5", "PM10"] and particles.unit == "µg/m³" and particles.zones is None
     assert render(chart, TZ)[:4] == b"\x89PNG"
     only = Air()._chart(["pm10", "co2"], rows, "period")                             # asked-for metrics only, in panel order
@@ -139,6 +135,6 @@ def test_air_metrics_are_grouped_into_four_panels_each_reading_with_its_own_scal
     nox = Air()._chart(["nox_index", "pm10"], rows, "period")                        # NOx alone in its panel: the left axis, with its zones
     assert [p.label for p in nox.panels] == ["PM10", "NOx index"] and nox.panels[1].zones == (20.0, 150.0)
     voc = Air()._chart(["voc_index", "pm10"], rows, "period")                         # VOC alone: the left axis, with its own label
-    assert [p.label for p in voc.panels] == ["PM10", "VOC index"] and not voc.panels[1].right and [s.label for s in voc.panels[1].lines] == ["VOC index"]
+    assert [p.label for p in voc.panels] == ["PM10", "VOC index"] and [s.label for s in voc.panels[1].lines] == ["VOC index"]
     single = Air()._chart(["pm2_5"], rows, "period")                                 # one metric: the large chart with its zones
     assert len(single.panels) == 1 and single.title == "PM2.5" and single.panels[0].zones == (9.0, 55.4)
