@@ -744,6 +744,12 @@ def synthetic_days(falling_rain: bool):
     return driver, daily
 
 
+def test_the_verdict_is_a_plain_call_from_moving_against_steady():
+    from lib.ecowitt.link import verdict
+    assert verdict(1.4, 0.6).startswith("Yes - a moderate") and verdict(1.8, 0.4).startswith("Yes - a clear")
+    assert verdict(1.0, 1.0).startswith("No") and verdict(1.3, 0.95).startswith("Weak") and verdict(None, 0.5) is None
+
+
 def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is_not():
     from lib.ecowitt.link import analyse, rain_slots
     from tests.fakes import TZ
@@ -759,6 +765,7 @@ def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is
         any("began after a fall" in f for f in out["findings"]) and any("fair share" in f for f in out["findings"])
     assert any(f.startswith("Moving either way") and "x; steady:" in f for f in out["findings"])
     assert any("the biggest was" in f for f in out["findings"]) and "raining in" in out["findings"][0]
+    assert out["verdict"].startswith("Yes")
     driver, daily = synthetic_days(False)                      # rain in the recovery: pressure is rising when it falls
     out = analyse(driver, rain_slots(daily), 1.0, TZ)
     assert (int(out["by_change_before"]["rising"]["share_of_rain"].rstrip("%")) >
