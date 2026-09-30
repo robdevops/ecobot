@@ -364,10 +364,8 @@ def _render_rose(fig, compass: Compass):
 
 # ---------- several panels on one time axis ----------
 def _extreme(line: Line, want: str, to_dt) -> tuple[float, float]:
-    """Where the highest (or lowest) reading really was: the record's own time and value (which an averaged line may not
-    reach), else the line's own extreme."""
-    if want in line.records:
-        return float(mdates.date2num(to_dt(line.records[want][0]))), float(line.records[want][1])
+    """Where the line itself is highest (or lowest): a label sits on the drawn line, not on a raw reading an averaged line
+    never reaches (that record is in the answer's text)."""
     i = int(np.argmax(line.y) if want == "high" else np.argmin(line.y))
     return float(mdates.date2num(to_dt(line.x[i]))), float(line.y[i])
 
@@ -390,9 +388,6 @@ def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: 
             placed.append((mx, my, above))
             lift = 5 + 11 * stacked
             frac = (mx - x0) / max(x1 - x0, 1e-9)
-            on_line = float(np.interp(line.records[want][0], line.x, line.y)) if want in line.records else my
-            if abs(my - on_line) > 0.01 * (y_hi - y_lo):  # off the (averaged) line: a dotted stem back to it
-                ax.vlines(mx, min(my, on_line), max(my, on_line), colors=colour, linestyles=(0, (1, 2)), linewidth=0.9, alpha=0.9, zorder=3)
             ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
             ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(0, lift if above else -lift), textcoords="offset points",
                         ha="left" if frac < 0.08 else "right" if frac > 0.92 else "center", va="bottom" if above else "top",
@@ -413,9 +408,6 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
         if "high" in line.records:
             mx, my = _extreme(line, "high", to_dt)
             peaks.append((mx, my, colour))
-            on_line = float(np.interp(line.records["high"][0], line.x, line.y))
-            if abs(my - on_line) > 0.01 * (y_hi - y_lo):  # above the (averaged) line: a faint dotted stem down to it
-                ax.vlines(mx, min(my, on_line), max(my, on_line), colors=colour, linestyles=(0, (1, 2)), linewidth=0.9, alpha=0.9, zorder=3)
     peaks.sort(key=lambda p: -p[1])                                       # the highest peak gets the top pill
     block = (10 + 12 * len(peaks)) * per_pt                               # the height the stacked pills need
     reach = 0.06 * (x1 - x0)                                              # half a pill's width, in x units
@@ -489,7 +481,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     drawn = _draw_lines(ax, p.lines, tz, 1.5, 2, 3, first, polish=True)
     lone = len(p.lines) == 1 and not p.right
     marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records] if not p.right else []  # highs labelled; a lone line's lows too
-    _pad_limits(ax, *_extent(p.lines, [float(r[1]) for s, _ in marks for w, r in s.records.items() if lone or w == "high"]),
+    _pad_limits(ax, *_extent(p.lines),
                 top=(0.3 if lone else 0.18) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
