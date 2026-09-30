@@ -581,6 +581,27 @@ async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year
     await eco.close()
 
 
+async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
+    from lib.ecowitt import history
+    seen = []
+    real = history.HistoryQuery._chunks
+
+    async def spy(self, cycle, t, until):
+        seen.append(cycle)
+        await real(self, cycle, t, until)
+    monkeypatch.setattr(history.HistoryQuery, "_chunks", spy)
+    eco, fake = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 00:00:00"}
+    await eco.tools[1].handler(args)
+    assert set(seen) == {"30min"} and fake.calls == []            # held: no daily records, no requests
+    seen.clear()
+    monkeypatch.setattr(history, "MAX_ROWS", 1000)                # too big to load: back to daily records
+    await eco.tools[1].handler(args)
+    assert "1day" in seen
+    await eco.close()
+
+
 async def test_averages_come_with_the_answer(tmp_path, archived_cache):
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()

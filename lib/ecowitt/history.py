@@ -34,7 +34,8 @@ MAX_MONTH_REFINE_WINDOWS = 24
 # date are exact even at month boundaries. Longer periods use daily data (10am-10am buckets), unless
 # the cache already holds the 30-minute data (the archive does), in which case up to a year is detailed.
 DETAILED_DAYS = 93
-CACHED_DETAILED_DAYS = 365
+MAX_ROWS = 500_000              # readings loaded per question from the cache: days x 48 x groups x FIELDS_PER_GROUP
+FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a group has
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
 # question asks for them, so an "averaged data" note can't be misapplied elsewhere.
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
@@ -266,6 +267,7 @@ class HistoryQuery:
         self.now_utc = datetime.now(timezone.utc)
         self.store: dict = {}       # "group.field" -> {"unit", "pts"}, filled by _fetch_period
         self.start = self.end = self.span = None          # the period, set by run()
+        self.held = False                                  # the whole period is in the cache at 30 minutes, and fits the row budget
         self.detailed = False                              # local-day-aligned data available for the whole period
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
@@ -286,8 +288,8 @@ class HistoryQuery:
         if self.start >= self.end:
             return "Error: start_date must be before end_date and within the last 4 years."
         self.span = self.end - self.start
-        self.detailed = self.span <= timedelta(days=DETAILED_DAYS) or (
-            self.span <= timedelta(days=CACHED_DETAILED_DAYS) and await self._cached_locally())
+        self.held = await self._held_locally()
+        self.detailed = self.held or self.span <= timedelta(days=DETAILED_DAYS)
 
         await self._fetch_period()
         if stack_names(self.args) and "rain" in stack_names(self.args):
@@ -301,14 +303,14 @@ class HistoryQuery:
         refined = await self._refine()
         return self._answer(refined)
 
-    async def _cached_locally(self) -> bool:
-        """Is the whole period already in the cache at 5- or 30-minute resolution (bar the newest day,
-        which is still settling)? Then detail costs no requests."""
+    async def _held_locally(self) -> bool:
+        """Is the whole period already in the cache at 30 minutes (bar the newest day, which is still settling), and
+        small enough to load? Then any length is read from it at no cost in requests."""
         f = self.f
-        floor = datetime.combine(self.now.date() - timedelta(days=RETENTION["30min"] - 2), time())
-        for t, e in spans("30min", max(self.start, floor), self.end - timedelta(days=1)):
-            first, last = f.epoch(t), f.epoch(e)
-            if not (await f.covered("5min", first, last) or await f.covered("30min", first, last)):
+        if (self.span.days + 1) * 48 * len(f.groups) * FIELDS_PER_GROUP > MAX_ROWS:
+            return False
+        for t, e in spans("30min", self.start, self.end - timedelta(days=1)):
+            if not await f.covered("30min", f.epoch(t), f.epoch(e)):
                 return False
         return True
 
@@ -333,6 +335,8 @@ class HistoryQuery:
                 collect(self.store, await f.get("5min" if five else "30min", a, b), "5min" if five else "30min")
             if start < thirty_floor:
                 await self._chunks("1day", start, min(end, thirty_floor - timedelta(seconds=1)))
+        elif self.held:
+            await self._chunks("30min", start, end)  # held in the cache: exact local days, true lows and highs, no requests
         else:
             # Longer: Ecowitt's daily records (each has its own low and high, and it is a request or two, cached),
             # plus the newest days at 30 minutes so the line reaches today. Exact times come from refining the extremes.
