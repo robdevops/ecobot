@@ -20,7 +20,8 @@ from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, Messag
 
 from . import intent, prompt
 from .alerts import AlertState, with_footer
-from .charts import AVERAGE_ASKED, CHART_ASKED, CHART_FIELD, CHART_REQUESTS, CHART_STACK, render as render_chart
+from .charts import render as render_chart
+from .tools import Turn
 from .config import Config
 from .timeutil import now_local
 from .llm import Agent, strip_tool_turns, trim_history
@@ -289,20 +290,19 @@ class Bot:
             typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
-            ok, charts, photos = True, [], []
-            chart_token = CHART_REQUESTS.set(charts)  # the history tools add chart specs here
-            average_token = AVERAGE_ASKED.set(bool(intent.AVERAGE.search(text)))
-            stack_token = CHART_STACK.set(intent.chart_fields(text))  # "temperature and rain": one chart, a panel each
-            field_token = CHART_FIELD.set(intent.chart_field(text))  # humidity questions get a humidity chart
-            asked_token = CHART_ASKED.set(bool(intent.GRAPH.search(text)))  # "plot" means a chart, whatever the model calls
+            ok, photos = True, []
+            turn = Turn(chart_asked=bool(intent.GRAPH.search(text)),   # "plot" means a chart, whatever the model calls
+                        chart_field=intent.chart_field(text),          # humidity questions get a humidity chart
+                        chart_fields=intent.chart_fields(text),        # "temperature and rain": one chart, a panel each
+                        average_asked=bool(intent.AVERAGE.search(text)))
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources],
                                       intent.period_hints(text, now), intent.about_the_bot(text),
                                       intent.wants_report(text))
                 reply = await self.agent.run(working, system, effort, first_call=fast[:2] if fast else None,
-                                             require_tool=intent.needs_data(text), no_tools=intent.about_the_bot(text))
+                                             require_tool=intent.needs_data(text), no_tools=intent.about_the_bot(text), turn=turn)
                 chat.history = trim_history(strip_tool_turns(working))
-                for spec in charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
+                for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
                         photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
                     except Exception:
@@ -312,11 +312,6 @@ class Bot:
                 # The details (which can include provider error bodies) go to the log, not the chat
                 ok, reply = False, f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment."
             finally:
-                CHART_REQUESTS.reset(chart_token)
-                CHART_ASKED.reset(asked_token)
-                CHART_FIELD.reset(field_token)
-                CHART_STACK.reset(stack_token)
-                AVERAGE_ASKED.reset(average_token)
                 stop_typing.set()
                 await typing  # wait for any in-flight "typing" so none is sent after the reply
 

@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta
 
 from lib.airgradient import AirGradient, pm25_aqi, rating
-from lib.charts import CHART_REQUESTS
+from lib.tools import Turn
 from tests.fakes import TZ, air_transport, config
 
 
@@ -30,15 +30,11 @@ async def test_current_reading_with_ratings(tmp_path):
 async def test_history_summary_and_chart(tmp_path):
     air, _ = await make(tmp_path)
     day = datetime.now(TZ).date() - timedelta(days=2)
-    holder = []
-    token = CHART_REQUESTS.set(holder)
-    try:
-        out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59", "chart": True,
-                                           "metrics": ["pm2_5", "co2"]}))
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59", "chart": True,
+                                       "metrics": ["pm2_5", "co2"]}, turn))
     assert out["pm2_5"]["high"] >= out["pm2_5"]["low"] and "high_aqi_us" in out["pm2_5"]
-    assert holder[0]["kind"] == "panels" and len(holder[0]["panels"]) == 2
+    assert turn.charts[0]["kind"] == "panels" and len(turn.charts[0]["panels"]) == 2
     await air.close()
 
 
@@ -220,13 +216,10 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_only_da
     fmt = "%Y-%m-%d %H:%M:%S"
 
     async def specs(days_back, metrics):
-        token = CHART_REQUESTS.set([])
-        try:
-            await air.handle({"start_date": (now - timedelta(days=days_back)).strftime(fmt), "end_date": now.strftime(fmt),
-                              "chart": True, "metrics": metrics})
-            return CHART_REQUESTS.get()
-        finally:
-            CHART_REQUESTS.reset(token)
+        turn = Turn()
+        await air.handle({"start_date": (now - timedelta(days=days_back)).strftime(fmt), "end_date": now.strftime(fmt),
+                          "chart": True, "metrics": metrics}, turn)
+        return turn.charts
     short = (await specs(3, ["pm2_5"]))[0]["series"][0]
     assert len(short["x"]) > 20 and "low" not in short                            # a few days: the readings themselves, no band
     week = (await specs(30, ["pm2_5"]))[0]

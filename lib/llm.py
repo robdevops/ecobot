@@ -7,7 +7,7 @@ import time
 
 from openai import AsyncOpenAI
 
-from .tools import Tools
+from .tools import Tools, Turn
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,8 @@ class Agent:
         return content, calls, elapsed
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
-                  first_call: tuple[str, dict] | None = None, require_tool: bool = True, no_tools: bool = False) -> str:
+                  first_call: tuple[str, dict] | None = None, require_tool: bool = True, no_tools: bool = False,
+                  turn: Turn | None = None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
@@ -53,7 +54,7 @@ class Agent:
 
         async def call(name: str, args: str) -> str:
             if (name, args) not in cache:
-                cache[(name, args)] = asyncio.ensure_future(self.tools.call(name, args))
+                cache[(name, args)] = asyncio.ensure_future(self.tools.call(name, args, turn))
                 return await cache[(name, args)]
             log.info("Tool call %s served from cache (repeat)", name)
             return ("[You already made this exact call - same result as before. Don't repeat it; "

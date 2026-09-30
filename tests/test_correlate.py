@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from lib import correlate
-from lib.charts import CHART_REQUESTS
+from lib.tools import Turn
 from tests.fakes import TZ
 from tests.test_compose import composer
 
@@ -101,12 +101,9 @@ def test_a_full_size_scan_of_every_pair_completes():
 
 async def test_air_scan_answers_with_a_verdict_and_can_chart_the_strongest_pair(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
-    token = CHART_REQUESTS.set([])
-    try:
-        out = json.loads(await comp.air_scan({"metric": "pm2_5", "chart": True}))
-        specs = CHART_REQUESTS.get()
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = json.loads(await comp.air_scan({"metric": "pm2_5", "chart": True}, turn))
+    specs = turn.charts
     assert out["verdict"] and out["findings"] and out["pairs_tested"] >= 6 and "how_to_read" in out
     assert all(len(s["panels"]) == 2 for s in specs)                     # a chart only when a relationship stood out
     assert "error" in json.loads(await comp.air_scan({"metric": "pm1"}))

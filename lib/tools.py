@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
@@ -13,11 +13,21 @@ TOOL_TIMEOUT = 90
 
 
 @dataclass
+class Turn:
+    """What one question carries between the bot and the tools it calls (nothing is shared between questions)."""
+    charts: list = field(default_factory=list)   # chart specs the tools add; the bot renders them after the answer
+    chart_asked: bool = False                    # the person's words asked for a chart ("plot"), whatever the model sets
+    chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
+    chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
+    average_asked: bool = False                  # an average was asked for: the caption leads with it
+
+
+@dataclass
 class Tool:
     name: str
     description: str
     parameters: dict
-    handler: Callable[[dict], Awaitable[str]]
+    handler: Callable[[dict, Turn], Awaitable[str]]   # (arguments, the question's Turn); a Turn is optional when called directly
 
     def schema(self) -> dict:
         return {"type": "function", "function": {"name": self.name, "description": self.description,
@@ -29,7 +39,7 @@ class Tools:
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
 
-    async def call(self, name: str, raw_args: str) -> str:
+    async def call(self, name: str, raw_args: str, turn: Turn | None = None) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""
         tool = self.by_name.get(name)
         if not tool:
@@ -40,7 +50,7 @@ class Tools:
             return f"Error: tool arguments were not valid JSON ({e})"
         log.info("Tool call %s %s", name, raw_args[:300])
         try:
-            out = await asyncio.wait_for(tool.handler(args), TOOL_TIMEOUT)
+            out = await asyncio.wait_for(tool.handler(args, turn or Turn()), TOOL_TIMEOUT)
         except asyncio.TimeoutError:
             return f"Error: tool timed out after {TOOL_TIMEOUT}s"
         except Exception as e:

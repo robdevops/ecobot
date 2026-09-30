@@ -21,10 +21,10 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from .. import intent
-from ..charts import CHART_HINT, CHART_REQUESTS, wants_chart
+from ..charts import CHART_HINT, wants_chart
 from ..config import Config
 from ..timeutil import BAND_FROM, WIDTH_NAMES, WIDTHS, bucket_width, bucketed, local_date, now_local, to_local
-from ..tools import Tool
+from ..tools import Tool, Turn
 from ..warm import Warmer
 from .metrics import ALL_METRICS, CHART_UNITS, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
 from .store import AirStore
@@ -252,13 +252,14 @@ class AirGradient:
         return fetched, failed, total
 
     # ---------- the tool ----------
-    async def handle(self, args: dict) -> str:
+    async def handle(self, args: dict, turn: Turn | None = None) -> str:
         """The air_quality tool: current reading, or a summary of a past period."""
+        turn = turn or Turn()
         try:
-            chart = wants_chart(args)
+            chart = wants_chart(args, turn)
             if args.get("start_date") or args.get("end_date") or chart:
                 return json.dumps(await self.history(args.get("start_date"), args.get("end_date"),
-                                                     chart=chart, metrics=args.get("metrics")),
+                                                     chart=chart, metrics=args.get("metrics"), turn=turn),
                                   ensure_ascii=False)
             reading = await self.current()
             reading.pop("_time_utc", None)
@@ -300,7 +301,8 @@ class AirGradient:
         return [r for r in rows if lo_ts <= r["ts"] <= hi_ts], hourly, skipped
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,
-                      metrics: list[str] | None = None) -> dict:
+                      metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
+        turn = turn or Turn()
         now = self._now()
         parse = lambda s, d: datetime.fromisoformat(str(s).replace("T", " ")) if s else d
         t0, t1 = parse(start, now - timedelta(days=1)), min(parse(end, now), now)
@@ -308,7 +310,7 @@ class AirGradient:
         t0 = max(t0, t1 - timedelta(days=MAX_DAYS))
         if t0 >= t1:
             return {"error": "start must be before end"}
-        chart = wants_chart({"chart": chart}, t0, t1)
+        chart = wants_chart({"chart": chart}, turn, t0, t1)
         before = self.requests
         rows, hourly, skipped = await self.rows(t0, t1)
         log.info("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}", f"{t1:%m-%d %H:%M}", len(rows),
@@ -339,8 +341,7 @@ class AirGradient:
                                    "downloading the sensor's history. Say so briefly.")
         if not rows:
             out["note"] = "No readings for this period."
-        holder = CHART_REQUESTS.get()
-        if chart and rows and holder is not None:
+        if chart and rows:
             wanted = [m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"]
             specs = [sp for sp in (self._chart_spec(m, rows, out["period"]) for m in wanted) if sp]
             spec = specs[0] if len(specs) == 1 else {  # several metrics: one image, a panel each
@@ -349,7 +350,7 @@ class AirGradient:
                                 k: sp["series"][0][k] for k in ("x", "y", "low", "high", "records") if k in sp["series"][0]}}
                            for sp in specs]} if specs else None
             if spec:
-                holder.append(spec)
+                turn.charts.append(spec)
                 out["chart"] = CHART_HINT
         return out
 

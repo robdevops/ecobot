@@ -1,6 +1,6 @@
 """Charts sent alongside history answers, for both Ecowitt and AirGradient.
 
-A history tool adds a chart spec to CHART_REQUESTS (a per-question list set by the
+A history tool adds a chart spec to turn.charts (the question's Turn, made by the
 bot) when a chart was asked for; the bot renders them after the answer is written
 and sends them with it. One line per reading type (e.g. outdoor and indoor):
   {"kind": "line", "title", "subtitle", "unit",
@@ -23,7 +23,6 @@ rescaled and the chart stays sharp.
 
 import glob
 import io
-from contextvars import ContextVar
 from datetime import datetime, timezone, tzinfo
 
 import matplotlib
@@ -38,18 +37,6 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
 
-# Set per question by the bot; the history tools append chart specs to it
-CHART_REQUESTS: ContextVar[list | None] = ContextVar("chart_requests", default=None)
-# True when the person's own words ask for a graph ("plot", "chart"...): the model sometimes forgets chart=true
-CHART_ASKED: ContextVar[bool] = ContextVar("chart_asked", default=False)
-
-
-# The reading a chart should plot, from the person's words ("humidity"); None means temperature
-CHART_FIELD: ContextVar[str | None] = ContextVar("chart_field", default=None)
-# The readings the person's words ask to see together ("plot temperature and rain"); empty means the usual chart
-CHART_STACK: ContextVar[list] = ContextVar("chart_stack", default=[])
-# True when the person asked for an average ("average temp 3m"): the caption then leads with the average
-AVERAGE_ASKED: ContextVar[bool] = ContextVar("average_asked", default=False)
 CHART_MIN_DAYS = 3  # a period of this many calendar days or more always gets a chart
 
 
@@ -66,10 +53,10 @@ def stack_spec(panels: list[dict], first, last) -> dict:
             "panels": panels}
 
 
-def wants_chart(args: dict, start: datetime | None = None, end: datetime | None = None) -> bool:
-    """The model asked for one, the person's words did, or the period (naive local start/end) spans 3+ days."""
+def wants_chart(args: dict, turn, start: datetime | None = None, end: datetime | None = None) -> bool:
+    """The model asked for one, the person's words did (turn.chart_asked), or the period (naive local start/end) spans 3+ days."""
     long = bool(start and end and (end.date() - start.date()).days >= CHART_MIN_DAYS - 1)
-    return bool(args.get("chart")) or CHART_ASKED.get() or long
+    return bool(args.get("chart")) or turn.chart_asked or long
 
 
 # Added to a tool result when a chart was made, so the reply becomes a good caption

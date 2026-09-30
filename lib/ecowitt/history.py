@@ -16,7 +16,7 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import NamedTuple
 
-from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_STACK, STACK_CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
+from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import WIDTH_NAMES, WIDTHS, bucket_width, bucketed, daily_summary, local_date, local_epoch, now_local, rolling_mean, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
@@ -51,9 +51,9 @@ STACK = {"temperature": ("outdoor", "temperature", "Temperature", "°C"), "humid
          "rain": ("rainfall", "daily", "Rain", "mm")}
 
 
-def stack_names(args: dict) -> list[str]:
+def stack_names(args: dict, turn) -> list[str]:
     """The readings to put side by side (from the person's words, else the model's chart_fields), two or more."""
-    raw = CHART_STACK.get() or args.get("chart_fields") or []
+    raw = turn.chart_fields or args.get("chart_fields") or []
     names = [n for n in dict.fromkeys(str(x).strip().lower() for x in raw) if n in STACK]
     return names if len(names) >= 2 else []
 
@@ -265,8 +265,8 @@ class HistoryQuery:
     """Answers one question: fetch, find the extremes, refine them, and build the compact
     result (and chart) for the model."""
 
-    def __init__(self, fetcher: Fetcher, args: dict):
-        self.f, self.tz, self.args = fetcher, fetcher.tz, args
+    def __init__(self, fetcher: Fetcher, args: dict, turn):
+        self.f, self.tz, self.args, self.turn = fetcher, fetcher.tz, args, turn
         self.now = now_local(self.tz)
         self.now_utc = datetime.now(timezone.utc)
         self.store: dict = {}       # "group.field" -> {"unit", "pts"}, filled by _fetch_period
@@ -295,7 +295,7 @@ class HistoryQuery:
         self.detailed = self.held or self.span <= timedelta(days=DETAILED_DAYS)
 
         await self._fetch_period()
-        if stack_names(self.args) and "rain" in stack_names(self.args):
+        if "rain" in stack_names(self.args, self.turn):
             self.rain_bars = await self._rain_bars()
         await self._summarise_direction()
         if not self.store and not self.direction:
@@ -488,7 +488,7 @@ class HistoryQuery:
                                 describe_time(e.ts, e.cycle, tz)
                     else:  # long periods: values only, to keep the result small
                         entry["monthly"][month] = {w: e.raw for w, e in d.items()}
-            if (self.args.get("average") or AVERAGE_ASKED.get()) and not key.startswith("rainfall"):  # a rain total has no mean
+            if (self.args.get("average") or self.turn.average_asked) and not key.startswith("rainfall"):  # a rain total has no mean
                 self._add_averages(entry, self._daily_means(self.store[key]["pts"]))
             series_out[key] = entry
 
@@ -500,10 +500,10 @@ class HistoryQuery:
         if self.monthly and not self.detailed:
             out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
-        holder = CHART_REQUESTS.get()
+        holder = self.turn.charts
         plottable = {k: v for k, v in series_out.items() if k in self.store}
-        if wants_chart(self.args, self.start, self.end) and holder is not None:
-            spec = self._stack_spec(stack_names(self.args)) if stack_names(self.args) else None
+        if wants_chart(self.args, self.turn, self.start, self.end):
+            spec = self._stack_spec(names) if (names := stack_names(self.args, self.turn)) else None
             if spec:
                 out["rain_total_mm"] = round(sum(self.rain_bars["y"]), 1) if self.rain_bars["x"] else None
                 holder.append(spec)
@@ -512,7 +512,7 @@ class HistoryQuery:
                 spec = self._chart_spec(plottable) if plottable else None
                 if spec:
                     holder.append(spec)
-                    out["chart"] = AVERAGE_CHART_HINT if AVERAGE_ASKED.get() else CHART_HINT
+                    out["chart"] = AVERAGE_CHART_HINT if self.turn.average_asked else CHART_HINT
             if self.compass:  # wind direction was counted: the compass goes beside the wind speed line
                 wind = spec if spec and spec["title"] == "Wind" else self._chart_spec(plottable, "wind_gust")
                 if wind:
@@ -553,7 +553,7 @@ class HistoryQuery:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
-        wanted = str(field or CHART_FIELD.get() or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
+        wanted = str(field or self.turn.chart_field or self.args.get("chart_field") or "temperature").strip().lower().replace(" ", "_")
         keys = [k for k in series_out if k.endswith("." + wanted)] or [k for k in series_out if k.endswith(".temperature")]
         if not keys:  # nothing to match: the wind chart when wind direction was counted, else the first field
             field = "wind_gust" if self.compass and any(k.endswith(".wind_gust") for k in series_out) else next(iter(series_out)).split(".", 1)[-1]
@@ -659,7 +659,7 @@ class HistoryQuery:
         sub_daily = [c for c in ("5min", "30min") if c in counts]
         if sub_daily:
             source = CYCLE_SECONDS[sub_daily[0]]
-            width = 86400 if "1day" in counts or AVERAGE_ASKED.get() else bucket_width(self.span.total_seconds(), source)
+            width = 86400 if "1day" in counts or self.turn.average_asked else bucket_width(self.span.total_seconds(), source)
             if width >= 86400:
                 return self._daily_line(pts)  # long charts, and any average: a point a day (mean line, each day's range)
             if width > source or len(sub_daily) > 1:  # 5-minute weeks next to 30-minute ones also come out as one resolution

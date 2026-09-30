@@ -25,7 +25,7 @@ class FakeLLM:
 def tools():
     seen = []
 
-    async def handler(args):
+    async def handler(args, turn=None):
         seen.append(args)
         return json.dumps({"ok": True})
     return Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)]), seen

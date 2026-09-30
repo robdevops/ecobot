@@ -15,7 +15,7 @@ from datetime import date, datetime, time, tzinfo
 import numpy as np
 
 from ..airgradient.metrics import ZONES, zone
-from ..charts import CHART_REQUESTS, LINK_CHART_HINT, stack_spec, wants_chart
+from ..charts import LINK_CHART_HINT, stack_spec, wants_chart
 from ..correlate import rank
 from ..timeutil import BAND_FROM, MIN_DAY_SLOTS, SLOT, bucket_width, bucketed, day_bounds, local_date, now_local, parse_period, to_local
 from .store import HistoryCache
@@ -340,10 +340,9 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
     return out, spec, first, last
 
 
-async def link_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict) -> str:
+async def link_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn) -> str:
     out, spec, first, last = await asyncio.to_thread(link, cache, mac, tz, args, now_local(tz))
-    holder = CHART_REQUESTS.get()
-    if spec and holder is not None and wants_chart(args, datetime.combine(first, time()), datetime.combine(last, time())):
-        holder.append(spec)
+    if spec and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
+        turn.charts.append(spec)
         out["chart"] = LINK_CHART_HINT
     return json.dumps(out, ensure_ascii=False, separators=(",", ":"))

@@ -12,10 +12,10 @@ from datetime import date, datetime, time, tzinfo
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
 from . import correlate
-from .charts import CHART_REQUESTS, COMPOSED_CHART_HINT, stack_spec, wants_chart
+from .charts import COMPOSED_CHART_HINT, stack_spec, wants_chart
 from .ecowitt.link import analyse_air, bar_layout, driver_series, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
-from .tools import Tool
+from .tools import Tool, Turn
 
 log = logging.getLogger(__name__)
 
@@ -153,7 +153,8 @@ class Composer:
         series, notes = await self.air_series([metric], first, last)
         return (*series[metric], notes)
 
-    async def plot_chart(self, args: dict) -> str:
+    async def plot_chart(self, args: dict, turn: Turn | None = None) -> str:
+        turn = turn or Turn()
         panels = args.get("panels")
         if not isinstance(panels, list) or not 1 <= len(panels) <= MAX_PANELS:
             return _error(f"give 1 to {MAX_PANELS} panels, each with a series and a style")
@@ -173,18 +174,16 @@ class Composer:
             built.append(panel)
             summary.append(facts)
         out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
-        self._add_chart(out, built, first, last)
+        self._add_chart(out, built, first, last, turn)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
-    def _add_chart(self, out: dict, panels: list[dict], first: date, last: date):
-        """Send the panels as one stacked chart (when this question can have one) and tell the model what its reply is for."""
-        holder = CHART_REQUESTS.get()
-        if holder is None:
-            return
-        holder.append(stack_spec(panels, first, last))
+    def _add_chart(self, out: dict, panels: list[dict], first: date, last: date, turn: Turn):
+        """Send the panels as one stacked chart and tell the model what its reply is for."""
+        turn.charts.append(stack_spec(panels, first, last))
         out["chart"] = COMPOSED_CHART_HINT
 
-    async def air_link(self, args: dict) -> str:
+    async def air_link(self, args: dict, turn: Turn | None = None) -> str:
+        turn = turn or Turn()
         metric = args.get("metric") or "pm2_5"
         if metric not in LINK_METRICS:
             return _error(f"metric must be one of {', '.join(LINK_METRICS)}")
@@ -203,11 +202,12 @@ class Composer:
                **(result or {"note": "No overlapping air-quality and rain readings for this period. Say exactly that."}),
                **({"notes": notes} if notes else {})}
         bars = rain_bars(rain, self.tz, first, last)
-        if result and air_panel and bars["x"] and wants_chart(args, datetime.combine(first, time()), datetime.combine(last, time())):
-            self._add_chart(out, [air_panel, {"label": "Rain", "unit": "mm", "bars": bars}], first, last)
+        if result and air_panel and bars["x"] and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
+            self._add_chart(out, [air_panel, {"label": "Rain", "unit": "mm", "bars": bars}], first, last, turn)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
-    async def air_scan(self, args: dict) -> str:
+    async def air_scan(self, args: dict, turn: Turn | None = None) -> str:
+        turn = turn or Turn()
         metric = args.get("metric") or "all"
         if metric != "all" and metric not in SCAN_AIR:
             return _error(f"metric must be all or one of {', '.join(SCAN_AIR)}")
@@ -237,12 +237,12 @@ class Composer:
                "how_to_read": ("Open with `verdict`, then the relationships in `findings`, strongest first. These go together; they "
                                "do not cause each other (shared weather and season). If nothing stands out, say so and that the "
                                "closest are probably chance."), **summary, **({"notes": notes} if notes else {})}
-        if strongest and wants_chart(args, datetime.combine(first, time()), datetime.combine(last, time())):
+        if strongest and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             drawn = [n for n in (strongest["air"], {"wind_speed": "wind"}.get(strongest["weather"], strongest["weather"])) if n in SERIES]
             if len(drawn) == 2:
                 panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, {}, data=air.get(n)))[0] for n in drawn]
                 if all(panels):
-                    self._add_chart(out, panels, first, last)
+                    self._add_chart(out, panels, first, last, turn)
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
     async def _panel(self, name: str, style: str, first: date, last: date, notes: dict,

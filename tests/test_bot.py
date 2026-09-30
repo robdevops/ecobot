@@ -13,7 +13,7 @@ class RaisingAgent:
 
 
 class AnsweringAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False):
+    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None):
         self.first_call = first_call
         return "It is 12 degrees."
 

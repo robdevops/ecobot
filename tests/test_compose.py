@@ -1,7 +1,8 @@
 import json
 from datetime import datetime, timedelta
 
-from lib.charts import CHART_REQUESTS, render
+from lib.charts import render
+from lib.tools import Turn
 from lib.compose import MAX_PANELS, SERIES, Composer, rating_shares
 from lib.ecowitt.link import analyse_air
 from tests.fakes import TZ, archived_station
@@ -29,12 +30,9 @@ async def composer(tmp_path, archived_cache):
 
 
 async def plot(comp, **args):
-    token = CHART_REQUESTS.set([])
-    try:
-        out = json.loads(await comp.plot_chart(args))
-        return out, CHART_REQUESTS.get()
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = json.loads(await comp.plot_chart(args, turn))
+    return out, turn.charts
 
 
 async def test_the_composer_offers_the_chart_tool_and_the_two_air_tools(tmp_path, archived_cache):
@@ -133,12 +131,9 @@ def test_too_few_rain_events_or_no_overlap_says_so():
 
 async def test_air_link_reports_a_verdict_and_can_chart_the_reading_over_rain(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
-    token = CHART_REQUESTS.set([])
-    try:
-        out = json.loads(await comp.air_link({"chart": True}))
-        specs = CHART_REQUESTS.get()
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = json.loads(await comp.air_link({"chart": True}, turn))
+    specs = turn.charts
     assert out["verdict"] and out["findings"] and "how_to_read" in out and out["metric"].startswith("PM2.5")
     assert len(specs) == 1 and [p["label"] for p in specs[0]["panels"]] == ["PM2.5", "Rain"] and specs[0]["panels"][0]["zones"] == [9.0, 55.4]
     assert "error" in json.loads(await comp.air_link({"metric": "co2"}))

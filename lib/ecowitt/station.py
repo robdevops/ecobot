@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from ..config import Config
 from ..timeutil import now_local
 from ..alerts.weather import rain_outlook
-from ..tools import Tool
+from ..tools import Tool, Turn
 from ..warm import Warmer
 from .api import EcowittAPI, GROUPS, UNITS
 from .calendar import PublicHolidays
@@ -131,18 +131,19 @@ class Ecowitt:
         return now_local(self.tz)
 
     # ---------- tools ----------
-    async def _history(self, args: dict) -> str:
+    async def _history(self, args: dict, turn: Turn | None = None) -> str:
+        turn = turn or Turn()
         groups = parse_groups(args.get("groups"))
-        groups += [g for n in stack_names(args) if (g := STACK[n][0]) not in groups]  # what "plot temperature and rain" needs
-        return await HistoryQuery(self.fetcher(groups), args).run()
+        groups += [g for n in stack_names(args, turn) if (g := STACK[n][0]) not in groups]  # what "plot temperature and rain" needs
+        return await HistoryQuery(self.fetcher(groups), args, turn).run()
 
-    async def _days(self, args: dict) -> str:
+    async def _days(self, args: dict, turn: Turn | None = None) -> str:
         return await days_tool(self.cache, self.mac, self.tz, args)
 
-    async def _link(self, args: dict) -> str:
-        return await link_tool(self.cache, self.mac, self.tz, args)
+    async def _link(self, args: dict, turn: Turn | None = None) -> str:
+        return await link_tool(self.cache, self.mac, self.tz, args, turn or Turn())
 
-    async def _realtime(self, args: dict) -> str:
+    async def _realtime(self, args: dict, turn: Turn | None = None) -> str:
         groups = parse_groups(args.get("groups"))
         data = await self.api.realtime(self.mac, ",".join(groups))
         out, newest, emoji = {}, 0, {}

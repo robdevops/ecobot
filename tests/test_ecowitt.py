@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from lib.charts import CHART_REQUESTS
+from lib.tools import Turn
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
 from tests.fakes import MAC, archived_station, config, ecowitt_transport
@@ -130,13 +130,10 @@ async def test_chart_request_adds_a_spec(station):
     eco, _ = station
     day = datetime.now(eco.tz).date() - timedelta(days=2)
     holder = []
-    token = CHART_REQUESTS.set(holder)
-    try:
-        out = json.loads(await eco.tools[1].handler(
-            {"groups": "outdoor,indoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}))
-    finally:
-        CHART_REQUESTS.reset(token)
-    assert "chart" in out and holder[0]["kind"] == "line" and {s["label"] for s in holder[0]["series"]} == {"Outdoor", "Indoor"}
+    turn = Turn()
+    out = json.loads(await eco.tools[1].handler(
+        {"groups": "outdoor,indoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, turn))
+    assert "chart" in out and turn.charts[0]["kind"] == "line" and {s["label"] for s in turn.charts[0]["series"]} == {"Outdoor", "Indoor"}
 
 
 async def test_bad_dates_are_reported(station):
@@ -223,12 +220,9 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
 
     await Archive(eco).run_once()
     fake.calls.clear()
-    token = CHART_REQUESTS.set([])
-    try:
-        out = await eco.tools[1].handler({**args, "chart": True})
-        spec = CHART_REQUESTS.get()[0]
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = await eco.tools[1].handler({**args, "chart": True}, turn)
+    spec = turn.charts[0]
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
     assert "monthly_note" not in json.loads(out) and fake.calls == []
@@ -437,13 +431,9 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     assert direction["calm"].startswith("25%")                                             # midnight to 6am had no wind
     assert len(direction["daily"]) == 6 and all(v.startswith("N ") for v in direction["daily"].values())
     assert "high" in out["series"]["wind.wind_gust"]                                       # speeds are unchanged
-    holder = CHART_REQUESTS.set([])                                                        # asking for a chart of direction alone
-    try:
-        again = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "include_derived": [],
-                                                       "start_date": f"{today - timedelta(days=3)} 00:00:00",
-                                                       "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
-    finally:
-        CHART_REQUESTS.reset(holder)
+    again = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "include_derived": [],   # a chart of direction alone
+                                                   "start_date": f"{today - timedelta(days=3)} 00:00:00",
+                                                   "end_date": f"{today - timedelta(days=2)} 23:59:59"}, Turn()))
     assert "wind.wind_direction" in again["series"]
     await eco.close()
 
@@ -454,12 +444,9 @@ async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path
     today = datetime.now(eco.tz).date()
     args = {"groups": "wind", "chart": True, "start_date": f"{today - timedelta(days=6)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
-    token = CHART_REQUESTS.set([])
-    try:
-        out = json.loads(await eco.tools[1].handler(args))
-        specs = CHART_REQUESTS.get()
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = json.loads(await eco.tools[1].handler(args, turn))
+    specs = turn.charts
     assert [s["kind"] for s in specs] == ["line"] and "compass" in out["chart"]     # one image: speed line and compass
     spec = specs[0]
     line = spec["series"][0]
@@ -483,20 +470,15 @@ def test_calm_readings_are_reported_not_counted():
 
 
 async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model_says_chart_false(tmp_path, archived_cache):
-    from lib.charts import CHART_ASKED
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     short = {"groups": "wind", "chart": False, "start_date": f"{today - timedelta(days=3)} 00:00:00",
              "end_date": f"{today - timedelta(days=2)} 23:59:59"}   # two days
     long = {**short, "start_date": f"{today - timedelta(days=5)} 00:00:00"}   # four days: always a chart
     for args, asked, expected in ((short, False, 0), (short, True, 1), (long, False, 1)):     # one wind chart: line and compass
-        holder, asked_token = CHART_REQUESTS.set([]), CHART_ASKED.set(asked)
-        try:
-            await eco.tools[1].handler(args)
-            assert len(CHART_REQUESTS.get()) == expected
-        finally:
-            CHART_ASKED.reset(asked_token)
-            CHART_REQUESTS.reset(holder)
+        turn = Turn(chart_asked=asked)
+        await eco.tools[1].handler(args, turn)
+        assert len(turn.charts) == expected
     await eco.close()
 
 
@@ -507,22 +489,14 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
     today = datetime.now(eco.tz).date()
     base = {"groups": "outdoor", "start_date": f"{today - timedelta(days=8)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
-    async def chart_of(**extra):
-        token = CHART_REQUESTS.set([])
-        try:
-            await eco.tools[1].handler({**base, **extra})
-            return CHART_REQUESTS.get()[0]
-        finally:
-            CHART_REQUESTS.reset(token)
+    async def chart_of(asked_field=None, **extra):
+        turn = Turn(chart_field=asked_field)                                   # asked_field: from the person's words
+        await eco.tools[1].handler({**base, **extra}, turn)
+        return turn.charts[0]
     assert (await chart_of())["title"] == "Temperature"                       # the default
     assert (await chart_of(chart_field="wind_gust", groups="wind"))["title"] == "Wind"
     assert (await chart_of(chart_field="Nonsense"))["title"] == "Temperature"  # unknown: fall back, never fail
-    from lib.charts import CHART_FIELD
-    token = CHART_FIELD.set("wind_gust")                                       # from the person's words: beats the model's choice
-    try:
-        assert (await chart_of(groups="outdoor,wind", chart_field="temperature"))["title"] == "Wind"
-    finally:
-        CHART_FIELD.reset(token)
+    assert (await chart_of("wind_gust", groups="outdoor,wind", chart_field="temperature"))["title"] == "Wind"   # the words beat the model
     await eco.close()
 
 
@@ -533,14 +507,11 @@ async def test_a_chart_is_bucketed_to_the_point_budget_and_only_daily_buckets_ca
     today = datetime.now(eco.tz).date()
 
     async def spec_for(days_back):
-        token = CHART_REQUESTS.set([])
-        try:
-            await eco.tools[1].handler({"groups": "outdoor", "chart": True,
-                                        "start_date": f"{today - timedelta(days=days_back)} 00:00:00",
-                                        "end_date": f"{today - timedelta(days=1)} 23:59:59"})
-            return CHART_REQUESTS.get()[0]
-        finally:
-            CHART_REQUESTS.reset(token)
+        turn = Turn()
+        await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+                                    "start_date": f"{today - timedelta(days=days_back)} 00:00:00",
+                                    "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
+        return turn.charts[0]
     ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: plain line
     assert "range shaded" not in ten["subtitle"] and "low" not in ten["series"][0]
     fortnight = await spec_for(20)                                 # twenty days: hourly averages, a plain line (a band there would hug it)
@@ -559,14 +530,11 @@ async def test_a_chart_is_bucketed_to_the_point_budget_and_only_daily_buckets_ca
 async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year(tmp_path, archived_cache):
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
-    token = CHART_REQUESTS.set([])
-    try:
-        await eco.tools[1].handler({"groups": "outdoor", "chart": True,
-                                    "start_date": f"{today - timedelta(days=540)} 00:00:00",
-                                    "end_date": f"{today - timedelta(days=1)} 00:00:00"})   # settled: no request in the small hours
-        spec = CHART_REQUESTS.get()[0]
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+                                "start_date": f"{today - timedelta(days=540)} 00:00:00",
+                                "end_date": f"{today - timedelta(days=1)} 00:00:00"}, turn)   # settled: no request in the small hours
+    spec = turn.charts[0]
     line = spec["series"][0]
     assert fake.calls == [], fake.calls                          # all from the cache
     assert len(line["x"]) >= 500 and len(line["low"]) == len(line["x"])   # one point a day across the whole period
@@ -582,14 +550,11 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
     today = datetime.now(eco.tz).date()
 
     async def wind_chart(days, **extra):
-        token = CHART_REQUESTS.set([])
-        try:
-            await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind_gust",
-                                        "start_date": f"{today - timedelta(days=days)} 00:00:00",
-                                        "end_date": f"{today - timedelta(days=1)} 23:59:59", **extra})
-            return CHART_REQUESTS.get()[0]
-        finally:
-            CHART_REQUESTS.reset(token)
+        turn = Turn()
+        await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind_gust",
+                                    "start_date": f"{today - timedelta(days=days)} 00:00:00",
+                                    "end_date": f"{today - timedelta(days=1)} 23:59:59", **extra}, turn)
+        return turn.charts[0]
     raw = await wind_chart(4)                                       # readings themselves: the band is speed up to gust
     line = raw["series"][0]
     assert raw["title"] == "Wind" and line["label"] == "Wind" and "shaded up to the gusts" in raw["subtitle"]
@@ -643,12 +608,9 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
     args = {"groups": "outdoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
 
     async def chart():
-        token = CHART_REQUESTS.set([])
-        try:
-            out = json.loads(await eco.tools[1].handler(args))
-            return out, CHART_REQUESTS.get()[0]
-        finally:
-            CHART_REQUESTS.reset(token)
+        turn = Turn()
+        out = json.loads(await eco.tools[1].handler(args, turn))
+        return out, turn.charts[0]
     out, smooth = await chart()
     monkeypatch.setattr(history, "SMOOTH_SERIES", set())
     _, raw = await chart()
@@ -701,20 +663,16 @@ async def test_averages_come_with_the_answer(tmp_path, archived_cache):
 
 
 async def test_an_average_question_gets_a_caption_that_leads_with_the_average_and_a_daily_range_chart(tmp_path, archived_cache):
-    from lib.charts import AVERAGE_ASKED, AVERAGE_CHART_HINT
+    from lib.charts import AVERAGE_CHART_HINT
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor,indoor", "start_date": f"{today - timedelta(days=90)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
     hints = {}
     for asked in (False, True):
-        chart, avg = CHART_REQUESTS.set([]), AVERAGE_ASKED.set(asked)
-        try:
-            out = json.loads(await eco.tools[1].handler(args))
-            spec = CHART_REQUESTS.get()[0]
-        finally:
-            AVERAGE_ASKED.reset(avg)
-            CHART_REQUESTS.reset(chart)
+        turn = Turn(average_asked=asked)
+        out = json.loads(await eco.tools[1].handler(args, turn))
+        spec = turn.charts[0]
         hints[asked] = out["chart"]
         assert ("average" in out["series"]["outdoor.temperature"]) is asked      # highs and lows by default
         assert "daily averages, range shaded" in spec["subtitle"] and len(spec["series"][0]["x"]) > 80   # 90 days: a point a day
@@ -723,20 +681,15 @@ async def test_an_average_question_gets_a_caption_that_leads_with_the_average_an
 
 
 async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(tmp_path, archived_cache):
-    from lib.charts import AVERAGE_ASKED
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=6)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59", "chart": True}   # five days: intraday unless an average was asked
     subtitles = {}
     for asked in (False, True):
-        chart, avg = CHART_REQUESTS.set([]), AVERAGE_ASKED.set(asked)
-        try:
-            await eco.tools[1].handler(args)
-            subtitles[asked] = CHART_REQUESTS.get()[0]["subtitle"]
-        finally:
-            AVERAGE_ASKED.reset(avg)
-            CHART_REQUESTS.reset(chart)
+        turn = Turn(average_asked=asked)
+        await eco.tools[1].handler(args, turn)
+        subtitles[asked] = turn.charts[0]["subtitle"]
     assert "daily averages" not in subtitles[False] and "daily averages, range shaded" in subtitles[True]
     await eco.close()
 
@@ -844,13 +797,10 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
     from lib.charts import render
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
-    token = CHART_REQUESTS.set([])
-    try:
-        out = json.loads(await eco.tools[3].handler({"start_date": f"{today - timedelta(days=20)}",
-                                                     "end_date": f"{today - timedelta(days=2)}"}))
-        specs = CHART_REQUESTS.get()
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    out = json.loads(await eco.tools[3].handler({"start_date": f"{today - timedelta(days=20)}",
+                                                 "end_date": f"{today - timedelta(days=2)}"}, turn))
+    specs = turn.charts
     assert fake.calls == [] and out["resolution"].startswith("30-minute") and out["slots"] > 500
     assert set(out["by_change_before"]) == {"falling", "steady", "rising"} and "chart" in out
     assert len(specs) == 1 and specs[0]["kind"] == "stack" and specs[0]["panels"][1]["bars"]["width"] == 6 * 3600
@@ -943,19 +893,16 @@ async def test_weather_link_says_which_series_is_missing(tmp_path):
 
 
 async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, archived_cache):
-    from lib.charts import CHART_STACK, render
+    from lib.charts import render
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=20)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59", "chart": True}
 
-    async def ask_chart(**extra):
-        token = CHART_REQUESTS.set([])
-        try:
-            out = json.loads(await eco.tools[1].handler({**args, **extra}))
-            return out, CHART_REQUESTS.get()
-        finally:
-            CHART_REQUESTS.reset(token)
+    async def ask_chart(asked_stack=(), **extra):
+        turn = Turn(chart_fields=list(asked_stack))                                  # asked_stack: from the person's words
+        out = json.loads(await eco.tools[1].handler({**args, **extra}, turn))
+        return out, turn.charts
     out, specs = await ask_chart(chart_fields=["temperature", "rain"])              # the model's choice; rain's group is added for it
     assert len(specs) == 1 and specs[0]["kind"] == "stack" and [p["label"] for p in specs[0]["panels"]] == ["Temperature", "Rain"]
     assert "bars" in specs[0]["panels"][1] and out["rain_total_mm"] > 0 and "rain_total_mm" in out["chart"]
@@ -965,11 +912,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
     temperature = next(p for p in specs[0]["panels"] if p["label"] == "Temperature")
     assert [s["label"] for s in temperature["series"]] == ["Indoor", "Outdoor"]        # both lines in one panel
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
-    token = CHART_STACK.set(["rain", "wind"])                                          # from the person's words: beats nothing else
-    try:
-        out, specs = await ask_chart()
-    finally:
-        CHART_STACK.reset(token)
+    out, specs = await ask_chart(["rain", "wind"])
     assert [p["label"] for p in specs[0]["panels"]] == ["Rain", "Wind"]
     out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
     assert specs[0]["kind"] == "line"

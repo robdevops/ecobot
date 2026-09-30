@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from lib.airgradient.store import AirStore
-from lib.charts import CHART_REQUESTS
+from lib.tools import Turn
 from lib.ecowitt import api
 from lib.ecowitt.store import HistoryCache
 from tests.fakes import MAC, TZ, archived_station
@@ -59,7 +59,7 @@ async def test_every_tool_result_keeps_its_shape(tmp_path, archived_cache):
     now = json.loads(await call(0, {"groups": "outdoor,indoor,pressure,wind,rainfall"}))
     assert set(now) == {"time", "outdoor", "emoji"}
     history = json.loads(await call(1, {"groups": "outdoor", **span}))
-    assert set(history) == {"period", "series"}
+    assert set(history) - {"chart"} == {"period", "series"}                    # "chart": a hint that appears when one was drawn
     assert set(history["series"]["outdoor.temperature"]) == {
         "unit", "low", "low_time", "low_when", "low_date", "high", "high_time", "high_when", "high_date", "daily"}
     wind = json.loads(await call(1, {"groups": "wind", **span}))
@@ -69,20 +69,17 @@ async def test_every_tool_result_keeps_its_shape(tmp_path, archived_cache):
     assert set(days) == {"period", "days_checked", "matching_days", "units", "days"}
     assert set(days["days"][0]) == {"date", "temp_max", "temp_min", "rain", "source"}
     link = json.loads(await call(3, {"start_date": str(today - timedelta(days=20)), "end_date": str(today - timedelta(days=2))}))
-    assert set(link) == {"period", "driver", "resolution", "how_to_read", "slots", "rain_mm", "wet_slots", "verdict", "findings",
+    assert set(link) - {"chart"} == {"period", "driver", "resolution", "how_to_read", "slots", "rain_mm", "wet_slots", "verdict", "findings",
                          "by_change_before", "average_level", "correlation_change_vs_rain_next_3h", "rain_events", "days_with_data"}
     await eco.close()
 
 
 async def test_the_cross_source_tools_keep_their_shape(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
-    token = CHART_REQUESTS.set([])
-    try:
-        plot = json.loads(await comp.plot_chart({"panels": [{"series": "pm2_5"}, {"series": "rain"}]}))
-        link = json.loads(await comp.air_link({"chart": True}))
-        scan = json.loads(await comp.air_scan({"metric": "pm2_5", "chart": True}))
-    finally:
-        CHART_REQUESTS.reset(token)
+    turn = Turn()
+    plot = json.loads(await comp.plot_chart({"panels": [{"series": "pm2_5"}, {"series": "rain"}]}, turn))
+    link = json.loads(await comp.air_link({"chart": True}, turn))
+    scan = json.loads(await comp.air_scan({"metric": "pm2_5", "chart": True}, turn))
     assert set(plot) == {"period", "panels", "chart"}
     assert {"period", "metric", "resolution", "how_to_read", "verdict", "findings", "events", "days_compared",
             "rank_correlation_daily_rain_vs_air", "slots", "wet_slots"} <= set(link)

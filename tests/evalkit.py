@@ -66,7 +66,7 @@ def tool_names() -> list[str]:
 def make_tools(calls: list) -> Tools:
     """The real tool definitions with stand-in handlers that record the call."""
     def recorder(name):
-        async def handler(args):
+        async def handler(args, turn=None):
             calls.append((name, args))
             return CANNED
         return handler
