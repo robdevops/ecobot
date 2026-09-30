@@ -659,6 +659,21 @@
   }
  },
  {
+  "id": "metrics-bare",
+  "ask": "metrics",
+  "expect": {
+   "needs_data": false,
+   "about_the_bot": true,
+   "not_tools": [
+    "weather_now",
+    "weather_history",
+    "weather_days",
+    "weather_link",
+    "air_quality"
+   ]
+  }
+ },
+ {
   "id": "list-our-metrics",
   "ask": "list our metrics from both sources",
   "note": "the model fetched current readings; a question about the bot is answered from what it knows",

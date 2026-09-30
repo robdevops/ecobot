@@ -66,7 +66,8 @@ def wants_report(text: str) -> bool:
 # Questions about the bot itself ("what metrics do you have", "list our sources"): answered from what it knows, no fetch
 ABOUT_THE_BOT = re.compile(
     r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"
-    r"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b", I)
+    r"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b|"
+    r"^\s*(please\s+)?((our|the|my|available|all)\s+)*(metrics?|sensors?|sources?|devices?)(\s+please)?\s*[?.!]*\s*$", I)
 
 
 def about_the_bot(text: str) -> bool:

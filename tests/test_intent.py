@@ -249,9 +249,9 @@ def test_a_bare_period_is_hinted_and_a_command_to_the_bot_is_not_a_request_for_r
 
 def test_questions_about_the_bot_are_recognised_and_readings_questions_are_not():
     for text in ("list our metrics from both sources", "what metrics do you have?", "which sensors do you use", "what can you do",
-                 "what do you measure", "what can I ask"):
+                 "what do you measure", "what can I ask", "metrics", "our metrics?", "Available sensors", "sources please"):
         assert intent.about_the_bot(text) and not intent.needs_data(text), text
-    for text in ("what was the hottest day", "list rainy days in september", "what's the temperature", "show the past week",
+    for text in ("rain metrics for Tuesday", "metrics last week", "what was the hottest day", "list rainy days in september", "what's the temperature", "show the past week",
                  "what was the pressure last month", "how's the air?"):
         assert not intent.about_the_bot(text), text
 
