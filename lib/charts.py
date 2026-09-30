@@ -4,8 +4,8 @@ A history tool adds a specs.Chart to turn.charts (the question's Turn, made by t
 bot renders them after the answer is written and sends them with it. Every chart is one or more panels on a shared time
 axis (see specs.py):
   - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
-    at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
-  - several panels are stacked, the figure growing a little taller with each one past two.
+    at 2560x1440 (16:9), the largest size Telegram keeps for a photo;
+  - several panels are stacked, the figure growing a little taller with each one past two (four panels: 2560x2320).
 Rain (bars) sits behind the lines of the panel it belongs to, on its own right-hand axis; a second unit gets a right-hand
 axis of its own.
 """
@@ -64,13 +64,13 @@ BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5
 COLOURS = {"Outdoor": "#F97316", "Indoor": "#6366F1",
            # air-quality metrics (kept clear of the green/yellow/red rating zones)
            "PM2.5": "#0EA5E9", "PM10": "#8B5CF6", "PM1": "#14B8A6", "CO₂": "#475569",
-           "VOC index": "#059669", "NOx index": "#DB2777"}   # VOC green and NOx pink: complements, sharing one panel
+           "VOC index": "#D97706", "NOx index": "#DB2777"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#1E3A8A"                 # deep navy: the rain sits behind the lines and stays clear of every reading's colour
 CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
 WIND_STEPS = ("#FED7AA", "#FB923C", "#C2410C")  # light, middle and strong wind
-W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
+W_IN, H_IN, DPI = 6.4, 3.6, 400  # 2560 x 1440 px: the size Telegram keeps for a photo (width + height must stay under 10000)
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
@@ -488,7 +488,7 @@ def _png(fig) -> bytes:
 
 
 def render(chart: Chart, tz: tzinfo) -> bytes:
-    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller)."""
+    """PNG bytes for one chart (2560x1440; a stack of more than two panels is taller)."""
     first = chart.panels[0]
     single = len(chart.panels) == 1 and bool(first.lines) and not first.right
     height = H_IN if single or len(chart.panels) <= 2 else H_IN + PANEL_IN * (len(chart.panels) - 2)

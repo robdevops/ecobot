@@ -62,4 +62,4 @@ no line is there to sit behind). A panel can carry a second y axis for a reading
 panels: CO2 with VOC, PM1/PM2.5/PM10, NOx. Line data is unchanged: on the test fixture caches, every x/y/low/high/bars array
 in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
 
-Air quality is three panels, top to bottom: the particles; CO2; VOC with NOx on a right-hand axis (`AIR_PANELS` in `airgradient/metrics.py`).
+Air quality is four panels, top to bottom: the particles, CO2, VOC and NOx, each on its own scale (`AIR_PANELS` in `airgradient/metrics.py`). Charts render at 2560 px wide (Telegram keeps photos up to 2560 px on the long side).

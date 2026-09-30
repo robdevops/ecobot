@@ -100,10 +100,10 @@ def test_a_taller_chart_for_more_panels():
     for n in (1, 2, 3, 4):
         chart = Chart("t", "s", [Panel(f"P{i}", "", [line(f"L{i}")]) for i in range(n)])
         sizes.append(Image.open(io.BytesIO(render(chart, TZ))).size)
-    assert sizes[0] == sizes[1] == (1280, 720) and sizes[2][1] > 720 and sizes[3][1] > sizes[2][1]
+    assert sizes[0] == sizes[1] == (2560, 1440) and sizes[2][1] > 1440 and sizes[3][1] > sizes[2][1] and sizes[3][1] < 2560   # within Telegram's photo size
 
 
-def test_air_metrics_are_grouped_into_three_panels_with_nox_on_the_right_hand_axis_of_the_voc_panel():
+def test_air_metrics_are_grouped_into_four_panels_each_reading_with_its_own_scale():
     class Air:
         tz = TZ
         _line = AirGradient._line
@@ -113,10 +113,10 @@ def test_air_metrics_are_grouped_into_three_panels_with_nox_on_the_right_hand_ax
              "nox_index": 1.0 + i % 4} for i in range(60)]
     everything = [m for on_left, on_right in AIR_PANELS for m in (*on_left, *on_right)]
     chart = Air()._chart(everything, rows, "period")
-    assert [p.label for p in chart.panels] == ["PM1, PM2.5 and PM10", "CO₂", "VOC index and NOx index"]
-    particles, co2, indexes = chart.panels
-    assert co2.zones == (799.0, 1499.0) and not co2.right                             # CO2 alone keeps its rating zones
-    assert [s.label for s in indexes.lines] == ["VOC index"] and [s.label for s in indexes.right] == ["NOx index"] and indexes.zones is None
+    assert [p.label for p in chart.panels] == ["PM1, PM2.5 and PM10", "CO₂", "VOC index", "NOx index"]
+    particles, co2, voc, nox_panel = chart.panels
+    assert co2.zones == (799.0, 1499.0) and nox_panel.zones == (20.0, 150.0) and voc.zones == (150.0, 250.0)   # each alone keeps its zones
+    assert not any(p.right for p in chart.panels)                                     # one scale per panel
     assert [s.label for s in particles.lines] == ["PM1", "PM2.5", "PM10"] and particles.unit == "µg/m³" and particles.zones is None
     assert render(chart, TZ)[:4] == b"\x89PNG"
     only = Air()._chart(["pm10", "co2"], rows, "period")                             # asked-for metrics only, in panel order
