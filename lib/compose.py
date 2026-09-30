@@ -55,8 +55,8 @@ PLOT_PARAMETERS = {
 SCAN_DAYS = 90
 SCAN_AIR = ("pm2_5", "pm10", "co2", "voc_index", "nox_index")
 # What the scan compares the air with: name -> (group, field, label, unit)
-SCAN_WEATHER = {"temperature": ("outdoor", "temperature", "temperature", "°C"), "humidity": ("outdoor", "humidity", "humidity", "%"),
-                "dew_point": ("outdoor", "dew_point", "dew point", "°C"), "pressure": ("pressure", "relative", "pressure", "hPa"),
+SCAN_WEATHER = {**{n: (WEATHER[n].group, WEATHER[n].field, WEATHER[n].label.lower(), WEATHER[n].unit)
+                   for n in ("temperature", "humidity", "dew_point", "pressure")},
                 "wind_speed": ("wind", "wind_speed", "wind speed", "km/h"), "wind_gust": ("wind", "wind_gust", "wind gusts", "km/h")}
 SCAN_DESCRIPTION = (
     "Which readings go with air quality? Scans every air-quality metric (PM2.5, PM10, CO2, VOC, NOx) against the weather "

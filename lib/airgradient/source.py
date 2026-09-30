@@ -24,7 +24,7 @@ from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..lines import Plotted, build_line
-from ..panels import air_group_panel, panel_for
+from ..panels import panel_for
 from ..specs import Chart, Line
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
@@ -368,6 +368,6 @@ class AirGradient:
         for group in AIR_PANELS:
             members = [m for m in group if m in drawn]
             if members:
-                panels.append(air_group_panel(members, [drawn[m][0] for m in members]))
+                panels.append(panel_for(members, [drawn[m][0] for m in members]))
         return Chart("Air quality", f"{period}  ·  AirGradient readings"
                      + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)
