@@ -17,4 +17,4 @@ def panel_for(name: str | list[str], lines: list[Line] | None = None, bars: Bars
     names = [name] if isinstance(name, str) else name
     one = len(names) == 1
     return Panel(", ".join(LABELS[n] for n in names), CHART_UNITS[names[0]], lines, bars=bars, reading=names[0] if one else "",
-                 zones=tuple(RATINGS[names[0]]) if one and len(lines) == 1 else None, aside=not one)
+                 zones=tuple(RATINGS[names[0]]) if one and len(lines) == 1 else None, peaks="pills" if one else "aside")

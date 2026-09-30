@@ -146,3 +146,12 @@ def test_a_stacked_charts_subtitle_says_what_a_bar_covers_and_whether_a_range_is
     assert chart.subtitle == "Tue 1 – Mon 7 Sep 2026  ·  rain per hour  ·  range shaded"
     rating = Panel("Rating", "%", shares=Shares("Rating", TS[:2], 3600, [1.0, 1.0], [0.0, 0.0], [0.0, 0.0], "hour"))
     assert stack([Panel("T", "°C", [line("T")]), rating], date(2026, 9, 1), date(2026, 9, 1)).subtitle == "Tue 1 Sep 2026  ·  rating per hour"
+
+
+def test_a_chart_of_one_line_panel_gives_every_line_its_records_but_a_stack_does_not_and_peaks_are_validated():
+    alone = Chart("A", "s", [Panel("A", "", [Line("A", [1, 2, 3], [1.0, 5.0, 2.0], low=[0.0, 4.0, 1.0], high=[2.0, 9.0, 3.0])])])
+    assert alone.panels[0].lines[0].records == {"high": (2, 9.0), "low": (1, 0.0)}           # the band's top and bottom
+    both = Chart("B", "s", [Panel("A", "", [line("A")]), Panel("B", "", [line("B")])])
+    assert not any(s.records for p in both.panels for s in p.lines)
+    with pytest.raises(ValueError):
+        Panel("bad", "", [line()], peaks="beside")

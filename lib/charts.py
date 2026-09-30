@@ -76,7 +76,6 @@ class Look:
     pill_z: int
     pitch: float             # the stacked pills beside several lines: row spacing (pt)
     pad: float               # room above and below the data for pills, as a share of its span
-    label_all: bool          # label every line's peaks, not just the lines that carry records
     legend_font: float
     key_from: int            # the colour key is drawn from this many entries (a big chart's names its one line too)
     units: bool              # pills carry a decimal and the unit; a stacked panel's are the bare number (its title has the unit)
@@ -85,8 +84,8 @@ class Look:
     in_headline: bool        # the panel's name and unit are the figure's headline, and its colour key sits beside it
 
 
-BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, True, 8.5, 1, True, 5, False, True)
-SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, False, 7, 2, False, 4, True, False)
+BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, 8.5, 1, True, 5, False, True)
+SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, 7, 2, False, 4, True, False)
 
 
 def _look_for(chart: Chart) -> Look:
@@ -305,7 +304,7 @@ def _legend_dots(ax_or_fig, colours: list[str], labels: list[str], **kw):
 def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1: float, look: Look, deg: str = ""):
     """A dot on the highest and the lowest point of each line with a pill of its value above or below it. The point is the top
     (bottom) of the line's band when it has one, else its true record at its actual time (a dotted stem joins it to a line that
-    does not reach it), else the line's own extreme. A low on the floor says nothing and is not labelled; pills that land close
+    does not reach it). A low on the floor says nothing and is not labelled; pills that land close
     together go side by side."""
     y_lo, y_hi = ax.get_ylim()
     edge = lambda x: "left" if (x - x0) / (x1 - x0) < 0.06 else "right" if (x - x0) / (x1 - x0) > 0.94 else "center"
@@ -317,11 +316,8 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1:
             elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
                 rx, ry = float(_nums(tz, [s.records[want][0]])[0]), float(s.records[want][1])
                 rx = min(max(rx, x0), x1)
-            elif s.records:  # only some records given (wind: the strongest gust, no lowest): no label for the other
+            else:  # only some records given (wind: the strongest gust, no lowest): no label for the other
                 continue
-            else:
-                idx = int(ys.argmax() if above else ys.argmin())
-                rx, ry = xs[idx], ys[idx]
             if want == "low" and (ry - y_lo) < 0.08 * (y_hi - y_lo):
                 continue  # a low on the floor (0 mm, 0 km/h) says nothing
             line_y = float(np.interp(rx, xs, ys))
@@ -477,8 +473,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         ax.set_ylim(0, top)
         return 0, _end_of(bx, b.width, x1), []
     lines = p.lines
-    marked = [i for i, s in enumerate(lines) if look.label_all or s.records]  # peaks labelled: beside the lines (aside), else as pills
-    pilled = bool(marked) and not p.aside
+    marked = [i for i, s in enumerate(lines) if s.records and p.peaks != "none"]
+    pilled = bool(marked) and p.peaks == "pills"
     _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()] if pilled else []),
                 top=look.pad if pilled else 0.18 if marked else 0.12, bottom=look.pad if pilled else 0.12,
                 floor=0)
@@ -490,7 +486,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         if not s.low and len(lines) <= 2:  # a soft fade from the line to the floor (muddy with more lines, and a band says enough)
             _gradient_under(ax, xs, ys, colour, ybottom)
     ax.set_ylim(ybottom, ytop)
-    if marked and p.aside:
+    if marked and p.peaks == "aside":
         _mark_highs(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look)
     elif marked:
         _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], tz, x0, x1, look, _deg(p.unit))

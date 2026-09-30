@@ -34,6 +34,12 @@ class Line:
         if not set(self.records) <= {"low", "high"}:
             raise ValueError(f"line {self.label!r}: records are 'low' and 'high'")
 
+    def own_records(self) -> dict[str, tuple[int, float]]:
+        """The line's highest and lowest point as drawn (the top and bottom of its band when it has one)."""
+        hi, lo = self.high or self.y, self.low or self.y
+        i, j = max(range(len(hi)), key=hi.__getitem__), min(range(len(lo)), key=lo.__getitem__)
+        return {"high": (self.x[i], hi[i]), "low": (self.x[j], lo[j])}
+
 
 @dataclass
 class Bars:
@@ -73,13 +79,15 @@ class Panel:
     shares: Shares | None = None
     zones: tuple[float, float] | None = None           # good and poor limits, shaded behind a single rated reading
     reading: str = ""                                  # which reading this is ("humidity", "pressure" ...), for the rain rule
-    aside: bool = False                                # several lines: peaks labelled in empty space, not as pills on the lines
+    peaks: str = "pills"                               # how peaks are labelled: "pills" on the lines, "aside" in empty space, "none"
 
     def __post_init__(self):
         if not (self.lines or self.bars or self.shares):
             raise ValueError(f"panel {self.label!r}: nothing to draw")
         if self.shares and (self.lines or self.bars):
             raise ValueError(f"panel {self.label!r}: shares draw alone")
+        if self.peaks not in ("pills", "aside", "none"):
+            raise ValueError(f"panel {self.label!r}: peaks are 'pills', 'aside' or 'none'")
 
     @property
     def xs(self) -> list[int]:
@@ -111,6 +119,9 @@ class Chart:
             raise ValueError("a chart needs a panel")
         if self.compass and not (len(self.panels) == 1 and self.panels[0].lines):
             raise ValueError("a compass goes beside a single line panel")
+        if len(self.panels) == 1:  # a chart of one panel of lines labels the peaks of every line, so each carries its records
+            for line in self.panels[0].lines:
+                line.records = line.records or line.own_records()
 
 
 def period_text(a: date, b: date) -> str:
