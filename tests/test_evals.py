@@ -10,7 +10,11 @@ CASES = evalkit.load_cases()
 
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_the_decisions_made_in_code_hold(case):
-    assert evalkit.deterministic(case) == []
+    fails = evalkit.deterministic(case)
+    if case.xfail:  # a known gap: the case says what should happen. When it starts passing, remove the xfail note.
+        assert fails, f"{case.id} now passes: remove its xfail"
+        pytest.xfail(case.xfail)
+    assert fails == []
 
 
 def test_case_ids_are_unique_and_every_case_expects_something():

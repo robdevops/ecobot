@@ -8,7 +8,7 @@ tests/evals/cases.json holds the questions (real ones from the logs). Two kinds 
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +30,7 @@ class Case:
     expect: dict
     reply_to: str = ""               # the message being replied to, if any
     note: str = ""
-    tools: list[str] = field(default_factory=list)
+    xfail: str = ""                  # known gap: the case says what SHOULD happen; the reason it doesn't yet
 
 
 def load_cases(path: Path = CASES) -> list[Case]:
@@ -86,6 +86,8 @@ def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
     for tool in expect.get("tools", []):
         if tool not in names:
             fails.append(f"did not call {tool} (called: {', '.join(names) or 'nothing'})")
+    if expect.get("any_tools") and not any(t in names for t in expect["any_tools"]):
+        fails.append(f"called none of {expect['any_tools']} (called: {', '.join(names) or 'nothing'})")
     for tool in expect.get("not_tools", []):
         if tool in names:
             fails.append(f"should not have called {tool}")
@@ -122,7 +124,9 @@ def deterministic(case: Case) -> list[str]:
         fails.append(f"chart_fields {intent.chart_fields(text)}, expected {e['chart_fields']}")
     if "chart_field" in e and intent.chart_field(text) != e["chart_field"]:
         fails.append(f"chart_field {intent.chart_field(text)}, expected {e['chart_field']}")
-    for name in e.get("tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):
+    if "needs_data" in e and intent.needs_data(text) != e["needs_data"]:
+        fails.append(f"needs_data {intent.needs_data(text)}, expected {e['needs_data']}")
+    for name in e.get("tools", []) + e.get("any_tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):
         if name not in tool_names():
             fails.append(f"unknown tool {name!r} in the case")
     return fails

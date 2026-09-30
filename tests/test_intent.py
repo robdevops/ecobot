@@ -236,3 +236,12 @@ def test_readings_named_together_are_charted_together():
     assert intent.chart_fields("wind vs temp this week") == ["wind", "temperature"]
     for text in ("plot the temperature", "will it rain", "hottest day this year", "hello"):
         assert intent.chart_fields(text) == [], text
+
+
+def test_a_bare_period_is_hinted_and_a_command_to_the_bot_is_not_a_request_for_readings():
+    assert intent.period_hints("humidity week", NOW) == ['"week" = last 7 days: 2026-09-23 00:00:00 to 2026-09-29 23:59:59']
+    assert intent.period_hints("weather this week", NOW)[0].startswith('"this week"')                # a named period wins
+    for text in ("add an alert for if winds reach 100 km hour", "please set up a rain alert", "mute the alerts"):
+        assert not intent.needs_data(text), text
+    for text in ("will the wind reach 100 km/h", "what was the addition of rain", "how windy is it"):
+        assert intent.needs_data(text), text

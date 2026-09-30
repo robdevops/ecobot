@@ -1,43 +1,792 @@
 [
-  {"id": "3m-average", "ask": "average temp 3m",
-   "note": "3m was read as 3 days",
-   "expect": {"hints": ["\"3m\" = last 3 months: 2026-07-01"], "effort": "none", "chart_fields": [],
-              "tools": ["weather_history"], "args": {"weather_history": {"start_date": {"regex": "^2026-07-0[1-2]"}, "average": true}}}},
-  {"id": "3m-wind-chart", "ask": "wind direction plot 3m",
-   "note": "fast path: a plain wind chart request with a short-form period",
-   "expect": {"fast": {"tool": "weather_history", "args": {"groups": "wind", "chart": true, "start_date": {"regex": "^2026-07-01"}}}}},
-  {"id": "temperature-and-rain", "ask": "plot temperature and rain",
-   "note": "only temperature was charted",
-   "expect": {"chart_fields": ["temperature", "rain"], "tools": ["weather_history"],
-              "args": {"weather_history": {"chart_fields": {"has": ["temperature", "rain"]}}}}},
-  {"id": "humidity-chart", "ask": "lowest and highest humidity",
-   "note": "plotted temperature on a humidity question",
-   "expect": {"chart_field": "humidity", "tools": ["weather_history"]}},
-  {"id": "pressure-rain-correlation", "ask": "Is there a correlation between pressure and rainfall",
-   "note": "answered from monthly extremes",
-   "expect": {"effort": "low", "tools": ["weather_link"], "not_tools": ["weather_days"]}},
-  {"id": "pressure-vs-rain-graph", "ask": "plot a graph of pressure against rainfall",
-   "expect": {"tools": ["weather_link"]}},
-  {"id": "rain-on-the-lowest-day", "ask": "did it rain on the lowest day",
-   "reply_to": "Tue 01 - Wed 30 Sep 2026:\nAbsolute pressure\n• High: 1027.7 hPa at 9:45am on Thu 10 Sep\n• Low: 992.9 hPa at 2:20pm on Sat 5 Sep",
-   "note": "searched September for rainy days and inferred 'no rain' from the day's absence",
-   "expect": {"tools": ["weather_days", "weather_history"], "first_tool": "weather_days",
-              "args": {"weather_days": {"start_date": "2026-09-05", "end_date": "2026-09-05", "where": {"absent": true}}}}},
-  {"id": "public-holidays", "ask": "hottest public holidays",
-   "expect": {"tools": ["weather_days"], "args": {"weather_days": {"only": "public_holiday", "sort_by": "temp_max"}}}},
-  {"id": "hottest-day-that-rained", "ask": "what was the hottest day that also rained",
-   "expect": {"effort": "low", "tools": ["weather_days"],
-              "args": {"weather_days": {"sort_by": "temp_max", "order": {"any_of": ["desc", null]}}}}},
-  {"id": "wind-direction-week", "ask": "most common wind direction this week",
-   "expect": {"tools": ["weather_history"], "args": {"weather_history": {"groups": {"regex": "wind"}}}}},
-  {"id": "will-it-rain", "ask": "will it rain later?",
-   "expect": {"effort": "medium", "tools": ["weather_now"]}},
-  {"id": "air-now", "ask": "how's the air?", "expect": {"fast": {"tool": "air_quality"}}},
-  {"id": "aq-week", "ask": "aq week",
-   "expect": {"fast": {"tool": "air_quality", "args": {"chart": true, "start_date": {"regex": "^2026-09-23"}}}}},
-  {"id": "weather-week", "ask": "weather week",
-   "expect": {"fast": {"tool": "weather_history", "args": {"chart": true, "start_date": {"regex": "^2026-09-23"}}}}},
-  {"id": "highest-wind-this-week", "ask": "highest wind this week",
-   "expect": {"fast": null, "tools": ["weather_history"]}},
-  {"id": "hello", "ask": "thanks, that's great", "expect": {"fast": null, "not_tools": ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality"]}}
+ {
+  "id": "3m-average",
+  "ask": "average temp 3m",
+  "note": "3m was read as 3 days",
+  "expect": {
+   "hints": [
+    "\"3m\" = last 3 months: 2026-07-01"
+   ],
+   "effort": "none",
+   "chart_fields": [],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2026-07-0[1-2]"
+     },
+     "average": true
+    }
+   }
+  }
+ },
+ {
+  "id": "3m-wind-chart",
+  "ask": "wind direction plot 3m",
+  "note": "fast path: a plain wind chart request with a short-form period",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "groups": "wind",
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-07-01"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "temperature-and-rain",
+  "ask": "plot temperature and rain",
+  "note": "only temperature was charted",
+  "expect": {
+   "chart_fields": [
+    "temperature",
+    "rain"
+   ],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "chart_fields": {
+      "has": [
+       "temperature",
+       "rain"
+      ]
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "humidity-chart",
+  "ask": "lowest and highest humidity",
+  "note": "plotted temperature on a humidity question",
+  "expect": {
+   "chart_field": "humidity",
+   "tools": [
+    "weather_history"
+   ]
+  }
+ },
+ {
+  "id": "pressure-rain-correlation",
+  "ask": "Is there a correlation between pressure and rainfall",
+  "note": "answered from monthly extremes",
+  "expect": {
+   "effort": "low",
+   "tools": [
+    "weather_link"
+   ],
+   "not_tools": [
+    "weather_days"
+   ]
+  }
+ },
+ {
+  "id": "pressure-vs-rain-graph",
+  "ask": "plot a graph of pressure against rainfall",
+  "expect": {
+   "tools": [
+    "weather_link"
+   ]
+  }
+ },
+ {
+  "id": "rain-on-the-lowest-day",
+  "ask": "did it rain on the lowest day",
+  "reply_to": "Tue 01 - Wed 30 Sep 2026:\nAbsolute pressure\n• High: 1027.7 hPa at 9:45am on Thu 10 Sep\n• Low: 992.9 hPa at 2:20pm on Sat 5 Sep",
+  "note": "searched September for rainy days and inferred 'no rain' from the day's absence",
+  "expect": {
+   "tools": [
+    "weather_days",
+    "weather_history"
+   ],
+   "first_tool": "weather_days",
+   "args": {
+    "weather_days": {
+     "start_date": "2026-09-05",
+     "end_date": "2026-09-05",
+     "where": {
+      "absent": true
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "public-holidays",
+  "ask": "hottest public holidays",
+  "expect": {
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "only": "public_holiday",
+     "sort_by": "temp_max"
+    }
+   }
+  }
+ },
+ {
+  "id": "hottest-day-that-rained",
+  "ask": "what was the hottest day that also rained",
+  "expect": {
+   "effort": "low",
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "sort_by": "temp_max",
+     "order": {
+      "any_of": [
+       "desc",
+       null
+      ]
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "wind-direction-week",
+  "ask": "most common wind direction this week",
+  "expect": {
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "groups": {
+      "regex": "wind"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "will-it-rain",
+  "ask": "will it rain later?",
+  "expect": {
+   "effort": "medium",
+   "tools": [
+    "weather_now"
+   ]
+  }
+ },
+ {
+  "id": "air-now",
+  "ask": "how's the air?",
+  "expect": {
+   "fast": {
+    "tool": "air_quality"
+   }
+  }
+ },
+ {
+  "id": "aq-week",
+  "ask": "aq week",
+  "expect": {
+   "fast": {
+    "tool": "air_quality",
+    "args": {
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-09-23"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "weather-week",
+  "ask": "weather week",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-09-23"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "highest-wind-this-week",
+  "ask": "highest wind this week",
+  "expect": {
+   "fast": null,
+   "tools": [
+    "weather_history"
+   ]
+  }
+ },
+ {
+  "id": "hello",
+  "ask": "thanks, that's great",
+  "expect": {
+   "fast": null,
+   "not_tools": [
+    "weather_now",
+    "weather_history",
+    "weather_days",
+    "weather_link",
+    "air_quality"
+   ]
+  }
+ },
+ {
+  "id": "aq-1m",
+  "ask": "aq 1m",
+  "note": "period short forms on air quality",
+  "expect": {
+   "fast": {
+    "tool": "air_quality",
+    "args": {
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-08-31"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "aq-bare",
+  "ask": "aq",
+  "expect": {
+   "fast": {
+    "tool": "air_quality",
+    "args": {
+     "chart": {
+      "absent": true
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "chart-pm10-week",
+  "ask": "chart PM10 from the past week",
+  "expect": {
+   "fast": {
+    "tool": "air_quality",
+    "args": {
+     "chart": true,
+     "metrics": [
+      "pm10"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "id": "weather-1m",
+  "ask": "weather 1m",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "chart": true,
+     "groups": "outdoor,indoor",
+     "start_date": {
+      "regex": "^2026-08-31"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "weather-4-months",
+  "ask": "weather 4 months",
+  "note": "4 months was read as the last 7 days",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-05-31"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "chart-indoors",
+  "ask": "chart the past week indoors",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "groups": "indoor",
+     "chart": true
+    }
+   }
+  }
+ },
+ {
+  "id": "chart-outdoors-only",
+  "ask": "chart the past week outdoors only",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "groups": "outdoor",
+     "chart": true
+    }
+   }
+  }
+ },
+ {
+  "id": "temp-3m",
+  "ask": "temp 3m",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-07-01"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "high-low-week",
+  "ask": "High and low for week",
+  "note": "a bare 'week' is this week",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "start_date": {
+      "regex": "^2026-09-23"
+     }
+    }
+   },
+   "hints": [
+    "\"week\" = last 7 days: 2026-09-23"
+   ]
+  }
+ },
+ {
+  "id": "pressure-week",
+  "ask": "pressure week",
+  "note": "pressure needs the pressure group and a pressure chart",
+  "expect": {
+   "fast": null,
+   "chart_field": "relative",
+   "hints": [
+    "\"week\" = last 7 days"
+   ],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "groups": {
+      "regex": "pressure"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "humidity-3m",
+  "ask": "humidity 3m",
+  "expect": {
+   "fast": null,
+   "chart_field": "humidity",
+   "hints": [
+    "\"3m\" = last 3 months: 2026-07-01"
+   ],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2026-07-0[1-2]"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "wind-3m",
+  "ask": "wind 3m",
+  "note": "wind 3m was read as 3 days",
+  "expect": {
+   "fast": null,
+   "hints": [
+    "\"3m\" = last 3 months: 2026-07-01"
+   ],
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "groups": {
+      "regex": "wind"
+     },
+     "start_date": {
+      "regex": "^2026-07-0[1-2]"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "wind-direction-plot-90d",
+  "ask": "wind direction plot 90d",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "groups": "wind",
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-07-02"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "wind-direction-plot-1y",
+  "ask": "wind direction plot 1y",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "groups": "wind",
+     "chart": true,
+     "start_date": {
+      "regex": "^2025-09-30"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "rain-and-pressure-one-graph",
+  "ask": "plot rain and pressure on the same graph for 90d",
+  "note": "one graph, a panel each",
+  "expect": {
+   "chart_fields": [
+    "rain",
+    "pressure"
+   ],
+   "hints": [
+    "\"90d\" = last 90 days"
+   ],
+   "any_tools": [
+    "weather_history",
+    "weather_link"
+   ]
+  }
+ },
+ {
+  "id": "hottest-weekends",
+  "ask": "hottest weekends",
+  "expect": {
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "only": "weekend",
+     "sort_by": "temp_max"
+    }
+   }
+  }
+ },
+ {
+  "id": "windiest-day-on-record",
+  "ask": "Windiest day on record",
+  "expect": {
+   "hints": [
+    "\"on record\" = on record"
+   ],
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "sort_by": "wind_gust"
+    }
+   }
+  }
+ },
+ {
+  "id": "rainy-days-in-september",
+  "ask": "list rainy days in september",
+  "expect": {
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "start_date": "2026-09-01",
+     "where": {
+      "regex": "rain"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "hottest-coldest-on-record",
+  "ask": "hottest and coldest on record",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "chart": true,
+     "start_date": {
+      "regex": "^2022-10"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "a-day-in-2023",
+  "ask": "give me the outdoor high between 11am Fri 10 Nov 2023 and 11am Sat 11 Nov 2023",
+  "note": "a particular window, not a whole period",
+  "expect": {
+   "fast": null,
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2023-11-10 11:00"
+     },
+     "end_date": {
+      "regex": "^2023-11-11 11:00"
+     },
+     "groups": {
+      "regex": "outdoor"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "cold-innit",
+  "ask": "cold innit",
+  "expect": {
+   "needs_data": true,
+   "any_tools": [
+    "weather_now",
+    "weather_history"
+   ]
+  }
+ },
+ {
+  "id": "todays-weather",
+  "ask": "What was today's weather",
+  "expect": {
+   "any_tools": [
+    "weather_now",
+    "weather_history"
+   ]
+  }
+ },
+ {
+  "id": "weather-on-june-11",
+  "ask": "what kind of weather was June 11",
+  "expect": {
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2026-06-11"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "what-it-would-have-been-like",
+  "ask": "what would it have been like if we were alive on Mon 10 Aug",
+  "expect": {
+   "effort": "low",
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "start_date": {
+      "regex": "^2026-08-10"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "compliment",
+  "ask": "you're a good bot",
+  "expect": {
+   "needs_data": false,
+   "fast": null,
+   "effort": "none",
+   "not_tools": [
+    "weather_now",
+    "weather_history",
+    "weather_days",
+    "weather_link",
+    "air_quality"
+   ]
+  }
+ },
+ {
+  "id": "add-an-alert",
+  "ask": "add an alert for if winds reach 100 km hour",
+  "note": "a request to change the bot, not for readings: it was forced to fetch the weather",
+  "expect": {
+   "needs_data": false,
+   "not_tools": [
+    "weather_now",
+    "weather_history",
+    "weather_days",
+    "weather_link",
+    "air_quality"
+   ]
+  }
+ },
+ {
+  "id": "list-our-metrics",
+  "ask": "list our metrics from both sources",
+  "note": "a question about the bot: answer from what it knows, no fetch",
+  "expect": {
+   "needs_data": false,
+   "not_tools": [
+    "weather_now",
+    "weather_history",
+    "weather_days",
+    "weather_link",
+    "air_quality"
+   ]
+  }
+ },
+ {
+  "id": "colder-in-2025",
+  "ask": "wasn't it colder on Tue 19 Aug 2025?",
+  "expect": {
+   "any_tools": [
+    "weather_days",
+    "weather_history"
+   ]
+  }
+ },
+ {
+  "id": "humidity-granular",
+  "ask": "plot humidity using granular data not averages",
+  "expect": {
+   "chart_field": "humidity",
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "average": {
+      "absent": true
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "coldest-days-jja",
+  "ask": "Coldest days in June, July, August 2026",
+  "expect": {
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "sort_by": "temp_min",
+     "order": "asc",
+     "start_date": "2026-06-01",
+     "end_date": "2026-08-31"
+    }
+   }
+  }
+ },
+ {
+  "id": "most-rain-days-jja",
+  "ask": "Days with most rain in June, July, August 2026",
+  "expect": {
+   "tools": [
+    "weather_days"
+   ],
+   "args": {
+    "weather_days": {
+     "sort_by": "rain",
+     "start_date": "2026-06-01",
+     "end_date": "2026-08-31"
+    }
+   }
+  }
+ },
+ {
+  "id": "wind-direction-year-chart",
+  "ask": "most common wind direction this year with chart",
+  "expect": {
+   "fast": {
+    "tool": "weather_history",
+    "args": {
+     "groups": "wind",
+     "chart": true,
+     "start_date": {
+      "regex": "^2026-01-01"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "fastest-gust",
+  "ask": "fastest gust recorded",
+  "expect": {
+   "tools": [
+    "weather_history"
+   ],
+   "args": {
+    "weather_history": {
+     "groups": {
+      "regex": "wind"
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "chart-all-airgradient-week",
+  "ask": "chart all airgradient past week",
+  "expect": {
+   "fast": {
+    "tool": "air_quality",
+    "args": {
+     "chart": true
+    }
+   }
+  }
+ }
 ]

@@ -54,8 +54,12 @@ def reasoning_effort(text: str) -> str:
     return EFFORT_DESCRIBE if ANALYSIS.search(text) or DESCRIBE.search(text) else EFFORT_DEFAULT
 
 
+# Asking the bot to DO something ("add an alert if winds reach 100 km/h") is not a request for readings
+COMMAND = re.compile(r"^\s*(please\s+)?(add|set( up)?|create|remind|schedule|turn (on|off)|enable|disable|mute|unmute|subscribe)\b", I)
+
+
 def needs_data(text: str) -> bool:
-    return bool(WEATHER.search(text))
+    return bool(WEATHER.search(text)) and not COMMAND.search(text)
 
 
 # ---------- periods ----------
@@ -159,6 +163,9 @@ def period_hints(text: str, now: datetime) -> list[str]:
     for m in NUMBERED_PERIOD.finditer(text):
         if numbered := numbered_span(m.group(1), m.group(2), now):
             found.setdefault(numbered[1:], (m.group(0), numbered[0]))
+    if not found and (bare := BARE_PERIOD.search(text)):  # "humidity week", "aq month": as if "this ..."
+        name = BARE_PERIODS[bare.group(1).lower()]
+        found[span(name, now)] = (bare.group(0), name)
     return [f'"{said}" = {name}: {start:%Y-%m-%d %H:%M:%S} to {end:%Y-%m-%d %H:%M:%S}'
             for (start, end), (said, name) in found.items()]
 
