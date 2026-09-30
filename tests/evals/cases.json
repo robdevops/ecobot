@@ -79,7 +79,7 @@
   "ask": "Is there a correlation between pressure and rainfall",
   "note": "answered from monthly extremes",
   "expect": {
-   "effort": "low",
+   "effort": "medium",
    "tools": [
     "weather_link"
    ],

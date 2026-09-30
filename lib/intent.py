@@ -41,15 +41,22 @@ FORECAST = re.compile(
 
 # Combining readings across days or conditions ("the hottest day that also rained", "how many days ...")
 ANALYSIS = re.compile(
-    r"\b(also|both|same day|at the same time|coincid\w*|correlat\w*|combination|how many days|how often|"
+    r"\b(also|both|same day|at the same time|coincid\w*|combination|how many days|how often|"
     r"(days?|times?|when) (when|that|where|with|it)|(that|where|when) (it )?(also|and)|"
     r"(hottest|coldest|wettest|driest|windiest|warmest|coolest)\b.*\b(that|where|when|but|and)\b)", I)
 
 
+# Is one reading tied to another ("is there a correlation between pressure and rain"): the answer is a judgement
+LINK = re.compile(
+    r"\b(correlat\w*|(link|links|linked|connection|connected|relation|relationship|relationships|relate|related|relates)\b"
+    r".*\b(between|to|with)\b|(between|with)\b.*\b(link|connection|relation\w*)|cross[- ]?referenc\w*|cross[- ]?check\w*|"
+    r"(does|do|did|is|are)\b.*\b(affect\w*|influence\w*|predict\w*|cause\w*)\b.*\b(rain|pressure|humidity|wind|temperature)\w*)\b", I)
+
+
 def reasoning_effort(text: str) -> str:
-    """Thinking is for judgement calls only: predictions (medium), and analysis across days or readings
-    or describing a day (low). Lookups get none."""
-    if FORECAST.search(text):
+    """Thinking is for judgement calls only: predictions and how one reading relates to another (medium), and
+    analysis across days or readings or describing a day (low). Lookups get none."""
+    if FORECAST.search(text) or LINK.search(text):
         return EFFORT_FORECAST
     return EFFORT_DESCRIBE if ANALYSIS.search(text) or DESCRIBE.search(text) else EFFORT_DEFAULT
 

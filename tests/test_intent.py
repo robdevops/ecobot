@@ -163,6 +163,16 @@ def test_air_quality_chart_or_current_reading():
     assert call("aq 1w")[2] == "air quality chart, last 1 week"
 
 
+def test_how_one_reading_relates_to_another_gets_medium_thinking():
+    for text in ("Is there a correlation between pressure and rainfall", "is there a link between humidity and rain",
+                 "cross-reference pressure with rain", "cross reference wind and rain", "what's the connection between wind and temperature",
+                 "is there a relationship between pressure and rain", "is rain related to pressure", "what is the relation between heat and pm2.5",
+                 "does pressure affect the rain", "correlate wind and rain"):
+        assert intent.reasoning_effort(text) == "medium", text
+    for text in ("what was the pressure last month", "how much rain fell yesterday", "hottest day", "connect to the station"):
+        assert intent.reasoning_effort(text) == "none", text
+
+
 def test_analysis_across_days_or_readings_gets_low_thinking():
     for text in ("what was the hottest day that where it also rained", "how many days over 30 had rain",
                  "hottest day when it also rained?", "days when it was both windy and cold",
