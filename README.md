@@ -50,6 +50,8 @@ scripts/                ecowitt_metrics.py (which metrics the station reports), 
                         dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
 ```
 
+A design for tappable commands and buttons is in `TELEGRAM_UX.md` (not built yet).
+
 Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.
 
 ## How it stays fast and cheap
