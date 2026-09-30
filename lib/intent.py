@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
+from .series import PRESSURE_WORDS, TEMP_WORDS, WEATHER as WEATHER_READINGS
+
 log = logging.getLogger(__name__)
 
 I = re.IGNORECASE
@@ -21,9 +23,9 @@ I = re.IGNORECASE
 EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_FORECAST = "none", "low", "medium"
 
 # The words that name each reading, shared by every pattern below
-_TEMP = r"temp\w*|hot\w*|cold\w*|warm\w*|cool\w*|heat\w*|freez\w*|degrees?|celsius"
+_TEMP = TEMP_WORDS
 _WIND = r"wind\w*|gusts?|breez\w*"
-_PRESSURE = r"pressure|barometer|barometric"
+_PRESSURE = PRESSURE_WORDS
 _OTHER_THAN_AIR = r"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather"  # a question that is not (only) about the air
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
@@ -248,9 +250,7 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
 
 
 # The readings a chart can plot: name -> (the words that name it, the field it plots when it is the only one asked about)
-READINGS = {"temperature": (_TEMP, None), "humidity": (r"humid\w*", "humidity"), "pressure": (_PRESSURE, "relative"),
-            "wind": (r"gusts?|wind\w*", "wind_gust"), "rain": (r"rain\w*|precip\w*", "daily")}
-
+READINGS = {name: (r.words, None if name == "temperature" else r.field) for name, r in WEATHER_READINGS.items()}
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 
 

@@ -15,6 +15,7 @@ from .analysis import scan
 from .analysis.pairs import analyse_air
 from .charts import COMPOSED_CHART_HINT, stack_spec, wants_chart
 from .ecowitt.link import driver_series
+from .series import WEATHER
 from .rain import bar_layout, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
 from .tools import Tool, Turn
@@ -23,10 +24,8 @@ log = logging.getLogger(__name__)
 
 MAX_PANELS = 4
 DEFAULT_DAYS = 30
-# Weather station series: name -> (group, field, label, unit)
-ECOWITT = {"temperature": ("outdoor", "temperature", "Temperature", "°C"), "humidity": ("outdoor", "humidity", "Humidity", "%"),
-           "pressure": ("pressure", "relative", "Pressure", "hPa"), "wind": ("wind", "wind_speed", "Wind", "km/h"),
-           "rain": ("rainfall", "daily", "Rain", "mm")}
+# Weather station series: name -> (group, field, label, unit); the composer draws the wind as its average speed
+ECOWITT = {**{n: (r.group, r.field, r.label, r.unit) for n, r in WEATHER.items()}, "wind": ("wind", "wind_speed", "Wind", "km/h")}
 SERIES = [*ECOWITT, *ALL_METRICS]
 STYLES = ("line", "bars", "rating")
 

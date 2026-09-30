@@ -19,6 +19,7 @@ from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION
 from ..lines import build_line
 from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, local_date, now_local
+from ..series import WEATHER
 from .api import CYCLE_SECONDS, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
@@ -45,10 +46,7 @@ FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a 
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
 
 
-# What "plot X and Y" can put on one chart: name -> (group, field, label, unit)
-STACK = {"temperature": ("outdoor", "temperature", "Temperature", "°C"), "humidity": ("outdoor", "humidity", "Humidity", "%"),
-         "pressure": ("pressure", "relative", "Pressure", "hPa"), "wind": ("wind", "wind_gust", "Wind", "km/h"),
-         "rain": ("rainfall", "daily", "Rain", "mm")}
+STACK = {name: (r.group, r.field, r.label, r.unit) for name, r in WEATHER.items()}  # what "plot X and Y" can put on one chart
 
 
 def stack_names(args: dict, turn) -> list[str]:
