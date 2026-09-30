@@ -448,7 +448,7 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     await eco.close()
 
 
-async def test_a_direction_chart_is_a_scatter_by_hour_of_day(tmp_path, archived_cache):
+async def test_a_direction_chart_is_a_heatmap_over_time(tmp_path, archived_cache):
     from lib.charts import render
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
@@ -462,8 +462,12 @@ async def test_a_direction_chart_is_a_scatter_by_hour_of_day(tmp_path, archived_
         CHART_REQUESTS.reset(token)
     kinds = [s["kind"] for s in specs]
     assert kinds == ["line", "direction"] and "wind direction" in out["chart"]     # gusts still get their line
-    points = specs[1]["points"]
-    assert 0 < len(points) <= 4000 and all(0 <= h < 24 and 0 <= d < 360 for h, d in points)
+    spec = specs[1]
+    assert spec["step"] == 3600 and spec["unit"] == "hour" and len(spec["columns"]) <= 130    # five days: hourly columns
+    assert all(len(col) == 16 for col in spec["columns"]) and sum(map(sum, spec["columns"])) > 0
+    north = sum(col[0] for col in spec["columns"])
+    assert north == sum(map(sum, spec["columns"]))                # the fake wind swings 350, 0, 10: all in the N cell
+    assert "share of readings from each direction, per hour" in spec["subtitle"]
     png = render(specs[1], eco.tz)
     assert png[:4] == b"\x89PNG"
     (tmp_path / "direction.png").write_bytes(png)
@@ -646,3 +650,29 @@ async def test_resolution_follows_the_length_of_the_period(tmp_path):
     assert set(seen[20]) <= {"30min", "5min"} and "1day" not in seen[20]  # a month or less: 30-minute weeks
     assert "1day" in seen[60] and seen[60].get("30min", 0) <= 3        # longer: daily records (+ the newest days, + refinements)
     assert seen[300]["1day"] >= 1 and seen[300].get("30min", 0) <= 6   # not a year of 30-minute weeks
+
+
+def test_the_heatmap_steps_follow_the_length_of_the_period_and_never_wrap_at_north():
+    from lib.ecowitt.direction import grid, sector
+    from tests.fakes import TZ
+    first = datetime(2026, 1, 1, 0, 0)
+    for days, unit, step in ((2, "hour", 3600), (20, "6 hours", 21600), (100, "day", 86400), (300, "week", 604800)):
+        g = grid([], TZ, first, first + timedelta(days=days))
+        assert g["unit"] == unit and g["step"] == step and 1 <= len(g["columns"]) <= 130, days
+    assert sector(359) == sector(1) == sector(0) == 0 and sector(11.2) == 0 and sector(11.3) == 1 and sector(348.8) == 0
+    base = int(datetime(2026, 1, 1, 12, tzinfo=TZ).timestamp())
+    g = grid([(base, 359.0, True), (base + 60, 1.0, True), (base + 7200, 180.0, True)], TZ, first, first + timedelta(days=2))
+    assert g["columns"][12][0] == 2 and g["columns"][14][8] == 1 and sum(map(sum, g["columns"])) == 3
+
+
+def test_the_direction_heatmap_renders_for_two_days_and_a_year():
+    from lib.charts import render
+    from lib.ecowitt.direction import grid
+    from tests.fakes import TZ
+    first = datetime(2026, 1, 1)
+    for days in (2, 92, 365):
+        last = first + timedelta(days=days)
+        readings = [(int((first + timedelta(minutes=30 * i)).replace(tzinfo=TZ).timestamp()), (i * 37) % 360, True)
+                    for i in range(days * 48)]
+        spec = {"kind": "direction", "title": "Wind direction", "subtitle": "test", **grid(readings, TZ, first, last)}
+        assert render(spec, TZ)[:4] == b"\x89PNG"

@@ -7,8 +7,9 @@ and sends them with it. One line per reading type (e.g. outdoor and indoor):
    "series": [{"label", "x": [epoch], "y": [float], "records": {"high": [epoch, value], "low": [...]},
                "low": [float], "high": [float]}]}      (low/high optional: each point's range, drawn as a band)
 
-Wind direction has no line (it is circular), so it gets a scatter of each reading by hour of day:
-  {"kind": "direction", "title", "subtitle", "points": [[local hour 0-24, degrees]]}
+Wind direction has no line (it is circular), so it gets a heatmap over time (16 compass points up):
+  {"kind": "direction", "title", "subtitle", "start": epoch of the first column, "step": seconds per column,
+   "columns": [[16 counts, N first], ...]}
 
 Rendered at exactly 1280x720, the size Telegram displays photos at, so nothing is
 rescaled and the chart stays sharp.
@@ -59,7 +60,7 @@ AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, s
                       "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
                       "\"average\" field, and its low and high in brackets. Lead with the average: that is what was asked. "
                       "Don't mention or describe the chart.")
-DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction by hour of day, so keep it short: "
+DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind direction over time, so keep it short: "
                         "the period, then the most common direction and how steady it was. Don't mention or describe the chart.")
 
 # Palette (slate neutrals, warm outdoor, cool indoor)
@@ -214,7 +215,12 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
             if hi_z > ybottom and lo_z < ytop:
                 ax.axhspan(max(lo_z, ybottom), min(hi_z, ytop), color=colour, alpha=0.07, linewidth=0, zorder=0)
     ax.set_ylim(ybottom, ytop)
-    span_days = (x_max - x_min) / 86400
+    _time_axis(ax, (x_max - x_min) / 86400)
+    _frame(fig, ax, spec, labels, colours)
+
+
+def _time_axis(ax, span_days: float):
+    """Tick positions and labels for a date axis, chosen by the length of the period."""
     if span_days <= 1.1:
         ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 3)))
         fmt = "%-I%p"
@@ -232,23 +238,37 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
         fmt = "%b\n'%y"
     ax.xaxis.set_major_formatter(FuncFormatter(
         lambda v, _: mdates.num2date(v).strftime(fmt).replace("AM", "am").replace("PM", "pm")))
-    _frame(fig, ax, spec, labels, colours)
 
 
-def _render_direction(fig, ax, spec: dict):
-    """Each reading as a dot: hour of day across, compass direction up. Days overlay each other, so a
-    sea breeze or an evening turn shows as a band."""
-    hours, degrees = (np.asarray(v, dtype=float) for v in zip(*spec["points"]))
-    colour = _colour("Outdoor", 0)
-    ax.scatter(hours, degrees, s=9, color=colour, alpha=0.3, linewidths=0, zorder=3)
-    _frame(fig, ax, {**spec, "unit": ""}, [spec.get("label", "Wind direction")], [colour])
-    ax.set_xlim(0, 24)
-    ax.set_ylim(-12, 372)
-    ax.set_yticks([0, 90, 180, 270, 360])
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: {0: "N", 90: "E", 180: "S", 270: "W", 360: "N"}.get(int(v), "")))
-    ax.set_xticks(range(0, 24, 3))
-    ax.xaxis.set_major_formatter(FuncFormatter(
-        lambda v, _: f"{int(v) % 12 or 12}{'am' if int(v) % 24 < 12 else 'pm'}"))
+WIND_RAMP = ("#FFFFFF", "#FED7AA", "#FB923C", "#EA580C", "#9A3412")  # white to deep orange: more readings from that way
+MIN_READINGS = 2  # a time step with fewer readings than this (2: even hourly steps of 30-minute data) is left blank rather than drawn from noise
+
+
+def _render_direction(fig, ax, spec: dict, tz: tzinfo):
+    """Wind direction over time as a heatmap: time across, the 16 compass points up (N at the bottom, so nothing
+    wraps), shade = that step's share of readings from each direction. Dots mark each step's most common direction."""
+    counts = np.asarray(spec["columns"], dtype=float).T                  # 16 compass points x time steps
+    totals = counts.sum(axis=0)
+    share = np.where(totals >= MIN_READINGS, counts / np.maximum(totals, 1), np.nan)
+    to_dt = lambda t: datetime.fromtimestamp(t, timezone.utc).astimezone(tz).replace(tzinfo=None)
+    x0 = mdates.date2num(to_dt(spec["start"]))
+    width = spec["step"] / 86400
+    n = share.shape[1]
+    cmap = matplotlib.colors.LinearSegmentedColormap.from_list("wind", WIND_RAMP).with_extremes(bad=BG)
+    ax.imshow(np.ma.masked_invalid(share), aspect="auto", origin="lower", cmap=cmap, vmin=0, vmax=0.5,
+              interpolation="nearest", extent=[x0, x0 + n * width, -0.5, 15.5], zorder=2)
+    keep = totals >= MIN_READINGS
+    centres = x0 + (np.arange(n) + 0.5) * width
+    if keep.any():
+        ax.scatter(centres[keep], np.nanargmax(np.nan_to_num(share[:, keep], nan=-1), axis=0), s=8, color=TEXT,
+                   alpha=0.75, linewidths=0, zorder=4)
+    _frame(fig, ax, {**spec, "unit": ""}, [spec.get("label", "Wind direction")], [_colour("Outdoor", 0)])
+    ax.grid(False)
+    ax.set_xlim(x0, x0 + n * width)
+    ax.set_ylim(-0.5, 15.5)
+    ax.set_yticks([0, 4, 8, 12])
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: {0: "N", 4: "E", 8: "S", 12: "W"}.get(int(round(v)), "")))
+    _time_axis(ax, n * width)
 
 
 def _render_panels(spec: dict, tz: tzinfo):
@@ -331,7 +351,7 @@ def render(spec: dict, tz: tzinfo) -> bytes:
     ax = fig.add_axes(AX_RECT, facecolor=BG)
     try:
         if spec["kind"] == "direction":
-            _render_direction(fig, ax, spec)
+            _render_direction(fig, ax, spec, tz)
         else:
             _render_line(fig, ax, spec, tz)
         buf = io.BytesIO()

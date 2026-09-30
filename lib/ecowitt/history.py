@@ -19,7 +19,7 @@ from typing import NamedTuple
 from ..charts import AVERAGE_ASKED, AVERAGE_CHART_HINT, CHART_FIELD, CHART_HINT, CHART_REQUESTS, DIRECTION_CHART_HINT, wants_chart
 from ..timeutil import local_date, local_epoch, now_local, to_local
 from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
-from .direction import summarise as summarise_direction
+from .direction import grid as direction_grid, summarise as summarise_direction
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ log = logging.getLogger(__name__)
 DAILY_CHART_DAYS = 7            # a chart longer than this is one point a day: the mean, with the day's low-to-high band
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
-MAX_DIRECTION_POINTS = 4000     # dots on the wind direction chart
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
 MAX_REFINE_WINDOWS = 4          # overall records
 MAX_MONTH_REFINE_WINDOWS = 24
@@ -253,7 +252,7 @@ class HistoryQuery:
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
         self.direction_period = (None, None)               # what the counted readings actually span
-        self.direction_points: list = []                   # [local hour, degrees] of each counted reading, for the chart
+        self.direction_grid: dict = {}                     # counts per compass point per time step, for the heatmap
 
     async def run(self) -> str:
         today = self.now.date()
@@ -351,8 +350,7 @@ class HistoryQuery:
             result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31), len(calm))
             if not result:
                 continue
-            step = -(-len(counted) // MAX_DIRECTION_POINTS)
-            self.direction_points = [[(lt := f.local(t)).hour + lt.minute / 60, d] for t, d, _ in counted[::step]]
+            self.direction_grid = direction_grid(counted, self.tz, first, self.end)
             self.direction_period = (first, self.end)
             if self.start < first:
                 result["note_period"] = f"covers only the last {DIRECTION_DAYS} days of the period"
@@ -480,9 +478,11 @@ class HistoryQuery:
             if spec:
                 holder.append(spec)
                 out["chart"] = AVERAGE_CHART_HINT if AVERAGE_ASKED.get() else CHART_HINT
-            if self.direction_points:
-                holder.append({"kind": "direction", "title": "Wind direction by hour of day",
-                               "subtitle": _period(*self.direction_period), "points": self.direction_points})
+            if self.direction_grid:
+                unit = self.direction_grid["unit"]
+                holder.append({"kind": "direction", "title": "Wind direction", **self.direction_grid,
+                               "subtitle": f"{_period(*self.direction_period)}  ·  share of readings from each direction, "
+                                           f"per {unit}  ·  dots: most common"})
                 out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
                                 if spec else DIRECTION_CHART_HINT)
         if f.errors:
