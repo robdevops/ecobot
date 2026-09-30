@@ -80,6 +80,9 @@ READING_COLOURS = {
     "dew_point": "#13B8A6",     # teal
     "wind": "#64748B",          # slate grey
 }
+# The same reading indoors, in its complementary hue (opposite on the colour wheel, as a painter pairs them): red with
+# peacock teal, blue with amber, teal with apricot, raspberry with green.
+INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#F5A524", "dew_point": "#F28C3C", "feels_like": "#2FB872"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
@@ -120,9 +123,9 @@ TITLE_WEIGHT = "semibold" if any(f.name == FONT and f.weight in (600, "semibold"
 
 
 def _colour(label: str, i: int, reading: str = "") -> str:
-    """A reading's own hue (indoors, a lighter one); else the line's name, else the next fallback."""
+    """A reading's own hue (indoors, its complement); else the line's name, else the next fallback."""
     if base := READING_COLOURS.get(reading):
-        return _mix(base, 0.4) if label == "Indoor" else base
+        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if label == "Indoor" else base
     return COLOURS.get(label, FALLBACK[i % len(FALLBACK)])
 
 

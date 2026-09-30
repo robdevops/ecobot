@@ -65,6 +65,6 @@ in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
 Air quality is four panels, top to bottom: the particles, CO2, VOC and NOx, each on its own scale (`AIR_PANELS` in `airgradient/metrics.py`). Charts render at 1280x720.
 Air-quality lines get the shaded low-to-high range at every bucket width, in single and multi-panel charts alike.
 Every line carries its shaded low-to-high range wherever the readings have one or are bucketed (air quality at every bucket width, weather from the cache's per-slot lows and highs); a peak label sits on the top of the band.
-Each weather reading has one hue, the same alone and stacked (`READING_COLOURS` in `charts.py`; the indoor line of a reading is that hue lightened):
+Each weather reading has one hue, the same alone and stacked (`READING_COLOURS` in `charts.py`; the indoor line of a reading is its complement, `INDOOR_COLOURS`: temperature `#0FA3B1` peacock teal, humidity `#F5A524` amber, dew point `#F28C3C` apricot, feels-like `#2FB872` green):
 temperature coral red `#F2545B`, feels-like raspberry `#E5408F`, solar radiation golden `#F5B83D`, UV index violet `#8B5CF6`, pressure orchid `#C04CE8`, VPD cyan `#06B6D4`, humidity deep blue `#2747C9`, rain light blue `#7CC3F7`, dew point teal `#13B8A6`, wind slate grey `#64748B`.
 `scripts/ecowitt_metrics.py` asks the Ecowitt API which data groups and fields the station reports; the solar and UV group (`solar_and_uvi`) is fetched, archived and charted like the rest.
