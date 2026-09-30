@@ -68,12 +68,16 @@ LINK = re.compile(
     r"(does|do|did|is|are)\b.*\b(affect\w*|influence\w*|predict\w*|cause\w*)\b.*\b(rain|pressure|humidity|wind|temperature)\w*)\b", I)
 
 
-EFFORT_RULES = ((EFFORT_FORECAST, (FORECAST, LINK)), (EFFORT_DESCRIBE, (ANALYSIS, DESCRIBE)))
+# Asking the model to think: "think about it", "try to work out why", "reason it through", "predict", "estimate"
+THINK = re.compile(r"\b(think\w*|try|trying|reason\w*|predict\w*|estimat\w*)\b", I)
+
+EFFORT_RULES = ((EFFORT_FORECAST, (FORECAST, LINK, THINK)), (EFFORT_DESCRIBE, (ANALYSIS, DESCRIBE)))
 
 
 def reasoning_effort(text: str) -> str:
     """Thinking is for judgement calls only: predictions and how one reading relates to another (medium), and
-    analysis across days or readings or describing a day (low). Lookups get none."""
+    analysis across days or readings or describing a day (low). Lookups get none, unless the person asks the bot to think,
+    try, reason, predict or estimate (medium)."""
     return next((effort for effort, patterns in EFFORT_RULES if any(p.search(text) for p in patterns)), EFFORT_DEFAULT)
 
 

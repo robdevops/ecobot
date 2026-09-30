@@ -16,6 +16,15 @@ def test_only_predictions_and_descriptions_reason():
     assert intent.reasoning_effort("how much rain fell today") == "none"
 
 
+def test_asking_to_think_try_or_reason_gives_medium_reasoning_to_any_question():
+    for text in ("think about the wind this week", "try to work out why it was humid", "reason it through: hottest day", "thinking harder about yesterday",
+                 "how hot was it, think", "what was yesterday like? think", "Try 3m", "estimate the hottest day this week",
+                 "predict the average humidity for 30d", "what's your estimate of the week's rain"):
+        assert intent.reasoning_effort(text) == "medium", text                      # medium wins over describe's low
+    for text in ("what was this week's high and low", "thanks", "a thinner chart please", "I tried that yesterday"):
+        assert intent.reasoning_effort(text) == "none", text
+
+
 def test_chat_needs_no_data():
     assert not intent.needs_data("thanks, that's great")
     assert intent.needs_data("how hot is it")

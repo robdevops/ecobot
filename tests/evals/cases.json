@@ -942,5 +942,20 @@
     "covers": [
       "q:report"
     ]
+  },
+  {
+    "id": "think-hottest-week",
+    "ask": "think: hottest day this week",
+    "note": "asking to think gives medium reasoning to a lookup",
+    "expect": {
+      "effort": "medium",
+      "tools": [
+        "weather_days"
+      ]
+    },
+    "covers": [
+      "q:rank-days",
+      "m:temperature"
+    ]
   }
 ]
