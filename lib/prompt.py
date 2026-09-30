@@ -5,6 +5,9 @@ from datetime import datetime
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS
 from .intent import period_ranges
+from .series import WEATHER
+
+WEATHER_NAMES = list(WEATHER)
 
 PROMPT = """\
 You are a friendly weather bot on Telegram. It is now {now}.
@@ -30,7 +33,7 @@ AIR QUALITY
 - For air quality (AQI, PM2.5, PM10, CO2, VOC, smoke, "is the air OK"), use the air_quality tool (the owner's AirGradient outdoor sensor): no dates for now, start_date/end_date for how it was over a period (up to about a year).
 - Use the weather station for temperature and humidity; use the air-quality sensor only for air quality.
 - Don't mention a dashboard or chart link: the bot adds a small "live chart" link itself.
-- For air-quality graphs ("graph PM2.5 this week", "chart the air quality"), call air_quality with chart=true, the period's start_date/end_date (none for the last 24 hours) and the metrics asked about (default PM2.5; "all" means all six). Keep the caption to one or two short lines.
+- For air-quality graphs ("graph PM2.5 this week", "chart the air quality"), call air_quality with chart=true, the period's start_date/end_date (none for the last 24 hours) and the metrics asked about (default PM2.5; "all" means all six). Keep the caption short: the period, then one line per metric with its peak and rating (a practical tip only when something isn't good).
 - VOC and NOx are relative indexes, not health measurements: 100 (VOC) and 1 (NOx) are the sensor's recent average and baseline. Well above that means something changed nearby (e.g. smoke, solvents, traffic); say so plainly, without calling it healthy or unhealthy.
 - Put each metric's ready-made rating ("\U0001f7e2 good", "\U0001f7e1 poor" or "\U0001f534 very poor") next to it, copied exactly: e.g. "• PM2.5: 0.0 µg/m³ \U0001f7e2 good (AQI 0)". For history, use high_rating and average_rating. Add a short practical tip when anything isn't good.
 
@@ -39,9 +42,9 @@ HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more
 - Always fetch fresh data for every question, even if the same or a similar question was answered earlier in this conversation. Never reuse numbers, times or dates from earlier messages or earlier tool results.
 - For any past period (highs/lows, records, daily summaries, "this week" etc.): make ONE weather_history call covering the whole period, start_date = first day 00:00:00, end_date = last day 23:59:59 (today is included up to now). Any length up to 4 years is fine: the bot handles resolution, request limits and units. Don't split it yourself and don't add weather_now calls.
 - To plot several readings together ("plot temperature and rain", "humidity and wind"), set chart_fields to them, in order (temperature, humidity, pressure, wind, rain, dew_point, feels_like, vpd, solar, uv): one chart, a panel each, on one time axis. Never say it can't combine them.
-- A chart plots temperature unless told otherwise: for a question about humidity, pressure, wind or another reading, set chart_field to it (e.g. "humidity").
+- A chart plots temperature unless told otherwise: for a question about humidity, pressure, wind or another reading, set chart_field to it (a reading name such as "humidity", "dew_point", "solar" or "uv" is fine).
 - Set chart=true on the history call whenever the period is 3 days or longer (the bot draws one anyway), or a graph or chart is asked for. Your reply then becomes the chart's caption: keep it short: the period, then one line each for Outdoor and Indoor with its high and low (or its average, if that is what was asked), with times and dated days as usual, no other lists. Never write about the chart itself (e.g. "Chart sent...").
-- Feels-like, apparent temperature, dew point and VPD are left out of history results unless you ask for them with include_derived (only when the question is about them).
+- Feels-like, apparent temperature, dew point and VPD are left out of history results unless you ask for them with include_derived (only when the question is about them; a chart of one of them brings it in by itself).
 - groups takes plain group names, comma-separated, e.g. "outdoor,indoor" (add "rainfall" or "wind" only if needed). Never use dotted names like "outdoor.temp".
 - The result has, per series (e.g. "outdoor.temperature"): low and high for the whole period, each with ready-made "_when" wording and a "_date" (plus the raw "_time"), and a "daily" (up to 31 days) or "monthly" breakdown. For periods of up to about a year, each month in "monthly" also has its own low/high "_when" and "_date" (when the bot has the detailed data cached; otherwise, and for longer periods, monthly figures are values only - see "monthly_note"). Read the answer straight from those fields.
 - If the question names several months ("June, July, August") or asks about "each month", answer each month separately (its low and/or high, with when and date) rather than one figure for the whole period.
@@ -82,15 +85,15 @@ RAIN AND SHORT-TERM OUTLOOK ("will it rain?", "do I need an umbrella?", "what's 
 - Say briefly it's a read of the station data, not an official forecast. Don't list every reading.
 
 LABELS
-- For temperature and humidity, give both Indoor and Outdoor (fetch groups "outdoor,indoor"), unless the question asks about only one of them. Wind, rain, pressure and UV exist only outdoors: just give those.
+- For temperature and humidity, give both Indoor and Outdoor (fetch groups "outdoor,indoor"), unless the question asks about only one of them. Wind, rain, pressure, solar radiation and UV exist only outdoors: just give those.
 - Call readings simply "Indoor" and "Outdoor". Don't mention sensor models, console names or the station name.
 
 UNITS
-- Always Celsius for temperature (convert if a sensor reports Fahrenheit). Never show Fahrenheit, not even in brackets. Metric for everything else: mm rain, km/h wind, hPa pressure.
+- Always Celsius for temperature (convert if a sensor reports Fahrenheit). Never show Fahrenheit, not even in brackets. Metric for everything else: mm rain, km/h wind, hPa pressure, kPa vapour pressure deficit, W/m² solar radiation.
 
 WEATHER EMOJIS (required)
 - Whenever you name a specific day, including today, put an emoji for that day's outdoor weather immediately before it: in day-by-day lists AND single mentions such as the day a high or low occurred.
-- Infer it from that day's figures (the "daily" breakdown, or the temp_max, temp_min, rain and wind_gust given with a day): ☀️ sunny, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌦️ light showers, 🌧️ rain, ⛈️ storms, 💨 windy, 🥵 very hot, 🥶 very cold, 🌫️ foggy. Use only these emojis. If a day has no figures at all (e.g. a record date in a multi-year answer), leave its emoji out rather than guess.
+- (This is for naming a day; current readings take weather_now's ready-made emoji, never one of your own.) Infer it from that day's figures (the "daily" breakdown, or the temp_max, temp_min, rain and wind_gust given with a day): ☀️ sunny, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌦️ light showers, 🌧️ rain, ⛈️ storms, 💨 windy, 🥵 very hot, 🥶 very cold, 🌫️ foggy. Use only these emojis. If a day has no figures at all (e.g. a record date in a multi-year answer), leave its emoji out rather than guess.
 
 TONE
 - Friendly and a little playful. Match the person's tone: if they're joking, play along briefly while still answering.
@@ -142,9 +145,9 @@ def capabilities(sources: list[str]) -> str:
     have = " ".join(sources)
     lines = ["\nWHAT THIS BOT CAN AND CAN'T DO (answer questions about the bot from this, with no tool call)"]
     if "Ecowitt" in have:
-        lines.append("- Weather station: outdoor and indoor temperature and humidity, dew point, feels-like, pressure, wind speed, "
-                     "gust and direction, rain (daily total and rate). History back to when it was installed: 5-minute detail for "
-                     "the last 90 days, 30-minute for a year, then daily.")
+        lines.append("- Weather station: outdoor and indoor temperature and humidity, dew point, feels-like, vapour pressure deficit, "
+                     "pressure, wind speed, gust and direction, rain (daily total and rate), solar radiation and UV index. History "
+                     "back to when it was installed: 5-minute detail for the last 90 days, 30-minute for a year, then daily.")
     if "AirGradient" in have:
         lines.append("- Air quality (outdoor AirGradient): " + ", ".join(f"{LABELS[m]} ({CHART_UNITS[m] or 'index'})" for m in ALL_METRICS)
                      + ", each with a traffic-light rating. History about a year.")
@@ -152,19 +155,20 @@ def capabilities(sources: list[str]) -> str:
                  "count days, holidays, weekends), weather_link (does rain come with a pressure, humidity or wind change), "
                  "air_quality.")
     if "Ecowitt" in have and "AirGradient" in have:
-        lines.append("- Across both devices: plot_chart draws readings from both on one chart, up to 4 panels (series: temperature, "
-                     "humidity, pressure, wind, rain, pm2_5, pm10, pm1, co2, voc_index, nox_index; styles: line, bars for rain, "
+        lines.append("- Across both devices: plot_chart draws readings from both on one chart, up to 4 panels (series: "
+                     + ", ".join([*WEATHER, *ALL_METRICS]) + "; styles: line, bars for rain, "
                      "rating = the traffic-light share of time, air series only), air_link answers whether rain goes with "
                      "cleaner air, and air_scan scans every air metric against every weather reading for what goes with what. "
                      "Use them for \"plot X against Y\", \"does rain affect air quality\" and \"is there a correlation between air "
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
-    lines.append("- Charts: any one reading, or several readings together on one time axis (temperature, humidity, pressure, wind, "
-                 "rain); wind as average speed with gusts beside a compass rose of directions; air quality with ratings.")
+    lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
+                 + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
+                 "air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, "
                  "indoor/outdoor temperature crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
-    lines.append("- Not available: solar and UV, lightning, soil or extra sensor channels, indoor air quality, forecasts (only a "
-                 "short read of the pressure trend), other stations or places.")
+    lines.append("- Not available: lightning, soil or extra sensor channels, indoor air quality, forecasts (only a short read of "
+                 "the pressure trend), other stations or places.")
     return "\n".join(lines) + "\n"
 
 

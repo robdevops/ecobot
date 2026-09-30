@@ -276,6 +276,7 @@ class HistoryQuery:
         wanted = self.args.get("include_derived") or []
         wanted = {wanted} if isinstance(wanted, str) else set(wanted)
         asked = [self.turn.chart_field or self.args.get("chart_field"), *(STACK[n][1] for n in stack_names(self.args, self.turn))]
+        asked = [WEATHER[a].field if a in WEATHER else a for a in asked]
         wanted |= {f for f in asked if f in DERIVED}   # charting one of them brings it into the result
         if "app_temp" in wanted:
             wanted.add("app_tempin")  # indoor's name for apparent temperature
@@ -379,6 +380,7 @@ class HistoryQuery:
         or daily averages for long periods), plus the true record high and low with their times."""
         asked = field or self.turn.chart_field or self.args.get("chart_field")
         wanted = str(asked or "temperature").strip().lower().replace(" ", "_")
+        wanted = WEATHER[wanted].field if wanted in WEATHER else wanted   # a reading's name ("uv", "pressure") or its field ("uvi")
         keys = [k for k in series_out if k.endswith("." + wanted)]
         if not keys and (wanted in DERIVED or asked and wanted in KNOWN_FIELDS):  # asked for on its own and not there: no chart, rather than a temperature one
             return None

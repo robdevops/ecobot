@@ -169,7 +169,7 @@ def test_the_prompt_says_what_the_bot_can_and_cannot_do_for_the_sources_it_has()
     now = datetime(2026, 9, 29, 14, 5)
     both = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor"])
     assert "WHAT THIS BOT CAN AND CAN'T DO" in both and "PM2.5 (µg/m³)" in both and "weather_link" in both
-    assert "Custom alerts" in both and "solar and UV" in both and "correct the call once" in both
+    assert "Custom alerts" in both and "solar radiation and UV index" in both and "Not available: lightning" in both and "correct the call once" in both
     weather_only = prompt.build(now, ["Ecowitt weather station"])
     assert "Weather station:" in weather_only and "Air quality (outdoor AirGradient)" not in weather_only
     assert "Weather station:" not in prompt.build(now, ["AirGradient outdoor sensor"])

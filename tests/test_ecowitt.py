@@ -1050,3 +1050,16 @@ async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_fi
     assert (first["low"][0], first["high"][0]) == (10.0, 15.0) and q.store["solar_and_uvi.solar"]["pts"][base + 1800]["high"][0] == 21.0
     assert q.store["outdoor.temperature"]["pts"][base]["low"][0] == 9.0      # its own range is kept
     assert "low" not in q.store["wind.wind_speed"]["pts"][base]              # wind has its own band
+
+
+async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):
+    transport, _ = ecowitt_transport()
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    today = datetime.now(eco.tz).date()
+    for said in ("pressure", "relative", "dew_point"):
+        turn = Turn()
+        await eco.tools[1].handler({"groups": "outdoor,pressure", "chart": True, "chart_field": said,
+                                    "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
+        assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Relative"), said
+    await eco.close()
