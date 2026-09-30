@@ -602,7 +602,7 @@ def test_the_rolling_mean_smooths_a_staircase_without_moving_timestamps_or_cross
 
 
 async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_stay_raw(tmp_path, archived_cache, monkeypatch):
-    from lib.ecowitt import history
+    from lib.ecowitt import query as history
     eco, _ = await archived_station(tmp_path, archived_cache)
     day = datetime.now(eco.tz).date() - timedelta(days=2)
     args = {"groups": "outdoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
@@ -623,7 +623,7 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
 
 
 async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
-    from lib.ecowitt import history
+    from lib.ecowitt import query as history
     seen = []
     real = history.HistoryQuery._chunks
 

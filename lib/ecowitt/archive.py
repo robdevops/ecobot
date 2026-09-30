@@ -14,7 +14,7 @@ from datetime import datetime, time, timedelta
 
 from ..timeutil import now_local
 from .api import MIN_GAP_SECONDS, RETENTION
-from .history import spans
+from .fetch import spans
 from .store import BUCKET_SECONDS, horizon, subtract
 
 log = logging.getLogger(__name__)

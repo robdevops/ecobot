@@ -17,7 +17,8 @@ from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
-from .history import STACK, Fetcher, HistoryQuery, stack_names
+from .fetch import Fetcher
+from .query import STACK, HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
 
 log = logging.getLogger(__name__)

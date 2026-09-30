@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, tzinfo
 
 from ..timeutil import day_bounds, local_date, now_local
 from .calendar import PublicHolidays
-from .history import collect
+from .extremes import collect
 from .store import HistoryCache, subtract
 
 log = logging.getLogger(__name__)

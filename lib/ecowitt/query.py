@@ -13,16 +13,16 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 import asyncio
 import json
 import logging
-from datetime import date, datetime, time, timedelta, timezone, tzinfo
-from typing import NamedTuple
+from datetime import datetime, time, timedelta, timezone
 
 from ..charts import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
 from ..rain import rain_bars, rain_slots
-from ..timeutil import daily_summary, local_date, local_epoch, now_local, to_local
-from .api import CYCLE_SECONDS, EcowittError, MAX_SPAN, RETENTION
+from ..timeutil import daily_summary, local_date, now_local
+from .api import CYCLE_SECONDS, RETENTION
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
-from .store import HistoryCache, HotStore, merge as merge_intervals
+from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
+from .fetch import Fetcher, spans
 
 log = logging.getLogger(__name__)
 
@@ -56,208 +56,6 @@ def stack_names(args: dict, turn) -> list[str]:
     raw = turn.chart_fields or args.get("chart_fields") or []
     names = [n for n in dict.fromkeys(str(x).strip().lower() for x in raw) if n in STACK]
     return names if len(names) >= 2 else []
-
-
-# ---------- fetching ----------
-def series_in(data: dict):
-    """(group, field, obj) for every time series in an Ecowitt 'data' object; obj["list"] is {ts: value}."""
-    for group, fields in data.items():
-        if isinstance(fields, dict):
-            for field, obj in fields.items():
-                if isinstance(obj, dict) and isinstance(obj.get("list"), dict):
-                    yield group, field, obj
-
-
-def spans(cycle: str, t: datetime, until: datetime):
-    """(start, end) pieces of [t, until) that each fit Ecowitt's per-request limit for this cycle."""
-    while t < until:
-        e = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), until)
-        yield t, e
-        t = e + timedelta(seconds=1)
-
-
-def merge_data(into: dict, new: dict, window: tuple[int, int] | None = None):
-    """Merge one Ecowitt 'data' object into another, optionally only timestamps in window."""
-    for grp, field, obj in series_in(new):
-        entry = into.setdefault(grp, {}).setdefault(field, {"unit": obj.get("unit", ""), "list": {}})
-        for ts, value in obj["list"].items():
-            if window is None or window[0] <= int(ts) <= window[1]:
-                entry["list"][ts] = value
-
-
-class Fetcher:
-    """History for one job (a question, a refresh, an alert check): from the disk cache where
-    possible, recent readings from memory if fresh, the rest from Ecowitt."""
-
-    def __init__(self, api, cache: HistoryCache, hot: HotStore, mac: str, groups: list[str], tz: tzinfo):
-        self.api, self.cache, self.hot, self.tz = api, cache, hot, tz
-        self.mac = mac.strip().upper()
-        self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
-        self.ranges = self.from_cache = self.from_memory = self.calls = 0
-        self.errors: list[str] = []
-        self.rejected = 0  # requests Ecowitt itself refused (not network trouble or a busy server)
-
-    def epoch(self, local: datetime) -> int:
-        return local_epoch(local, self.tz)
-
-    def local(self, epoch: int) -> datetime:
-        return to_local(epoch, self.tz).replace(tzinfo=None)
-
-    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
-        """Readings for [start, end] (local time). refresh=True ignores the in-memory copy (used by
-        the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
-        skips building the result nobody will read (the refresh and the archive)."""
-        self.ranges += 1
-        s, e = self.epoch(start), self.epoch(end)
-        async with self.hot.lock(self.mac, cycle):
-            missing = {g: await asyncio.to_thread(self.cache.missing, self.mac, cycle, g, s, e) for g in self.groups}
-            gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
-            if not gaps:
-                self.from_cache += 1
-            fresh: dict = {}
-            for gap_start, gap_end in gaps:
-                need = [g for g in self.groups if any(a <= gap_end and b >= gap_start for a, b in missing[g])]
-                hot = {} if refresh else {g: self.hot.get(self.mac, cycle, g, gap_start, gap_end) for g in need}
-                if hot and all(v is not None for v in hot.values()):
-                    self.from_memory += 1
-                    merge_data(fresh, hot, (gap_start, gap_end))
-                    continue
-                data = await self._fetch(cycle, self.local(gap_start), self.local(gap_end), need)
-                if data is None:
-                    continue  # failed: not recorded as fetched, so it's retried next time
-                await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, gap_start, gap_end)
-                for g in need:
-                    self.hot.put(self.mac, cycle, g, gap_start, gap_end, data.get(g) or {})
-                merge_data(fresh, data)
-            if not load:
-                return {}
-            result = await asyncio.to_thread(self.cache.load, self.mac, cycle, self.groups, s, e)
-        merge_data(result, fresh, (s, e))  # recent readings aren't on disk; use the fresh ones
-        return result
-
-    async def _fetch(self, cycle: str, start: datetime, end: datetime, groups: list[str]) -> dict | None:
-        """One Ecowitt request: its data ({} if none), or None if it failed."""
-        self.calls += 1
-        try:
-            return await self.api.history(self.mac, cycle, start, end, ",".join(groups))
-        except EcowittError as e:
-            label = f"{cycle} {start:%d %b %Y} - {end:%d %b %Y}"
-            log.warning("History request failed (%s): %s", label, e)
-            self.errors.append(f"{label}: {e}")
-            self.rejected += not e.transient
-            return None
-
-    async def covered(self, cycle: str, start: int, end: int) -> bool:
-        """True if the cache holds every group for [start, end] (epoch seconds)."""
-        for g in self.groups:
-            if await asyncio.to_thread(self.cache.missing, self.mac, cycle, g, start, end):
-                return False
-        return bool(self.groups)
-
-    async def finer_cycle(self, ts: int, current: str, window_end: int, now_utc: datetime) -> str | None:
-        """Finest cycle finer than `current` available for this window: still kept by Ecowitt,
-        or already in the cache (e.g. archived 5-minute data). None if neither."""
-        age = (now_utc - datetime.fromtimestamp(ts, timezone.utc)).days
-        for cycle in ("5min", "30min", "4hour"):
-            if cycle == current:
-                return None
-            if age < RETENTION[cycle] - 1 or await self.covered(cycle, ts, window_end):
-                return cycle
-        return None
-
-
-# ---------- extremes ----------
-class Ext(NamedTuple):
-    value: float
-    raw: str        # as Ecowitt gave it, so no rounding artefacts
-    ts: int
-    cycle: str
-    exact: bool     # a real reading or a bucket's true low/high, not an average
-
-
-def collect(store: dict, data: dict, cycle: str):
-    """Fold an Ecowitt 'data' object into store["group.field"] = {unit, pts: {ts: rec}}.
-    rec holds value / low / high as (float, raw string) and the source cycle."""
-    for group, fname, fobj in series_in(data):
-        base, kind = fname, "value"
-        if fname.endswith("_low"):
-            base, kind = fname[:-4], "low"
-        elif fname.endswith("_high"):
-            base, kind = fname[:-5], "high"
-        series = store.setdefault(f"{group}.{base}", {"unit": fobj.get("unit", ""), "pts": {}})
-        for ts, raw in fobj["list"].items():
-            try:
-                rec = series["pts"].setdefault(int(ts), {"cycle": cycle})
-                rec[kind] = (float(raw), str(raw))
-            except (TypeError, ValueError):
-                continue
-
-
-def _better(want: str, a: float, b: float) -> bool:
-    return a < b if want == "low" else a > b
-
-
-def _fold(into: dict, ts: int, rec: dict):
-    """Update into["low"/"high"] with this point's low/high if more extreme."""
-    for want in ("low", "high"):
-        if want in rec:
-            found = (*rec[want], True)
-        elif "value" in rec:
-            found = (*rec["value"], rec["cycle"] == "5min")  # 5-minute readings are real readings
-        else:
-            continue
-        if want not in into or _better(want, found[0], into[want].value):
-            into[want] = Ext(found[0], found[1], ts, rec["cycle"], found[2])
-
-
-def series_extremes(series: dict, lo_ts: int | None = None, hi_ts: int | None = None) -> dict[str, Ext]:
-    """Overall low/high of a series (optionally only points with lo_ts <= ts <= hi_ts)."""
-    out: dict = {}
-    for ts, rec in series["pts"].items():
-        if lo_ts is None or lo_ts <= ts <= hi_ts:
-            _fold(out, ts, rec)
-    return out
-
-
-def _low(rec: dict) -> float:
-    return rec["low"][0] if "low" in rec else rec["value"][0]
-
-
-def _high(rec: dict) -> float:
-    return rec["high"][0] if "high" in rec else rec["value"][0]
-
-
-def _readings(pts: dict, before: date | None = None, tz: tzinfo | None = None) -> list[tuple]:
-    """(ts, value, low, high, fine) for the 5- and 30-minute readings (those before `before`), for daily_summary."""
-    return [(t, r["value"][0], _low(r), _high(r), r["cycle"] == "5min") for t, r in pts.items()
-            if r["cycle"] != "1day" and "value" in r and (before is None or local_date(t, tz) < before)]
-
-
-def _clock(dt: datetime) -> str:
-    """12-hour clock, e.g. '7:05am', '3:30pm', '10am'."""
-    text = dt.strftime("%I:%M%p").lstrip("0").lower()
-    return text.replace(":00", "") if dt.minute == 0 else text
-
-
-def _day(dt: datetime) -> str:
-    return f"{dt:%a} {dt.day} {dt:%b %Y}"
-
-
-def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
-    """(raw local time, ready-made wording, date) for an extreme found in a point of this
-    cycle. The wording already says "at" (5-minute readings), "around" (30-minute slots) or gives
-    the window it happened in, so the model can copy it as is. The date is separate (so an emoji
-    can go before it) and empty when the window spans two days, since then the wording has both."""
-    start = datetime.fromtimestamp(ts, timezone.utc).astimezone(tz)
-    raw = start.strftime("%a %d %b %Y %H:%M")
-    if cycle == "5min":
-        return raw, f"at {_clock(start)}", _day(start)
-    if cycle == "30min":
-        return raw, f"around {_clock(start)}", _day(start)
-    end = datetime.fromtimestamp(ts + CYCLE_SECONDS[cycle], timezone.utc).astimezone(tz)
-    if start.date() == end.date():
-        return raw, f"sometime between {_clock(start)} and {_clock(end)}", _day(start)
-    return raw, f"sometime between {_clock(start)} {_day(start)} and {_clock(end)} {_day(end)}", ""
 
 
 # ---------- one history question ----------
@@ -392,7 +190,7 @@ class HistoryQuery:
             months: dict = {}
             for ts, rec in sorted(series["pts"].items()):
                 month = datetime.fromtimestamp(ts, timezone.utc).astimezone(self.tz).strftime("%b %Y")
-                _fold(months.setdefault(month, {}), ts, rec)
+                fold(months.setdefault(month, {}), ts, rec)
             out[key] = months
         return out
 
@@ -444,7 +242,7 @@ class HistoryQuery:
                     if not found:
                         continue
                     cur = slots[sid]
-                    keep = cur if _better(want, cur.value, found.value) else found  # the more extreme value...
+                    keep = cur if better(want, cur.value, found.value) else found  # the more extreme value...
                     slots[sid] = Ext(keep.value, keep.raw, found.ts, found.cycle, keep.exact)  # ...at the finer time
         for sid, ext in slots.items():
             if sid[0] == "all":
@@ -475,7 +273,7 @@ class HistoryQuery:
                 days: dict = {}
                 for ts, rec in self.store[key]["pts"].items():
                     if rec["cycle"] != "1day":  # sub-daily points give correct local days
-                        _fold(days.setdefault(local_date(ts, self.tz), {}), ts, rec)
+                        fold(days.setdefault(local_date(ts, self.tz), {}), ts, rec)
                 entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)}
             else:
                 entry["monthly"] = {}
@@ -529,7 +327,7 @@ class HistoryQuery:
     def _daily_means(self, pts: dict) -> dict:
         """{local date: mean of that day's readings}: from 5- or 30-minute readings where held, else the daily bucket."""
         means = {local_date(ts, self.tz): rec["value"][0] for ts, rec in pts.items() if rec.get("cycle") == "1day" and "value" in rec}
-        means.update({d: mean for d, (mean, _, _) in daily_summary(_readings(pts), self.tz).items()})  # exact local days win over 10am-10am buckets
+        means.update({d: mean for d, (mean, _, _) in daily_summary(daily_readings(pts), self.tz).items()})  # exact local days win over 10am-10am buckets
         return means
 
     def _add_averages(self, entry: dict, means: dict):
@@ -592,7 +390,7 @@ class HistoryQuery:
                 v = r["value"][0]
                 low, high = (r["low"][0] if "low" in r else None), (r["high"][0] if "high" in r else None)
                 if wind:
-                    low, high = _low(r), max(_high(gust[t]) if t in gust and "value" in gust[t] else _high(r), v)
+                    low, high = low_of(r), max(high_of(gust[t]) if t in gust and "value" in gust[t] else high_of(r), v)
                 out.append((t, v, low, high, CYCLE_SECONDS[r["cycle"]]))
         return out
 
