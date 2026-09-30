@@ -123,7 +123,7 @@ def _colour(line: Line, i: int, reading: str = "") -> str:
     """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback."""
     reading = line.reading or reading
     if base := READING_COLOURS.get(reading):
-        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if line.label == "Indoor" else base
+        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if line.indoor else base
     return FALLBACK[i % len(FALLBACK)]
 
 

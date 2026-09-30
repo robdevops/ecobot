@@ -430,7 +430,8 @@ class HistoryQuery:
                           force_daily=self.turn.average_asked, until=now_local(self.tz).date())
         if line is None:
             return None
-        return line.spec(label or k.split(".", 1)[0].replace("_", " ").capitalize()), line.name
+        group = k.split(".", 1)[0]
+        return line.spec(label or group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:
         """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
@@ -453,7 +454,7 @@ class HistoryQuery:
                      group == "outdoor" and k.split(".")[0] in ("outdoor", "indoor") or k.startswith(group + "."))
                      and (e := self._series_entry(k)) is not None]
             if lines:
-                if len(lines) == 1 and name != "temperature":
+                if len(lines) == 1:
                     lines[0].label = label
                 panels.append(panel_for(name, lines))
         if len(panels) < 2:

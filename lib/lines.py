@@ -37,9 +37,9 @@ class Plotted:
             return f"{WIDTH_NAMES.get(self.width, f'{self.width // 60}-minute')} readings"
         return f"{WIDTH_NAMES.get(self.width, 'daily')} averages"
 
-    def spec(self, label: str, records: dict | None = None, reading: str = "") -> Line:
+    def spec(self, label: str, records: dict | None = None, reading: str = "", indoor: bool = False) -> Line:
         """The line as a chart draws it."""
-        return Line(label, self.x, self.y, self.low, self.high, self.smoothed, records or {}, reading)
+        return Line(label, self.x, self.y, self.low, self.high, self.smoothed, records or {}, reading, indoor)
 
 
 def slot_readings(values: dict[int, float], lows: dict[int, float] | None = None, highs: dict[int, float] | None = None,

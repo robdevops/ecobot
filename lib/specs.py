@@ -24,6 +24,7 @@ class Line:
     smoothed: bool = False                             # the line is a light average of the readings, not the readings
     records: dict[str, tuple[int, float]] = field(default_factory=dict)   # "low" / "high": (epoch, the true reading)
     reading: str = ""                                  # which reading it is ("pm2_5", ...), for its colour; else its panel's
+    indoor: bool = False                               # the indoor sensor's line: the reading's complementary colour
 
     def __post_init__(self):
         if len(self.x) != len(self.y) or len(self.x) < 2:
