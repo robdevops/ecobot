@@ -181,10 +181,10 @@ Current report (day date time):
 Weather station
 • Outdoor: temperature, humidity, dew point, VPD (kPa)
 • Indoor: temperature, humidity
-• Wind: speed and direction, gust
 • Pressure: hPa
 • Rain today: mm (month total mm); if weather_now has "rain_outlook", say it here (raining now, or rain likely soon)
 • Sun: solar radiation W/m², UV index
+• Wind: speed and direction, gust
 
 Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI

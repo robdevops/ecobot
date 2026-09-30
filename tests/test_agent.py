@@ -208,3 +208,13 @@ def test_the_prompt_never_shows_a_temperature_emoji_to_copy_and_says_no_entry_me
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], report=True)
     assert '"outdoor.temperature": "' not in text and "a reading with no entry gets NO emoji" in text
     assert "a whole line or label never gets one" in text
+
+
+def test_the_report_lists_outdoor_then_indoor_then_the_rest_alphabetically():
+    import re
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], report=True)
+    section = text[text.index("Weather station\n"):text.index("Air quality\n", text.index("Weather station\n"))]
+    names = re.findall(r"^• (\w+( today)?):", section, re.M)
+    assert [n[0] for n in names] == ["Outdoor", "Indoor", "Pressure", "Rain today", "Sun", "Wind"]
