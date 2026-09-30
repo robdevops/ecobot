@@ -388,6 +388,30 @@ def _mark_records(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: 
                         bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"})
 
 
+def _mark_highs(ax, marks: list[tuple[Line, str]], tz: tzinfo, x0: float, x1: float):
+    """The peak of each line in a multi-line panel, labelled beside its own point (not piled above the tallest), moved
+    apart vertically only where two peaks are close together."""
+    to_dt = _to_dt(tz)
+    y_lo, y_hi = ax.get_ylim()
+    height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
+    peaks = []
+    for line, colour in marks:
+        if "high" in line.records:
+            mx, my = mdates.date2num(to_dt(line.records["high"][0])), float(line.records["high"][1])
+            peaks.append((mx, my, colour, (my - y_lo) / (y_hi - y_lo) * height_pt))
+    placed = []                                            # (x, where its label sits, in points up the panel)
+    for mx, my, colour, y_pt in sorted(peaks, key=lambda p: -p[3]):
+        near = [ly for px, ly in placed if abs(px - mx) < 0.12 * (x1 - x0)]
+        ly = min(y_pt, min(near) - 12) if near else y_pt
+        placed.append((mx, ly))
+        right = (mx - x0) / max(x1 - x0, 1e-9) < 0.9       # near the right edge the label goes to the left
+        ax.scatter([mx], [my], s=12, color=colour, edgecolors="white", linewidths=0.8, zorder=4)
+        ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(9 if right else -9, ly - y_pt), textcoords="offset points",
+                    ha="left" if right else "right", va="center", fontsize=6.5, fontweight="bold", color="white", zorder=5,
+                    bbox={"boxstyle": "round,pad=0.25,rounding_size=0.6", "fc": colour, "ec": "none"},
+                    arrowprops={"arrowstyle": "-", "color": colour, "linewidth": 0.6, "shrinkA": 0, "shrinkB": 2} if ly != y_pt else None)
+
+
 def _end_labels(ax, drawn: list[tuple]):
     """The latest value of each line in the margin beside it, nudged apart where they would touch."""
     y_lo, y_hi = ax.get_ylim()
@@ -432,7 +456,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
     lone = len(p.lines) == 1 and not p.right
     marks = [(s, drawn[i][0]) for i, s in enumerate(p.lines) if s.records] if not p.right else []  # highs labelled; a lone line's lows too
     _pad_limits(ax, *_extent(p.lines, [float(r[1]) for s, _ in marks for w, r in s.records.items() if lone or w == "high"]),
-                top=(0.3 if lone else 0.5) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
+                top=(0.3 if lone else 0.18) if marks else 0.12, bottom=0.3 if lone and marks else 0.12, floor=0)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, *ax.get_ylim(), 0.07)
     if len(p.lines) == 1 and not p.right and not p.lines[0].low and not p.zones:  # a lone line fades softly to the floor
@@ -444,7 +468,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float):
         if len(p.lines) == 1:
             ax.tick_params(axis="y", labelcolor=drawn[0][0])
     if marks:
-        _mark_records(ax, marks, tz, x0, x1, lows=lone)
+        (_mark_records(ax, marks, tz, x0, x1, lows=True) if lone else _mark_highs(ax, marks, tz, x0, x1))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(p.lines) > 1 and not p.right:
