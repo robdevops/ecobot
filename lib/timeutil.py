@@ -1,6 +1,9 @@
 """Local-time helpers shared by the sources: naive local datetimes, epochs and day boundaries."""
 
+import math
+from bisect import bisect_left, bisect_right
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from itertools import accumulate
 
 
 def now_local(tz: tzinfo) -> datetime:
@@ -28,22 +31,16 @@ def day_bounds(day: date, tz: tzinfo, last_second: bool = False) -> tuple[int, i
     return int(start.timestamp()), int((start + timedelta(days=1)).timestamp()) - last_second
 
 
-def rolling_mean(values: dict[int, float], half_window: int = 450) -> dict[int, float]:
+def rolling_mean(values: dict[int, float], half_window: int) -> dict[int, float]:
     """Each reading replaced by the mean of the readings within half_window seconds either side of it (itself included):
     a light smoothing of the drawn line. Timestamps are unchanged, nothing is interpolated, and a gap only means fewer
-    readings in the window."""
-    ts = sorted(values)
+    readings in the window. A reading that is not a finite number is left out."""
+    ts = sorted(t for t, v in values.items() if math.isfinite(v))
+    prefix = [0.0, *accumulate(values[t] for t in ts)]
     out: dict[int, float] = {}
-    lo = hi = 0
-    total = 0.0
     for t in ts:
-        while hi < len(ts) and ts[hi] <= t + half_window:
-            total += values[ts[hi]]
-            hi += 1
-        while ts[lo] < t - half_window:
-            total -= values[ts[lo]]
-            lo += 1
-        out[t] = total / (hi - lo)
+        lo, hi = bisect_left(ts, t - half_window), bisect_right(ts, t + half_window)
+        out[t] = (prefix[hi] - prefix[lo]) / (hi - lo)
     return out
 
 

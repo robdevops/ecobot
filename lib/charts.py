@@ -229,7 +229,7 @@ def _render_line(fig, ax, spec: dict, tz: tzinfo):
                 idx = int(ys.argmax() if above else ys.argmin())
                 rx, ry = xs[idx], ys[idx]
             line_y = float(np.interp(rx, xs, ys))
-            if abs(ry - line_y) > 0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) and not s.get("low"):  # well off the line: dotted stem back to it (not with a band: the band shows why)
+            if abs(ry - line_y) > (0.005 * (ax.get_ylim()[1] - ax.get_ylim()[0]) if s.get("smoothed") else 1e-6) and not s.get("low"):  # well off the line: dotted stem back to it (not with a band: the band shows why)
                 ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),
                           linewidth=1.2, alpha=0.8, zorder=3)
             ax.scatter([rx], [ry], s=18, color=colour, edgecolors="white", linewidths=1.2, zorder=6)

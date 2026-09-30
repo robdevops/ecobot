@@ -624,14 +624,15 @@ async def test_weather_now_carries_the_rain_outlook_when_it_is_raining_or_likely
 
 def test_the_rolling_mean_smooths_a_staircase_without_moving_timestamps_or_crossing_gaps():
     from lib.timeutil import rolling_mean
-    assert rolling_mean({0: 5.0, 300: 5.0, 600: 5.0}) == {0: 5.0, 300: 5.0, 600: 5.0}
+    assert rolling_mean({0: 5.0, 300: 5.0, 600: 5.0}, 450) == {0: 5.0, 300: 5.0, 600: 5.0}
+    assert rolling_mean({0: 1.0, 300: float('nan'), 600: 3.0}, 450) == {0: 1.0, 600: 3.0}   # a bad reading is left out, it does not poison the rest
     stairs = {i * 300: 10 + 0.1 * (i // 3) + (0.1 if i % 2 else 0.0) for i in range(30)}                 # 0.1-degree steps with jitter
-    out = rolling_mean(stairs)
+    out = rolling_mean(stairs, 450)
     assert list(out) == list(stairs)                                       # the same timestamps
     turns = lambda d: sum(1 for a, b, c in zip(list(d.values()), list(d.values())[1:], list(d.values())[2:]) if (b - a) * (c - b) < 0)
     assert turns(out) < turns(stairs)
     assert out[0] == (stairs[0] + stairs[300]) / 2                         # the ends use the shorter window
-    gap = rolling_mean({0: 0.0, 300: 0.0, 3600: 10.0, 3900: 10.0})         # an hour apart: neither side pulls on the other
+    gap = rolling_mean({0: 0.0, 300: 0.0, 3600: 10.0, 3900: 10.0}, 450)         # an hour apart: neither side pulls on the other
     assert gap == {0: 0.0, 300: 0.0, 3600: 10.0, 3900: 10.0}
 
 
@@ -649,11 +650,12 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
         finally:
             CHART_REQUESTS.reset(token)
     out, smooth = await chart()
-    monkeypatch.setattr(history, "SMOOTH_FIELDS", ())
+    monkeypatch.setattr(history, "SMOOTH_SERIES", set())
     _, raw = await chart()
     a, b = smooth["series"][0], raw["series"][0]
     assert "5-minute" in smooth["subtitle"] and a["x"] == b["x"] and a["y"] != b["y"]
     assert max(a["y"]) <= max(b["y"]) + 1e-6 and min(a["y"]) >= min(b["y"]) - 1e-6         # smoothing never goes past the readings
+    assert a["smoothed"] and "smoothed" not in b and a["y"][-1] == b["y"][-1]          # the end dot is the latest reading, as it was
     assert a["records"] == b["records"] and a["records"]["high"][1] == float(out["series"]["outdoor.temperature"]["high"].split()[0])
     await eco.close()
 

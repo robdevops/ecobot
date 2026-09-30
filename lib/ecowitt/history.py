@@ -34,7 +34,10 @@ MAX_MONTH_REFINE_WINDOWS = 24
 # date are exact even at month boundaries. Longer periods use daily data (10am-10am buckets), unless
 # the cache already holds the 30-minute data (the archive does), in which case up to a year is detailed.
 DETAILED_DAYS = 93
-SMOOTH_FIELDS = ("temperature", "humidity", "relative", "absolute", "dew_point", "feels_like")  # slow readings: a 5-minute line is lightly smoothed
+# Slow readings, by "group.field": a 5-minute line of these is lightly smoothed (wind, rain and the rest are not)
+SMOOTH_SERIES = {f"{g}.{f}" for g in ("outdoor", "indoor") for f in ("temperature", "humidity", "dew_point", "feels_like")} | {
+    "pressure.relative", "pressure.absolute"}
+SMOOTH_POINTS = 3               # each drawn point is the mean of this many 5-minute readings (a 15-minute window)
 MAX_ROWS = 500_000              # readings loaded per question from the cache: days x 48 x groups x FIELDS_PER_GROUP
 FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a group has
 # Readings Ecowitt only provides as averages (no _low/_high). Left out of results unless the
@@ -601,12 +604,15 @@ class HistoryQuery:
         if not pts:
             return None
         cycle, line, band = self._line(pts, keep_band=windy)
-        if cycle == "5min" and k.split(".")[-1] in SMOOTH_FIELDS:  # only the drawn line: records and figures use the raw readings
-            line = rolling_mean(line)
+        smooth = cycle == "5min" and k in SMOOTH_SERIES  # only the drawn line: records and figures use the raw readings
+        if smooth:
+            newest = max(line)
+            line = {**rolling_mean(line, CYCLE_SECONDS[cycle] * SMOOTH_POINTS // 2), newest: line[newest]}  # the end dot is the latest reading
         xs = sorted(line)
         if len(xs) < 2:
             return None
-        entry = {"label": label or k.split(".", 1)[0].replace("_", " ").capitalize(), "x": xs, "y": [line[t] for t in xs]}
+        entry = {"label": label or k.split(".", 1)[0].replace("_", " ").capitalize(), "x": xs, "y": [line[t] for t in xs],
+                 **({"smoothed": True} if smooth else {})}
         if len(band) >= len(xs) // 2:  # an average over a bucket: its low and high around it
             entry["low"] = [band.get(t, (line[t], line[t]))[0] for t in xs]
             entry["high"] = [band.get(t, (line[t], line[t]))[1] for t in xs]
