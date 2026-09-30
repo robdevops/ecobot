@@ -75,6 +75,7 @@ W_IN, H_IN, DPI = 6.4, 3.6, 400  # 2560 x 1440 px: the size Telegram keeps for a
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
+LEADER_CLEARANCE = 0.05          # peak labels sit at least this share of the panel's width away from the peaks (shorter = closer)
 BARS_SHARE = 0.3                 # rain behind a line never rises past this share of the panel's height
 
 
@@ -423,7 +424,7 @@ def _mark_highs(ax, marks: list[tuple[Line, str]], drawn: list[tuple], tz: tzinf
     for k in range(3, 98, 2):                                             # candidate columns across the panel
         cx = x0 + (x1 - x0) * k / 100
         highest = max((float(np.max(ys[(xs > cx - reach) & (xs < cx + reach)], initial=y_lo)) for _, xs, ys in drawn), default=y_lo)
-        if highest < y_hi - block - 4 * per_pt and abs(cx - mean_x) > 0.12 * (x1 - x0):  # clear of the peaks, so the leaders slope
+        if highest < y_hi - block - 4 * per_pt and abs(cx - mean_x) > LEADER_CLEARANCE * (x1 - x0):  # a little clear of the peaks, so the leaders do not run straight up them
             free.append(cx)
     arrow = lambda colour: {"arrowstyle": "-", "color": colour, "linewidth": 0.8, "linestyle": (0, (1, 2)), "shrinkA": 1, "shrinkB": 2}
     pill = {"boxstyle": "round,pad=0.25,rounding_size=0.6", "ec": "none"}

@@ -63,3 +63,4 @@ panels: CO2 with VOC, PM1/PM2.5/PM10, NOx. Line data is unchanged: on the test f
 in every chart matches the pre-change dumps exactly (`scripts/dump_specs.py`).
 
 Air quality is four panels, top to bottom: the particles, CO2, VOC and NOx, each on its own scale (`AIR_PANELS` in `airgradient/metrics.py`). Charts render at 2560 px wide (Telegram keeps photos up to 2560 px on the long side).
+Air-quality lines get the shaded low-to-high range when the points go daily, in single charts only (not in multi-panel charts).

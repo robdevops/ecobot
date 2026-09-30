@@ -103,6 +103,20 @@ def test_a_taller_chart_for_more_panels():
     assert sizes[0] == sizes[1] == (2560, 1440) and sizes[2][1] > 1440 and sizes[3][1] > sizes[2][1] and sizes[3][1] < 2560   # within Telegram's photo size
 
 
+def test_a_daily_air_line_has_its_range_band_alone_but_not_in_a_multi_panel_chart():
+    class Air:
+        tz = TZ
+        _line = AirGradient._line
+        _chart = AirGradient._chart
+
+    base = 1_780_000_000 // 3600 * 3600
+    rows = [{"ts": base - i * 3600, "pm2_5": 5 + (i % 24) / 2, "co2": 450 + i % 7} for i in range(120 * 24, 0, -1)]   # 120 days: daily points
+    alone = Air()._chart(["pm2_5"], rows, "p")
+    assert alone.panels[0].lines[0].low is not None and "range shaded" in alone.subtitle
+    several = Air()._chart(["pm2_5", "co2"], rows, "p")
+    assert len(several.panels) == 2 and all(s.low is None and s.high is None for p in several.panels for s in p.lines)
+
+
 def test_air_metrics_are_grouped_into_four_panels_each_reading_with_its_own_scale():
     class Air:
         tz = TZ

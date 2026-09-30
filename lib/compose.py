@@ -181,7 +181,13 @@ class Composer:
 
     def _add_chart(self, out: dict, panels: list[Panel], first: date, last: date, turn: Turn):
         """Send the panels as one chart (rain behind the first line) and tell the model what its reply is for."""
-        turn.charts.append(stack(panels, first, last))
+        chart = stack(panels, first, last)
+        if len(chart.panels) > 1:                 # a range shaded behind several panels' lines looks blurry: single panels only
+            for panel in chart.panels:
+                if panel.reading in ALL_METRICS:
+                    for line in panel.lines:
+                        line.low = line.high = None
+        turn.charts.append(chart)
         out["chart"] = COMPOSED_CHART_HINT
 
     async def air_link(self, args: dict, turn: Turn | None = None) -> str:
@@ -281,7 +287,6 @@ class Composer:
         line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
         if line is None:
             return None, {}
-        line.low = line.high = None  # air-quality lines are plain: no shaded range
         return (Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]), reading=name),
                 {"series": name, **self._stats(values, CHART_UNITS[name])})
 
