@@ -1,7 +1,7 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
-  - Rain: "stopped" after 30 dry minutes, with how much fell; any rain after that is a new
+  - Rain: "stopped" after 15 dry minutes, with how much fell; any rain after that is a new
     "started" (one tip of the gauge is enough). One rule both ways, so the alerts never contradict each other (no flapping).
   - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
     Melbourne (see assess_rain). At most once every 6 hours.
@@ -19,7 +19,7 @@ from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
 
-RAIN_STOP_DRY_SECONDS = 30 * 60
+RAIN_STOP_DRY_SECONDS = 15 * 60
 PREDICT_EVERY_SECONDS = 6 * 3600
 CROSS_MIN_SECONDS = 2 * 86400
 CROSS_MARGIN = 0.3
