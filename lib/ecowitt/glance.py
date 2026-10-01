@@ -9,7 +9,8 @@ HUMIDITY_HIGH, HUMIDITY_LOW = 85, 30              # % : muggy or dry; in between
 PRESSURE_HIGH = 1025                              # hPa, sea level: a strong high. VPD_HIGH: kPa, the air is drying things fast
 VPD_HIGH = 1.2
 SOLAR_HIGH = 600                                  # W/m2: bright sun (full sun is about 1000)
-UVI_HIGH = 6                                      # UV index: 'high' and above
+UVI = ((9, "🧴"), (6, "😎"))                      # UV index: 6 is 'high'; 9 and above is also an alert
+UVI_ALERT = 9
 
 
 def _step(value: float, table: tuple) -> str:
@@ -32,7 +33,7 @@ def glance(group: str, field: str, value: float) -> str:
     if name == "solar":
         return "☀️" if value >= SOLAR_HIGH else ""
     if name == "uvi":
-        return "😎" if value >= UVI_HIGH else ""
+        return _step(value, UVI)
     if group == "pressure" and name == "relative":
         return "🗜️" if value >= PRESSURE_HIGH else ""
     if name == "vpd":

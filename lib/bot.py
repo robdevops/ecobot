@@ -41,7 +41,7 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, indoor/outdoor "
+ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, UV index of 9 or more, indoor/outdoor "
                "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
                "Use /alerts {other} to turn them {other}.")
 
@@ -387,7 +387,7 @@ class Bot:
                         average_asked=read.average_asked)
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
-                                      read.about_the_bot, read.report, read.weather_now)
+                                      read.about_the_bot, read.report, read.weather_now, read.rain_caption)
                 reply = await asyncio.wait_for(
                     self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
                                    require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,

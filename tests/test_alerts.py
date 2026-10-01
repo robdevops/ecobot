@@ -300,3 +300,35 @@ async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
                 raise Forbidden("bot was blocked")
     await Notifier(Bot(), state)("hi")
     assert all(kw["disable_notification"] for _, kw in calls) and 2 not in state.chats and 1 in state.chats
+
+
+def uv(*values, start=T0):
+    return [(start + i * 300, {"solar_and_uvi.uvi": v}) for i, v in enumerate(values)]
+
+
+async def test_a_uv_index_of_9_alerts_once_and_again_only_after_an_hour_below_it(tmp_path):
+    vals = [3, 5]
+    m, state, sent = monitor(tmp_path, uv(*vals))
+
+    async def step(*more):
+        vals.extend(more)
+        m.station.data = uv(*vals)
+        await m.check()
+    await m.check()                                    # the first look sets the mark
+    await step(8.9)
+    assert sent == []
+    await step(9)
+    assert len(sent) == 1 and "UV index 9" in sent[0] and "1:15pm" in sent[0]
+    await step(10, 7, *[6] * 11)                       # still the same spell, then under an hour below 9
+    await step(9.5)
+    assert len(sent) == 1
+    await step(*[5] * 12)                              # a calm hour starts counting
+    await step(*[5] * 12)                              # an hour below 9 re-arms it
+    await step(9)
+    assert len(sent) == 2
+
+
+async def test_old_uv_readings_are_not_announced_after_a_restart(tmp_path):
+    m, state, sent = monitor(tmp_path, uv(10, 11, 4))
+    await m.check()
+    assert sent == []

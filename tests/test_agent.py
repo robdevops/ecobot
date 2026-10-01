@@ -269,3 +269,19 @@ def test_weather_now_lists_the_weather_half_of_the_report_in_the_same_layout():
     assert "EVERYTHING THE WEATHER STATION READS RIGHT NOW" in text and "• Sun: solar radiation W/m², UV index" in text
     assert "air_quality (no dates)" not in text and "FULL CURRENT REPORT" not in text
     assert "EVERYTHING THE WEATHER STATION READS" not in prompt.build(now, ["Ecowitt weather station"], report=True)
+
+
+def test_a_rain_chart_caption_is_only_the_least_and_most_rain_and_whether_more_is_expected():
+    from datetime import datetime
+    from lib import prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    text = prompt.build(now, ["Ecowitt weather station"], rain_caption=True)
+    assert "THIS IS A RAIN CHART" in text and "rain_outlook" in text
+    assert "THIS IS A RAIN CHART" not in prompt.build(now, ["Ecowitt weather station"])
+
+
+def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], about_bot=True)
+    assert "as simple bullet points" in text and "no sub-bullets" in text

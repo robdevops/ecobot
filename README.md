@@ -2,7 +2,7 @@
 
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
-chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, indoor/outdoor temperatures crossing,
+chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, UV index of 9 or more, indoor/outdoor temperatures crossing,
 and unhealthy air (with when it is safe again). `/alerts off` mutes a chat.
 
 ## Run

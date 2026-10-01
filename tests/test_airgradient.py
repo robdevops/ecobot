@@ -21,9 +21,25 @@ def test_aqi_and_ratings_follow_the_us_scale():
 
 async def test_current_reading_with_ratings(tmp_path):
     air, _ = await make(tmp_path)
+
+    async def no_previous(ts):
+        return None      # the fake history's PM2.5 depends on the hour, so the previous reading would too
+    air._previous_row = no_previous
     reading = json.loads(await air.handle({}))
     assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == "moderate"
     assert "_time_utc" not in reading and reading["pm2_5"]["rating"].endswith("poor")
+    await air.close()
+
+
+async def test_a_rating_is_the_level_the_last_two_readings_both_reached(tmp_path):
+    air, _ = await make(tmp_path)
+    for before, band, noted in ((5.0, "good", True), (20.0, "moderate", False)):
+        async def previous(ts, before=before):
+            return {"pm2_5": before}
+        air._previous_row = previous
+        reading = json.loads(await air.handle({}))
+        assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == band
+        assert ("rating_note" in reading["pm2_5"]) is noted
     await air.close()
 
 

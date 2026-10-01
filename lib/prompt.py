@@ -165,7 +165,7 @@ def capabilities(sources: list[str]) -> str:
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
-    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, "
+    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, UV index of 9 or more, "
                  "indoor/outdoor temperature crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
     lines.append("- Not available: lightning, soil or extra sensor channels, indoor air quality, forecasts (only a short read of "
@@ -204,17 +204,27 @@ Weather now (day date time):
 """
 
 
+RAIN_CAPTION_SECTION = """
+THIS IS A RAIN CHART: its caption is ONLY the least and the most rain in the period (daily totals, mm, with the dated days), then one line
+saying whether rain is expected: call weather_now with groups "rainfall" and use its "rain_outlook" (raining now, or rain likely
+soon); with no rain_outlook, say no rain is expected soon. Nothing else: no averages, no other readings.
+"""
+
+
 def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, report: bool = False,
-          weather_now: bool = False) -> str:
+          weather_now: bool = False, rain_caption: bool = False) -> str:
     text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
                          sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
     if report:
         text += REPORT_SECTION
     elif weather_now:
         text += WEATHER_NOW_SECTION
+    if rain_caption:
+        text += RAIN_CAPTION_SECTION
     if about_bot:
         text += ("\nTHIS QUESTION IS ABOUT THE BOT ITSELF (its metrics, sensors, sources or abilities): answer from WHAT THIS "
-                 "BOT CAN AND CAN'T DO above, briefly. Do not fetch readings.\n")
+                 "BOT CAN AND CAN'T DO above, as simple bullet points (\u2022, one short line each, no intro or closing sentence, no sub-bullets). "
+                 "Do not fetch readings.\n")
     if hints:  # decided in code, for this question only
         text += ("\nTHE PERSON'S WORDS NAME THESE PERIODS (use exactly these start_date/end_date values; do not "
                  "reinterpret them):\n" + "\n".join(f"- {h}" for h in hints) + "\n")

@@ -7,6 +7,7 @@
     Melbourne (see assess_rain). At most once every 6 hours.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
+  - Strong sun: one alert when the UV index reaches 9, and no more until it has stayed below 9 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler) after the other way
     round held for 2+ days. A 0.3 degree margin stops sensor noise flip-flopping.
 """
@@ -14,6 +15,7 @@
 import logging
 from datetime import timedelta
 
+from ..ecowitt.glance import UVI_ALERT
 from ..ecowitt.outlook import PREDICT_MIN_SCORE, Rows, assess_rain, duration, rain_amount, wet_flags
 from ..timeutil import to_local
 
@@ -25,6 +27,7 @@ CROSS_MIN_SECONDS = 2 * 86400
 CROSS_MARGIN = 0.3
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600
+UV_REARM_SECONDS = 3600
 
 
 def side(r: dict) -> str | None:
@@ -71,6 +74,7 @@ class WeatherMonitor:
         await self._rain(rows + [live] if live and live[0] > rows[-1][0] else rows)
         await self._rain_likely(rows)
         await self._gusts(rows)
+        await self._uv(rows)
         await self._cross(rows)
         self.state.save()
 
@@ -132,6 +136,24 @@ class WeatherMonitor:
         elif m["active"]:
             m["calm_since"] = m["calm_since"] or latest_ts
             if latest_ts - m["calm_since"] >= GUST_REARM_SECONDS:
+                m.update(active=False, calm_since=None)
+
+    async def _uv(self, rows: Rows):
+        """Like the gusts: only readings since the last check count, one alert per spell at or above UVI_ALERT."""
+        m = self.state.monitor.setdefault("uv", {"active": False, "calm_since": None})
+        latest_ts = rows[-1][0]
+        seen, m["checked"] = m.get("checked", latest_ts), latest_ts
+        over = [(u, ts) for ts, r in rows if ts > seen and (u := r.get("solar_and_uvi.uvi")) is not None and u >= UVI_ALERT]
+        if over:
+            m["calm_since"] = None
+            if not m["active"]:
+                m["active"] = True
+                uv, ts = max(over)
+                await self.notify(f"\U0001f9f4 UV index {uv:g} at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
+                                  + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).")
+        elif m["active"]:
+            m["calm_since"] = m["calm_since"] or latest_ts
+            if latest_ts - m["calm_since"] >= UV_REARM_SECONDS:
                 m.update(active=False, calm_since=None)
 
     async def _cross(self, rows: Rows):

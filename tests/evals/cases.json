@@ -966,7 +966,8 @@
       "chart_field": "daily",
       "tools": [
         "weather_history"
-      ]
+      ],
+      "rain_caption": true
     },
     "covers": [
       "m:rain",
@@ -1015,7 +1016,8 @@
         "args": {
           "groups": "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
         }
-      }
+      },
+      "weather_now": true
     },
     "covers": [
       "q:report",

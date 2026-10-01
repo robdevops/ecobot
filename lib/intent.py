@@ -294,6 +294,14 @@ def chart_field(text: str) -> str | None:
     return WEATHER_READINGS[found[0]].field if len(found) == 1 and found[0] != "temperature" else None
 
 
+# "rain chart 7d": a rain chart whose caption is just the least and most rain and whether more is expected
+RAIN_CHART = re.compile(r"^\s*rain\s+(chart|graph|plot)\b[^,&+]*$", I)
+
+
+def wants_rain_caption(text: str) -> bool:
+    return bool(RAIN_CHART.search(text)) and not re.search(r"\band\b", text, I)
+
+
 def weather_groups(text: str) -> str:
     """Just indoor or just outdoor if only one is asked about, otherwise both. A wind chart is just wind."""
     if WIND.search(text):
@@ -386,6 +394,7 @@ class Reading:
     chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
     average_asked: bool = False
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
+    rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
 
 
 def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Reading:
@@ -397,4 +406,4 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Re
         fast = None
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), wants_report(text), period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   ecowitt and wants_weather_now(text))
+                   ecowitt and wants_weather_now(text), ecowitt and wants_rain_caption(text))
