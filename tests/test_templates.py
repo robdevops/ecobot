@@ -86,3 +86,10 @@ async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off
     update, sent = message("/keyboard", chat_type="group")
     await bot.on_keyboard(update, NS(args=[]))
     assert "reply_markup" not in sent[0][1]
+
+
+async def test_the_alerts_status_lists_one_bullet_per_alert():
+    from lib.bot import ALERTS_TEXT
+    text = ALERTS_TEXT.format(on="on", other="off")
+    bullets = [line for line in text.splitlines() if line.startswith("• ")]
+    assert len(bullets) == 6 and text.startswith("Weather alerts are on here:") and text.endswith("to turn them off.")

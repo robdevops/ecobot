@@ -41,8 +41,13 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, UV index of 9 or more, indoor/outdoor "
-               "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
+ALERTS_TEXT = ("Weather alerts are {on} here:\n"
+               "\u2022 Rain starting, and stopping (after 15 dry minutes)\n"
+               "\u2022 Rain likely soon\n"
+               "\u2022 Wind gusts over 40 km/h\n"
+               "\u2022 UV index of 9 or more\n"
+               "\u2022 Indoor and outdoor temperatures crossing, after 2+ days\n"
+               "\u2022 Unhealthy outdoor air, and when it's safe again\n"
                "Use /alerts {other} to turn them {other}.")
 
 
