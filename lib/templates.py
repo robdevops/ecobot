@@ -31,13 +31,13 @@ def sentence(text: str) -> str | None:
     return SENTENCES.get(text.strip())
 
 
-WEATHER_METRICS = ["Temperature and humidity, outdoor and indoor", "Dew point, feels-like and VPD", "Pressure",
-                   "Wind speed, gust and direction", "Rain", "Solar radiation and UV index"]
-AIR_METRICS = ["Air quality: PM1, PM2.5, PM10, CO₂, VOC, NOx"]
-HISTORY = ["History charts of any of them"]
+WEATHER_METRICS = ["Outdoor and indoor temperature", "Outdoor and indoor humidity",
+                   "Dew point, vapour pressure deficit, pressure, wind speed", "Rain, solar radiation, UV index"]
+AIR_METRICS = ["PM1, PM2.5, PM10, CO₂, VOC, NOx"]
+HISTORY = ["History charts"]
 
 
 def capabilities_text(weather: bool = True, air: bool = True) -> str:
     """What the bot measures, as a short bulleted list (no dates, no detail): the answer to the Capabilities button."""
     lines = (WEATHER_METRICS if weather else []) + (AIR_METRICS if air else []) + HISTORY
-    return "Current readings for:\n" + "\n".join(f"\u2022 {line}" for line in lines)
+    return "\n".join(f"\u2022 {line}" for line in lines)
