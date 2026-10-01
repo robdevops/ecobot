@@ -134,7 +134,7 @@ def deterministic(case: Case) -> list[str]:
     """Failures of the decisions made in code (no model): reasoning effort, fast path, hints, chart choices."""
     e, fails = case.expect, []
     text = case.ask
-    r = intent.read(text, NOW, pollen=True)
+    r = intent.read(text, NOW, pollen=True, forecast=True)
     if "effort" in e and r.effort != e["effort"]:
         fails.append(f"effort {r.effort}, expected {e['effort']}")
     if "fast" in e:
@@ -166,16 +166,16 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     """Ask the real model; returns the tool calls it made and its final reply."""
     calls: list[tuple[str, dict]] = []
     text = case.ask
-    r = intent.read(text, NOW, pollen=True)
+    r = intent.read(text, NOW, pollen=True, forecast=True)
     system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor",
                                 "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
                                 "Weather forecast for the owner's location (Bureau of Meteorology)"],
-                          r.hints, r.about_the_bot, r.report, r.weather_now, r.rain_caption)
+                          r.hints, r.about_the_bot, r.report, r.weather_now, r.rain_caption, bool(r.fast))
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
-        messages, system, effort or r.effort, first_call=fast[:2] if fast else None, require_tool=r.needs_data,
+        messages, system, effort or r.effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None, require_tool=r.needs_data,
         no_tools=r.about_the_bot)
     if fast:
-        calls.insert(0, (fast[0], fast[1]))  # the bot ran it itself, before the model
+        calls[0:0] = [(fast[0], fast[1]), *r.more]  # the bot ran them itself, before the model
     return calls, reply

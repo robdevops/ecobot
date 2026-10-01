@@ -66,13 +66,13 @@ class Agent:
         return content, [calls[i] for i in sorted(calls)], usage
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
-                  first_call: tuple[str, dict] | None = None, require_tool: bool = True, no_tools: bool = False,
+                  first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
                   turn: Turn | None = None, on_text=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
-        first_call (tool name, args) is a call the bot already worked out (the fast path): it runs
-        straight away and the model is only invoked once the data is in. require_tool forces a
+        first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
+        straight away, together, and the model is only invoked once the data is in. require_tool forces a
         fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
         on_text(text so far) is called as each answer streams in (private chats show it as a draft)."""
         cache: dict = {}  # identical tool calls within one question are only made once
@@ -89,13 +89,14 @@ class Agent:
         first_step = 0
         try:
             if first_call:
-                name, args = first_call[0], json.dumps(first_call[1])
+                fast = [(n, json.dumps(a)) for n, a in (first_call if isinstance(first_call, list) else [first_call])]
                 messages.append({"role": "assistant", "content": "", "tool_calls": [
-                    {"id": "fast_1", "type": "function", "function": {"name": name, "arguments": args}}]})
+                    {"id": f"fast_{i}", "type": "function", "function": {"name": n, "arguments": a}}
+                    for i, (n, a) in enumerate(fast, 1)]})
                 t0 = time.monotonic()
-                result = await call(name, args)
+                results = await asyncio.gather(*(call(n, a) for n, a in fast))
                 tool_time += time.monotonic() - t0
-                messages.append({"role": "tool", "tool_call_id": "fast_1", "content": result})
+                messages.extend({"role": "tool", "tool_call_id": f"fast_{i}", "content": r} for i, r in enumerate(results, 1))
                 first_step = 1  # data is in; the model just answers (and may still call tools)
             for step in range(first_step, MAX_STEPS + 1):
                 final = step == MAX_STEPS  # out of steps: force an answer from what we have

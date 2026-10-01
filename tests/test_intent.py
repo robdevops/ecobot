@@ -335,3 +335,15 @@ def test_ecowitt_means_the_weather_and_ag_or_airgradient_means_the_air_quality()
     assert intent.air_metrics("ag all week") == ["pm2_5", "pm10", "pm1", "co2", "voc_index", "nox_index"] or len(intent.air_metrics("ag all week")) == 6
     assert intent.needs_data("ecowitt") and intent.needs_data("ag") and intent.about_the_bot("what does ecowitt measure") and intent.about_the_bot("what does ag measure")
     assert not intent.needs_data("that was a nice sag in the road") and not intent.needs_data("thanks")
+
+
+def test_the_report_fetches_everything_in_code_before_the_model_sees_it():
+    r = intent.read("report", NOW, True, True, True, True)
+    assert r.report and r.fast == ("weather_now", {"groups": intent.NOW_GROUPS}, "report")
+    assert r.more == [("air_quality", {}), ("pollen_asthma", {}), ("weather_forecast", {"days": 2})]
+    plain = intent.read("sitrep", NOW)
+    assert [plain.fast[0], *(t for t, _ in plain.more)] == ["weather_now", "air_quality"]
+    only_air = intent.read("status", NOW, ecowitt=False)
+    assert only_air.fast[0] == "air_quality" and only_air.more == []
+    assert intent.read("report", NOW, ecowitt=False, air=False).fast is None
+    assert not intent.read("report for last week", NOW).report

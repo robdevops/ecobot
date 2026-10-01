@@ -190,9 +190,7 @@ WEATHER_LAYOUT = """\
 • Wind: speed and direction, gust"""
 EMOJI_RULE = ("Put an emoji from weather_now's \"emoji\" right before the value of the one reading it is keyed to, and only for readings it lists; "
               "a reading with no entry has no emoji, and a whole line or label never gets one.")
-REPORT_SECTION = f"""
-THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "{NOW_GROUPS}") and air_quality (no dates)
-in parallel, then list EVERYTHING from both devices, no summary sentence, in this layout (values from the tools):
+REPORT_BODY = f"""in this layout (values from the tools):
 Current report (day date time):
 
 Weather station
@@ -202,6 +200,13 @@ Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI
 {EMOJI_RULE}
 """
+REPORT_FETCH = f"""
+THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "{NOW_GROUPS}") and air_quality (no dates)
+in parallel, then list EVERYTHING from both devices, no summary sentence, """
+REPORT_FETCHED = """
+THE PERSON WANTS THE FULL CURRENT REPORT. Its data is already fetched (weather_now, air_quality and the other report tools'
+results are above), so do not call them again. List EVERYTHING from both devices, no summary sentence, """
+REPORT_SECTION = REPORT_FETCH + REPORT_BODY  # (kept for the tests and the prompt with nothing fetched)
 POLLEN_BLOCK = """
 Pollen & asthma
 • the "lines" of pollen_asthma, copied as they are (emoji included; the asthma line only when it has one)"""
@@ -226,16 +231,17 @@ soon); with no rain_outlook, say no rain is expected soon. Nothing else: no aver
 
 
 def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, report: bool = False,
-          weather_now: bool = False, rain_caption: bool = False) -> str:
+          weather_now: bool = False, rain_caption: bool = False, fetched: bool = False) -> str:
     text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
                          sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
     if report:
-        text += REPORT_SECTION
+        text += (REPORT_FETCHED if fetched else REPORT_FETCH) + REPORT_BODY
         have = " ".join(sources)
+        also = "" if fetched else "Also call {tool} (in parallel with the others) and, after the {where}, add:"
         if "melbournepollen" in have:   # the optional sources add their blocks after Air quality
-            text += ("Also call pollen_asthma (in parallel with the others) and, after the Air quality block, add:" + POLLEN_BLOCK + "\n")
+            text += (also.format(tool="pollen_asthma", where="Air quality block") or "After the Air quality block, add:") + POLLEN_BLOCK + "\n"
         if "Bureau of Meteorology" in have:
-            text += ("Also call weather_forecast (in parallel with the others) and, after the last block above, add:" + FORECAST_BLOCK + "\n")
+            text += (also.format(tool="weather_forecast", where="last block above") or "After the last block above, add:") + FORECAST_BLOCK + "\n"
     elif weather_now:
         text += WEATHER_NOW_SECTION
     if rain_caption:

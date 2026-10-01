@@ -185,3 +185,24 @@ async def test_a_long_answer_is_cut_to_fit_one_chart_message_not_sent_as_text_th
     caption = sent[0][1]
     assert len(caption) <= botmod.CAPTION_LIMIT and caption.startswith("Fri 25 Sep") and "…" in caption and caption.endswith("live chart")
     assert botmod.fit_caption("short answer") == "short answer"
+
+
+async def test_a_report_hands_the_model_every_call_already_made_in_code():
+    class Capture:
+        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None):
+            self.first_call, self.system = first_call, system
+            return "Current report"
+    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "AirGradient")]
+    agent, replies = Capture(), []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    await Bot(NS(tz=TZ), agent, sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "report")
+    assert [name for name, _ in agent.first_call] == ["weather_now", "air_quality"] and replies == ["Current report"]
+    assert "already fetched" in agent.system

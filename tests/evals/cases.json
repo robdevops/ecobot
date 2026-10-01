@@ -786,7 +786,13 @@
       "tools": [
         "weather_now",
         "air_quality"
-      ]
+      ],
+      "fast": {
+        "tool": "weather_now",
+        "args": {
+          "groups": "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+        }
+      }
     },
     "covers": [
       "q:report"

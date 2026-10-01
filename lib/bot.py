@@ -405,7 +405,8 @@ class Bot:
         if not text:
             return
         now = now_local(self.cfg.tz)
-        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name)
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
+                           "Forecast" in self.by_name)
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  _short(text))
         for source in self.sources:  # fetch recent readings while the model thinks
@@ -431,9 +432,9 @@ class Bot:
                         average_asked=read.average_asked)
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
-                                      read.about_the_bot, read.report, read.weather_now, read.rain_caption)
+                                      read.about_the_bot, read.report, read.weather_now, read.rain_caption, fetched=bool(read.fast))
                 reply = await asyncio.wait_for(
-                    self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
+                    self.agent.run(working, system, read.effort, first_call=([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None,
                                    require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,
                                    **({"on_text": draft.update} if draft else {})), TURN_SECONDS)
                 chat.history = trim_history(strip_tool_turns(working))

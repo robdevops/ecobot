@@ -95,6 +95,12 @@ def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
 
 
+def report_calls(ecowitt: bool, air: bool, pollen: bool = False, forecast: bool = False) -> list[tuple[str, dict]]:
+    """What the full report needs, fetched together before the model sees the question."""
+    return ([("weather_now", {"groups": NOW_GROUPS})] if ecowitt else []) + ([("air_quality", {})] if air else []) + (
+        [("pollen_asthma", {})] if pollen else []) + ([("weather_forecast", {"days": 2})] if forecast else [])
+
+
 # Pollen and thunderstorm asthma (the Pollen source)
 POLLEN_WORDS = re.compile(r"\b(pollen|hay ?fever|thunderstorm asthma|asthma)\b", I)
 POLLEN_NOW = re.compile(_only(r"pollen( count| level| forecast| today| now)?|hay ?fever|(thunderstorm )?asthma( risk)?",
@@ -405,17 +411,21 @@ class Reading:
     chart_field: str | None = None        # humidity questions get a humidity chart
     chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
     average_asked: bool = False
+    more: list[tuple[str, dict]] = field(default_factory=list)   # the rest of the report's calls (fast is the first)
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
 
 
-def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False) -> Reading:
+def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
+         forecast: bool = False) -> Reading:
     """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
+    report = wants_report(text)
+    calls = report_calls(ecowitt, air, pollen, forecast) if report else []
     try:
-        fast = fast_call(text, now, ecowitt, air, pollen)
+        fast = (*calls[0], "report") if calls else fast_call(text, now, ecowitt, air, pollen)
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None
-    return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), wants_report(text), period_hints(text, now),
+    return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   ecowitt and wants_weather_now(text), ecowitt and wants_rain_caption(text))
+                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=ecowitt and wants_rain_caption(text))

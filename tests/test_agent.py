@@ -312,3 +312,26 @@ def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
     both = prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE])
     assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High or Extreme" in both
     assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]
+
+
+async def test_several_fast_calls_run_together_before_the_model_and_the_report_prompt_says_they_are_fetched():
+    from datetime import datetime
+    from lib import prompt
+    seen = []
+
+    async def handler(args, turn=None):
+        seen.append(args)
+        return json.dumps({"ok": True})
+    t = Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler),
+               Tool("air_quality", "d", {"type": "object", "properties": {}}, handler)])
+    client = FakeLLM(["The report."])
+    msgs = [{"role": "user", "content": "report"}]
+    reply = await llm.Agent(client, "m", t).run(msgs, "sys", "none", first_call=[("weather_now", {"groups": "outdoor"}), ("air_quality", {})])
+    assert reply == "The report." and len(client.requests) == 1 and seen == [{"groups": "outdoor"}, {}]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "tool", "assistant"]
+    assert [tc["id"] for tc in msgs[1]["tool_calls"]] == ["fast_1", "fast_2"] and [m["tool_call_id"] for m in msgs[2:4]] == ["fast_1", "fast_2"]
+    now = datetime(2026, 9, 29, 14, 5)
+    sources = ["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE]
+    fetched = prompt.build(now, sources, report=True, fetched=True)
+    assert "already fetched" in fetched and "Also call" not in fetched and "Pollen & asthma" in fetched and "Forecast [" in fetched
+    assert "Call weather_now" in prompt.build(now, sources, report=True) and "Also call pollen_asthma" in prompt.build(now, sources, report=True)
