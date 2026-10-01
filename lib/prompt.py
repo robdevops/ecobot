@@ -222,9 +222,10 @@ def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: b
     if rain_caption:
         text += RAIN_CAPTION_SECTION
     if about_bot:
-        text += ("\nTHIS QUESTION IS ABOUT THE BOT ITSELF (its metrics, sensors, sources or abilities): answer from WHAT THIS "
-                 "BOT CAN AND CAN'T DO above, as simple bullet points (\u2022, one short line each, no intro or closing sentence, no sub-bullets). "
-                 "Do not fetch readings.\n")
+        text += ("\nTHIS QUESTION IS ABOUT THE BOT ITSELF: answer from WHAT THIS BOT CAN AND CAN'T DO above, with no tool call. Keep it "
+                 "to the METRICS only, as simple bullet points (\u2022, one short line each, no intro or closing sentence, no sub-bullets): "
+                 "one per weather reading and per air-quality metric, each saying it is available now and how far its history goes "
+                 "(from the Weather station and Air quality lines). Leave out tools, charts and alerts unless the question asks about them.\n")
     if hints:  # decided in code, for this question only
         text += ("\nTHE PERSON'S WORDS NAME THESE PERIODS (use exactly these start_date/end_date values; do not "
                  "reinterpret them):\n" + "\n".join(f"- {h}" for h in hints) + "\n")
