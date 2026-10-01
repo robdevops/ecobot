@@ -84,3 +84,22 @@ def test_sun_uv_and_wind_are_left_out_when_zero_and_shown_when_not():
     gusty = report.weather_now(NOW.replace('"wind_gust":"0.0 km/h"', '"wind_gust":"9.0 km/h"'))
     assert "• Wind: 0.0 km/h from 131°, gust 9.0 km/h" in gusty
     assert "Sun" not in report.weather_now(NOW) and "Wind" not in report.weather_now(NOW)
+
+
+def test_every_emoji_threshold_the_station_reports_shows_in_the_report_at_its_reading():
+    from lib.ecowitt.glance import glance
+    now = ('{"outdoor":{"temperature":"36.0 ℃","humidity":"90 %","dew_point":"18.0 ℃","vpd":"1.300 kPa"},"indoor":{"temperature":"29.0 ℃","humidity":"20 %"},'
+           '"pressure":{"relative":"1030.0 hPa"},"rainfall":{"rain_rate":"2.0 mm/hr","daily":"3.0 mm","monthly":"9.0 mm"},'
+           '"solar_and_uvi":{"solar":"800.0 W/m²","uvi":"10"},"wind":{"wind_speed":"55.0 km/h","wind_gust":"70.0 km/h","wind_direction":"90 º"}}')
+    import json
+    data = json.loads(now)
+    data["emoji"] = {f"{g}.{f}": e for g, fields in data.items() for f, v in fields.items()
+                     if (e := glance(g, f, float(v.split()[0])))}
+    got = report.weather_now(json.dumps(data))
+    assert got.splitlines() == [
+        "• Outdoor: 🔥 36.0 °C, 💦 90 %, dew point 18.0 °C, 🧽 VPD 1.300 kPa",
+        "• Indoor: 🥵 29.0 °C, 🏜️ 20 %",
+        "• Pressure: 🗜️ 1030.0 hPa",
+        "• Rain today: ☔ 3.0 mm (month total 9.0 mm); 🌧️ raining (2.0 mm/h)",
+        "• Sun: ☀️ solar radiation 800.0 W/m², 🧴 UV index 10",
+        "• Wind: 🌪️ 55.0 km/h from 90°, gust 🌪️ 70.0 km/h"]

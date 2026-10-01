@@ -63,7 +63,7 @@ def weather_lines(now: dict) -> list[str]:
                  None if _zero(uvi) else tag("solar_and_uvi", "uvi", f"UV index {uvi}")])
     bullets = [("Outdoor", _join([tag("outdoor", "temperature"), tag("outdoor", "humidity"),
                                   f"dew point {get('outdoor', 'dew_point')}" if get("outdoor", "dew_point") else None,
-                                  f"VPD {get('outdoor', 'vpd')}" if get("outdoor", "vpd") else None])),
+                                  tag("outdoor", "vpd", f"VPD {get('outdoor', 'vpd')}" if get("outdoor", "vpd") else None)])),
                ("Indoor", _join([tag("indoor", "temperature"), tag("indoor", "humidity")])),
                ("Pressure", tag("pressure", "relative")),
                ("Rain today", rain),
