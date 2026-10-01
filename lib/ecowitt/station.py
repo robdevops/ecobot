@@ -5,9 +5,11 @@ readings ready, readings() feeds the alert monitors."""
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from ..config import Config
+from ..intent import NOW_GROUPS
 from ..timeutil import now_local
 from .outlook import rain_outlook
 from ..tools import Tool, Turn
@@ -88,6 +90,10 @@ REALTIME_PARAMS = {
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
 
+LIVE_GROUPS = NOW_GROUPS.split(",")   # what the once-a-minute live reading asks for: everything "weather now" and the report show
+LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
+
+
 class Ecowitt:
     name = "Ecowitt"
 
@@ -99,6 +105,7 @@ class Ecowitt:
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self._live_ok: bool | None = None  # the live rain reading: None until first tried
+        self._live: tuple[float, dict] | None = None   # (fetched at, the real_time data) from the keep-warm's minute check
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
@@ -161,7 +168,7 @@ class Ecowitt:
 
     async def _realtime(self, args: dict, turn: Turn | None = None) -> str:
         groups = parse_groups(args.get("groups"))
-        data = await self.api.realtime(self.mac, ",".join(groups), urgent=True)  # someone is waiting: before the background refreshes
+        data = await self._live_data(groups)
         out, newest, emoji = {}, 0, {}
         for grp, fields in data.items():
             for name, obj in (fields.items() if isinstance(fields, dict) else ()):
@@ -181,11 +188,21 @@ class Ecowitt:
         return json.dumps({"time": when, **out, **({"rain_outlook": outlook} if outlook else {}), **({"emoji": emoji} if emoji else {})},
                           ensure_ascii=False, separators=(",", ":"))
 
+    async def _live_data(self, groups: list[str]) -> dict:
+        """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and has them,
+        else a request of its own, ahead of the background refreshes (someone is waiting)."""
+        if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(self._live[1]):
+            return {g: self._live[1][g] for g in groups}
+        return await self.api.realtime(self.mac, ",".join(groups), urgent=True)
+
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags
-        by up to 5 minutes, this is about a minute old. None when unavailable."""
+        by up to 5 minutes, this is about a minute old. The same request keeps every live reading ready for "weather now" and the
+        report (self._live), one request a minute. None when unavailable."""
         try:
-            group = (await self.api.realtime(self.mac, "rainfall")).get("rainfall") or {}
+            data = await self.api.realtime(self.mac, ",".join(LIVE_GROUPS))
+            self._live = (time.time(), data)
+            group = data.get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)
             if not row or not ts:

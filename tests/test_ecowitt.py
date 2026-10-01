@@ -1145,3 +1145,23 @@ async def test_a_cancelled_waiter_does_not_block_the_lock():
     lock.release()
     await asyncio.wait_for(lock.acquire(), 1)           # free, not stuck behind the cancelled waiter
     lock.release()
+
+
+async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_afresh_when_it_cannot(station):
+    import time
+    eco, fake = station
+    real_time = lambda: [c for c in fake.calls if c.get("path") == "real_time"]
+    groups = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+    out = json.loads(await eco.tools[0].handler({"groups": groups}))
+    assert len(real_time()) == 1                                   # nothing cached yet: a request of its own
+    await eco.live_rain()                                          # the keep-warm's minute check takes every group
+    assert real_time()[-1]["call_back"] == groups and len(real_time()) == 2
+    cached = json.loads(await eco.tools[0].handler({"groups": groups}))
+    assert len(real_time()) == 2 and cached["outdoor"] == out["outdoor"]                # no request: the report is instant
+    json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
+    assert len(real_time()) == 2                                   # a subset of those groups too
+    json.loads(await eco.tools[0].handler({"groups": "lightning"}))
+    assert len(real_time()) == 3                                   # a group it doesn't hold: asks
+    eco._live = (time.time() - 100, eco._live[1])                  # older than 90 s: asks
+    json.loads(await eco.tools[0].handler({"groups": groups}))
+    assert len(real_time()) == 4
