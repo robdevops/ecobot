@@ -88,10 +88,13 @@ async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off
 
 
 async def test_the_alerts_status_lists_one_bullet_per_alert():
-    from lib.bot import ALERTS_TEXT
-    text = ALERTS_TEXT.format(on="on", other="off")
-    bullets = [line for line in text.splitlines() if line.startswith("• ")]
+    from lib.bot import alerts_text
+    text = alerts_text(True)
+    bullets = [line for line in text.splitlines() if line.startswith("\u2022 ")]
     assert len(bullets) == 6 and text.startswith("Weather alerts are on here:") and text.endswith("to turn them off.")
+    assert len(alerts_text(False, pollen=True).splitlines()) == 9 and "turn them on" in alerts_text(False)
+    assert "Pollen or thunderstorm asthma risk High or Extreme" in alerts_text(True, pollen=True)
+
 
 
 def test_report_is_on_the_right_hand_side_of_the_first_row():
@@ -217,3 +220,10 @@ def test_the_capabilities_list_is_short_bullets_without_dates():
     assert "available" not in text and len(templates.capabilities_text(air=False).splitlines()) == 5
     assert len(templates.capabilities_text(weather=False).splitlines()) == 2
 
+
+
+def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
+    plain = templates.capabilities_text()
+    assert "Pollen" not in plain and "Forecast" not in plain
+    full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
+    assert full[-3:] == ["• Pollen and thunderstorm asthma risk", "• Forecast", "• History charts"]

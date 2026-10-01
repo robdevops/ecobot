@@ -15,11 +15,13 @@ from telegram import Update
 from telegram.ext import Application, Defaults
 
 from lib.airgradient import AirGradient
-from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, Notifier, WeatherMonitor
+from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, Notifier, PollenMonitor, WeatherMonitor
 from lib.bot import Bot, polling_error
 from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
+from lib.forecast import Forecast
 from lib.llm import Agent
+from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.tools import Tools
 from lib.warm import every, safely
@@ -31,15 +33,24 @@ log = logging.getLogger("ecobot")
 
 
 async def start_sources(cfg: Config) -> list:
-    """Every configured data source that starts. Ecowitt and AirGradient are treated alike."""
+    """Every configured data source that starts: the weather station and the air sensor, then the optional website sources
+    (pollen, forecast), which are off unless switched on. The forecast uses the station's location unless one is configured."""
     sources = []
-    for source in ([Ecowitt(cfg)] if cfg.ecowitt else []) + ([AirGradient(cfg)] if cfg.airgradient else []):
+
+    async def start(source):
         try:
             await source.start()
             sources.append(source)
         except Exception:
             log.exception("%s couldn't start - continuing without it", source.name)
             await source.close()
+    for source in ([Ecowitt(cfg)] if cfg.ecowitt else []) + ([AirGradient(cfg)] if cfg.airgradient else []):
+        await start(source)
+    if cfg.pollen:
+        await start(Pollen(cfg))
+    if cfg.forecast:
+        eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
+        await start(Forecast(cfg, (eco.latitude, eco.longitude) if eco and eco.latitude is not None else None))
     return sources
 
 
@@ -60,6 +71,7 @@ async def main():
         raise SystemExit("No data source is working - nothing to talk about")
     eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
     air = next((s for s in sources if isinstance(s, AirGradient)), None)
+    pollen = next((s for s in sources if isinstance(s, Pollen)), None)
 
     composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
     tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
@@ -100,6 +112,9 @@ async def main():
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
                     kinds.append(f"air quality (every {AIR_CHECK_SECONDS // 60} min)")
+                if pollen:
+                    pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
+                    kinds.append("pollen and thunderstorm asthma")
                 log.info("Alerts: %s, to %d chat(s)", ", ".join(kinds) or "none", len(state.alert_chats()))
 
                 # Keeping warm: everything questions need, refreshed before they arrive

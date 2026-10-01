@@ -80,7 +80,7 @@ class FakeEcowitt:
             return httpx.Response(200, json={"code": -1, "msg": "System is busy."})
         path = request.url.path.rsplit("/", 1)[-1]
         if path == "list":
-            return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0,
+            return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0, "latitude": -37.8,
                                        "createtime": int((datetime.now(timezone.utc) - timedelta(days=self.history_days)).timestamp())}]})
         if path == "real_time":
             now = int(datetime.now(timezone.utc).timestamp())

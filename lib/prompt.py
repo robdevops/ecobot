@@ -162,14 +162,22 @@ def capabilities(sources: list[str]) -> str:
                      "cleaner air, and air_scan scans every air metric against every weather reading for what goes with what. "
                      "Use them for \"plot X against Y\", \"does rain affect air quality\" and \"is there a correlation between air "
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
+    if "melbournepollen" in have:
+        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme), tool pollen_asthma.")
+    if "Bureau of Meteorology" in have:
+        lines.append("- Forecast: today and the days ahead from the Bureau of Meteorology (summary, temperatures, chance of rain), tool weather_forecast.")
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, UV index of 9 or more, "
-                 "indoor/outdoor temperature crossing, air-quality mask alerts. /alerts off mutes them. Custom alerts "
+                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High or Extreme" if "melbournepollen" in have else "") + ". /alerts off mutes them. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
-    lines.append("- Not available: lightning, soil or extra sensor channels, indoor air quality, forecasts (only a short read of "
-                 "the pressure trend), other stations or places.")
+    missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
+    if "melbournepollen" not in have:
+        missing.append("pollen and thunderstorm asthma")
+    if "Bureau of Meteorology" not in have:
+        missing.append("forecasts (only a short read of the pressure trend)")
+    lines.append("- Not available: " + ", ".join(missing) + ".")
     return "\n".join(lines) + "\n"
 
 
@@ -194,6 +202,12 @@ Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI
 {EMOJI_RULE}
 """
+POLLEN_BLOCK = """
+Pollen & asthma
+• the "lines" of pollen_asthma, copied as they are (emoji included; the asthma line only when it has one)"""
+FORECAST_BLOCK = """
+Forecast
+• the "lines" of weather_forecast (days 2: Today, Tomorrow), copied as they are (emoji included)"""
 WEATHER_NOW_SECTION = f"""
 THE PERSON WANTS EVERYTHING THE WEATHER STATION READS RIGHT NOW. weather_now is already fetched (groups "{NOW_GROUPS}"), so don't call it again.
 List EVERYTHING from it, no summary sentence, in this layout (values from the tool):
@@ -217,6 +231,11 @@ def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: b
                          sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
     if report:
         text += REPORT_SECTION
+        have = " ".join(sources)
+        if "melbournepollen" in have:   # the optional sources add their blocks after Air quality
+            text += ("Also call pollen_asthma (in parallel with the others) and, after the Air quality block, add:" + POLLEN_BLOCK + "\n")
+        if "Bureau of Meteorology" in have:
+            text += ("Also call weather_forecast (in parallel with the others) and, after the last block above, add:" + FORECAST_BLOCK + "\n")
     elif weather_now:
         text += WEATHER_NOW_SECTION
     if rain_caption:

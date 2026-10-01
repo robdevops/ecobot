@@ -8,11 +8,19 @@ A source's `refresh(fresh)` fetches what questions usually need. A Warmer runs i
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 log = logging.getLogger(__name__)
 
 REFRESH_SECONDS = 240  # under the 5 minute freshness window both sources use
 FAST_REFRESH_SECONDS = 60  # the weather station: each refresh also runs the rain and temperature alert checks, so this is their delay
+
+
+SYNC_HOURS = (6, 18)  # the sources that are websites are only fetched from 6 am to 6 pm local time, to keep the hits down
+
+
+def in_sync_hours(now: datetime) -> bool:
+    return SYNC_HOURS[0] <= now.hour < SYNC_HOURS[1]
 
 
 async def safely(fn: Callable[..., Awaitable], *args):

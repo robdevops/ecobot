@@ -41,14 +41,15 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS_TEXT = ("Weather alerts are {on} here:\n"
-               "\u2022 Rain starting, and stopping (after 15 dry minutes)\n"
-               "\u2022 Rain likely soon\n"
-               "\u2022 Wind gusts over 40 km/h\n"
-               "\u2022 UV index of 9 or more\n"
-               "\u2022 Indoor and outdoor temperatures crossing, after 2+ days\n"
-               "\u2022 Unhealthy outdoor air, and when it's safe again\n"
-               "Use /alerts {other} to turn them {other}.")
+ALERTS = ["Rain starting, and stopping (after 15 dry minutes)", "Rain likely soon", "Wind gusts over 40 km/h", "UV index of 9 or more",
+          "Indoor and outdoor temperatures crossing, after 2+ days", "Unhealthy outdoor air, and when it's safe again"]
+POLLEN_ALERT = "Pollen or thunderstorm asthma risk High or Extreme"
+
+
+def alerts_text(on: bool, pollen: bool = False) -> str:
+    """The /alerts status: one bullet per alert."""
+    bullets = "\n".join(f"\u2022 {a}" for a in ALERTS + ([POLLEN_ALERT] if pollen else []))
+    return f"Weather alerts are {'on' if on else 'off'} here:\n{bullets}\nUse /alerts {'off' if on else 'on'} to turn them {'off' if on else 'on'}."
 
 
 @dataclass
@@ -281,7 +282,7 @@ class Bot:
             log.info("/alerts %s in %s", arg, describe_source(update))
         self.remember_chat(update)
         on = self.state.alerts_on(chat.id)
-        await msg.reply_text(ALERTS_TEXT.format(on="on" if on else "off", other="off" if on else "on"))
+        await msg.reply_text(alerts_text(on, "Pollen" in self.by_name))
 
     @staticmethod
     def _thread(msg: Message):
@@ -372,7 +373,8 @@ class Bot:
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
             if msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
-                await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name))
+                await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
+                                                                      "Pollen" in self.by_name, "Forecast" in self.by_name))
                 await self.on_alerts(update, context)
             else:
                 await self.respond(update, context, templates.sentence(msg.text) or msg.text)
@@ -403,7 +405,7 @@ class Bot:
         if not text:
             return
         now = now_local(self.cfg.tz)
-        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name)
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  _short(text))
         for source in self.sources:  # fetch recent readings while the model thinks

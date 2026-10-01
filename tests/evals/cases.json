@@ -1023,5 +1023,48 @@
       "q:report",
       "m:temperature"
     ]
+  },
+  {
+    "id": "pollen-now",
+    "ask": "pollen",
+    "note": "pollen and thunderstorm asthma are fetched without the model",
+    "expect": {
+      "fast": {
+        "tool": "pollen_asthma"
+      }
+    },
+    "covers": [
+      "q:pollen"
+    ]
+  },
+  {
+    "id": "hay-fever-today",
+    "ask": "is the pollen bad today?",
+    "note": "the model calls the pollen tool",
+    "expect": {
+      "fast": null,
+      "needs_data": true,
+      "tools": [
+        "pollen_asthma"
+      ]
+    },
+    "covers": [
+      "q:pollen"
+    ]
+  },
+  {
+    "id": "forecast-tomorrow",
+    "ask": "what's the forecast for tomorrow?",
+    "note": "the BOM forecast tool, not the station's own pressure trend",
+    "expect": {
+      "fast": null,
+      "needs_data": true,
+      "tools": [
+        "weather_forecast"
+      ]
+    },
+    "covers": [
+      "q:forecast"
+    ]
   }
 ]

@@ -285,3 +285,29 @@ def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], about_bot=True)
     assert "simple bullet points" in text and "no sub-bullets" in text and "6 at most" in text and "No dates" in text
+
+
+POLLEN_SOURCE = "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)"
+FORECAST_SOURCE = "Weather forecast for the owner's location (Bureau of Meteorology)"
+
+
+def test_the_report_has_pollen_and_forecast_blocks_only_when_those_sources_are_on():
+    from datetime import datetime
+    from lib import prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    plain = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor"], report=True)
+    assert "Pollen & asthma" not in plain and "weather_forecast" not in plain
+    full = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor", POLLEN_SOURCE, FORECAST_SOURCE], report=True)
+    report = full[full.index("THE PERSON WANTS THE FULL CURRENT REPORT"):]
+    assert report.index("Air quality") < report.index("Pollen & asthma") < report.index("Forecast\n•")
+    assert "pollen_asthma" in report and "weather_forecast" in report and "copied as they are" in report
+    assert "Pollen & asthma" not in prompt.build(now, ["Ecowitt weather station", FORECAST_SOURCE], report=True)
+
+
+def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
+    from lib import prompt
+    base = prompt.capabilities(["Ecowitt weather station"])
+    assert "pollen and thunderstorm asthma" in base.split("Not available:")[1] and "forecasts (only a short read" in base
+    both = prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE])
+    assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High or Extreme" in both
+    assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]

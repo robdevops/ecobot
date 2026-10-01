@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 from lib.alerts import AirMonitor, AlertState, Notifier, WeatherMonitor, with_footer
@@ -332,3 +333,69 @@ async def test_old_uv_readings_are_not_announced_after_a_restart(tmp_path):
     m, state, sent = monitor(tmp_path, uv(10, 11, 4))
     await m.check()
     assert sent == []
+
+
+# ---------- pollen and thunderstorm asthma ----------
+class FakePollen:
+    def __init__(self):
+        self.grass = self.asthma = None
+        self.fetched_at = time.time()
+        self.today = datetime(2026, 10, 1, 12, 0)
+
+    def now(self):
+        return self.today
+
+    def current(self):
+        from lib.pollen import LEVEL_EMOJI
+        make = lambda level, **kw: {"level": level, "emoji": LEVEL_EMOJI[level], **kw} if level else None
+        return {"grass": make(self.grass, date=self.today.date()), "asthma": make(self.asthma, updated=None),
+                "fetched_at": self.fetched_at}
+
+
+def pollen_monitor(tmp_path):
+    from lib.alerts import PollenMonitor
+    state, sent = AlertState(tmp_path / "s.json"), []
+
+    async def notify(text, link=None):
+        sent.append(text)
+    pollen = FakePollen()
+    return PollenMonitor(pollen, state, notify), pollen, sent
+
+
+async def test_high_or_extreme_pollen_and_asthma_alert_once_per_level_and_day(tmp_path):
+    mon, pollen, sent = pollen_monitor(tmp_path)
+    for grass, asthma in (("Low", "Low"), ("Moderate", "Moderate")):
+        pollen.grass, pollen.asthma = grass, asthma
+        await mon.check()
+    assert sent == []
+    pollen.grass = "High"
+    await mon.check()
+    await mon.check()                                                  # unchanged: nothing more
+    assert sent == ["🟠 Grass pollen is High."]
+    pollen.grass, pollen.asthma = "Extreme", "Extreme"
+    await mon.check()
+    assert sent[1:] == ["🔴 Grass pollen is Extreme.", "🔴 Thunderstorm asthma risk is Extreme. Check your asthma action plan."]
+    pollen.grass, pollen.asthma = "Low", "Moderate"                    # dropped below High: ready to warn again
+    await mon.check()
+    pollen.grass = "High"
+    await mon.check()
+    assert len(sent) == 4 and sent[-1] == "🟠 Grass pollen is High."
+    pollen.today += timedelta(days=1)                                  # a new day, still High
+    pollen.fetched_at = time.time()
+    await mon.check()
+    assert len(sent) == 5 and "Central" not in " ".join(sent)
+
+
+async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stale_page_is_ignored(tmp_path):
+    from lib.alerts import PollenMonitor
+    mon, pollen, sent = pollen_monitor(tmp_path)
+    pollen.grass = "High"
+    await mon.check()
+    assert len(sent) == 1
+    again = PollenMonitor(pollen, mon.state, mon.notify)               # the state file keeps what was sent
+    await again.check()
+    assert len(sent) == 1
+    pollen.asthma = None                                               # off-season: nothing to say
+    pollen.grass, pollen.fetched_at = "Extreme", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
+    await again.check()
+    assert len(sent) == 1

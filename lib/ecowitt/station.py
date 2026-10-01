@@ -103,6 +103,7 @@ class Ecowitt:
         self.station_name = ""
         self.created: datetime | None = None
         self.longitude = 145.0  # Melbourne; only used to time the pressure tide
+        self.latitude: float | None = None  # the station's own location (the forecast uses it unless one is configured)
         self.tools = [Tool("weather_now", REALTIME_DESCRIPTION, REALTIME_PARAMS, self._realtime),
                       Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history),
                       Tool("weather_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days),
@@ -121,6 +122,10 @@ class Ecowitt:
             pass
         try:
             self.longitude = float(device["longitude"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        try:
+            self.latitude = float(device["latitude"])
         except (KeyError, TypeError, ValueError):
             pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:

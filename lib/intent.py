@@ -33,7 +33,7 @@ _OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|wea
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
 WEATHER = re.compile(
-    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP}|frost\w*|"
+    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP}|frost\w*|pollen|hay ?fever|asthma|"
     rf"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
     rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"
@@ -93,6 +93,16 @@ REPORT = re.compile(_only(r"status|report|sitrep|overview|dashboard|summary|ever
 
 def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
+
+
+# Pollen and thunderstorm asthma (the Pollen source)
+POLLEN_WORDS = re.compile(r"\b(pollen|hay ?fever|thunderstorm asthma|asthma)\b", I)
+POLLEN_NOW = re.compile(_only(r"pollen( count| level| forecast| today| now)?|hay ?fever|(thunderstorm )?asthma( risk)?",
+                              r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+
+
+def mentions_pollen(text: str) -> bool:
+    return bool(POLLEN_WORDS.search(text))
 
 
 # "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
@@ -359,7 +369,7 @@ SPECIFIC_MOMENT = re.compile(
     r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b\d{1,2}:\d{2}\b|\b(noon|midnight|morning|afternoon|evening|overnight|tonight)\b|"
     r"\b(mon|tues?|wed(nes)?|thu(rs?)?|fri|sat(ur)?|sun)(day)?\b", I)
 
-def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
     if SPECIFIC_MOMENT.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
@@ -369,6 +379,8 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
                                "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"air quality chart, {name}"
     if air and mentions_air(text) and not AIR_NOT_NOW.search(text) and not TIME_WORDS.search(text):
         return "air_quality", {}, "air quality now"
+    if pollen and POLLEN_NOW.search(text) and not TIME_WORDS.search(text):
+        return "pollen_asthma", {}, "pollen and thunderstorm asthma"
     if ecowitt and wants_weather_now(text):
         return "weather_now", {"groups": NOW_GROUPS}, "weather now"
     if ecowitt and (period := weather_period(text, now)):
@@ -397,10 +409,10 @@ class Reading:
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
 
 
-def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Reading:
+def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False) -> Reading:
     """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
     try:
-        fast = fast_call(text, now, ecowitt, air)
+        fast = fast_call(text, now, ecowitt, air, pollen)
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None

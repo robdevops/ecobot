@@ -21,6 +21,8 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient |
 | `AIRGRADIENT_DASHBOARD_URL` | optional "live chart" link under air-quality replies and alerts |
+| `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High or Extreme. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
+| `FORECAST=on` | optional: the BOM daily forecast (Open-Meteo if the BOM is down) in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the place, else the weather station's own location is used |
 
 ## Layout
 
@@ -43,7 +45,8 @@ lib/captions.py         when a chart is drawn, and the hint that makes the model
 lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
                         days (rank/count days), outlook (raining / likely soon), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
-lib/alerts/             notify (chats, silent send), weather, air
+lib/alerts/             notify (chats, silent send), weather, air, pollen
+lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, BOM forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases
 scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
                         sent to the model for a question), check_rain.py (are rain totals trustworthy?),
@@ -53,6 +56,9 @@ scripts/                ecowitt_metrics.py (which metrics the station reports), 
 A design for tappable commands and buttons is in `TELEGRAM_UX.md` (not built yet).
 
 Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.
+
+## The pollen and forecast sources
+Both are off by default. They are websites, not APIs (the pollen page is parsed; the BOM's JSON is unofficial), so they are fetched gently: only between 6 am and 6 pm local time, pollen every 30 minutes with a conditional request (a 304 costs the site almost nothing) and the forecast hourly, and questions use the last fetch. One fetch is made at start (or at the first question) when nothing is cached, even at night. `python scripts/conditions.py --lat .. --lon ..` fetches both once and prints what the report would show: run it before switching them on. The thunderstorm asthma forecast only runs 1 Oct - 31 Dec; outside that the report simply has no asthma line.
 
 ## How it stays fast and cheap
 
