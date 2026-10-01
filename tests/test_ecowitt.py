@@ -1110,3 +1110,38 @@ async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers
         assert await station.live_rain() == (100, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0})
         await station.live_rain()
     assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "recovered" in caplog.records[1].message
+
+
+async def test_a_waiting_person_goes_before_the_background_requests_queued_ahead_of_them():
+    from lib.ecowitt.api import _TurnLock
+    lock, order = _TurnLock(), []
+
+    async def use(name, urgent=False):
+        await lock.acquire(urgent)
+        try:
+            order.append(name)
+            await asyncio.sleep(0.01)
+        finally:
+            lock.release()
+    running = asyncio.create_task(use("in flight"))
+    await asyncio.sleep(0)
+    tasks = [asyncio.create_task(use(f"background {i}")) for i in range(3)]
+    await asyncio.sleep(0)
+    tasks.append(asyncio.create_task(use("person", urgent=True)))
+    await asyncio.gather(running, *tasks)
+    assert order == ["in flight", "person", "background 0", "background 1", "background 2"]
+    await use("after")                                  # and the lock is free again
+    assert order[-1] == "after" and not lock._locked
+
+
+async def test_a_cancelled_waiter_does_not_block_the_lock():
+    from lib.ecowitt.api import _TurnLock
+    lock = _TurnLock()
+    await lock.acquire()
+    waiting = asyncio.create_task(lock.acquire())
+    await asyncio.sleep(0)
+    waiting.cancel()
+    await asyncio.gather(waiting, return_exceptions=True)
+    lock.release()
+    await asyncio.wait_for(lock.acquire(), 1)           # free, not stuck behind the cancelled waiter
+    lock.release()

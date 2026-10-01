@@ -190,9 +190,7 @@ WEATHER_LAYOUT = """\
 • Wind: speed and direction, gust"""
 EMOJI_RULE = ("Put an emoji from weather_now's \"emoji\" right before the value of the one reading it is keyed to, and only for readings it lists; "
               "a reading with no entry has no emoji, and a whole line or label never gets one.")
-REPORT_BODY = f"""in this layout (values from the tools):
-Current report (day date time):
-
+REPORT_BODY = f"""in this layout (values from the tools; no title or header line: start with "Weather station"):
 Weather station
 {WEATHER_LAYOUT}
 

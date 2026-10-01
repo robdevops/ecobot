@@ -161,7 +161,7 @@ class Ecowitt:
 
     async def _realtime(self, args: dict, turn: Turn | None = None) -> str:
         groups = parse_groups(args.get("groups"))
-        data = await self.api.realtime(self.mac, ",".join(groups))
+        data = await self.api.realtime(self.mac, ",".join(groups), urgent=True)  # someone is waiting: before the background refreshes
         out, newest, emoji = {}, 0, {}
         for grp, fields in data.items():
             for name, obj in (fields.items() if isinstance(fields, dict) else ()):

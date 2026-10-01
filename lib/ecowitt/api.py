@@ -14,6 +14,7 @@ busy.") is an error. Ecowitt keeps and allows per request:
 
 import asyncio
 import logging
+from collections import deque
 from datetime import datetime, timedelta
 
 import httpx
@@ -87,22 +88,56 @@ def _body(res: httpx.Response) -> dict | None:
     return body if isinstance(body, dict) and "code" in body else None
 
 
+class _TurnLock:
+    """One request at a time, with an urgent line: a person waiting for a reading goes before the background refreshes
+    queued behind the request in flight (a keep-warm round can queue several requests, two seconds apart)."""
+
+    def __init__(self):
+        self._locked = False
+        self._queues = {True: deque(), False: deque()}
+
+    async def acquire(self, urgent: bool = False):
+        if not self._locked and not self._queues[True] and not self._queues[False]:
+            self._locked = True
+            return
+        waiter = asyncio.get_running_loop().create_future()
+        self._queues[urgent].append(waiter)
+        try:
+            await waiter
+        except asyncio.CancelledError:
+            if waiter.done() and not waiter.cancelled():   # the turn was already handed to us: pass it on
+                self.release()
+            else:
+                self._queues[urgent].remove(waiter)
+            raise
+
+    def release(self):
+        for urgent in (True, False):
+            while self._queues[urgent]:
+                waiter = self._queues[urgent].popleft()
+                if not waiter.cancelled():
+                    waiter.set_result(None)                 # the lock stays held: its turn passes to the waiter
+                    return
+        self._locked = False
+
+
 class EcowittAPI:
     def __init__(self, api_key: str, app_key: str, transport: httpx.AsyncBaseTransport | None = None):
         self.keys = {"application_key": app_key, "api_key": api_key}
         self.client = httpx.AsyncClient(timeout=30, transport=transport)
-        self._turn = asyncio.Lock()  # one request at a time, spaced out
+        self._turn = _TurnLock()  # one request at a time, spaced out; a person's request goes first
         self._last = 0.0
         self.requests = 0  # sent so far, including retries
 
     async def close(self):
         await self.client.aclose()
 
-    async def _get(self, path: str, **params) -> dict | list:
+    async def _get(self, path: str, urgent: bool = False, **params) -> dict | list:
         """The response's "data". Retries when Ecowitt says it is busy or we were too quick;
-        raises EcowittError."""
+        raises EcowittError. urgent: someone is waiting for it, so it goes before queued background requests."""
         loop = asyncio.get_running_loop()
-        async with self._turn:
+        await self._turn.acquire(urgent)
+        try:
             for attempt in range(BUSY_RETRIES + 1):
                 if (pause := self._last + MIN_GAP_SECONDS - loop.time()) > 0:
                     await asyncio.sleep(pause)
@@ -127,13 +162,15 @@ class EcowittAPI:
                     await asyncio.sleep(wait)
                     continue
                 raise EcowittError(msg, transient=passing)
+        finally:
+            self._turn.release()
 
     async def devices(self) -> list[dict]:
         data = await self._get("list", limit=50)
         return data.get("list", []) if isinstance(data, dict) else []
 
-    async def realtime(self, mac: str, groups: str) -> dict:
-        return fix_units(await self._get("real_time", mac=mac, call_back=groups, **UNIT_IDS))
+    async def realtime(self, mac: str, groups: str, urgent: bool = False) -> dict:
+        return fix_units(await self._get("real_time", urgent=urgent, mac=mac, call_back=groups, **UNIT_IDS))
 
     async def history(self, mac: str, cycle: str, start: datetime, end: datetime, groups: str) -> dict:
         """{group: {field: {"unit", "list": {epoch: value}}}}; empty when there is no data."""

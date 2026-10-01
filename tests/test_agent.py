@@ -335,3 +335,10 @@ async def test_several_fast_calls_run_together_before_the_model_and_the_report_p
     fetched = prompt.build(now, sources, report=True, fetched=True)
     assert "already fetched" in fetched and "Also call" not in fetched and "Pollen & asthma" in fetched and "Forecast [" in fetched
     assert "Call weather_now" in prompt.build(now, sources, report=True) and "Also call pollen_asthma" in prompt.build(now, sources, report=True)
+
+
+def test_the_report_has_no_title_line():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], report=True)
+    assert "Current report" not in text and 'no title or header line: start with "Weather station"' in text
