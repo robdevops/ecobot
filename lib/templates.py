@@ -5,9 +5,9 @@ from telegram import ReplyKeyboardMarkup
 
 CAPABILITIES = "\U0001f514 Capabilities & alerts"  # answered with what the bot can do, then the /alerts status
 
-ROWS = [[("\U0001f4cb Report", "Report")],
+ROWS = [[("\U0001f4cb Report", "Report"), ("\U0001f327️ Rain chart 7d", "Rain chart 7d"),
+         ("\U0001f4a7 Humidity chart 7d", "Humidity chart 7d")],
         [(f"\U0001f4c8 Temperature chart {days}d", f"Temperature chart {days}d") for days in (7, 30, 90)],
-        [("\U0001f327️ Rain chart 7d", "Rain chart 7d"), ("\U0001f4a7 Humidity chart 7d", "Humidity chart 7d")],
         [("\U0001f3ed Air quality 7d", "Air quality PM1, PM2.5 and PM10 7d"),
          ("\U0001f3ed Air quality 30d", "Air quality PM1, PM2.5 and PM10 30d"),
          (CAPABILITIES, "What can you do?")]]

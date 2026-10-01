@@ -36,6 +36,7 @@ def test_the_keyboard_is_persistent_and_has_every_button():
     kb = templates.keyboard()
     assert kb.is_persistent and kb.resize_keyboard
     assert {b.text for row in kb.keyboard for b in row} == templates.LABELS
+    assert [len(row) for row in kb.keyboard] == [3, 3, 3]
 
 
 class Recorder(Bot):
