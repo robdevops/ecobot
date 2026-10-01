@@ -89,6 +89,7 @@ async def main():
                 log.info("Bot @%s running with model %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
                 notify = Notifier(app.bot, state)
+                await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts
                 kinds = []

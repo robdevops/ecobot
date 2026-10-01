@@ -16,7 +16,7 @@ from datetime import datetime
 
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
-from telegram.error import BadRequest, NetworkError, TelegramError
+from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
 from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, prompt, templates
@@ -308,6 +308,25 @@ class Bot:
             reply_markup=templates.keyboard() if private else None)
         if private and self.state:
             self.state.set_keyboard(update.effective_chat.id, templates.VERSION)
+
+    async def refresh_keyboards(self, tg_bot) -> int:
+        """At startup: tell each private chat whose buttons are out of date that they changed, with the new keyboard (silently).
+        A chat that hid them is left alone. Returns how many were sent."""
+        if not self.state:
+            return 0
+        sent = 0
+        for chat_id in [c for c in self.state.chats if c > 0 and self.state.keyboard(c) not in (templates.VERSION, templates.HIDDEN)]:
+            try:
+                await tg_bot.send_message(chat_id, "Buttons updated.", reply_markup=templates.keyboard(), disable_notification=True)
+                self.state.set_keyboard(chat_id, templates.VERSION)
+                sent += 1
+            except Forbidden as e:  # blocked the bot
+                self.state.remove_chat(chat_id, f"can't post: {e}")
+            except TelegramError as e:
+                log.warning("Buttons update to %s failed: %s", chat_id, e)
+        if sent:
+            log.info("Buttons: told %d private chat(s) the buttons changed (keyboard %s)", sent, templates.VERSION)
+        return sent
 
     def _keyboard_stale(self, msg: Message) -> bool:
         """Does this private chat need the current buttons (it has never had them, or they have changed since)? Not when it

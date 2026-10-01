@@ -182,3 +182,27 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
     first, second = await ask(), await ask()
     assert first[0][1].get("reply_markup") is not None and second[0][1].get("reply_markup") is None
     assert state.keyboard(1) == templates.VERSION
+
+
+async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_others_left_alone(tmp_path):
+    from telegram.error import Forbidden
+    from lib.alerts import AlertState
+    state = AlertState(tmp_path / "s.json")
+    for chat_id in (10, 11, 12, 13, -20):                     # -20 is a group
+        state.add_chat(chat_id, str(chat_id))
+    state.set_keyboard(10, "old1234")
+    state.set_keyboard(11, templates.VERSION)
+    state.set_keyboard(12, templates.HIDDEN)                  # 13 and the group have no record
+    sent = []
+
+    class TG:
+        async def send_message(self, chat_id, text, **kw):
+            if chat_id == 13:
+                raise Forbidden("bot was blocked by the user")
+            sent.append((chat_id, text, kw["reply_markup"].is_persistent))
+    bot = Bot(NS(tz=TZ), None, [], state)
+    assert await bot.refresh_keyboards(TG()) == 1
+    assert sent == [(10, "Buttons updated.", True)]
+    assert state.keyboard(10) == templates.VERSION and 13 not in state.chats and state.keyboard(-20) is None
+    assert await bot.refresh_keyboards(TG()) == 0             # nothing more on the next start
+    assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
