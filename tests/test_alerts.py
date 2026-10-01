@@ -20,6 +20,12 @@ class FakeStation:
 
     def __init__(self, data=None):
         self.data = data or []
+        self.live = None
+
+    async def live_rain(self):
+        if isinstance(self.live, Exception):
+            return None
+        return self.live
 
     async def recent(self, hours):
         return self.data
@@ -63,6 +69,30 @@ async def test_a_dry_gap_shorter_than_30_minutes_does_not_flap(tmp_path):
         m.station.data = data
         await m.check()
     assert len(sent) == 1 and "started" in sent[0]
+
+
+async def test_a_live_reading_starts_the_rain_alert_before_the_history_catches_up(tmp_path):
+    m, state, sent = monitor(tmp_path, rain(0, 0, 0))
+    await m.check()
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 0.0, "rainfall.daily": 0.5})   # dry live reading
+    await m.check()
+    assert sent == []
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 0.0, "rainfall.daily": 0.7})   # one tip: the total rose
+    await m.check()
+    assert len(sent) == 1 and "started raining" in sent[0]
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 2.4, "rainfall.daily": 0.9})
+    await m.check()
+    assert len(sent) == 1
+
+
+async def test_a_live_rate_alone_starts_it_and_a_failed_live_call_is_ignored(tmp_path):
+    m, state, sent = monitor(tmp_path, rain(0, 0, 0))
+    m.station.live = RuntimeError("down")
+    await m.check()
+    assert sent == []
+    m.station.live = (T0 + 4 * 300, {"rainfall.rain_rate": 3.0, "rainfall.daily": 0.5})
+    await m.check()
+    assert len(sent) == 1 and "3 mm/h" in sent[0]
 
 
 def test_the_status_outlook_says_raining_now_or_likely_soon_or_nothing():

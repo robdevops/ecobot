@@ -1,8 +1,8 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
-5-minute readings, so no extra requests).
+5-minute readings; the rain check also reads the gauge's live value, one small request).
 
   - Rain: "stopped" after 30 dry minutes, with how much fell; any rain after that is a new
-    "started". One rule both ways, so the alerts never contradict each other (no flapping).
+    "started" (one tip of the gauge is enough). One rule both ways, so the alerts never contradict each other (no flapping).
   - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
     Melbourne (see assess_rain). At most once every 6 hours.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
@@ -67,7 +67,8 @@ class WeatherMonitor:
         rows = await self.station.recent(3)
         if not rows:
             return
-        await self._rain(rows)
+        live = await self.station.live_rain()  # newer than the 5-minute history by up to 5 minutes
+        await self._rain(rows + [live] if live and live[0] > rows[-1][0] else rows)
         await self._rain_likely(rows)
         await self._gusts(rows)
         await self._cross(rows)

@@ -175,6 +175,18 @@ class Ecowitt:
         return json.dumps({"time": when, **out, **({"rain_outlook": outlook} if outlook else {}), **({"emoji": emoji} if emoji else {})},
                           ensure_ascii=False, separators=(",", ":"))
 
+    async def live_rain(self) -> tuple[int, dict] | None:
+        """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags
+        by up to 5 minutes, this is about a minute old. None when unavailable."""
+        try:
+            group = (await self.api.realtime(self.mac, "rainfall")).get("rainfall") or {}
+            row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
+            ts = max(int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict))
+        except Exception as e:  # the alert still works from the history
+            log.debug("Live rain unavailable: %s", e)
+            return None
+        return (ts, row) if row and ts else None
+
     async def _rain_outlook(self) -> str | None:
         """Raining now, or likely soon (the same rules as the alerts), from the last 3 hours of readings."""
         try:
