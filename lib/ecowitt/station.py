@@ -98,6 +98,7 @@ class Ecowitt:
         self.hot = HotStore()
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
+        self._live_ok: bool | None = None  # the live rain reading: None until first tried
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
@@ -182,10 +183,19 @@ class Ecowitt:
             group = (await self.api.realtime(self.mac, "rainfall")).get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max(int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict))
+            if not row or not ts:
+                raise ValueError("no rain reading in the response")
         except Exception as e:  # the alert still works from the history
-            log.debug("Live rain unavailable: %s", e)
+            if self._live_ok is not False:  # once per outage, not every minute
+                log.warning("Live rain reading failed (%s); the rain alert uses the 5-minute history", e)
+            self._live_ok = False
             return None
-        return (ts, row) if row and ts else None
+        if self._live_ok is None:
+            log.info("Live rain reading working (%.1f mm/h, %.1f mm today)", row.get("rainfall.rain_rate", 0), row.get("rainfall.daily", 0))
+        elif not self._live_ok:
+            log.info("Live rain reading recovered")
+        self._live_ok = True
+        return ts, row
 
     async def _rain_outlook(self) -> str | None:
         """Raining now, or likely soon (the same rules as the alerts), from the last 3 hours of readings."""

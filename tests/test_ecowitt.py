@@ -1095,3 +1095,18 @@ async def test_the_weather_station_is_kept_warm_every_minute_and_the_air_sensor_
     eco = Ecowitt(config(tmp_path), transport=ecowitt_transport()[0])
     air = AirGradient(config(tmp_path), transport=air_transport()[0])
     assert eco.warmer.interval == 60 and air.warmer.interval == REFRESH_SECONDS == 240
+
+
+async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers(station, monkeypatch, caplog):
+    station, _ = station
+    good = {"rainfall": {"rain_rate": {"time": "100", "value": "1.5"}, "daily": {"time": "100", "value": "2.0"}}}
+    answers = [{}, {}, good, good]
+
+    async def realtime(mac, groups):
+        return answers.pop(0)
+    monkeypatch.setattr(station.api, "realtime", realtime)
+    with caplog.at_level("INFO", logger="lib.ecowitt.station"):
+        assert await station.live_rain() is None and await station.live_rain() is None
+        assert await station.live_rain() == (100, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0})
+        await station.live_rain()
+    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "recovered" in caplog.records[1].message

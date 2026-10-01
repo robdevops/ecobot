@@ -83,6 +83,8 @@ class WeatherMonitor:
         if not m["raining"] and any(w for _, w, _ in wet[-2:]):
             rate = max(r for _, w, r in wet[-2:] if w)
             m.update(raining=True, since=next(ts for ts, w, _ in wet[-2:] if w))
+            if not any(w for ts, w, _ in wet[:-1][-2:]):
+                log.info("Alerts: rain started, seen in the newest reading only (the live one when it is newer than the history)")
             await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."))
         elif m["raining"] and (last_wet is None or latest_ts - last_wet >= RAIN_STOP_DRY_SECONDS):
             if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
