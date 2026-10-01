@@ -440,6 +440,9 @@ class Bot:
         markup = templates.keyboard() if self._keyboard_stale(msg) else None
         try:
             if await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup):
+                log.info("Buttons: sent keyboard %s to chat %s (it had %s)", templates.VERSION, msg.chat_id, self.state.keyboard(msg.chat_id))
                 self.state.set_keyboard(msg.chat_id, templates.VERSION)
+            elif markup:
+                log.info("Buttons: this reply couldn't carry the keyboard (several charts); will try the next one")
         except TelegramError:
             log.exception("Failed to deliver reply")
