@@ -6,6 +6,7 @@ replies to the bot. Replies are silent (no notification sound).
 
 import asyncio
 import contextlib
+import json
 import logging
 import random
 import re
@@ -19,7 +20,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
 from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, prompt, templates
+from . import intent, prompt, report, templates
 from .alerts import AlertState, with_footer
 from .charts import render as render_chart
 from .tools import Turn
@@ -399,6 +400,15 @@ class Bot:
         sender = msg.from_user.full_name if msg.from_user else "Someone"
         return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
 
+    async def _written_in_code(self, read, turn: Turn) -> str:
+        """The report ("weather now") from the fast path's tool calls, made together; lib/report.py lays it out."""
+        calls = [read.fast[:2], *read.more]
+        results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
+        by_tool = {name: result for (name, _), result in zip(calls, results)}
+        if read.report:
+            return report.report(by_tool)
+        return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
+
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         msg = update.effective_message
         text = text.strip()
@@ -431,12 +441,16 @@ class Bot:
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked)
             try:
-                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
-                                      read.about_the_bot, read.report, read.weather_now, read.rain_caption, fetched=bool(read.fast))
-                reply = await asyncio.wait_for(
-                    self.agent.run(working, system, read.effort, first_call=([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None,
-                                   require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,
-                                   **({"on_text": draft.update} if draft else {})), TURN_SECONDS)
+                if read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model
+                    reply = await asyncio.wait_for(self._written_in_code(read, turn), TURN_SECONDS)
+                    working.append({"role": "assistant", "content": reply})
+                else:
+                    system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
+                                          read.about_the_bot, read.rain_caption)
+                    reply = await asyncio.wait_for(
+                        self.agent.run(working, system, read.effort, first_call=([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None,
+                                       require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,
+                                       **({"on_text": draft.update} if draft else {})), TURN_SECONDS)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:

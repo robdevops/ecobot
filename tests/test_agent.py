@@ -187,37 +187,11 @@ async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
     assert "ABOUT THE BOT ITSELF" in prompt.build(now, ["Ecowitt"], [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, ["Ecowitt"])
 
 
-def test_the_full_report_instructions_are_added_only_for_a_report_request():
-    from datetime import datetime
-    from lib import prompt
-    now = datetime(2026, 9, 29, 14, 5)
-    assert "FULL CURRENT REPORT" in prompt.build(now, ["Ecowitt"], report=True) and "air_quality (no dates)" in prompt.build(now, ["Ecowitt"], report=True)
-    assert "FULL CURRENT REPORT" not in prompt.build(now, ["Ecowitt"])
-
-
-def test_the_full_report_asks_for_and_lists_solar_radiation_and_uv():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station", "AirGradient outdoor sensor"], report=True)
-    assert "solar_and_uvi" in text and "• Sun: solar radiation W/m², UV index" in text and "dew point, VPD (kPa)" in text
-
-
 def test_the_prompt_never_shows_a_temperature_emoji_to_copy_and_says_no_entry_means_no_emoji():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], report=True)
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
     assert '"outdoor.temperature": "' not in text and "a reading with no entry gets NO emoji" in text
-    assert "a whole line or label never gets one" in text
-
-
-def test_the_report_lists_outdoor_then_indoor_then_the_rest_alphabetically():
-    import re
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], report=True)
-    section = text[text.index("Weather station\n"):text.index("Air quality\n", text.index("Weather station\n"))]
-    names = re.findall(r"^• (\w+( today)?):", section, re.M)
-    assert [n[0] for n in names] == ["Outdoor", "Indoor", "Pressure", "Rain today", "Sun", "Wind"]
 
 
 def chunk(content=None, calls=None, usage=None):
@@ -261,16 +235,6 @@ async def test_streamed_answers_give_the_same_result_and_report_the_text_so_far(
     assert msgs[1]["tool_calls"][0]["function"] == {"name": "weather_now", "arguments": '{"groups": "outdoor"}'}
 
 
-def test_weather_now_lists_the_weather_half_of_the_report_in_the_same_layout():
-    from datetime import datetime
-    from lib import prompt
-    now = datetime(2026, 9, 29, 14, 5)
-    text = prompt.build(now, ["Ecowitt weather station"], weather_now=True)
-    assert "EVERYTHING THE WEATHER STATION READS RIGHT NOW" in text and "• Sun: solar radiation W/m², UV index" in text
-    assert "air_quality (no dates)" not in text and "FULL CURRENT REPORT" not in text
-    assert "EVERYTHING THE WEATHER STATION READS" not in prompt.build(now, ["Ecowitt weather station"], report=True)
-
-
 def test_a_rain_chart_caption_is_only_the_least_and_most_rain_and_whether_more_is_expected():
     from datetime import datetime
     from lib import prompt
@@ -291,20 +255,6 @@ POLLEN_SOURCE = "Melbourne pollen forecast and thunderstorm asthma risk (melbour
 FORECAST_SOURCE = "Weather forecast for the owner's location (Bureau of Meteorology)"
 
 
-def test_the_report_has_pollen_and_forecast_blocks_only_when_those_sources_are_on():
-    from datetime import datetime
-    from lib import prompt
-    now = datetime(2026, 9, 29, 14, 5)
-    plain = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor"], report=True)
-    assert "Pollen & asthma" not in plain and "weather_forecast" not in plain
-    full = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor", POLLEN_SOURCE, FORECAST_SOURCE], report=True)
-    report = full[full.index("THE PERSON WANTS THE FULL CURRENT REPORT"):]
-    assert report.index("Air quality") < report.index("Pollen & asthma") < report.index("Forecast [")
-    assert "pollen_asthma" in report and "weather_forecast" in report and "copied as they are" in report
-    assert 'Forecast [the "tag" of weather_forecast' in report and "next day by its weekday" in report
-    assert "Pollen & asthma" not in prompt.build(now, ["Ecowitt weather station", FORECAST_SOURCE], report=True)
-
-
 def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
     from lib import prompt
     base = prompt.capabilities(["Ecowitt weather station"])
@@ -314,9 +264,7 @@ def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
     assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]
 
 
-async def test_several_fast_calls_run_together_before_the_model_and_the_report_prompt_says_they_are_fetched():
-    from datetime import datetime
-    from lib import prompt
+async def test_several_fast_calls_run_together_before_the_model():
     seen = []
 
     async def handler(args, turn=None):
@@ -330,15 +278,6 @@ async def test_several_fast_calls_run_together_before_the_model_and_the_report_p
     assert reply == "The report." and len(client.requests) == 1 and seen == [{"groups": "outdoor"}, {}]
     assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "tool", "assistant"]
     assert [tc["id"] for tc in msgs[1]["tool_calls"]] == ["fast_1", "fast_2"] and [m["tool_call_id"] for m in msgs[2:4]] == ["fast_1", "fast_2"]
-    now = datetime(2026, 9, 29, 14, 5)
-    sources = ["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE]
-    fetched = prompt.build(now, sources, report=True, fetched=True)
-    assert "already fetched" in fetched and "Also call" not in fetched and "Pollen & asthma" in fetched and "Forecast [" in fetched
-    assert "Call weather_now" in prompt.build(now, sources, report=True) and "Also call pollen_asthma" in prompt.build(now, sources, report=True)
 
 
-def test_the_report_has_no_title_line():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], report=True)
-    assert "Current report" not in text and 'no title or header line: start with "Weather station"' in text
+

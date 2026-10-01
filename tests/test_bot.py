@@ -187,13 +187,25 @@ async def test_a_long_answer_is_cut_to_fit_one_chart_message_not_sent_as_text_th
     assert botmod.fit_caption("short answer") == "short answer"
 
 
-async def test_a_report_hands_the_model_every_call_already_made_in_code():
-    class Capture:
-        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None):
-            self.first_call, self.system = first_call, system
-            return "Current report"
+async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_model_is_not_asked():
+    import json
+
+    class Tools:
+        def __init__(self):
+            self.called = []
+
+        async def call(self, name, raw, turn=None):
+            self.called.append(name)
+            return {"weather_now": json.dumps({"outdoor": {"temperature": "12.3 ℃", "humidity": "94 %"}, "emoji": {"outdoor.humidity": "💦"}}),
+                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
+
+    class Agent:
+        tools = Tools()
+
+        async def run(self, *a, **k):
+            raise AssertionError("the model must not be asked for a report")
     sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "AirGradient")]
-    agent, replies = Capture(), []
+    agent, replies = Agent(), []
 
     async def reply_text(body, **kw):
         replies.append(body)
@@ -203,6 +215,11 @@ async def test_a_report_hands_the_model_every_call_already_made_in_code():
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), agent, sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "report")
-    assert [name for name, _ in agent.first_call] == ["weather_now", "air_quality"] and replies == ["Current report"]
-    assert "already fetched" in agent.system
+    bot = Bot(NS(tz=TZ), agent, sources, None)
+    await bot.respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "report")
+    await bot.respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "weather now")
+    assert agent.tools.called == ["weather_now", "air_quality", "weather_now"]
+    assert replies[0] == "Weather station\n• Outdoor: 12.3 °C, 💦 94 %\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"
+    assert replies[1] == "• Outdoor: 12.3 °C, 💦 94 %"
+    history = bot.chats[(1, None)].history
+    assert history[-1] == {"role": "assistant", "content": replies[1]} and history[-4]["content"] == "report"

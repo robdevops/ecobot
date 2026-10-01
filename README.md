@@ -62,7 +62,7 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed;
 
 ## How it stays fast and cheap
 
-- Private chats also get a persistent button keyboard (`lib/templates.py`): tapping one sends its label as a message (a 3x3 grid: Report, Rain chart 7d, Humidity chart 7d; Temperature chart 7d/30d/90d; Air quality 7d/30d (PM1, PM2.5 and PM10 together), Capabilities & alerts = what the bot can do, then the alert settings). `/keyboard` shows it, `/keyboard off` hides it. When the buttons change, the bot says "Buttons updated." with the new keyboard to each private chat at its next start, and any chat missed gets it with its next reply (the bot remembers which version each chat has; a chat that hid it keeps it hidden). Typed "weather now" fetches every reading the station has. A chart's text is cut to Telegram's 1024-character caption so it goes as one message.
+- Private chats also get a persistent button keyboard (`lib/templates.py`): tapping one sends its label as a message (a 3x3 grid: Report, Rain chart 7d, Humidity chart 7d; Temperature chart 7d/30d/90d; Air quality 7d/30d (PM1, PM2.5 and PM10 together), Capabilities & alerts = what the bot can do, then the alert settings). `/keyboard` shows it, `/keyboard off` hides it. When the buttons change, the bot says "Buttons updated." with the new keyboard to each private chat at its next start, and any chat missed gets it with its next reply (the bot remembers which version each chat has; a chat that hid it keeps it hidden). Typed "weather now" shows every reading the station has. A chart's text is cut to Telegram's 1024-character caption so it goes as one message.
 - In private chats the bot shows Telegram's "Thinking..." draft (sendMessageDraft, re-sent every 20 s, as drafts expire after 30) and streams the answer into it before sending the real message; groups show "typing...". A "message generation stopped" update is only logged.
 - The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
@@ -72,3 +72,6 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed;
   `airgradient_cache.sqlite`): a background archive copies every Ecowitt cycle (5-minute, 30-minute,
   4-hour, daily) before Ecowitt expires it, and backfills AirGradient day by day to where the sensor's
   data starts. Questions only go to the APIs for data the cache is missing.
+
+## The report
+"report" (and "status", "sitrep") and "weather now" are written in code, with no model call (`lib/report.py`): the bot fetches the tools' results together and lays them out, so they are quick and always the same. Sun, UV and wind are left out when zero (night, calm). The report is: Weather station, Air quality, and Pollen & asthma and Forecast when those sources are on (pollen and forecast always come from the cache).
