@@ -189,10 +189,10 @@ class Ecowitt:
                           ensure_ascii=False, separators=(",", ":"))
 
     async def _live_data(self, groups: list[str]) -> dict:
-        """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and has them,
+        """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and asked for them,
         else a request of its own, ahead of the background refreshes (someone is waiting)."""
-        if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(self._live[1]):
-            return {g: self._live[1][g] for g in groups}
+        if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
+            return {g: self._live[1][g] for g in groups if g in self._live[1]}
         return await self.api.realtime(self.mac, ",".join(groups), urgent=True)
 
     async def live_rain(self) -> tuple[int, dict] | None:

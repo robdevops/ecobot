@@ -1160,7 +1160,7 @@ async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_a
     assert len(real_time()) == 2 and cached["outdoor"] == out["outdoor"]                # no request: the report is instant
     json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
     assert len(real_time()) == 2                                   # a subset of those groups too
-    json.loads(await eco.tools[0].handler({"groups": "lightning"}))
+    json.loads(await eco.tools[0].handler({"groups": "rainfall_piezo"}))
     assert len(real_time()) == 3                                   # a group it doesn't hold: asks
     eco._live = (time.time() - 100, eco._live[1])                  # older than 90 s: asks
     json.loads(await eco.tools[0].handler({"groups": groups}))
