@@ -36,7 +36,7 @@ UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh
 UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rainfall_unitid": 12}
 
 BUSY_RETRIES = 3
-MIN_GAP_SECONDS = 2.0  # Ecowitt rejects requests that come too fast ("Operation too frequent")
+MIN_GAP_SECONDS = 1.0  # Ecowitt rejects requests that come too fast ("Operation too frequent")
 RETRY_ON = ("busy", "too frequent")
 FMT = "%Y-%m-%d %H:%M:%S"
 
