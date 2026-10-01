@@ -211,7 +211,7 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
 def test_the_capabilities_list_is_short_bullets_without_dates():
     text = templates.capabilities_text()
     bullets = [line for line in text.splitlines() if line.startswith("\u2022 ")]
-    assert len(bullets) == 8 and text.endswith("\u2022 History charts of any of them") and "PM1, PM2.5 and PM10" in text and "outdoor and indoor" in text
+    assert len(bullets) == 8 and text.endswith("\u2022 History charts of any of them") and "PM1, PM2.5, PM10, CO₂, VOC, NOx" in text and "outdoor and indoor" in text
     assert not any(ch.isdigit() for ch in text.replace("PM10", "").replace("PM2.5", "").replace("PM1", "").replace("CO₂", ""))
     assert "available" not in text and templates.capabilities_text(air=False).count("\u2022") == 7
     assert templates.capabilities_text(weather=False).count("\u2022") == 2

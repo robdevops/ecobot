@@ -33,7 +33,7 @@ def sentence(text: str) -> str | None:
 
 WEATHER_METRICS = ["Temperature and humidity, outdoor and indoor", "Dew point, feels-like and VPD", "Pressure",
                    "Wind speed, gust and direction", "Rain", "Solar radiation and UV index"]
-AIR_METRICS = ["Air quality: PM1, PM2.5 and PM10, CO₂, VOC and NOx"]
+AIR_METRICS = ["Air quality: PM1, PM2.5, PM10, CO₂, VOC, NOx"]
 HISTORY = ["History charts of any of them"]
 
 
