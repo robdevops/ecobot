@@ -182,7 +182,7 @@ class Ecowitt:
         try:
             group = (await self.api.realtime(self.mac, "rainfall")).get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
-            ts = max(int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict))
+            ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)
             if not row or not ts:
                 raise ValueError("no rain reading in the response")
         except Exception as e:  # the alert still works from the history

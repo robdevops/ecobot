@@ -7,6 +7,7 @@ replies to the bot. Replies are silent (no notification sound).
 import asyncio
 import contextlib
 import logging
+import random
 import re
 import time
 from collections import defaultdict
@@ -32,6 +33,8 @@ TG_LIMIT = 4000
 CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
+DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
+DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
@@ -132,6 +135,43 @@ async def keep_typing(bot, chat_id: int, thread_id, stop: asyncio.Event):
             await asyncio.wait_for(stop.wait(), 4.5)
 
 
+class Draft:
+    """A private chat's "Thinking..." preview (sendMessageDraft): empty until the answer streams in, then the text so far.
+    It only lasts 30 s after its last update, so run() re-sends it while the model works; the real reply is sent after."""
+
+    def __init__(self, bot, chat_id: int, thread_id):
+        self.bot, self.chat_id, self.thread_id = bot, chat_id, thread_id
+        self.draft_id = random.randint(1, 2**31 - 1)  # one id, so the updates animate one draft
+        self.text = ""
+        self.changed = asyncio.Event()
+
+    def update(self, text: str):
+        self.text = text
+        self.changed.set()
+
+    async def run(self, stop: asyncio.Event):
+        """Send the draft, then again on every change (at most once a second) and every DRAFT_REFRESH_SECONDS. If Telegram
+        refuses drafts, fall back to the "typing..." indicator for the rest of the turn."""
+        while not stop.is_set():
+            self.changed.clear()
+            try:
+                await self.bot.send_message_draft(self.chat_id, self.draft_id, text=self.text[-TG_LIMIT:] or None,
+                                                  message_thread_id=self.thread_id)
+            except Exception as e:
+                log.warning("Draft not sent (%s: %s); using the typing indicator", type(e).__name__, e)
+                await keep_typing(self.bot, self.chat_id, self.thread_id, stop)
+                return
+            waits = [asyncio.ensure_future(stop.wait()), asyncio.ensure_future(self.changed.wait())]
+            try:
+                done, _ = await asyncio.wait(waits, timeout=DRAFT_REFRESH_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for w in waits:
+                    w.cancel()
+            if self.changed.is_set() and not stop.is_set():
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop.wait(), DRAFT_MIN_GAP)
+
+
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None):
     """Send the answer with any charts. A short answer goes in the photo's caption (one message);
     a long one goes first as text, then the charts. If sending the chart fails the answer is still
@@ -176,6 +216,7 @@ class Bot:
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
         app.add_handler(CommandHandler("reset", self.on_reset))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
+        app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
         app.add_error_handler(self.on_error)
@@ -247,6 +288,14 @@ class Bot:
             log.error("Unhandled error while handling a message", exc_info=err)
 
     # ---------- messages ----------
+    async def on_other(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Service messages and other non-text updates: only logged when Telegram says a draft's generation was stopped
+        (a field this library version doesn't know, so it is found by name)."""
+        msg = update.effective_message
+        extra = getattr(msg, "api_kwargs", None) or {}
+        if stopped := [k for k in extra if "generation" in k.lower()]:
+            log.info("Message generation stopped in %s (fields: %s)", describe_source(update), ", ".join(stopped))
+
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.effective_message
         if not msg or not msg.text:
@@ -295,7 +344,10 @@ class Bot:
         started = time.monotonic()
         async with chat.lock:
             stop_typing = asyncio.Event()
-            typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
+            draft = (Draft(context.bot, msg.chat_id, thread_id)
+                     if msg.chat.type == ChatType.PRIVATE and hasattr(context.bot, "send_message_draft") else None)
+            typing = asyncio.create_task(draft.run(stop_typing) if draft else
+                                         keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
             stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
@@ -307,7 +359,8 @@ class Bot:
                                       read.about_the_bot, read.report)
                 reply = await asyncio.wait_for(
                     self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
-                                   require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn), TURN_SECONDS)
+                                   require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,
+                                   **({"on_text": draft.update} if draft else {})), TURN_SECONDS)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:

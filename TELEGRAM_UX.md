@@ -5,6 +5,9 @@ Not built yet. This is the plan for making commands and common questions tappabl
 ## What exists today
 `lib/bot.py` registers `/start` and `/help`, `/reset` and `/alerts`, and sends every other text message to `Bot.respond`, which reads the sentence (`intent.read`), takes the fast path when the bot can fetch without the model, runs the model with the tools, and sends the answer with any charts. Replies are silent. A message in a group is answered only when the bot is mentioned or replied to. Questions in one chat are queued in order and given up on after 90 seconds.
 
+## Built since: the thinking draft
+In private chats `Bot.respond` shows a `sendMessageDraft` ("Thinking...", then the answer streaming in) instead of "typing...", then sends the real reply as before (`lib/bot.py` `Draft`, `lib/llm.py` streaming).
+
 ## Principle
 A command or a button never does work of its own. It is turned into the plain sentence a person would have typed and handed to `Bot.respond`. The fast path, the period hints, the model, the queue, the timeout, the charts and the alerts all behave exactly as they do for typed text, and there is one place to fix them.
 

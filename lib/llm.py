@@ -22,34 +22,59 @@ class Agent:
     def __init__(self, client: AsyncOpenAI, model: str, tools: Tools):
         self.client, self.model, self.tools = client, model, tools
 
-    async def _complete(self, kwargs: dict, call_no: int) -> tuple[str, list[dict], float]:
-        """One LLM call. Returns (content, tool_calls, seconds) and logs timing/usage."""
+    async def _complete(self, kwargs: dict, call_no: int, on_text=None) -> tuple[str, list[dict], float]:
+        """One LLM call. Returns (content, tool_calls, seconds) and logs timing/usage. With on_text the answer is streamed
+        and on_text(text so far) is called as it grows."""
         started = time.monotonic()
-        resp = await self.client.chat.completions.create(**kwargs)
+        if on_text:
+            content, calls, usage = await self._stream(kwargs, on_text)
+        else:
+            resp = await self.client.chat.completions.create(**kwargs)
+            msg = resp.choices[0].message
+            calls = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
+                     for tc in msg.tool_calls or []]
+            content, usage = msg.content or "", resp.usage
         elapsed = time.monotonic() - started
-        msg = resp.choices[0].message
-        calls = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
-                 for tc in msg.tool_calls or []]
-        content = msg.content or ""
         detail = "no usage"
-        if usage := resp.usage:
+        if usage:
             cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
             thought = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
             detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached), "
                       f"out {usage.completion_tokens} ({'?' if thought is None else thought} thinking)")
-        log.info("LLM %d (%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
-                 elapsed, detail, len(calls), len(content))
+        log.info("LLM %d (%s%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
+                 ", streamed" if on_text else "", elapsed, detail, len(calls), len(content))
         return content, calls, elapsed
+
+    async def _stream(self, kwargs: dict, on_text) -> tuple[str, list[dict], object]:
+        """The same answer as a plain call, assembled from the streamed pieces: (content, tool_calls, usage)."""
+        content, calls, usage = "", {}, None
+        stream = await self.client.chat.completions.create(**kwargs, stream=True, stream_options={"include_usage": True})
+        async for chunk in stream:
+            usage = getattr(chunk, "usage", None) or usage
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            for tc in getattr(delta, "tool_calls", None) or []:
+                call = calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                call["id"] = tc.id or call["id"]
+                if fn := tc.function:
+                    call["name"] += fn.name or ""
+                    call["arguments"] += fn.arguments or ""
+            if piece := getattr(delta, "content", None):
+                content += piece
+                on_text(content)
+        return content, [calls[i] for i in sorted(calls)], usage
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
                   first_call: tuple[str, dict] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None) -> str:
+                  turn: Turn | None = None, on_text=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
         first_call (tool name, args) is a call the bot already worked out (the fast path): it runs
         straight away and the model is only invoked once the data is in. require_tool forces a
-        fresh fetch on the first model call (weather questions); off for chat, so it can just reply."""
+        fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft)."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:
@@ -85,7 +110,7 @@ class Agent:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)
                     kwargs["messages"].append({"role": "user", "content": LIMIT_NOTICE})
 
-                content, tool_calls, secs = await self._complete(kwargs, step + 1)
+                content, tool_calls, secs = await self._complete(kwargs, step + 1, on_text)
                 llm_time += secs
                 entry = {"role": "assistant", "content": content}
                 if tool_calls and not final:

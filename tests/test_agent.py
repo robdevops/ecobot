@@ -218,3 +218,44 @@ def test_the_report_lists_outdoor_then_indoor_then_the_rest_alphabetically():
     section = text[text.index("Weather station\n"):text.index("Air quality\n", text.index("Weather station\n"))]
     names = re.findall(r"^• (\w+( today)?):", section, re.M)
     assert [n[0] for n in names] == ["Outdoor", "Indoor", "Pressure", "Rain today", "Sun", "Wind"]
+
+
+def chunk(content=None, calls=None, usage=None):
+    delta = NS(content=content, tool_calls=calls)
+    return NS(choices=[NS(delta=delta)] if (content is not None or calls) else [], usage=usage)
+
+
+def piece(index, id=None, name=None, args=None):
+    return NS(index=index, id=id, function=NS(name=name, arguments=args))
+
+
+class StreamingLLM:
+    """Streams each scripted answer as chunks: a list of chunks per call."""
+
+    def __init__(self, script):
+        self.script, self.requests = list(script), []
+        self.chat = NS(completions=NS(create=self.create))
+
+    async def create(self, **kw):
+        self.requests.append(kw)
+        chunks = self.script.pop(0)
+
+        async def gen():
+            for c in chunks:
+                yield c
+        return gen()
+
+
+async def test_streamed_answers_give_the_same_result_and_report_the_text_so_far():
+    t, seen = tools()
+    usage = NS(prompt_tokens=10, completion_tokens=5)
+    client = StreamingLLM([
+        [chunk(calls=[piece(0, "c0", "weather_now", '{"gr')]), chunk(calls=[piece(0, None, None, 'oups": "outdoor"}')])],
+        [chunk("It is "), chunk("12 degrees."), chunk(usage=usage)]])
+    texts = []
+    msgs = [{"role": "user", "content": "how hot"}]
+    reply = await llm.Agent(client, "m", t).run(msgs, "sys", "none", on_text=texts.append)
+    assert reply == "It is 12 degrees." and seen == [{"groups": "outdoor"}]
+    assert texts == ["It is ", "It is 12 degrees."]
+    assert client.requests[0]["stream"] is True and client.requests[0]["stream_options"] == {"include_usage": True}
+    assert msgs[1]["tool_calls"][0]["function"] == {"name": "weather_now", "arguments": '{"groups": "outdoor"}'}
