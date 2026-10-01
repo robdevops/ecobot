@@ -23,7 +23,7 @@ def test_every_button_asks_something_the_bot_understands():
     assert read("\U0001f32c️ Air quality now").fast[0] == "air_quality"
     for days in (7, 30):
         name, args, _ = read(f"\U0001f3ed Air quality {days}d").fast
-        assert name == "air_quality" and args["chart"] is True
+        assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
     for days in (7, 30, 90):
         name, args, _ = read(f"\U0001f4c8 Temperature chart {days}d").fast
         assert name == "weather_history" and args["chart"] is True

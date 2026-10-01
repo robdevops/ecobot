@@ -7,7 +7,8 @@ CAPABILITIES = "\U0001f514 Capabilities & alerts"  # answered with what the bot 
 
 ROWS = [[("\U0001f321️ Weather now", "Weather now"), ("\U0001f32c️ Air quality now", "Air quality now"), ("\U0001f4cb Report", "Report")],
         [(f"\U0001f4c8 Temperature chart {days}d", f"Temperature chart {days}d") for days in (7, 30, 90)],
-        [("\U0001f3ed Air quality 7d", "Air quality 7d"), ("\U0001f3ed Air quality 30d", "Air quality 30d"),
+        [("\U0001f3ed Air quality 7d", "Air quality PM1, PM2.5 and PM10 7d"),
+         ("\U0001f3ed Air quality 30d", "Air quality PM1, PM2.5 and PM10 30d"),
          (CAPABILITIES, "What can you do?")]]
 SENTENCES = dict(button for row in ROWS for button in row)
 LABELS = set(SENTENCES)
