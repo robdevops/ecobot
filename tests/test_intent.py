@@ -340,7 +340,7 @@ def test_ecowitt_means_the_weather_and_ag_or_airgradient_means_the_air_quality()
 def test_the_report_fetches_everything_in_code_before_the_model_sees_it():
     r = intent.read("report", NOW, True, True, True, True)
     assert r.report and r.fast == ("weather_now", {"groups": intent.NOW_GROUPS}, "report")
-    assert r.more == [("air_quality", {}), ("pollen_asthma", {}), ("weather_forecast", {"days": 2})]
+    assert r.more == [("air_quality", {}), ("pollen_asthma", {"cached": True}), ("weather_forecast", {"days": 2, "cached": True})]
     plain = intent.read("sitrep", NOW)
     assert [plain.fast[0], *(t for t, _ in plain.more)] == ["weather_now", "air_quality"]
     only_air = intent.read("status", NOW, ecowitt=False)

@@ -40,6 +40,7 @@ class Config:
     state_path: Path = ROOT / "bot_state.json"
     cache_path: Path = ROOT / "ecowitt_cache.sqlite"
     air_cache_path: Path = ROOT / "airgradient_cache.sqlite"
+    conditions_cache_path: Path = ROOT / "conditions_cache.sqlite"   # the last pollen page and forecast, kept across restarts
     pollen: bool = False                 # POLLEN=on: Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = "Central"     # the Victorian forecast district whose thunderstorm asthma risk is used
     forecast: bool = False               # FORECAST=on: the BOM daily forecast (Open-Meteo as a fallback)

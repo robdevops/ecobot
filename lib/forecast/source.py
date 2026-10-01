@@ -13,6 +13,7 @@ import httpx
 
 from .. import intent
 from ..config import Config
+from ..snapshots import Snapshots
 from ..timeutil import now_local
 from ..tools import Tool, Turn
 from ..warm import Warmer, in_sync_hours
@@ -22,8 +23,8 @@ log = logging.getLogger(__name__)
 BOM = "https://api.weather.bom.gov.au/v1"
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
-FORECAST_REFRESH_SECONDS = 3600
-FRESH_SECONDS = 1800          # a question reuses a forecast this young
+FORECAST_REFRESH_SECONDS = 15 * 60
+FRESH_SECONDS = 10 * 60       # a question reuses a forecast this young
 
 DESCRIPTION = ("The weather forecast for the owner's location from the Bureau of Meteorology: today and the days ahead, "
                "each with a summary, the lowest and highest temperature and the chance of rain. Use it for forecast "
@@ -113,6 +114,8 @@ class Forecast:
         self.tag = ""                 # "BOM" or "Open-Meteo": which one answered, for a short [tag] in the reply
         self.fetched_at = 0.0
         self.requests = 0
+        self.store = Snapshots.open(cfg.conditions_cache_path)
+        self._load()
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
         self.tools = [Tool("weather_forecast", DESCRIPTION, PARAMETERS, self.handle)]
 
@@ -129,13 +132,28 @@ class Forecast:
         return "Weather forecast for the owner's location (Bureau of Meteorology) (people say \"forecast\")"
 
     def wants(self, text: str) -> bool:
-        return bool(re.search(r"\bforecast\w*|\btomorrow\b|\bthis week\b", text, re.I)) or intent.wants_report(text)
+        """Only forecast questions start a refresh; the report always uses what is cached."""
+        return bool(re.search(r"\bforecast\w*|\btomorrow\b|\bthis week\b", text, re.I))
 
     def poke(self):
         self.warmer.poke()
 
     async def close(self):
         await self.client.aclose()
+        self.store.close()
+
+    # ---------- kept on disk ----------
+    def _load(self):
+        """Start from the last forecast fetched (before the restart), so a night-time start needs no fetch."""
+        if last := self.store.latest("forecast"):
+            self.fetched_at, saved = last
+            self.source, self.tag = saved["source"], saved["tag"]
+            self.days = [{**d, "date": date.fromisoformat(d["date"])} for d in saved["days"]]
+
+    def _save(self):
+        self.store.save("forecast", {"source": self.source, "tag": self.tag,
+                                     "days": [{**d, "date": d["date"].isoformat()} for d in self.days]},
+                        now=self.fetched_at)
 
     def now(self) -> datetime:
         return now_local(self.tz)
@@ -180,10 +198,11 @@ class Forecast:
         before = self.requests
         try:
             (self.source, self.days), self.tag = await self._bom(), "BOM"
-        except Exception as e:
-            log.warning("BOM forecast failed (%s: %s); using Open-Meteo", type(e).__name__, e)
+        except Exception as e:  # not logged: only both failing is news (the Open-Meteo call below raises, and the warmer logs it)
+            log.debug("BOM forecast failed (%s: %s); using Open-Meteo", type(e).__name__, e)
             (self.source, self.days), self.tag = await self._open_meteo(), "Open-Meteo"
         self.fetched_at = time.time()
+        self._save()
         return f"Forecast {self.requests - before} req"
 
     # ---------- reading ----------
@@ -193,7 +212,7 @@ class Forecast:
         return [f"{day_label(d['date'], today)}: {describe_day(d)}" for d in wanted]
 
     async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        if self.days is None:
+        if self.days is None and not args.get("cached"):   # the report ("cached") never fetches
             try:
                 await self.warm(True)
             except Exception as e:

@@ -19,7 +19,8 @@ def config(tmp_path, **over) -> Config:
     base = dict(telegram_token="1:x", xai_api_key="k", xai_base_url="http://x", xai_model="m", tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite")
+                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite",
+                conditions_cache_path=tmp_path / "conditions.sqlite")
     return Config(**{**base, **over})
 
 

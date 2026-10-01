@@ -98,7 +98,8 @@ def wants_report(text: str) -> bool:
 def report_calls(ecowitt: bool, air: bool, pollen: bool = False, forecast: bool = False) -> list[tuple[str, dict]]:
     """What the full report needs, fetched together before the model sees the question."""
     return ([("weather_now", {"groups": NOW_GROUPS})] if ecowitt else []) + ([("air_quality", {})] if air else []) + (
-        [("pollen_asthma", {})] if pollen else []) + ([("weather_forecast", {"days": 2})] if forecast else [])
+        [("pollen_asthma", {"cached": True})] if pollen else []) + (
+        [("weather_forecast", {"days": 2, "cached": True})] if forecast else [])
 
 
 # Pollen and thunderstorm asthma (the Pollen source)

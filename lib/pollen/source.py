@@ -7,12 +7,13 @@ One fetch is made at the start (or the first question) when nothing is cached, e
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import date, datetime
 
 import httpx
 
 from .. import intent
 from ..config import Config
+from ..snapshots import Snapshots
 from ..timeutil import now_local
 from ..tools import Tool, Turn
 from ..warm import Warmer, in_sync_hours
@@ -40,6 +41,8 @@ class Pollen:
         self.fetched_at = 0.0                # when (epoch)
         self._validators: dict = {}          # ETag / Last-Modified for the conditional request
         self.requests = 0
+        self.store = Snapshots.open(cfg.conditions_cache_path)
+        self._load()
         self.warmer = Warmer(self.warm, POLLEN_REFRESH_SECONDS)
         self.tools = [Tool("pollen_asthma", DESCRIPTION, PARAMETERS, self.handle)]
 
@@ -54,13 +57,29 @@ class Pollen:
         return "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au) (people say \"pollen\" or \"hay fever\")"
 
     def wants(self, text: str) -> bool:
-        return intent.mentions_pollen(text) or intent.wants_report(text)
+        """Only pollen questions start a refresh; the report always uses what is cached."""
+        return intent.mentions_pollen(text)
 
     def poke(self):
         self.warmer.poke()
 
     async def close(self):
         await self.client.aclose()
+        self.store.close()
+
+    # ---------- kept on disk ----------
+    def _load(self):
+        """Start from the last page seen (before the restart), so a night-time start needs no fetch."""
+        if last := self.store.latest("pollen"):
+            self.fetched_at, saved = last
+            self.data = {**saved, "melbourne_date": date.fromisoformat(saved["melbourne_date"]) if saved.get("melbourne_date") else None}
+            self._validators = json.loads(self.store.get("pollen_validators") or "{}")
+
+    def _save(self):
+        d = self.data
+        self.store.save("pollen", {**d, "melbourne_date": d["melbourne_date"].isoformat() if d.get("melbourne_date") else None},
+                        now=self.fetched_at)
+        self.store.put("pollen_validators", json.dumps(self._validators))
 
     # ---------- fetching ----------
     def now(self) -> datetime:
@@ -76,11 +95,13 @@ class Pollen:
         res = await self.client.get(URL, headers=self._validators)
         if res.status_code == 304 and self.data is not None:
             self.fetched_at = time.time()
+            self._save()                       # the same page: only its last-seen time moves
             return "Pollen 1 req (not modified)"
         res.raise_for_status()
         self._validators = {k: v for k, v in (("If-None-Match", res.headers.get("etag")),
                                               ("If-Modified-Since", res.headers.get("last-modified"))) if v}
         self.data, self.fetched_at = parse_melbourne_pollen(res.text), time.time()
+        self._save()
         if not self.data["melbourne_grass"] and not self.data["district_grass"]:
             log.warning("Pollen: no grass pollen level found on the page (has its layout changed?)")
         return "Pollen 1 req"
@@ -106,7 +127,7 @@ class Pollen:
         return out
 
     async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        if self.data is None:
+        if self.data is None and not args.get("cached"):   # the report ("cached") never fetches
             try:
                 await self.warm(True)
             except Exception as e:
