@@ -21,7 +21,9 @@ def test_every_button_asks_something_the_bot_understands():
         return intent.read(templates.sentence(label), NOW, True, True)
     assert read("\U0001f4cb Report").report
     assert read("\U0001f32c️ Air quality now").fast[0] == "air_quality"
-    assert read("\U0001f3ed AQ all week").fast[1]["chart"] is True
+    for days in (7, 30):
+        name, args, _ = read(f"\U0001f3ed Air quality {days}d").fast
+        assert name == "air_quality" and args["chart"] is True
     for days in (7, 30, 90):
         name, args, _ = read(f"\U0001f4c8 Temperature chart {days}d").fast
         assert name == "weather_history" and args["chart"] is True
