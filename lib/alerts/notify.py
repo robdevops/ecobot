@@ -59,6 +59,15 @@ class AlertState:
         self.chats.setdefault(chat_id, {"title": title})["alerts"] = on
         self.save()
 
+    def keyboard(self, chat_id: int) -> str | None:
+        """The version of the button keyboard this chat was last sent (or "hidden" if it hid it)."""
+        return self.chats.get(chat_id, {}).get("keyboard")
+
+    def set_keyboard(self, chat_id: int, version: str):
+        if chat_id in self.chats and self.chats[chat_id].get("keyboard") != version:
+            self.chats[chat_id]["keyboard"] = version
+            self.save()
+
     def alerts_on(self, chat_id: int) -> bool:
         return self.chats.get(chat_id, {}).get("alerts", True)
 

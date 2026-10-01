@@ -191,32 +191,35 @@ def fit_caption(text: str, link: tuple[str, str] | None = None) -> str:
     return (cut.rstrip() + "…") if cut != text else text
 
 
-async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None):
+async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None) -> bool:
     """Send the answer with any charts. A short answer goes in the photo's caption (one message);
     a long one goes first as text, then the charts. If sending the chart fails the answer is still
-    sent as text. link = (label, url) adds a small italic link line at the end."""
+    sent as text. link = (label, url) adds a small italic link line at the end. markup (the button keyboard) rides on
+    the last text or the single photo; returns whether it was sent (a group of photos can't carry one)."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
     caption, entities = with_footer(text, link)
     if photos and len(caption) > CAPTION_LIMIT:  # one message beats a text and then a picture: cut the text to fit
         caption, entities = with_footer(fit_caption(text, link), link)
+    extra = {"reply_markup": markup} if markup else {}
     if photos and len(caption) <= CAPTION_LIMIT:
         try:
             if len(photos) == 1:
-                await msg.reply_photo(photos[0], caption=caption, caption_entities=entities or None)
-            else:
-                await msg.reply_media_group([InputMediaPhoto(p, caption=caption if i == 0 else None,
-                                                             caption_entities=(entities or None) if i == 0 else None)
-                                             for i, p in enumerate(photos)])
-            return
+                await msg.reply_photo(photos[0], caption=caption, caption_entities=entities or None, **extra)
+                return bool(markup)
+            await msg.reply_media_group([InputMediaPhoto(p, caption=caption if i == 0 else None,
+                                                         caption_entities=(entities or None) if i == 0 else None)
+                                         for i, p in enumerate(photos)])
+            return False
         except TelegramError:
             log.exception("Couldn't send the chart; sending the answer as text")
             photos = []
     chunks = split_message(text)
     for i, chunk in enumerate(chunks):
-        body, ents = with_footer(chunk, link) if i == len(chunks) - 1 else (chunk, [])
-        await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True)
+        last = i == len(chunks) - 1
+        body, ents = with_footer(chunk, link) if last else (chunk, [])
+        await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True, **(extra if last else {}))
     if photos:
         try:
             if len(photos) == 1:
@@ -225,6 +228,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
                 await msg.reply_media_group([InputMediaPhoto(p) for p in photos])
         except TelegramError:
             log.exception("Couldn't send the chart")
+    return bool(markup)
 
 
 class Bot:
@@ -302,6 +306,14 @@ class Bot:
         await update.effective_message.reply_text(
             HELP.format(user=update.effective_user.id, chat=update.effective_chat.id),
             reply_markup=templates.keyboard() if private else None)
+        if private and self.state:
+            self.state.set_keyboard(update.effective_chat.id, templates.VERSION)
+
+    def _keyboard_stale(self, msg: Message) -> bool:
+        """Does this private chat need the current buttons (it has never had them, or they have changed since)? Not when it
+        hid them."""
+        return bool(self.state and msg.chat.type == ChatType.PRIVATE
+                    and self.state.keyboard(msg.chat_id) not in (templates.VERSION, templates.HIDDEN))
 
     async def on_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/keyboard shows the buttons again, /keyboard off hides them (private chats only)."""
@@ -310,8 +322,12 @@ class Bot:
             await msg.reply_text("The buttons are only in private chats.")
         elif context.args and context.args[0].lower() == "off":
             await msg.reply_text("Buttons hidden. /keyboard shows them again.", reply_markup=ReplyKeyboardRemove())
+            if self.state:
+                self.state.set_keyboard(msg.chat_id, templates.HIDDEN)
         else:
             await msg.reply_text("Here are the buttons.", reply_markup=templates.keyboard())
+            if self.state:
+                self.state.set_keyboard(msg.chat_id, templates.VERSION)
 
     async def on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Errors raised inside handlers: network blips get one line, anything else a traceback."""
@@ -421,7 +437,9 @@ class Bot:
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
+        markup = templates.keyboard() if self._keyboard_stale(msg) else None
         try:
-            await deliver(msg, reply, photos, link=air.link if air and used_air else None)
+            if await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup):
+                self.state.set_keyboard(msg.chat_id, templates.VERSION)
         except TelegramError:
             log.exception("Failed to deliver reply")

@@ -92,3 +92,93 @@ async def test_the_alerts_status_lists_one_bullet_per_alert():
     text = ALERTS_TEXT.format(on="on", other="off")
     bullets = [line for line in text.splitlines() if line.startswith("• ")]
     assert len(bullets) == 6 and text.startswith("Weather alerts are on here:") and text.endswith("to turn them off.")
+
+
+def test_report_is_on_the_right_hand_side_of_the_first_row():
+    assert [label for label, _ in templates.ROWS[0]][-1].endswith("Report")
+
+
+class Replies:
+    """A message that records what it was answered with."""
+
+    def __init__(self, chat_type="private"):
+        self.sent, self.chat_id = [], 1
+        self.chat = NS(type=chat_type)
+
+    async def reply_text(self, body, **kw):
+        self.sent.append(("text", kw))
+
+    async def reply_photo(self, photo, **kw):
+        self.sent.append(("photo", kw))
+
+    async def reply_media_group(self, media, **kw):
+        self.sent.append(("group", kw))
+
+
+async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tmp_path):
+    from lib.bot import deliver
+    markup = templates.keyboard()
+    msg = Replies()
+    assert await deliver(msg, "hello", [], markup=markup) is True and msg.sent[-1][1]["reply_markup"] is markup
+    msg = Replies()
+    assert await deliver(msg, "caption", [b"p"], markup=markup) is True and msg.sent == [("photo", msg.sent[0][1])]
+    assert msg.sent[0][1]["reply_markup"] is markup
+    msg = Replies()
+    assert await deliver(msg, "caption", [b"p", b"q"], markup=markup) is False       # a group of photos can't carry it
+    msg = Replies()
+    assert await deliver(msg, "hello", []) is False and "reply_markup" not in msg.sent[0][1]
+
+
+async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_next_reply_once(tmp_path):
+    from lib.alerts import AlertState
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "Rob")
+    bot = Bot(NS(tz=TZ), None, [], state)
+    msg = Replies()
+    assert bot._keyboard_stale(msg)                                    # never had it
+    state.set_keyboard(1, "old1234")
+    assert bot._keyboard_stale(msg)                                    # the buttons changed since
+    state.set_keyboard(1, templates.VERSION)
+    assert not bot._keyboard_stale(msg)                                # up to date: nothing is added
+    state.set_keyboard(1, templates.HIDDEN)
+    assert not bot._keyboard_stale(msg)                                # they hid it: leave it hidden
+    assert not bot._keyboard_stale(Replies("supergroup"))
+    assert not Bot(NS(tz=TZ), None, [], None)._keyboard_stale(msg)
+
+
+async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tmp_path):
+    from lib.alerts import AlertState
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "Rob")
+    bot = Bot(NS(tz=TZ), None, [], state)
+    update, _ = message("/keyboard off")
+    await bot.on_keyboard(update, NS(args=["off"]))
+    assert state.keyboard(1) == templates.HIDDEN
+    update, _ = message("/keyboard")
+    await bot.on_keyboard(update, NS(args=[]))
+    assert state.keyboard(1) == templates.VERSION
+    state.set_keyboard(1, "old1234")
+    update, _ = message("/start")
+    await bot.on_start(update, NS(args=[]))
+    assert state.keyboard(1) == templates.VERSION
+
+
+async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
+    from lib.alerts import AlertState
+
+    class Agent:
+        async def run(self, *a, **k):
+            return "It is 12 degrees."
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "Rob")
+    state.set_keyboard(1, "old1234")
+    bot = Bot(NS(tz=TZ), Agent(), [], state)
+
+    async def ask():
+        update, sent = message("how hot is it")
+        update.effective_message.chat = NS(type="private", id=1, title=None)
+        await bot.respond(update, NS(bot=NS(id=99)), "how hot is it")
+        return sent
+    first, second = await ask(), await ask()
+    assert first[0][1].get("reply_markup") is not None and second[0][1].get("reply_markup") is None
+    assert state.keyboard(1) == templates.VERSION
