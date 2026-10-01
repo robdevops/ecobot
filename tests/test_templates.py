@@ -13,14 +13,13 @@ def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left
     assert templates.sentence("\U0001f4c8 Temperature chart 90d") == "Temperature chart 90d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
-    assert len(templates.LABELS) == 12
+    assert len(templates.LABELS) == 9
 
 
 def test_every_button_asks_something_the_bot_understands():
     def read(label):
         return intent.read(templates.sentence(label), NOW, True, True)
     assert read("\U0001f4cb Report").report
-    assert read("\U0001f32c️ Air quality now").fast[0] == "air_quality"
     for days in (7, 30):
         name, args, _ = read(f"\U0001f3ed Air quality {days}d").fast
         assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
@@ -28,10 +27,9 @@ def test_every_button_asks_something_the_bot_understands():
         name, args, _ = read(f"\U0001f4c8 Temperature chart {days}d").fast
         assert name == "weather_history" and args["chart"] is True
     assert read("\U0001f327️ Rain chart 7d").rain_caption and read("\U0001f327️ Rain chart 7d").chart_field == "daily"
-    assert read("\U0001f4a8 Wind chart 7d").chart_asked and read("\U0001f4a7 Humidity chart 7d").chart_field == "humidity"
-    assert not read("\U0001f4a8 Wind chart 7d").rain_caption
+    assert read("\U0001f4a7 Humidity chart 7d").chart_asked and read("\U0001f4a7 Humidity chart 7d").chart_field == "humidity"
+    assert not read("\U0001f4a7 Humidity chart 7d").rain_caption
     assert read(templates.CAPABILITIES).about_the_bot
-    assert read("\U0001f321️ Weather now").fast[0] == "weather_now"
 
 
 def test_the_keyboard_is_persistent_and_has_every_button():
