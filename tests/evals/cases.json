@@ -1004,5 +1004,22 @@
       "c:air-panels",
       "m:air-quality"
     ]
+  },
+  {
+    "id": "weather-now-everything",
+    "ask": "weather now",
+    "note": "every reading the station has, in the report's layout",
+    "expect": {
+      "fast": {
+        "tool": "weather_now",
+        "args": {
+          "groups": "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+        }
+      }
+    },
+    "covers": [
+      "q:report",
+      "m:temperature"
+    ]
   }
 ]

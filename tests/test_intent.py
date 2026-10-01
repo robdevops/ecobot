@@ -78,9 +78,18 @@ def test_weather_plus_a_period_is_a_summary_request():
 
 
 def test_weather_now_and_open_questions_still_go_to_the_model():
-    for text in ("weather", "weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week",
+    for text in ("weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week",
                  "will the weather be nice this week"):
         assert call(text) is None, text
+
+
+def test_weather_now_fetches_every_reading_the_station_has_and_asks_for_the_reports_layout():
+    for text in ("weather", "weather now", "Weather Now", "current weather", "ecowitt", "ecowitt now", "show me the weather now please"):
+        name, args, label = call(text)
+        assert (name, label) == ("weather_now", "weather now") and args == {"groups": intent.NOW_GROUPS}, text
+        assert intent.read(text, NOW).weather_now
+    assert not intent.read("weather last 7 days", NOW).weather_now and not intent.read("report", NOW).weather_now
+    assert not intent.read("weather now", NOW, ecowitt=False).weather_now
 
 
 def test_24_hour_weather_charts_over_a_rolling_window():

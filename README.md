@@ -56,7 +56,7 @@ Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close
 
 ## How it stays fast and cheap
 
-- Private chats also get a persistent button keyboard (`lib/templates.py`): tapping one sends its label as a message (Weather now, Air quality now, Report, three 7-day charts, Weather all week, AQ all week, Alerts). `/keyboard` shows it, `/keyboard off` hides it.
+- Private chats also get a persistent button keyboard (`lib/templates.py`): tapping one sends its label as a message (Weather now = every reading the station has, Air quality now, Report, Temperature chart 7d/30d/90d, Weather all week, AQ all week, Capabilities & alerts = what the bot can do, then the alert settings). `/keyboard` shows it, `/keyboard off` hides it. "weather" / "weather now" typed by hand do the same as the button. A chart's text is cut to Telegram's 1024-character caption so it goes as one message.
 - In private chats the bot shows Telegram's "Thinking..." draft (sendMessageDraft, re-sent every 20 s, as drafts expire after 30) and streams the answer into it before sending the real message; groups show "typing...". A "message generation stopped" update is only logged.
 - The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the

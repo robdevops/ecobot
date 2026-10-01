@@ -95,6 +95,16 @@ def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
 
 
+# "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
+NOW_GROUPS = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+WEATHER_NOW = re.compile(_only(rf"(weather|{_ECOWITT}|conditions)(\s+(now|right now|currently|at the moment))?|(current|latest)\s+(weather|conditions)",
+                               r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+
+
+def wants_weather_now(text: str) -> bool:
+    return bool(WEATHER_NOW.search(text)) and not TIME_WORDS.search(text)
+
+
 # Questions about the bot itself ("what metrics do you have", "list our sources"): answered from what it knows, no fetch
 ABOUT_THE_BOT = re.compile(
     r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"
@@ -351,6 +361,8 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
                                "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"air quality chart, {name}"
     if air and mentions_air(text) and not AIR_NOT_NOW.search(text) and not TIME_WORDS.search(text):
         return "air_quality", {}, "air quality now"
+    if ecowitt and wants_weather_now(text):
+        return "weather_now", {"groups": NOW_GROUPS}, "weather now"
     if ecowitt and (period := weather_period(text, now)):
         name, start, end = period
         # 3+ days, an hours-long window, or whenever a graph is asked for
@@ -373,6 +385,7 @@ class Reading:
     chart_field: str | None = None        # humidity questions get a humidity chart
     chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
     average_asked: bool = False
+    weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
 
 
 def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Reading:
@@ -383,4 +396,5 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Re
         log.exception("Fast path failed; using the normal path")
         fast = None
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), wants_report(text), period_hints(text, now),
-                   fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)))
+                   fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
+                   ecowitt and wants_weather_now(text))

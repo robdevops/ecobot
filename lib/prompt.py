@@ -4,7 +4,7 @@ units, wording of times) is decided in code and handed over ready-made."""
 from datetime import datetime
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS
-from .intent import period_ranges
+from .intent import NOW_GROUPS, period_ranges
 from .series import WEATHER
 
 WEATHER_NAMES = list(WEATHER)
@@ -44,7 +44,7 @@ HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more
 - For any past period (highs/lows, records, daily summaries, "this week" etc.): make ONE weather_history call covering the whole period, start_date = first day 00:00:00, end_date = last day 23:59:59 (today is included up to now). Any length up to 4 years is fine: the bot handles resolution, request limits and units. Don't split it yourself and don't add weather_now calls.
 - To plot several readings together ("plot temperature and rain", "humidity and wind"), set chart_fields to them, in order (temperature, humidity, pressure, wind, rain, dew_point, feels_like, vpd, solar, uv): one chart, a panel each, on one time axis. Never say it can't combine them.
 - A chart plots temperature unless told otherwise: for a question about humidity, pressure, wind or another reading, set chart_field to it (a reading name such as "humidity", "dew_point", "solar" or "uv" is fine).
-- Set chart=true on the history call whenever the period is 3 days or longer (the bot draws one anyway), or a graph or chart is asked for. Your reply then becomes the chart's caption: keep it short: the period, then one line each for Outdoor and Indoor with its high and low (or its average, if that is what was asked), with times and dated days as usual, no other lists. Never write about the chart itself (e.g. "Chart sent...").
+- Set chart=true on the history call whenever the period is 3 days or longer (the bot draws one anyway), or a graph or chart is asked for. Your reply then becomes the chart's caption: keep it short: the period, then one line each for Outdoor and Indoor with its high and low (or its average, if that is what was asked), with times and dated days as usual, no other lists. For a chart of several readings, one short line per reading. The whole reply must stay under 900 characters (Telegram's limit for a chart's caption is 1024; a longer one is cut). Never write about the chart itself (e.g. "Chart sent...").
 - Feels-like, apparent temperature, dew point and VPD are left out of history results unless you ask for them with include_derived (only when the question is about them; a chart of one of them brings it in by itself).
 - groups takes plain group names, comma-separated, e.g. "outdoor,indoor" (add "rainfall" or "wind" only if needed). Never use dotted names like "outdoor.temp".
 - The result has, per series (e.g. "outdoor.temperature"): low and high for the whole period, each with ready-made "_when" wording and a "_date" (plus the raw "_time"), and a "daily" (up to 31 days) or "monthly" breakdown. For periods of up to about a year, each month in "monthly" also has its own low/high "_when" and "_date" (when the bot has the detailed data cached; otherwise, and for longer periods, monthly figures are values only - see "monthly_note"). Read the answer straight from those fields.
@@ -173,30 +173,45 @@ def capabilities(sources: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-REPORT_SECTION = """
-THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi") and air_quality (no dates)
-in parallel, then list EVERYTHING from both devices, no summary sentence, in this layout (values from the tools):
-Current report (day date time):
-
-Weather station
+WEATHER_LAYOUT = """\
 • Outdoor: temperature, humidity, dew point, VPD (kPa)
 • Indoor: temperature, humidity
 • Pressure: hPa
 • Rain today: mm (month total mm); if weather_now has "rain_outlook", say it here (raining now, or rain likely soon)
 • Sun: solar radiation W/m², UV index
-• Wind: speed and direction, gust
+• Wind: speed and direction, gust"""
+EMOJI_RULE = ("Put an emoji from weather_now's \"emoji\" right before the value of the one reading it is keyed to, and only for readings it lists; "
+              "a reading with no entry has no emoji, and a whole line or label never gets one.")
+REPORT_SECTION = f"""
+THE PERSON WANTS THE FULL CURRENT REPORT. Call weather_now (groups "{NOW_GROUPS}") and air_quality (no dates)
+in parallel, then list EVERYTHING from both devices, no summary sentence, in this layout (values from the tools):
+Current report (day date time):
+
+Weather station
+{WEATHER_LAYOUT}
 
 Air quality
 • PM2.5, PM10, CO2, VOC index, NOx index (and PM1 if given), each with its ready-made rating; PM2.5 also with its AQI
-Put an emoji from weather_now's "emoji" right before the value of the one reading it is keyed to, and only for readings it lists; a reading with no entry has no emoji, and a whole line or label never gets one.
+{EMOJI_RULE}
+"""
+WEATHER_NOW_SECTION = f"""
+THE PERSON WANTS EVERYTHING THE WEATHER STATION READS RIGHT NOW. weather_now is already fetched (groups "{NOW_GROUPS}"), so don't call it again.
+List EVERYTHING from it, no summary sentence, in this layout (values from the tool):
+Weather now (day date time):
+
+{WEATHER_LAYOUT}
+{EMOJI_RULE}
 """
 
 
-def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, report: bool = False) -> str:
+def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, report: bool = False,
+          weather_now: bool = False) -> str:
     text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
                          sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
     if report:
         text += REPORT_SECTION
+    elif weather_now:
+        text += WEATHER_NOW_SECTION
     if about_bot:
         text += ("\nTHIS QUESTION IS ABOUT THE BOT ITSELF (its metrics, sensors, sources or abilities): answer from WHAT THIS "
                  "BOT CAN AND CAN'T DO above, briefly. Do not fetch readings.\n")

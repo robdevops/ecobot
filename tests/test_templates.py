@@ -10,9 +10,10 @@ NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
 def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left_alone():
     assert templates.sentence("\U0001f4cb Report") == "Report"
-    assert templates.sentence("🌧️ Rain chart 7d") == "Rain chart 7d"
+    assert templates.sentence("\U0001f4c8 Temperature chart 90d") == "Temperature chart 90d"
+    assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
-    assert all(templates.sentence(label) for label in templates.LABELS - {templates.ALERTS})
+    assert len(templates.LABELS) == 9
 
 
 def test_every_button_asks_something_the_bot_understands():
@@ -21,11 +22,12 @@ def test_every_button_asks_something_the_bot_understands():
     assert read("\U0001f4cb Report").report
     assert read("\U0001f32c️ Air quality now").fast[0] == "air_quality"
     assert read("\U0001f3ed AQ all week").fast[1]["chart"] is True
-    assert read("\U0001f4c8 Temperature chart 7d").fast[1]["chart"] is True
-    assert read("\U0001f327️ Rain chart 7d").chart_asked and read("\U0001f327️ Rain chart 7d").chart_field == "daily"
-    assert read("\U0001f4a7 Humidity chart 7d").chart_field == "humidity"
+    for days in (7, 30, 90):
+        name, args, _ = read(f"\U0001f4c8 Temperature chart {days}d").fast
+        assert name == "weather_history" and args["chart"] is True
+    assert read(templates.CAPABILITIES).about_the_bot
     assert len(read("\U0001f324️ Weather all week").chart_fields) > 5
-    assert read("\U0001f321️ Weather now").needs_data
+    assert read("\U0001f321️ Weather now").fast[0] == "weather_now"
 
 
 def test_the_keyboard_is_persistent_and_has_every_button():
@@ -56,11 +58,11 @@ def message(text, chat_type="private"):
     return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob")), sent
 
 
-async def test_tapping_a_button_asks_its_sentence_and_the_alerts_button_runs_the_alerts_command():
+async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both():
     bot = Recorder()
-    for text in ("\U0001f4cb Report", "weather now", "\U0001f514 Alerts"):
+    for text in ("\U0001f4cb Report", "weather now", templates.CAPABILITIES):
         await bot.on_message(message(text)[0], NS(bot=NS(username="b", id=99)))
-    assert bot.asked == ["Report", "weather now"] and bot.alerts == 1
+    assert bot.asked == ["Report", "weather now", "What can you do?"] and bot.alerts == 1
 
 
 async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it():

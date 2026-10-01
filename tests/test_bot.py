@@ -167,3 +167,21 @@ async def test_a_generation_stopped_update_is_logged(caplog):
     with caplog.at_level("INFO", logger="lib.bot"):
         await Bot(NS(tz=TZ), None, [], None).on_other(update, None)
     assert "generation stopped" in caplog.text and "message_generation_stopped" in caplog.text
+
+
+async def test_a_long_answer_is_cut_to_fit_one_chart_message_not_sent_as_text_then_picture():
+    from lib import bot as botmod
+    answer = "Fri 25 Sep - Thu 01 Oct 2026\n" + "\n".join(f"Reading {i}: 10.0 to 20.0 °C, a long description of it" for i in range(40))
+    assert len(answer) > botmod.CAPTION_LIMIT
+    sent = []
+
+    async def reply_photo(photo, caption=None, caption_entities=None):
+        sent.append(("photo", caption))
+
+    async def reply_text(body, **kw):
+        sent.append(("text", body))
+    await botmod.deliver(NS(reply_photo=reply_photo, reply_text=reply_text), answer, [b"png"], link=("live chart", "https://x"))
+    assert [kind for kind, _ in sent] == ["photo"]
+    caption = sent[0][1]
+    assert len(caption) <= botmod.CAPTION_LIMIT and caption.startswith("Fri 25 Sep") and "…" in caption and caption.endswith("live chart")
+    assert botmod.fit_caption("short answer") == "short answer"

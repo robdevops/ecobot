@@ -173,6 +173,19 @@ class Draft:
                     await asyncio.wait_for(stop.wait(), DRAFT_MIN_GAP)
 
 
+def fit_caption(text: str, link: tuple[str, str] | None = None) -> str:
+    """The text cut to what fits a photo's caption together with the footer: whole lines from the top, then a trailing
+    ellipsis (words, if the first line alone is too long)."""
+    room = CAPTION_LIMIT - len(with_footer("", link)[0]) - 1
+    lines = text.splitlines()
+    while len(lines) > 1 and len("\n".join(lines)) + 1 > room:
+        lines.pop()
+    cut = "\n".join(lines)
+    if len(cut) + 1 > room:
+        cut = cut[:room - 1].rsplit(" ", 1)[0]
+    return (cut.rstrip() + "…") if cut != text else text
+
+
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None):
     """Send the answer with any charts. A short answer goes in the photo's caption (one message);
     a long one goes first as text, then the charts. If sending the chart fails the answer is still
@@ -181,6 +194,8 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
     if photos:
         text = strip_chart_talk(text)
     caption, entities = with_footer(text, link)
+    if photos and len(caption) > CAPTION_LIMIT:  # one message beats a text and then a picture: cut the text to fit
+        caption, entities = with_footer(fit_caption(text, link), link)
     if photos and len(caption) <= CAPTION_LIMIT:
         try:
             if len(photos) == 1:
@@ -316,10 +331,9 @@ class Bot:
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
-            if msg.text.strip() == templates.ALERTS:
+            await self.respond(update, context, templates.sentence(msg.text) or msg.text)
+            if msg.text.strip() == templates.CAPABILITIES:  # what the bot can do (above), then the alert settings
                 await self.on_alerts(update, context)
-            else:
-                await self.respond(update, context, templates.sentence(msg.text) or msg.text)
             return
         # Group / supergroup: only respond when addressed
         mention = re.compile(rf"@{re.escape(context.bot.username)}\b", re.IGNORECASE)
@@ -373,7 +387,7 @@ class Bot:
                         average_asked=read.average_asked)
             try:
                 system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
-                                      read.about_the_bot, read.report)
+                                      read.about_the_bot, read.report, read.weather_now)
                 reply = await asyncio.wait_for(
                     self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
                                    require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,

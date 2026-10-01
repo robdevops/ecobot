@@ -259,3 +259,13 @@ async def test_streamed_answers_give_the_same_result_and_report_the_text_so_far(
     assert texts == ["It is ", "It is 12 degrees."]
     assert client.requests[0]["stream"] is True and client.requests[0]["stream_options"] == {"include_usage": True}
     assert msgs[1]["tool_calls"][0]["function"] == {"name": "weather_now", "arguments": '{"groups": "outdoor"}'}
+
+
+def test_weather_now_lists_the_weather_half_of_the_report_in_the_same_layout():
+    from datetime import datetime
+    from lib import prompt
+    now = datetime(2026, 9, 29, 14, 5)
+    text = prompt.build(now, ["Ecowitt weather station"], weather_now=True)
+    assert "EVERYTHING THE WEATHER STATION READS RIGHT NOW" in text and "• Sun: solar radiation W/m², UV index" in text
+    assert "air_quality (no dates)" not in text and "FULL CURRENT REPORT" not in text
+    assert "EVERYTHING THE WEATHER STATION READS" not in prompt.build(now, ["Ecowitt weather station"], report=True)
