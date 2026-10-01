@@ -2,9 +2,9 @@
 reading always gets the same emoji; the model just copies it next to the reading."""
 
 # (lowest value that gets it, emoji), highest first; a comfortable range has none, so an emoji is something to notice
-TEMPERATURE = ((35, "🔥"), (30, "🥵"), (25, "🏖️"), (16, ""), (8, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors
-INDOOR_TEMPERATURE = ((35, "🔥"), (28, "🥵"), (25, "🏖️"), (20, ""), (16, "🧥"), (10, "🥶"), (float("-inf"), "🧊"))  # indoors
-WIND = ((50, "🌪️"), (30, "💨"), (15, "🍃"))       # km/h; lighter than that gets none
+TEMPERATURE = ((35, "🔥"), (30, "🥵"), (25, "🌡️"), (16, ""), (8, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors
+INDOOR_TEMPERATURE = ((35, "🔥"), (28, "🥵"), (25, "🌡️"), (20, ""), (16, "🧥"), (10, "🥶"), (float("-inf"), "🧊"))  # indoors
+WIND = ((50, "🌪️"), (30, "🌬️"), (15, "🍃"))       # km/h; lighter than that gets none
 HUMIDITY_HIGH, HUMIDITY_LOW = 85, 30              # % : muggy or dry; in between gets none
 PRESSURE_HIGH = 1025                              # hPa, sea level: a strong high. VPD_HIGH: kPa, the air is drying things fast
 VPD_HIGH = 1.2
