@@ -38,13 +38,14 @@ def test_a_cache_written_by_an_earlier_version_still_opens_and_reads(tmp_path):
     shutil.copy(DATA / "ecowitt_cache.sqlite", tmp_path / "eco.sqlite")
     shutil.copy(DATA / "airgradient_cache.sqlite", tmp_path / "air.sqlite")
     cache = HistoryCache(tmp_path / "eco.sqlite", api.UNITS)                       # the same units: nothing is cleared
-    now = int(datetime.now(TZ).timestamp())
+    now = cache._query("SELECT MAX(ts) FROM points WHERE cycle = '30min'")[0][0]    # the fixture's own newest reading, so the test does not age
     for cycle, at_least in (("5min", 100), ("30min", 100), ("1day", 1)):
         temperature, = cache.slots(MAC, cycle, "outdoor", ["temperature"], now - 5 * 86400, now)
         assert len(temperature) >= at_least, cycle
     assert cache.days_held(MAC, "30min", ["outdoor"]) >= 3
     store = AirStore(tmp_path / "air.sqlite", "42", TZ)
-    rows = store.load(now - 5 * 86400, now)
+    newest = store.db.execute("SELECT MAX(ts) FROM readings").fetchone()[0]
+    rows = store.load(newest - 5 * 86400, newest)
     assert len(rows) > 20 and {"ts", "pm2_5"} <= set(rows[0])
     cache.close()
     store.close()

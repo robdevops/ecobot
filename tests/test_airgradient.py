@@ -255,3 +255,47 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_carry_a
     from lib.charts import render
     assert render(panels, TZ)[:4] == b"\x89PNG" and render(week, TZ)[:4] == b"\x89PNG"
     await air.close()
+
+
+async def current_with(tmp_path, latest, earlier, gap=300):
+    """air.current() when the latest reading is `latest` and today's cache holds `earlier` (a list of values `gap` seconds apart,
+    oldest first, the last one `gap` seconds before the latest)."""
+    from datetime import timezone
+    from tests.fakes import air_row
+    air, _ = await make(tmp_path)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    row = air_row(now, pm25=latest["pm2_5"], pm10=latest.get("pm10", 8.0)) | {"tvocIndex": latest["voc"]}
+    ts = int(now.timestamp())
+    cached = [{"ts": ts - gap * (len(earlier) - i), "pm2_5": v["pm2_5"], "voc_index": v["voc"]} for i, v in enumerate(earlier)]
+
+    async def current_row(refresh=False):
+        return row
+
+    async def day_rows(day, refresh=False):
+        return cached
+    air._current_row, air._day_rows = current_row, day_rows
+    out = await air.current()
+    await air.close()
+    return out
+
+
+async def test_a_rating_needs_the_last_two_readings_not_one(tmp_path):
+    spike = await current_with(tmp_path, {"pm2_5": 5.0, "voc": 174.0}, [{"pm2_5": 5.0, "voc": 120.0}])      # latest poor, previous good
+    assert spike["voc_index"]["value"] == 174.0 and spike["voc_index"]["rating"].endswith("good")
+    assert "rating_note" in spike["voc_index"] and "rating_note" not in spike["pm2_5"]
+    assert "_rated" not in spike["voc_index"]
+    held = await current_with(tmp_path, {"pm2_5": 5.0, "voc": 174.0}, [{"pm2_5": 5.0, "voc": 160.0}])       # both poor
+    assert held["voc_index"]["rating"].endswith("poor") and "rating_note" not in held["voc_index"]
+    steady = await current_with(tmp_path, {"pm2_5": 5.0, "voc": 174.0}, [{"pm2_5": 5.0, "voc": 170.0}, {"pm2_5": 5.0, "voc": 180.0}])
+    assert steady["voc_index"]["rating"].endswith("poor")                                                    # only the one before the latest counts
+
+
+async def test_without_a_recent_previous_reading_the_latest_is_rated_alone_and_pm25s_band_follows_the_rated_value(tmp_path):
+    none = await current_with(tmp_path, {"pm2_5": 5.0, "voc": 174.0}, [])
+    assert none["voc_index"]["rating"].endswith("poor")                                                      # nothing before it
+    old = await current_with(tmp_path, {"pm2_5": 5.0, "voc": 174.0}, [{"pm2_5": 5.0, "voc": 120.0}], gap=1800)
+    assert old["voc_index"]["rating"].endswith("poor")                                                       # too long ago to be consecutive
+    pm = await current_with(tmp_path, {"pm2_5": 40.0, "voc": 100.0}, [{"pm2_5": 4.0, "voc": 100.0}])
+    assert pm["pm2_5"]["value"] == 40.0 and pm["pm2_5"]["band"] == "good" and pm["pm2_5"]["aqi_us"] <= 50   # the spike is not yet called moderate
+    both = await current_with(tmp_path, {"pm2_5": 40.0, "voc": 100.0}, [{"pm2_5": 38.0, "voc": 100.0}])
+    assert both["pm2_5"]["band"] == "unhealthy for sensitive groups" or both["pm2_5"]["band"] == "moderate"

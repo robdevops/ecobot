@@ -40,6 +40,7 @@ MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
 HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly averages (24), not 5-minute (288)
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
+MAX_GAP_SECONDS = 900             # the reading before the latest counts as its neighbour only if it is this recent
 WARM_DAYS = 7                     # finished days kept ready by every refresh
 BACKFILL_PACE = 1.0               # seconds between backfill requests
 BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some data: the sensor's data starts here
@@ -259,8 +260,17 @@ class AirGradient:
             log.warning("AirGradient request failed: %s", e)
             return f"Error: couldn't read the air-quality sensor ({e})"
 
+    async def _previous_row(self, ts: int) -> dict | None:
+        """The newest of today's cached readings older than `ts` and within MAX_GAP_SECONDS of it, else None."""
+        today = to_local(ts, self.tz).date()
+        rows = [r for r in await self._day_rows(today) if r["ts"] < ts]
+        return rows[-1] if rows and ts - rows[-1]["ts"] <= MAX_GAP_SECONDS else None
+
     async def current(self) -> dict:
+        """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
+        spike is not called poor until the next reading agrees; the value shown is always the latest one."""
         row = await self._current_row()
+        previous = await self._previous_row(epoch(row["timestamp"])) if row.get("timestamp") else None
         out = {"sensor": row.get("locationName"), "sensor_type": row.get("locationType"),
                "time": self._when(epoch(row["timestamp"])) if row.get("timestamp") else None}
         if row.get("timestamp"):  # for the air alerts' staleness check (removed before the model sees it)
@@ -268,10 +278,18 @@ class AirGradient:
         for name, (_, unit) in METRICS.items():
             v = value_of(row, name)
             if v is not None:
-                out[name] = {"value": v, "unit": unit, "rating": rating(name, v)}
+                before = previous.get(name) if previous else None   # today's rows are already normalised
+                rated = v if before is None else min(v, before)   # thresholds only rise: the lower value's zone is the one both reached
+                out[name] = {"value": v, "unit": unit, "rating": rating(name, rated)}
+                if out[name]["rating"] != rating(name, v):
+                    out[name]["rating_note"] = "rated on the last two readings: the previous one was lower"
+                out[name]["_rated"] = rated
         if "pm2_5" in out:
-            aqi, band = pm25_aqi(out["pm2_5"]["value"])
+            aqi, band = pm25_aqi(out["pm2_5"]["_rated"])
             out["pm2_5"].update(aqi_us=aqi, band=band)
+        for entry in out.values():
+            if isinstance(entry, dict):
+                entry.pop("_rated", None)
         return out
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
