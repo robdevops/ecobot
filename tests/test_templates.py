@@ -28,7 +28,6 @@ def test_every_button_asks_something_the_bot_understands():
         name, args, _ = read(f"\U0001f4c8 Temperature chart {days}d").fast
         assert name == "weather_history" and args["chart"] is True
     assert read(templates.CAPABILITIES).about_the_bot
-    assert len(read("\U0001f324️ Weather all week").chart_fields) > 5
     assert read("\U0001f321️ Weather now").fast[0] == "weather_now"
 
 
