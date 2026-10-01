@@ -1061,7 +1061,7 @@
   {
     "id": "forecast-tomorrow",
     "ask": "what's the forecast for tomorrow?",
-    "note": "the BOM forecast tool, not the station's own pressure trend",
+    "note": "the forecast tool, not the station's own pressure trend",
     "expect": {
       "fast": null,
       "needs_data": true,

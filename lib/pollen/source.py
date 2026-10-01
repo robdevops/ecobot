@@ -35,7 +35,7 @@ class Pollen:
     name = "Pollen"
 
     def __init__(self, cfg: Config, transport=None):
-        self.tz, self.district = cfg.tz, cfg.pollen_district
+        self.tz, self.district, self.place = cfg.tz, cfg.pollen_district, cfg.place
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.data: dict | None = None        # the parsed page
         self.fetched_at = 0.0                # when (epoch)
@@ -136,7 +136,7 @@ class Pollen:
         if not lines:
             return json.dumps({"error": "No pollen levels are available right now."})
         cur = self.current()
-        out = {"lines": lines, "source": "melbournepollen.com.au (grass pollen from pollen-trap data; asthma risk from the "
+        out = {"lines": lines, "place": self.place, "source": "melbournepollen.com.au (grass pollen from pollen-trap data; asthma risk from the "
                                          "Victorian Department of Health and BOM, 1 Oct - 31 Dec)"}
         if cur["asthma"] and cur["asthma"]["updated"]:
             out["asthma_updated"] = cur["asthma"]["updated"]

@@ -14,9 +14,9 @@ AIR = ('{"sensor": "Fairleigh", "sensor_type": "outdoor", "time": "Fri 2 Oct 202
        '"unit": "µg/m³", "rating": "🟢 good"}, "co2": {"value": 433.0, "unit": "ppm", "rating": "🟢 good"}, "voc_index": {"value": 88.0, '
        '"unit": "relative index (100 = this sensor\'s recent average)", "rating": "🟢 good"}, "nox_index": {"value": 1.0, '
        '"unit": "relative index (1 = baseline)", "rating": "🟢 good"}}')
-POLLEN = '{"lines": ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 Low"], "source": "melbournepollen.com.au"}'
+POLLEN = '{"lines": ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 Low"], "place": "Melbourne", "source": "melbournepollen.com.au"}'
 FORECAST = ('{"lines": ["Today: 🌦️ Showers. 11–16°C, 97% chance of rain", "Saturday: ⛈️ Thunderstorm. 12–20°C, 95% chance of rain"], '
-            '"tag": "Open-Meteo", "source": "Open-Meteo (the BOM was unavailable)"}')
+            '"place": "Melbourne", "source": "Open-Meteo"}')
 
 WEATHER = """\
 • Outdoor: 🧥 12.3 °C, 💦 94 %, dew point 11.3 °C, VPD 0.085 kPa
@@ -38,11 +38,11 @@ Air quality
 • VOC index: 88 🟢 good
 • NOx index: 1.0 🟢 good
 
-Pollen & asthma
+Pollen & asthma (Melbourne)
 • Grass pollen: 🟢 Low
 • Thunderstorm asthma risk: 🟢 Low
 
-Forecast [Open-Meteo]
+Forecast (Melbourne)
 • Today: 🌦️ Showers. 11–16°C, 97% chance of rain
 • Saturday: ⛈️ Thunderstorm. 12–20°C, 95% chance of rain"""
     assert not got.startswith("Current report")

@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import os
 import sys
+import tempfile
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +28,8 @@ async def main():
     ap.add_argument("--district", default="Central")
     ap.add_argument("--raw", action="store_true")
     args = ap.parse_args()
-    cfg = SimpleNamespace(tz=_tz(), pollen_district=args.district, forecast_lat=args.lat, forecast_lon=args.lon)
+    cfg = SimpleNamespace(tz=_tz(), pollen_district=args.district, forecast_lat=args.lat, forecast_lon=args.lon,
+                         place=os.getenv("PLACE", "Melbourne"), conditions_cache_path=os.path.join(tempfile.mkdtemp(), "conditions.sqlite"))   # a scratch cache: the bot's is left alone
 
     pollen = Pollen(cfg)
     try:
@@ -47,7 +49,7 @@ async def main():
     forecast = Forecast(cfg)
     try:
         await forecast.warm(True)
-        print(f"\nForecast ({forecast.source})")
+        print(f"\nForecast ({cfg.place})")
         print("\n".join(f"• {line}" for line in forecast.lines()))
     except Exception as e:
         print(f"\nForecast: error: {e}")

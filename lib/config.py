@@ -41,9 +41,10 @@ class Config:
     cache_path: Path = ROOT / "ecowitt_cache.sqlite"
     air_cache_path: Path = ROOT / "airgradient_cache.sqlite"
     conditions_cache_path: Path = ROOT / "conditions_cache.sqlite"   # the last pollen page and forecast, kept across restarts
+    place: str = "Melbourne"             # PLACE: named after the Pollen & asthma and Forecast headings in the report
     pollen: bool = False                 # POLLEN=on: Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = "Central"     # the Victorian forecast district whose thunderstorm asthma risk is used
-    forecast: bool = False               # FORECAST=on: the BOM daily forecast (Open-Meteo as a fallback)
+    forecast: bool = False               # FORECAST=on: the daily forecast from Open-Meteo
     forecast_lat: float | None = None    # FORECAST_LAT / FORECAST_LON; the weather station's own location when unset
     forecast_lon: float | None = None
 
@@ -69,6 +70,7 @@ class Config:
             airgradient_token=env("AIRGRADIENT_API_TOKEN"),
             airgradient_location=env("AIRGRADIENT_LOCATION_ID"),
             airgradient_dashboard=env("AIRGRADIENT_DASHBOARD_URL"),
+            place=env("PLACE", "Melbourne"),
             pollen=_on(env("POLLEN")),
             pollen_district=env("POLLEN_DISTRICT", "Central"),
             forecast=_on(env("FORECAST")),

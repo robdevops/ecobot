@@ -164,8 +164,8 @@ def capabilities(sources: list[str]) -> str:
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
     if "melbournepollen" in have:
         lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme), tool pollen_asthma.")
-    if "Bureau of Meteorology" in have:
-        lines.append("- Forecast: today and the days ahead from the Bureau of Meteorology (summary, temperatures, chance of rain), tool weather_forecast.")
+    if "Open-Meteo" in have:
+        lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of rain), tool weather_forecast.")
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
@@ -175,7 +175,7 @@ def capabilities(sources: list[str]) -> str:
     missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
     if "melbournepollen" not in have:
         missing.append("pollen and thunderstorm asthma")
-    if "Bureau of Meteorology" not in have:
+    if "Open-Meteo" not in have:
         missing.append("forecasts (only a short read of the pressure trend)")
     lines.append("- Not available: " + ", ".join(missing) + ".")
     return "\n".join(lines) + "\n"

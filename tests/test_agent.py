@@ -252,7 +252,7 @@ def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
 
 
 POLLEN_SOURCE = "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)"
-FORECAST_SOURCE = "Weather forecast for the owner's location (Bureau of Meteorology)"
+FORECAST_SOURCE = "Weather forecast for the owner's location (Open-Meteo)"
 
 
 def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():

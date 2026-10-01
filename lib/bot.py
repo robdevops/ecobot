@@ -42,7 +42,7 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS = ["Rain starting, and stopping (after 15 dry minutes)", "Rain likely soon", "Wind gusts over 40 km/h", "UV index of 9 or more",
+ALERTS = ["Rain starting, and stopping (after 30 dry minutes)", "Rain likely soon", "Wind gusts over 40 km/h", "UV index of 9 or more",
           "Indoor and outdoor temperatures crossing, after 2+ days", "Unhealthy outdoor air, and when it's safe again"]
 POLLEN_ALERT = "Pollen or thunderstorm asthma risk High or Extreme"
 

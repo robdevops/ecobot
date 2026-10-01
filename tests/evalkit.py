@@ -169,7 +169,7 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     r = intent.read(text, NOW, pollen=True, forecast=True)
     system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor",
                                 "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
-                                "Weather forecast for the owner's location (Bureau of Meteorology)"],
+                                "Weather forecast for the owner's location (Open-Meteo)"],
                           r.hints, r.about_the_bot, r.rain_caption)
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]

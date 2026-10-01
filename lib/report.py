@@ -34,6 +34,11 @@ def _join(parts: list[str | None], sep: str = ", ") -> str:
     return sep.join(p for p in parts if p)
 
 
+def _heading(name: str, result: dict) -> str:
+    """"Forecast (Melbourne)": the place the result names, if it does."""
+    return f"{name} ({result['place']})" if result.get("place") else name
+
+
 def weather_lines(now: dict) -> list[str]:
     """The weather station's bullets from a weather_now result: an emoji sits right before the reading it is keyed to."""
     emoji = now.get("emoji") or {}
@@ -102,7 +107,7 @@ def report(results: dict[str, str]) -> str:
         air = _load(results["air_quality"])
         sections.append(["Air quality", *(air_lines(air) if air else ["• not available right now"])])
     if pollen := _load(results.get("pollen_asthma")):
-        sections.append(["Pollen & asthma", *(f"• {line}" for line in pollen.get("lines", []))])
+        sections.append([_heading("Pollen & asthma", pollen), *(f"• {line}" for line in pollen.get("lines", []))])
     if forecast := _load(results.get("weather_forecast")):
-        sections.append([f"Forecast [{forecast.get('tag', '')}]".replace(" []", ""), *(f"• {line}" for line in forecast.get("lines", []))])
+        sections.append([_heading("Forecast", forecast), *(f"• {line}" for line in forecast.get("lines", []))])
     return "\n\n".join("\n".join(section) for section in sections) or "No readings are available right now."

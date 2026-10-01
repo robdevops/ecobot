@@ -1,6 +1,5 @@
-"""The forecast source: the daily forecast from BOM's JSON API (api.weather.bom.gov.au: used by the BOM website and app, but
-unofficial and undocumented), with Open-Meteo as the fallback. Kept warm and cached; fetched only from 6 am to 6 pm local time
-(lib/warm.py SYNC_HOURS), hourly, and once at the start (or the first question) when nothing is cached."""
+"""The forecast source: the daily forecast from Open-Meteo (open-meteo.com), kept warm and cached; fetched only from 6 am to 6 pm
+local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once at the start (or the first question) when nothing is cached."""
 
 import json
 import logging
@@ -20,17 +19,16 @@ from ..warm import Warmer, in_sync_hours
 
 log = logging.getLogger(__name__)
 
-BOM = "https://api.weather.bom.gov.au/v1"
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
 FORECAST_REFRESH_SECONDS = 15 * 60
 FRESH_SECONDS = 10 * 60       # a question reuses a forecast this young
 
-DESCRIPTION = ("The weather forecast for the owner's location from the Bureau of Meteorology: today and the days ahead, "
+DESCRIPTION = ("The weather forecast for the owner's location: today and the days ahead, "
                "each with a summary, the lowest and highest temperature and the chance of rain. Use it for forecast "
                "questions ('what's tomorrow like', 'will it rain this week'). days = how many days from today (default 2, "
-               "at most 7). The result's \"lines\" are ready-made, emoji included: copy them as they are, and say which source answered "
-               "with the result's \"tag\" in square brackets, e.g. [BOM].")
+               "at most 7). The result's \"lines\" are ready-made, emoji included: copy them as they are, and put the result's "
+               "\"place\" in parentheses after the forecast heading, e.g. (Melbourne).")
 PARAMETERS = {"type": "object", "properties": {"days": {"type": "integer", "description": "Days from today (default 2, at most 7)."}}}
 
 # The first match wins; each sentence of a summary gets its own emoji ("Showers. Possible storm." -> "🌦️ Showers. ⛈️ Possible storm.")
@@ -40,27 +38,6 @@ EMOJI = ((r"thunder|storm", "⛈️"), (r"shower", "🌦️"), (r"rain|drizzle",
 WMO = {0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Fog", 51: "Light drizzle", 53: "Drizzle",
        55: "Heavy drizzle", 61: "Light rain", 63: "Rain", 65: "Heavy rain", 71: "Snow", 73: "Snow", 75: "Heavy snow",
        80: "Showers", 81: "Showers", 82: "Heavy showers", 95: "Thunderstorm", 96: "Thunderstorm and hail", 99: "Thunderstorm and hail"}
-
-
-def geohash(lat: float, lon: float, precision: int = 7) -> str:
-    """Standard geohash encoding (BOM identifies locations by geohash)."""
-    chars = "0123456789bcdefghjkmnpqrstuvwxyz"
-    lat_rng, lon_rng = [-90.0, 90.0], [-180.0, 180.0]
-    out, bits, ch, even = [], 0, 0, True
-    while len(out) < precision:
-        rng, val = (lon_rng, lon) if even else (lat_rng, lat)
-        mid = (rng[0] + rng[1]) / 2
-        if val >= mid:
-            ch = (ch << 1) | 1
-            rng[0] = mid
-        else:
-            ch <<= 1
-            rng[1] = mid
-        even, bits = not even, bits + 1
-        if bits == 5:
-            out.append(chars[ch])
-            bits, ch = 0, 0
-    return "".join(out)
 
 
 def forecast_emoji(sentence: str) -> str:
@@ -104,14 +81,13 @@ class Forecast:
 
     def __init__(self, cfg: Config, location: tuple[float, float] | None = None, transport=None):
         """location: (lat, lon), used when the config has none (the weather station's own)."""
-        self.tz = cfg.tz
+        self.tz, self.place = cfg.tz, cfg.place
         lat = cfg.forecast_lat if cfg.forecast_lat is not None else (location[0] if location else None)
         lon = cfg.forecast_lon if cfg.forecast_lon is not None else (location[1] if location else None)
         self.location = (lat, lon) if lat is not None and lon is not None else None
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
         self.source = ""
-        self.tag = ""                 # "BOM" or "Open-Meteo": which one answered, for a short [tag] in the reply
         self.fetched_at = 0.0
         self.requests = 0
         self.store = Snapshots.open(cfg.conditions_cache_path)
@@ -129,7 +105,7 @@ class Forecast:
             log.warning("Forecast not readable yet: %s", e)
 
     def describe(self) -> str:
-        return "Weather forecast for the owner's location (Bureau of Meteorology) (people say \"forecast\")"
+        return "Weather forecast for the owner's location (Open-Meteo) (people say \"forecast\")"
 
     def wants(self, text: str) -> bool:
         """Only forecast questions start a refresh; the report always uses what is cached."""
@@ -147,11 +123,11 @@ class Forecast:
         """Start from the last forecast fetched (before the restart), so a night-time start needs no fetch."""
         if last := self.store.latest("forecast"):
             self.fetched_at, saved = last
-            self.source, self.tag = saved["source"], saved["tag"]
+            self.source = saved.get("source", "Open-Meteo")
             self.days = [{**d, "date": date.fromisoformat(d["date"])} for d in saved["days"]]
 
     def _save(self):
-        self.store.save("forecast", {"source": self.source, "tag": self.tag,
+        self.store.save("forecast", {"source": self.source,
                                      "days": [{**d, "date": d["date"].isoformat()} for d in self.days]},
                         now=self.fetched_at)
 
@@ -165,27 +141,12 @@ class Forecast:
         res.raise_for_status()
         return res.json()
 
-    async def _bom(self) -> tuple[str, list[dict]]:
-        lat, lon = self.location
-        gh7 = geohash(lat, lon, 7)
-        gh = gh7[:6]  # the forecast endpoints want a 6-character geohash
-        try:
-            name = (await self._json(f"{BOM}/locations/{gh7}"))["data"].get("name", gh)
-        except Exception:
-            name = gh
-        daily = (await self._json(f"{BOM}/locations/{gh}/forecasts/daily"))["data"]
-        return f"Bureau of Meteorology, {name}", [
-            {"date": datetime.fromisoformat(d["date"].replace("Z", "+00:00")).astimezone(self.tz).date(),
-             "min_c": d.get("temp_min"), "max_c": d.get("temp_max"),
-             "summary": d.get("short_text") or d.get("extended_text"),
-             "rain_chance_pct": (d.get("rain") or {}).get("chance")} for d in daily]
-
     async def _open_meteo(self) -> tuple[str, list[dict]]:
         lat, lon = self.location
         d = await self._json(OPEN_METEO, latitude=lat, longitude=lon, timezone=str(self.tz),
                              daily="temperature_2m_min,temperature_2m_max,precipitation_probability_max,weather_code")
         dd = d["daily"]
-        return "Open-Meteo (the BOM was unavailable)", [
+        return "Open-Meteo", [
             {"date": date.fromisoformat(dd["time"][i]), "min_c": dd["temperature_2m_min"][i], "max_c": dd["temperature_2m_max"][i],
              "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
             for i in range(len(dd["time"]))]
@@ -196,11 +157,7 @@ class Forecast:
         if self.days is not None and (not in_sync_hours(self.now()) or age < FRESH_SECONDS and not fresh):
             return "Forecast cached"
         before = self.requests
-        try:
-            (self.source, self.days), self.tag = await self._bom(), "BOM"
-        except Exception as e:  # not logged: only both failing is news (the Open-Meteo call below raises, and the warmer logs it)
-            log.debug("BOM forecast failed (%s: %s); using Open-Meteo", type(e).__name__, e)
-            (self.source, self.days), self.tag = await self._open_meteo(), "Open-Meteo"
+        self.source, self.days = await self._open_meteo()   # a failure raises: the warmer logs it
         self.fetched_at = time.time()
         self._save()
         return f"Forecast {self.requests - before} req"
@@ -224,4 +181,4 @@ class Forecast:
         lines = self.lines(count)
         if not lines:
             return json.dumps({"error": "No forecast is available right now."})
-        return json.dumps({"lines": lines, "tag": self.tag, "source": self.source}, ensure_ascii=False)
+        return json.dumps({"lines": lines, "place": self.place, "source": self.source}, ensure_ascii=False)

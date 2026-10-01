@@ -77,25 +77,23 @@ async def test_the_forecast_survives_a_restart_and_a_night_start_needs_no_reques
     again = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(22, 0))
     await again.start()
-    assert calls == [] and again.lines(3) == lines and again.tag == "BOM" and again.store.count("forecast") == 1
+    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and again.store.count("forecast") == 1
     await again.close()
 
 
-async def test_the_forecast_is_kept_warm_every_15_minutes_and_only_both_failing_is_logged(tmp_path, caplog):
+async def test_the_forecast_is_kept_warm_every_15_minutes_and_a_failure_is_logged_once_per_refresh(tmp_path, caplog):
     assert FORECAST_REFRESH_SECONDS == 15 * 60
     caplog.set_level("DEBUG")
-    forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([], bom_ok=False))
+    forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([]))
     forecast.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(12, 0))
-    await safely(forecast.warm, True)                       # the BOM is down, Open-Meteo answers: nothing above debug
-    assert forecast.tag == "Open-Meteo" and not [r for r in caplog.records if r.name.startswith("lib") and r.levelname != "DEBUG"]
-
-    def both_down(request):
-        return httpx.Response(503)
-    broken = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, httpx.MockTransport(both_down))
+    await safely(forecast.warm, True)                       # working: nothing logged above debug
+    assert not [r for r in caplog.records if r.name.startswith("lib") and r.levelname != "DEBUG"]
+    broken = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([], ok=False))
     broken.now = forecast.now
     caplog.clear()
-    await safely(broken.warm, True)                         # both down: one warning, from the warmer
-    assert [r.levelname for r in caplog.records if r.name.startswith("lib") and r.levelname != "DEBUG"] == ["WARNING"] and "Forecast.warm failed" in caplog.text
+    await safely(broken.warm, True)                         # down: one warning, from the warmer
+    assert [r.levelname for r in caplog.records if r.name.startswith("lib") and r.levelname != "DEBUG"] == ["WARNING"]
+    assert "Forecast.warm failed" in caplog.text
     await forecast.close()
     await broken.close()
 
@@ -111,3 +109,17 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
     assert calls == []
     await pollen.close()
     await forecast.close()
+
+
+async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
+    from lib.snapshots import Snapshots
+    store = Snapshots.open(tmp_path / "conditions.sqlite")
+    today = datetime.now(TZ).date()
+    store.save("forecast", {"source": "Bureau of Meteorology, Testville", "tag": "BOM",
+                            "days": [{"date": str(today), "min_c": 11, "max_c": 17, "summary": "Rain.", "rain_chance_pct": 90}]})
+    forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([]))
+    forecast.now = lambda: datetime.combine(today, dtime(22, 0))
+    await forecast.start()
+    assert forecast.lines() == ["Today: 🌧️ Rain. 11–17°C, 90% chance of rain"]
+    await forecast.close()
+    store.close()
