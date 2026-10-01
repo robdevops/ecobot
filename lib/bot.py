@@ -371,9 +371,11 @@ class Bot:
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
-            await self.respond(update, context, templates.sentence(msg.text) or msg.text)
-            if msg.text.strip() == templates.CAPABILITIES:  # what the bot can do (above), then the alert settings
+            if msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
+                await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name))
                 await self.on_alerts(update, context)
+            else:
+                await self.respond(update, context, templates.sentence(msg.text) or msg.text)
             return
         # Group / supergroup: only respond when addressed
         mention = re.compile(rf"@{re.escape(context.bot.username)}\b", re.IGNORECASE)

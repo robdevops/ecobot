@@ -29,3 +29,15 @@ def keyboard() -> ReplyKeyboardMarkup:
 def sentence(text: str) -> str | None:
     """The question a button label stands for; None for anything else typed."""
     return SENTENCES.get(text.strip())
+
+
+WEATHER_METRICS = ["Temperature and humidity, outdoor and indoor", "Dew point, feels-like and VPD", "Pressure",
+                   "Wind speed, gust and direction", "Rain", "Solar radiation and UV index"]
+AIR_METRICS = ["Air quality: PM1, PM2.5 and PM10, CO₂, VOC and NOx"]
+HISTORY = ["History charts of any of them"]
+
+
+def capabilities_text(weather: bool = True, air: bool = True) -> str:
+    """What the bot measures, as a short bulleted list (no dates, no detail): the answer to the Capabilities button."""
+    lines = (WEATHER_METRICS if weather else []) + (AIR_METRICS if air else []) + HISTORY
+    return "Current readings for:\n" + "\n".join(f"\u2022 {line}" for line in lines)

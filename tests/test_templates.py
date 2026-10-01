@@ -65,7 +65,7 @@ async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_pr
     bot = Recorder()
     for text in ("\U0001f4cb Report", "weather now", templates.CAPABILITIES):
         await bot.on_message(message(text)[0], NS(bot=NS(username="b", id=99)))
-    assert bot.asked == ["Report", "weather now", "What can you do?"] and bot.alerts == 1
+    assert bot.asked == ["Report", "weather now"] and bot.alerts == 1       # capabilities are not sent to the model
 
 
 async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it():
@@ -206,3 +206,12 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     assert state.keyboard(10) == templates.VERSION and 13 not in state.chats and state.keyboard(-20) is None
     assert await bot.refresh_keyboards(TG()) == 0             # nothing more on the next start
     assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
+
+
+def test_the_capabilities_list_is_short_bullets_without_dates():
+    text = templates.capabilities_text()
+    bullets = [line for line in text.splitlines() if line.startswith("\u2022 ")]
+    assert len(bullets) == 8 and text.endswith("\u2022 History charts of any of them") and "PM1, PM2.5 and PM10" in text and "outdoor and indoor" in text
+    assert not any(ch.isdigit() for ch in text.replace("PM10", "").replace("PM2.5", "").replace("PM1", "").replace("CO₂", ""))
+    assert "available" not in text and templates.capabilities_text(air=False).count("\u2022") == 7
+    assert templates.capabilities_text(weather=False).count("\u2022") == 2

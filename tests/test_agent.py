@@ -284,4 +284,4 @@ def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
     from datetime import datetime
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], about_bot=True)
-    assert "as simple bullet points" in text and "no sub-bullets" in text and "METRICS only" in text and "available now and how far its history goes" in text
+    assert "simple bullet points" in text and "no sub-bullets" in text and "8 at most" in text and "No dates" in text
