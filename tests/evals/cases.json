@@ -957,5 +957,52 @@
       "q:record",
       "m:temperature"
     ]
+  },
+  {
+    "id": "button-rain-chart",
+    "ask": "Rain chart 7d",
+    "note": "the Rain chart button",
+    "expect": {
+      "chart_field": "daily",
+      "tools": [
+        "weather_history"
+      ]
+    },
+    "covers": [
+      "m:rain",
+      "c:line"
+    ]
+  },
+  {
+    "id": "button-humidity-chart",
+    "ask": "Humidity chart 7d",
+    "note": "the Humidity chart button",
+    "expect": {
+      "chart_field": "humidity",
+      "tools": [
+        "weather_history"
+      ]
+    },
+    "covers": [
+      "m:humidity",
+      "c:line"
+    ]
+  },
+  {
+    "id": "button-aq-all-week",
+    "ask": "AQ all week",
+    "note": "the AQ all week button",
+    "expect": {
+      "fast": {
+        "tool": "air_quality",
+        "args": {
+          "chart": true
+        }
+      }
+    },
+    "covers": [
+      "c:air-panels",
+      "m:air-quality"
+    ]
   }
 ]

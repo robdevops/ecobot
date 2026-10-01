@@ -14,12 +14,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from telegram import InputMediaPhoto, Message, Update
+from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, prompt
+from . import intent, prompt, templates
 from .alerts import AlertState, with_footer
 from .charts import render as render_chart
 from .tools import Turn
@@ -39,6 +39,7 @@ WATCHDOG_SECONDS = 45        # a question still running after this many seconds 
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
+        "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
 ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, indoor/outdoor "
                "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
@@ -215,6 +216,7 @@ class Bot:
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
         app.add_handler(CommandHandler("reset", self.on_reset))
+        app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -276,8 +278,20 @@ class Bot:
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.remember_chat(update)
         log.info("/start in %s", describe_source(update))
+        private = update.effective_chat.type == ChatType.PRIVATE
         await update.effective_message.reply_text(
-            HELP.format(user=update.effective_user.id, chat=update.effective_chat.id))
+            HELP.format(user=update.effective_user.id, chat=update.effective_chat.id),
+            reply_markup=templates.keyboard() if private else None)
+
+    async def on_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/keyboard shows the buttons again, /keyboard off hides them (private chats only)."""
+        msg = update.effective_message
+        if update.effective_chat.type != ChatType.PRIVATE:
+            await msg.reply_text("The buttons are only in private chats.")
+        elif context.args and context.args[0].lower() == "off":
+            await msg.reply_text("Buttons hidden. /keyboard shows them again.", reply_markup=ReplyKeyboardRemove())
+        else:
+            await msg.reply_text("Here are the buttons.", reply_markup=templates.keyboard())
 
     async def on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Errors raised inside handlers: network blips get one line, anything else a traceback."""
@@ -302,7 +316,10 @@ class Bot:
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
-            await self.respond(update, context, msg.text)
+            if msg.text.strip() == templates.ALERTS:
+                await self.on_alerts(update, context)
+            else:
+                await self.respond(update, context, templates.sentence(msg.text) or msg.text)
             return
         # Group / supergroup: only respond when addressed
         mention = re.compile(rf"@{re.escape(context.bot.username)}\b", re.IGNORECASE)
