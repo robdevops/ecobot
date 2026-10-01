@@ -22,7 +22,7 @@ from lib.ecowitt import Archive, Ecowitt
 from lib.llm import Agent
 from lib.compose import Composer
 from lib.tools import Tools
-from lib.warm import REFRESH_SECONDS, every, safely
+from lib.warm import every, safely
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -103,7 +103,7 @@ async def main():
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("Keeping warm every %ds: %s", REFRESH_SECONDS, " + ".join(s.name for s in sources))
+                log.info("Keeping warm: %s", ", ".join(f"{s.name} every {s.warmer.interval:.0f}s" for s in sources))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""

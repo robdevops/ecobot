@@ -1086,3 +1086,12 @@ async def test_keep_warm_fetches_every_resolution_for_every_group(tmp_path):
     assert {cycle for cycle, _ in asked} == {"5min", "30min", "4hour", "1day"}
     assert {groups for _, groups in asked} == {",".join(ecowitt_api.GROUPS)}         # all metrics, every time
     await eco.close()
+
+
+async def test_the_weather_station_is_kept_warm_every_minute_and_the_air_sensor_every_four(tmp_path):
+    from lib.airgradient import AirGradient
+    from lib.warm import REFRESH_SECONDS
+    from tests.fakes import air_transport
+    eco = Ecowitt(config(tmp_path), transport=ecowitt_transport()[0])
+    air = AirGradient(config(tmp_path), transport=air_transport()[0])
+    assert eco.warmer.interval == 60 and air.warmer.interval == REFRESH_SECONDS == 240

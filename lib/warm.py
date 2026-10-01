@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 log = logging.getLogger(__name__)
 
 REFRESH_SECONDS = 240  # under the 5 minute freshness window both sources use
+FAST_REFRESH_SECONDS = 60  # the weather station: each refresh also runs the rain and temperature alert checks, so this is their delay
 
 
 async def safely(fn: Callable[..., Awaitable], *args):

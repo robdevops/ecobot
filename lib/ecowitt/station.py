@@ -11,7 +11,7 @@ from ..config import Config
 from ..timeutil import now_local
 from .outlook import rain_outlook
 from ..tools import Tool, Turn
-from ..warm import Warmer
+from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import EcowittAPI, GROUPS, UNITS
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
@@ -97,7 +97,7 @@ class Ecowitt:
         self.cache = HistoryCache(cfg.cache_path, UNITS)
         self.hot = HotStore()
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
-        self.warmer = Warmer(self.warm)
+        self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
