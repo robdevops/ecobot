@@ -206,8 +206,8 @@ POLLEN_BLOCK = """
 Pollen & asthma
 • the "lines" of pollen_asthma, copied as they are (emoji included; the asthma line only when it has one)"""
 FORECAST_BLOCK = """
-Forecast
-• the "lines" of weather_forecast (days 2: Today, Tomorrow), copied as they are (emoji included)"""
+Forecast [the "tag" of weather_forecast, e.g. BOM, in the square brackets]
+• the "lines" of weather_forecast (days 2: Today, then the next day by its weekday), copied as they are (emoji included)"""
 WEATHER_NOW_SECTION = f"""
 THE PERSON WANTS EVERYTHING THE WEATHER STATION READS RIGHT NOW. weather_now is already fetched (groups "{NOW_GROUPS}"), so don't call it again.
 List EVERYTHING from it, no summary sentence, in this layout (values from the tool):

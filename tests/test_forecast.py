@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from lib.forecast import Forecast, decorate, forecast_emoji, geohash
-from lib.forecast.source import describe_day
+from lib.forecast.source import day_label, describe_day, temps
 from tests.fakes import TZ, config
 
 
@@ -61,17 +61,29 @@ def test_a_day_reads_like_the_report_line():
     assert describe_day({"summary": "Rain.", "min_c": 11, "max_c": 17, "rain_chance_pct": 90}) == "🌧️ Rain. 11–17°C, 90% chance of rain"
     assert describe_day({"summary": "Showers. Possible storm.", "min_c": 11, "max_c": 18, "rain_chance_pct": 95}) == \
         "🌦️ Showers. ⛈️ Possible storm. 11–18°C, 95% chance of rain"
-    assert describe_day({"summary": "Sunny.", "min_c": 9.5, "max_c": None, "rain_chance_pct": None}) == "☀️ Sunny. min 9.5°C"
+    assert describe_day({"summary": "Sunny.", "min_c": 9.5, "max_c": None, "rain_chance_pct": None}) == "☀️ Sunny. min 10°C"
     assert describe_day({}) == "no data"
 
 
-async def test_today_and_tomorrow_come_from_the_bom_by_local_date(tmp_path):
+def test_temperatures_are_whole_degrees_with_halves_rounded_up():
+    assert temps({"min_c": 10.5, "max_c": 19.5}) == "11–20°C" and temps({"min_c": -1.5, "max_c": -0.5}) == "-1–0°C"
+    assert temps({"min_c": 12.4, "max_c": 16.6}) == "12–17°C" and temps({"max_c": 20.5}) == "max 21°C" and temps({}) is None
+
+
+def test_days_after_today_are_named_by_their_weekday():
+    today = datetime(2026, 10, 1).date()               # a Thursday
+    assert [day_label(today + timedelta(days=n), today) for n in range(4)] == ["Today", "Friday", "Saturday", "Sunday"]
+
+
+async def test_today_and_the_next_days_come_from_the_bom_by_local_date(tmp_path):
     forecast, calls = make(tmp_path)
     await forecast.start()
+    today = datetime.now(TZ).date()
     assert forecast.lines() == ["Today: 🌧️ Rain. 11–17°C, 90% chance of rain",
-                                "Tomorrow: 🌦️ Showers. ⛈️ Possible storm. 11–18°C, 95% chance of rain"]
+                                f"{today + timedelta(days=1):%A}: 🌦️ Showers. ⛈️ Possible storm. 11–18°C, 95% chance of rain"]
     out = json.loads(await forecast.handle({"days": 3}))
-    assert len(out["lines"]) == 3 and out["lines"][2].endswith(": 🌤️ Mostly sunny. min 9°C") and "Testville" in out["source"]
+    assert len(out["lines"]) == 3 and out["lines"][2] == f"{today + timedelta(days=2):%A}: 🌤️ Mostly sunny. min 9°C"
+    assert out["tag"] == "BOM" and "Testville" in out["source"] and "Tomorrow" not in " ".join(out["lines"])
     assert set(calls) == {"api.weather.bom.gov.au"}
     await forecast.close()
 
@@ -79,9 +91,10 @@ async def test_today_and_tomorrow_come_from_the_bom_by_local_date(tmp_path):
 async def test_when_the_bom_fails_open_meteo_answers(tmp_path):
     forecast, calls = make(tmp_path, bom_ok=False)
     await forecast.start()
-    assert forecast.lines()[0] == "Today: 🌧️ Rain. 10.5–16°C, 40% chance of rain"
-    assert forecast.lines()[1].startswith("Tomorrow: ☀️ Clear. 12–19.5°C, 0% chance of rain")
-    assert "Open-Meteo" in json.loads(await forecast.handle({}))["source"] and "api.open-meteo.com" in set(calls)
+    assert forecast.lines()[0] == "Today: 🌧️ Rain. 11–16°C, 40% chance of rain"
+    assert forecast.lines()[1].endswith(": ☀️ Clear. 12–20°C, 0% chance of rain")
+    out = json.loads(await forecast.handle({}))
+    assert out["tag"] == "Open-Meteo" and "Open-Meteo" in out["source"] and "api.open-meteo.com" in set(calls)
     await forecast.close()
 
 

@@ -299,8 +299,9 @@ def test_the_report_has_pollen_and_forecast_blocks_only_when_those_sources_are_o
     assert "Pollen & asthma" not in plain and "weather_forecast" not in plain
     full = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor", POLLEN_SOURCE, FORECAST_SOURCE], report=True)
     report = full[full.index("THE PERSON WANTS THE FULL CURRENT REPORT"):]
-    assert report.index("Air quality") < report.index("Pollen & asthma") < report.index("Forecast\n•")
+    assert report.index("Air quality") < report.index("Pollen & asthma") < report.index("Forecast [")
     assert "pollen_asthma" in report and "weather_forecast" in report and "copied as they are" in report
+    assert 'Forecast [the "tag" of weather_forecast' in report and "next day by its weekday" in report
     assert "Pollen & asthma" not in prompt.build(now, ["Ecowitt weather station", FORECAST_SOURCE], report=True)
 
 

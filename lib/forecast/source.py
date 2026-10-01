@@ -4,6 +4,7 @@ unofficial and undocumented), with Open-Meteo as the fallback. Kept warm and cac
 
 import json
 import logging
+import math
 import re
 import time
 from datetime import date, datetime, timedelta
@@ -27,7 +28,8 @@ FRESH_SECONDS = 1800          # a question reuses a forecast this young
 DESCRIPTION = ("The weather forecast for the owner's location from the Bureau of Meteorology: today and the days ahead, "
                "each with a summary, the lowest and highest temperature and the chance of rain. Use it for forecast "
                "questions ('what's tomorrow like', 'will it rain this week'). days = how many days from today (default 2, "
-               "at most 7). The result's \"lines\" are ready-made, emoji included: copy them as they are.")
+               "at most 7). The result's \"lines\" are ready-made, emoji included: copy them as they are, and say which source answered "
+               "with the result's \"tag\" in square brackets, e.g. [BOM].")
 PARAMETERS = {"type": "object", "properties": {"days": {"type": "integer", "description": "Days from today (default 2, at most 7)."}}}
 
 # The first match wins; each sentence of a summary gets its own emoji ("Showers. Possible storm." -> "🌦️ Showers. ⛈️ Possible storm.")
@@ -70,13 +72,18 @@ def decorate(summary: str) -> str:
     return ". ".join(f"{e} {s}" if (e := forecast_emoji(s)) else s for s in (s.rstrip(".") for s in sentences)) + ("." if sentences else "")
 
 
+def whole(x: float) -> int:
+    """The nearest whole degree, halves up (10.5 -> 11, -0.5 -> 0), unlike round()'s halves-to-even."""
+    return math.floor(x + 0.5)
+
+
 def temps(d: dict) -> str | None:
     lo, hi = d.get("min_c"), d.get("max_c")
     if lo is not None and hi is not None:
-        return f"{lo:g}–{hi:g}°C"
+        return f"{whole(lo)}–{whole(hi)}°C"
     if hi is not None:
-        return f"max {hi:g}°C"
-    return f"min {lo:g}°C" if lo is not None else None
+        return f"max {whole(hi)}°C"
+    return f"min {whole(lo)}°C" if lo is not None else None
 
 
 def describe_day(d: dict) -> str:
@@ -87,7 +94,8 @@ def describe_day(d: dict) -> str:
 
 
 def day_label(day: date, today: date) -> str:
-    return "Today" if day == today else "Tomorrow" if day == today + timedelta(days=1) else f"{day:%a} {day.day} {day:%b}"
+    """"Today", then each later day by its weekday ("Friday"): within the week it can't be mistaken for another day."""
+    return "Today" if day == today else f"{day:%A}"
 
 
 class Forecast:
@@ -102,6 +110,7 @@ class Forecast:
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
         self.source = ""
+        self.tag = ""                 # "BOM" or "Open-Meteo": which one answered, for a short [tag] in the reply
         self.fetched_at = 0.0
         self.requests = 0
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
@@ -170,10 +179,10 @@ class Forecast:
             return "Forecast cached"
         before = self.requests
         try:
-            self.source, self.days = await self._bom()
+            (self.source, self.days), self.tag = await self._bom(), "BOM"
         except Exception as e:
             log.warning("BOM forecast failed (%s: %s); using Open-Meteo", type(e).__name__, e)
-            self.source, self.days = await self._open_meteo()
+            (self.source, self.days), self.tag = await self._open_meteo(), "Open-Meteo"
         self.fetched_at = time.time()
         return f"Forecast {self.requests - before} req"
 
@@ -196,4 +205,4 @@ class Forecast:
         lines = self.lines(count)
         if not lines:
             return json.dumps({"error": "No forecast is available right now."})
-        return json.dumps({"lines": lines, "source": self.source}, ensure_ascii=False)
+        return json.dumps({"lines": lines, "tag": self.tag, "source": self.source}, ensure_ascii=False)
