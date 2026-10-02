@@ -86,7 +86,7 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     assert [(c, t.split("\n")[0]) for c, t, _ in bot.sent] == [(1, "It's raining"), (1, "Gusts"), (2, "Gusts")]
     markup = bot.sent[0][2]["reply_markup"]
     assert rows(markup) == [[("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub")]]
-    assert "/alerts to change" in bot.sent[0][1]
+    assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
     assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
 
 

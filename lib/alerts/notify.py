@@ -1,9 +1,9 @@
 """Who gets alerts, and sending them.
 
 Alerts go to every chat the bot knows about (Telegram can't list a bot's chats, so they are
-remembered as messages arrive) unless it opted out with /alerts off. Chats and monitor state
-live in a small JSON file, so restarts neither forget chats nor repeat alerts. Alerts are
-sent silently, with a small italic footer: optional link label, then how to mute.
+remembered as messages arrive) unless it unsubscribed (per alert type, with the buttons under each alert or /alerts). Chats and
+monitor state live in a small JSON file, so restarts neither forget chats nor repeat alerts. Alerts are sent silently, with the
+settings buttons and, when there is one, a small italic footer with a link label.
 """
 
 import json
@@ -17,8 +17,6 @@ from telegram.error import BadRequest, Forbidden, TelegramError
 from .menu import ALL, LABELS, keyboard
 
 log = logging.getLogger(__name__)
-
-OPT_OUT = "/alerts to change"
 
 
 class AlertState:
@@ -154,7 +152,7 @@ class Notifier:
     async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None):
         """Send an alert (silently) to every chat subscribed to its type; forget chats the bot can no
         longer post to. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons."""
-        text, entities = with_footer(text, link, OPT_OUT)
+        text, entities = with_footer(text, link)
         sent = sum([await self._send(chat_id, text, entities) for chat_id in self.state.alert_chats(kind)])
         log.info("Alert sent to %d chat(s): %s", sent, text.replace("\n", " "))
 
@@ -163,7 +161,7 @@ class Notifier:
         True if it was sent."""
         if not self.state.subscribed(chat_id, kind):
             return False
-        text, entities = with_footer(text, link, OPT_OUT)
+        text, entities = with_footer(text, link)
         sent = await self._send(chat_id, text, entities)
         log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text.replace("\n", " "))
         return sent
