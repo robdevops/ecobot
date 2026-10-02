@@ -9,8 +9,14 @@ HUMIDITY_HIGH, HUMIDITY_LOW = 85, 30              # % : muggy or dry; in between
 PRESSURE_HIGH = 1025                              # hPa, sea level: a strong high. VPD_HIGH: kPa, the air is drying things fast
 VPD_HIGH = 1.2
 SOLAR_HIGH = 600                                  # W/m2: bright sun (full sun is about 1000)
+SOLAR_LOW = 200                                   # below this: dim (overcast, dawn, dusk); 200 up to SOLAR_HIGH is medium
 UVI = ((9, "🧴"), (6, "😎"))                      # UV index: 6 is 'high'; 9 and above is also an alert
 UVI_ALERT = 9
+
+
+def solar_band(value: float) -> str:
+    """"low", "medium" or "high" for a solar radiation reading (W/m2)."""
+    return "high" if value >= SOLAR_HIGH else "medium" if value >= SOLAR_LOW else "low"
 
 
 def _step(value: float, table: tuple) -> str:

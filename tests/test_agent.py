@@ -248,7 +248,7 @@ def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
     from datetime import datetime
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], about_bot=True)
-    assert "simple bullet points" in text and "no sub-bullets" in text and "6 at most" in text and "No dates" in text
+    assert "simple bullet points" in text and "no sub-bullets" in text and "7 at most" in text and "No dates" in text
 
 
 POLLEN_SOURCE = "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)"

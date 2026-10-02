@@ -4,6 +4,8 @@ decided here, so it is instant and always the same. Each tool result is JSON; on
 import json
 import re
 
+from .ecowitt.glance import solar_band
+
 AIR_ROWS = (("pm2_5", "PM2.5"), ("pm10", "PM10"), ("pm1", "PM1"), ("co2", "CO₂"), ("voc_index", "VOC index"), ("nox_index", "NOx index"))
 OUTLOOK_NOTE = re.compile(r"\s*\(an estimate from the station's readings, not an official forecast\)")
 
@@ -28,6 +30,14 @@ def _zero(text: str | None) -> bool:
         return not text or float(text.split()[0]) == 0
     except ValueError:
         return False
+
+
+def _band(solar: str | None) -> str:
+    """" (medium)" for a solar reading like "40.2 W/m²"; nothing when it can't be read."""
+    try:
+        return f" ({solar_band(float(solar.split()[0]))})"
+    except (AttributeError, IndexError, ValueError):
+        return ""
 
 
 def _join(parts: list[str | None], sep: str = ", ") -> str:
@@ -64,7 +74,7 @@ def weather_lines(now: dict) -> list[str]:
     wind = None if calm else _join([_join([tag("wind", "wind_speed"), f"from {_units(degrees)}" if degrees else None], " "),
                                     f"gust {tag('wind', 'wind_gust')}" if get("wind", "wind_gust") else None])
     solar, uvi = get("solar_and_uvi", "solar"), get("solar_and_uvi", "uvi")
-    sun = _join([None if _zero(solar) else tag("solar_and_uvi", "solar", f"solar radiation {solar}"),       # night: no sun line
+    sun = _join([None if _zero(solar) else tag("solar_and_uvi", "solar", f"solar radiation {solar}{_band(solar)}"),       # night: no sun line
                  None if _zero(uvi) else tag("solar_and_uvi", "uvi", f"UV index {uvi}")])
     bullets = [("Outdoor", _join([tag("outdoor", "temperature"), tag("outdoor", "humidity"),
                                   f"dew point {get('outdoor', 'dew_point')}" if get("outdoor", "dew_point") else None,

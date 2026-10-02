@@ -78,7 +78,7 @@ def test_sun_uv_and_wind_are_left_out_when_zero_and_shown_when_not():
     day = NOW.replace('"solar":"0.0 W/m²","uvi":"0"', '"solar":"612.5 W/m²","uvi":"7"').replace(
         '"wind_speed":"0.0 km/h","wind_gust":"0.0 km/h"', '"wind_speed":"14.0 km/h","wind_gust":"31.0 km/h"')
     got = report.weather_now(day).splitlines()
-    assert got[-2:] == ["• Sun: solar radiation 612.5 W/m², UV index 7", "• Wind: 14.0 km/h from 131°, gust 31.0 km/h"]
+    assert got[-2:] == ["• Sun: solar radiation 612.5 W/m² (high), UV index 7", "• Wind: 14.0 km/h from 131°, gust 31.0 km/h"]
     only_uv = report.weather_now(NOW.replace('"uvi":"0"', '"uvi":"3"'))
     assert "• Sun: UV index 3" in only_uv and "solar" not in only_uv
     gusty = report.weather_now(NOW.replace('"wind_gust":"0.0 km/h"', '"wind_gust":"9.0 km/h"'))
@@ -101,5 +101,17 @@ def test_every_emoji_threshold_the_station_reports_shows_in_the_report_at_its_re
         "• Indoor: 🥵 29.0 °C, 🏜️ 20 %",
         "• Pressure: 🗜️ 1030.0 hPa",
         "• Rain today: ☔ 3.0 mm (month total 9.0 mm); 🌧️ raining (2.0 mm/h)",
-        "• Sun: ☀️ solar radiation 800.0 W/m², 🧴 UV index 10",
+        "• Sun: ☀️ solar radiation 800.0 W/m² (high), 🧴 UV index 10",
         "• Wind: 🌪️ 55.0 km/h from 90°, gust 🌪️ 70.0 km/h"]
+
+
+def test_solar_radiation_is_rated_low_medium_or_high():
+    from lib.ecowitt.glance import solar_band
+    assert [solar_band(v) for v in (0.1, 40.2, 199.9, 200, 599.9, 600, 1000)] == ["low", "low", "low", "medium", "medium", "high", "high"]
+
+    def sun(solar):
+        return report.weather_now('{"solar_and_uvi":{"solar":"%s","uvi":"0"},"emoji":{}}' % solar)
+    assert sun("40.2 W/m²") == "• Sun: solar radiation 40.2 W/m² (low)"
+    assert sun("350.0 W/m²") == "• Sun: solar radiation 350.0 W/m² (medium)"
+    assert sun("0.0 W/m²") == ""                                      # zero is left out, so there is no Sun line
+    assert sun("n/a") == "• Sun: solar radiation n/a"                 # unreadable: shown as it came, with no rating

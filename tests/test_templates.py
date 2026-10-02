@@ -211,14 +211,15 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
 
 
-def test_the_capabilities_list_is_short_bullets_without_dates():
-    text = templates.capabilities_text()
-    bullets = text.splitlines()
-    assert len(bullets) == 6 and all(line.startswith("\u2022 ") for line in bullets)
-    assert bullets[-2] == "\u2022 PM1, PM2.5, PM10, CO₂, VOC, NOx" and bullets[-1] == "\u2022 History charts"
-    assert bullets[0] == "\u2022 Outdoor and indoor temperature"
-    assert "available" not in text and len(templates.capabilities_text(air=False).splitlines()) == 5
-    assert len(templates.capabilities_text(weather=False).splitlines()) == 2
+def test_the_capabilities_list_is_the_users_bullets():
+    assert templates.capabilities_text() == "\n".join([
+        "\u2022 Temperature, humidity (indoor, outdoor)", "\u2022 Dew point, vapour pressure deficit, pressure, wind speed",
+        "\u2022 Rain, solar radiation, UV index", "\u2022 PM1, PM2.5, PM10, CO₂, VOC, NOx", "\u2022 History charts"])
+    assert len(templates.capabilities_text(air=False).splitlines()) == 4 and len(templates.capabilities_text(weather=False).splitlines()) == 2
+    full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
+    assert len(full) == 7 and full[4:] == ["\u2022 Pollen and thunderstorm asthma risk", "\u2022 Forecast", "\u2022 History charts"]
+
+
 
 
 
