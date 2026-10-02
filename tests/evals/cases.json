@@ -56,17 +56,12 @@
         "temperature",
         "rain"
       ],
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "chart_fields": {
-            "has": [
-              "temperature",
-              "rain"
-            ]
-          }
+      "chart_in_code": true,
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "groups": "rainfall,outdoor,indoor",
+          "chart": true
         }
       }
     },
@@ -955,10 +950,15 @@
     "note": "the Rain chart button",
     "expect": {
       "chart_field": "daily",
-      "tools": [
-        "weather_history"
-      ],
-      "rain_caption": true
+      "rain_caption": true,
+      "chart_in_code": true,
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "groups": "rainfall",
+          "chart": true
+        }
+      }
     },
     "covers": [
       "m:rain",
@@ -971,9 +971,14 @@
     "note": "the Humidity chart button",
     "expect": {
       "chart_field": "humidity",
-      "tools": [
-        "weather_history"
-      ]
+      "chart_in_code": true,
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "groups": "outdoor,indoor",
+          "chart": true
+        }
+      }
     },
     "covers": [
       "m:humidity",
@@ -1107,5 +1112,36 @@
     "covers": [
       "q:chat"
     ]
+  },
+  {
+    "id": "chart-with-forecast",
+    "ask": "plot rain this week and will it rain tomorrow",
+    "note": "a forecast question goes to the model",
+    "expect": {
+      "chart_in_code": false
+    }
+  },
+  {
+    "id": "chart-correlation",
+    "ask": "graph humidity and say if it relates to rain",
+    "note": "correlation goes to the model",
+    "expect": {
+      "chart_in_code": false
+    }
+  },
+  {
+    "id": "chart-pressure-30d",
+    "ask": "pressure graph 30d",
+    "note": "a plain chart of a named reading",
+    "expect": {
+      "chart_in_code": true,
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "groups": "pressure",
+          "chart": true
+        }
+      }
+    }
   }
 ]

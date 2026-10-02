@@ -265,3 +265,41 @@ async def test_a_question_with_no_lower_step_or_a_second_timeout_gives_up(monkey
         with pytest.raises(asyncio.TimeoutError):
             await bot._ask_model([], "sys", intent.read(text, datetime(2026, 10, 2, 12, 0)), Turn(), None)
         assert efforts == expected
+
+
+async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_model_is_not_asked(monkeypatch):
+    import json
+    from lib import bot as botmod
+    from lib.specs import Chart, Line, Panel
+
+    class Tools:
+        calls = []
+
+        async def call(self, name, raw, turn=None):
+            self.calls.append((name, json.loads(raw)))
+            turn.charts.append(Chart("Humidity", "", [Panel("Humidity", "%", [Line("Outdoor", [1, 2], [50.0, 60.0])])]))
+            return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
+                "outdoor.humidity": {"unit": "%", "low": "50", "high": "60", "low_when": "at 5am", "low_date": "Fri 25 Sep 2026",
+                                     "high_when": "at 3pm", "high_date": "Sat 26 Sep 2026"}}})
+
+    class Agent:
+        tools = Tools()
+
+        async def run(self, *a, **k):
+            raise AssertionError("the model must not be asked for a plain chart")
+    sent = []
+
+    async def reply_photo(photo, caption=None, **kw):
+        sent.append(caption)
+    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz: b"png")
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "Humidity chart 7d")
+    name, args = Agent.tools.calls[0]
+    assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
+    assert sent and "Humidity: low 50 %, Fri 25 Sep at 5am · high 60 %, Sat 26 Sep at 3pm" in sent[0]

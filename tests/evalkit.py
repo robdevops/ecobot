@@ -153,7 +153,7 @@ def deterministic(case: Case) -> list[str]:
         fails += [f"period hints lack {h!r} (got: {hints or 'none'})" for h in e["hints"] if h not in hints]
     for key, got in (("chart_fields", r.chart_fields), ("chart_field", r.chart_field), ("report", r.report),
                      ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data),
-                     ("weather_now", r.weather_now), ("rain_caption", r.rain_caption)):
+                     ("weather_now", r.weather_now), ("rain_caption", r.rain_caption), ("chart_in_code", r.chart_in_code)):
         if key in e and got != e[key]:
             fails.append(f"{key} {got}, expected {e[key]}")
     for name in e.get("tools", []) + e.get("any_tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):

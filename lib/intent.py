@@ -340,6 +340,32 @@ def wants_rain_caption(text: str) -> bool:
     return bool(RAIN_CHART.search(text)) and not re.search(r"\band\b", text, I)
 
 
+_NOT_CHART = re.compile(r"\b(compare\w*|vs|versus|than|why|how many|days (above|below|over|under)|will|going to|now|right now|current\w*)\b", I)
+JUDGEMENT = (FORECAST, LINK, THINK, ANALYSIS, DESCRIBE)   # questions that want the model's thinking, not just a chart
+
+
+def _sides(text: str) -> list[str]:
+    indoor, outdoor = bool(INDOOR.search(text)), bool(OUTDOOR.search(text))
+    return ["indoor"] if indoor and not outdoor else ["outdoor"] if outdoor and not indoor else ["outdoor", "indoor"]
+
+
+def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, list[str]] | None:
+    """(period name, start, end, Ecowitt groups) for a plain chart of named readings ("rain chart 7d", "plot temperature and
+    humidity"), else None. A comparison, a forecast or a question that wants thinking is the model's."""
+    if (not GRAPH.search(text) or mentions_air(text) or _NOT_CHART.search(text)
+            or any(p.search(text) for p in JUDGEMENT) or not (fields := chart_fields(text) or list(_named(text)))):
+        return None
+    spans = spans_in(text, now)
+    if not spans and not TIME_WORDS.search(text):
+        spans = [("last 7 days", *span("last 7 days", now))]   # a chart with no period is a week
+    if len(spans) != 1:
+        return None
+    groups = list(dict.fromkeys(WEATHER_READINGS[f].group for f in fields))
+    if "outdoor" in groups and {"temperature", "humidity"} & set(fields):   # these two have an indoor sensor as well
+        groups = [g for g in groups if g != "outdoor"] + _sides(text)
+    return (*spans[0], list(dict.fromkeys(groups)))
+
+
 def weather_groups(text: str) -> str:
     """Just indoor or just outdoor if only one is asked about, otherwise both. A wind chart is just wind."""
     if WIND.search(text):
@@ -411,6 +437,10 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool =
         return "pollen_asthma", {}, "pollen and thunderstorm asthma"
     if ecowitt and wants_weather_now(text):
         return "weather_now", {"groups": NOW_GROUPS}, "weather now"
+    if ecowitt and (chart := weather_chart(text, now)):
+        name, start, end, groups = chart
+        return "weather_history", {"groups": ",".join(groups), "chart": True, "start_date": start.strftime(FMT),
+                                   "end_date": end.strftime(FMT)}, f"weather chart, {name}"
     if ecowitt and (period := weather_period(text, now)):
         name, start, end = period
         # 3+ days, an hours-long window, or whenever a graph is asked for
@@ -436,6 +466,7 @@ class Reading:
     more: list[tuple[str, dict]] = field(default_factory=list)   # the rest of the report's calls (fast is the first)
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
+    chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
 
 
 def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
@@ -448,6 +479,11 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None
+    in_code = bool(fast and fast[0] in ("weather_history", "air_quality") and fast[1].get("chart")
+                   and not any(p.search(text) for p in JUDGEMENT))
+    rain_caption = ecowitt and wants_rain_caption(text)
+    if in_code and rain_caption:   # the caption also says whether rain is expected
+        calls = [("", {}), ("weather_now", {"groups": "rainfall"})]
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=ecowitt and wants_rain_caption(text))
+                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code)

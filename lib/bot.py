@@ -449,6 +449,18 @@ class Bot:
             return report.report(by_tool)
         return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
 
+    async def _chart_in_code(self, read, turn: Turn) -> str | None:
+        """A chart asked for plainly: the tool draws it and the caption is written here. None (the model then takes the
+        question) when there is nothing to caption."""
+        calls = [read.fast[:2], *read.more]
+        results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
+        caption = report.chart_caption(read.fast[0], read.fast[1], results[0], turn, self.cfg.tz,
+                                       results[1] if len(results) > 1 else None)
+        if caption is None:
+            turn.charts.clear()
+            turn.forecast_shown.clear()
+        return caption
+
     async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
@@ -499,8 +511,12 @@ class Bot:
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked)
             try:
-                if read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model
+                reply = None
+                if read.fast and read.chart_in_code:   # drawn by the tool, captioned in code
+                    reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
+                elif read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model
                     reply = await asyncio.wait_for(self._written_in_code(read, turn), TURN_SECONDS)
+                if reply is not None:
                     working.append({"role": "assistant", "content": reply})
                 else:
                     system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
