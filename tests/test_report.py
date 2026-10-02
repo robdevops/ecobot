@@ -206,3 +206,13 @@ def test_a_short_period_highs_and_lows_lookup_gives_each_sides_extremes_with_the
         "outdoor.humidity": {"unit": "%", "low": "40", "high": "95"}}})
     assert report.lookup("extremes", result, [], []) == ("Fri 02 Oct – Fri 02 Oct 2026\n"
                                                          "• Temperature: low 9.0 °C, Fri 2 Oct at 5am · high 16.2 °C, Fri 2 Oct at 2pm")
+
+
+def test_an_average_or_highs_lookup_covers_the_readings_named():
+    result = json.dumps({"period": "Thu 01 Oct 2026 - Thu 01 Oct 2026", "series": {
+        "outdoor.temperature": {"unit": "℃", "low": "9.0", "high": "16.2", "average": "12.4"},
+        "outdoor.humidity": {"unit": "%", "low": "40", "high": "95", "low_when": "at 3pm", "low_date": "Thu 1 Oct 2026", "high_when": "at 5am", "high_date": "Thu 1 Oct 2026"},
+        "wind.wind_speed": {"unit": "km/h", "low": "0", "high": "14"}, "wind.wind_gust": {"unit": "km/h", "low": "0", "high": "31", "high_when": "at 2pm", "high_date": "Thu 1 Oct 2026"}}})
+    assert report.lookup("extremes", result, ["temperature"], []).splitlines()[1] == "• Temperature: average 12.4 °C (low 9.0, high 16.2)"
+    assert report.lookup("extremes", result, ["humidity"], []).splitlines()[1] == "• Humidity: low 40 %, Thu 1 Oct at 3pm · high 95 %, Thu 1 Oct at 5am"
+    assert [line.split(":")[0] for line in report.lookup("extremes", result, ["wind"], []).splitlines()[1:]] == ["• Wind", "• Wind gust"]

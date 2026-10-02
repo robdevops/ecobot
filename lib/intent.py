@@ -122,6 +122,16 @@ def mentions_pollen(text: str) -> bool:
     return bool(POLLEN_WORDS.search(text))
 
 
+POLLEN_FILLER = frozenset("pollen hay fever hayfever asthma thunderstorm count counts level levels risk forecast today bad high like much "
+                          "dangerous okay ok safe".split())
+
+
+def pollen_ask(text: str) -> bool:
+    """Is this only a plain question about the pollen or thunderstorm asthma ("is the pollen bad today", "how's the hay fever")?"""
+    return bool(mentions_pollen(text)) and all(
+        word in POLLEN_FILLER or word in FILLER for word in re.findall(r"[\w'’.]+", text.lower()))
+
+
 # "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
 NOW_GROUPS = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
 WEATHER_NOW = re.compile(_only(rf"(weather|{_ECOWITT}|conditions)(\s+(now|right now|currently|at the moment))?|(current|latest)\s+(weather|conditions)",
@@ -367,6 +377,27 @@ def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, li
     return (*spans[0], list(dict.fromkeys(groups)))
 
 
+AVERAGE_READINGS = ("temperature", "humidity", "pressure", "wind", "dew_point", "feels_like", "vpd", "solar", "uv")   # a rain total has no average
+
+
+HILO = re.compile(r"\b(highest|lowest|highs?|lows?|max(imum)?|min(imum)?|peak|extremes?|strongest|fastest|hottest|coldest|warmest|coolest)\b", I)
+
+
+def weather_average(text: str, now: datetime) -> tuple[str, datetime, datetime, list[str]] | None:
+    """(period name, start, end, Ecowitt groups) for a plain "average temp last week" or "highest humidity yesterday" (the chart-less
+    cousin of weather_chart)."""
+    if (not (AVERAGE.search(text) or HILO.search(text)) or mentions_air(text) or _NOT_CHART.search(text) or any(p.search(text) for p in JUDGEMENT)
+            or not (names := list(_named(text))) or not set(names) <= set(AVERAGE_READINGS)):
+        return None
+    spans = spans_in(text, now)
+    if len(spans) != 1:
+        return None
+    groups = list(dict.fromkeys(WEATHER_READINGS[n].group for n in names))
+    if "outdoor" in groups and {"temperature", "humidity"} & set(names):
+        groups = [g for g in groups if g != "outdoor"] + _sides(text)
+    return (*spans[0], list(dict.fromkeys(groups)))
+
+
 def weather_groups(text: str) -> str:
     """Just indoor or just outdoor if only one is asked about, otherwise both. A wind chart is just wind."""
     if WIND.search(text):
@@ -460,7 +491,7 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool =
                                "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"air quality chart, {name}"
     if air and mentions_air(text) and not AIR_NOT_NOW.search(text) and not TIME_WORDS.search(text):
         return "air_quality", {}, "air quality now"
-    if pollen and POLLEN_NOW.search(text) and not TIME_WORDS.search(text):
+    if pollen and (POLLEN_NOW.search(text) and not TIME_WORDS.search(text) or pollen_ask(text)):
         return "pollen_asthma", {}, "pollen and thunderstorm asthma"
     if ecowitt and wants_weather_now(text):
         return "weather_now", {"groups": NOW_GROUPS}, "weather now"
@@ -472,6 +503,11 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool =
         name, start, end, groups = chart
         return "weather_history", {"groups": ",".join(groups), "chart": True, "start_date": start.strftime(FMT),
                                    "end_date": end.strftime(FMT)}, f"weather chart, {name}"
+    if ecowitt and (average := weather_average(text, now)):
+        name, start, end, groups = average
+        return "weather_history", {"groups": ",".join(groups), **({"average": True} if AVERAGE.search(text) else {}),
+                                   "chart": (end - start).days >= 2 or name.endswith("hours"),
+                                   "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"weather history, {name}"
     if ecowitt and (period := weather_period(text, now)):
         name, start, end = period
         # 3+ days, an hours-long window, or whenever a graph is asked for
@@ -555,8 +591,8 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
         return "forecast", []
     if any(p.search(text) for p in JUDGEMENT):
         return "", []
-    if tool == "weather_history" and not args.get("chart") and not args.get("average"):
-        return "extremes", []
+    if tool == "weather_history" and not args.get("chart") and not any(p.search(text) for p in JUDGEMENT):
+        return "extremes", [n for n in _named(text)]
     if tool == "weather_now" and (names := reading_now(text)):
         return "reading", names
     if tool == "air_quality" and not args and len(text.split()) <= 6:

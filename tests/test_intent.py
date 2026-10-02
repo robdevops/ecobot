@@ -52,7 +52,7 @@ def test_last_24_hours_is_rolling():
 def test_anything_else_takes_the_normal_path():
     assert call("will it rain tomorrow?") is None
     assert call("compare this week and last week highs") is None
-    assert call("highest wind this week") is None
+    assert call("highest wind this week")[1]["groups"] == "wind"   # a plain highs question is answered in code
     assert call("hello") is None
 
 
@@ -150,7 +150,7 @@ def test_a_plain_wind_chart_takes_the_fast_path_with_the_period_read():
     assert name == "weather_history" and args["groups"] == "wind" and args["chart"] is True
     assert args["start_date"] == "2026-07-01 00:00:00" and args["end_date"] == "2026-09-29 23:59:59"
     assert call("graph the wind this week")[1]["groups"] == "wind"
-    for text in ("highest wind this week", "plot wind vs temperature 3m", "will the wind chart change", "why was the wind strong 3m"):
+    for text in ("plot wind vs temperature 3m", "will the wind chart change", "why was the wind strong 3m"):
         assert call(text) is None, text
 
 
@@ -388,7 +388,7 @@ import pytest as _pytest
     ("how's the air", "air", []), ("pm10", "air", ["pm10"]), ("forecast", "forecast", []), ("7 day forecast", "forecast", []),
     ("pollen", "pollen", []), ("what can you do", "about", []),
     ("is it too cold to run", "", []), ("is the air ok for a run", "", []), ("will it rain", "", []), ("forecast tomorrow", "", []),
-    ("temperature today", "extremes", []), ("is it hotter than yesterday", "", []), ("why is it so humid", "", []),
+    ("temperature today", "extremes", ["temperature"]), ("is it hotter than yesterday", "", []), ("why is it so humid", "", []),
 ])
 def test_plain_lookups_are_answered_in_code_and_everything_else_is_left_to_the_model(text, kind, named):
     read = intent.read(text, datetime(2026, 10, 2, 12), True, True, True, True)
