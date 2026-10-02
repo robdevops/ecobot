@@ -81,11 +81,11 @@ LINK = re.compile(
 # Asking the model to think: "think about it", "try to work out why", "reason it through", "predict", "estimate", "grind", "whirl"
 THINK = re.compile(r"\b(think\w*|try|trying|reason\w*|predict\w*|estimat\w*|grind\w*|whirl\w*)\b", I)
 
-EFFORT_RULES = ((EFFORT_FORECAST, (FORECAST, LINK, THINK)), (EFFORT_DESCRIBE, (ANALYSIS, DESCRIBE)))
+EFFORT_RULES = ((EFFORT_FORECAST, (LINK, THINK)), (EFFORT_DESCRIBE, (FORECAST, ANALYSIS, DESCRIBE)))
 
 
 def reasoning_effort(text: str) -> str:
-    """Thinking is for judgement calls only: predictions and how one reading relates to another (medium), and
+    """Thinking is for judgement calls only: how one reading relates to another (medium), and looking ahead,
     analysis across days or readings or describing a day (low). Lookups get none, unless the person asks the bot to think,
     try, reason, predict, estimate, grind or whirl (medium)."""
     return next((effort for effort, patterns in EFFORT_RULES if any(p.search(text) for p in patterns)), EFFORT_DEFAULT)
@@ -307,6 +307,7 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
 
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 ALL = re.compile(r"\b(all|every\w*|each)\b", I)
+PER_DAY = re.compile(r"\b(each|every|per|by)\s+day|daily|day[- ]by[- ]day|which days|list|breakdown|one by one", I)
 
 
 def _named(text: str) -> dict[str, int]:
@@ -480,6 +481,43 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool =
     return None
 
 
+# ---------- what the model needs for a question: guidance for the prompt, tools for the call ----------
+DAYS_WORDS = re.compile(r"\b(days?|how many|how often|most|least|ranks?|ranking|top|worst|best|holidays?|weekends?|"
+                        r"hottest|coldest|wettest|driest|windiest|warmest|coolest|compare\w*|versus|vs|yesterday)\b", I)
+OUTLOOK_WORDS = re.compile(r"\b(rain\w*|umbrella|showers?|wet|storms?|later|soon|going to|will|about to)\b", I)
+WIND_WORDS = re.compile(r"\b(wind\w*|gusts?|direction|breez\w*)\b", I)
+BOT_WORDS = re.compile(r"\b(can|could|do|does|are|will)\s+(you|the bot)\b|\b(alerts?|notify|notification\w*|support\w*|capabilit\w*|able to|add|set up|remind)\b", I)
+COMPARE = re.compile(r"\b(against|versus|vs|compare\w*|affect\w*|influence\w*|correlat\w*|relat\w*|link\w*|cause\w*)\b", I)
+# Words that carry no topic of their own: a follow-up made only of these takes the topics of the messages before it
+TOPIC_TOOLS = {"days": ["weather_days"], "link": ["weather_link"], "compose": ["plot_chart", "air_link", "air_scan"],
+               "forecast": ["weather_forecast"], "pollen": ["pollen_asthma"]}
+CORE_TOOLS = ("weather_now", "weather_history", "air_quality")
+
+
+def topics(text: str, before: list[str] = ()) -> set[str]:
+    """What guidance and tools the question needs beyond the basics, from its words and the messages just before it (a follow-up
+    like "and indoors?" is about what came before). Generous on purpose: a topic that isn't needed costs a few tokens, one that
+    is missing costs the answer."""
+    found: set[str] = set()
+    for said in (*before, text):
+        found |= {name for name, hit in (
+            ("air", mentions_air(said)), ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
+            ("link", bool(LINK.search(said)) or bool(COMPARE.search(said)) and bool(OUTLOOK_WORDS.search(said))),
+            ("outlook", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
+            ("forecast", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
+            ("wind", bool(WIND_WORDS.search(said))), ("describe", bool(DESCRIBE.search(said))),
+            ("pollen", mentions_pollen(said)),
+            ("bot", bool(BOT_WORDS.search(said)) or about_the_bot(said) or bool(COMMAND.search(said))),
+            ("compose", mentions_air(said) and bool(COMPARE.search(said) or GRAPH.search(said) or LINK.search(said) or ANALYSIS.search(said))),
+        ) if hit}
+    return found
+
+
+def tools_for(found: set[str]) -> list[str]:
+    """The tool names a question can use: the basics, and what its topics add."""
+    return [*CORE_TOOLS, *(t for topic in TOPIC_TOOLS if topic in found for t in TOPIC_TOOLS[topic])]
+
+
 @dataclass
 class Reading:
     """Everything decided about one message before the model sees it."""
@@ -497,6 +535,8 @@ class Reading:
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
+    readings: list[str] = field(default_factory=list)     # the readings the words name
+    per_day: bool = False                 # figures day by day were asked for
     lookup: str = ""                      # "reading", "air", "pollen", "forecast" or "about": answered in code, no model
     lookup_arg: list[str] = field(default_factory=list)   # the readings named ("reading", "air"; none: all)
     sides: list[str] = field(default_factory=list)        # "indoor", "outdoor" or both, for a reading
@@ -543,4 +583,4 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
                    more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
-                   lookup=lookup, lookup_arg=named, sides=_sides(text))
+                   lookup=lookup, lookup_arg=named, sides=_sides(text), readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))

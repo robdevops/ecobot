@@ -170,12 +170,12 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor",
                                 "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
                                 "Weather forecast for the owner's location (Open-Meteo)"],
-                          r.hints, r.about_the_bot, r.rain_caption)
+                          r.hints, r.about_the_bot, r.rain_caption, found := intent.topics(content(case), [m["content"] for m in case.history if m["role"] == "user"][-2:]))
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
         messages, system, effort or r.effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None, require_tool=r.needs_data,
-        no_tools=r.about_the_bot)
+        no_tools=r.about_the_bot, tool_names=intent.tools_for(found))
     if fast:
         calls[0:0] = [(fast[0], fast[1]), *r.more]  # the bot ran them itself, before the model
     return calls, reply

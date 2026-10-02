@@ -147,7 +147,7 @@ def test_the_day_tool_rules_are_short_separate_bullets():
     from datetime import datetime
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
-    block = text[text.index("- For questions that rank, compare or count DAYS"):text.index("- Use weather_now")]
+    block = text[text.index("- For questions that rank, compare or count DAYS"):text.index("- To ask whether rain comes WITH")]
     bullets = [line for line in block.splitlines() if line.startswith("  - ")]
     assert len(bullets) == 9 and all(len(b) < 300 for b in bullets)
     for needle in ("sort_by", "rain >= 1", "It rained on 507 of 1,454 days", "trace_rain_days", "note_daily", "on record", "public_holiday", "known day", "RECORD"):

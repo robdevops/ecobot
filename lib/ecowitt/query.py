@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
+DAILY_ALL_DAYS = 7              # longer periods send every day's figures only when day by day was asked for
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
 MAX_REFINE_WINDOWS = 4          # overall records
 MAX_MONTH_REFINE_WINDOWS = 24
@@ -278,10 +279,11 @@ class HistoryQuery:
         series_out = {key: self._result(key, ext) for key, ext in self.overall.items()
                       if key.split(".", 1)[-1] not in DERIVED or key.split(".", 1)[-1] in wanted}  # the rest: cached, not sent
         series_out.update(self.direction)
+        shown = {k: v for k, v in series_out.items() if self._in_focus(k)}   # what the model is sent (charts use all of series_out)
         log.info("%s to %s: %d ranges, %d cached, %d in mem, %d req%s, %d series, %d refined",
                  f"{self.start:%Y-%m-%d}", f"{self.end:%m-%d %H:%M}", f.ranges, f.from_cache, f.from_memory, f.calls,
                  f", {len(f.errors)} failed" if f.errors else "", len(series_out), refined)
-        out = {"period": f"{self.start:%a %d %b %Y} - {self.end:%a %d %b %Y}", "series": series_out}
+        out = {"period": f"{self.start:%a %d %b %Y} - {self.end:%a %d %b %Y}", "series": shown if shown else series_out}
         if self.monthly and not self.detailed:
             out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
@@ -291,6 +293,13 @@ class HistoryQuery:
             out["missing"] = f.errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+    def _in_focus(self, key: str) -> bool:
+        """Is this series wanted by the question? Outdoor and indoor come with both temperature and humidity: when the words name
+        only one of them, the other is left out of what the model reads (everything else is kept)."""
+        field = key.split(".", 1)[-1]
+        named = self.turn.readings
+        return not named or field not in ("temperature", "humidity") or field in named
 
     def _result(self, key: str, ext: dict) -> dict:
         """One series as the model sees it: its records with when they happened, and a daily or monthly breakdown."""
@@ -307,7 +316,10 @@ class HistoryQuery:
             for ts, rec in self.store[key]["pts"].items():
                 if rec["cycle"] != "1day":  # sub-daily points give correct local days
                     fold(days.setdefault(local_date(ts, tz), {}), ts, rec)
-            entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)}
+            keep = None if len(days) <= DAILY_ALL_DAYS or self.turn.per_day else {   # a long period: the days of its records, not all of them
+                local_date(ext[w].ts, tz).strftime("%a %d %b") for w in ("low", "high")}
+            entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)
+                              if keep is None or d.strftime("%a %d %b") in keep}
         else:
             entry["monthly"] = {}
             for month, d in self.monthly.get(key, {}).items():

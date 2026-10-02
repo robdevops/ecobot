@@ -192,7 +192,7 @@
     "id": "will-it-rain",
     "ask": "will it rain later?",
     "expect": {
-      "effort": "medium",
+      "effort": "low",
       "tools": [
         "weather_now"
       ]

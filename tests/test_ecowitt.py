@@ -1165,3 +1165,25 @@ async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_a
     eco._live = (time.time() - 100, eco._live[1])                  # older than 90 s: asks
     json.loads(await eco.tools[0].handler({"groups": groups}))
     assert len(real_time()) == 4
+
+
+async def test_a_two_week_result_keeps_only_the_days_of_the_records_unless_every_day_was_asked_for(station):
+    eco, _ = station
+    today = datetime.now(eco.tz).date()
+    args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=13)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}
+    short = json.loads(await eco.tools[1].handler(args, Turn()))["series"]["outdoor.temperature"]
+    full = json.loads(await eco.tools[1].handler(args, Turn(per_day=True)))["series"]["outdoor.temperature"]
+    assert len(full["daily"]) == 13 and 1 <= len(short["daily"]) <= 2
+    assert short["high"] == full["high"] and set(short["daily"]) <= set(full["daily"])
+
+
+def test_naming_one_of_temperature_and_humidity_leaves_the_other_out_of_what_the_model_reads():
+    from lib.ecowitt.query import HistoryQuery
+    q = HistoryQuery.__new__(HistoryQuery)
+    q.turn = Turn(readings=["temperature"])
+    assert q._in_focus("outdoor.temperature") and q._in_focus("wind.wind_speed") and q._in_focus("rainfall.daily")
+    assert not q._in_focus("outdoor.humidity") and not q._in_focus("indoor.humidity")
+    q.turn = Turn(readings=["temperature", "humidity"])
+    assert q._in_focus("outdoor.humidity")
+    q.turn = Turn()
+    assert q._in_focus("outdoor.humidity")

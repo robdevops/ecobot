@@ -16,7 +16,7 @@ class RaisingAgent:
 
 
 class AnsweringAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None):
+    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, **k):
         self.first_call = first_call
         return "It is 12 degrees."
 
@@ -108,7 +108,7 @@ class DraftBot:
 
 
 class StreamingAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None):
+    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None):
         await asyncio.sleep(0.05)       # "thinking"
         on_text("It is")
         await asyncio.sleep(0.05)
@@ -234,7 +234,7 @@ async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower
     efforts = []
 
     class SlowThenQuick:
-        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None):
+        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None):
             efforts.append(effort)
             messages.append({"role": "assistant", "content": "(unfinished)"})
             if effort == "medium":
