@@ -445,7 +445,7 @@ class HistoryQuery:
         """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
         (daily,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
-        return rain_bars(rain_slots(daily), self.tz, self.start.date(), self.end.date())
+        return rain_bars(rain_slots(daily), self.tz, self.start.date(), self.end.date(), until=hi)
 
     def _stack_spec(self, names: list[str]) -> Chart | None:
         """The readings asked for, one panel each on a shared time axis (rain behind the first line); None if fewer than

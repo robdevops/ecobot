@@ -46,10 +46,12 @@ def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
             {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
 
 
-def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date) -> Bars:
-    """Rain summed into bars (see bar_layout)."""
+def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until: int | None = None) -> Bars:
+    """Rain summed into bars (see bar_layout), one for every stretch of the period, dry ones included (a bar of 0), up to `until`
+    (epoch, default the end of the last day)."""
     origin, width, per = bar_layout(tz, first, last)
-    bars: dict[int, float] = {}
+    end = min(day_bounds(last, tz)[1], until) if until else day_bounds(last, tz)[1]
+    bars: dict[int, float] = dict.fromkeys(range(origin, end, width), 0.0)
     for t, mm in rain.items():
         if mm > 0:
             k = origin + (t - origin) // width * width
