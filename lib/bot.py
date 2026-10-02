@@ -46,11 +46,12 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
 ALERTS = ["Rain starting, and stopping (after 30 dry minutes)", "Rain likely soon", "Wind gusts over 40 km/h", "UV index of 9 or more",
           "Indoor and outdoor temperatures crossing, after 2+ days", "Unhealthy outdoor air, and when it's safe again"]
 POLLEN_ALERT = "Pollen or thunderstorm asthma risk High or Extreme"
+FORECAST_ALERT = "A forecast I sent changes (rain, or max temperature by over 2°C)"
 
 
-def alerts_text(on: bool, pollen: bool = False) -> str:
+def alerts_text(on: bool, pollen: bool = False, forecast: bool = False) -> str:
     """The /alerts status: one bullet per alert."""
-    bullets = "\n".join(f"\u2022 {a}" for a in ALERTS + ([POLLEN_ALERT] if pollen else []))
+    bullets = "\n".join(f"\u2022 {a}" for a in ALERTS + ([POLLEN_ALERT] if pollen else []) + ([FORECAST_ALERT] if forecast else []))
     return f"Weather alerts are {'on' if on else 'off'} here:\n{bullets}\nUse /alerts {'off' if on else 'on'} to turn them {'off' if on else 'on'}."
 
 
@@ -284,7 +285,7 @@ class Bot:
             log.info("/alerts %s in %s", arg, describe_source(update))
         self.remember_chat(update)
         on = self.state.alerts_on(chat.id)
-        await msg.reply_text(alerts_text(on, "Pollen" in self.by_name))
+        await msg.reply_text(alerts_text(on, "Pollen" in self.by_name, "Forecast" in self.by_name))
 
     @staticmethod
     def _thread(msg: Message):
@@ -493,7 +494,10 @@ class Bot:
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard() if self._keyboard_stale(msg) else None
         try:
-            if await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup):
+            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup)
+            if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
+                self.state.record_forecast(msg.chat_id, turn.forecast_shown)
+            if carried_keyboard:
                 log.info("Buttons: sent keyboard %s to chat %s (it had %s)", templates.VERSION, msg.chat_id, self.state.keyboard(msg.chat_id))
                 self.state.set_keyboard(msg.chat_id, templates.VERSION)
             elif markup:

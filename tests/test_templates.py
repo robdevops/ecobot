@@ -93,6 +93,7 @@ async def test_the_alerts_status_lists_one_bullet_per_alert():
     bullets = [line for line in text.splitlines() if line.startswith("\u2022 ")]
     assert len(bullets) == 6 and text.startswith("Weather alerts are on here:") and text.endswith("to turn them off.")
     assert len(alerts_text(False, pollen=True).splitlines()) == 9 and "turn them on" in alerts_text(False)
+    assert len(alerts_text(True, forecast=True).splitlines()) == 9 and "A forecast I sent changes" in alerts_text(True, forecast=True)
     assert "Pollen or thunderstorm asthma risk High or Extreme" in alerts_text(True, pollen=True)
 
 

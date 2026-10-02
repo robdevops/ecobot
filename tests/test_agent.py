@@ -281,3 +281,9 @@ async def test_several_fast_calls_run_together_before_the_model():
 
 
 
+
+
+def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecast_source():
+    from lib import prompt
+    assert "revised" not in prompt.capabilities(["Ecowitt weather station"])
+    assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt weather station", FORECAST_SOURCE])

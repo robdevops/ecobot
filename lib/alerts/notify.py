@@ -9,6 +9,7 @@ sent silently, with a small italic footer: optional link label, then how to mute
 import json
 import logging
 import os
+from datetime import date
 
 from telegram import MessageEntity
 from telegram.error import BadRequest, Forbidden, TelegramError
@@ -68,6 +69,25 @@ class AlertState:
             self.chats[chat_id]["keyboard"] = version
             self.save()
 
+    def record_forecast(self, chat_id: int, days: list[dict]):
+        """Remember the forecast days this chat was just sent (a newer send replaces the baseline for the same day); days
+        already past are dropped. days is not empty."""
+        sent = self.monitor.setdefault("forecast_sent", {}).setdefault(str(chat_id), {})
+        for d in days:
+            sent[d["date"].isoformat()] = {**d, "date": d["date"].isoformat()}
+        first = min(d["date"] for d in days).isoformat()   # what was sent starts today: older days are past
+        for day in [k for k in sent if k < first]:
+            del sent[day]
+        self.save()
+
+    def forecast_sent(self, chat_id: int) -> dict:
+        """{date: the day as it was sent} for this chat."""
+        return {date.fromisoformat(k): {**v, "date": date.fromisoformat(k)}
+                for k, v in self.monitor.get("forecast_sent", {}).get(str(chat_id), {}).items()}
+
+    def forecast_chats(self) -> list[int]:
+        return [int(c) for c in self.monitor.get("forecast_sent", {})]
+
     def alerts_on(self, chat_id: int) -> bool:
         return self.chats.get(chat_id, {}).get("alerts", True)
 
@@ -104,19 +124,28 @@ class Notifier:
         """Send an alert (silently) to every chat with alerts on; forget chats the bot can no
         longer post to. link = (label, url) adds a clickable label to the footer."""
         text, entities = with_footer(text, link, OPT_OUT)
-        sent = 0
-        for chat_id in self.state.alert_chats():
-            try:
-                await self.bot.send_message(chat_id, text, entities=entities, disable_notification=True,
-                                            disable_web_page_preview=True)
-                sent += 1
-            except Forbidden as e:  # kicked from the group, or blocked in a private chat
-                self.state.remove_chat(chat_id, f"can't post: {e}")
-            except BadRequest as e:
-                if "not found" in str(e).lower():
-                    self.state.remove_chat(chat_id, f"chat gone: {e}")
-                else:
-                    log.warning("Alert to %s failed: %s", chat_id, e)
-            except TelegramError as e:
-                log.warning("Alert to %s failed: %s", chat_id, e)
+        sent = sum([await self._send(chat_id, text, entities) for chat_id in self.state.alert_chats()])
         log.info("Alert sent to %d chat(s): %s", sent, text.replace("\n", " "))
+
+    async def to_chat(self, chat_id: int, text: str, link: tuple[str, str] | None = None) -> bool:
+        """An alert for one chat (the one that was sent something that has since changed). True if it was sent."""
+        text, entities = with_footer(text, link, OPT_OUT)
+        sent = await self._send(chat_id, text, entities)
+        log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text.replace("\n", " "))
+        return sent
+
+    async def _send(self, chat_id: int, text: str, entities) -> bool:
+        """Send silently; forget a chat the bot can no longer post to."""
+        try:
+            await self.bot.send_message(chat_id, text, entities=entities, disable_notification=True, disable_web_page_preview=True)
+            return True
+        except Forbidden as e:  # kicked from the group, or blocked in a private chat
+            self.state.remove_chat(chat_id, f"can't post: {e}")
+        except BadRequest as e:
+            if "not found" in str(e).lower():
+                self.state.remove_chat(chat_id, f"chat gone: {e}")
+            else:
+                log.warning("Alert to %s failed: %s", chat_id, e)
+        except TelegramError as e:
+            log.warning("Alert to %s failed: %s", chat_id, e)
+        return False

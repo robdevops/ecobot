@@ -170,7 +170,8 @@ def capabilities(sources: list[str]) -> str:
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, UV index of 9 or more, "
-                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High or Extreme" if "melbournepollen" in have else "") + ". /alerts off mutes them. Custom alerts "
+                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High or Extreme" if "melbournepollen" in have else "") + (
+                     ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Open-Meteo" in have else "") + ". /alerts off mutes them. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
     missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
     if "melbournepollen" not in have:

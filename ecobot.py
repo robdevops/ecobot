@@ -15,7 +15,7 @@ from telegram import Update
 from telegram.ext import Application, Defaults
 
 from lib.airgradient import AirGradient
-from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, Notifier, PollenMonitor, WeatherMonitor
+from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, Notifier, PollenMonitor, WeatherMonitor
 from lib.bot import Bot, polling_error
 from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
@@ -72,6 +72,7 @@ async def main():
     eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
     air = next((s for s in sources if isinstance(s, AirGradient)), None)
     pollen = next((s for s in sources if isinstance(s, Pollen)), None)
+    forecast = next((s for s in sources if isinstance(s, Forecast)), None)
 
     composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
     tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
@@ -112,6 +113,9 @@ async def main():
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
                     kinds.append(f"air quality (every {AIR_CHECK_SECONDS // 60} min)")
+                if forecast:
+                    forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
+                    kinds.append("forecast changes")
                 if pollen:
                     pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
                     kinds.append("pollen and thunderstorm asthma")

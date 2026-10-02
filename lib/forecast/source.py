@@ -163,10 +163,14 @@ class Forecast:
         return f"Forecast {self.requests - before} req"
 
     # ---------- reading ----------
+    def upcoming(self, count: int = 2) -> list[dict]:
+        """Today and the next days, up to `count`."""
+        today = self.now().date()
+        return [d for d in (self.days or []) if d["date"] >= today][:count]
+
     def lines(self, count: int = 2) -> list[str]:
         today = self.now().date()
-        wanted = [d for d in (self.days or []) if d["date"] >= today][:count]
-        return [f"{day_label(d['date'], today)}: {describe_day(d)}" for d in wanted]
+        return [f"{day_label(d['date'], today)}: {describe_day(d)}" for d in self.upcoming(count)]
 
     async def handle(self, args: dict, turn: Turn | None = None) -> str:
         if self.days is None and not args.get("cached"):   # the report ("cached") never fetches
@@ -181,4 +185,6 @@ class Forecast:
         lines = self.lines(count)
         if not lines:
             return json.dumps({"error": "No forecast is available right now."})
+        if turn:
+            turn.forecast_shown.extend(self.upcoming(count))   # remembered for the chat once the answer is sent
         return json.dumps({"lines": lines, "place": self.place, "source": self.source}, ensure_ascii=False)
