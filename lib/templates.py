@@ -34,7 +34,7 @@ def sentence(text: str) -> str | None:
 WEATHER_METRICS = ["Temperature, humidity (indoor, outdoor)", "Dew point, vapour pressure deficit, pressure, wind speed",
                    "Rain, solar radiation, UV index"]
 AIR_METRICS = ["PM1, PM2.5, PM10, CO₂, VOC, NOx"]
-POLLEN = ["Pollen and thunderstorm asthma risk"]
+POLLEN = ["Pollen and thunderstorm asthma risk (October to December)"]
 FORECAST = ["Forecast"]
 HISTORY = ["History charts"]
 

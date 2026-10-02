@@ -1096,5 +1096,16 @@
       "q:current",
       "m:temperature"
     ]
+  },
+  {
+    "id": "now-what",
+    "ask": "ok now what?",
+    "note": "'now' alone is not a weather question",
+    "expect": {
+      "needs_data": false
+    },
+    "covers": [
+      "q:chat"
+    ]
   }
 ]

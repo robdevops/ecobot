@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 URL = "https://www.melbournepollen.com.au/"
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot; a few requests a day)"}
 POLLEN_REFRESH_SECONDS = 30 * 60
+SEASON_MONTHS = (10, 11, 12)   # grass pollen and the thunderstorm asthma forecast run October to December: nothing else is fetched, shown or alerted
+OFF_SEASON = "Pollen and thunderstorm asthma forecasts only run from October to December."
 
 DESCRIPTION = ("Melbourne's grass pollen level today and the thunderstorm asthma risk (Low, Moderate, High or Extreme), from "
                "melbournepollen.com.au. Use it for pollen, hay fever and thunderstorm asthma questions. Takes no arguments. "
@@ -47,6 +49,9 @@ class Pollen:
         self.tools = [Tool("pollen_asthma", DESCRIPTION, PARAMETERS, self.handle)]
 
     async def start(self):
+        if not self.in_season():
+            log.info("Pollen: out of season (October to December)")
+            return
         try:
             await self.warm(True)
             log.info("Pollen: %s", "; ".join(self.lines()) or "no levels on the page")
@@ -85,9 +90,14 @@ class Pollen:
     def now(self) -> datetime:
         return now_local(self.tz)
 
+    def in_season(self) -> bool:
+        return self.now().month in SEASON_MONTHS
+
     async def warm(self, fresh: bool = True) -> str:
-        """Fetch the page when it is due: never outside the sync hours (unless nothing is cached), and not more often than
-        the poll interval."""
+        """Fetch the page when it is due: never out of season, never outside the sync hours (unless nothing is cached), and not
+        more often than the poll interval."""
+        if not self.in_season():
+            return "Pollen out of season"
         age = time.time() - self.fetched_at
         if self.data is not None and (not in_sync_hours(self.now()) or age < POLLEN_REFRESH_SECONDS - 5 and not fresh):
             return "Pollen cached"
@@ -109,7 +119,8 @@ class Pollen:
     # ---------- reading ----------
     def current(self) -> dict:
         """{"grass": {level, emoji, date} | None, "asthma": {level, emoji, updated} | None, "fetched_at": epoch}"""
-        d = self.data or {}
+        d = self.data if self.in_season() else {}   # last season's page is never shown
+        d = d or {}
         grass = d.get("melbourne_grass") or (d.get("district_grass") or {}).get(self.district)
         asthma = (d.get("thunderstorm_asthma") or {}).get(self.district)
         return {"grass": {"level": grass, "emoji": LEVEL_EMOJI[grass], "date": d.get("melbourne_date")} if grass else None,
@@ -127,6 +138,8 @@ class Pollen:
         return out
 
     async def handle(self, args: dict, turn: Turn | None = None) -> str:
+        if not self.in_season():
+            return json.dumps({"error": OFF_SEASON})
         if self.data is None and not args.get("cached"):   # the report ("cached") never fetches
             try:
                 await self.warm(True)

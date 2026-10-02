@@ -369,3 +369,11 @@ def test_only_temp_temperature_how_hot_or_cold_and_hottest_style_questions_force
                  "hottest weekends", "coldest day last month", "is it cold outside"):
         assert intent.needs_data(text), text
     assert intent.read("only that it's cold", NOW).needs_data is False
+
+
+def test_now_alone_is_not_a_weather_question_but_naming_a_reading_with_it_is():
+    for text in ("now", "ok now what?", "what now", "do it now", "right now", "currently", "current", "what's happening now"):
+        r = intent.read(text, NOW)
+        assert not r.needs_data and not r.weather_now and r.fast is None, text
+    for text in ("weather now", "is it raining now", "what's the temperature now", "current weather", "how windy is it right now"):
+        assert intent.needs_data(text), text
