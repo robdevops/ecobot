@@ -96,3 +96,13 @@ async def test_the_station_location_is_used_when_none_is_configured_and_without_
     assert Forecast(cfg, (-37.8, 144.9)).location == (-37.8, 144.9)
     with pytest.raises(RuntimeError, match="FORECAST_LAT"):
         await Forecast(cfg).start()
+
+
+async def test_a_direct_forecast_question_shows_the_whole_week_unless_fewer_days_are_asked_for(tmp_path):
+    forecast, _ = make(tmp_path)
+    await forecast.start()
+    assert len(json.loads(await forecast.handle({}))["lines"]) == 3          # every day Open-Meteo gave (the test data has three)
+    assert len(json.loads(await forecast.handle({"days": 2}))["lines"]) == 2
+    assert len(json.loads(await forecast.handle({"days": "nonsense"}))["lines"]) == 3
+    assert len(json.loads(await forecast.handle({"days": 30}))["lines"]) == 3
+    await forecast.close()

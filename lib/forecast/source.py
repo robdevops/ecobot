@@ -26,10 +26,10 @@ FRESH_SECONDS = 10 * 60       # a question reuses a forecast this young
 
 DESCRIPTION = ("The weather forecast for the owner's location: today and the days ahead, "
                "each with a summary, the lowest and highest temperature and the chance of rain. Use it for forecast "
-               "questions ('what's tomorrow like', 'will it rain this week'). days = how many days from today (default 2, "
-               "at most 7). The result's \"lines\" are ready-made, emoji included: copy them as they are, and put the result's "
+               "questions ('what's tomorrow like', 'will it rain this week'). days = how many days from today (default 7, "
+               "at most 7: the whole week; pass 1 for 'today' and 2 for 'tomorrow'). The result's \"lines\" are ready-made, emoji included: copy them as they are, and put the result's "
                "\"place\" in parentheses after the forecast heading, e.g. (Melbourne).")
-PARAMETERS = {"type": "object", "properties": {"days": {"type": "integer", "description": "Days from today (default 2, at most 7)."}}}
+PARAMETERS = {"type": "object", "properties": {"days": {"type": "integer", "description": "Days from today (default 7, at most 7)."}}}
 
 # The first match wins; each sentence of a summary gets its own emoji ("Showers. Possible storm." -> "🌦️ Showers. ⛈️ Possible storm.")
 EMOJI = ((r"thunder|storm", "⛈️"), (r"shower", "🌦️"), (r"rain|drizzle", "🌧️"), (r"snow|hail", "🌨️"), (r"fog|mist", "🌫️"),
@@ -175,9 +175,9 @@ class Forecast:
             except Exception as e:
                 log.warning("Forecast not readable: %s", e)
         try:
-            count = max(1, min(7, int(args.get("days") or 2)))
+            count = max(1, min(7, int(args.get("days") or 7)))
         except (TypeError, ValueError):
-            count = 2
+            count = 7
         lines = self.lines(count)
         if not lines:
             return json.dumps({"error": "No forecast is available right now."})
