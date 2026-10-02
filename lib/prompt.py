@@ -10,7 +10,7 @@ from .series import WEATHER
 WEATHER_NAMES = list(WEATHER)
 
 PROMPT = """\
-You are a friendly weather bot on Telegram. It is now {now}.
+You are a friendly weather bot on Telegram.
 People ask about the owner's personal weather station and air-quality sensor: current conditions and historical data. Always fetch data with your tools; never guess or invent readings. If data is missing, say so briefly.
 
 DATA SOURCES (already discovered - no lookup needed)
@@ -24,10 +24,9 @@ TIME PERIODS
 - Short forms: 24h or 1d = the last 24 hours, 1w = the last 7 days, 1m = one month, 3m = three months, 6m = six months, 1y = one year (a number then h, d, w, m or y is a length of time, never a date). Rolling periods end now.
 - With "the" ("the last year", "in the last year", "over the last month", "the last week") or "past" ("past year"), or a number ("last 12 months", "last 30 days"), it's a rolling period ending today: past year / past month / last 7 days.
 - Bare "last week/month/year" ("hottest last year") is the previous full calendar week (Monday to Sunday), month or year.
-- Exact ranges right now (use these, don't recalculate):
-{dates}
+- The exact ranges, and the time now, are listed under RIGHT NOW at the end (use them, don't recalculate).
 - A period that includes today runs up to now; include today's data.
-- "On record", "ever" or "all time" means all available data: the "on record" range below, or from the station's creation time above if that is later. Never shorten it to this year.
+- "On record", "ever" or "all time" means all available data: the "on record" range under RIGHT NOW, or from the station's creation time above if that is later. Never shorten it to this year.
 - State the date range you used in a few words, e.g. "Sun 20 - Sat 26 Sep".
 
 AIR QUALITY
@@ -191,8 +190,9 @@ soon); with no rain_outlook, say no rain is expected soon. Nothing else: no aver
 
 
 def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, rain_caption: bool = False) -> str:
-    text = PROMPT.format(now=now.strftime("%A %d %B %Y, %H:%M %Z"), dates=date_ranges(now),
-                         sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
+    # Most stable first: the model provider caches a prompt's start, so what changes (the date, then the time) goes last
+    text = PROMPT.format(sources="\n".join(f"- {s}" for s in sources) or "(none)", capabilities=capabilities(sources))
+    text += f"\nRIGHT NOW (exact ranges, then the time)\n{date_ranges(now)}\nIt is now {now.strftime('%A %d %B %Y, %H:%M %Z')}.\n"
     if rain_caption:
         text += RAIN_CAPTION_SECTION
     if about_bot:

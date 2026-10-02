@@ -1,3 +1,5 @@
+import json
+
 from lib import report
 
 # What `python scripts/report_inputs.py` printed on the real station (rain, night)
@@ -115,3 +117,92 @@ def test_solar_radiation_is_rated_low_medium_or_high():
     assert sun("350.0 W/m²") == "• Sun: solar radiation 350.0 W/m² (medium)"
     assert sun("0.0 W/m²") == ""                                      # zero is left out, so there is no Sun line
     assert sun("n/a") == "• Sun: solar radiation n/a"                 # unreadable: shown as it came, with no rating
+
+
+# ---------- chart captions ----------
+def _turn(**kw):
+    from types import SimpleNamespace as NS
+    from lib.specs import Bars, Chart, Panel
+    bars = Bars("Rain", "mm", [1759000000, 1759086400, 1759172800], [0.0, 7.2, 1.4], 86400, "day")
+    return NS(charts=[Chart("Rain", "", [Panel("Rain", "mm", bars=bars)])], chart_fields=[], chart_field=None, average_asked=False, **kw)
+
+
+def test_a_weather_chart_caption_gives_the_period_then_low_and_high_per_series():
+    from zoneinfo import ZoneInfo
+    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {
+        "outdoor.temperature": {"unit": "℃", "low": "8.1", "low_when": "at 5:30am", "low_date": "Wed 30 Sep 2026",
+                                "high": "24.3", "high_when": "around 3pm", "high_date": "Sat 3 Oct 2026"},
+        "indoor.temperature": {"unit": "℃", "low": "18.0", "low_when": "at 6am", "low_date": "Wed 30 Sep 2026",
+                               "high": "22.5", "high_when": "at 4pm", "high_date": "Sat 3 Oct 2026"}}})
+    caption = report.chart_caption("weather_history", {}, result, _turn(), ZoneInfo("Australia/Melbourne"))
+    assert caption.splitlines() == ["Tue 29 Sep – Tue 06 Oct 2026",
+                                    "Temperature (outdoor): low 8.1 °C, Wed 30 Sep at 5:30am · high 24.3 °C, Sat 3 Oct around 3pm",
+                                    "Temperature (indoor): low 18.0 °C, Wed 30 Sep at 6am · high 22.5 °C, Sat 3 Oct at 4pm"]
+
+
+def test_an_average_chart_caption_leads_with_the_average():
+    from zoneinfo import ZoneInfo
+    turn = _turn()
+    turn.average_asked = True
+    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {
+        "outdoor.temperature": {"unit": "℃", "low": "8.1", "high": "24.3", "average": "15.2"}}})
+    assert report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC")).splitlines()[1] == \
+        "Temperature: average 15.2 °C (low 8.1, high 24.3)"
+
+
+def test_a_rain_chart_caption_is_the_least_and_most_rain_then_whether_more_is_expected():
+    from zoneinfo import ZoneInfo
+    turn = _turn()
+    turn.chart_fields = ["rain"]
+    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {"rainfall.daily": {"unit": "mm", "low": "0", "high": "7.2"}}})
+    now = json.dumps({"rain_outlook": "Rain looks likely soon: pressure falling. (An estimate from the station's readings, not an official forecast)"})
+    lines = report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC"), now).splitlines()
+    assert lines[1].startswith("☔ Rain per day: least 0 mm (") and "most 7.2 mm (" in lines[1] and "8.6 mm in all" in lines[1]
+    assert lines[2] == "☔ Rain looks likely soon: pressure falling. (an estimate)"
+    dry = report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC"), "{}")
+    assert dry.splitlines()[2] == "☔ No rain is expected soon."
+
+
+def test_an_air_chart_caption_gives_each_metrics_peak_rating_and_average():
+    from zoneinfo import ZoneInfo
+    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "pm2_5": {
+        "unit": "µg/m³", "high": 34.2, "high_time": "Wed 30 Sep 2026 3:00pm", "high_rating": "🟠 Poor", "average": 8.1},
+        "pm10": {"unit": "µg/m³", "high": 50, "high_time": "x", "average": 9}})
+    caption = report.chart_caption("air_quality", {"metrics": ["pm2_5"]}, result, _turn(), ZoneInfo("UTC"))
+    assert caption.splitlines()[1] == "• PM2.5: peak 34.2 µg/m³ (Wed 30 Sep 3:00pm) · 🟠 Poor · average 8.1"
+    assert len(caption.splitlines()) == 2
+
+
+def test_no_caption_when_the_tool_failed_or_drew_nothing():
+    from zoneinfo import ZoneInfo
+    from types import SimpleNamespace as NS
+    assert report.chart_caption("weather_history", {}, json.dumps({"error": "x"}), _turn(), ZoneInfo("UTC")) is None
+    assert report.chart_caption("weather_history", {}, json.dumps({"series": {}}), NS(charts=[]), ZoneInfo("UTC")) is None
+
+
+# ---------- plain lookups ----------
+def test_a_reading_lookup_prints_only_what_was_asked():
+    now = json.loads(NOW)
+    assert report.reading_lines(now, ["temperature"], ["outdoor", "indoor"]) == [
+        "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C", "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"]
+    assert report.reading_lines(now, ["humidity"], ["outdoor"]) == ["• Outdoor: 💦 94 %"]
+    assert report.reading_lines(now, ["wind"], []) == ["• Wind: calm"]
+    assert report.reading_lines(now, ["pressure"], []) == ["• Pressure: 🗜️ 1025.0 hPa"]
+    assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining now" in report.reading_lines(now, ["rain"], [])[0]
+
+
+def test_air_pollen_and_forecast_lookups_print_the_tools_own_lines():
+    assert report.lookup("air", AIR, ["pm10"], []) == "• PM10: 3.0 µg/m³ 🟢 good"
+    assert report.lookup("air", AIR, [], []).splitlines()[0] == "• PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)"
+    assert report.lookup("pollen", POLLEN, [], []) == "Pollen & asthma (Melbourne)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
+    assert report.lookup("forecast", FORECAST, [], []).startswith("Forecast (Melbourne)\n• Today: ")
+    assert report.lookup("pollen", json.dumps({"error": "off season"}), [], []) is None
+
+
+def test_a_short_period_highs_and_lows_lookup_gives_each_sides_extremes_with_their_times():
+    result = json.dumps({"period": "Fri 02 Oct 2026 - Fri 02 Oct 2026", "series": {
+        "outdoor.temperature": {"unit": "℃", "low": "9.0", "low_when": "at 5am", "low_date": "Fri 2 Oct 2026",
+                                "high": "16.2", "high_when": "at 2pm", "high_date": "Fri 2 Oct 2026"},
+        "outdoor.humidity": {"unit": "%", "low": "40", "high": "95"}}})
+    assert report.lookup("extremes", result, [], []) == ("Fri 02 Oct – Fri 02 Oct 2026\n"
+                                                         "• Temperature: low 9.0 °C, Fri 2 Oct at 5am · high 16.2 °C, Fri 2 Oct at 2pm")

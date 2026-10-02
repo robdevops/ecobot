@@ -377,3 +377,19 @@ def test_now_alone_is_not_a_weather_question_but_naming_a_reading_with_it_is():
         assert not r.needs_data and not r.weather_now and r.fast is None, text
     for text in ("weather now", "is it raining now", "what's the temperature now", "current weather", "how windy is it right now"):
         assert intent.needs_data(text), text
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("text, kind, named", [
+    ("how hot is it", "reading", ["temperature"]), ("is it raining", "reading", ["rain"]), ("uv", "reading", ["uv"]),
+    ("what's the pressure", "reading", ["pressure"]), ("dew point", "reading", ["dew_point"]),
+    ("how's the air", "air", []), ("pm10", "air", ["pm10"]), ("forecast", "forecast", []), ("7 day forecast", "forecast", []),
+    ("pollen", "pollen", []), ("what can you do", "about", []),
+    ("is it too cold to run", "", []), ("is the air ok for a run", "", []), ("will it rain", "", []), ("forecast tomorrow", "", []),
+    ("temperature today", "extremes", []), ("is it hotter than yesterday", "", []), ("why is it so humid", "", []),
+])
+def test_plain_lookups_are_answered_in_code_and_everything_else_is_left_to_the_model(text, kind, named):
+    read = intent.read(text, datetime(2026, 10, 2, 12), True, True, True, True)
+    assert (read.lookup, read.lookup_arg) == (kind, named)

@@ -76,3 +76,9 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed)
 
 ## The report
 "report" (and "status", "sitrep") and "weather now" are written in code, with no model call (`lib/report.py`): the bot fetches the tools' results together and lays them out, so they are quick and always the same. Sun, UV and wind are left out when zero (night, calm). The report is: Weather station, Air quality, and Pollen & asthma and Forecast when those sources are on (pollen and forecast always come from the cache).
+
+A plain chart request ("rain chart 7d", "plot temperature and humidity", "air quality 30d", the chart buttons) is also drawn and captioned in code, with no model call (`intent.weather_chart`, `report.chart_caption`): the period, then low and high per reading (the average first if one was asked), the peak and rating for air quality, and for a rain chart the least and most rain and whether more is expected. Anything that asks for correlation, analysis, a forecast, thinking or a description, or compares readings or names a particular date or time, still goes to the model.
+
+Other plain lookups are answered in code too, from the one tool result (`intent.plain_lookup`, `report.lookup`): a single reading now ("how hot is it", "is it raining", "uv"), the air ("how's the air", "pm10"), pollen, the plain forecast ("forecast", "7 day forecast"), the highs and lows of a short period ("hottest today") and what the bot can do ("what can you do"). Any question with forecast, correlation, thinking, analysis or description words, a comparison, or anything beyond the reading itself goes to the model; so does a lookup whose result can't be used.
+
+The system prompt starts with what never changes (the model provider caches the start of a prompt) and ends with the date ranges and the time.
