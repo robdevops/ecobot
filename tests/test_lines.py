@@ -16,18 +16,19 @@ def test_readings_that_fit_the_budget_are_drawn_as_they_are():
     assert line.raw and len(line.x) == 100 and line.low is None and line.name == "30-minute readings"
 
 
-def test_too_many_readings_are_bucketed_and_a_band_only_comes_with_days():
+def test_too_many_readings_are_bucketed_and_every_bucket_carries_its_range():
     week = build_line(readings(48 * 20, 1800, 1800), TZ, 20 * 86400)
-    assert not week.raw and week.width == 3600 and week.low is None and week.name == "hourly averages"
+    assert not week.raw and week.width == 3600 and week.low is not None and week.name == "hourly averages"
+    assert all(lo <= y <= hi for lo, y, hi in zip(week.low, week.y, week.high))
     year = build_line(readings(48 * 120, 1800, 1800, 0.0, 9.0), TZ, 120 * 86400)
     assert year.width == 86400 and year.low is not None and year.name == "daily averages"
 
 
-def test_a_native_band_is_kept_at_every_width():
+def test_a_bands_range_is_kept_at_every_width():
     raw = build_line(slot_readings({T0 + i * 1800: 5.0 for i in range(20)}, highs={T0 + i * 1800: 8.0 for i in range(20)}), TZ,
-                     20 * 1800, native_band=True)
+                     20 * 1800)
     assert raw.raw and raw.high == [8.0] * 20
-    hourly = build_line(readings(48 * 20, 1800, 1800, 1.0, 9.0), TZ, 20 * 86400, native_band=True)
+    hourly = build_line(readings(48 * 20, 1800, 1800, 1.0, 9.0), TZ, 20 * 86400)
     assert hourly.width == 3600 and hourly.high is not None
 
 

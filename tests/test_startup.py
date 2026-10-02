@@ -33,7 +33,7 @@ class FakeApp:
 
     start = stop = _noop
 
-    def add_handler(self, h):
+    def add_handler(self, h, group=0):
         self.handlers.append(h)
 
     def add_error_handler(self, h):
@@ -76,7 +76,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
     assert "failed" not in final and "days (5min/30min/4h/1d)" in final
-    assert len(app.handlers) == 6  # start+help, reset, alerts, membership, messages, errors
+    assert len(app.handlers) == 9  # start+help, reset, keyboard, alerts, alert buttons, other updates, membership, messages, errors
 
 
 async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(tmp_path, monkeypatch, caplog):
@@ -114,3 +114,23 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     assert "the network dropped" in log                                     # and the reason is in the log
     assert " req, held " in log and "AirGradient archive:" in log         # yet both archives ran
     assert "Startup warm-up failed" not in log                            # not lost to the catch-all
+
+
+async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_uses_the_stations_location(tmp_path, monkeypatch):
+    from tests.test_forecast import transport as forecast_transport
+    from tests.test_pollen import page, transport as pollen_transport
+    eco_t, _ = ecowitt_transport(history_days=45)
+    calls = []
+    eco_init, pollen_init, forecast_init = ecobot.Ecowitt.__init__, ecobot.Pollen.__init__, ecobot.Forecast.__init__
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c: eco_init(self, c, eco_t))
+    monkeypatch.setattr(ecobot.Pollen, "__init__", lambda self, c: pollen_init(self, c, pollen_transport(page, calls)))
+    monkeypatch.setattr(ecobot.Forecast, "__init__", lambda self, c, place=None: forecast_init(self, c, place, forecast_transport(calls)))
+    off = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location=""))
+    assert [s.name for s in off] == ["Ecowitt"]
+    for s in off:
+        await s.close()
+    on = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location="", pollen=True, forecast=True))
+    assert [s.name for s in on] == ["Ecowitt", "Pollen", "Forecast"]
+    assert on[2].location == (-37.8, 145.0) and on[2].lines() and on[1].lines()
+    for s in on:
+        await s.close()

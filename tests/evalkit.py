@@ -15,6 +15,8 @@ from pathlib import Path
 from lib import compose, intent, prompt
 from lib.airgradient import source as air
 from lib.ecowitt import days, link, station
+from lib.forecast import source as forecast
+from lib.pollen import source as pollen
 from lib.llm import Agent
 from lib.tools import Tool, Tools
 
@@ -26,7 +28,7 @@ CANNED = json.dumps({"note": "(evaluation run: no data is available; say so in o
 # Every kind of question, metric and chart the bot handles needs at least one saved case (see Case.covers). One case
 # per kind is the aim: when a new kind is added, add it here and a case for it; a redundant case can go.
 COVERAGE = {
-    "q:current": "current conditions", "q:forecast": "will it rain / looking ahead", "q:summary": "a period's highs and lows",
+    "q:current": "current conditions", "q:pollen": "pollen and thunderstorm asthma", "q:forecast": "will it rain / looking ahead", "q:summary": "a period's highs and lows",
     "q:average": "averages", "q:record": "records (highest, fastest, all time)", "q:rank-days": "ranking or listing days",
     "q:known-day": "a question about one named day", "q:describe-day": "describing a day or a hypothetical",
     "q:correlation": "does one reading go with another", "q:follow-up": "a follow-up that keeps the subject",
@@ -60,7 +62,8 @@ def load_cases(path: Path = CASES) -> list[Case]:
 
 
 def tool_names() -> list[str]:
-    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link", "air_scan"]
+    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link", "air_scan",
+            "pollen_asthma", "weather_forecast"]
 
 
 def make_tools(calls: list) -> Tools:
@@ -77,7 +80,9 @@ def make_tools(calls: list) -> Tools:
             ("air_quality", air.DESCRIPTION, air.PARAMETERS),
             ("plot_chart", compose.PLOT_DESCRIPTION, compose.PLOT_PARAMETERS),
             ("air_link", compose.LINK_DESCRIPTION, compose.LINK_PARAMETERS),
-            ("air_scan", compose.SCAN_DESCRIPTION, compose.SCAN_PARAMETERS)]
+            ("air_scan", compose.SCAN_DESCRIPTION, compose.SCAN_PARAMETERS),
+            ("pollen_asthma", pollen.DESCRIPTION, pollen.PARAMETERS),
+            ("weather_forecast", forecast.DESCRIPTION, forecast.PARAMETERS)]
     return Tools([Tool(n, d, p, recorder(n)) for n, d, p in defs])
 
 
@@ -129,7 +134,7 @@ def deterministic(case: Case) -> list[str]:
     """Failures of the decisions made in code (no model): reasoning effort, fast path, hints, chart choices."""
     e, fails = case.expect, []
     text = case.ask
-    r = intent.read(text, NOW)
+    r = intent.read(text, NOW, pollen=True, forecast=True)
     if "effort" in e and r.effort != e["effort"]:
         fails.append(f"effort {r.effort}, expected {e['effort']}")
     if "fast" in e:
@@ -147,7 +152,8 @@ def deterministic(case: Case) -> list[str]:
         hints = " | ".join(r.hints)
         fails += [f"period hints lack {h!r} (got: {hints or 'none'})" for h in e["hints"] if h not in hints]
     for key, got in (("chart_fields", r.chart_fields), ("chart_field", r.chart_field), ("report", r.report),
-                     ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data)):
+                     ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data),
+                     ("weather_now", r.weather_now), ("rain_caption", r.rain_caption)):
         if key in e and got != e[key]:
             fails.append(f"{key} {got}, expected {e[key]}")
     for name in e.get("tools", []) + e.get("any_tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):
@@ -160,13 +166,16 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     """Ask the real model; returns the tool calls it made and its final reply."""
     calls: list[tuple[str, dict]] = []
     text = case.ask
-    r = intent.read(text, NOW)
-    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], r.hints, r.about_the_bot, r.report)
+    r = intent.read(text, NOW, pollen=True, forecast=True)
+    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor",
+                                "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
+                                "Weather forecast for the owner's location (Open-Meteo)"],
+                          r.hints, r.about_the_bot, r.rain_caption)
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
-        messages, system, effort or r.effort, first_call=fast[:2] if fast else None, require_tool=r.needs_data,
+        messages, system, effort or r.effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None, require_tool=r.needs_data,
         no_tools=r.about_the_bot)
     if fast:
-        calls.insert(0, (fast[0], fast[1]))  # the bot ran it itself, before the model
+        calls[0:0] = [(fast[0], fast[1]), *r.more]  # the bot ran them itself, before the model
     return calls, reply

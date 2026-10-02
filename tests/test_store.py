@@ -72,6 +72,7 @@ def test_vpd_reported_in_inhg_is_stored_and_read_in_kpa_and_old_rows_are_convert
     old = now - 5 * 86400
     cache.db.execute("INSERT INTO fields VALUES ('M','30min','outdoor','vpd','inHg')")
     cache.db.execute("INSERT INTO points VALUES ('M','30min','outdoor','vpd',?, '0.261')", (old,))
+    cache.db.execute("DELETE FROM meta WHERE key = 'unit_fixes'")                # as a cache from before the fix
     cache.db.commit()
     cache.close()
     again = make(tmp_path)                                                      # opened again: the old rows are converted once
@@ -79,3 +80,13 @@ def test_vpd_reported_in_inhg_is_stored_and_read_in_kpa_and_old_rows_are_convert
     assert loaded["unit"] == "kPa" and loaded["list"] == {str(old): "0.884"}
     again.close()
     assert make(tmp_path).load("M", "30min", ["outdoor"], 0, now)["outdoor"]["vpd"]["list"] == {str(old): "0.884"}   # and not again
+
+
+def test_slot_ranges_come_from_the_cached_five_minute_readings(tmp_path):
+    cache, now = make(tmp_path), int(time.time())
+    base = now - 10 * 86400
+    base -= base % 1800
+    cache.store("M", "5min", ["outdoor"], {"outdoor": {"dew_point": {"unit": "C", "list": {str(base + 300 * i): str(10.0 + i) for i in range(12)}}}}, base, base + 3600)
+    lows, highs = cache.slot_ranges("M", "outdoor", "dew_point", {base: 12.0, base + 1800: 18.0, base + 3600: 30.0}, base, base + 7200)
+    assert (lows[base], highs[base]) == (10.0, 15.0) and (lows[base + 1800], highs[base + 1800]) == (16.0, 21.0)
+    assert base + 3600 not in lows                                   # no 5-minute readings there: no range

@@ -21,16 +21,29 @@ I = re.IGNORECASE
 
 # ---------- reasoning and fetching ----------
 EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_FORECAST = "none", "low", "medium"
+EFFORT_STEPS = ("none", "low", "medium", "high")
+
+
+def lower_effort(effort: str) -> str | None:
+    """One reasoning step down (medium > low > none), for asking again after a timeout; None when there is no lower step."""
+    i = EFFORT_STEPS.index(effort) if effort in EFFORT_STEPS else 0
+    return EFFORT_STEPS[i - 1] if i else None
 
 # The words that name each reading, shared by every pattern below
 _TEMP = TEMP_WORDS
+# Which temperature words make a message a weather question that must fetch ("only that it's cold" is chat): "temp", "temperature",
+# "how hot/cold ...", and the superlatives that rank days ("hottest weekends"). _TEMP (all the words) still names the reading.
+_TEMP_ASK = r"temp\w*|how (?:hot|cold|warm|cool|freezing)|(?:hott|cold|warm|cool)est"
 _WIND = r"wind\w*|gusts?|breez\w*"
 _PRESSURE = PRESSURE_WORDS
-_OTHER_THAN_AIR = r"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather"  # a question that is not (only) about the air
+# The two devices by name: "ecowitt" is the weather, "ag" / "airgradient" / "air gradient" the air quality
+_ECOWITT = r"ecowitt"
+_AG = r"air ?gradient|ag"
+_OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather|{_ECOWITT}"  # a question that is not (only) about the air
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
 WEATHER = re.compile(
-    rf"\b(weather|{_TEMP}|frost\w*|"
+    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP_ASK}|frost\w*|pollen|hay ?fever|asthma|"
     rf"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
     rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"
@@ -65,12 +78,16 @@ LINK = re.compile(
     r"(does|do|did|is|are)\b.*\b(affect\w*|influence\w*|predict\w*|cause\w*)\b.*\b(rain|pressure|humidity|wind|temperature)\w*)\b", I)
 
 
-EFFORT_RULES = ((EFFORT_FORECAST, (FORECAST, LINK)), (EFFORT_DESCRIBE, (ANALYSIS, DESCRIBE)))
+# Asking the model to think: "think about it", "try to work out why", "reason it through", "predict", "estimate", "grind", "whirl"
+THINK = re.compile(r"\b(think\w*|try|trying|reason\w*|predict\w*|estimat\w*|grind\w*|whirl\w*)\b", I)
+
+EFFORT_RULES = ((EFFORT_FORECAST, (FORECAST, LINK, THINK)), (EFFORT_DESCRIBE, (ANALYSIS, DESCRIBE)))
 
 
 def reasoning_effort(text: str) -> str:
     """Thinking is for judgement calls only: predictions and how one reading relates to another (medium), and
-    analysis across days or readings or describing a day (low). Lookups get none."""
+    analysis across days or readings or describing a day (low). Lookups get none, unless the person asks the bot to think,
+    try, reason, predict, estimate, grind or whirl (medium)."""
     return next((effort for effort, patterns in EFFORT_RULES if any(p.search(text) for p in patterns)), EFFORT_DEFAULT)
 
 
@@ -80,7 +97,7 @@ def _only(words: str, lead: str = "") -> str:
 
 
 # "status", "report": the whole current picture from both devices (a period word or a subject makes it something else)
-REPORT = re.compile(_only(r"status|report|overview|dashboard|summary|everything|what you'?ve got",
+REPORT = re.compile(_only(r"status|report|sitrep|overview|dashboard|summary|everything|what you'?ve got",
                           r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?(a\s+)?(full\s+|current\s+|complete\s+)?"), I)
 
 
@@ -88,10 +105,37 @@ def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
 
 
+def report_calls(ecowitt: bool, air: bool, pollen: bool = False, forecast: bool = False) -> list[tuple[str, dict]]:
+    """What the full report needs, fetched together before the model sees the question."""
+    return ([("weather_now", {"groups": NOW_GROUPS})] if ecowitt else []) + ([("air_quality", {})] if air else []) + (
+        [("pollen_asthma", {"cached": True})] if pollen else []) + (
+        [("weather_forecast", {"days": 3, "cached": True})] if forecast else [])
+
+
+# Pollen and thunderstorm asthma (the Pollen source)
+POLLEN_WORDS = re.compile(r"\b(pollen|hay ?fever|thunderstorm asthma|asthma)\b", I)
+POLLEN_NOW = re.compile(_only(r"pollen( count| level| forecast| today| now)?|hay ?fever|(thunderstorm )?asthma( risk)?",
+                              r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+
+
+def mentions_pollen(text: str) -> bool:
+    return bool(POLLEN_WORDS.search(text))
+
+
+# "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
+NOW_GROUPS = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+WEATHER_NOW = re.compile(_only(rf"(weather|{_ECOWITT}|conditions)(\s+(now|right now|currently|at the moment))?|(current|latest)\s+(weather|conditions)",
+                               r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+
+
+def wants_weather_now(text: str) -> bool:
+    return bool(WEATHER_NOW.search(text)) and not TIME_WORDS.search(text)
+
+
 # Questions about the bot itself ("what metrics do you have", "list our sources"): answered from what it knows, no fetch
 ABOUT_THE_BOT = re.compile(
     r"\b(what|which|list|show)\b.*\b(metrics?|sensors?|sources?|devices?)\b|"
-    r"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b|"
+    rf"\bwhat (can|do) you (do|measure|track|have|know|tell)\b|\bwhat can (i|we) ask\b|\bwhat (does|do) ({_ECOWITT}|{_AG}) (measure|track|have|report|tell)\b|"
     + _only(r"metrics?|sensors?|sources?|devices?", r"((our|the|my|available|all)\s+)*"), I)
 
 
@@ -103,8 +147,19 @@ def about_the_bot(text: str) -> bool:
 COMMAND = re.compile(r"^\s*(please\s+)?(add|set( up)?|create|remind|schedule|turn (on|off)|enable|disable|mute|unmute|subscribe)\b", I)
 
 
+# Asking for the bot's view ("what do you think of weather in general"): a conversation, not a lookup, unless it names a time or a reading now
+OPINION = re.compile(r"\b(what do you think|your (view|opinion|thoughts?)|philosoph\w*|do you (like|prefer|love|hate|enjoy))\b", I)
+RIGHT_NOW = re.compile(r"\b(today|tonight|tomorrow|yesterday|now|currently|current|right now|outside|forecast\w*|this (morning|afternoon|evening|week))\b", I)
+
+
+def is_opinion(text: str) -> bool:
+    return bool(OPINION.search(text)) and not RIGHT_NOW.search(text) and not TIME_WORDS.search(text)
+
+
 def needs_data(text: str) -> bool:
-    return bool(WEATHER.search(text)) and not COMMAND.search(text) and not about_the_bot(text)
+    """Must the model fetch before answering? Weather and air words say yes, unless it is an instruction or a question about the bot
+    or its opinion: those are not forced to call a tool."""
+    return bool(WEATHER.search(text)) and not COMMAND.search(text) and not about_the_bot(text) and not is_opinion(text)
 
 
 # ---------- periods ----------
@@ -216,7 +271,7 @@ EXTREMES = re.compile(r"\b(hottest|coldest|warmest|coolest|highest|lowest|highs?
 GRAPH = re.compile(r"\b(graph\w*|chart\w*|plot\w*|trend\w*|visuali[sz]\w*)\b", I)
 # Anything that needs other data, a judgement, or a comparison goes the normal way
 _NOT_SIMPLE = (r"rain\w*|pressure|humid\w*|uv|solar|lightning|pm ?2\.?5|pm2|pm ?10|pm ?1|"
-               r"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|airgradient|"
+               rf"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|{_AG}|"
                r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
                r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now")
 NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
@@ -224,8 +279,8 @@ NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
 WIND = re.compile(rf"\b({_WIND})\b", I)
 NOT_SIMPLE_WIND_OK = re.compile(rf"\b({_NOT_SIMPLE})\b", I)
 # What a chart request with no period must name to default to a week ("chart it" refers back instead)
-WEATHER_SUBJECT = re.compile(rf"\b(weather|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
-WEATHER_WORD = re.compile(r"\b(weather|conditions)\b", I)
+WEATHER_SUBJECT = re.compile(rf"\b(weather|{_ECOWITT}|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
+WEATHER_WORD = re.compile(rf"\b(weather|{_ECOWITT}|conditions)\b", I)
 # A period named on its own ("weather week", "aq month") is the rolling week, month or year ending today, not the calendar
 # one (on the 1st, "month" must not be just today)
 BARE_PERIODS = {"week": "last 7 days", "month": "past month", "year": "past year"}
@@ -250,15 +305,13 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     return spans[0] if len(spans) == 1 else None  # none, or several ("this week vs last week"): the model decides
 
 
-# The readings a chart can plot: name -> (the words that name it, the field it plots when it is the only one asked about)
-READINGS = {name: (r.words, None if name == "temperature" else r.field) for name, r in WEATHER_READINGS.items()}
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 ALL = re.compile(r"\b(all|every\w*|each)\b", I)
 
 
 def _named(text: str) -> dict[str, int]:
     """The readings a question names, with where. "dew point temperature" names the dew point, not also the temperature."""
-    found = {name: m.start() for name, (words, _) in READINGS.items() if (m := re.search(rf"\b({words})\b", text, I))}
+    found = {name: m.start() for name, r in WEATHER_READINGS.items() if (m := re.search(rf"\b({r.words})\b", text, I))}
     if "temperature" in found and any(name in found for name in SPECIFIC):
         del found["temperature"]
     return found
@@ -276,7 +329,15 @@ def chart_field(text: str) -> str | None:
     """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
     is about temperature, several readings, or none in particular."""
     found = list(_named(text))
-    return READINGS[found[0]][1] if len(found) == 1 else None
+    return WEATHER_READINGS[found[0]].field if len(found) == 1 and found[0] != "temperature" else None
+
+
+# "rain chart 7d": a rain chart whose caption is just the least and most rain and whether more is expected
+RAIN_CHART = re.compile(r"^\s*rain\s+(chart|graph|plot)\b[^,&+]*$", I)
+
+
+def wants_rain_caption(text: str) -> bool:
+    return bool(RAIN_CHART.search(text)) and not re.search(r"\band\b", text, I)
 
 
 def weather_groups(text: str) -> str:
@@ -290,7 +351,7 @@ def weather_groups(text: str) -> str:
 # ---------- air-quality fast path ----------
 # "how's the air?", "what's the AQI", "report my airgradient aq". History, comparisons and mixed
 # weather questions go the normal way.
-AIR = re.compile(r"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|airgradient)\b", I)
+AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|{_AG})\b", I)
 AIR_QUALITY = re.compile(r"\bair quality\b", I)
 AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"
@@ -336,7 +397,7 @@ SPECIFIC_MOMENT = re.compile(
     r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b\d{1,2}:\d{2}\b|\b(noon|midnight|morning|afternoon|evening|overnight|tonight)\b|"
     r"\b(mon|tues?|wed(nes)?|thu(rs?)?|fri|sat(ur)?|sun)(day)?\b", I)
 
-def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
     if SPECIFIC_MOMENT.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
@@ -346,6 +407,10 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, 
                                "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}, f"air quality chart, {name}"
     if air and mentions_air(text) and not AIR_NOT_NOW.search(text) and not TIME_WORDS.search(text):
         return "air_quality", {}, "air quality now"
+    if pollen and POLLEN_NOW.search(text) and not TIME_WORDS.search(text):
+        return "pollen_asthma", {}, "pollen and thunderstorm asthma"
+    if ecowitt and wants_weather_now(text):
+        return "weather_now", {"groups": NOW_GROUPS}, "weather now"
     if ecowitt and (period := weather_period(text, now)):
         name, start, end = period
         # 3+ days, an hours-long window, or whenever a graph is asked for
@@ -368,14 +433,21 @@ class Reading:
     chart_field: str | None = None        # humidity questions get a humidity chart
     chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
     average_asked: bool = False
+    more: list[tuple[str, dict]] = field(default_factory=list)   # the rest of the report's calls (fast is the first)
+    weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
+    rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
 
 
-def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True) -> Reading:
+def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
+         forecast: bool = False) -> Reading:
     """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
+    report = wants_report(text)
+    calls = report_calls(ecowitt, air, pollen, forecast) if report else []
     try:
-        fast = fast_call(text, now, ecowitt, air)
+        fast = (*calls[0], "report") if calls else fast_call(text, now, ecowitt, air, pollen)
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None
-    return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), wants_report(text), period_hints(text, now),
-                   fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)))
+    return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
+                   fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
+                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=ecowitt and wants_rain_caption(text))

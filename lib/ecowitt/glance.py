@@ -1,11 +1,22 @@
-"""One emoji per current reading so hot, cold, wet and windy show at a glance. Decided here, from the values, so the same
+"""One emoji per current reading so hot, cold, wet, windy and sunny show at a glance. Decided here, from the values, so the same
 reading always gets the same emoji; the model just copies it next to the reading."""
 
-# (lowest value that gets it, emoji), highest first
-TEMPERATURE = ((35, "🔥"), (30, "🥵"), (22, "😎"), (16, "🙂"), (8, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors
-INDOOR_TEMPERATURE = ((35, "🔥"), (28, "🥵"), (24, "😎"), (20, "🙂"), (16, "🧥"), (10, "🥶"), (float("-inf"), "🧊"))  # indoors
-WIND = ((50, "🌪️"), (30, "💨"), (15, "🍃"))       # km/h; lighter than that gets none
+# (lowest value that gets it, emoji), highest first; a comfortable range has none, so an emoji is something to notice
+TEMPERATURE = ((35, "🔥"), (30, "🥵"), (25, "🌡️"), (16, ""), (8, "🧥"), (0, "🥶"), (float("-inf"), "🧊"))       # outdoors
+INDOOR_TEMPERATURE = ((35, "🔥"), (28, "🥵"), (25, "🌡️"), (20, ""), (16, "🧥"), (10, "🥶"), (float("-inf"), "🧊"))  # indoors
+WIND = ((50, "🌪️"), (30, "🌬️"), (15, "🍃"))       # km/h; lighter than that gets none
 HUMIDITY_HIGH, HUMIDITY_LOW = 85, 30              # % : muggy or dry; in between gets none
+PRESSURE_HIGH = 1025                              # hPa, sea level: a strong high. VPD_HIGH: kPa, the air is drying things fast
+VPD_HIGH = 1.2
+SOLAR_HIGH = 600                                  # W/m2: bright sun (full sun is about 1000)
+SOLAR_LOW = 200                                   # below this: dim (overcast, dawn, dusk); 200 up to SOLAR_HIGH is medium
+UVI = ((9, "🧴"), (6, "😎"))                      # UV index: 6 is 'high'; 9 and above is also an alert
+UVI_ALERT = 9
+
+
+def solar_band(value: float) -> str:
+    """"low", "medium" or "high" for a solar radiation reading (W/m2)."""
+    return "high" if value >= SOLAR_HIGH else "medium" if value >= SOLAR_LOW else "low"
 
 
 def _step(value: float, table: tuple) -> str:
@@ -25,4 +36,12 @@ def glance(group: str, field: str, value: float) -> str:
         return "🌧️" if value > 0 else ""
     if name in ("daily", "rain_daily", "rain_today"):
         return "☔" if value > 0 else ""
+    if name == "solar":
+        return "☀️" if value >= SOLAR_HIGH else ""
+    if name == "uvi":
+        return _step(value, UVI)
+    if group == "pressure" and name == "relative":
+        return "🗜️" if value >= PRESSURE_HIGH else ""
+    if name == "vpd":
+        return "🧽" if value >= VPD_HIGH else ""
     return ""

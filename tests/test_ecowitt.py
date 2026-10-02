@@ -665,7 +665,7 @@ async def test_averages_come_with_the_answer(tmp_path, archived_cache):
 
 
 async def test_an_average_question_gets_a_caption_that_leads_with_the_average_and_a_daily_range_chart(tmp_path, archived_cache):
-    from lib.charts import AVERAGE_CHART_HINT
+    from lib.captions import AVERAGE_CHART_HINT
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor,indoor", "start_date": f"{today - timedelta(days=90)} 00:00:00",
@@ -884,7 +884,7 @@ def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
         base = int(datetime(2026, 1, 1, tzinfo=TZ).timestamp())
         driver = {base + i * 1800: 1015 + 6 * ((i / 200) % 2 - 1) for i in range(days * 48)}
         rain = {t: (0.4 if (i // 30) % 5 == 0 else 0.0) for i, t in enumerate(driver)}
-        spec = chart_spec(driver, rain, TZ, first, last, "pressure", "hPa")
+        spec = chart_spec(driver, rain, TZ, first, last, "pressure")
         assert spec.panels[0].bars.width in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
 
 
@@ -928,14 +928,19 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
 
 def test_current_readings_get_a_hot_cold_wet_windy_emoji_from_their_values():
     from lib.ecowitt.glance import glance
-    assert [glance("outdoor", "temperature", t) for t in (38, 31, 24, 16, 9, 3, -2)] == ["🔥", "🥵", "😎", "🙂", "🧥", "🥶", "🧊"]
-    assert glance("outdoor", "temperature", 15.9) == "🧥" and glance("outdoor", "temperature", 16) == "🙂"       # happy from 16 outside
-    assert glance("indoor", "temperature", 19.9) == "🧥" and glance("indoor", "temperature", 20) == "🙂"          # and from 20 inside
-    assert [glance("indoor", "temperature", t) for t in (36, 29, 25, 21, 17, 12, 8)] == ["🔥", "🥵", "😎", "🙂", "🧥", "🥶", "🧊"]
+    assert [glance("outdoor", "temperature", t) for t in (38, 31, 26, 16, 9, 3, -2)] == ["🔥", "🥵", "🌡️", "", "🧥", "🥶", "🧊"]
+    assert glance("outdoor", "temperature", 15.9) == "🧥" and glance("outdoor", "temperature", 16) == ""       # comfortable from 16 outside: no emoji
+    assert glance("outdoor", "temperature", 24.9) == "" and glance("outdoor", "temperature", 25) == "🌡️"      # the thermometer from 25
+    assert glance("indoor", "temperature", 19.9) == "🧥" and glance("indoor", "temperature", 20) == ""          # and from 20 inside
+    assert [glance("indoor", "temperature", t) for t in (36, 29, 25, 21, 17, 12, 8)] == ["🔥", "🥵", "🌡️", "", "🧥", "🥶", "🧊"]
     assert glance("outdoor", "humidity", 90) == "💦" and glance("outdoor", "humidity", 20) == "🏜️" and glance("outdoor", "humidity", 55) == ""
-    assert [glance("wind", "wind_speed", v) for v in (60, 35, 20, 5)] == ["🌪️", "💨", "🍃", ""]
+    assert [glance("wind", "wind_speed", v) for v in (60, 35, 20, 5)] == ["🌪️", "🌬️", "🍃", ""]
     assert glance("rainfall", "rain_rate", 1.2) == "🌧️" and glance("rainfall", "rain_rate", 0) == ""
-    assert glance("rainfall", "daily", 3.0) == "☔" and glance("rainfall", "daily", 0) == "" and glance("pressure", "relative", 1010) == ""
+    assert glance("rainfall", "daily", 3.0) == "☔" and glance("rainfall", "daily", 0) == ""
+    assert glance("solar_and_uvi", "solar", 700.0) == "☀️" and glance("solar_and_uvi", "solar", 400.0) == "" and glance("solar_and_uvi", "uvi", 6) == "😎" and glance("solar_and_uvi", "uvi", 9) == "🧴" and glance("solar_and_uvi", "uvi", 5.9) == ""
+    assert glance("solar_and_uvi", "uvi", 3) == "" and glance("solar_and_uvi", "solar", 0.4) == ""            # only when the level is high
+    assert glance("outdoor", "vpd", 1.5) == "🧽" and glance("outdoor", "vpd", 0.85) == ""
+    assert glance("pressure", "relative", 1030) == "🗜️" and glance("pressure", "relative", 1020.9) == "" and glance("pressure", "absolute", 1030) == ""
 
 
 async def test_weather_now_carries_the_emoji_next_to_the_readings(tmp_path):
@@ -1028,19 +1033,24 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
         await eco.tools[1].handler({"groups": "outdoor,wind,pressure", "chart": True, "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         panel = turn.charts[0].panels[0]
-        assert panel.reading == reading and _colour(panel.lines[0].label, 0, panel.reading) == READING_COLOURS[reading]
+        assert panel.reading == reading and _colour(panel.lines[0], 0, panel.reading) == READING_COLOURS[reading]
     await eco.close()
 
 
-async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings():
+async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings(tmp_path):
+    import time as _time
     from types import SimpleNamespace as NS
     from lib.ecowitt.query import HistoryQuery
+    from lib.ecowitt.store import HistoryCache
     from tests.fakes import TZ
-    base = 1_780_000_200 - 1_780_000_200 % 1800
-    fine = {base + 300 * i: 10.0 + i for i in range(12)}                      # two slots of six 5-minute readings
-    cache = NS(slots=lambda mac, cycle, grp, fields, lo, hi: [fine])
-    q = HistoryQuery(NS(tz=TZ, epoch=lambda d: 0, cache=cache, mac="M"), {}, Turn())
-    q.start = q.end = datetime(2026, 1, 1)
+    base = int(_time.time()) - 10 * 86400
+    base -= base % 1800
+    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    five = {"solar_and_uvi": {"solar": {"unit": "W/m2", "list": {str(base + 300 * i): str(10.0 + i) for i in range(12)}}}}   # two slots of six
+    cache.store("M", "5min", ["solar_and_uvi"], five, base, base + 3600)
+    start, end = datetime(2026, 1, 1), datetime(2026, 1, 2)
+    q = HistoryQuery(NS(tz=TZ, epoch=lambda d: base if d == start else base + 7200, cache=cache, mac="M"), {}, Turn())
+    q.start, q.end = start, end
     q.store = {"solar_and_uvi.solar": {"unit": "W/m²", "pts": {base: {"cycle": "30min", "value": (12.0, "12")},
                                                                base + 1800: {"cycle": "30min", "value": (18.0, "18")}}},
                "outdoor.temperature": {"unit": "C", "pts": {base: {"cycle": "30min", "value": (12.0, "12"), "low": (9.0, "9"), "high": (16.0, "16")}}},
@@ -1050,6 +1060,7 @@ async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_fi
     assert (first["low"][0], first["high"][0]) == (10.0, 15.0) and q.store["solar_and_uvi.solar"]["pts"][base + 1800]["high"][0] == 21.0
     assert q.store["outdoor.temperature"]["pts"][base]["low"][0] == 9.0      # its own range is kept
     assert "low" not in q.store["wind.wind_speed"]["pts"][base]              # wind has its own band
+    cache.close()
 
 
 async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):
@@ -1061,7 +1072,7 @@ async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):
         turn = Turn()
         await eco.tools[1].handler({"groups": "outdoor,pressure", "chart": True, "chart_field": said,
                                     "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
-        assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Relative"), said
+        assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Pressure"), said
     await eco.close()
 
 
@@ -1075,3 +1086,82 @@ async def test_keep_warm_fetches_every_resolution_for_every_group(tmp_path):
     assert {cycle for cycle, _ in asked} == {"5min", "30min", "4hour", "1day"}
     assert {groups for _, groups in asked} == {",".join(ecowitt_api.GROUPS)}         # all metrics, every time
     await eco.close()
+
+
+async def test_the_weather_station_is_kept_warm_every_minute_and_the_air_sensor_every_four(tmp_path):
+    from lib.airgradient import AirGradient
+    from lib.warm import REFRESH_SECONDS
+    from tests.fakes import air_transport
+    eco = Ecowitt(config(tmp_path), transport=ecowitt_transport()[0])
+    air = AirGradient(config(tmp_path), transport=air_transport()[0])
+    assert eco.warmer.interval == 60 and air.warmer.interval == REFRESH_SECONDS == 240
+
+
+async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers(station, monkeypatch, caplog):
+    station, _ = station
+    good = {"rainfall": {"rain_rate": {"time": "100", "value": "1.5"}, "daily": {"time": "100", "value": "2.0"}}}
+    answers = [{}, {}, good, good]
+
+    async def realtime(mac, groups):
+        return answers.pop(0)
+    monkeypatch.setattr(station.api, "realtime", realtime)
+    with caplog.at_level("INFO", logger="lib.ecowitt.station"):
+        assert await station.live_rain() is None and await station.live_rain() is None
+        assert await station.live_rain() == (100, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0})
+        await station.live_rain()
+    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "recovered" in caplog.records[1].message
+
+
+async def test_a_waiting_person_goes_before_the_background_requests_queued_ahead_of_them():
+    from lib.ecowitt.api import _TurnLock
+    lock, order = _TurnLock(), []
+
+    async def use(name, urgent=False):
+        await lock.acquire(urgent)
+        try:
+            order.append(name)
+            await asyncio.sleep(0.01)
+        finally:
+            lock.release()
+    running = asyncio.create_task(use("in flight"))
+    await asyncio.sleep(0)
+    tasks = [asyncio.create_task(use(f"background {i}")) for i in range(3)]
+    await asyncio.sleep(0)
+    tasks.append(asyncio.create_task(use("person", urgent=True)))
+    await asyncio.gather(running, *tasks)
+    assert order == ["in flight", "person", "background 0", "background 1", "background 2"]
+    await use("after")                                  # and the lock is free again
+    assert order[-1] == "after" and not lock._locked
+
+
+async def test_a_cancelled_waiter_does_not_block_the_lock():
+    from lib.ecowitt.api import _TurnLock
+    lock = _TurnLock()
+    await lock.acquire()
+    waiting = asyncio.create_task(lock.acquire())
+    await asyncio.sleep(0)
+    waiting.cancel()
+    await asyncio.gather(waiting, return_exceptions=True)
+    lock.release()
+    await asyncio.wait_for(lock.acquire(), 1)           # free, not stuck behind the cancelled waiter
+    lock.release()
+
+
+async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_afresh_when_it_cannot(station):
+    import time
+    eco, fake = station
+    real_time = lambda: [c for c in fake.calls if c.get("path") == "real_time"]
+    groups = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+    out = json.loads(await eco.tools[0].handler({"groups": groups}))
+    assert len(real_time()) == 1                                   # nothing cached yet: a request of its own
+    await eco.live_rain()                                          # the keep-warm's minute check takes every group
+    assert real_time()[-1]["call_back"] == groups and len(real_time()) == 2
+    cached = json.loads(await eco.tools[0].handler({"groups": groups}))
+    assert len(real_time()) == 2 and cached["outdoor"] == out["outdoor"]                # no request: the report is instant
+    json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
+    assert len(real_time()) == 2                                   # a subset of those groups too
+    json.loads(await eco.tools[0].handler({"groups": "rainfall_piezo"}))
+    assert len(real_time()) == 3                                   # a group it doesn't hold: asks
+    eco._live = (time.time() - 100, eco._live[1])                  # older than 90 s: asks
+    json.loads(await eco.tools[0].handler({"groups": groups}))
+    assert len(real_time()) == 4

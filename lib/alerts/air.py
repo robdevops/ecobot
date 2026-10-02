@@ -41,10 +41,10 @@ class AirMonitor:
         if not m["unsafe"] and m["above"] >= CONFIRM_CHECKS:
             m["unsafe"] = True
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
-                              link=self.air.link)
+                              link=self.air.link, kind="air")
         elif m["unsafe"] and m["below"] >= CONFIRM_CHECKS:
             m["unsafe"] = False
-            await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link)
+            await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="air")
         self.state.save()
 
     @staticmethod

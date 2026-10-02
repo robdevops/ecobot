@@ -1,8 +1,7 @@
 """What a chart is, as data. Every chart is a Chart: a title, a subtitle and one or more Panels on a shared time axis.
 
 A Panel draws one of:
-  - lines on a left axis (and, with `right`, lines in another unit on a right axis), optionally with rain-style `bars`
-    behind them on their own axis;
+  - lines on one axis, optionally with rain-style `bars` behind them on their own axis;
   - bars on their own (rain with no line to sit behind);
   - shares (the traffic-light share of each bar's time in good, poor and very poor).
 A Line is a series of points, each optionally with the low and high it stands for (drawn as a band around the line), and
@@ -24,6 +23,8 @@ class Line:
     high: list[float] | None = None
     smoothed: bool = False                             # the line is a light average of the readings, not the readings
     records: dict[str, tuple[int, float]] = field(default_factory=dict)   # "low" / "high": (epoch, the true reading)
+    reading: str = ""                                  # which reading it is ("pm2_5", ...), for its colour; else its panel's
+    indoor: bool = False                               # the indoor sensor's line: the reading's complementary colour
 
     def __post_init__(self):
         if len(self.x) != len(self.y) or len(self.x) < 2:
@@ -32,6 +33,12 @@ class Line:
             raise ValueError(f"line {self.label!r}: low and high go together and match the points")
         if not set(self.records) <= {"low", "high"}:
             raise ValueError(f"line {self.label!r}: records are 'low' and 'high'")
+
+    def own_records(self) -> dict[str, tuple[int, float]]:
+        """The line's highest and lowest point as drawn (the top and bottom of its band when it has one)."""
+        hi, lo = self.high or self.y, self.low or self.y
+        i, j = max(range(len(hi)), key=hi.__getitem__), min(range(len(lo)), key=lo.__getitem__)
+        return {"high": (self.x[i], hi[i]), "low": (self.x[j], lo[j])}
 
 
 @dataclass
@@ -68,25 +75,24 @@ class Panel:
     label: str
     unit: str = ""
     lines: list[Line] = field(default_factory=list)
-    right: list[Line] = field(default_factory=list)    # lines on a second (right-hand) axis, in another unit
     bars: Bars | None = None                           # behind the lines if there are any (rain), else the panel itself
     shares: Shares | None = None
     zones: tuple[float, float] | None = None           # good and poor limits, shaded behind a single rated reading
     reading: str = ""                                  # which reading this is ("humidity", "pressure" ...), for the rain rule
-    aside: bool = False                                # several lines: peaks labelled in empty space, not as pills on the lines
+    peaks: str = "pills"                               # how peaks are labelled: "pills" on the lines, "aside" in empty space, "none"
 
     def __post_init__(self):
         if not (self.lines or self.bars or self.shares):
             raise ValueError(f"panel {self.label!r}: nothing to draw")
         if self.shares and (self.lines or self.bars):
             raise ValueError(f"panel {self.label!r}: shares draw alone")
-        if self.right and (not self.lines or self.bars):
-            raise ValueError(f"panel {self.label!r}: a right axis needs lines on the left and no bars")
+        if self.peaks not in ("pills", "aside", "none"):
+            raise ValueError(f"panel {self.label!r}: peaks are 'pills', 'aside' or 'none'")
 
     @property
     def xs(self) -> list[int]:
         """Every x the panel draws, bars to the end of the last one."""
-        out = [t for line in (*self.lines, *self.right) for t in line.x]
+        out = [t for line in self.lines for t in line.x]
         for b in (self.bars, self.shares):
             if b and b.x:
                 out += [b.x[0], b.x[-1] + b.width]
@@ -113,6 +119,9 @@ class Chart:
             raise ValueError("a chart needs a panel")
         if self.compass and not (len(self.panels) == 1 and self.panels[0].lines):
             raise ValueError("a compass goes beside a single line panel")
+        if len(self.panels) == 1:  # a chart of one panel of lines labels the peaks of every line, so each carries its records
+            for line in self.panels[0].lines:
+                line.records = line.records or line.own_records()
 
 
 def period_text(a: date, b: date) -> str:
@@ -130,7 +139,7 @@ def rain_behind(panels: list[Panel]) -> list[Panel]:
     """A rain panel goes behind a line panel (the first bars-only panel is drawn there, on its own right-hand axis), so the
     rain lines up with the reading: the one series.RAIN_WITH names first, else the first line. With no line panel it
     stays a panel of its own."""
-    lines = [p for p in panels if p.lines and not p.bars and not p.right]
+    lines = [p for p in panels if p.lines and not p.bars]
     line_panel = next((p for name in RAIN_WITH for p in lines if p.reading == name), lines[0] if lines else None)
     bars_panel = next((p for p in panels if p.bars and not p.lines), None)
     if not (line_panel and bars_panel):
@@ -140,8 +149,9 @@ def rain_behind(panels: list[Panel]) -> list[Panel]:
 
 
 def stack(panels: list[Panel], first: date, last: date) -> Chart:
-    """A chart of these panels for the days first to last, rain behind the first line; what a bar covers goes into the
-    subtitle."""
-    per = next((b.per for p in panels for b in (p.bars, p.shares) if b and b.per), "")
-    return Chart(", ".join(p.label for p in panels), period_text(first, last) + (f"  ·  per {per}" if per else ""),
-                 rain_behind(panels))
+    """A chart of these panels for the days first to last, rain behind the first line. The subtitle says what a bar covers and
+    whether a range is shaded. Every producer of a stacked chart goes through here, so they all read alike."""
+    per = next((f"{'rain' if b is p.bars else 'rating'} per {b.per}" for p in panels for b in (p.bars, p.shares) if b and b.per), "")
+    shaded = any(s.low is not None for p in panels for s in p.lines)
+    return Chart(", ".join(p.label for p in panels),
+                 "  ·  ".join(filter(None, [period_text(first, last), per, "range shaded" if shaded else ""])), rain_behind(panels))

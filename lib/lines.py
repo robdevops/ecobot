@@ -4,10 +4,10 @@ A reading is (epoch, value, low, high, seconds): the value, the lowest and highe
 source gives no range) and how many seconds of time it covers (300 for a 5-minute reading, 1800 for a 30-minute one, 86400
 for one of Ecowitt's daily records). `build_line` picks how to draw a whole period of them:
   - up to about 500 points, the readings themselves (a slow 5-minute reading is lightly smoothed);
-  - more than that, buckets of 30 minutes, an hour, 2 hours, 4 hours, and past that one point a day (the local day's mean
-    with its true lowest and highest as a band; shorter buckets hug the line, so they get none).
-A source whose value is a mean and whose range is real (wind: the average speed, shaded up to the gusts) says so with
-`native_band`, and keeps its band at every width."""
+  - more than that, buckets of 30 minutes, an hour, 2 hours, 4 hours, and past that one point a day (the bucket's mean).
+Every line keeps its range as a band at every width: the lowest and highest reading in each bucket, or a reading's own range
+when the source gives one (Ecowitt's 30-minute lows and highs; wind: the average speed, shaded up to the gusts). The readings
+themselves (up to about 500 points) have a band only where the source gave them a range."""
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
@@ -37,9 +37,9 @@ class Plotted:
             return f"{WIDTH_NAMES.get(self.width, f'{self.width // 60}-minute')} readings"
         return f"{WIDTH_NAMES.get(self.width, 'daily')} averages"
 
-    def spec(self, label: str, records: dict | None = None) -> Line:
+    def spec(self, label: str, records: dict | None = None, reading: str = "", indoor: bool = False) -> Line:
         """The line as a chart draws it."""
-        return Line(label, self.x, self.y, self.low, self.high, self.smoothed, records or {})
+        return Line(label, self.x, self.y, self.low, self.high, self.smoothed, records or {}, reading, indoor)
 
 
 def slot_readings(values: dict[int, float], lows: dict[int, float] | None = None, highs: dict[int, float] | None = None,
@@ -53,7 +53,7 @@ def _own_range(r: Reading) -> tuple[float, float]:
     return (r[1] if r[2] is None else r[2]), (r[1] if r[3] is None else r[3])
 
 
-def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool = False, native_band: bool = False,
+def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool = False,
                force_daily: bool = False, until: date | None = None) -> Plotted | None:
     """The line for these readings over a period of span_seconds; None when there is too little to draw.
     force_daily: one point a day whatever the length (an average was asked for). until: with daily records in the mix,
@@ -62,15 +62,15 @@ def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool
     fine = [r for r in rs if r[4] < DAY]
     records = [r for r in rs if r[4] >= DAY]
     if not fine:  # only daily records: as they are, each with its own range
-        return _as_they_are(records, native_band=True) if len(records) >= 2 else None
+        return _as_they_are(records) if len(records) >= 2 else None
     source = min(r[4] for r in fine)
     width = DAY if records or force_daily else bucket_width(span_seconds, source)
     if width >= DAY:
         return _daily(fine, records, tz, until)
     if width > source or len({r[4] for r in fine}) > 1:  # too many for the chart, or two resolutions side by side
         xs, mean, low, high = bucketed([(r[0], r[1], *_own_range(r), r[4] < SLOT) for r in fine], tz, max(width, SLOT))
-        return Plotted(xs, mean, max(width, SLOT), False, *((low, high) if native_band else (None, None))) if len(xs) >= 2 else None
-    line = _as_they_are([r for r in fine if r[4] == source], native_band=native_band or source > SLOT)
+        return Plotted(xs, mean, max(width, SLOT), False, low, high) if len(xs) >= 2 else None
+    line = _as_they_are([r for r in fine if r[4] == source])
     if line and smooth and source == 300:  # slow readings come in 0.1-degree steps: a light average of the real readings
         smoothed = rolling_mean(dict(zip(line.x, line.y)), SMOOTH_POINTS * source // 2)
         if len(smoothed) == len(line.x):  # every reading was a finite number
@@ -79,11 +79,11 @@ def build_line(readings: list[Reading], tz, span_seconds: float, *, smooth: bool
     return line
 
 
-def _as_they_are(rs: list[Reading], native_band: bool) -> Plotted | None:
+def _as_they_are(rs: list[Reading]) -> Plotted | None:
     if len(rs) < 2:
         return None
     ranges = [_own_range(r) for r in rs]
-    ranged = native_band and sum(1 for r in rs if r[2] is not None or r[3] is not None) >= len(rs) // 2
+    ranged = sum(1 for r in rs if r[2] is not None or r[3] is not None) >= len(rs) // 2
     return Plotted([r[0] for r in rs], [r[1] for r in rs], rs[0][4], True,
                 [lo for lo, _ in ranges] if ranged else None, [hi for _, hi in ranges] if ranged else None)
 

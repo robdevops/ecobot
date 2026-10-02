@@ -6,19 +6,22 @@ replies to the bot. Replies are silent (no notification sound).
 
 import asyncio
 import contextlib
+import json
 import logging
+import random
 import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from telegram import InputMediaPhoto, Message, Update
+from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
-from telegram.error import BadRequest, NetworkError, TelegramError
-from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
+from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, prompt
+from . import intent, prompt, report, templates
+from .alerts import menu
 from .alerts import AlertState, with_footer
 from .charts import render as render_chart
 from .tools import Turn
@@ -31,17 +34,16 @@ log = logging.getLogger(__name__)
 TG_LIMIT = 4000
 CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
+RETRY_SECONDS = 60           # the second try, one reasoning step lower, after a question timed out
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
+DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
+DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
-        "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
+        "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe).\n"
+        "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS_TEXT = ("Weather alerts are {on} here: rain starting and stopping, rain likely soon, gusts over 40 km/h, indoor/outdoor "
-               "temperatures crossing after 2+ days, and unhealthy outdoor air (and when it's safe again). "
-               "Use /alerts {other} to turn them {other}.")
-
-
 @dataclass
 class ChatState:
     history: list[dict] = field(default_factory=list)
@@ -132,30 +134,85 @@ async def keep_typing(bot, chat_id: int, thread_id, stop: asyncio.Event):
             await asyncio.wait_for(stop.wait(), 4.5)
 
 
-async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None):
+class Draft:
+    """A private chat's "Thinking..." preview (sendMessageDraft): empty until the answer streams in, then the text so far.
+    It only lasts 30 s after its last update, so run() re-sends it while the model works; the real reply is sent after."""
+
+    def __init__(self, bot, chat_id: int, thread_id):
+        self.bot, self.chat_id, self.thread_id = bot, chat_id, thread_id
+        self.draft_id = random.randint(1, 2**31 - 1)  # one id, so the updates animate one draft
+        self.text = ""
+        self.changed = asyncio.Event()
+
+    def update(self, text: str):
+        self.text = text
+        self.changed.set()
+
+    async def run(self, stop: asyncio.Event):
+        """Send the draft, then again on every change (at most once a second) and every DRAFT_REFRESH_SECONDS. If Telegram
+        refuses drafts, fall back to the "typing..." indicator for the rest of the turn."""
+        while not stop.is_set():
+            self.changed.clear()
+            try:
+                await self.bot.send_message_draft(self.chat_id, self.draft_id, text=self.text[-TG_LIMIT:] or None,
+                                                  message_thread_id=self.thread_id)
+            except Exception as e:
+                log.warning("Draft not sent (%s: %s); using the typing indicator", type(e).__name__, e)
+                await keep_typing(self.bot, self.chat_id, self.thread_id, stop)
+                return
+            waits = [asyncio.ensure_future(stop.wait()), asyncio.ensure_future(self.changed.wait())]
+            try:
+                done, _ = await asyncio.wait(waits, timeout=DRAFT_REFRESH_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for w in waits:
+                    w.cancel()
+            if self.changed.is_set() and not stop.is_set():
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop.wait(), DRAFT_MIN_GAP)
+
+
+def fit_caption(text: str, link: tuple[str, str] | None = None) -> str:
+    """The text cut to what fits a photo's caption together with the footer: whole lines from the top, then a trailing
+    ellipsis (words, if the first line alone is too long)."""
+    room = CAPTION_LIMIT - len(with_footer("", link)[0]) - 1
+    lines = text.splitlines()
+    while len(lines) > 1 and len("\n".join(lines)) + 1 > room:
+        lines.pop()
+    cut = "\n".join(lines)
+    if len(cut) + 1 > room:
+        cut = cut[:room - 1].rsplit(" ", 1)[0]
+    return (cut.rstrip() + "…") if cut != text else text
+
+
+async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None) -> bool:
     """Send the answer with any charts. A short answer goes in the photo's caption (one message);
     a long one goes first as text, then the charts. If sending the chart fails the answer is still
-    sent as text. link = (label, url) adds a small italic link line at the end."""
+    sent as text. link = (label, url) adds a small italic link line at the end. markup (the button keyboard) rides on
+    the last text or the single photo; returns whether it was sent (a group of photos can't carry one)."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
     caption, entities = with_footer(text, link)
+    if photos and len(caption) > CAPTION_LIMIT:  # one message beats a text and then a picture: cut the text to fit
+        caption, entities = with_footer(fit_caption(text, link), link)
+    extra = {"reply_markup": markup} if markup else {}
     if photos and len(caption) <= CAPTION_LIMIT:
         try:
             if len(photos) == 1:
-                await msg.reply_photo(photos[0], caption=caption, caption_entities=entities or None)
-            else:
-                await msg.reply_media_group([InputMediaPhoto(p, caption=caption if i == 0 else None,
-                                                             caption_entities=(entities or None) if i == 0 else None)
-                                             for i, p in enumerate(photos)])
-            return
+                await msg.reply_photo(photos[0], caption=caption, caption_entities=entities or None, **extra)
+                return bool(markup)
+            await msg.reply_media_group([InputMediaPhoto(p, caption=caption if i == 0 else None,
+                                                         caption_entities=(entities or None) if i == 0 else None)
+                                         for i, p in enumerate(photos)])
+            return False
         except TelegramError:
             log.exception("Couldn't send the chart; sending the answer as text")
             photos = []
     chunks = split_message(text)
     for i, chunk in enumerate(chunks):
-        body, ents = with_footer(chunk, link) if i == len(chunks) - 1 else (chunk, [])
-        await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True)
+        last = i == len(chunks) - 1
+        body, ents = with_footer(chunk, link) if last else (chunk, [])
+        await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True, **(extra if last else {}))
     if photos:
         try:
             if len(photos) == 1:
@@ -164,6 +221,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
                 await msg.reply_media_group([InputMediaPhoto(p) for p in photos])
         except TelegramError:
             log.exception("Couldn't send the chart")
+    return bool(markup)
 
 
 class Bot:
@@ -175,7 +233,10 @@ class Bot:
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
         app.add_handler(CommandHandler("reset", self.on_reset))
+        app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
+        app.add_handler(CallbackQueryHandler(self.on_alert_button, pattern=r"^al:"))
+        app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
         app.add_error_handler(self.on_error)
@@ -202,19 +263,67 @@ class Bot:
         elif status in ("left", "kicked"):
             self.state.remove_chat(change.chat.id, f"bot {status}")
 
+    def _alert_kinds(self) -> list[str]:
+        return menu.available_kinds(set(self.by_name))
+
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/alerts, /alerts on, /alerts off"""
+        """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
+        unsubscribe every type."""
         msg, chat = update.effective_message, update.effective_chat
         if not self.state:
             await msg.reply_text("Alerts aren't available: no sensor is connected.")
             return
         arg = context.args[0].lower() if context.args else ""
+        self.remember_chat(update)
         if arg in ("on", "off"):
             self.state.set_alerts(chat.id, self._title(update), arg == "on")
             log.info("/alerts %s in %s", arg, describe_source(update))
-        self.remember_chat(update)
-        on = self.state.alerts_on(chat.id)
-        await msg.reply_text(ALERTS_TEXT.format(on="on" if on else "off", other="off" if on else "on"))
+        muted, kinds = self.state.muted(chat.id), self._alert_kinds()
+        await msg.reply_text(menu.title(muted, kinds), reply_markup=menu.keyboard(muted, kinds))
+
+    async def on_alert_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """A press on the alert settings buttons (under an alert or the /alerts message): open or close a section, or subscribe
+        or unsubscribe a type or all. In a group only admins may change them."""
+        query = update.callback_query
+        parts = (query.data or "").split(":")
+        action, arg, section = (parts + ["", "", ""])[1:4]
+        if action == "noop" or not self.state:
+            await query.answer()
+            return
+        message = query.message
+        chat = message.chat
+        if chat.type != ChatType.PRIVATE:
+            member = await context.bot.get_chat_member(chat.id, query.from_user.id)
+            if member.status not in ("administrator", "creator"):
+                await query.answer("Only group admins can change alerts")
+                return
+        kinds = self._alert_kinds()
+        toast, opened = None, section or None
+        if action in ("open", "close"):
+            opened = arg if action == "open" else None
+            if opened in ("sub", "unsub") and not menu.options(self.state.muted(chat.id), kinds, opened):
+                await query.answer("You're subscribed to everything" if opened == "sub" else "No alerts are on")   # nothing to list
+                return
+        elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
+            self.state.set_kind(chat.id, arg, action == "on")
+            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg].capitalize()} alerts"
+            toast = f"{what} {action} in this chat"
+        else:
+            await query.answer()
+            return
+        muted = self.state.muted(chat.id)
+        if opened in ("sub", "unsub") and not menu.options(muted, kinds, opened):
+            opened = None                                    # the last one was just turned on or off: close the section
+        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None)
+        await query.answer(toast)
+        try:
+            if (message.text or "").startswith(menu.TITLE):   # the /alerts message: keep its on/off summary current
+                await query.edit_message_text(menu.title(muted, kinds), reply_markup=markup)
+            else:                                             # an alert: only its buttons change
+                await query.edit_message_reply_markup(reply_markup=markup)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                raise
 
     @staticmethod
     def _thread(msg: Message):
@@ -235,8 +344,51 @@ class Bot:
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.remember_chat(update)
         log.info("/start in %s", describe_source(update))
+        private = update.effective_chat.type == ChatType.PRIVATE
         await update.effective_message.reply_text(
-            HELP.format(user=update.effective_user.id, chat=update.effective_chat.id))
+            HELP.format(user=update.effective_user.id, chat=update.effective_chat.id),
+            reply_markup=templates.keyboard() if private else None)
+        if private and self.state:
+            self.state.set_keyboard(update.effective_chat.id, templates.VERSION)
+
+    async def refresh_keyboards(self, tg_bot) -> int:
+        """At startup: tell each private chat whose buttons are out of date that they changed, with the new keyboard (silently).
+        A chat that hid them is left alone. Returns how many were sent."""
+        if not self.state:
+            return 0
+        sent = 0
+        for chat_id in [c for c in self.state.chats if c > 0 and self.state.keyboard(c) not in (templates.VERSION, templates.HIDDEN)]:
+            try:
+                await tg_bot.send_message(chat_id, "Buttons updated.", reply_markup=templates.keyboard(), disable_notification=True)
+                self.state.set_keyboard(chat_id, templates.VERSION)
+                sent += 1
+            except Forbidden as e:  # blocked the bot
+                self.state.remove_chat(chat_id, f"can't post: {e}")
+            except TelegramError as e:
+                log.warning("Buttons update to %s failed: %s", chat_id, e)
+        if sent:
+            log.info("Buttons: told %d private chat(s) the buttons changed (keyboard %s)", sent, templates.VERSION)
+        return sent
+
+    def _keyboard_stale(self, msg: Message) -> bool:
+        """Does this private chat need the current buttons (it has never had them, or they have changed since)? Not when it
+        hid them."""
+        return bool(self.state and msg.chat.type == ChatType.PRIVATE
+                    and self.state.keyboard(msg.chat_id) not in (templates.VERSION, templates.HIDDEN))
+
+    async def on_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/keyboard shows the buttons again, /keyboard off hides them (private chats only)."""
+        msg = update.effective_message
+        if update.effective_chat.type != ChatType.PRIVATE:
+            await msg.reply_text("The buttons are only in private chats.")
+        elif context.args and context.args[0].lower() == "off":
+            await msg.reply_text("Buttons hidden. /keyboard shows them again.", reply_markup=ReplyKeyboardRemove())
+            if self.state:
+                self.state.set_keyboard(msg.chat_id, templates.HIDDEN)
+        else:
+            await msg.reply_text("Here are the buttons.", reply_markup=templates.keyboard())
+            if self.state:
+                self.state.set_keyboard(msg.chat_id, templates.VERSION)
 
     async def on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Errors raised inside handlers: network blips get one line, anything else a traceback."""
@@ -247,13 +399,26 @@ class Bot:
             log.error("Unhandled error while handling a message", exc_info=err)
 
     # ---------- messages ----------
+    async def on_other(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Service messages and other non-text updates: only logged when Telegram says a draft's generation was stopped
+        (a field this library version doesn't know, so it is found by name)."""
+        msg = update.effective_message
+        extra = getattr(msg, "api_kwargs", None) or {}
+        if stopped := [k for k in extra if "generation" in k.lower()]:
+            log.info("Message generation stopped in %s (fields: %s)", describe_source(update), ", ".join(stopped))
+
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.effective_message
         if not msg or not msg.text:
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
-            await self.respond(update, context, msg.text)
+            if msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
+                await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
+                                                                      "Pollen" in self.by_name, "Forecast" in self.by_name))
+                await self.on_alerts(update, context)
+            else:
+                await self.respond(update, context, templates.sentence(msg.text) or msg.text)
             return
         # Group / supergroup: only respond when addressed
         mention = re.compile(rf"@{re.escape(context.bot.username)}\b", re.IGNORECASE)
@@ -275,13 +440,41 @@ class Bot:
         sender = msg.from_user.full_name if msg.from_user else "Someone"
         return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
 
+    async def _written_in_code(self, read, turn: Turn) -> str:
+        """The report ("weather now") from the fast path's tool calls, made together; lib/report.py lays it out."""
+        calls = [read.fast[:2], *read.more]
+        results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
+        by_tool = {name: result for (name, _), result in zip(calls, results)}
+        if read.report:
+            return report.report(by_tool)
+        return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
+
+    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft) -> str:
+        """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
+        none), for RETRY_SECONDS; a question already at no reasoning just times out."""
+        first = ([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None
+        before, effort, budget, retried = list(working), read.effort, TURN_SECONDS, False
+        while True:
+            try:
+                return await asyncio.wait_for(
+                    self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
+                                   no_tools=read.about_the_bot, turn=turn, **({"on_text": draft.update} if draft else {})), budget)
+            except asyncio.TimeoutError:
+                lower = intent.lower_effort(effort)
+                if not lower or retried:
+                    raise
+                log.warning("No answer in %ds at reasoning %s; asking again at %s", budget, effort, lower)
+                working[:] = before          # the unfinished attempt's turns are dropped
+                effort, budget, retried = lower, RETRY_SECONDS, True
+
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         msg = update.effective_message
         text = text.strip()
         if not text:
             return
         now = now_local(self.cfg.tz)
-        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name)
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
+                           "Forecast" in self.by_name)
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  _short(text))
         for source in self.sources:  # fetch recent readings while the model thinks
@@ -295,7 +488,10 @@ class Bot:
         started = time.monotonic()
         async with chat.lock:
             stop_typing = asyncio.Event()
-            typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
+            draft = (Draft(context.bot, msg.chat_id, thread_id)
+                     if msg.chat.type == ChatType.PRIVATE and hasattr(context.bot, "send_message_draft") else None)
+            typing = asyncio.create_task(draft.run(stop_typing) if draft else
+                                         keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
             stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
@@ -303,11 +499,13 @@ class Bot:
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked)
             try:
-                system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
-                                      read.about_the_bot, read.report)
-                reply = await asyncio.wait_for(
-                    self.agent.run(working, system, read.effort, first_call=read.fast[:2] if read.fast else None,
-                                   require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn), TURN_SECONDS)
+                if read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model
+                    reply = await asyncio.wait_for(self._written_in_code(read, turn), TURN_SECONDS)
+                    working.append({"role": "assistant", "content": reply})
+                else:
+                    system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
+                                          read.about_the_bot, read.rain_caption)
+                    reply = await self._ask_model(working, system, read, turn, draft)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
@@ -332,7 +530,15 @@ class Bot:
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
+        markup = templates.keyboard() if self._keyboard_stale(msg) else None
         try:
-            await deliver(msg, reply, photos, link=air.link if air and used_air else None)
+            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup)
+            if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
+                self.state.record_forecast(msg.chat_id, turn.forecast_shown)
+            if carried_keyboard:
+                log.info("Buttons: sent keyboard %s to chat %s (it had %s)", templates.VERSION, msg.chat_id, self.state.keyboard(msg.chat_id))
+                self.state.set_keyboard(msg.chat_id, templates.VERSION)
+            elif markup:
+                log.info("Buttons: this reply couldn't carry the keyboard (several charts); will try the next one")
         except TelegramError:
             log.exception("Failed to deliver reply")

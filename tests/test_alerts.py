@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 from lib.alerts import AirMonitor, AlertState, Notifier, WeatherMonitor, with_footer
@@ -20,6 +21,12 @@ class FakeStation:
 
     def __init__(self, data=None):
         self.data = data or []
+        self.live = None
+
+    async def live_rain(self):
+        if isinstance(self.live, Exception):
+            return None
+        return self.live
 
     async def recent(self, hours):
         return self.data
@@ -34,7 +41,7 @@ class FakeStation:
 def monitor(tmp_path, data):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     m = WeatherMonitor(FakeStation(data), state, notify)
     return m, state, sent
@@ -63,6 +70,30 @@ async def test_a_dry_gap_shorter_than_30_minutes_does_not_flap(tmp_path):
         m.station.data = data
         await m.check()
     assert len(sent) == 1 and "started" in sent[0]
+
+
+async def test_a_live_reading_starts_the_rain_alert_before_the_history_catches_up(tmp_path):
+    m, state, sent = monitor(tmp_path, rain(0, 0, 0))
+    await m.check()
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 0.0, "rainfall.daily": 0.5})   # dry live reading
+    await m.check()
+    assert sent == []
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 0.0, "rainfall.daily": 0.7})   # one tip: the total rose
+    await m.check()
+    assert len(sent) == 1 and "started raining" in sent[0]
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 2.4, "rainfall.daily": 0.9})
+    await m.check()
+    assert len(sent) == 1
+
+
+async def test_a_live_rate_alone_starts_it_and_a_failed_live_call_is_ignored(tmp_path):
+    m, state, sent = monitor(tmp_path, rain(0, 0, 0))
+    m.station.live = RuntimeError("down")
+    await m.check()
+    assert sent == []
+    m.station.live = (T0 + 4 * 300, {"rainfall.rain_rate": 3.0, "rainfall.daily": 0.5})
+    await m.check()
+    assert len(sent) == 1 and "3 mm/h" in sent[0]
 
 
 def test_the_status_outlook_says_raining_now_or_likely_soon_or_nothing():
@@ -192,7 +223,7 @@ class FakeAir:
 async def test_mask_alert_needs_two_bad_checks_and_pairs_with_all_clear(tmp_path):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append((text, link))
     mon = AirMonitor(FakeAir(), state, notify)
     await mon.check(air_reading(80))
@@ -213,7 +244,7 @@ async def test_mask_alert_needs_two_bad_checks_and_pairs_with_all_clear(tmp_path
 async def test_mask_threshold_is_official_aqi_151(tmp_path):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     mon = AirMonitor(FakeAir(), state, notify)
     for _ in range(3):
@@ -227,7 +258,7 @@ async def test_mask_threshold_is_official_aqi_151(tmp_path):
 async def test_stale_air_readings_are_ignored(tmp_path):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     mon = AirMonitor(FakeAir(), state, notify)
     for _ in range(3):
@@ -270,3 +301,101 @@ async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
                 raise Forbidden("bot was blocked")
     await Notifier(Bot(), state)("hi")
     assert all(kw["disable_notification"] for _, kw in calls) and 2 not in state.chats and 1 in state.chats
+
+
+def uv(*values, start=T0):
+    return [(start + i * 300, {"solar_and_uvi.uvi": v}) for i, v in enumerate(values)]
+
+
+async def test_a_uv_index_of_9_alerts_once_and_again_only_after_an_hour_below_it(tmp_path):
+    vals = [3, 5]
+    m, state, sent = monitor(tmp_path, uv(*vals))
+
+    async def step(*more):
+        vals.extend(more)
+        m.station.data = uv(*vals)
+        await m.check()
+    await m.check()                                    # the first look sets the mark
+    await step(8.9)
+    assert sent == []
+    await step(9)
+    assert len(sent) == 1 and "UV index 9" in sent[0] and "1:15pm" in sent[0]
+    await step(10, 7, *[6] * 11)                       # still the same spell, then under an hour below 9
+    await step(9.5)
+    assert len(sent) == 1
+    await step(*[5] * 12)                              # a calm hour starts counting
+    await step(*[5] * 12)                              # an hour below 9 re-arms it
+    await step(9)
+    assert len(sent) == 2
+
+
+async def test_old_uv_readings_are_not_announced_after_a_restart(tmp_path):
+    m, state, sent = monitor(tmp_path, uv(10, 11, 4))
+    await m.check()
+    assert sent == []
+
+
+# ---------- pollen and thunderstorm asthma ----------
+class FakePollen:
+    def __init__(self):
+        self.grass = self.asthma = None
+        self.fetched_at = time.time()
+        self.today = datetime(2026, 10, 1, 12, 0)
+
+    def now(self):
+        return self.today
+
+    def current(self):
+        from lib.pollen import LEVEL_EMOJI
+        make = lambda level, **kw: {"level": level, "emoji": LEVEL_EMOJI[level], **kw} if level else None
+        return {"grass": make(self.grass, date=self.today.date()), "asthma": make(self.asthma, updated=None),
+                "fetched_at": self.fetched_at}
+
+
+def pollen_monitor(tmp_path):
+    from lib.alerts import PollenMonitor
+    state, sent = AlertState(tmp_path / "s.json"), []
+
+    async def notify(text, link=None, **kw):
+        sent.append(text)
+    pollen = FakePollen()
+    return PollenMonitor(pollen, state, notify), pollen, sent
+
+
+async def test_high_or_extreme_pollen_and_asthma_alert_once_per_level_and_day(tmp_path):
+    mon, pollen, sent = pollen_monitor(tmp_path)
+    for grass, asthma in (("Low", "Low"), ("Moderate", "Moderate")):
+        pollen.grass, pollen.asthma = grass, asthma
+        await mon.check()
+    assert sent == []
+    pollen.grass = "High"
+    await mon.check()
+    await mon.check()                                                  # unchanged: nothing more
+    assert sent == ["🟠 Grass pollen is High."]
+    pollen.grass, pollen.asthma = "Extreme", "Extreme"
+    await mon.check()
+    assert sent[1:] == ["🔴 Grass pollen is Extreme.", "🔴 Thunderstorm asthma risk is Extreme. Check your asthma action plan."]
+    pollen.grass, pollen.asthma = "Low", "Moderate"                    # dropped below High: ready to warn again
+    await mon.check()
+    pollen.grass = "High"
+    await mon.check()
+    assert len(sent) == 4 and sent[-1] == "🟠 Grass pollen is High."
+    pollen.today += timedelta(days=1)                                  # a new day, still High
+    pollen.fetched_at = time.time()
+    await mon.check()
+    assert len(sent) == 5 and "Central" not in " ".join(sent)
+
+
+async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stale_page_is_ignored(tmp_path):
+    from lib.alerts import PollenMonitor
+    mon, pollen, sent = pollen_monitor(tmp_path)
+    pollen.grass = "High"
+    await mon.check()
+    assert len(sent) == 1
+    again = PollenMonitor(pollen, mon.state, mon.notify)               # the state file keeps what was sent
+    await again.check()
+    assert len(sent) == 1
+    pollen.asthma = None                                               # off-season: nothing to say
+    pollen.grass, pollen.fetched_at = "Extreme", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
+    await again.check()
+    assert len(sent) == 1

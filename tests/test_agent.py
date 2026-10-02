@@ -91,7 +91,7 @@ def test_charts_render_for_both_datasets():
     shares = Shares("PM2.5 rating", ts[::12], 6 * 3600, [100.0] * 8, [0.0] * 8, [0.0] * 8, "6 hours")
     rated = Chart("PM2.5 rating, Rain", "z", [Panel("PM2.5 rating", "%", shares=shares), Panel("Rain", "mm", bars=rain)])
     air = Chart("Air quality", "w", [
-        Panel("CO₂ (ppm) and VOC index", "", [line("CO₂", [450 + i for i in range(96)])], right=[line("VOC index", [100 + i % 20 for i in range(96)])]),
+        Panel("CO₂, VOC index", "", [line("CO₂", [450 + i for i in range(96)]), line("VOC index", [100 + i % 20 for i in range(96)])]),
         Panel("PM1, PM2.5, PM10", "µg/m³", [line("PM1", [3 + i % 4 for i in range(96)]), line("PM2.5", [5 + i % 7 for i in range(96)]),
                                                line("PM10", [8 + i % 9 for i in range(96)])]),
         Panel("NOx index", "", [line("NOx index", [1 + i % 3 for i in range(96)])], zones=(20, 150))])
@@ -187,9 +187,103 @@ async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
     assert "ABOUT THE BOT ITSELF" in prompt.build(now, ["Ecowitt"], [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, ["Ecowitt"])
 
 
-def test_the_full_report_instructions_are_added_only_for_a_report_request():
+def test_the_prompt_never_shows_a_temperature_emoji_to_copy_and_says_no_entry_means_no_emoji():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
+    assert '"outdoor.temperature": "' not in text and "a reading with no entry gets NO emoji" in text
+
+
+def chunk(content=None, calls=None, usage=None):
+    delta = NS(content=content, tool_calls=calls)
+    return NS(choices=[NS(delta=delta)] if (content is not None or calls) else [], usage=usage)
+
+
+def piece(index, id=None, name=None, args=None):
+    return NS(index=index, id=id, function=NS(name=name, arguments=args))
+
+
+class StreamingLLM:
+    """Streams each scripted answer as chunks: a list of chunks per call."""
+
+    def __init__(self, script):
+        self.script, self.requests = list(script), []
+        self.chat = NS(completions=NS(create=self.create))
+
+    async def create(self, **kw):
+        self.requests.append(kw)
+        chunks = self.script.pop(0)
+
+        async def gen():
+            for c in chunks:
+                yield c
+        return gen()
+
+
+async def test_streamed_answers_give_the_same_result_and_report_the_text_so_far():
+    t, seen = tools()
+    usage = NS(prompt_tokens=10, completion_tokens=5)
+    client = StreamingLLM([
+        [chunk(calls=[piece(0, "c0", "weather_now", '{"gr')]), chunk(calls=[piece(0, None, None, 'oups": "outdoor"}')])],
+        [chunk("It is "), chunk("12 degrees."), chunk(usage=usage)]])
+    texts = []
+    msgs = [{"role": "user", "content": "how hot"}]
+    reply = await llm.Agent(client, "m", t).run(msgs, "sys", "none", on_text=texts.append)
+    assert reply == "It is 12 degrees." and seen == [{"groups": "outdoor"}]
+    assert texts == ["It is ", "It is 12 degrees."]
+    assert client.requests[0]["stream"] is True and client.requests[0]["stream_options"] == {"include_usage": True}
+    assert msgs[1]["tool_calls"][0]["function"] == {"name": "weather_now", "arguments": '{"groups": "outdoor"}'}
+
+
+def test_a_rain_chart_caption_is_only_the_least_and_most_rain_and_whether_more_is_expected():
     from datetime import datetime
     from lib import prompt
     now = datetime(2026, 9, 29, 14, 5)
-    assert "FULL CURRENT REPORT" in prompt.build(now, ["Ecowitt"], report=True) and "air_quality (no dates)" in prompt.build(now, ["Ecowitt"], report=True)
-    assert "FULL CURRENT REPORT" not in prompt.build(now, ["Ecowitt"])
+    text = prompt.build(now, ["Ecowitt weather station"], rain_caption=True)
+    assert "THIS IS A RAIN CHART" in text and "rain_outlook" in text
+    assert "THIS IS A RAIN CHART" not in prompt.build(now, ["Ecowitt weather station"])
+
+
+def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], about_bot=True)
+    assert "simple bullet points" in text and "no sub-bullets" in text and "7 at most" in text and "No dates" in text
+
+
+POLLEN_SOURCE = "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)"
+FORECAST_SOURCE = "Weather forecast for the owner's location (Open-Meteo)"
+
+
+def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
+    from lib import prompt
+    base = prompt.capabilities(["Ecowitt weather station"])
+    assert "pollen and thunderstorm asthma" in base.split("Not available:")[1] and "forecasts (only a short read" in base
+    both = prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE])
+    assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High or Extreme" in both
+    assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]
+
+
+async def test_several_fast_calls_run_together_before_the_model():
+    seen = []
+
+    async def handler(args, turn=None):
+        seen.append(args)
+        return json.dumps({"ok": True})
+    t = Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler),
+               Tool("air_quality", "d", {"type": "object", "properties": {}}, handler)])
+    client = FakeLLM(["The report."])
+    msgs = [{"role": "user", "content": "report"}]
+    reply = await llm.Agent(client, "m", t).run(msgs, "sys", "none", first_call=[("weather_now", {"groups": "outdoor"}), ("air_quality", {})])
+    assert reply == "The report." and len(client.requests) == 1 and seen == [{"groups": "outdoor"}, {}]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "tool", "assistant"]
+    assert [tc["id"] for tc in msgs[1]["tool_calls"]] == ["fast_1", "fast_2"] and [m["tool_call_id"] for m in msgs[2:4]] == ["fast_1", "fast_2"]
+
+
+
+
+
+def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecast_source():
+    from lib import prompt
+    assert "revised" not in prompt.capabilities(["Ecowitt weather station"])
+    assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt weather station", FORECAST_SOURCE])

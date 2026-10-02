@@ -13,10 +13,12 @@ import logging
 from datetime import date, datetime, time, tzinfo
 
 from ..analysis.pairs import analyse
-from ..charts import LINK_CHART_HINT, wants_chart
+from ..captions import LINK_CHART_HINT, wants_chart
 from ..lines import build_line, slot_readings
 from ..rain import rain_bars, rain_slots
-from ..specs import Chart, Line, Panel, stack
+from ..panels import panel_for
+from ..series import WEATHER
+from ..specs import Chart, Line, stack
 from ..timeutil import day_bounds, local_date, now_local, parse_period
 from .store import HistoryCache
 
@@ -50,17 +52,17 @@ def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date,
                   lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> Line | None:
     """The reading as a line (see lines.build_line); a day's mean has its range shaded, from Ecowitt's own 30-minute
     lows and highs where the cache holds them."""
-    line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400, native_band=True)
+    line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400)
     return line.spec(label) if line else None
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,
-               name: str, unit: str, lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> Chart | None:
+               name: str, lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> Chart | None:
     """The reading with the rain behind it."""
-    line = driver_series(driver, tz, first, last, name.capitalize(), lows, highs)
+    line = driver_series(driver, tz, first, last, WEATHER[name].label, lows, highs)
     if line is None:
         return None
-    return stack([Panel(name.capitalize(), unit, [line], reading=name), Panel("Rain", "mm", bars=rain_bars(rain, tz, first, last))], first, last)
+    return stack([panel_for(name, [line]), panel_for("rain", bars=rain_bars(rain, tz, first, last))], first, last)
 
 
 def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -> tuple[dict, Chart | None, date | None, date | None]:
@@ -94,7 +96,7 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
         return out, None, first, last
     out.update(result)
     out["days_with_data"] = len({local_date(t, tz) for t in rain})
-    spec = chart_spec(driver, rain, tz, first, last, name, unit, lows, highs)
+    spec = chart_spec(driver, rain, tz, first, last, name, lows, highs)
     return out, spec, first, last
 
 

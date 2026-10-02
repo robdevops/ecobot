@@ -16,6 +16,16 @@ def test_only_predictions_and_descriptions_reason():
     assert intent.reasoning_effort("how much rain fell today") == "none"
 
 
+def test_asking_to_think_try_or_reason_gives_medium_reasoning_to_any_question():
+    for text in ("think about the wind this week", "try to work out why it was humid", "reason it through: hottest day", "thinking harder about yesterday",
+                 "how hot was it, think", "what was yesterday like? think", "Try 3m", "estimate the hottest day this week",
+                 "predict the average humidity for 30d", "what's your estimate of the week's rain", "an estimation of the wind 7d",
+                 "give me a prediction for the week's high", "grind on the hottest day this week", "whirl it around: 7d wind"):
+        assert intent.reasoning_effort(text) == "medium", text                      # medium wins over describe's low
+    for text in ("what was this week's high and low", "thanks", "a thinner chart please", "I tried that yesterday"):
+        assert intent.reasoning_effort(text) == "none", text
+
+
 def test_chat_needs_no_data():
     assert not intent.needs_data("thanks, that's great")
     assert intent.needs_data("how hot is it")
@@ -68,9 +78,18 @@ def test_weather_plus_a_period_is_a_summary_request():
 
 
 def test_weather_now_and_open_questions_still_go_to_the_model():
-    for text in ("weather", "weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week",
+    for text in ("weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week",
                  "will the weather be nice this week"):
         assert call(text) is None, text
+
+
+def test_weather_now_fetches_every_reading_the_station_has_and_asks_for_the_reports_layout():
+    for text in ("weather", "weather now", "Weather Now", "current weather", "ecowitt", "ecowitt now", "show me the weather now please"):
+        name, args, label = call(text)
+        assert (name, label) == ("weather_now", "weather now") and args == {"groups": intent.NOW_GROUPS}, text
+        assert intent.read(text, NOW).weather_now
+    assert not intent.read("weather last 7 days", NOW).weather_now and not intent.read("report", NOW).weather_now
+    assert not intent.read("weather now", NOW, ecowitt=False).weather_now
 
 
 def test_24_hour_weather_charts_over_a_rolling_window():
@@ -219,7 +238,7 @@ def test_a_particular_date_or_time_goes_to_the_model_not_a_whole_period():
 def test_a_question_about_one_reading_charts_that_reading():
     assert intent.chart_field("lowest and highest humidity") == "humidity"
     assert intent.chart_field("plot pressure this week") == "relative"
-    assert intent.chart_field("highest wind gust this year") == "wind_gust"
+    assert intent.chart_field("highest wind gust this year") == "wind_speed"   # the mean, shaded up to the gusts
     for text in ("hottest day this year", "humidity and temperature this week", "wind and rain", "weather week", "how hot was it"):
         assert intent.chart_field(text) is None, text
 
@@ -268,9 +287,9 @@ def test_questions_about_the_bot_are_recognised_and_readings_questions_are_not()
 
 def test_a_bare_status_or_report_asks_for_everything_and_nothing_else_does():
     for text in ("status", "report", "Report please", "give me the full report", "current report", "show what you've got",
-                 "overview", "everything?", "what's the status"):
+                 "overview", "everything?", "what's the status", "sitrep", "SITREP please", "give me the sitrep"):
         assert intent.wants_report(text), text
-    for text in ("weather report for Tuesday", "report the humidity", "status of the rain alert", "report last week", "hello",
+    for text in ("weather report for Tuesday", "report the humidity", "status of the rain alert", "report last week", "sitrep last week", "hello",
                  "how's the air?"):
         assert not intent.wants_report(text), text
 
@@ -297,3 +316,56 @@ def test_solar_radiation_and_uv_are_charted_readings_and_a_weekday_is_not_solar(
 def test_sun_and_uvi_is_two_stacked_readings_but_a_sunday_or_a_dated_sun_is_not_solar():
     assert intent.chart_fields("sun + uvi one month") == ["solar", "uv"]
     assert intent.chart_field("sun 5 jan") is None and intent.chart_field("was it hot on sunday") is None
+
+
+def test_a_readings_band_field_still_names_it_and_only_plain_readings_derive_a_range():
+    from lib.series import derives_range, field_of, find_name
+    assert find_name("wind_gust") == find_name("wind_speed") == find_name("wind") == "wind" and field_of("wind_gust") == "wind_speed"
+    assert derives_range("dew_point") and derives_range("solar") and not derives_range("wind_speed") and not derives_range("wind_direction")
+
+
+def test_ecowitt_means_the_weather_and_ag_or_airgradient_means_the_air_quality():
+    assert call("ecowitt week")[0] == "weather_history" and call("ecowitt week") == call("weather week") and call("ecowitt week")[1]["chart"]
+    for text in ("ag 7d", "airgradient 7d", "air gradient 7d", "AG 7d"):
+        name, args, _ = call(text)
+        assert name == "air_quality" and args["chart"] is True and args["metrics"] == ["pm2_5"], text
+    assert call("ag now")[0] == "air_quality" and call("air gradient")[0] == "air_quality" and not call("ag now")[1]
+    assert call("ag and ecowitt 7d") is None                                          # both devices: the model decides
+    assert intent.chart_fields("ecowitt all week") == intent.chart_fields("weather all week") and intent.chart_fields("ecowitt all week")
+    assert intent.air_metrics("ag all week") == ["pm2_5", "pm10", "pm1", "co2", "voc_index", "nox_index"] or len(intent.air_metrics("ag all week")) == 6
+    assert intent.needs_data("ecowitt") and intent.needs_data("ag") and intent.about_the_bot("what does ecowitt measure") and intent.about_the_bot("what does ag measure")
+    assert not intent.needs_data("that was a nice sag in the road") and not intent.needs_data("thanks")
+
+
+def test_the_report_fetches_everything_in_code_before_the_model_sees_it():
+    r = intent.read("report", NOW, True, True, True, True)
+    assert r.report and r.fast == ("weather_now", {"groups": intent.NOW_GROUPS}, "report")
+    assert r.more == [("air_quality", {}), ("pollen_asthma", {"cached": True}), ("weather_forecast", {"days": 3, "cached": True})]
+    plain = intent.read("sitrep", NOW)
+    assert [plain.fast[0], *(t for t, _ in plain.more)] == ["weather_now", "air_quality"]
+    only_air = intent.read("status", NOW, ecowitt=False)
+    assert only_air.fast[0] == "air_quality" and only_air.more == []
+    assert intent.read("report", NOW, ecowitt=False, air=False).fast is None
+    assert not intent.read("report for last week", NOW).report
+
+
+def test_one_reasoning_step_down_for_asking_again_after_a_timeout():
+    assert [intent.lower_effort(e) for e in ("high", "medium", "low", "none", "odd")] == ["medium", "low", "none", None, None]
+
+
+def test_asking_for_the_bots_view_is_not_forced_to_fetch_but_a_view_of_the_weather_today_is():
+    philosophical = "what do you think of weather in general, from a philosophical perspective?"
+    assert intent.is_opinion(philosophical) and not intent.needs_data(philosophical)
+    assert intent.reasoning_effort(philosophical) == "medium"                      # "think": still given a little thought
+    for text in ("what do you think of the weather today?", "what do you think about tomorrow's rain", "do you like the rain now",
+                 "what do you think of the weather over the last 3 days", "weather", "how hot is it", "what do you think the forecast says"):
+        assert intent.needs_data(text), text
+
+
+def test_only_temp_temperature_how_hot_or_cold_and_hottest_style_questions_force_a_fetch():
+    for text in ("only that it's cold", "it's so hot in here", "nice and warm", "warm regards", "cool", "freezing", "degrees"):
+        assert not intent.needs_data(text), text
+    for text in ("temp", "temps this week", "what's the temperature", "how cold is it", "how hot will it get", "how's the weather",
+                 "hottest weekends", "coldest day last month", "is it cold outside"):
+        assert intent.needs_data(text), text
+    assert intent.read("only that it's cold", NOW).needs_data is False

@@ -19,7 +19,8 @@ def config(tmp_path, **over) -> Config:
     base = dict(telegram_token="1:x", xai_api_key="k", xai_base_url="http://x", xai_model="m", tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite")
+                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite",
+                conditions_cache_path=tmp_path / "conditions.sqlite")
     return Config(**{**base, **over})
 
 
@@ -80,7 +81,7 @@ class FakeEcowitt:
             return httpx.Response(200, json={"code": -1, "msg": "System is busy."})
         path = request.url.path.rsplit("/", 1)[-1]
         if path == "list":
-            return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0,
+            return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0, "latitude": -37.8,
                                        "createtime": int((datetime.now(timezone.utc) - timedelta(days=self.history_days)).timestamp())}]})
         if path == "real_time":
             now = int(datetime.now(timezone.utc).timestamp())

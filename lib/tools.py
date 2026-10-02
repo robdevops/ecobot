@@ -20,6 +20,7 @@ class Turn:
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
     average_asked: bool = False                  # an average was asked for: the caption leads with it
+    forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
 
 
 @dataclass

@@ -21,14 +21,15 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from .. import intent
-from ..charts import CHART_HINT, wants_chart
+from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..lines import Plotted, build_line
-from ..specs import Chart, Line, Panel
+from ..panels import panel_for
+from ..specs import Chart, Line
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
-from .metrics import AIR_PANELS, ALL_METRICS, CHART_UNITS, MARK_LOW, LABELS, METRICS, RATINGS, epoch, normalise, pm25_aqi, rating, value_of
+from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
 HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly averages (24), not 5-minute (288)
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
+MAX_GAP_SECONDS = 900             # the reading before the latest counts as its neighbour only if it is this recent
 WARM_DAYS = 7                     # finished days kept ready by every refresh
 BACKFILL_PACE = 1.0               # seconds between backfill requests
 BACKFILL_EMPTY_STOP = 60          # this many empty days in a row, after some data: the sensor's data starts here
@@ -93,7 +95,7 @@ class AirGradient:
             log.warning("AirGradient location %s not readable yet: %s", self.loc, e)
 
     def describe(self) -> str:
-        return f"AirGradient outdoor air-quality sensor (location {self.loc})"
+        return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Only air-quality questions."""
@@ -258,8 +260,17 @@ class AirGradient:
             log.warning("AirGradient request failed: %s", e)
             return f"Error: couldn't read the air-quality sensor ({e})"
 
+    async def _previous_row(self, ts: int) -> dict | None:
+        """The newest of today's cached readings older than `ts` and within MAX_GAP_SECONDS of it, else None."""
+        today = to_local(ts, self.tz).date()
+        rows = [r for r in await self._day_rows(today) if r["ts"] < ts]
+        return rows[-1] if rows and ts - rows[-1]["ts"] <= MAX_GAP_SECONDS else None
+
     async def current(self) -> dict:
+        """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
+        spike is not called poor until the next reading agrees; the value shown is always the latest one."""
         row = await self._current_row()
+        previous = await self._previous_row(epoch(row["timestamp"])) if row.get("timestamp") else None
         out = {"sensor": row.get("locationName"), "sensor_type": row.get("locationType"),
                "time": self._when(epoch(row["timestamp"])) if row.get("timestamp") else None}
         if row.get("timestamp"):  # for the air alerts' staleness check (removed before the model sees it)
@@ -267,10 +278,18 @@ class AirGradient:
         for name, (_, unit) in METRICS.items():
             v = value_of(row, name)
             if v is not None:
-                out[name] = {"value": v, "unit": unit, "rating": rating(name, v)}
+                before = previous.get(name) if previous else None   # today's rows are already normalised
+                rated = v if before is None else min(v, before)   # thresholds only rise: the lower value's zone is the one both reached
+                out[name] = {"value": v, "unit": unit, "rating": rating(name, rated)}
+                if out[name]["rating"] != rating(name, v):
+                    out[name]["rating_note"] = "rated on the last two readings: the previous one was lower"
+                out[name]["_rated"] = rated
         if "pm2_5" in out:
-            aqi, band = pm25_aqi(out["pm2_5"]["value"])
+            aqi, band = pm25_aqi(out["pm2_5"]["_rated"])
             out["pm2_5"].update(aqi_us=aqi, band=band)
+        for entry in out.values():
+            if isinstance(entry, dict):
+                entry.pop("_rated", None)
         return out
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
@@ -346,15 +365,15 @@ class AirGradient:
         if len(pts) < 2:
             return None
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in zip(pts, pts[1:]))))
-        plotted = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0], native_band=True)
+        plotted = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}), plotted
+        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name), plotted
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (CO2 and VOC with NOx on a right-hand axis, the particles together)."""
+        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None
@@ -362,20 +381,11 @@ class AirGradient:
             (name, (line, plotted)), = drawn.items()
             subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
-            return Chart(LABELS[name], subtitle, [Panel(LABELS[name], CHART_UNITS[name], [line], zones=tuple(RATINGS[name]))])
+            return Chart(LABELS[name], subtitle, [panel_for(name, [line])])
         panels = []
-        for on_left, on_right in AIR_PANELS:
-            left, right = [m for m in on_left if m in drawn], [m for m in on_right if m in drawn]
-            if not left:  # only the right-hand readings were asked for: they take the left axis
-                left, right = right, []
-            if not left:
-                continue
-            members = left + right
-            units = [CHART_UNITS[m] for m in members]
-            names_ = [f"{LABELS[m]} ({u})" if u and len(set(units)) > 1 else LABELS[m] for m, u in zip(members, units)]
-            label = ", ".join(names_)
-            panels.append(Panel(label, units[0] if len({CHART_UNITS[m] for m in left}) == 1 and not right else "",
-                                [drawn[m][0] for m in left], right=[drawn[m][0] for m in right],
-                                zones=tuple(RATINGS[members[0]]) if len(members) == 1 else None, aside=len(left) > 1))
+        for group in AIR_PANELS:
+            members = [m for m in group if m in drawn]
+            if members:
+                panels.append(panel_for(members, [drawn[m][0] for m in members]))
         return Chart("Air quality", f"{period}  ·  AirGradient readings"
                      + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)

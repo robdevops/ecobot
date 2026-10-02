@@ -3,4 +3,4 @@ httpx
 matplotlib
 numpy
 openai
-python-telegram-bot>=21
+python-telegram-bot>=22.8

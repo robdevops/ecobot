@@ -15,14 +15,17 @@ from telegram import Update
 from telegram.ext import Application, Defaults
 
 from lib.airgradient import AirGradient
-from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, Notifier, WeatherMonitor
+from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, Notifier, PollenMonitor, WeatherMonitor
+from lib.alerts.menu import available_kinds
 from lib.bot import Bot, polling_error
 from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
+from lib.forecast import Forecast
 from lib.llm import Agent
+from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.tools import Tools
-from lib.warm import REFRESH_SECONDS, every, safely
+from lib.warm import every, safely
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -31,15 +34,24 @@ log = logging.getLogger("ecobot")
 
 
 async def start_sources(cfg: Config) -> list:
-    """Every configured data source that starts. Ecowitt and AirGradient are treated alike."""
+    """Every configured data source that starts: the weather station and the air sensor, then the optional website sources
+    (pollen, forecast), which are off unless switched on. The forecast uses the station's location unless one is configured."""
     sources = []
-    for source in ([Ecowitt(cfg)] if cfg.ecowitt else []) + ([AirGradient(cfg)] if cfg.airgradient else []):
+
+    async def start(source):
         try:
             await source.start()
             sources.append(source)
         except Exception:
             log.exception("%s couldn't start - continuing without it", source.name)
             await source.close()
+    for source in ([Ecowitt(cfg)] if cfg.ecowitt else []) + ([AirGradient(cfg)] if cfg.airgradient else []):
+        await start(source)
+    if cfg.pollen:
+        await start(Pollen(cfg))
+    if cfg.forecast:
+        eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
+        await start(Forecast(cfg, (eco.latitude, eco.longitude) if eco and eco.latitude is not None else None))
     return sources
 
 
@@ -60,6 +72,8 @@ async def main():
         raise SystemExit("No data source is working - nothing to talk about")
     eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
     air = next((s for s in sources if isinstance(s, AirGradient)), None)
+    pollen = next((s for s in sources if isinstance(s, Pollen)), None)
+    forecast = next((s for s in sources if isinstance(s, Forecast)), None)
 
     composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
     tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
@@ -88,7 +102,8 @@ async def main():
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("Bot @%s running with model %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
-                notify = Notifier(app.bot, state)
+                notify = Notifier(app.bot, state, available_kinds({s.name for s in sources}))
+                await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts
                 kinds = []
@@ -99,11 +114,17 @@ async def main():
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
                     kinds.append(f"air quality (every {AIR_CHECK_SECONDS // 60} min)")
+                if forecast:
+                    forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
+                    kinds.append("forecast changes")
+                if pollen:
+                    pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
+                    kinds.append("pollen and thunderstorm asthma")
                 log.info("Alerts: %s, to %d chat(s)", ", ".join(kinds) or "none", len(state.alert_chats()))
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("Keeping warm every %ds: %s", REFRESH_SECONDS, " + ".join(s.name for s in sources))
+                log.info("Keeping warm: %s", ", ".join(f"{s.name} every {s.warmer.interval:.0f}s" for s in sources))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""

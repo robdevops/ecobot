@@ -90,7 +90,7 @@ async def main():
 
     client = Recorder([call, "(the model's answer goes here)"])
     messages = [{"role": "user", "content": text}]
-    await Agent(client, "grok-4.3", tools).run(messages, system, effort, first_call=fast[:2] if fast else None,
+    await Agent(client, "grok-4.3", tools).run(messages, system, effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None,
                                                require_tool=r.needs_data)
 
     banner("DECISIONS MADE IN CODE")
