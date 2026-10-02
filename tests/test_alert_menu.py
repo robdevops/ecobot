@@ -24,10 +24,10 @@ def test_unsubscribe_opens_the_types_that_are_on_and_subscribe_the_types_that_ar
     assert got[0] == [("➕ Subscribe", "al:open:sub"), ("▾ ➖ Unsubscribe", "al:close")]
     assert got[1] == [("rain", "al:off:rain:unsub"), ("rain likely", "al:off:rain_likely:unsub")]
     assert [text for row in got[1:-1] for text, _ in row] == ["rain", "rain likely", "gusts", "UV", "temperature crossing", "air quality"]
-    assert got[-1] == [("All alerts", "al:off:all:unsub")]
+    assert got[-1] == [("Unsubscribe from all", "al:off:all:unsub")]
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "sub"))
     assert got[0][0] == ("▾ ➕ Subscribe", "al:close")
-    assert got[1:] == [[("pollen & asthma", "al:on:pollen:sub"), ("forecast changes", "al:on:forecast:sub")], [("All alerts", "al:on:all:sub")]]
+    assert got[1:] == [[("pollen & asthma", "al:on:pollen:sub"), ("forecast changes", "al:on:forecast:sub")], [("Subscribe to all", "al:on:all:sub")]]
     assert not any(data == "al:noop" for row in got for _, data in row)                  # no button that does nothing
     assert options({"pollen"}, KINDS, "sub") == ["pollen"] and options({"pollen"}, ["rain", "pollen"], "unsub") == ["rain"]
     assert len(rows(keyboard(set(), KINDS, "sub"))) == 1                                  # nothing off: nothing listed
@@ -148,7 +148,7 @@ async def test_pressing_unsubscribe_then_a_type_updates_the_state_and_redraws_th
     assert q.toast == "No alerts are on" and q.edits == []                                  # nothing to list: a toast, no dead button
     q = Query("al:open:sub")
     await press(bot, q)
-    assert rows(q.edits[0][1])[-1] == [("All alerts", "al:on:all:sub")]
+    assert rows(q.edits[0][1])[-1] == [("Subscribe to all", "al:on:all:sub")]
     q = Query("al:close")
     await press(bot, q)
     assert len(rows(q.edits[0][1])) == 1

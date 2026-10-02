@@ -39,7 +39,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None) -> 
         buttons = [_button(LABELS[k], f"al:{verb}:{k}:{open}") for k in listed]
         rows += [buttons[i:i + PER_ROW] for i in range(0, len(buttons), PER_ROW)]
         if listed:
-            rows.append([_button("All alerts", f"al:{verb}:{ALL}:{open}")])
+            rows.append([_button("Subscribe to all" if open == "sub" else "Unsubscribe from all", f"al:{verb}:{ALL}:{open}")])
     return InlineKeyboardMarkup(rows)
 
 
