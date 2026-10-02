@@ -10,7 +10,7 @@ Callback data (self-contained and short, so an old message's buttons still work 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # kind -> the name on the button, in the order listed
-LABELS = {"rain": "rain", "rain_likely": "rain likely", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
+LABELS = {"rain": "rain", "rain_likely": "rain predicted", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
           "air": "air quality", "pollen": "pollen & asthma", "forecast": "forecast changes"}
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
