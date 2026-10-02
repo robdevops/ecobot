@@ -424,3 +424,45 @@ async def test_the_time_dry_before_the_rain_stops_is_configurable(tmp_path):
     m.station.data = rain(0, 0, 1, 1, 0, 0, 0, 0, 0, 0)   # 30 dry minutes
     await m.check()
     assert len(sent) == 2 and "stopped" in sent[1]
+
+
+def night_rain(start, *wet):
+    """One reading per flag from `start` (epoch): rain rate 1.2 mm/h when wet; the day's total rises 0.4 mm a wet reading."""
+    total, out = 0.0, []
+    for i, w in enumerate(wet):
+        total += 0.4 if w else 0.0
+        out.append((start + i * 300, {"rainfall.rain_rate": 1.2 if w else 0.0, "rainfall.daily": total}))
+    return out
+
+
+async def test_no_rain_alerts_in_quiet_hours_and_one_summary_after_them(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.quiet = (0, 6)
+    one_am = int(datetime(2026, 9, 30, 1, 0, tzinfo=TZ).timestamp())
+    for data in (night_rain(one_am, 0, 0, 0), night_rain(one_am, 0, 0, 1), night_rain(one_am, 0, 0, 1, 1, 1),
+                 night_rain(one_am, 0, 0, 1, 1, 1, *[0] * 13)):   # it starts, rains, stops after 60 dry minutes
+        m.station.data = data
+        await m.check()
+    assert sent == []                                              # all in quiet hours
+    m.station.data = night_rain(int(datetime(2026, 9, 30, 5, 55, tzinfo=TZ).timestamp()), 0, 0, 0)   # 5:55 to 6:05
+    await m.check()
+    assert len(sent) == 1 and sent[0].startswith("\U0001f327️ Overnight rain: 1.2 mm, from about 1:10am to 1:25am.")
+    await m.check()
+    assert len(sent) == 1                                          # once
+    m.station.data = night_rain(int(datetime(2026, 9, 30, 13, 0, tzinfo=TZ).timestamp()), 0, 1)
+    await m.check()
+    assert len(sent) == 2 and "started raining" in sent[1]         # by day, rain alerts are back
+
+
+async def test_a_dry_night_has_no_summary_and_quiet_hours_can_be_off(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.quiet = (0, 6)
+    m.station.data = night_rain(int(datetime(2026, 9, 30, 2, 0, tzinfo=TZ).timestamp()), 0, 0, 0)
+    await m.check()
+    m.station.data = night_rain(int(datetime(2026, 9, 30, 6, 5, tzinfo=TZ).timestamp()), 0, 0, 0)
+    await m.check()
+    assert sent == []
+    m.quiet = None
+    m.station.data = night_rain(int(datetime(2026, 9, 30, 2, 0, tzinfo=TZ).timestamp()), 0, 0, 1)
+    await m.check()
+    assert len(sent) == 1 and "started raining" in sent[0]

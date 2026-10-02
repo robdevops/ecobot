@@ -18,6 +18,17 @@ def _on(value: str) -> bool:
     return value.lower() in ("on", "1", "true", "yes")
 
 
+def _hours(value: str, default: tuple[int, int] | None) -> tuple[int, int] | None:
+    """"0-6" -> (0, 6); "off" or "none" -> None; anything unreadable -> the default."""
+    if value.lower() in ("off", "none", "no", "false"):
+        return None
+    try:
+        start, end = (int(x) for x in value.split("-"))
+    except ValueError:
+        return default
+    return (start, end) if 0 <= start <= 23 and 0 <= end <= 24 and start != end else default
+
+
 def _number(value: str) -> float | None:
     try:
         return float(value)
@@ -47,6 +58,7 @@ class Config:
     forecast: bool = False               # FORECAST=on: the daily forecast from Open-Meteo
     forecast_lat: float | None = None    # FORECAST_LAT / FORECAST_LON; the weather station's own location when unset
     forecast_lon: float | None = None
+    rain_quiet_hours: tuple[int, int] | None = (0, 6)   # RAIN_QUIET_HOURS="0-6" (local hours; "off" for none): no rain alerts, a summary after
     rain_stop_minutes: int = 60          # RAIN_STOP_MINUTES: dry for this long and "the rain has stopped" is sent (5 to 150)
 
     @property
@@ -77,6 +89,7 @@ class Config:
             forecast=_on(env("FORECAST")),
             forecast_lat=_number(env("FORECAST_LAT")),
             forecast_lon=_number(env("FORECAST_LON")),
+            rain_quiet_hours=_hours(env("RAIN_QUIET_HOURS"), (0, 6)),
             rain_stop_minutes=int(min(150, max(5, _number(env("RAIN_STOP_MINUTES")) or 60))),
         )
         if not (cfg.ecowitt or cfg.airgradient):

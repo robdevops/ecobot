@@ -148,3 +148,9 @@ def test_the_rain_stop_time_is_configurable_with_a_default_and_limits(monkeypatc
     for value, want in (("30", 30), ("1", 5), ("999", 150), ("junk", 60)):
         monkeypatch.setenv("RAIN_STOP_MINUTES", value)
         assert Config.from_env().rain_stop_minutes == want
+
+
+def test_the_rain_quiet_hours_are_configurable():
+    from lib.config import _hours
+    assert _hours("", (0, 6)) == (0, 6) and _hours("22-6", (0, 6)) == (22, 6) and _hours("off", (0, 6)) is None
+    assert _hours("junk", (0, 6)) == (0, 6) and _hours("6-6", (0, 6)) == (0, 6) and _hours("0-25", (0, 6)) == (0, 6)
