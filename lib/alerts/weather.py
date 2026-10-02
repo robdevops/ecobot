@@ -89,7 +89,7 @@ class WeatherMonitor:
             m.update(raining=True, since=next(ts for ts, w, _ in wet[-2:] if w))
             if not any(w for ts, w, _ in wet[:-1][-2:]):
                 log.info("Alerts: rain started, seen in the newest reading only (the live one when it is newer than the history)")
-            await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."))
+            await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), kind="rain")
         elif m["raining"] and (last_wet is None or latest_ts - last_wet >= RAIN_STOP_DRY_SECONDS):
             if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
                 log.info("Alerts: rain ended while not watching; no alert")
@@ -98,7 +98,7 @@ class WeatherMonitor:
                 fell = rain_amount(rows, since, last_wet)
                 amount = f"{fell:.1f} mm fell" if fell else "Only a trace fell"
                 took = duration(last_wet + 300 - since)
-                await self.notify(f"\U0001f324️ The rain has stopped. {amount} over {took}.")
+                await self.notify(f"\U0001f324️ The rain has stopped. {amount} over {took}.", kind="rain")
             m.update(raining=False, since=None)
 
     async def _rain_likely(self, rows: Rows):
@@ -118,7 +118,7 @@ class WeatherMonitor:
         if outlook.score >= PREDICT_MIN_SCORE:
             m["last"] = latest_ts
             await self.notify("\U0001f326️ Rain looks likely soon: " + ", ".join(outlook.reasons[:3]) +
-                              ". (An estimate from the station's readings, not an official forecast.)")
+                              ". (An estimate from the station's readings, not an official forecast.)", kind="rain_likely")
 
     async def _gusts(self, rows: Rows):
         """Only readings since the last check count, so a restart doesn't re-announce an old gust."""
@@ -132,7 +132,7 @@ class WeatherMonitor:
                 m["active"] = True
                 gust, ts = max(over)
                 await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-                                  + f" (alerts above {GUST_ALERT_KMH} km/h).")
+                                  + f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts")
         elif m["active"]:
             m["calm_since"] = m["calm_since"] or latest_ts
             if latest_ts - m["calm_since"] >= GUST_REARM_SECONDS:
@@ -150,7 +150,7 @@ class WeatherMonitor:
                 m["active"] = True
                 uv, ts = max(over)
                 await self.notify(f"\U0001f9f4 UV index {uv:g} at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-                                  + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).")
+                                  + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv")
         elif m["active"]:
             m["calm_since"] = m["calm_since"] or latest_ts
             if latest_ts - m["calm_since"] >= UV_REARM_SECONDS:
@@ -170,5 +170,5 @@ class WeatherMonitor:
             if held >= CROSS_MIN_SECONDS:
                 o, i = r["outdoor.temperature"], r["indoor.temperature"]
                 await self.notify(f"\U0001f321️ It's now {current} outside ({o:.1f}°C) than inside "
-                                  f"({i:.1f}°C), for the first time in {int(held // 86400)} days.")
+                                  f"({i:.1f}°C), for the first time in {int(held // 86400)} days.", kind="temps")
             c.update(side=current, since=ts)

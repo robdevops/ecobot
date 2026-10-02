@@ -18,9 +18,10 @@ from datetime import datetime
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
-from telegram.ext import ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, prompt, report, templates
+from .alerts import menu
 from .alerts import AlertState, with_footer
 from .charts import render as render_chart
 from .tools import Turn
@@ -40,21 +41,9 @@ DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answe
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
-        "/reset clears this chat's memory, /alerts manages weather alerts (on/off for this chat).\n"
+        "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe).\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-ALERTS = ["Rain starting, and stopping (after 30 dry minutes)", "Rain likely soon", "Wind gusts over 40 km/h", "UV index of 9 or more",
-          "Indoor and outdoor temperatures crossing, after 2+ days", "Unhealthy outdoor air, and when it's safe again"]
-POLLEN_ALERT = "Pollen or thunderstorm asthma risk High or Extreme"
-FORECAST_ALERT = "A forecast I sent changes (rain, or max temperature by over 2°C)"
-
-
-def alerts_text(on: bool, pollen: bool = False, forecast: bool = False) -> str:
-    """The /alerts status: one bullet per alert."""
-    bullets = "\n".join(f"\u2022 {a}" for a in ALERTS + ([POLLEN_ALERT] if pollen else []) + ([FORECAST_ALERT] if forecast else []))
-    return f"Weather alerts are {'on' if on else 'off'} here:\n{bullets}\nUse /alerts {'off' if on else 'on'} to turn them {'off' if on else 'on'}."
-
-
 @dataclass
 class ChatState:
     history: list[dict] = field(default_factory=list)
@@ -246,6 +235,7 @@ class Bot:
         app.add_handler(CommandHandler("reset", self.on_reset))
         app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
+        app.add_handler(CallbackQueryHandler(self.on_alert_button, pattern=r"^al:"))
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
@@ -273,19 +263,62 @@ class Bot:
         elif status in ("left", "kicked"):
             self.state.remove_chat(change.chat.id, f"bot {status}")
 
+    def _alert_kinds(self) -> list[str]:
+        return menu.available_kinds(set(self.by_name))
+
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/alerts, /alerts on, /alerts off"""
+        """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
+        unsubscribe every type."""
         msg, chat = update.effective_message, update.effective_chat
         if not self.state:
             await msg.reply_text("Alerts aren't available: no sensor is connected.")
             return
         arg = context.args[0].lower() if context.args else ""
+        self.remember_chat(update)
         if arg in ("on", "off"):
             self.state.set_alerts(chat.id, self._title(update), arg == "on")
             log.info("/alerts %s in %s", arg, describe_source(update))
-        self.remember_chat(update)
-        on = self.state.alerts_on(chat.id)
-        await msg.reply_text(alerts_text(on, "Pollen" in self.by_name, "Forecast" in self.by_name))
+        muted, kinds = self.state.muted(chat.id), self._alert_kinds()
+        await msg.reply_text(menu.title(muted, kinds), reply_markup=menu.keyboard(muted, kinds))
+
+    async def on_alert_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """A press on the alert settings buttons (under an alert or the /alerts message): open or close a section, or subscribe
+        or unsubscribe a type or all. In a group only admins may change them."""
+        query = update.callback_query
+        parts = (query.data or "").split(":")
+        action, arg, section = (parts + ["", "", ""])[1:4]
+        if action == "noop" or not self.state:
+            await query.answer()
+            return
+        message = query.message
+        chat = message.chat
+        if chat.type != ChatType.PRIVATE:
+            member = await context.bot.get_chat_member(chat.id, query.from_user.id)
+            if member.status not in ("administrator", "creator"):
+                await query.answer("Only group admins can change alerts")
+                return
+        kinds = self._alert_kinds()
+        toast, opened = None, section or None
+        if action in ("open", "close"):
+            opened = arg if action == "open" else None
+        elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
+            self.state.set_kind(chat.id, arg, action == "on")
+            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg].capitalize()} alerts"
+            toast = f"{what} {action} in this chat"
+        else:
+            await query.answer()
+            return
+        muted = self.state.muted(chat.id)
+        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None)
+        await query.answer(toast)
+        try:
+            if (message.text or "").startswith(menu.TITLE):   # the /alerts message: keep its on/off summary current
+                await query.edit_message_text(menu.title(muted, kinds), reply_markup=markup)
+            else:                                             # an alert: only its buttons change
+                await query.edit_message_reply_markup(reply_markup=markup)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                raise
 
     @staticmethod
     def _thread(msg: Message):

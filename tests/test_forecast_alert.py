@@ -168,5 +168,5 @@ async def test_to_chat_goes_to_one_chat_and_forgets_a_blocked_one(tmp_path):
                 raise Forbidden("bot was blocked by the user")
             sent.append((chat_id, text))
     notifier = Notifier(Bot(), state)
-    assert await notifier.to_chat(1, "hello") is True and [c for c, _ in sent] == [1] and "mute" in sent[0][1]
+    assert await notifier.to_chat(1, "hello") is True and [c for c, _ in sent] == [1] and "/alerts to change" in sent[0][1]
     assert await notifier.to_chat(2, "hello") is False and 2 not in state.chats

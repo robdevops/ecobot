@@ -16,6 +16,7 @@ from telegram.ext import Application, Defaults
 
 from lib.airgradient import AirGradient
 from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, Notifier, PollenMonitor, WeatherMonitor
+from lib.alerts.menu import available_kinds
 from lib.bot import Bot, polling_error
 from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
@@ -101,7 +102,7 @@ async def main():
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("Bot @%s running with model %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
-                notify = Notifier(app.bot, state)
+                notify = Notifier(app.bot, state, available_kinds({s.name for s in sources}))
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts

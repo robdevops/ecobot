@@ -87,15 +87,6 @@ async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off
     assert "reply_markup" not in sent[0][1]
 
 
-async def test_the_alerts_status_lists_one_bullet_per_alert():
-    from lib.bot import alerts_text
-    text = alerts_text(True)
-    bullets = [line for line in text.splitlines() if line.startswith("\u2022 ")]
-    assert len(bullets) == 6 and text.startswith("Weather alerts are on here:") and text.endswith("to turn them off.")
-    assert len(alerts_text(False, pollen=True).splitlines()) == 9 and "turn them on" in alerts_text(False)
-    assert len(alerts_text(True, forecast=True).splitlines()) == 9 and "A forecast I sent changes" in alerts_text(True, forecast=True)
-    assert "Pollen or thunderstorm asthma risk High or Extreme" in alerts_text(True, pollen=True)
-
 
 
 def test_report_is_on_the_right_hand_side_of_the_first_row():

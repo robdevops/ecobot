@@ -76,7 +76,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
     assert "failed" not in final and "days (5min/30min/4h/1d)" in final
-    assert len(app.handlers) == 8  # start+help, reset, keyboard, alerts, other updates, membership, messages, errors
+    assert len(app.handlers) == 9  # start+help, reset, keyboard, alerts, alert buttons, other updates, membership, messages, errors
 
 
 async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(tmp_path, monkeypatch, caplog):

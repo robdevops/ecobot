@@ -41,7 +41,7 @@ class FakeStation:
 def monitor(tmp_path, data):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     m = WeatherMonitor(FakeStation(data), state, notify)
     return m, state, sent
@@ -223,7 +223,7 @@ class FakeAir:
 async def test_mask_alert_needs_two_bad_checks_and_pairs_with_all_clear(tmp_path):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append((text, link))
     mon = AirMonitor(FakeAir(), state, notify)
     await mon.check(air_reading(80))
@@ -244,7 +244,7 @@ async def test_mask_alert_needs_two_bad_checks_and_pairs_with_all_clear(tmp_path
 async def test_mask_threshold_is_official_aqi_151(tmp_path):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     mon = AirMonitor(FakeAir(), state, notify)
     for _ in range(3):
@@ -258,7 +258,7 @@ async def test_mask_threshold_is_official_aqi_151(tmp_path):
 async def test_stale_air_readings_are_ignored(tmp_path):
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     mon = AirMonitor(FakeAir(), state, notify)
     for _ in range(3):
@@ -356,7 +356,7 @@ def pollen_monitor(tmp_path):
     from lib.alerts import PollenMonitor
     state, sent = AlertState(tmp_path / "s.json"), []
 
-    async def notify(text, link=None):
+    async def notify(text, link=None, **kw):
         sent.append(text)
     pollen = FakePollen()
     return PollenMonitor(pollen, state, notify), pollen, sent

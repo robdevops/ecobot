@@ -171,7 +171,7 @@ def capabilities(sources: list[str]) -> str:
                  "air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, UV index of 9 or more, "
                  "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High or Extreme" if "melbournepollen" in have else "") + (
-                     ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Open-Meteo" in have else "") + ". /alerts off mutes them. Custom alerts "
+                     ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Open-Meteo" in have else "") + ". Each alert has buttons to subscribe or unsubscribe by type, and /alerts opens the same settings. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
     missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
     if "melbournepollen" not in have:

@@ -42,12 +42,12 @@ class ForecastMonitor:
         if not current:
             return
         for chat_id in self.state.forecast_chats():
-            if not self.state.alerts_on(chat_id):
+            if not self.state.subscribed(chat_id, "forecast"):
                 continue
             changes = [(day, old, current[day]) for day, old in sorted(self.state.forecast_sent(chat_id).items())
                        if day >= today and day in current and revised(old, current[day])]
             if not changes:
                 continue
             lines = [f"• {day_label(day, today)}: was {describe_day(old)}\n  now {describe_day(new)}" for day, old, new in changes]
-            if await self.notify.to_chat(chat_id, "\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines)):
+            if await self.notify.to_chat(chat_id, "\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines), kind="forecast"):
                 self.state.record_forecast(chat_id, [new for _, _, new in changes])

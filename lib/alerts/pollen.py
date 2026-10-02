@@ -42,5 +42,5 @@ class PollenMonitor:
                 m[key] = {"rank": rank, "day": day}
                 for_day = reading.get("date")
                 when = f" (forecast for {for_day:%a %d %b})" if for_day and for_day != today else ""
-                await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK)
+                await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen")
         self.state.save()
