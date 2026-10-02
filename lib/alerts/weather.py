@@ -1,7 +1,7 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
-  - Rain: "stopped" after 30 dry minutes, with how much fell; any rain after that is a new
+  - Rain: "stopped" after 60 dry minutes (RAIN_STOP_MINUTES), with how much fell; any rain after that is a new
     "started" (one tip of the gauge is enough). One rule both ways, so the alerts never contradict each other (no flapping).
   - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
     Melbourne (see assess_rain). At most once every 6 hours.
@@ -21,7 +21,7 @@ from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
 
-RAIN_STOP_DRY_SECONDS = 30 * 60
+RAIN_STOP_DRY_SECONDS = 60 * 60   # the default; RAIN_STOP_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 PREDICT_EVERY_SECONDS = 6 * 3600
 CROSS_MIN_SECONDS = 2 * 86400
 CROSS_MARGIN = 0.3
@@ -39,8 +39,9 @@ def side(r: dict) -> str | None:
 
 
 class WeatherMonitor:
-    def __init__(self, station, state, notify):
+    def __init__(self, station, state, notify, rain_stop_seconds: int = RAIN_STOP_DRY_SECONDS):
         self.station, self.state, self.notify = station, state, notify
+        self.rain_stop_seconds = rain_stop_seconds
 
     @property
     def tz(self):
@@ -90,7 +91,7 @@ class WeatherMonitor:
             if not any(w for ts, w, _ in wet[:-1][-2:]):
                 log.info("Alerts: rain started, seen in the newest reading only (the live one when it is newer than the history)")
             await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), kind="rain")
-        elif m["raining"] and (last_wet is None or latest_ts - last_wet >= RAIN_STOP_DRY_SECONDS):
+        elif m["raining"] and (last_wet is None or latest_ts - last_wet >= self.rain_stop_seconds):
             if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
                 log.info("Alerts: rain ended while not watching; no alert")
             else:

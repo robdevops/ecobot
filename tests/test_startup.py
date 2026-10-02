@@ -135,3 +135,16 @@ async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_
     assert on[2].location == (-37.8, 145.0) and on[2].lines() and on[1].lines()
     for s in on:
         await s.close()
+
+
+def test_the_rain_stop_time_is_configurable_with_a_default_and_limits(monkeypatch):
+    from lib.config import Config
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("XAI_API_KEY", "k")
+    monkeypatch.setenv("ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("RAIN_STOP_MINUTES", raising=False)
+    assert Config.from_env().rain_stop_minutes == 60
+    for value, want in (("30", 30), ("1", 5), ("999", 150), ("junk", 60)):
+        monkeypatch.setenv("RAIN_STOP_MINUTES", value)
+        assert Config.from_env().rain_stop_minutes == want

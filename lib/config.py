@@ -47,6 +47,7 @@ class Config:
     forecast: bool = False               # FORECAST=on: the daily forecast from Open-Meteo
     forecast_lat: float | None = None    # FORECAST_LAT / FORECAST_LON; the weather station's own location when unset
     forecast_lon: float | None = None
+    rain_stop_minutes: int = 60          # RAIN_STOP_MINUTES: dry for this long and "the rain has stopped" is sent (5 to 150)
 
     @property
     def ecowitt(self) -> bool:
@@ -76,6 +77,7 @@ class Config:
             forecast=_on(env("FORECAST")),
             forecast_lat=_number(env("FORECAST_LAT")),
             forecast_lon=_number(env("FORECAST_LON")),
+            rain_stop_minutes=int(min(150, max(5, _number(env("RAIN_STOP_MINUTES")) or 60))),
         )
         if not (cfg.ecowitt or cfg.airgradient):
             raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID")

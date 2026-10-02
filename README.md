@@ -24,6 +24,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High or Extreme. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
 | `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
 | `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
+| `RAIN_STOP_MINUTES` | optional: how long it must stay dry before "the rain has stopped" is sent (default 60, from 5 to 150) |
 
 ## Layout
 

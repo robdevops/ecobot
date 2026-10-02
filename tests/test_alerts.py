@@ -53,18 +53,18 @@ def rain(*wet):
             for i, w in enumerate(wet)]
 
 
-async def test_rain_starts_once_then_stops_after_30_dry_minutes(tmp_path):
+async def test_rain_starts_once_then_stops_after_60_dry_minutes(tmp_path):
     m, state, sent = monitor(tmp_path, None)
     for data in (rain(0, 0, 0), rain(0, 0, 1), rain(0, 0, 1, 1), rain(0, 0, 1, 1, 0), rain(0, 0, 1, 1, 0, 0)):
         m.station.data = data
         await m.check()
     assert len(sent) == 1 and "started raining" in sent[0]
-    m.station.data = rain(0, 0, 1, 1, 0, 0, 0, 0, 0, 0)  # 30 dry minutes since the last wet reading
+    m.station.data = rain(0, 0, 1, 1, *[0] * 12)  # 60 dry minutes since the last wet reading
     await m.check()
     assert len(sent) == 2 and "stopped" in sent[1] and "mm fell" in sent[1]
 
 
-async def test_a_dry_gap_shorter_than_30_minutes_does_not_flap(tmp_path):
+async def test_a_dry_gap_shorter_than_the_stop_time_does_not_flap(tmp_path):
     m, state, sent = monitor(tmp_path, None)
     for data in (rain(1, 1), rain(1, 1, 0, 0), rain(1, 1, 0, 0, 0), rain(1, 1, 0, 0, 0, 1), rain(1, 1, 0, 0, 0, 1, 0)):
         m.station.data = data
@@ -413,3 +413,14 @@ async def test_no_pollen_alert_out_of_season_even_with_a_high_reading_cached(tmp
     pollen.season = True
     await mon.check()
     assert len(sent) == 2
+
+
+async def test_the_time_dry_before_the_rain_stops_is_configurable(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.rain_stop_seconds = 30 * 60
+    for data in (rain(0, 0, 0), rain(0, 0, 1), rain(0, 0, 1, 1)):
+        m.station.data = data
+        await m.check()
+    m.station.data = rain(0, 0, 1, 1, 0, 0, 0, 0, 0, 0)   # 30 dry minutes
+    await m.check()
+    assert len(sent) == 2 and "stopped" in sent[1]
