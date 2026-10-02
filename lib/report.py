@@ -51,8 +51,8 @@ def _heading(name: str, result: dict) -> str:
     return f"{name} ({result['place']})" if result.get("place") else name
 
 
-def weather_lines(now: dict) -> list[str]:
-    """The weather station's bullets from a weather_now result: an emoji sits right before the reading it is keyed to."""
+def _getters(now: dict):
+    """(get, tag) for a weather_now result: a reading's text, and the same with its emoji (if it has one) before it."""
     emoji = now.get("emoji") or {}
 
     def get(group: str, field: str) -> str | None:
@@ -61,7 +61,12 @@ def weather_lines(now: dict) -> list[str]:
     def tag(group: str, field: str, text: str | None = None) -> str | None:
         text = text or get(group, field)
         return f"{emoji[f'{group}.{field}']} {text}" if text and f"{group}.{field}" in emoji else text
+    return get, tag
 
+
+def weather_lines(now: dict) -> list[str]:
+    """The weather station's bullets from a weather_now result: an emoji sits right before the reading it is keyed to."""
+    get, tag = _getters(now)
     rain_rate = (now.get("rainfall") or {}).get("rain_rate", "")
     outlook = OUTLOOK_NOTE.sub(" (an estimate)", now["rain_outlook"]) if now.get("rain_outlook") else None
     if outlook and outlook.startswith("raining"):
@@ -89,10 +94,10 @@ def weather_lines(now: dict) -> list[str]:
     return [f"• {name}: {text}" for name, text in bullets if text]
 
 
-def air_lines(air: dict) -> list[str]:
+def air_lines(air: dict, only: list[str] | None = None) -> list[str]:
     out = []
     for key, label in AIR_ROWS:
-        entry = air.get(key)
+        entry = air.get(key) if only is None or key in only else None
         if not isinstance(entry, dict) or entry.get("value") is None:
             continue
         unit = entry.get("unit", "")
@@ -101,6 +106,57 @@ def air_lines(air: dict) -> list[str]:
         aqi = f" (AQI {entry['aqi_us']})" if key == "pm2_5" and "aqi_us" in entry else ""
         out.append(f"• {label}: {_join([shown, entry.get('rating')], ' ')}{aqi}")
     return out
+
+
+def reading_lines(now: dict, names: list[str], sides: list[str]) -> list[str]:
+    """Just the readings asked about from a weather_now result ("how hot is it": the temperature, indoors and out)."""
+    get, tag = _getters(now)
+    lines = []
+    for name in names:
+        reading = WEATHER[name]
+        if reading.group in ("outdoor", "indoor") and name in ("temperature", "humidity"):
+            for side in sides:
+                text = _join([tag(side, name), f"feels like {get(side, 'feels_like')}" if name == "temperature" and get(side, "feels_like") else None], ", ")
+                lines.append(f"• {side.capitalize()}: {text}" if text else None)
+        elif name == "wind":
+            wind = (now.get("wind") or {})
+            if _zero(get("wind", "wind_speed")) and _zero(get("wind", "wind_gust")):
+                lines.append("• Wind: calm")
+            else:
+                degrees = wind.get("wind_direction")
+                lines.append("• Wind: " + _join([_join([tag("wind", "wind_speed"), f"from {_units(degrees)}" if degrees else None], " "),
+                                                  f"gust {tag('wind', 'wind_gust')}" if get("wind", "wind_gust") else None]))
+        elif name == "rain":
+            lines += [line for line in weather_lines(now) if line.startswith("• Rain today")] or [
+                f"• Rain today: {get('rainfall', 'daily') or 'none'}"]
+        else:
+            text = tag(reading.group, reading.field)
+            if text:
+                lines.append(f"• {reading.label}: {text}")
+    return [line for line in lines if line]
+
+
+def lookup(kind: str, result: str | None, names: list[str], sides: list[str]) -> str | None:
+    """A plain lookup written from its one tool result: "reading", "air", "pollen" or "forecast". None when the result can't be
+    used (the model then takes the question)."""
+    data = _load(result)
+    if not data:
+        return None
+    if kind == "reading":
+        lines = reading_lines(data, names, sides)
+    elif kind == "air":
+        lines = air_lines(data, [k for k in names] or None)
+    elif kind == "extremes":   # the highs and lows of a short period: each with its day and time
+        series = data.get("series") or {}
+        keys = [k for k in series if k.endswith(".temperature")]
+        lines = [f"• {_range('Temperature' + (f' ({k.split(chr(46))[0]})' if len(keys) > 1 else ''), series[k], False)}" for k in keys]
+        return "\n".join([_period(data), *lines]) if lines else None
+    elif kind in ("pollen", "forecast"):
+        lines = [f"• {line}" for line in data.get("lines", [])]
+        return "\n".join([_heading("Pollen & asthma" if kind == "pollen" else "Forecast", data), *lines]) if lines else None
+    else:
+        return None
+    return "\n".join(lines) or None
 
 
 def weather_now(result: str | None) -> str | None:
@@ -129,6 +185,11 @@ def report(results: dict[str, str]) -> str:
 def _year(text: str | None) -> str:
     """"Tue 29 Sep 2026" -> "Tue 29 Sep"."""
     return re.sub(r" 20\d\d\b", "", text or "")
+
+
+def _period(data: dict) -> str:
+    """"Tue 29 Sep 2026 - Tue 06 Oct 2026" -> "Tue 29 Sep – Tue 06 Oct 2026"."""
+    return re.sub(r" 20\d\d\b(?= - )", "", data.get("period", "")).replace(" - ", " – ")
 
 
 def _at(entry: dict, which: str) -> str:
@@ -207,4 +268,4 @@ def chart_caption(tool: str, args: dict, result: str | None, turn, tz, extra: st
         return None
     notes = (["(Older days are still downloading, so they are left out.)"] if data.get("note_missing") else
              ["(Some data couldn't be fetched, so this may be incomplete.)"] if data.get("warning") else [])
-    return "\n".join([re.sub(r" 20\d\d\b(?= - )", "", data.get("period", "")).replace(" - ", " – "), *lines, *notes]).strip()
+    return "\n".join([_period(data), *lines, *notes]).strip()

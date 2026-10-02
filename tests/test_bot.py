@@ -303,3 +303,50 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
     name, args = Agent.tools.calls[0]
     assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
     assert sent and "Humidity: low 50 %, Fri 25 Sep at 5am · high 60 %, Sat 26 Sep at 3pm" in sent[0]
+
+
+async def _ask_with(tool_result, text, monkeypatch=None):
+    """Ask `text` of a bot whose one tool returns `tool_result`; returns (replies, whether the model was asked)."""
+    asked = []
+
+    class Tools:
+        async def call(self, name, raw, turn=None):
+            return tool_result
+
+    class Agent:
+        tools = Tools()
+
+        async def run(self, messages, *a, **k):
+            asked.append(True)
+            return "from the model"
+    replies = []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "AirGradient")]
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
+    return replies, bool(asked)
+
+
+async def test_a_plain_reading_question_is_answered_in_code_without_the_model():
+    import json
+    result = json.dumps({"outdoor": {"temperature": "12.3 ℃", "feels_like": "11.0 ℃"}, "indoor": {"temperature": "18.3 ℃"}})
+    replies, asked = await _ask_with(result, "how hot is it")
+    assert not asked and replies == ["• Outdoor: 12.3 °C, feels like 11.0 °C\n• Indoor: 18.3 °C"]
+
+
+async def test_a_lookup_that_cannot_be_written_falls_back_to_the_model():
+    import json
+    replies, asked = await _ask_with(json.dumps({"error": "station not answering"}), "how hot is it")
+    assert asked and replies == ["from the model"]
+
+
+async def test_about_the_bot_is_answered_in_code_without_the_model():
+    replies, asked = await _ask_with("{}", "what can you do")
+    assert not asked and replies[0].startswith("• Temperature, humidity")

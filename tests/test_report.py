@@ -178,3 +178,31 @@ def test_no_caption_when_the_tool_failed_or_drew_nothing():
     from types import SimpleNamespace as NS
     assert report.chart_caption("weather_history", {}, json.dumps({"error": "x"}), _turn(), ZoneInfo("UTC")) is None
     assert report.chart_caption("weather_history", {}, json.dumps({"series": {}}), NS(charts=[]), ZoneInfo("UTC")) is None
+
+
+# ---------- plain lookups ----------
+def test_a_reading_lookup_prints_only_what_was_asked():
+    now = json.loads(NOW)
+    assert report.reading_lines(now, ["temperature"], ["outdoor", "indoor"]) == [
+        "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C", "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"]
+    assert report.reading_lines(now, ["humidity"], ["outdoor"]) == ["• Outdoor: 💦 94 %"]
+    assert report.reading_lines(now, ["wind"], []) == ["• Wind: calm"]
+    assert report.reading_lines(now, ["pressure"], []) == ["• Pressure: 🗜️ 1025.0 hPa"]
+    assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining now" in report.reading_lines(now, ["rain"], [])[0]
+
+
+def test_air_pollen_and_forecast_lookups_print_the_tools_own_lines():
+    assert report.lookup("air", AIR, ["pm10"], []) == "• PM10: 3.0 µg/m³ 🟢 good"
+    assert report.lookup("air", AIR, [], []).splitlines()[0] == "• PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)"
+    assert report.lookup("pollen", POLLEN, [], []) == "Pollen & asthma (Melbourne)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
+    assert report.lookup("forecast", FORECAST, [], []).startswith("Forecast (Melbourne)\n• Today: ")
+    assert report.lookup("pollen", json.dumps({"error": "off season"}), [], []) is None
+
+
+def test_a_short_period_highs_and_lows_lookup_gives_each_sides_extremes_with_their_times():
+    result = json.dumps({"period": "Fri 02 Oct 2026 - Fri 02 Oct 2026", "series": {
+        "outdoor.temperature": {"unit": "℃", "low": "9.0", "low_when": "at 5am", "low_date": "Fri 2 Oct 2026",
+                                "high": "16.2", "high_when": "at 2pm", "high_date": "Fri 2 Oct 2026"},
+        "outdoor.humidity": {"unit": "%", "low": "40", "high": "95"}}})
+    assert report.lookup("extremes", result, [], []) == ("Fri 02 Oct – Fri 02 Oct 2026\n"
+                                                         "• Temperature: low 9.0 °C, Fri 2 Oct at 5am · high 16.2 °C, Fri 2 Oct at 2pm")

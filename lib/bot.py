@@ -461,6 +461,16 @@ class Bot:
             turn.forecast_shown.clear()
         return caption
 
+    async def _lookup_in_code(self, read, turn: Turn) -> str | None:
+        """A plain lookup (a reading, the air, the pollen, the forecast, what the bot can do) answered from its one tool result; None
+        (the model then takes the question) when it can't be."""
+        if read.lookup == "about":
+            return templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
+                                               "Pollen" in self.by_name, "Forecast" in self.by_name)
+        name, args = read.fast[:2]
+        result = await self.agent.tools.call(name, json.dumps(args), turn)
+        return report.lookup(read.lookup, result, read.lookup_arg, read.sides)
+
     async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
@@ -514,6 +524,10 @@ class Bot:
                 reply = None
                 if read.fast and read.chart_in_code:   # drawn by the tool, captioned in code
                     reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
+                elif read.lookup:
+                    reply = await asyncio.wait_for(self._lookup_in_code(read, turn), TURN_SECONDS)
+                    if reply is None:
+                        turn.forecast_shown.clear()
                 elif read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model
                     reply = await asyncio.wait_for(self._written_in_code(read, turn), TURN_SECONDS)
                 if reply is not None:

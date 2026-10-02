@@ -407,12 +407,17 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
     return spans[0] if len(spans) == 1 else None
 
 
-def air_metrics(text: str) -> list[str]:
+def air_named(text: str) -> list[str]:
+    """The air readings the text names ("pm10", "co2"); all of them for "all"; none if it only says air."""
     metrics = [m for _, m in AIR_METRICS] if ALL.search(text) else []
     for pattern, metric in AIR_METRICS:
         if re.search(rf"\b({pattern})", text, I) and metric not in metrics:
             metrics.append(metric)
-    return metrics or ["pm2_5"]
+    return metrics
+
+
+def air_metrics(text: str) -> list[str]:
+    return air_named(text) or ["pm2_5"]
 
 
 # ---------- dispatch ----------
@@ -423,7 +428,28 @@ SPECIFIC_MOMENT = re.compile(
     r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b\d{1,2}:\d{2}\b|\b(noon|midnight|morning|afternoon|evening|overnight|tonight)\b|"
     r"\b(mon|tues?|wed(nes)?|thu(rs?)?|fri|sat(ur)?|sun)(day)?\b", I)
 
-def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False) -> tuple[str, dict, str] | None:
+# Plain lookups, answered in code from the tool's own result (no model): what is said is nothing but the reading asked for
+FILLER = frozenset("what whats what's how hows how's is are it its it's the a an of tell me give show please like reading level speed "
+                   "now currently current right at moment outside outdoors outdoor indoors indoor inside out there any we point".split())
+FORECAST_PLAIN = re.compile(_only(r"(weather\s+)?forecast(\s+(for\s+)?(the\s+)?(this\s+|next\s+)?(week|7 days|seven days|coming days))?|"
+                                  r"(the\s+)?(7|seven)[- ]day (weather )?forecast|(the\s+)?week ahead",
+                                  r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+
+
+def reading_now(text: str) -> list[str] | None:
+    """The readings named when the text is only a plain question about them right now ("how hot is it", "is it raining", "uv"), else None."""
+    if (GRAPH.search(text) or TIME_WORDS.search(text) or SPECIFIC_MOMENT.search(text) or mentions_air(text)
+            or any(p.search(text) for p in JUDGEMENT) or not (names := list(_named(text))) or len(names) > 2):
+        return None
+    patterns = [re.compile(rf"({WEATHER_READINGS[n].words}|indoors?|outdoors?)", I) for n in names]
+    for word in re.findall(r"[\w'’.]+", text.lower()):
+        if word not in FILLER and not any(p.fullmatch(word) for p in patterns):
+            return None
+    return names
+
+
+def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False,
+              forecast: bool = False) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
     if SPECIFIC_MOMENT.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
@@ -437,6 +463,10 @@ def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool =
         return "pollen_asthma", {}, "pollen and thunderstorm asthma"
     if ecowitt and wants_weather_now(text):
         return "weather_now", {"groups": NOW_GROUPS}, "weather now"
+    if forecast and FORECAST_PLAIN.search(text):
+        return "weather_forecast", {"days": 7}, "forecast"
+    if ecowitt and reading_now(text):
+        return "weather_now", {"groups": NOW_GROUPS}, "weather reading now"
     if ecowitt and (chart := weather_chart(text, now)):
         name, start, end, groups = chart
         return "weather_history", {"groups": ",".join(groups), "chart": True, "start_date": start.strftime(FMT),
@@ -467,6 +497,31 @@ class Reading:
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
+    lookup: str = ""                      # "reading", "air", "pollen", "forecast" or "about": answered in code, no model
+    lookup_arg: list[str] = field(default_factory=list)   # the readings named ("reading", "air"; none: all)
+    sides: list[str] = field(default_factory=list)        # "indoor", "outdoor" or both, for a reading
+
+
+def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
+    """(kind, readings named) for a question answered in code from one tool result, else ("", [])."""
+    if about_the_bot(text):
+        return "about", []
+    if not fast:
+        return "", []
+    tool, args = fast[0], fast[1]
+    if tool == "pollen_asthma":
+        return "pollen", []
+    if tool == "weather_forecast":
+        return "forecast", []
+    if any(p.search(text) for p in JUDGEMENT):
+        return "", []
+    if tool == "weather_history" and not args.get("chart") and not args.get("average"):
+        return "extremes", []
+    if tool == "weather_now" and (names := reading_now(text)):
+        return "reading", names
+    if tool == "air_quality" and not args and len(text.split()) <= 6:
+        return "air", air_named(text)
+    return "", []
 
 
 def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
@@ -475,15 +530,17 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     report = wants_report(text)
     calls = report_calls(ecowitt, air, pollen, forecast) if report else []
     try:
-        fast = (*calls[0], "report") if calls else fast_call(text, now, ecowitt, air, pollen)
+        fast = (*calls[0], "report") if calls else fast_call(text, now, ecowitt, air, pollen, forecast)
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None
     in_code = bool(fast and fast[0] in ("weather_history", "air_quality") and fast[1].get("chart")
                    and not any(p.search(text) for p in JUDGEMENT))
     rain_caption = ecowitt and wants_rain_caption(text)
+    lookup, named = plain_lookup(text, fast) if not (report or in_code) else ("", [])
     if in_code and rain_caption:   # the caption also says whether rain is expected
         calls = [("", {}), ("weather_now", {"groups": "rainfall"})]
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code)
+                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
+                   lookup=lookup, lookup_arg=named, sides=_sides(text))

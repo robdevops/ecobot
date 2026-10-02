@@ -1143,5 +1143,64 @@
         }
       }
     }
+  },
+  {
+    "id": "lookup-how-hot",
+    "ask": "how hot is it",
+    "note": "a plain reading question",
+    "expect": {
+      "lookup": "reading"
+    }
+  },
+  {
+    "id": "lookup-raining",
+    "ask": "is it raining",
+    "expect": {
+      "lookup": "reading"
+    }
+  },
+  {
+    "id": "lookup-air",
+    "ask": "how's the air",
+    "expect": {
+      "lookup": "air"
+    }
+  },
+  {
+    "id": "lookup-forecast",
+    "ask": "forecast",
+    "expect": {
+      "lookup": "forecast"
+    }
+  },
+  {
+    "id": "lookup-about",
+    "ask": "what can you do",
+    "expect": {
+      "lookup": "about"
+    }
+  },
+  {
+    "id": "lookup-judgement",
+    "ask": "is it too cold to run",
+    "note": "judgement stays with the model",
+    "expect": {
+      "lookup": ""
+    }
+  },
+  {
+    "id": "lookup-hottest-today",
+    "ask": "hottest today",
+    "note": "highs and lows of a short period",
+    "expect": {
+      "lookup": "extremes"
+    }
+  },
+  {
+    "id": "lookup-hottest-vs",
+    "ask": "is today hotter than yesterday",
+    "expect": {
+      "lookup": ""
+    }
   }
 ]
