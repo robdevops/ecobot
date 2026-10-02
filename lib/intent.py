@@ -31,6 +31,9 @@ def lower_effort(effort: str) -> str | None:
 
 # The words that name each reading, shared by every pattern below
 _TEMP = TEMP_WORDS
+# Which temperature words make a message a weather question that must fetch ("only that it's cold" is chat): "temp", "temperature",
+# "how hot/cold ...", and the superlatives that rank days ("hottest weekends"). _TEMP (all the words) still names the reading.
+_TEMP_ASK = r"temp\w*|how (?:hot|cold|warm|cool|freezing)|(?:hott|cold|warm|cool)est"
 _WIND = r"wind\w*|gusts?|breez\w*"
 _PRESSURE = PRESSURE_WORDS
 # The two devices by name: "ecowitt" is the weather, "ag" / "airgradient" / "air gradient" the air quality
@@ -40,7 +43,7 @@ _OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|wea
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
 WEATHER = re.compile(
-    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP}|frost\w*|pollen|hay ?fever|asthma|"
+    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP_ASK}|frost\w*|pollen|hay ?fever|asthma|"
     rf"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
     rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"

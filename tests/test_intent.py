@@ -360,3 +360,12 @@ def test_asking_for_the_bots_view_is_not_forced_to_fetch_but_a_view_of_the_weath
     for text in ("what do you think of the weather today?", "what do you think about tomorrow's rain", "do you like the rain now",
                  "what do you think of the weather over the last 3 days", "weather", "how hot is it", "what do you think the forecast says"):
         assert intent.needs_data(text), text
+
+
+def test_only_temp_temperature_how_hot_or_cold_and_hottest_style_questions_force_a_fetch():
+    for text in ("only that it's cold", "it's so hot in here", "nice and warm", "warm regards", "cool", "freezing", "degrees"):
+        assert not intent.needs_data(text), text
+    for text in ("temp", "temps this week", "what's the temperature", "how cold is it", "how hot will it get", "how's the weather",
+                 "hottest weekends", "coldest day last month", "is it cold outside"):
+        assert intent.needs_data(text), text
+    assert intent.read("only that it's cold", NOW).needs_data is False

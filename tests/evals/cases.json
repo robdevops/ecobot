@@ -462,21 +462,6 @@
     ]
   },
   {
-    "id": "cold-innit",
-    "ask": "cold innit",
-    "expect": {
-      "needs_data": true,
-      "any_tools": [
-        "weather_now",
-        "weather_history"
-      ]
-    },
-    "covers": [
-      "q:current",
-      "m:temperature"
-    ]
-  },
-  {
     "id": "weather-on-june-11",
     "ask": "what kind of weather was June 11",
     "expect": {
@@ -1083,6 +1068,33 @@
     },
     "covers": [
       "q:chat"
+    ]
+  },
+  {
+    "id": "only-that-its-cold",
+    "ask": "only that it's cold",
+    "note": "a chat reply, not a request: it replaced the bot's answer with the temperatures",
+    "expect": {
+      "needs_data": false
+    },
+    "covers": [
+      "q:chat"
+    ]
+  },
+  {
+    "id": "how-cold-is-it",
+    "ask": "how cold is it",
+    "note": "a plain current-temperature question",
+    "expect": {
+      "needs_data": true,
+      "any_tools": [
+        "weather_now",
+        "weather_history"
+      ]
+    },
+    "covers": [
+      "q:current",
+      "m:temperature"
     ]
   }
 ]
