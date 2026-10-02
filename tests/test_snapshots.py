@@ -11,7 +11,7 @@ from lib.snapshots import KEEP_SECONDS, Snapshots
 from lib.warm import safely
 from tests.fakes import TZ, config
 from tests.test_forecast import transport as forecast_transport
-from tests.test_pollen import make as make_pollen, page, transport as pollen_transport
+from tests.test_pollen import SEASON_DAY, make as make_pollen, page, transport as pollen_transport
 
 
 def test_a_repeat_only_moves_last_seen_and_a_change_adds_a_row(tmp_path):
@@ -46,7 +46,7 @@ async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_withou
     await again.start()
     assert more == [] and again.lines() == ["Grass pollen: 🟠 High", "Thunderstorm asthma risk: 🔴 Extreme"]
     assert again.current()["fetched_at"] == first.fetched_at
-    again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(9, 0))
+    again.now = lambda: datetime.combine(SEASON_DAY, dtime(9, 0))
     await again.warm(True)                                   # next morning: asks with the saved validator
     assert len(more) == 1 and more[0].headers["if-none-match"] == "v1"
     assert again.lines()[0].startswith("Grass pollen: 🟠 High")      # a 304: the saved page still stands

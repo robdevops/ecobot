@@ -287,3 +287,8 @@ def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecas
     from lib import prompt
     assert "revised" not in prompt.capabilities(["Ecowitt weather station"])
     assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt weather station", FORECAST_SOURCE])
+
+
+def test_the_capabilities_say_pollen_only_runs_october_to_december():
+    from lib import prompt
+    assert "only run from October to December" in prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE])

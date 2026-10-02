@@ -339,11 +339,15 @@ async def test_old_uv_readings_are_not_announced_after_a_restart(tmp_path):
 class FakePollen:
     def __init__(self):
         self.grass = self.asthma = None
+        self.season = True
         self.fetched_at = time.time()
         self.today = datetime(2026, 10, 1, 12, 0)
 
     def now(self):
         return self.today
+
+    def in_season(self):
+        return self.season
 
     def current(self):
         from lib.pollen import LEVEL_EMOJI
@@ -399,3 +403,13 @@ async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stal
     pollen.grass, pollen.fetched_at = "Extreme", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
     await again.check()
     assert len(sent) == 1
+
+
+async def test_no_pollen_alert_out_of_season_even_with_a_high_reading_cached(tmp_path):
+    mon, pollen, sent = pollen_monitor(tmp_path)
+    pollen.grass, pollen.asthma, pollen.season = "Extreme", "High", False
+    await mon.check()
+    assert sent == []
+    pollen.season = True
+    await mon.check()
+    assert len(sent) == 2

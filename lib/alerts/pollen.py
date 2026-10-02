@@ -1,4 +1,5 @@
-"""Pollen and thunderstorm asthma alerts, checked after every refresh of the Pollen source (every 30 minutes in the day).
+"""Pollen and thunderstorm asthma alerts, checked after every refresh of the Pollen source (every 30 minutes in the day, October to
+December only).
 
 A warning when grass pollen or the thunderstorm asthma risk is High 🟠 or Extreme 🔴. One alert per metric, level and day: another
 when it rises from High to Extreme, or on a new day that is still High or worse; none while it stays the same. Once it drops below
@@ -24,6 +25,8 @@ class PollenMonitor:
         self.pollen, self.state, self.notify = pollen, state, notify
 
     async def check(self):
+        if not self.pollen.in_season():   # October to December only
+            return
         cur = self.pollen.current()
         if not cur["fetched_at"] or time.time() - cur["fetched_at"] > STALE_SECONDS:
             return

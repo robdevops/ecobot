@@ -125,6 +125,7 @@ async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_
     monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c: eco_init(self, c, eco_t))
     monkeypatch.setattr(ecobot.Pollen, "__init__", lambda self, c: pollen_init(self, c, pollen_transport(page, calls)))
     monkeypatch.setattr(ecobot.Forecast, "__init__", lambda self, c, place=None: forecast_init(self, c, place, forecast_transport(calls)))
+    monkeypatch.setattr(ecobot.Pollen, "now", lambda self: datetime(2026, 11, 10, 12, 0))     # in the pollen season, whatever day the test runs
     off = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location=""))
     assert [s.name for s in off] == ["Ecowitt"]
     for s in off:

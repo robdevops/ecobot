@@ -209,7 +209,7 @@ def test_the_capabilities_list_is_the_users_bullets():
         "\u2022 Rain, solar radiation, UV index", "\u2022 PM1, PM2.5, PM10, CO₂, VOC, NOx", "\u2022 History charts"])
     assert len(templates.capabilities_text(air=False).splitlines()) == 4 and len(templates.capabilities_text(weather=False).splitlines()) == 2
     full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
-    assert len(full) == 7 and full[4:] == ["\u2022 Pollen and thunderstorm asthma risk", "\u2022 Forecast", "\u2022 History charts"]
+    assert len(full) == 7 and full[4:] == ["\u2022 Pollen and thunderstorm asthma risk (October to December)", "\u2022 Forecast", "\u2022 History charts"]
 
 
 
@@ -219,4 +219,4 @@ def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
     plain = templates.capabilities_text()
     assert "Pollen" not in plain and "Forecast" not in plain
     full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
-    assert full[-3:] == ["• Pollen and thunderstorm asthma risk", "• Forecast", "• History charts"]
+    assert full[-3:] == ["• Pollen and thunderstorm asthma risk (October to December)", "• Forecast", "• History charts"]
