@@ -4,7 +4,7 @@ import pytest
 from telegram.error import BadRequest
 
 from lib.alerts import AlertState, Notifier
-from lib.alerts.menu import ALL, LABELS, TITLE, available_kinds, keyboard, title
+from lib.alerts.menu import ALL, LABELS, TITLE, available_kinds, keyboard, options, title
 from lib.bot import Bot
 from tests.fakes import TZ
 
@@ -19,22 +19,18 @@ def test_the_collapsed_menu_is_subscribe_and_unsubscribe():
     assert rows(keyboard(set(), KINDS)) == [[("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub")]]
 
 
-def test_unsubscribe_opens_the_subscribed_types_under_a_heading_that_does_nothing():
+def test_unsubscribe_opens_the_types_that_are_on_and_subscribe_the_types_that_are_off():
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub"))
     assert got[0] == [("➕ Subscribe", "al:open:sub"), ("▾ ➖ Unsubscribe", "al:close")]
-    assert got[1] == [("✅ Subscribed — tap to turn off", "al:noop")]
-    assert got[2] == [("rain", "al:off:rain:unsub"), ("rain likely", "al:off:rain_likely:unsub")]
-    assert [text for row in got[2:-1] for text, _ in row] == ["rain", "rain likely", "gusts", "UV", "temperature crossing", "air quality"]
+    assert got[1] == [("rain", "al:off:rain:unsub"), ("rain likely", "al:off:rain_likely:unsub")]
+    assert [text for row in got[1:-1] for text, _ in row] == ["rain", "rain likely", "gusts", "UV", "temperature crossing", "air quality"]
     assert got[-1] == [("All alerts", "al:off:all:unsub")]
-
-
-def test_subscribe_opens_the_types_that_are_off_and_says_so_when_there_are_none():
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "sub"))
-    assert got[0][0] == ("▾ ➕ Subscribe", "al:close") and got[1] == [("🔕 Not subscribed — tap to turn on", "al:noop")]
-    assert got[2] == [("pollen & asthma", "al:on:pollen:sub"), ("forecast changes", "al:on:forecast:sub")]
-    assert got[3] == [("All alerts", "al:on:all:sub")]
-    assert rows(keyboard(set(), KINDS, "sub"))[1:] == [[("✅ Subscribed to everything", "al:noop")]]
-    assert rows(keyboard(set(KINDS), KINDS, "unsub"))[1:] == [[("🔕 Nothing subscribed", "al:noop")]]
+    assert got[0][0] == ("▾ ➕ Subscribe", "al:close")
+    assert got[1:] == [[("pollen & asthma", "al:on:pollen:sub"), ("forecast changes", "al:on:forecast:sub")], [("All alerts", "al:on:all:sub")]]
+    assert not any(data == "al:noop" for row in got for _, data in row)                  # no button that does nothing
+    assert options({"pollen"}, KINDS, "sub") == ["pollen"] and options({"pollen"}, ["rain", "pollen"], "unsub") == ["rain"]
+    assert len(rows(keyboard(set(), KINDS, "sub"))) == 1                                  # nothing off: nothing listed
 
 
 def test_only_the_types_the_bot_has_are_listed_and_every_callback_is_short():
@@ -135,18 +131,24 @@ async def test_pressing_unsubscribe_then_a_type_updates_the_state_and_redraws_th
     bot, state = make_bot(tmp_path)
     q = Query("al:open:unsub")
     await press(bot, q)
-    assert q.toast is None and rows(q.edits[0][1])[1] == [("✅ Subscribed — tap to turn off", "al:noop")] and q.edits[0][0] == "markup"
+    assert q.toast is None and rows(q.edits[0][1])[1][0] == ("rain", "al:off:rain:unsub") and q.edits[0][0] == "markup"
     q = Query("al:off:rain:unsub")
     await press(bot, q)
     assert state.muted(1) == {"rain"} and q.toast == "Rain alerts off in this chat"
     drawn = rows(q.edits[0][1])
-    assert drawn[0][1] == ("▾ ➖ Unsubscribe", "al:close") and "rain" not in [t for row in drawn[2:] for t, _ in row]
+    assert drawn[0][1] == ("▾ ➖ Unsubscribe", "al:close") and "rain" not in [t for row in drawn[1:] for t, _ in row]
     q = Query("al:on:rain:sub")
     await press(bot, q)
     assert state.muted(1) == set() and q.toast == "Rain alerts on in this chat"
     q = Query("al:off:all:unsub")
     await press(bot, q)
-    assert q.toast == "All alerts off in this chat" and not state.alerts_on(1) and rows(q.edits[0][1])[-1] == [("🔕 Nothing subscribed", "al:noop")]
+    assert q.toast == "All alerts off in this chat" and not state.alerts_on(1) and len(rows(q.edits[0][1])) == 1    # nothing left: closed
+    q = Query("al:open:unsub")
+    await press(bot, q)
+    assert q.toast == "No alerts are on" and q.edits == []                                  # nothing to list: a toast, no dead button
+    q = Query("al:open:sub")
+    await press(bot, q)
+    assert rows(q.edits[0][1])[-1] == [("All alerts", "al:on:all:sub")]
     q = Query("al:close")
     await press(bot, q)
     assert len(rows(q.edits[0][1])) == 1
@@ -171,6 +173,7 @@ async def test_noop_unknown_kinds_and_unchanged_markup_are_harmless(tmp_path):
         q = Query(data)
         await press(bot, q)
         assert q.edits == [] and state.muted(1) == set(), data
+    state.set_kind(1, "rain", False)                                                          # something to list, so it edits
     q = Query("al:open:sub")
     q.fail = BadRequest("Message is not modified: specified new message content and reply markup are exactly the same")
     await press(bot, q)                                                                       # swallowed

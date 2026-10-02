@@ -3,7 +3,7 @@
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
 chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, UV index of 9 or more, indoor/outdoor temperatures crossing,
-and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, rain likely, gusts, UV, temperature crossing, air quality, pollen & asthma, forecast changes), each under a heading saying whether it is on; `/alerts` opens the same settings (and `/alerts on|off` still subscribes or unsubscribes every type). In a group only admins can change them (`lib/alerts/menu.py`).
+and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, rain likely, gusts, UV, temperature crossing, air quality, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (and `/alerts on|off` still subscribes or unsubscribes every type). In a group only admins can change them (`lib/alerts/menu.py`).
 
 ## Run
 
