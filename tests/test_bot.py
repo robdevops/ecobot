@@ -1,10 +1,12 @@
 """Bot.respond: what the person is sent when things go wrong."""
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace as NS
 
 from lib import intent
 from lib.bot import Bot
+from lib.tools import Turn
 from tests.fakes import TZ
 
 
@@ -223,3 +225,43 @@ async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_mode
     assert replies[1] == "• Outdoor: 12.3 °C, 💦 94 %"
     history = bot.chats[(1, None)].history
     assert history[-1] == {"role": "assistant", "content": replies[1]} and history[-4]["content"] == "report"
+
+
+async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower(monkeypatch):
+    from lib import bot as botmod
+    monkeypatch.setattr(botmod, "TURN_SECONDS", 0.05)
+    monkeypatch.setattr(botmod, "RETRY_SECONDS", 0.5)
+    efforts = []
+
+    class SlowThenQuick:
+        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None):
+            efforts.append(effort)
+            messages.append({"role": "assistant", "content": "(unfinished)"})
+            if effort == "medium":
+                await asyncio.sleep(10)
+            return f"answered at {effort}"
+    bot = Bot(NS(tz=TZ), SlowThenQuick(), [], None)
+    working = [{"role": "user", "content": "q"}]
+    read = intent.read("what do you think about the weather today?", datetime(2026, 10, 2, 12, 0))
+    assert read.effort == "medium"
+    assert await bot._ask_model(working, "sys", read, Turn(), None) == "answered at low"
+    assert efforts == ["medium", "low"] and working == [{"role": "user", "content": "q"}, {"role": "assistant", "content": "(unfinished)"}]
+
+
+async def test_a_question_with_no_lower_step_or_a_second_timeout_gives_up(monkeypatch):
+    import pytest
+    from lib import bot as botmod
+    monkeypatch.setattr(botmod, "TURN_SECONDS", 0.05)
+    monkeypatch.setattr(botmod, "RETRY_SECONDS", 0.05)
+    efforts = []
+
+    class Hangs:
+        async def run(self, messages, system, effort, **k):
+            efforts.append(effort)
+            await asyncio.sleep(10)
+    bot = Bot(NS(tz=TZ), Hangs(), [], None)
+    for text, expected in (("hello there", ["none"]), ("what do you think about the weather today?", ["medium", "low"])):
+        efforts.clear()
+        with pytest.raises(asyncio.TimeoutError):
+            await bot._ask_model([], "sys", intent.read(text, datetime(2026, 10, 2, 12, 0)), Turn(), None)
+        assert efforts == expected

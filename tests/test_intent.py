@@ -347,3 +347,16 @@ def test_the_report_fetches_everything_in_code_before_the_model_sees_it():
     assert only_air.fast[0] == "air_quality" and only_air.more == []
     assert intent.read("report", NOW, ecowitt=False, air=False).fast is None
     assert not intent.read("report for last week", NOW).report
+
+
+def test_one_reasoning_step_down_for_asking_again_after_a_timeout():
+    assert [intent.lower_effort(e) for e in ("high", "medium", "low", "none", "odd")] == ["medium", "low", "none", None, None]
+
+
+def test_asking_for_the_bots_view_is_not_forced_to_fetch_but_a_view_of_the_weather_today_is():
+    philosophical = "what do you think of weather in general, from a philosophical perspective?"
+    assert intent.is_opinion(philosophical) and not intent.needs_data(philosophical)
+    assert intent.reasoning_effort(philosophical) == "medium"                      # "think": still given a little thought
+    for text in ("what do you think of the weather today?", "what do you think about tomorrow's rain", "do you like the rain now",
+                 "what do you think of the weather over the last 3 days", "weather", "how hot is it", "what do you think the forecast says"):
+        assert intent.needs_data(text), text

@@ -21,6 +21,13 @@ I = re.IGNORECASE
 
 # ---------- reasoning and fetching ----------
 EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_FORECAST = "none", "low", "medium"
+EFFORT_STEPS = ("none", "low", "medium", "high")
+
+
+def lower_effort(effort: str) -> str | None:
+    """One reasoning step down (medium > low > none), for asking again after a timeout; None when there is no lower step."""
+    i = EFFORT_STEPS.index(effort) if effort in EFFORT_STEPS else 0
+    return EFFORT_STEPS[i - 1] if i else None
 
 # The words that name each reading, shared by every pattern below
 _TEMP = TEMP_WORDS
@@ -137,8 +144,19 @@ def about_the_bot(text: str) -> bool:
 COMMAND = re.compile(r"^\s*(please\s+)?(add|set( up)?|create|remind|schedule|turn (on|off)|enable|disable|mute|unmute|subscribe)\b", I)
 
 
+# Asking for the bot's view ("what do you think of weather in general"): a conversation, not a lookup, unless it names a time or a reading now
+OPINION = re.compile(r"\b(what do you think|your (view|opinion|thoughts?)|philosoph\w*|do you (like|prefer|love|hate|enjoy))\b", I)
+RIGHT_NOW = re.compile(r"\b(today|tonight|tomorrow|yesterday|now|currently|current|right now|outside|forecast\w*|this (morning|afternoon|evening|week))\b", I)
+
+
+def is_opinion(text: str) -> bool:
+    return bool(OPINION.search(text)) and not RIGHT_NOW.search(text) and not TIME_WORDS.search(text)
+
+
 def needs_data(text: str) -> bool:
-    return bool(WEATHER.search(text)) and not COMMAND.search(text) and not about_the_bot(text)
+    """Must the model fetch before answering? Weather and air words say yes, unless it is an instruction or a question about the bot
+    or its opinion: those are not forced to call a tool."""
+    return bool(WEATHER.search(text)) and not COMMAND.search(text) and not about_the_bot(text) and not is_opinion(text)
 
 
 # ---------- periods ----------

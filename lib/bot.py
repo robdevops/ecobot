@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 TG_LIMIT = 4000
 CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
+RETRY_SECONDS = 60           # the second try, one reasoning step lower, after a question timed out
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
@@ -409,6 +410,24 @@ class Bot:
             return report.report(by_tool)
         return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
 
+    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft) -> str:
+        """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
+        none), for RETRY_SECONDS; a question already at no reasoning just times out."""
+        first = ([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None
+        before, effort, budget, retried = list(working), read.effort, TURN_SECONDS, False
+        while True:
+            try:
+                return await asyncio.wait_for(
+                    self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
+                                   no_tools=read.about_the_bot, turn=turn, **({"on_text": draft.update} if draft else {})), budget)
+            except asyncio.TimeoutError:
+                lower = intent.lower_effort(effort)
+                if not lower or retried:
+                    raise
+                log.warning("No answer in %ds at reasoning %s; asking again at %s", budget, effort, lower)
+                working[:] = before          # the unfinished attempt's turns are dropped
+                effort, budget, retried = lower, RETRY_SECONDS, True
+
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         msg = update.effective_message
         text = text.strip()
@@ -447,10 +466,7 @@ class Bot:
                 else:
                     system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
                                           read.about_the_bot, read.rain_caption)
-                    reply = await asyncio.wait_for(
-                        self.agent.run(working, system, read.effort, first_call=([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None,
-                                       require_tool=read.needs_data, no_tools=read.about_the_bot, turn=turn,
-                                       **({"on_text": draft.update} if draft else {})), TURN_SECONDS)
+                    reply = await self._ask_model(working, system, read, turn, draft)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
