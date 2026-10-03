@@ -108,7 +108,7 @@ class DraftBot:
 
 
 class StreamingAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None):
+    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None, conv_id=None):
         await asyncio.sleep(0.05)       # "thinking"
         on_text("It is")
         await asyncio.sleep(0.05)
@@ -234,7 +234,7 @@ async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower
     efforts = []
 
     class SlowThenQuick:
-        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None):
+        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None, conv_id=None):
             efforts.append(effort)
             messages.append({"role": "assistant", "content": "(unfinished)"})
             if effort == "medium":

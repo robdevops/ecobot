@@ -68,14 +68,14 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_heavy=None) -> str:
+                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_heavy=None, conv_id: str | None = None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
         first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
         straight away, together, and the model is only invoked once the data is in. require_tool forces a
         fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft). on_heavy(tokens) is called once, before the model is
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft). conv_id names the conversation for the provider's prompt cache (see above); on_heavy(tokens) is called once, before the model is
         sent a lot of data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
         first. The work carries on; nothing waits for a reply."""
         cache: dict = {}  # identical tool calls within one question are only made once
@@ -119,6 +119,8 @@ class Agent:
                 kwargs = {"model": self.model,
                           "messages": [{"role": "system", "content": system_prompt}, *messages],
                           "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
+                if conv_id:   # the same id for every call of a chat sends them to the server holding its cached prompt
+                    kwargs["extra_headers"] = {"x-grok-conv-id": conv_id}
                 if schemas:
                     kwargs["tools"] = schemas
                     kwargs["tool_choice"] = ("none" if final or no_tools else

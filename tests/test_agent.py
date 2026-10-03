@@ -336,3 +336,13 @@ def test_the_prompt_says_to_use_the_whole_record_without_a_period_and_holidays_o
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
     assert "use the whole record" in text and "only when the person's words say holidays or weekends" in text
+
+
+async def test_every_call_of_a_chat_carries_the_same_conversation_id_for_the_prompt_cache():
+    t, _ = tools()
+    client = FakeLLM([[("weather_now", {})], "Done."])
+    await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", conv_id="ecobot-42")
+    assert [r["extra_headers"] for r in client.requests] == [{"x-grok-conv-id": "ecobot-42"}] * 2
+    plain = FakeLLM(["Hi."])
+    await llm.Agent(plain, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", require_tool=False)
+    assert "extra_headers" not in plain.requests[0]
