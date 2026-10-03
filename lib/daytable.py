@@ -122,7 +122,8 @@ class Analysis:
 
 
 def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[str, str], args: dict, checked: list[date],
-            first: date, last: date, tz: tzinfo, turn=None, row_extra: Callable[[date], dict] | None = None) -> Analysis:
+            first: date, last: date, tz: tzinfo, turn=None, row_extra: Callable[[date], dict] | None = None,
+            scope: str = "") -> Analysis:
     """Find, rank, count and group the checked days. `values` has {day: figure} for every field in `shown`."""
     where = args.get("where") or []
     sort_by = args.get("sort_by") or (where[0]["field"] if where else shown[0])

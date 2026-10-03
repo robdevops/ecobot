@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import operator
+import re
 from datetime import date, datetime, timedelta, tzinfo
 
 from ..daytable import analyse, parameters, validate
@@ -47,8 +48,9 @@ SUB_DAILY = ("5min", "30min")
 
 PARAMETERS = parameters(list(FIELDS), "rain >= 1 and temp_max > 30", {
     "only": {"type": "string", "enum": ["public_holiday", "weekend"],
-             "description": "Only look at public holidays in the owner's local area (the bot knows them: never pick "
-                            "holiday dates yourself) or only Saturdays and Sundays. Days are then counted from those only."}})
+             "description": "ONLY when the person's words say holidays or weekends: look just at public holidays in the owner's local area "
+                            "(the bot knows them: never pick holiday dates yourself) or just Saturdays and Sundays. Days are then counted "
+                            "from those only, so never set it otherwise."}})
 DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking every day in the period: for questions that "
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
                "35°C\", \"how many days was UV 9 or more\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
@@ -148,7 +150,8 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
     got = analyse(values, shown, units, args, checked, first, last, tz, turn,
                   lambda d: {**({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
-                             "source": "daily" if source.get(d) == "daily" else "exact"})
+                             "source": "daily" if source.get(d) == "daily" else "exact"},
+                  {"public_holiday": "public holidays only", "weekend": "weekends only"}.get(only, ""))
     out, matches, ranked, rank, holds, row = got.out, got.matches, got.ranked, got.rank, got.holds, got.row
 
     # Days that would have ranked higher had a trace of rain counted: the answer should mention them
@@ -188,7 +191,15 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     return out
 
 
+HOLIDAY_WORDS = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", re.I)
+
+
 async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=None) -> str:
+    if args.get("only") and turn is not None and turn.text and not HOLIDAY_WORDS.search(turn.text):
+        # the model added a holiday or weekend filter nobody asked for: it would count only those days (and, with holidays,
+        # only the years the calendar knows), so it is dropped
+        log.warning("Ignored only=%s: the question doesn't mention holidays or weekends (%s)", args["only"], turn.text[:60])
+        args = {k: v for k, v in args.items() if k != "only"}
     now = now_local(tz)
     result = await asyncio.to_thread(find_days, cache, mac, tz, args, now, turn)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))

@@ -322,3 +322,27 @@ async def test_a_total_highest_or_average_per_month_is_a_bar_chart_of_those_figu
     assert overall["value"] == round(max(top.values()), 1) and "by_month" not in overall
     bad = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), stat="max"), Turn()))
     assert "needs `of`" in bad["error"]
+
+
+async def test_a_holiday_filter_the_person_never_asked_for_is_dropped_but_a_requested_one_is_kept(station):
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 60, 1)
+    args = dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], count_only=True)
+    plain = json.loads(await eco.tools[2].handler(args, Turn(text="days over 0 degrees")))
+    strayed = json.loads(await eco.tools[2].handler({**args, "only": "weekend"}, Turn(text="days over 0 degrees")))
+    assert strayed["days_checked"] == plain["days_checked"] > 40            # the weekend filter was dropped: every day counted
+    asked = json.loads(await eco.tools[2].handler({**args, "only": "weekend"}, Turn(text="how many weekend days over 0 degrees")))
+    assert 0 < asked["days_checked"] < 20                                    # kept: only Saturdays and Sundays
+    direct = json.loads(await eco.tools[2].handler({**args, "only": "weekend"}))   # no question to check against (a direct call)
+    assert direct["days_checked"] == asked["days_checked"]
+
+
+async def test_a_chart_of_holiday_or_weekend_days_says_so_in_its_subtitle(station):
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 60, 1)
+    turn = Turn(text="how many weekend days over 0 degrees per month")
+    await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}],
+                                    count_only=True, group_by="month", only="weekend"), turn)
+    assert turn.charts[0].subtitle.endswith("weekends only  ·  per month") or "weekends only" in turn.charts[0].subtitle
