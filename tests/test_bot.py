@@ -384,7 +384,7 @@ async def test_the_forecast_is_fetched_with_the_first_step_of_a_rain_ahead_quest
     async def send_chat_action(*a, **k):
         pass
     await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "will it rain?")
-    assert got == [[("weather_forecast", {"days": 3, "cached": True})]] and replies == ["Possibly."]
+    assert [name for name, _ in got[0]] == ["weather_now", "weather_history", "weather_forecast"] and replies == ["Possibly."]
 
 
 async def _message_aged(seconds):

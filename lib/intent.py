@@ -686,11 +686,23 @@ RAIN_AHEAD = re.compile(r"\b(umbrella|chance of rain|(will|going to|gonna|likely
 WEEK_AHEAD = re.compile(r"\b(week|days|weekend|next \w+day)\b", I)
 
 
-def forecast_prefetch(text: str, forecast: bool) -> list[tuple[str, dict]]:
-    """The forecast fetched with the model's first step for a question about rain ahead (it is cached: no wait)."""
-    if not forecast or not RAIN_AHEAD.search(text):
-        return []
-    return [("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True})]
+def model_prefetch(text: str, now: datetime, ecowitt: bool, forecast: bool) -> list[tuple[str, dict]]:
+    """What the model would fetch first for these questions, fetched here instead (so it answers in one call, not two): for rain
+    ahead, the current reading, the last 3 hours and the forecast (cached); for a described today or yesterday, that day's readings."""
+    calls: list[tuple[str, dict]] = []
+    if RAIN_AHEAD.search(text):
+        if ecowitt:
+            groups = "outdoor,pressure,rainfall,rainfall_piezo,wind"
+            calls += [("weather_now", {"groups": groups}),
+                      ("weather_history", {"groups": groups, "start_date": (now - timedelta(hours=3)).strftime(FMT), "end_date": now.strftime(FMT)})]
+        if forecast:
+            calls.append(("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True}))
+    elif ecowitt and DESCRIBE.search(text) and not SPECIFIC_MOMENT.search(text):
+        spans = spans_in(text, now)
+        if len(spans) == 1 and spans[0][0] in ("yesterday", "today", "last 24 hours"):
+            _, start, end = spans[0]
+            calls.append(("weather_history", {"groups": "outdoor,indoor,rainfall,wind", "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}))
+    return calls
 
 
 def tools_for(found: set[str]) -> list[str]:
@@ -767,4 +779,4 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
                    more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
-                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=forecast_prefetch(text, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
+                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, ecowitt, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))

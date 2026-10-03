@@ -27,7 +27,7 @@ from .charts import render as render_chart
 from .tools import Turn
 from .config import Config
 from .timeutil import now_local
-from .llm import Agent, strip_tool_turns, trim_history
+from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 
 log = logging.getLogger(__name__)
 
@@ -557,7 +557,7 @@ class Bot:
                     tool_names = intent.tools_for(found)
                     reply = await self._ask_model(working, system, read, turn, draft, tool_names, lambda tokens: self._warn(msg, tokens),
                                               f"ecobot-{msg.chat_id}")
-                chat.history = trim_history(strip_tool_turns(working))
+                chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
                         photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))

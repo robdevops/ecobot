@@ -346,3 +346,20 @@ async def test_every_call_of_a_chat_carries_the_same_conversation_id_for_the_pro
     plain = FakeLLM(["Hi."])
     await llm.Agent(plain, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", require_tool=False)
     assert "extra_headers" not in plain.requests[0]
+
+
+def test_older_answers_are_cut_to_their_first_lines_but_the_last_answer_and_every_question_stay_whole():
+    long = "Mon 3 - Sun 9 Aug:\n" + "\n".join(f"• Day {i}: 10 to 20 °C, a long line of detail" for i in range(30))
+    history = [{"role": "user", "content": "q1 " + "x" * 500}, {"role": "assistant", "content": long},
+               {"role": "user", "content": "q2"}, {"role": "assistant", "content": long},
+               {"role": "user", "content": "q3"}, {"role": "assistant", "content": long}]
+    out = llm.shorten_old(history)
+    assert out[1]["content"].endswith("…") and len(out[1]["content"]) <= llm.OLD_ANSWER_CHARS + 2 and out[1]["content"].startswith("Mon 3 - Sun 9 Aug:")
+    assert out[3]["content"].endswith("…") and out[5]["content"] == long            # the last answer is whole
+    assert out[0]["content"].startswith("q1 xxx") and len(out[0]["content"]) > 500        # questions untouched
+    short = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "It is 12 degrees."}, {"role": "user", "content": "q"},
+             {"role": "assistant", "content": "ok"}]
+    assert llm.shorten_old(short) == short                                               # short answers are never changed
+    assert llm.shorten_old(out) == out                                                   # idempotent
+    one_line = [{"role": "assistant", "content": "word " * 200}, {"role": "assistant", "content": "last"}]
+    assert len(llm.shorten_old(one_line)[0]["content"]) <= llm.OLD_ANSWER_CHARS + 2

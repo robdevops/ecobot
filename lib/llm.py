@@ -157,6 +157,29 @@ def strip_tool_turns(messages: list[dict]) -> list[dict]:
             if m["role"] == "user" or (m["role"] == "assistant" and not m.get("tool_calls") and m.get("content"))]
 
 
+OLD_ANSWER_CHARS = 300   # an older answer is kept to about this much: the last one stays whole, since follow-ups refer to it
+
+
+def shorten_old(messages: list[dict], limit: int = OLD_ANSWER_CHARS) -> list[dict]:
+    """The history with every assistant turn but the last cut to its first lines (about `limit` characters, ending "..."): a long list or
+    caption from several questions ago is rarely needed in full, and it is re-sent on every call."""
+    last = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
+    out = []
+    for i, m in enumerate(messages):
+        text = m.get("content")
+        if m["role"] != "assistant" or i == last or not isinstance(text, str) or len(text) <= limit:
+            out.append(m)
+            continue
+        lines = text.splitlines()
+        while len(lines) > 1 and len("\n".join(lines)) > limit:
+            lines.pop()
+        cut = "\n".join(lines)
+        if len(cut) > limit:
+            cut = cut[:limit].rsplit(" ", 1)[0]
+        out.append({**m, "content": cut.rstrip() + " \u2026"})
+    return out
+
+
 def trim_history(messages: list[dict], max_messages: int = MAX_HISTORY) -> list[dict]:
     """Keep roughly the last `max_messages`, always starting on a user turn. If the latest turn
     alone is longer than the limit, keep that whole turn."""

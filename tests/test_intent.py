@@ -423,10 +423,29 @@ def test_tools_follow_the_topics_and_the_basics_are_always_there():
 
 @_pytest.mark.parametrize("text, days", [("will it rain?", 3), ("do I need an umbrella", 3), ("is it going to rain tomorrow", 3),
                                          ("will it rain this week", 7), ("rain later?", 3)])
-def test_a_question_about_rain_ahead_fetches_the_forecast_with_the_models_first_step(text, days):
-    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True)
-    assert read.extra == [("weather_forecast", {"days": days, "cached": True})] and read.fast is None
-    assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False).extra == []   # forecast off: nothing to fetch
+def test_a_question_about_rain_ahead_has_the_reading_the_last_3_hours_and_the_forecast_fetched_for_the_model(text, days):
+    now = datetime(2026, 10, 3, 12)
+    read = intent.read(text, now, True, True, False, True)
+    groups = "outdoor,pressure,rainfall,rainfall_piezo,wind"
+    assert read.fast is None and read.extra == [
+        ("weather_now", {"groups": groups}),
+        ("weather_history", {"groups": groups, "start_date": "2026-10-03 09:00:00", "end_date": "2026-10-03 12:00:00"}),
+        ("weather_forecast", {"days": days, "cached": True})]
+    no_forecast = intent.read(text, now, True, True, False, False).extra
+    assert [c[0] for c in no_forecast] == ["weather_now", "weather_history"]          # forecast off: just the station
+    assert intent.read(text, now, False, True, False, True).extra == [("weather_forecast", {"days": days, "cached": True})]   # no station
+
+
+@_pytest.mark.parametrize("text, name, day", [("what was yesterday like?", "yesterday", "2026-10-02"), ("describe today", "today", "2026-10-03")])
+def test_describing_today_or_yesterday_has_that_days_readings_fetched_for_the_model(text, name, day):
+    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    (tool, args), = read.extra
+    assert tool == "weather_history" and args["groups"] == "outdoor,indoor,rainfall,wind" and args["start_date"].startswith(day)
+
+
+@_pytest.mark.parametrize("text", ["what was it like on Mon 10 Aug", "what was it like at 3pm today", "how hot was yesterday", "describe last week"])
+def test_a_named_date_a_moment_a_longer_period_or_a_plain_question_has_nothing_fetched_ahead(text):
+    assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []
 
 
 @_pytest.mark.parametrize("text", ["how much rain fell today", "how much rain this week", "did it rain yesterday", "forecast", "rain chart 7d"])
