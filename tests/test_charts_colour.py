@@ -21,9 +21,9 @@ def test_a_ramp_blends_between_its_stops_and_holds_at_the_ends():
     assert charts.ramp("wind") is None and charts.ramp("pressure") is None
 
 
-@pytest.mark.parametrize("reading", list(charts.GRADIENTS))
-def test_every_stop_is_deep_enough_for_the_white_text_of_a_value_pill(reading):
-    for _, colour in charts.GRADIENTS[reading]:
+@pytest.mark.parametrize("scale", [*charts.GRADIENTS.values(), *charts.INDOOR_GRADIENTS.values()])
+def test_every_stop_is_deep_enough_for_the_white_text_of_a_value_pill(scale):
+    for _, colour in scale:
         assert (1.05) / (luminance(colour) + 0.05) >= 2.0, colour   # white against the colour
 
 
@@ -32,8 +32,10 @@ def test_an_outdoor_line_of_these_readings_is_an_ink_that_knows_its_colour_at_ea
     ink = charts._colour(line, 0)
     assert isinstance(ink, str) and ink.startswith("#") and ink.at(5) != ink.at(30) and ink.at(30) == charts.ramp("temperature")(30)
     indoor = charts._colour(Line("Indoor", [1, 2], [20.0, 21.0], reading="temperature", indoor=True), 0)
-    assert indoor == charts.INDOOR_COLOURS["temperature"] and not isinstance(indoor, charts.Ink)
-    assert charts._at(indoor, 10) == indoor and charts._at(ink, 5) == ink.at(5)
+    assert isinstance(indoor, charts.Ink) and indoor.at(20) == charts.ramp("temperature", True)(20)
+    flat = charts._colour(Line("Indoor", [1, 2], [50.0, 60.0], reading="humidity", indoor=True), 0)    # no indoor scale: one solid colour
+    assert flat == charts.INDOOR_COLOURS["humidity"] and not isinstance(flat, charts.Ink) and charts._at(flat, 10) == flat
+    assert charts._at(ink, 5) == ink.at(5)
     assert not isinstance(charts._colour(Line("W", [1, 2], [1.0, 2.0], reading="wind"), 0), charts.Ink)
 
 
@@ -48,3 +50,15 @@ def test_charts_of_lines_drawn_by_value_render_alone_banded_and_stacked(reading,
         assert charts.render(Chart("T", "s", [Panel("P", unit, lines, reading=reading)]), timezone.utc)[:4] == b"\x89PNG"
     two = Chart("T", "s", [Panel("P", unit, [plain], reading=reading), Panel("Q", unit, [banded], reading=reading)])
     assert charts.render(two, timezone.utc)[:4] == b"\x89PNG"
+
+
+def hue(hex_colour):
+    import colorsys
+    return colorsys.rgb_to_hsv(*to_rgb(hex_colour))[0] * 360
+
+
+def test_the_indoor_temperature_scale_shares_no_hue_with_the_outdoor_one():
+    indoor = [hue(c) for _, c in charts.INDOOR_GRADIENTS["temperature"]]
+    outdoor = [hue(c) for _, c in charts.GRADIENTS["temperature"]]
+    apart = lambda a, b: min(abs(a - b), 360 - abs(a - b))
+    assert all(apart(i, o) > 20 for i in indoor for o in outdoor)   # at least 20 degrees of hue apart

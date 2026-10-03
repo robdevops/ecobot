@@ -48,7 +48,7 @@ READING_COLOURS = {
     "wind": "#64748B",          # slate grey
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
-# Indoors: red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
+# Indoors (temperature is drawn by value, on its own scale): red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
 INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
 # Some readings are drawn in the colour of their own value, on one absolute scale (so a colour means the same on every chart):
 # (value, colour) stops, blended smoothly between, held at the ends. Every stop is deep enough for the white text of a value pill.
@@ -57,11 +57,16 @@ GRADIENTS = {
     "humidity": [(15, "#D97706"), (40, "#0D9488"), (65, "#2563EB"), (100, "#6D28D9")],
     "dew_point": [(-5, "#6366F1"), (4, "#0EA5E9"), (11, "#14B8A6"), (16, "#0891B2"), (20, "#7C3AED"), (24, "#DB2777"), (28, "#BE185D")],
 }
+# The indoor sensor's lines are drawn by value too, on a scale of their own that shares no hue with the outdoor one
+# (emerald to olive, where outdoor runs violet, blue, cyan, amber, orange, crimson, magenta).
+INDOOR_GRADIENTS = {
+    "temperature": [(14, "#065F46"), (19, "#059669"), (23, "#10B981"), (26, "#65A30D"), (30, "#4D7C0F")],
+}
 
 
-def ramp(reading: str):
-    """The function value -> hex colour for a reading drawn by value, else None."""
-    stops = GRADIENTS.get(reading)
+def ramp(reading: str, indoor: bool = False):
+    """The function value -> hex colour for a reading drawn by value (the indoor scale for the indoor sensor), else None."""
+    stops = (INDOOR_GRADIENTS if indoor else GRADIENTS).get(reading)
     if not stops:
         return None
     values = [v for v, _ in stops]
@@ -165,10 +170,10 @@ def _colour(line: Line, i: int, reading: str = "") -> str:
     An outdoor line of a reading drawn by value is an Ink that knows the colour at each value."""
     reading = line.reading or reading
     if base := READING_COLOURS.get(reading):
+        if by_value := ramp(reading, line.indoor):
+            return Ink(by_value(float(np.percentile(line.y, 80))), by_value)   # the colour key: its upper range, the vivid end
         if line.indoor:
             return INDOOR_COLOURS.get(reading) or _mix(base, 0.4)
-        if by_value := ramp(reading):
-            return Ink(by_value(float(np.percentile(line.y, 80))), by_value)   # the colour key: its upper range, the vivid end
         return base
     return FALLBACK[i % len(FALLBACK)]
 
