@@ -303,11 +303,11 @@ def test_dew_point_feels_like_and_vpd_are_charted_readings_that_outrank_temperat
 
 
 def test_weather_all_week_leaves_out_uv_feels_like_and_vpd_unless_configured(monkeypatch):
-    every = ["temperature", "humidity", "pressure", "rain", "dew_point", "solar", "wind"]   # no UV (same shape as solar), feels like or VPD; wind last
+    every = ["temperature", "humidity", "solar", "pressure", "rain", "dew_point", "wind"]   # solar third, wind last; no UV (same shape as solar), feels like or VPD
     assert intent.chart_fields("weather all week") == every
     monkeypatch.setattr(intent, "FEELS_LIKE_IN_ALL", True)
     monkeypatch.setattr(intent, "VPD_IN_ALL", True)
-    assert intent.chart_fields("weather all week") == ["temperature", "humidity", "pressure", "rain", "dew_point", "feels_like", "vpd", "solar", "wind"]
+    assert intent.chart_fields("weather all week") == ["temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "wind"]
     monkeypatch.setattr(intent, "FEELS_LIKE_IN_ALL", False)
     monkeypatch.setattr(intent, "VPD_IN_ALL", False)
     assert intent.chart_fields("plot feels like and humidity") in (["humidity", "feels_like"], ["feels_like", "humidity"])   # named: still charted
