@@ -23,14 +23,38 @@ def days_in(data: str | None) -> int | None:
     return None
 
 
-class Charted(OrderedDict):
-    """{(chat_id, message_id): the question that drew that chart}, the newest REMEMBERED."""
+class Charted:
+    """{chat_id:message_id -> the question that drew that chart}, the newest REMEMBERED. With a `store` (a dict the alert state saves
+    to its file) the questions outlive a restart, so a chart's buttons keep working."""
+
+    def __init__(self, store: dict | None = None, save=None):
+        self.store = store if store is not None else {}
+        self.save = save
+
+    @staticmethod
+    def _key(chat_id: int, message_id: int) -> str:
+        return f"{chat_id}:{message_id}"
+
+    def get(self, chat_id: int, message_id: int) -> str | None:
+        return self.store.get(self._key(chat_id, message_id))
+
+    def __getitem__(self, ids: tuple[int, int]) -> str:
+        return self.store[self._key(*ids)]
+
+    def __contains__(self, ids: tuple[int, int]) -> bool:
+        return self._key(*ids) in self.store
+
+    def __len__(self) -> int:
+        return len(self.store)
 
     def remember(self, chat_id: int, message_id: int, question: str):
-        self[(chat_id, message_id)] = question
-        self.move_to_end((chat_id, message_id))
-        while len(self) > REMEMBERED:
-            self.popitem(last=False)
+        key = self._key(chat_id, message_id)
+        self.store.pop(key, None)   # re-added at the end: the newest
+        self.store[key] = question
+        while len(self.store) > REMEMBERED:
+            del self.store[next(iter(self.store))]
+        if self.save:
+            self.save()
 
 
 class ImageCache:

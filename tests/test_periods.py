@@ -36,6 +36,14 @@ def test_only_the_newest_questions_are_remembered():
     assert len(charted) == periods.REMEMBERED and (1, 0) not in charted and (1, periods.REMEMBERED + 4) in charted
 
 
+def test_the_questions_behind_charts_survive_a_restart(tmp_path):
+    from lib.alerts import AlertState
+    state = AlertState(tmp_path / "s.json")
+    Bot(NS(tz=TZ), None, [], state).charted.remember(1, 101, "Temperature chart 7d")
+    again = Bot(NS(tz=TZ), None, [], AlertState(tmp_path / "s.json"))
+    assert again.charted.get(1, 101) == "Temperature chart 7d"
+
+
 class Tools:
     def __init__(self):
         self.calls = []

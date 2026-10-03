@@ -216,7 +216,7 @@ class Bot:
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
-        self.charted = periods.Charted()   # the question behind each chart sent, for its period buttons
+        self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
 
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
@@ -320,7 +320,7 @@ class Bot:
         query = update.callback_query
         days = periods.days_in(query.data)
         message = query.message
-        question = self.charted.get((message.chat_id, message.message_id)) if days and message else None
+        question = self.charted.get(message.chat_id, message.message_id) if days and message else None
         if not question:
             await query.answer("That chart is out of date, please ask again")
             return

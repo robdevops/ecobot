@@ -37,11 +37,12 @@ class AlertState:
             if entry.pop("alerts", True) is False:
                 entry["muted"] = list(LABELS)
         self.monitor: dict = data.get("monitor", {})
+        self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
 
     def save(self):
         tmp = f"{self.path}.tmp"
         with open(tmp, "w") as f:
-            json.dump({"chats": {str(k): v for k, v in self.chats.items()}, "monitor": self.monitor}, f, indent=1)
+            json.dump({"chats": {str(k): v for k, v in self.chats.items()}, "monitor": self.monitor, "charts": self.charts}, f, indent=1)
         os.replace(tmp, self.path)
 
     def add_chat(self, chat_id: int, title: str):
