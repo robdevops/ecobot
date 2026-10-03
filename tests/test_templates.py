@@ -10,7 +10,7 @@ NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
 def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left_alone():
     assert templates.sentence("\U0001f4cb Report") == "Report"
-    assert templates.sentence("\U0001f4c8 Temperature chart 90d") == "Temperature chart 90d"
+    assert templates.sentence("\U0001f4c8 Temperature 7d") == "Temperature chart 7d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
     assert len(templates.LABELS) == 9
@@ -20,15 +20,13 @@ def test_every_button_asks_something_the_bot_understands():
     def read(label):
         return intent.read(templates.sentence(label), NOW, True, True)
     assert read("\U0001f4cb Report").report
-    for days in (7, 30):
-        name, args, _ = read(f"\U0001f3ed Air quality {days}d").fast
-        assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
     for days in (7, 30, 90):
-        name, args, _ = read(f"\U0001f4c8 Temperature chart {days}d").fast
-        assert name == "weather_history" and args["chart"] is True
-    assert read("\U0001f327️ Rain chart 7d").rain_caption and read("\U0001f327️ Rain chart 7d").chart_field == "daily"
-    assert read("\U0001f4a7 Humidity chart 7d").chart_asked and read("\U0001f4a7 Humidity chart 7d").chart_field == "humidity"
-    assert not read("\U0001f4a7 Humidity chart 7d").rain_caption
+        name, args, _ = read(f"\U0001f3ed Air Qual. {days}d").fast
+        assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
+        weather = read(f"\U0001f326️ Weather {days}d")
+        assert weather.chart_all and weather.chart_in_code and weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
+    name, args, _ = read("\U0001f4c8 Temperature 7d").fast
+    assert name == "weather_history" and args["chart"] is True
     assert read(templates.CAPABILITIES).about_the_bot
 
 

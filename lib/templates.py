@@ -5,14 +5,11 @@ import hashlib
 
 from telegram import ReplyKeyboardMarkup
 
-CAPABILITIES = "\U0001f514 Capabilities & alerts"  # answered with what the bot can do, then the /alerts status
+CAPABILITIES = "\U0001f514 Alerts & Capabilities"  # answered with what the bot can do, then the /alerts status
 
-ROWS = [[("\U0001f327️ Rain chart 7d", "Rain chart 7d"), ("\U0001f4a7 Humidity chart 7d", "Humidity chart 7d"),
-         ("\U0001f4cb Report", "Report")],
-        [(f"\U0001f4c8 Temperature chart {days}d", f"Temperature chart {days}d") for days in (7, 30, 90)],
-        [("\U0001f3ed Air quality 7d", "Air quality PM1, PM2.5 and PM10 7d"),
-         ("\U0001f3ed Air quality 30d", "Air quality PM1, PM2.5 and PM10 30d"),
-         (CAPABILITIES, "What can you do?")]]
+ROWS = [[("\U0001f4c8 Temperature 7d", "Temperature chart 7d"), (CAPABILITIES, "What can you do?"), ("\U0001f4cb Report", "Report")],
+        [(f"\U0001f326️ Weather {days}d", f"Weather chart {days}d") for days in (7, 30, 90)],
+        [(f"\U0001f3ed Air Qual. {days}d", f"Air quality PM1, PM2.5 and PM10 {days}d") for days in (7, 30, 90)]]
 SENTENCES = dict(button for row in ROWS for button in row)
 LABELS = set(SENTENCES)
 # Telegram keeps the keyboard in each app until a message brings a new one; this changes whenever the buttons do, so a chat
