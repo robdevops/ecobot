@@ -432,3 +432,11 @@ def test_a_question_about_rain_ahead_fetches_the_forecast_with_the_models_first_
 @_pytest.mark.parametrize("text", ["how much rain fell today", "how much rain this week", "did it rain yesterday", "forecast", "rain chart 7d"])
 def test_questions_about_rain_so_far_do_not_fetch_the_forecast(text):
     assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []
+
+
+@_pytest.mark.parametrize("text", ["count days over PM2.5 of 90 per year", "days over UVI 10 per year", "how many days was PM2.5 over 25",
+                                   "rain total per month this year", "hottest day each year", "how many times did it rain this year",
+                                   "worst air quality day per month"])
+def test_counting_and_totalling_questions_are_never_turned_into_a_plain_chart(text):
+    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, True, True)
+    assert read.fast is None and not read.chart_in_code and read.lookup == ""

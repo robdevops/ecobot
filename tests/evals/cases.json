@@ -1331,5 +1331,31 @@
         }
       }
     }
+  },
+  {
+    "id": "count-pm25-days-per-year",
+    "ask": "count days over PM2.5 of 90 per year",
+    "note": "was turned into a line chart of PM2.5 by the fast path; the model must count days",
+    "expect": {
+      "lookup": "",
+      "fast": null,
+      "tools": [
+        "air_days"
+      ],
+      "args": {
+        "air_days": {
+          "group_by": "year",
+          "where": {
+            "has": [
+              {
+                "field": "pm2_5_max",
+                "op": ">",
+                "value": 90
+              }
+            ]
+          }
+        }
+      }
+    }
   }
 ]

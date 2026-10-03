@@ -163,6 +163,7 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
             else:
                 title, name, unit = phrase(stat, of) + on, noun(of).capitalize(), units[of]
                 detail = f"{len(matches):,} days counted"
+            detail += f"  ·  {scope}" if scope else ""
             turn.charts.append(bars_chart(buckets, by, title, f"{label(first)} – {label(last)}  ·  {detail}  ·  per {by}",
                                           name, unit, tz))
             out["chart"] = COUNT_CHART_HINT
