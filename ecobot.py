@@ -100,7 +100,7 @@ async def main():
             await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
                                             error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
-                log.info("Bot @%s running with model %s (sources: %s)", app.bot.username, cfg.xai_model,
+                log.info("@%s + %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
                 notify = Notifier(app.bot, state, available_kinds({s.name for s in sources}))
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
@@ -109,22 +109,22 @@ async def main():
                 kinds = []
                 if eco:
                     monitor = WeatherMonitor(eco, state, notify, cfg.rain_stop_minutes * 60, cfg.rain_quiet_hours)
-                    kinds += ["rain", "rain likely", "temperature crossing"]
+                    kinds += ["rain", "rain likely", "temp. crossing"]
                 if air:
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
-                    kinds.append(f"air quality (every {AIR_CHECK_SECONDS // 60} min)")
+                    kinds.append(f"air qual {AIR_CHECK_SECONDS // 60}m")
                 if forecast:
                     forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
                     kinds.append("forecast changes")
                 if pollen:
                     pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
-                    kinds.append("pollen and thunderstorm asthma")
-                log.info("Alerts: %s, to %d chat(s)", ", ".join(kinds) or "none", len(state.alert_chats()))
+                    kinds += ["pollen", "thunderstorm asthma"]
+                log.info("Alerts: %s: %d chat(s)", ", ".join(kinds) or "none", len(state.alert_chats()))
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("Keeping warm: %s", ", ".join(f"{s.name} every {s.warmer.interval:.0f}s" for s in sources))
+                log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""
