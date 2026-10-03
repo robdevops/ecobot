@@ -158,3 +158,22 @@ async def test_toggling_back_to_a_period_just_drawn_uses_the_cached_image_and_as
                                       effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")), CONTEXT)
     assert len(bot.agent.tools.calls) == 2                      # the first send and the first 30d: the rest came from the cache
     assert [e[0] for e in edits] == ["Temperature"] * 4 and bot.charted[(1, 101)] == "Temperature chart 7d"
+
+
+async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(monkeypatch):
+    bot = make_bot(monkeypatch)
+    actions = []
+
+    async def chat_action(*a, **k):
+        actions.append(a)
+    drafts = []
+
+    async def draft(*a, **k):
+        drafts.append(a)
+    context = NS(bot=NS(send_chat_action=chat_action, send_message_draft=draft, id=99))
+    msg = chat_message([], [])
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    await bot.respond(update, context, "Temperature chart 30d", redraw=msg)
+    assert actions == [] and drafts == []
+    await bot.respond(update, context, "Temperature chart 7d")          # a question of its own still does
+    assert actions

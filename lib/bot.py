@@ -535,7 +535,8 @@ class Bot:
         if not text:
             return
         stop_typing = asyncio.Event()   # "typing..." from the first moment, even while this question waits its turn
-        typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
+        typing = None if redraw is not None else asyncio.create_task(   # a chart redrawn in place from a button shows no "typing..."
+            keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
         await asyncio.sleep(0)
         now = now_local(self.cfg.tz)
         read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
@@ -553,7 +554,7 @@ class Bot:
         started = time.monotonic()
         async with chat.lock:
             draft = (Draft(context.bot, msg.chat_id, thread_id)
-                     if msg.chat.type == ChatType.PRIVATE and hasattr(context.bot, "send_message_draft") else None)
+                     if redraw is None and msg.chat.type == ChatType.PRIVATE and hasattr(context.bot, "send_message_draft") else None)
             drafting = asyncio.create_task(draft.run(stop_typing)) if draft else None   # a private chat also gets the "Thinking..." draft
             stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
@@ -598,7 +599,7 @@ class Bot:
             finally:
                 stuck.cancel()
                 stop_typing.set()
-                await asyncio.gather(typing, *([drafting] if drafting else []))  # wait for any in-flight "typing" or draft so none is sent after the reply
+                await asyncio.gather(*[t for t in (typing, drafting) if t])  # wait for any in-flight "typing" or draft so none is sent after the reply
 
         if silent and photos:
             reply = ""
