@@ -337,8 +337,9 @@ def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
     if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
-        return [n for n in WEATHER_READINGS if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
-                and (VPD_IN_ALL or n != "vpd")]   # naming one still works
+        every = [n for n in WEATHER_READINGS if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
+                 and (VPD_IN_ALL or n != "vpd")]   # naming one still works
+        return [*(n for n in every if n != "wind"), *(n for n in every if n == "wind")]   # wind is the bottom panel
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 

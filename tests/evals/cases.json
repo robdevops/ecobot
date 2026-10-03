@@ -894,16 +894,16 @@
   {
     "id": "ecowitt-all-week",
     "ask": "ecowitt all week",
-    "note": "every reading stacked, except UV, feels like and VPD (unless configured)",
+    "note": "every reading stacked, except UV, feels like and VPD (unless configured), wind last",
     "expect": {
       "chart_fields": [
         "temperature",
         "humidity",
         "pressure",
-        "wind",
         "rain",
         "dew_point",
-        "solar"
+        "solar",
+        "wind"
       ]
     },
     "covers": [
