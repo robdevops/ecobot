@@ -10,8 +10,8 @@ PRESSURE_HIGH = 1025                              # hPa, sea level: a strong hig
 VPD_HIGH = 1.2
 SOLAR_HIGH = 600                                  # W/m2: bright sun (full sun is about 1000)
 SOLAR_LOW = 200                                   # below this: dim (overcast, dawn, dusk); 200 up to SOLAR_HIGH is medium
-UVI = ((9, "🧴"), (6, "😎"))                      # UV index: 6 is 'high'; 9 and above is also an alert
-UVI_ALERT = 9
+UVI_ALERT = 10                                    # the UV index that sends an alert (and the sunscreen emoji)
+UVI = ((UVI_ALERT, "🧴"), (6, "😎"))               # UV index: 6 is 'high'; the alert level and above gets the sunscreen
 
 
 def solar_band(value: float) -> str:

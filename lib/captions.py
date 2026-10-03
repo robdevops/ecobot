@@ -32,3 +32,5 @@ COMPOSED_CHART_HINT = ("Your reply becomes the caption of a chart of these readi
 DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: average speed with the gusts, and a compass of "
                         "where the wind came from. Keep it short: the period, the average speed and strongest gust, then the "
                         "most common direction and how steady it was. Don't mention or describe the chart.")
+COUNT_CHART_HINT = ("Your reply becomes the caption of a bar chart of these counts, so keep it to one short line: how many of the days "
+                    "matched (matching_days of days_checked) and the period. Don't list the bars or describe the chart.")

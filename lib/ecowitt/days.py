@@ -15,6 +15,7 @@ import logging
 import operator
 from datetime import date, datetime, timedelta, tzinfo
 
+from ..daytable import analyse, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
 from .calendar import PublicHolidays
 from .extremes import collect
@@ -36,42 +37,27 @@ for _name, _group, _field, _unit in (
         ("solar", "solar_and_uvi", "solar", "W/m²"), ("uv", "solar_and_uvi", "uvi", ""), ("rain_rate", "rainfall", "rain_rate", "mm/h"),
         ("indoor_temp", "indoor", "temperature", "°C"), ("indoor_humidity", "indoor", "humidity", "%")):
     FIELDS[f"{_name}_max"] = (_group, _field, "high", _unit)
+    FIELDS[f"{_name}_avg"] = (_group, _field, "mean", _unit)   # a day's mean: "average humidity per month"
     if _name not in ("solar", "uv", "rain_rate", "wind_speed"):   # these have no interesting low: it is 0 every night or calm hour
         FIELDS[f"{_name}_min"] = (_group, _field, "low", _unit)
-AVERAGED = {n for n in FIELDS if n not in ("temp_max", "temp_min", "rain", "wind_gust")}   # these have no range of their own at 30 minutes or daily
+FIELDS["temp_avg"] = ("outdoor", "temperature", "mean", "°C")
+AVERAGED = {n for n in FIELDS if n.endswith(("_max", "_min")) and n not in ("temp_max", "temp_min")}   # no range of their own at 30 minutes or daily
 ALWAYS_SHOWN = ("temp_max", "temp_min", "rain")
-OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le, "=": operator.eq}
 SUB_DAILY = ("5min", "30min")
-MAX_LIMIT = 20
 
-PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Use the start of the 'on record' range for all time."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (today's readings aren't final, so up to yesterday)."},
-        "where": {"type": "array", "description": "Conditions that must ALL hold on the same day, e.g. rain >= 1 and temp_max > 30.",
-                  "items": {"type": "object", "properties": {
-                      "field": {"type": "string", "enum": list(FIELDS)},
-                      "op": {"type": "string", "enum": list(OPS)},
-                      "value": {"type": "number"}}, "required": ["field", "op", "value"]}},
-        "sort_by": {"type": "string", "enum": list(FIELDS), "description": "Rank matching days by this. Default: the first condition's field."},
-        "order": {"type": "string", "enum": ["desc", "asc"], "description": "desc = highest first (default), asc = lowest first."},
-        "only": {"type": "string", "enum": ["public_holiday", "weekend"],
-                 "description": "Only look at public holidays in the owner's local area (the bot knows them: never pick "
-                                "holiday dates yourself) or only Saturdays and Sundays. Days are then counted from those only."},
-        "count_only": {"type": "boolean", "description": "true for \"how many days\": returns just the counts, no list of days (much smaller). Use it whenever the days themselves aren't asked for."},
-        "group_by": {"type": "string", "enum": ["month", "year"], "description": "Also count the matching days in each month or year (\"how many each month\"), months with none included."},
-        "limit": {"type": "integer", "description": f"How many days to list (default 5, at most {MAX_LIMIT}). The total is always counted."},
-    },
-    "required": ["start_date", "end_date"],
-}
+PARAMETERS = parameters(list(FIELDS), "rain >= 1 and temp_max > 30", {
+    "only": {"type": "string", "enum": ["public_holiday", "weekend"],
+             "description": "Only look at public holidays in the owner's local area (the bot knows them: never pick "
+                            "holiday dates yourself) or only Saturdays and Sundays. Days are then counted from those only."}})
 DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking every day in the period: for questions that "
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
                "35°C\", \"how many days was UV 9 or more\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
                "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest), and a day's "
                "highest (_max) or lowest (_min) of every other reading: humidity, pressure, wind_speed, dew_point, feels_like, vpd, "
-               "indoor_temp, indoor_humidity (_max and _min); solar, uv, rain_rate (_max only), e.g. uv_max >= 9. For \"how many\" use count_only "
-               "(group_by month or year for a breakdown). Returns the total of matching "
+               "indoor_temp, indoor_humidity (_max and _min); solar, uv, rain_rate (_max only), e.g. uv_max >= 9; and _avg, a day's mean (temp_avg, "
+               "humidity_avg, pressure_avg ...). For \"how many\" use count_only; group_by month or year breaks it down and draws a bar chart. "
+               "For a total, average, highest or lowest per month or year use stat and of (\"rain per month\": stat sum, of rain; \"hottest day each "
+               "year\": stat max, of temp_max; \"average humidity per month\": stat avg, of humidity_avg). Returns the total of matching "
                "days and the top ones. For a record's value and the time it happened (hottest, coldest, fastest gust), use weather_history instead. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
@@ -91,6 +77,12 @@ def per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, f
     """One extreme per day (the highest high, or the lowest low) of the readings that fall in `days`."""
     group, field, kind, _ = FIELDS[name]
     out: dict[date, float] = {}
+    if kind == "mean":   # the day's mean of its readings
+        sums: dict[date, list[float]] = {}
+        for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
+            if (day := local_date(ts, tz)) in days and rec.get("value") is not None:
+                sums.setdefault(day, []).append(rec["value"][0])
+        return {d: sum(v) / len(v) for d, v in sums.items()}
     for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
         day = local_date(ts, tz)
         found = rec.get(kind) or rec.get("value")
@@ -100,7 +92,7 @@ def per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, f
     return out
 
 
-def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -> dict:
+def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
     today = now.date()
     try:
         first = date.fromisoformat(str(args["start_date"])[:10])
@@ -110,12 +102,10 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     if first > last:
         return {"error": "start_date must be before end_date (today isn't final, so the latest day is yesterday)"}
     where = args.get("where") or []
-    bad = [c for c in where if c.get("field") not in FIELDS or c.get("op") not in OPS or not isinstance(c.get("value"), (int, float))]
-    if bad:
-        return {"error": f"unusable condition(s) {bad}; fields are {', '.join(FIELDS)}, ops {' '.join(OPS)}"}
-    sort_by = args.get("sort_by") or (where[0]["field"] if where else "temp_max")
-    if sort_by not in FIELDS:
-        return {"error": f"sort_by must be one of {', '.join(FIELDS)}"}
+    if problem := validate(args, {n: f[3] for n, f in FIELDS.items()}):
+        return {"error": problem}
+    sort_by = args.get("sort_by") or (where[0]["field"] if where else args.get("of") or "temp_max")
+    args = {**args, "sort_by": sort_by}
     only = args.get("only")
     if only not in (None, "public_holiday", "weekend"):
         return {"error": "only must be public_holiday or weekend"}
@@ -124,8 +114,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
         return {"error": calendar.problem()}
     kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
             "public_holiday": lambda d: calendar.name(d) is not None}[only]
-    shown = list(dict.fromkeys([*ALWAYS_SHOWN, sort_by, *(c["field"] for c in where)]))
-    limit = max(1, min(int(args.get("limit") or 5), MAX_LIMIT))
+    shown = list(dict.fromkeys([*ALWAYS_SHOWN, sort_by, *(c["field"] for c in where), *([args["of"]] if args.get("of") else [])]))
     groups = sorted({FIELDS[n][0] for n in shown})
 
     # which cycle each day is answered from: exact sub-daily data where every needed group has it
@@ -155,16 +144,12 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
                 source[d] = "daily"
 
     checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
-    holds = lambda d, conds: all(d in values[c["field"]] and OPS[c["op"]](values[c["field"]][d], c["value"]) for c in conds)
-    rank = lambda ds: sorted((d for d in ds if d in values[sort_by]), key=lambda d: values[sort_by][d],
-                             reverse=args.get("order", "desc") != "asc")
+    units = {n: FIELDS[n][3] for n in shown}
     label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
-    row = lambda d: {"date": label(d), **({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
-                     **{n: round(values[n][d], 1) for n in shown if d in values[n]},
-                     "source": "daily" if source.get(d) == "daily" else "exact"}
-    matches = [d for d in checked if holds(d, where)]
-    ranked = rank(matches)
-    rows = [row(d) for d in ranked[:limit]]
+    got = analyse(values, shown, units, args, checked, first, last, tz, turn,
+                  lambda d: {**({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
+                             "source": "daily" if source.get(d) == "daily" else "exact"})
+    out, matches, ranked, rank, holds, row = got.out, got.matches, got.ranked, got.rank, got.holds, got.row
 
     # Days that would have ranked higher had a trace of rain counted: the answer should mention them
     trace: list[date] = []
@@ -182,18 +167,8 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
                 break
 
     exact_days = sorted(d for d in checked if source.get(d) != "daily")
-    out = {"period": f"{label(first)} - {label(last)}", "days_checked": len(checked), "matching_days": len(matches),
-           "units": {n: FIELDS[n][3] for n in shown}}
-    if args.get("group_by") in ("month", "year"):
-        key = (lambda d: f"{d:%Y-%m}") if args["group_by"] == "month" else (lambda d: f"{d:%Y}")
-        counts = dict.fromkeys(sorted({key(d) for d in checked}), 0)
-        for d in matches:
-            counts[key(d)] += 1
-        out[f"by_{args['group_by']}"] = counts
-    if args.get("count_only"):
-        rows, trace = [], []   # just the counts
-    else:
-        out["days"] = rows
+    if args.get("count_only") or (args.get("stat") not in (None, "count") and args.get("group_by")):
+        trace = []   # just the figures
     if trace:
         out["trace_rain_days"] = [row(d) for d in trace]
         out["note_trace"] = (f"These days rank higher but had less than {rain_cond['value']:g} mm of rain (a trace), so they "
@@ -213,7 +188,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     return out
 
 
-async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict) -> str:
+async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=None) -> str:
     now = now_local(tz)
-    result = await asyncio.to_thread(find_days, cache, mac, tz, args, now)
+    result = await asyncio.to_thread(find_days, cache, mac, tz, args, now, turn)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))

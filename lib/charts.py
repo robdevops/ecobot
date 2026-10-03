@@ -275,8 +275,15 @@ def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     fig.text(AX_RECT[0], 1 - 0.52 / height, subtitle, fontsize=8.5, color=MUTED, va="center")
 
 
-def _time_axis(ax, span_days: float):
-    """Tick positions and labels for a date axis, chosen by the length of the period."""
+def _time_axis(ax, span_days: float, bars=None, tz: tzinfo | None = None):
+    """Tick positions and labels for a date axis, chosen by the length of the period. Bars of whole months or years (a count per
+    month or year) are labelled under the middle of each bar instead."""
+    if bars and tz and bars.per in ("year", "month") and bars.x and (bars.per == "year" or len(bars.x) <= 14):
+        centres = _nums(tz, bars.x) + bars.width / 86400 * 0.85 / 2
+        fmt = "%Y" if bars.per == "year" else "%b\n'%y"
+        ax.xaxis.set_major_locator(FixedLocator(list(centres)))
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: mdates.num2date(v).strftime(fmt)))
+        return
     if span_days <= 1.1:
         ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 3)))
         fmt = "%-I%p"
@@ -469,8 +476,13 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         b = p.bars
         bx = _nums(tz, b.x)
         top = max([*b.y, 1.0]) * 1.15
+        bottom = min([*b.y, 0.0]) * 1.3   # a figure can be below zero (a coldest night)
         _draw_bars(ax, bx, b.y, b.width / 86400 * 0.85, top, 3, alpha=0.75)
-        ax.set_ylim(0, top)
+        if b.values:   # a few bars of counts or figures: the number at the end of each
+            for x, y in zip(bx, b.y):
+                ax.text(x + b.width / 86400 * 0.85 / 2, y + (top - bottom) * (0.015 if y >= 0 else -0.015), f"{y:g}", ha="center",
+                        va="bottom" if y >= 0 else "top", fontsize=8, color=TEXT, zorder=5)
+        ax.set_ylim(bottom, top)
         return 0, _end_of(bx, b.width, x1), []
     lines = p.lines
     marked = [i for i, s in enumerate(lines) if s.records and p.peaks != "none"]
@@ -535,7 +547,8 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
                              fontsize=look.legend_font, **key)
             deg = _deg(p.unit)
             tick_unit = deg if deg == "°" else ""
-            ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10]))
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10],
+                                                   integer=bool(p.bars and not p.lines and p.bars.unit == "days")))
             ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _, u=tick_unit: f"{v:g}{u}"))
             if not look.in_headline:
                 title = f"{p.label} ({p.unit})" if p.unit and not tick_unit else p.label
@@ -544,7 +557,7 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
                 plt.setp(ax.get_xticklabels(), visible=False)
         margin = (x1 - x0) * 0.015  # room for the end dots
         axes[0].set_xlim(x0 - margin, x1 + margin)
-        _time_axis(axes[-1], x1 - x0)
+        _time_axis(axes[-1], x1 - x0, panels[-1].bars if not panels[-1].lines else None, tz)
         if chart.compass:  # beside the wind line
             pos = axes[0].get_position()
             axes[0].set_position([pos.x0, pos.y0, 0.57, pos.height])

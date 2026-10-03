@@ -416,6 +416,7 @@ def test_topics_pick_the_guidance_and_tools_a_question_needs(text, before, has, 
 
 def test_tools_follow_the_topics_and_the_basics_are_always_there():
     assert intent.tools_for(set()) == ["weather_now", "weather_history", "air_quality"]
+    assert "air_days" in intent.tools_for({"days", "air"}) and "air_days" not in intent.tools_for({"days"}) and "air_days" not in intent.tools_for({"air"})
     assert {"weather_days", "weather_link", "plot_chart", "air_link", "air_scan", "weather_forecast", "pollen_asthma"} <= set(
         intent.tools_for({"days", "link", "compose", "forecast", "pollen"}))
 

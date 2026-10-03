@@ -307,7 +307,7 @@ def uv(*values, start=T0):
     return [(start + i * 300, {"solar_and_uvi.uvi": v}) for i, v in enumerate(values)]
 
 
-async def test_a_uv_index_of_9_alerts_once_and_again_only_after_an_hour_below_it(tmp_path):
+async def test_a_uv_index_of_10_alerts_once_and_again_only_after_an_hour_below_it(tmp_path):
     vals = [3, 5]
     m, state, sent = monitor(tmp_path, uv(*vals))
 
@@ -316,21 +316,21 @@ async def test_a_uv_index_of_9_alerts_once_and_again_only_after_an_hour_below_it
         m.station.data = uv(*vals)
         await m.check()
     await m.check()                                    # the first look sets the mark
-    await step(8.9)
+    await step(9.9)
     assert sent == []
-    await step(9)
-    assert len(sent) == 1 and "UV index 9" in sent[0] and "1:15pm" in sent[0]
-    await step(10, 7, *[6] * 11)                       # still the same spell, then under an hour below 9
-    await step(9.5)
+    await step(10)
+    assert len(sent) == 1 and "UV index 10" in sent[0] and "1:15pm" in sent[0] and "alerts at 10 and above" in sent[0]
+    await step(11, 7, *[6] * 11)                       # still the same spell, then under an hour below 10
+    await step(10.5)
     assert len(sent) == 1
     await step(*[5] * 12)                              # a calm hour starts counting
-    await step(*[5] * 12)                              # an hour below 9 re-arms it
-    await step(9)
+    await step(*[5] * 12)                              # an hour below 10 re-arms it
+    await step(10)
     assert len(sent) == 2
 
 
 async def test_old_uv_readings_are_not_announced_after_a_restart(tmp_path):
-    m, state, sent = monitor(tmp_path, uv(10, 11, 4))
+    m, state, sent = monitor(tmp_path, uv(11, 12, 4))
     await m.check()
     assert sent == []
 

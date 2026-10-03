@@ -564,7 +564,8 @@ def forecast_prefetch(text: str, forecast: bool) -> list[tuple[str, dict]]:
 
 def tools_for(found: set[str]) -> list[str]:
     """The tool names a question can use: the basics, and what its topics add."""
-    return [*CORE_TOOLS, *(t for topic in TOPIC_TOOLS if topic in found for t in TOPIC_TOOLS[topic])]
+    extra = ["air_days"] if {"days", "air"} <= found else []   # counting or ranking days by an air metric
+    return [*CORE_TOOLS, *(t for topic in TOPIC_TOOLS if topic in found for t in TOPIC_TOOLS[topic]), *extra]
 
 
 @dataclass

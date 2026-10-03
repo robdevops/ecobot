@@ -1263,5 +1263,73 @@
         }
       }
     }
+  },
+  {
+    "id": "uv-days-per-year",
+    "ask": "days over UVI 10 per year",
+    "note": "counts per year are a bar chart",
+    "expect": {
+      "lookup": "",
+      "tools": [
+        "weather_days"
+      ],
+      "args": {
+        "weather_days": {
+          "group_by": "year",
+          "count_only": true
+        }
+      }
+    }
+  },
+  {
+    "id": "rain-per-month",
+    "ask": "rain total per month this year",
+    "note": "a total per month is a bar chart",
+    "expect": {
+      "lookup": "",
+      "tools": [
+        "weather_days"
+      ],
+      "args": {
+        "weather_days": {
+          "stat": "sum",
+          "of": "rain",
+          "group_by": "month"
+        }
+      }
+    }
+  },
+  {
+    "id": "hottest-day-per-year",
+    "ask": "hottest day each year",
+    "note": "a figure per year is a bar chart",
+    "expect": {
+      "lookup": "",
+      "tools": [
+        "weather_days"
+      ],
+      "args": {
+        "weather_days": {
+          "stat": "max",
+          "group_by": "year"
+        }
+      }
+    }
+  },
+  {
+    "id": "air-days-per-year",
+    "ask": "days PM2.5 over 25 per year",
+    "note": "air counts per year are a bar chart",
+    "expect": {
+      "lookup": "",
+      "tools": [
+        "air_days"
+      ],
+      "args": {
+        "air_days": {
+          "group_by": "year"
+        }
+      }
+    }
   }
 ]
