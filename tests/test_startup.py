@@ -166,3 +166,13 @@ def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_
     assert Config.from_env().chart_all_feels_like is False
     monkeypatch.setenv("CHART_ALL_FEELS_LIKE", "on")
     assert Config.from_env().chart_all_feels_like is True
+
+
+def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("CHART_ALL_VPD", raising=False)
+    assert Config.from_env().chart_all_vpd is False
+    monkeypatch.setenv("CHART_ALL_VPD", "on")
+    assert Config.from_env().chart_all_vpd is True

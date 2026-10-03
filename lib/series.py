@@ -29,7 +29,7 @@ WEATHER = {
     "rain": Reading("rainfall", "daily", "Rain", "mm", r"rain\w*|precip\w*"),
     "dew_point": Reading("outdoor", "dew_point", "Dew point", "°C", r"dew\w*"),
     "feels_like": Reading("outdoor", "feels_like", "Feels like", "°C", r"feel\w*|apparent"),
-    "vpd": Reading("outdoor", "vpd", "VPD", "kPa", r"vpd|vapou?r pressure deficit"),
+    "vpd": Reading("outdoor", "vpd", "Vapour pressure deficit", "kPa", r"vpd|vapou?r pressure deficit"),
     "solar": Reading("solar_and_uvi", "solar", "Solar radiation", "W/m²", r"solar\w*|radiation|sunshine|sun(?!\s+\d)"),
     "uv": Reading("solar_and_uvi", "uvi", "UV index", "", r"uvi?|ultraviolet"),
 }

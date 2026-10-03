@@ -69,6 +69,7 @@ async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
+    intent.VPD_IN_ALL = cfg.chart_all_vpd
     sources = await start_sources(cfg)
     if not sources:
         raise SystemExit("No data source is working - nothing to talk about")

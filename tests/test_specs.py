@@ -155,3 +155,8 @@ def test_a_chart_of_one_line_panel_gives_every_line_its_records_but_a_stack_does
     assert not any(s.records for p in both.panels for s in p.lines)
     with pytest.raises(ValueError):
         Panel("bad", "", [line()], peaks="beside")
+
+
+def test_the_vpd_chart_is_titled_with_the_full_name():
+    from lib.series import WEATHER
+    assert WEATHER["vpd"].label == "Vapour pressure deficit"

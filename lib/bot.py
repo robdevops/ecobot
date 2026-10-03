@@ -203,9 +203,9 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
     if photos and len(caption) <= CAPTION_LIMIT:
         try:
             if len(photos) == 1:
-                await msg.reply_photo(photos[0], caption=caption, caption_entities=entities or None, **extra)
+                await msg.reply_photo(photos[0], caption=caption or None, caption_entities=entities or None, **extra)
                 return bool(markup)
-            await msg.reply_media_group([InputMediaPhoto(p, caption=caption if i == 0 else None,
+            await msg.reply_media_group([InputMediaPhoto(p, caption=(caption or None) if i == 0 else None,
                                                          caption_entities=(entities or None) if i == 0 else None)
                                          for i, p in enumerate(photos)])
             return False
@@ -474,7 +474,7 @@ class Bot:
         if caption is None:
             turn.charts.clear()
             turn.forecast_shown.clear()
-        return caption
+        return "" if read.chart_all and caption else caption   # "weather all week": the chart says it all
 
     async def _lookup_in_code(self, read, turn: Turn) -> str | None:
         """A plain lookup (a reading, the air, the pollen, the forecast, what the bot can do) answered from its one tool result; None
@@ -574,6 +574,8 @@ class Bot:
                 stop_typing.set()
                 await asyncio.gather(typing, *([drafting] if drafting else []))  # wait for any in-flight "typing" or draft so none is sent after the reply
 
+        if ok and not reply.strip() and not photos:   # a captionless chart that could not be drawn
+            reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in working[new_from:] if m["role"] == "tool"]
         log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
                  time.monotonic() - started, len(used), len(photos), len(reply), _short(reply, 30))

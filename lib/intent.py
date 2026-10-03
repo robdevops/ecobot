@@ -329,14 +329,23 @@ def _named(text: str) -> dict[str, int]:
 
 
 FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
+VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
+LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
     if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
-        return [n for n in WEATHER_READINGS if FEELS_LIKE_IN_ALL or n != "feels_like"]   # naming it ("plot feels like") still works
+        every = [n for n in WEATHER_READINGS if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
+                 and (VPD_IN_ALL or n != "vpd")]   # naming one still works
+        return [*(n for n in every if n != "wind"), *(n for n in every if n == "wind")]   # wind is the bottom panel
     return sorted(found, key=found.get) if len(found) >= 2 else []
+
+
+def wants_chart_all(text: str) -> bool:
+    """"weather all week": every reading, a panel each (the picture says it all: no caption)."""
+    return len(_named(text)) < 2 and bool(ALL.search(text) and WEATHER_WORD.search(text))
 
 
 def chart_field(text: str) -> str | None:
@@ -722,6 +731,7 @@ class Reading:
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
+    chart_all: bool = False               # "weather all week": every reading charted, sent with no caption
     readings: list[str] = field(default_factory=list)     # the readings the words name
     per_day: bool = False                 # figures day by day were asked for
     extra: list[tuple[str, dict]] = field(default_factory=list)   # fetched with the model's first step (the forecast, for "will it rain?")
@@ -772,5 +782,5 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
         calls = [("", {}), ("weather_now", {"groups": "rainfall"})]
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
+                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code, chart_all=in_code and wants_chart_all(text),
                    lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, ecowitt, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))

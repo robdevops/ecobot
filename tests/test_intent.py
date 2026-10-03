@@ -302,14 +302,16 @@ def test_dew_point_feels_like_and_vpd_are_charted_readings_that_outrank_temperat
     assert intent.chart_field("how hot was it") is None
 
 
-def test_weather_all_week_is_every_reading_stacked_except_feels_like_unless_configured(monkeypatch):
-    every = ["temperature", "humidity", "pressure", "wind", "rain", "dew_point", "vpd", "solar", "uv"]
+def test_weather_all_week_leaves_out_uv_feels_like_and_vpd_unless_configured(monkeypatch):
+    every = ["temperature", "humidity", "pressure", "rain", "dew_point", "solar", "wind"]   # no UV (same shape as solar), feels like or VPD; wind last
     assert intent.chart_fields("weather all week") == every
     monkeypatch.setattr(intent, "FEELS_LIKE_IN_ALL", True)
-    assert intent.chart_fields("weather all week") == [*every[:6], "feels_like", *every[6:]]
+    monkeypatch.setattr(intent, "VPD_IN_ALL", True)
+    assert intent.chart_fields("weather all week") == ["temperature", "humidity", "pressure", "rain", "dew_point", "feels_like", "vpd", "solar", "wind"]
     monkeypatch.setattr(intent, "FEELS_LIKE_IN_ALL", False)
-    assert intent.chart_fields("plot feels like and humidity") == ["humidity", "feels_like"] or intent.chart_fields("plot feels like and humidity") == ["feels_like", "humidity"]   # named: still charted
-    assert intent.chart_fields("weather this week") == [] and intent.chart_fields("all the rain last week") == []
+    monkeypatch.setattr(intent, "VPD_IN_ALL", False)
+    assert intent.chart_fields("plot feels like and humidity") in (["humidity", "feels_like"], ["feels_like", "humidity"])   # named: still charted
+    assert intent.chart_fields("plot solar and uv") == ["solar", "uv"] and intent.chart_fields("plot vpd and humidity") != []
     assert intent.chart_field("feels 90d") == intent.chart_field("feel 90d") == intent.chart_field("feels-like 90d") == "feels_like"
 
 
@@ -509,3 +511,9 @@ def test_one_reading_by_month_or_year_is_a_figure_per_period_worked_out_in_code(
 def test_anything_beyond_one_reading_by_month_or_year_is_left_to_the_model(text):
     read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
     assert read.lookup == "" and (read.fast is None or read.fast[0] not in ("weather_days", "air_days"))
+
+
+def test_weather_all_week_is_flagged_as_a_chart_with_no_caption_and_a_named_chart_is_not():
+    now = datetime(2026, 10, 3, 12)
+    assert intent.read("weather all week", now, True, True).chart_all and intent.read("ecowitt all week", now, True, True).chart_all
+    assert not intent.read("plot temperature and rain", now, True, True).chart_all and not intent.read("temperature chart 7d", now, True, True).chart_all
