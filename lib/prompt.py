@@ -121,7 +121,7 @@ BLOCKS = {
 - Recent rain: a rain rate above 0 now, or rain in the last hour, means showers are likely to continue for a while.
 - Wind picking up alongside falling pressure strengthens a rain call.
 - Answer with one of: unlikely / possible / likely, then a short reason citing one or two readings (e.g. "pressure down 2.4 hPa in 3 hours, humidity 91%"). Only look a few hours ahead.
-- Say briefly it's a read of the station data, not an official forecast. Don't list every reading.
+- When a weather_forecast result is in the conversation (or the tool is available), give it too: its ready-made lines for the days asked about (copied as they are, emoji included), after your own read of the station. If it disagrees with the station read, say so plainly. Keep the station read short and say it is a read of the station data; the forecast is Open-Meteo's. Don't list every reading.
 """,
     "wind": """WIND DIRECTION
 - Wind direction has no low or high (it is circular: 350° and 10° are 20° apart). For "wind.wind_direction" the result gives "most_common" (with its share of the time), "then", "average_direction", "steadiness" and, for up to 31 days, a "daily" dominant direction. Answer from those with compass names, e.g. "mostly NE (34% of the time), then E; fairly steady". Never give degrees as a range, or say the wind swung "from 2° to 349°". Add any "note", "note_period" or "calm" briefly.

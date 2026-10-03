@@ -549,6 +549,19 @@ def topics(text: str, before: list[str] = ()) -> set[str]:
     return found
 
 
+# "will it rain?", "do I need an umbrella?", "rain later?": the model reasons from the station, and the forecast (if on) comes with it
+RAIN_AHEAD = re.compile(r"\b(umbrella|chance of rain|(will|going to|gonna|likely to|expect\w*)\b.*\brain\w*|"
+                        r"rain\w*\b.*\b(later|soon|tonight|tomorrow|this (afternoon|evening)|coming|next)\b)", I)
+WEEK_AHEAD = re.compile(r"\b(week|days|weekend|next \w+day)\b", I)
+
+
+def forecast_prefetch(text: str, forecast: bool) -> list[tuple[str, dict]]:
+    """The forecast fetched with the model's first step for a question about rain ahead (it is cached: no wait)."""
+    if not forecast or not RAIN_AHEAD.search(text):
+        return []
+    return [("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True})]
+
+
 def tools_for(found: set[str]) -> list[str]:
     """The tool names a question can use: the basics, and what its topics add."""
     return [*CORE_TOOLS, *(t for topic in TOPIC_TOOLS if topic in found for t in TOPIC_TOOLS[topic])]
@@ -573,6 +586,7 @@ class Reading:
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
     readings: list[str] = field(default_factory=list)     # the readings the words name
     per_day: bool = False                 # figures day by day were asked for
+    extra: list[tuple[str, dict]] = field(default_factory=list)   # fetched with the model's first step (the forecast, for "will it rain?")
     lookup: str = ""                      # "reading", "air", "pollen", "forecast" or "about": answered in code, no model
     lookup_arg: list[str] = field(default_factory=list)   # the readings named ("reading", "air"; none: all)
     sides: list[str] = field(default_factory=list)        # "indoor", "outdoor" or both, for a reading
@@ -619,4 +633,4 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
                    more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
-                   lookup=lookup, lookup_arg=named, sides=_sides(text), readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
+                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=forecast_prefetch(text, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))

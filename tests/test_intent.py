@@ -418,3 +418,16 @@ def test_tools_follow_the_topics_and_the_basics_are_always_there():
     assert intent.tools_for(set()) == ["weather_now", "weather_history", "air_quality"]
     assert {"weather_days", "weather_link", "plot_chart", "air_link", "air_scan", "weather_forecast", "pollen_asthma"} <= set(
         intent.tools_for({"days", "link", "compose", "forecast", "pollen"}))
+
+
+@_pytest.mark.parametrize("text, days", [("will it rain?", 3), ("do I need an umbrella", 3), ("is it going to rain tomorrow", 3),
+                                         ("will it rain this week", 7), ("rain later?", 3)])
+def test_a_question_about_rain_ahead_fetches_the_forecast_with_the_models_first_step(text, days):
+    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True)
+    assert read.extra == [("weather_forecast", {"days": days, "cached": True})] and read.fast is None
+    assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False).extra == []   # forecast off: nothing to fetch
+
+
+@_pytest.mark.parametrize("text", ["how much rain fell today", "how much rain this week", "did it rain yesterday", "forecast", "rain chart 7d"])
+def test_questions_about_rain_so_far_do_not_fetch_the_forecast(text):
+    assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []

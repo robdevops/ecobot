@@ -125,9 +125,13 @@ def polling_error(error: TelegramError):
         pass
 
 
+TYPING_MAX_SECONDS = 600   # a safety net: the indicator never outlives a stuck question
+
+
 async def keep_typing(bot, chat_id: int, thread_id, stop: asyncio.Event):
-    """Send "typing..." every 4.5s until stop is set."""
-    while not stop.is_set():
+    """Send "typing..." every 4.5s until stop is set (or TYPING_MAX_SECONDS)."""
+    deadline = time.monotonic() + TYPING_MAX_SECONDS
+    while not stop.is_set() and time.monotonic() < deadline:
         with contextlib.suppress(Exception):
             await bot.send_chat_action(chat_id, ChatAction.TYPING, message_thread_id=thread_id)
         with contextlib.suppress(asyncio.TimeoutError):
@@ -150,15 +154,14 @@ class Draft:
 
     async def run(self, stop: asyncio.Event):
         """Send the draft, then again on every change (at most once a second) and every DRAFT_REFRESH_SECONDS. If Telegram
-        refuses drafts, fall back to the "typing..." indicator for the rest of the turn."""
+        refuses drafts, give up on them: the "typing..." indicator (which runs alongside) carries on."""
         while not stop.is_set():
             self.changed.clear()
             try:
                 await self.bot.send_message_draft(self.chat_id, self.draft_id, text=self.text[-TG_LIMIT:] or None,
                                                   message_thread_id=self.thread_id)
             except Exception as e:
-                log.warning("Draft not sent (%s: %s); using the typing indicator", type(e).__name__, e)
-                await keep_typing(self.bot, self.chat_id, self.thread_id, stop)
+                log.warning("Draft not sent (%s: %s); using the typing indicator alone", type(e).__name__, e)
                 return
             waits = [asyncio.ensure_future(stop.wait()), asyncio.ensure_future(self.changed.wait())]
             try:
@@ -474,7 +477,7 @@ class Bot:
     async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, tool_names=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
-        first = ([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None
+        first = [*([read.fast[:2], *read.more] if read.fast else []), *read.extra] or None
         before, effort, budget, retried = list(working), read.effort, TURN_SECONDS, False
         while True:
             try:
@@ -495,6 +498,9 @@ class Bot:
         text = text.strip()
         if not text:
             return
+        stop_typing = asyncio.Event()   # "typing..." from the first moment, even while this question waits its turn
+        typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
+        await asyncio.sleep(0)
         now = now_local(self.cfg.tz)
         read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
                            "Forecast" in self.by_name)
@@ -510,11 +516,9 @@ class Bot:
         thread_id = self._thread(msg)
         started = time.monotonic()
         async with chat.lock:
-            stop_typing = asyncio.Event()
             draft = (Draft(context.bot, msg.chat_id, thread_id)
                      if msg.chat.type == ChatType.PRIVATE and hasattr(context.bot, "send_message_draft") else None)
-            typing = asyncio.create_task(draft.run(stop_typing) if draft else
-                                         keep_typing(context.bot, msg.chat_id, thread_id, stop_typing))
+            drafting = asyncio.create_task(draft.run(stop_typing)) if draft else None   # a private chat also gets the "Thinking..." draft
             stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
@@ -556,7 +560,7 @@ class Bot:
             finally:
                 stuck.cancel()
                 stop_typing.set()
-                await typing  # wait for any in-flight "typing" so none is sent after the reply
+                await asyncio.gather(typing, *([drafting] if drafting else []))  # wait for any in-flight "typing" or draft so none is sent after the reply
 
         used = [m for m in working[new_from:] if m["role"] == "tool"]
         log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
