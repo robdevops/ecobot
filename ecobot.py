@@ -113,7 +113,7 @@ async def main():
                 if air:
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
-                    kinds.append(f"air {AIR_CHECK_SECONDS // 60}m")
+                    kinds.append("air")
                 if forecast:
                     forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
                     kinds.append("forecast changes")
