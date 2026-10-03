@@ -14,7 +14,7 @@ from datetime import date
 from .series import RAIN_WITH
 
 
-NO_LOW = ("solar", "wind", "rain")   # readings whose low is always nothing (night, calm, dry): only the high is tagged
+NO_LOW = ("solar", "uv", "wind", "rain")   # readings whose low is always nothing (night, calm, dry): only the high is tagged
 
 
 @dataclass

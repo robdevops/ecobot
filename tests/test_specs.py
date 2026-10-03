@@ -152,10 +152,10 @@ def test_every_line_gets_its_records_in_a_stack_too_except_the_low_of_sun_wind_a
     alone = Chart("A", "s", [Panel("A", "", [Line("A", [1, 2, 3], [1.0, 5.0, 2.0], low=[0.0, 4.0, 1.0], high=[2.0, 9.0, 3.0])])])
     assert alone.panels[0].lines[0].records == {"high": (2, 9.0), "low": (1, 0.0)}           # the band's top and bottom
     both = Chart("B", "s", [Panel("A", "", [line("A")], reading="humidity"), Panel("B", "", [line("B")], reading="solar"),
-                            Panel("C", "", [line("C")], reading="wind")])
-    humidity, solar, wind = (p.lines[0].records for p in both.panels)
+                            Panel("C", "", [line("C")], reading="wind"), Panel("D", "", [line("D")], reading="uv")])
+    humidity, solar, wind, uv = (p.lines[0].records for p in both.panels)
     assert set(humidity) == {"high", "low"}
-    assert set(solar) == set(wind) == {"high"}
+    assert set(solar) == set(wind) == set(uv) == {"high"}
     with pytest.raises(ValueError):
         Panel("bad", "", [line()], peaks="beside")
 
