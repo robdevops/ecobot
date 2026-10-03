@@ -97,8 +97,8 @@ async def main():
     try:
         async with app:  # one task runs everything, so connections open and close cleanly
             await app.start()
-            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True,
-                                            error_callback=polling_error)
+            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
+                                            error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("Bot @%s running with model %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))

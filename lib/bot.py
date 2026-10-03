@@ -13,7 +13,7 @@ import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
@@ -35,6 +35,7 @@ TG_LIMIT = 4000
 CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
 RETRY_SECONDS = 60           # the second try, one reasoning step lower, after a question timed out
+PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down) is not answered: its moment has passed
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
@@ -413,6 +414,10 @@ class Bot:
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.effective_message
         if not msg or not msg.text:
+            return
+        waited = (datetime.now(timezone.utc) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
+        if waited > PENDING_MAX_SECONDS:
+            log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), _short(msg.text, 40))
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
