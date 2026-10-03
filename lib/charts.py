@@ -328,9 +328,13 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     return _end_of(bx, bars.width, 0.0)
 
 
+END_LABELLED = ("pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd")   # one line, and still its latest value beside it
+
+
 def _axes_width(chart: Chart) -> float:
     """The plot's width: narrower when a panel has rain's scale or end labels on its right, to leave room for them."""
-    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 for p in chart.panels) else 0)
+    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 or (p.lines and p.reading in END_LABELLED)
+                                     for p in chart.panels) else 0)
 
 
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
@@ -515,11 +519,17 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
                     bbox=_box(colour))
 
 
-def _end_labels(ax, drawn: list[tuple]):
-    """The latest value of each line in the margin beside it, nudged apart where they would touch."""
+def _figure(value: float) -> str:
+    """A latest value as written beside a line: three significant figures, but never in exponent form (1014.8, not 1.01e+03)."""
+    return f"{value:.1f}".rstrip("0").rstrip(".") if abs(value) >= 100 else f"{value:.3g}"
+
+
+def _end_labels(ax, drawn: list[tuple], show_floor: bool = False):
+    """The latest value of each line in the margin beside it, nudged apart where they would touch. Lines that all sit on the
+    floor have nothing to read off and get no label, unless `show_floor` (a zero wind or solar reading is worth saying)."""
     y_lo, y_hi = ax.get_ylim()
-    if max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
-        return  # everything sits on the floor: nothing to read off
+    if not show_floor and max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
+        return
     height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
     gap = 8 * (y_hi - y_lo) / height_pt                     # 8 points, in data units
     placed = []
@@ -527,7 +537,7 @@ def _end_labels(ax, drawn: list[tuple]):
         y = max(ys[-1], placed[-1] + gap) if placed else ys[-1]
         placed.append(y)
         shade = _at(colour, ys[-1])
-        ax.annotate(f"{ys[-1]:.3g}", (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
+        ax.annotate(_figure(ys[-1]), (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
                     fontsize=7, fontweight="bold", color=shade, annotation_clip=False,
                     arrowprops={"arrowstyle": "-", "color": shade, "linewidth": 0.6, "alpha": 0.6, "shrinkA": 0, "shrinkB": 2},
                     bbox={"boxstyle": "round,pad=0.15", "fc": "none", "ec": "none"})
@@ -580,8 +590,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], tz, x0, x1, look, _deg(p.unit))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
-    if len(lines) > 1:
-        _end_labels(ax, drawn)
+    if len(lines) > 1 or p.reading in END_LABELLED:   # VPD at zero (the air is saturated or it is night) is left unlabelled
+        _end_labels(ax, drawn, show_floor=len(lines) == 1 and p.reading != "vpd")
     entries = [(_colour(s, first + i, p.reading), s.label) for i, s in enumerate(lines)] + ([(RAIN, p.bars.label)] if p.bars else [])
     return len(lines), x1, entries
 

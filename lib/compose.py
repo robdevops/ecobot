@@ -265,7 +265,7 @@ class Composer:
             if reading.band_field:  # a mean shaded up to another field (wind: the gusts)
                 gust, _, gust_high = self.weather_band(group, reading.band_field, first, last)
                 highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
-            line = driver_series(values, self.tz, first, last, label, lows, highs)
+            line = driver_series(values, self.tz, first, last, label, lows, highs, banded_short=bool(reading.band_field))
             facts = {"series": name, **self._stats(values, unit)}
             return (panel_for(name, [line]) if line else None), facts
         if data is None:

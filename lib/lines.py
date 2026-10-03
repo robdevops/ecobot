@@ -18,6 +18,7 @@ from .timeutil import SLOT, WIDTH_NAMES, bucket_width, bucketed, daily_summary, 
 DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
 Reading = tuple[int, float, float | None, float | None, int]
+SHORT_DAYS = 31   # up to this long a weather line is drawn with no shaded range (see Plotted.unbanded)
 
 
 @dataclass
@@ -29,6 +30,13 @@ class Plotted:
     low: list[float] | None = None
     high: list[float] | None = None
     smoothed: bool = False
+
+    def unbanded(self, days: float, keep: bool = False) -> "Plotted":
+        """The line without its shaded range when the period is SHORT_DAYS or less (a short period reads best as a clean line); `keep`
+        leaves it (wind: the mean shaded up to the gusts)."""
+        if not keep and days <= SHORT_DAYS:
+            self.low = self.high = None
+        return self
 
     @property
     def name(self) -> str:
