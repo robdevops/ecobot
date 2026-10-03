@@ -7,6 +7,7 @@ import time
 
 from openai import AsyncOpenAI
 
+from .timeutil import CHARS_PER_TOKEN, WARN_TOKENS
 from .tools import Tools, Turn
 
 log = logging.getLogger(__name__)
@@ -67,14 +68,16 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None) -> str:
+                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_heavy=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
         first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
         straight away, together, and the model is only invoked once the data is in. require_tool forces a
         fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft)."""
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft). on_heavy(tokens) is called once, before the model is
+        sent a lot of data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
+        first. The work carries on; nothing waits for a reply."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:
@@ -86,6 +89,17 @@ class Agent:
                     "change the request or answer now.]\n" + await cache[(name, args)])
 
         schemas = self.tools.schemas_for(tool_names)   # only the tools the question can use: each definition is sent on every call
+        warned = False
+
+        async def heavy_check():
+            """Before the model is sent the results: tell the chat once if they are a lot of data (then carry on)."""
+            nonlocal warned
+            tokens = (turn.result_chars if turn else 0) // CHARS_PER_TOKEN
+            if on_heavy and not warned and tokens > WARN_TOKENS:
+                warned = True
+                log.info("Heavy question: about %d tokens of tool results; warning the chat", tokens)
+                await on_heavy(tokens)
+
         llm_time = tool_time = 0.0
         first_step = 0
         try:
@@ -98,6 +112,7 @@ class Agent:
                 results = await asyncio.gather(*(call(n, a) for n, a in fast))
                 tool_time += time.monotonic() - t0
                 messages.extend({"role": "tool", "tool_call_id": f"fast_{i}", "content": r} for i, r in enumerate(results, 1))
+                await heavy_check()
                 first_step = 1  # data is in; the model just answers (and may still call tools)
             for step in range(first_step, MAX_STEPS + 1):
                 final = step == MAX_STEPS  # out of steps: force an answer from what we have
@@ -128,6 +143,7 @@ class Agent:
                 tool_time += time.monotonic() - t0
                 for tc, result in zip(tool_calls, results):
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                await heavy_check()
         finally:
             log.info("Timing: LLM %.1fs, tools %.1fs", llm_time, tool_time)
 

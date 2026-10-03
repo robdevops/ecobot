@@ -22,6 +22,7 @@ class Turn:
     average_asked: bool = False                  # an average was asked for: the caption leads with it
     readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others
     per_day: bool = False                        # day by day figures were asked for: a long period keeps every day, not only its extremes
+    result_chars: int = 0                        # the size of every tool result so far this question (what the model will be sent)
     forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
 
 
@@ -68,4 +69,6 @@ class Tools:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
             out = out[:MAX_OUTPUT_CHARS] + "\n...[truncated - request a shorter range]"
         log.info("Tool result %s: %s", name, out if len(out) < 300 else f"{len(out)} chars")
+        if turn:
+            turn.result_chars += len(out)
         return out

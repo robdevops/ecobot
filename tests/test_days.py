@@ -229,3 +229,45 @@ async def test_one_known_day_can_be_looked_up_with_no_conditions(station):
     row = out["days"][0]
     assert row["date"] == label(day) and {"temp_max", "temp_min", "rain"} <= set(row)
     assert row["rain"] == truth(day)[1] and row["temp_max"] == round(truth(day)[0], 1)
+
+
+async def test_days_can_be_counted_by_any_reading_not_only_temperature_rain_and_gusts(station):
+    eco, fake = station
+    first, last = dates(eco, 10, 1)
+    start, end = local_day(first), local_day(last) + 86399
+    hot = {first + timedelta(days=k) for k in (2, 5, 7)}          # the days UV reaches 9
+    uvi = {str(t): ("9.5" if datetime.fromtimestamp(t, TZ).date() in hot and 8 <= datetime.fromtimestamp(t, TZ).hour <= 14 else "3.0")
+           for t in range(start, end, 300)}
+    humidity = {str(t): "40" if datetime.fromtimestamp(t, TZ).date() in hot else "80" for t in range(start, end, 300)}
+    eco.cache.store(eco.mac, "5min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end)
+    eco.cache.store(eco.mac, "5min", ["outdoor"], {"outdoor": {"humidity": {"unit": "%", "list": humidity}}}, start, end)
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 9}], limit=5)
+    assert out["matching_days"] == 3 and out["units"]["uv_max"] == "" and {r["uv_max"] for r in out["days"]} == {9.5}
+    assert all(r["source"] == "exact" for r in out["days"]) and "note_averaged" not in out   # 5-minute readings: the peak is real
+    dry = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "humidity_min", "op": "<", "value": 50}])
+    assert dry["matching_days"] == 3 and dry["units"]["humidity_min"] == "%"
+    bad = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uvi", "op": ">=", "value": 9}])
+    assert "unusable condition" in bad["error"] and "uv_max" in bad["error"]
+    assert fake.calls == []
+
+
+async def test_days_from_30_minute_data_say_their_peaks_are_averages(station):
+    eco, _ = station
+    first, last = dates(eco, 150, 145)   # older than the 90 days kept at 5 minutes: 30-minute readings
+    start, end = local_day(first), local_day(last) + 86399
+    uvi = {str(t): "9.2" for t in range(start, end, 1800)}
+    eco.cache.store(eco.mac, "30min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end)
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 9}])
+    assert out["matching_days"] == out["days_checked"] > 0 and "average" in out["note_averaged"]
+
+
+async def test_count_only_gives_just_the_counts_and_group_by_month_gives_each_month(station):
+    eco, _ = station
+    first, last = dates(eco, 70, 1)
+    where = [{"field": "temp_max", "op": ">", "value": 0}]
+    full = await ask(eco, start_date=str(first), end_date=str(last), where=where, limit=5)
+    counted = await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="month")
+    assert "days" not in counted and counted["matching_days"] == full["matching_days"] and counted["days_checked"] == full["days_checked"]
+    months = counted["by_month"]
+    assert sum(months.values()) == counted["matching_days"] and list(months) == sorted(months) and len(months) >= 2
+    assert "by_year" in await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="year")

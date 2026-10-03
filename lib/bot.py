@@ -457,6 +457,13 @@ class Bot:
             return report.report(by_tool)
         return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
 
+    async def _warn(self, msg: Message, tokens: int):
+        """A heads-up before a big job: the question has pulled in a lot of data. Sent now, silently; the answer follows by itself."""
+        text = f"\u26a0\ufe0f That's pulling in about {tokens / 1000:.0f}k tokens of data, so it will take a little longer. Working on it..."
+        log.info("Heads-up sent: %s", text)
+        with contextlib.suppress(TelegramError):
+            await msg.reply_text(text)
+
     async def _chart_in_code(self, read, turn: Turn) -> str | None:
         """A chart asked for plainly: the tool draws it and the caption is written here. None (the model then takes the
         question) when there is nothing to caption."""
@@ -479,7 +486,7 @@ class Bot:
         result = await self.agent.tools.call(name, json.dumps(args), turn)
         return report.lookup(read.lookup, result, read.lookup_arg, read.sides)
 
-    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, tool_names=None) -> str:
+    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, tool_names=None, on_heavy=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
         first = [*([read.fast[:2], *read.more] if read.fast else []), *read.extra] or None
@@ -488,7 +495,7 @@ class Bot:
             try:
                 return await asyncio.wait_for(
                     self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
-                                   no_tools=read.about_the_bot, turn=turn, tool_names=tool_names,
+                                   no_tools=read.about_the_bot, turn=turn, tool_names=tool_names, on_heavy=on_heavy,
                                    **({"on_text": draft.update} if draft else {})), budget)
             except asyncio.TimeoutError:
                 lower = intent.lower_effort(effort)
@@ -548,7 +555,7 @@ class Bot:
                     system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
                                           read.about_the_bot, read.rain_caption, found)
                     tool_names = intent.tools_for(found)
-                    reply = await self._ask_model(working, system, read, turn, draft, tool_names)
+                    reply = await self._ask_model(working, system, read, turn, draft, tool_names, lambda tokens: self._warn(msg, tokens))
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
