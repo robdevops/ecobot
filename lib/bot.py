@@ -486,7 +486,7 @@ class Bot:
         result = await self.agent.tools.call(name, json.dumps(args), turn)
         return report.lookup(read.lookup, result, read.lookup_arg, read.sides)
 
-    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, tool_names=None, on_heavy=None, conv_id=None) -> str:
+    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, on_heavy=None, conv_id=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
         first = [*([read.fast[:2], *read.more] if read.fast else []), *read.extra] or None
@@ -495,7 +495,7 @@ class Bot:
             try:
                 return await asyncio.wait_for(
                     self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
-                                   no_tools=read.about_the_bot, turn=turn, tool_names=tool_names, on_heavy=on_heavy, conv_id=conv_id,
+                                   no_tools=read.about_the_bot, turn=turn, on_heavy=on_heavy, conv_id=conv_id,
                                    **({"on_text": draft.update} if draft else {})), budget)
             except asyncio.TimeoutError:
                 lower = intent.lower_effort(effort)
@@ -554,8 +554,7 @@ class Bot:
                     found = intent.topics(str(working[new_from - 1]["content"]), before)
                     system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
                                           read.about_the_bot, read.rain_caption, found)
-                    tool_names = intent.tools_for(found)
-                    reply = await self._ask_model(working, system, read, turn, draft, tool_names, lambda tokens: self._warn(msg, tokens),
+                    reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens),
                                               f"ecobot-{msg.chat_id}")
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing

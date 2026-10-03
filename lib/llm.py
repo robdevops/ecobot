@@ -40,7 +40,8 @@ class Agent:
         if usage:
             cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
             thought = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
-            detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached), "
+            share = "" if not cached or not usage.prompt_tokens else f", {100 * cached // usage.prompt_tokens}%"
+            detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached{share}), "
                       f"out {usage.completion_tokens} ({'?' if thought is None else thought} thinking)")
         log.info("LLM %d (%s%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
                  ", streamed" if on_text else "", elapsed, detail, len(calls), len(content))

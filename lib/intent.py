@@ -658,10 +658,6 @@ OUTLOOK_WORDS = re.compile(r"\b(rain\w*|umbrella|showers?|wet|storms?|later|soon
 WIND_WORDS = re.compile(r"\b(wind\w*|gusts?|direction|breez\w*)\b", I)
 BOT_WORDS = re.compile(r"\b(can|could|do|does|are|will)\s+(you|the bot)\b|\b(alerts?|notify|notification\w*|support\w*|capabilit\w*|able to|add|set up|remind)\b", I)
 COMPARE = re.compile(r"\b(against|versus|vs|compare\w*|affect\w*|influence\w*|correlat\w*|relat\w*|link\w*|cause\w*)\b", I)
-# Words that carry no topic of their own: a follow-up made only of these takes the topics of the messages before it
-TOPIC_TOOLS = {"days": ["weather_days"], "link": ["weather_link"], "compose": ["plot_chart", "air_link", "air_scan"],
-               "forecast": ["weather_forecast"], "pollen": ["pollen_asthma"]}
-CORE_TOOLS = ("weather_now", "weather_history", "air_quality")
 
 
 def topics(text: str, before: list[str] = ()) -> set[str]:
@@ -707,11 +703,6 @@ def model_prefetch(text: str, now: datetime, ecowitt: bool, forecast: bool) -> l
             calls.append(("weather_history", {"groups": "outdoor,indoor,rainfall,wind", "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}))
     return calls
 
-
-def tools_for(found: set[str]) -> list[str]:
-    """The tool names a question can use: the basics, and what its topics add."""
-    extra = ["air_days"] if {"days", "air"} <= found else []   # counting or ranking days by an air metric
-    return [*CORE_TOOLS, *(t for topic in TOPIC_TOOLS if topic in found for t in TOPIC_TOOLS[topic]), *extra]
 
 
 @dataclass

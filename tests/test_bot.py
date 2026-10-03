@@ -454,3 +454,26 @@ async def test_rain_by_month_is_worked_out_in_code_with_no_model():
                          "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 1234.5})
     replies, asked = await _ask_with(result, "rain by month for 2 years")
     assert not asked and replies == ["Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."]
+
+
+async def test_every_model_call_sends_the_full_tool_list_not_a_per_question_one():
+    seen = []
+
+    class Agent:
+        async def run(self, messages, system, effort, **k):
+            seen.append(k.get("tool_names", "all"))
+            return "ok"
+    for text in ("is it too cold to run", "which air quality day was worst when it also rained"):
+        replies = []
+
+        async def reply_text(body, **kw):
+            replies.append(body)
+        sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
+        msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+                 chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+        update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+        async def send_chat_action(*a, **k):
+            pass
+        await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
+    assert seen == ["all", "all"]
