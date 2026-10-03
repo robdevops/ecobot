@@ -14,6 +14,9 @@ from datetime import date
 from .series import RAIN_WITH
 
 
+NO_LOW = ("solar", "wind", "rain")   # readings whose low is always nothing (night, calm, dry): only the high is tagged
+
+
 @dataclass
 class Line:
     label: str
@@ -120,9 +123,11 @@ class Chart:
             raise ValueError("a chart needs a panel")
         if self.compass and not (len(self.panels) == 1 and self.panels[0].lines):
             raise ValueError("a compass goes beside a single line panel")
-        if len(self.panels) == 1:  # a chart of one panel of lines labels the peaks of every line, so each carries its records
-            for line in self.panels[0].lines:
+        for panel in self.panels:  # every line is labelled with its high and low, so each carries its records
+            for line in panel.lines:
                 line.records = line.records or line.own_records()
+                if panel.reading in NO_LOW:
+                    line.records.pop("low", None)
 
 
 def period_text(a: date, b: date) -> str:
