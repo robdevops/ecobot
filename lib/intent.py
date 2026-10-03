@@ -268,6 +268,26 @@ def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
     return [(name, *window) for window, (_, name) in _periods(text, now).items()]
 
 
+DEFAULT_CHART_DAYS = 7   # a chart with no period named is a week
+
+
+def period_days(text: str, now: datetime) -> int:
+    """How many days the period a question names covers (a week when it names none)."""
+    spans = spans_in(text, now)
+    if not spans:
+        return DEFAULT_CHART_DAYS
+    _, start, end = spans[0]
+    return max(1, round((end - start).total_seconds() / 86400))
+
+
+def with_period(text: str, days: int, now: datetime) -> str:
+    """The question with its period swapped for the last `days` days: "temperature chart 30d" -> "temperature chart 90d"; a question
+    that names no period gets one added."""
+    for said, _ in _periods(text, now).values():
+        text = re.sub(rf"(?:\b(?:for|over|in|during|the|past)\s+)*\b{re.escape(said)}\b", "", text, flags=I)
+    return f"{' '.join(text.split())} {days}d"
+
+
 def period_hints(text: str, now: datetime) -> list[str]:
     """One line per period the person's words name, with its exact dates, for the model: "3m" = the last 3 months:
     2026-07-01 00:00:00 to 2026-09-30 23:59:59. The model otherwise guesses short forms (3m has been read as 3 days)."""

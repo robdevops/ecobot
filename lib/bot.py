@@ -20,7 +20,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, prompt, report, templates
+from . import intent, periods, prompt, report, templates
 from .alerts import menu
 from .alerts import AlertState, with_footer
 from .charts import render as render_chart
@@ -175,10 +175,11 @@ class Draft:
 
 
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
-                  titles: list[str] | None = None) -> bool:
+                  titles: list[str] | None = None, period_row=None, sent_photo: list | None = None) -> bool:
     """Send the answer with any charts. A chart carries only its title as its caption; any answer text is its own message,
     sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
-    the last text, or on the single photo when there is no text; returns whether it was sent (a group of photos can't carry one)."""
+    the last text, or on the single photo when there is no text; returns whether it was sent (a group of photos can't carry one).
+    period_row (the period buttons) rides on a single photo instead, and then the keyboard waits; the photo's Message goes into sent_photo."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
@@ -196,8 +197,11 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
         caption = lambda i: (titles[i] if i < len(titles) else "") or None
         try:
             if len(photos) == 1:
-                await msg.reply_photo(photos[0], caption=caption(0), **({"reply_markup": markup} if markup else {}))
-                return bool(markup)
+                buttons = period_row or markup
+                sent = await msg.reply_photo(photos[0], caption=caption(0), **({"reply_markup": buttons} if buttons else {}))
+                if sent_photo is not None and sent is not None:
+                    sent_photo.append(sent)
+                return bool(markup) and not period_row
             await msg.reply_media_group([InputMediaPhoto(p, caption=caption(i)) for i, p in enumerate(photos)])
         except TelegramError:
             log.exception("Couldn't send the chart")
@@ -211,6 +215,7 @@ class Bot:
         self.cfg, self.agent, self.sources, self.state = cfg, agent, sources, state
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
+        self.charted = periods.Charted()   # the question behind each chart sent, for its period buttons
 
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
@@ -218,6 +223,7 @@ class Bot:
         app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(CallbackQueryHandler(self.on_alert_button, pattern=r"^al:"))
+        app.add_handler(CallbackQueryHandler(self.on_period_button, pattern=rf"^{periods.PREFIX}"))
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
@@ -306,6 +312,35 @@ class Bot:
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 raise
+
+    async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """A press on 7d / 30d / 90d / 365d under a chart: ask the chart's question again for that period and put the new chart
+        in the same message."""
+        query = update.callback_query
+        days = periods.days_in(query.data)
+        message = query.message
+        question = self.charted.get((message.chat_id, message.message_id)) if days and message else None
+        if not question:
+            await query.answer("That chart is out of date, please ask again")
+            return
+        await query.answer(f"Drawing {days} days...")
+        asked = intent.with_period(question, days, now_local(self.cfg.tz))
+        log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
+        await self.respond(update, context, asked, redraw=message)
+
+    async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str) -> bool:
+        """Put a new chart into the message a period button was pressed under (its answer text, if any, follows as a message of
+        its own). False when Telegram refuses, and the chart is then sent as a new message."""
+        try:
+            await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=row)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                log.warning("Couldn't edit the chart in place (%s); sending a new one", e)
+                return False
+        self.charted.remember(message.chat_id, message.message_id, question)
+        if reply.strip():
+            await deliver(message, reply, [])
+        return True
 
     @staticmethod
     def _thread(msg: Message):
@@ -483,7 +518,7 @@ class Bot:
                 working[:] = before          # the unfinished attempt's turns are dropped
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
-    async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
         msg = update.effective_message
         text = text.strip()
         if not text:
@@ -565,14 +600,21 @@ class Bot:
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard() if self._keyboard_stale(msg) else None
+        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
+        sent_photo = []
         try:
-            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup, titles=titles)
+            if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
+                reply, photos, row = "", [], None
+            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup,
+                                             titles=titles, period_row=row, sent_photo=sent_photo)
+            if sent_photo:
+                self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown)
             if carried_keyboard:
                 log.info("Buttons: sent keyboard %s to chat %s (it had %s)", templates.VERSION, msg.chat_id, self.state.keyboard(msg.chat_id))
                 self.state.set_keyboard(msg.chat_id, templates.VERSION)
-            elif markup:
+            elif markup and not row:
                 log.info("Buttons: this reply couldn't carry the keyboard (several charts); will try the next one")
         except TelegramError:
             log.exception("Failed to deliver reply")
