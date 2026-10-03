@@ -179,3 +179,9 @@ def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
         assert fig.texts[2].get_text() == "Temperature"                                  # a short one is untouched
     finally:
         plt.close(fig)
+
+
+def test_a_charts_caption_is_its_title_and_its_time_range():
+    chart = stack([Panel("Humidity", "%", [line("H")]), Panel("Rain", "mm", bars=bars())], date(2026, 9, 24), date(2026, 9, 30))
+    assert chart.caption == "Humidity, Rain\nThu 24 – Wed 30 Sep 2026"
+    assert Chart("Rain", "", [Panel("Rain", "mm", bars=bars())]).caption == "Rain"

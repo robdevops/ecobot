@@ -589,7 +589,7 @@ class Bot:
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
                         photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
-                        titles.append(spec.title)
+                        titles.append(spec.caption)
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
             except asyncio.TimeoutError:

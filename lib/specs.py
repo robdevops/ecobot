@@ -130,6 +130,15 @@ class Chart:
                     line.records.pop("low", None)
 
 
+def _caption(self) -> str:
+    """The chart's caption: its title, then the time range (the first part of the subtitle, which always starts with it)."""
+    period = self.subtitle.split("  ·  ")[0].strip()
+    return f"{self.title}\n{period}" if period else self.title
+
+
+Chart.caption = property(_caption)
+
+
 def period_text(a: date, b: date) -> str:
     """'Tue 30 Sep 2026', 'Wed 24 – Tue 30 Sep 2026', 'Thu 27 Aug – Tue 30 Sep 2026'; the year goes on both dates when it differs."""
     if a == b:
