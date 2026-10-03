@@ -1272,17 +1272,16 @@
   {
     "id": "rain-per-month",
     "ask": "rain total per month this year",
-    "note": "a total per month is a bar chart",
+    "note": "a total per month is counted in code and drawn as bars",
     "expect": {
-      "lookup": "",
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
           "stat": "sum",
           "of": "rain",
-          "group_by": "month"
+          "group_by": "month",
+          "count_only": true
         }
       }
     }
@@ -1290,16 +1289,16 @@
   {
     "id": "hottest-day-per-year",
     "ask": "hottest day each year",
-    "note": "a figure per year is a bar chart",
+    "note": "the highest daily maximum per year is counted in code and drawn as bars",
     "expect": {
-      "lookup": "",
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
           "stat": "max",
-          "group_by": "year"
+          "of": "temp_max",
+          "group_by": "year",
+          "count_only": true
         }
       }
     }
@@ -1361,6 +1360,63 @@
   {
     "id": "days-two-readings-go-to-the-model",
     "ask": "days over 35 and also rained",
+    "expect": {
+      "lookup": "",
+      "fast": null
+    }
+  },
+  {
+    "id": "rain-by-month-two-years",
+    "ask": "rain by month for 2 years",
+    "note": "the model answered with monthly text under a chart of daily bars: now monthly bars, one per line",
+    "expect": {
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
+          "stat": "sum",
+          "of": "rain",
+          "group_by": "month",
+          "start_date": {
+            "regex": "^2024-(09|10)-"
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "avg-temp-per-year",
+    "ask": "average temperature per year",
+    "expect": {
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
+          "stat": "avg",
+          "of": "temp_avg",
+          "group_by": "year"
+        }
+      }
+    }
+  },
+  {
+    "id": "highest-pm25-by-month",
+    "ask": "highest PM2.5 by month",
+    "expect": {
+      "lookup": "days",
+      "fast": {
+        "tool": "air_days",
+        "args": {
+          "stat": "max",
+          "of": "pm2_5_max",
+          "group_by": "month"
+        }
+      }
+    }
+  },
+  {
+    "id": "two-readings-by-month-go-to-the-model",
+    "ask": "pm2.5 and co2 by month",
     "expect": {
       "lookup": "",
       "fast": null

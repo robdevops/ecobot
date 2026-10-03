@@ -483,7 +483,7 @@ def reading_now(text: str) -> list[str] | None:
 # Counting, ranking or totalling over periods ("count days over PM2.5 of 90 per year", "how many times", "rain per month"): the model
 # picks the days tool, never a plain chart of the period
 COUNTING = re.compile(r"\b(count\w*|how many|how often|number of|days? (over|above|below|under|with|when|that|where)|"
-                      r"(per|each|every) (year|month)|monthly|yearly|annual\w*|worst|rank\w*|top \d+)\b", I)
+                      r"(per|by|each|every) (year|month)|monthly|yearly|annual\w*|worst|rank\w*|top \d+)\b", I)
 
 
 # "days over UVI 10 by year", "count days over PM2.5 of 90 per year", "how many days was UV 9 or more": one reading against one limit,
@@ -552,10 +552,67 @@ def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple
     return tool, args, f"days count, {period[0]}"
 
 
+# "rain by month for 2 years", "average temperature per year", "highest PM2.5 by month": one reading, a figure for each month or year, worked
+# out in code (weather_days or air_days with stat, of and group_by): one bar for each month or year, the same figure a text line would give
+HIGHER = re.compile(r"\b(hottest|highest|max\w*|peak\w*|wettest|windiest|warmest|worst|strongest|biggest)\b", I)
+LOWER = re.compile(r"\b(coldest|lowest|min\w*|driest|coolest|calmest|smallest)\b", I)
+
+
+def period_figures_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+    """(tool, arguments, label) when the text asks for one reading's figure by or per month or year, else None (the model decides)."""
+    group = GROUPING.search(text)
+    if (not group or any(p.search(text) for p in (FORECAST, LINK, THINK, DESCRIBE, HOLIDAYISH, ABOVE, BELOW, OR_MORE, OR_LESS, AT_LEAST))
+            or re.search(r"\b(and|also|both|but|days|times)\b", text, I)):
+        return None
+    rest = GROUPING.sub(" ", text)
+    if re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", NUMBERED_PERIOD.sub(" ", re.sub(r"\b(?:19|20)\d\d\b", " ", rest))):
+        return None   # a limit or another number: not a plain figure per period
+    high, low = bool(HIGHER.search(text)), bool(LOWER.search(text))
+    if high and low:
+        return None
+    if mentions_air(text):
+        metrics = air_named(text)
+        if not air or len(metrics) != 1 or ALL.search(text):
+            return None
+        tool, stat, field = "air_days", ("max" if high else "min" if low else "avg"), f"{metrics[0]}_{'max' if high else 'min' if low else 'avg'}"
+    else:
+        names = list(_named(text))
+        if not ecowitt or len(names) != 1:
+            return None
+        name, tool = names[0], "weather_days"
+        if name == "rain":
+            stat, field = ("max", "rain") if high else ("min", "rain") if low else ("sum", "rain")
+        elif name == "uv":
+            stat, field = ("max", "uv_max")
+        elif name == "wind":
+            if low:
+                return None
+            stat, field = ("max", "wind_gust") if high else ("avg", "wind_speed_avg")
+        elif name in DAY_COUNT:
+            stem = DAY_COUNT[name]
+            stat = "max" if high else "min" if low else "avg"
+            field = f"{stem}_{'max' if high else 'min' if low else 'avg'}"
+            if stem in ("solar",) and low:
+                return None
+        else:
+            return None
+    spans = spans_in(rest, now)
+    years = set(re.findall(r"\b((?:19|20)\d\d)\b", rest))
+    if len(spans) + len(years) > 1:
+        return None
+    if years:
+        year = int(years.pop())
+        spans = [(str(year), datetime(year, 1, 1), min(datetime(year, 12, 31, 23, 59, 59), now))]
+    name_, start, end = spans[0] if spans else ("on record", *span("on record", now))
+    by = "month" if (group.group(1) or "").lower() == "month" or group.group(3) else "year"
+    return tool, {"stat": stat, "of": field, "count_only": True, "group_by": by,
+                  "start_date": start.strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}, f"figures by {by}, {name_}"
+
+
 def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False,
               forecast: bool = False) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
-    if (counted := count_days_call(text, now, ecowitt, air)):
+    if (counted := count_days_call(text, now, ecowitt, air)) or (counted := period_figures_call(text, now, ecowitt, air)):
         return counted
     if SPECIFIC_MOMENT.search(text) or COUNTING.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
