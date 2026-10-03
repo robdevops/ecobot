@@ -1023,7 +1023,7 @@ async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
 
 
 async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_readings_hue(tmp_path):
-    from lib.charts import GRADIENTS, READING_COLOURS, Ink, _colour
+    from lib.charts import READING_COLOURS, _colour
     transport, _ = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
@@ -1033,8 +1033,7 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
         await eco.tools[1].handler({"groups": "outdoor,wind,pressure", "chart": True, "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         panel = turn.charts[0].panels[0]
-        colour = _colour(panel.lines[0], 0, panel.reading)
-        assert panel.reading == reading and (isinstance(colour, Ink) if reading in GRADIENTS else colour == READING_COLOURS[reading])   # drawn by value, or in the reading's hue
+        assert panel.reading == reading and _colour(panel.lines[0], 0, panel.reading) == READING_COLOURS[reading]
     await eco.close()
 
 

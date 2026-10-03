@@ -23,9 +23,7 @@ import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib import font_manager  # noqa: E402
-from matplotlib import patheffects as pe  # noqa: E402
-from matplotlib.collections import LineCollection  # noqa: E402
-from matplotlib.colors import to_hex, to_rgb  # noqa: E402
+from matplotlib.colors import to_rgb  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon  # noqa: E402
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: E402
@@ -50,52 +48,6 @@ READING_COLOURS = {
 }
 # Indoors (temperature is drawn by value, on its own scale): red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
 INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
-# Some readings are drawn in the colour of their own value, on one absolute scale (so a colour means the same on every chart):
-# (value, colour) stops, blended smoothly between, held at the ends. Every stop is deep enough for the white text of a value pill.
-GRADIENTS = {
-    "temperature": [(-5, "#312E81"), (5, "#4338CA"), (12, "#7E22CE"), (18, "#C026D3"), (24, "#F43F5E"), (30, "#F97316"), (38, "#F59E0B")],
-    "humidity": [(15, "#D97706"), (40, "#0D9488"), (65, "#2563EB"), (100, "#6D28D9")],
-    "dew_point": [(-5, "#6366F1"), (4, "#0EA5E9"), (11, "#14B8A6"), (16, "#0891B2"), (20, "#7C3AED"), (24, "#DB2777"), (28, "#BE185D")],
-}
-# The indoor sensor's lines are drawn by value too, on a scale of their own that shares no hue with the outdoor one
-# (deep cyan through teal and emerald to lime, where outdoor runs indigo, purple, magenta, rose, orange and amber).
-INDOOR_GRADIENTS = {
-    "temperature": [(12, "#155E75"), (18, "#0D9488"), (23, "#10B981"), (28, "#65A30D")],
-}
-
-
-def ramp(reading: str, indoor: bool = False):
-    """The function value -> hex colour for a reading drawn by value (the indoor scale for the indoor sensor), else None."""
-    stops = (INDOOR_GRADIENTS if indoor else GRADIENTS).get(reading)
-    if not stops:
-        return None
-    values = [v for v, _ in stops]
-    rgb = np.array([to_rgb(c) for _, c in stops])
-
-    def colour_at(value: float) -> str:
-        v = float(np.clip(value, values[0], values[-1]))
-        return to_hex(tuple(np.interp(v, values, rgb[:, k]) for k in range(3)))
-    return colour_at
-
-
-class Ink(str):
-    """A line's colour: a plain hex string (the colour at the line's upper range, so everything that takes a colour just works) that
-    can also say the colour at any value (`at`) for a line drawn by value."""
-
-    def __new__(cls, base: str, by_value=None):
-        ink = super().__new__(cls, base)
-        ink.by_value = by_value
-        return ink
-
-    def at(self, value: float) -> str:
-        return self.by_value(value) if self.by_value else str(self)
-
-
-def _at(colour: str, value: float) -> str:
-    """The colour for this value: its own on a line drawn by value, else the line's colour."""
-    return colour.at(value) if isinstance(colour, Ink) else colour
-
-
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
@@ -166,15 +118,10 @@ TITLE_WEIGHT = "semibold" if any(f.name == FONT and f.weight in (600, "semibold"
 
 
 def _colour(line: Line, i: int, reading: str = "") -> str:
-    """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback.
-    An outdoor line of a reading drawn by value is an Ink that knows the colour at each value."""
+    """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback."""
     reading = line.reading or reading
     if base := READING_COLOURS.get(reading):
-        if by_value := ramp(reading, line.indoor):
-            return Ink(by_value(float(np.percentile(line.y, 80))), by_value)   # the colour key: its upper range, the vivid end
-        if line.indoor:
-            return INDOOR_COLOURS.get(reading) or _mix(base, 0.4)
-        return base
+        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if line.indoor else base
     return FALLBACK[i % len(FALLBACK)]
 
 
@@ -247,25 +194,8 @@ def _extent(lines: list[Line], extra: list[float] = ()) -> tuple[float, float]:
     return (min([min(s.low or s.y) for s in lines] + list(extra)), max([max(s.high or s.y) for s in lines] + list(extra)))
 
 
-def _gradient_under(ax, xs, ys, colour: str, ybottom: float, alpha: float = 0.22):
-    """A soft fade from the line down to the floor; for a line drawn by value, a wash of its colours by height."""
-    poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
-    ax.add_patch(poly)
-    rgba = np.zeros((256, 1, 4))
-    top = ys.max()
-    if isinstance(colour, Ink) and colour.by_value:
-        levels = np.linspace(top, ybottom, 256)   # the top row is the highest value
-        rgba[..., :3] = np.array([to_rgb(colour.at(v)) for v in levels])[:, None, :]
-        alpha = max(alpha, 0.34)
-    else:
-        rgba[..., :3] = to_rgb(colour)
-    rgba[..., 3] = np.linspace(alpha, 0.0, 256)[:, None]
-    img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, top], origin="upper", zorder=2)
-    img.set_clip_path(poly)
-
-
 def _draw_lines(ax, lines: list[Line], tz: tzinfo, look: Look, first: int = 0, reading: str = "") -> list[tuple]:
-    """Each line's low-to-high range behind it, then the line with a soft glow and a dot on its end: [(colour, xs, ys)].
+    """Each line's low-to-high range behind it, then the line (crisp, no glow or fill) and a dot on its end: [(colour, xs, ys)].
     `first` is the colour index of the first line (the fallback colours cycle across a stack's panels)."""
     drawn = []
     dense = max(len(s.x) for s in lines) > 200
@@ -275,16 +205,8 @@ def _draw_lines(ax, lines: list[Line], tz: tzinfo, look: Look, first: int = 0, r
         if s.low:
             ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=3)
         w = 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2   # thinner where there are many lines, a band or many points
-        if isinstance(colour, Ink) and colour.by_value:   # drawn in the colour of its value: short segments, a soft glow beneath
-            points = np.column_stack([xs, ys])
-            segments = np.stack([points[:-1], points[1:]], axis=1)
-            shades = [colour.at(v) for v in (ys[:-1] + ys[1:]) / 2]
-            ax.add_collection(LineCollection(segments, colors=shades, linewidth=w + 3, alpha=0.14, capstyle="round", zorder=3.9), autolim=False)
-            ax.add_collection(LineCollection(segments, colors=shades, linewidth=w, capstyle="round", joinstyle="round", zorder=4), autolim=False)
-        else:
-            (line,) = ax.plot(xs, ys, color=colour, linewidth=w, solid_capstyle="round", solid_joinstyle="round", zorder=4)
-            line.set_path_effects([pe.Stroke(linewidth=w + 2.5, foreground=colour, alpha=0.10), pe.Normal()])
-        _dot(ax, xs[-1], ys[-1], _at(colour, ys[-1]), look.end_dot, look.end_rim, 5)
+        ax.plot(xs, ys, color=colour, linewidth=w, solid_capstyle="round", solid_joinstyle="round", zorder=4)   # a crisp line: no glow
+        _dot(ax, xs[-1], ys[-1], colour, look.end_dot, look.end_rim, 5)
         drawn.append((colour, xs, ys))
     return drawn
 
@@ -410,9 +332,9 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1:
             if abs(ry - line_y) > (0.005 * (y_hi - y_lo) if s.smoothed else 1e-6) and not s.low:
                 ax.vlines(rx, min(ry, line_y), max(ry, line_y), colors=colour, linestyles=(0, (1, 2)),  # well off the line: a dotted stem back to it
                           linewidth=1.2, alpha=0.8, zorder=3)
-            _dot(ax, rx, ry, _at(colour, ry), look.pill_dot, look.pill_rim, look.pill_z)
+            _dot(ax, rx, ry, colour, look.pill_dot, look.pill_rim, look.pill_z)
             text = f"{ry:.1f}{deg}" if look.units else f"{round(ry, 1):g}"
-            pills.append([rx, ry, text, _at(colour, ry), above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
+            pills.append([rx, ry, text, colour, above or (ry - y_lo) < 0.16 * (y_hi - y_lo), edge(rx)])  # a low near the floor: pill above
     for a in range(len(pills)):
         for b in range(a + 1, len(pills)):
             p, q = pills[a], pills[b]
@@ -475,7 +397,7 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
     for line, (colour, xs, _) in zip(lines, drawn):
         if "high" in line.records:
             mx, my = _extreme(line, "high", xs)
-            peaks.append((mx, my, _at(colour, my)))
+            peaks.append((mx, my, colour))
     peaks.sort(key=lambda p: -p[1])                                       # the highest peak gets the top pill
     size, pitch = look.pill_font, look.pitch                              # the pills' font and row spacing, in points
     groups = []                                                           # peaks at about the same time share a column, stacked
@@ -536,7 +458,7 @@ def _end_labels(ax, drawn: list[tuple], show_floor: bool = False):
     for colour, xs, ys in sorted(drawn, key=lambda d: d[2][-1]):
         y = max(ys[-1], placed[-1] + gap) if placed else ys[-1]
         placed.append(y)
-        shade = _at(colour, ys[-1])
+        shade = colour
         ax.annotate(_figure(ys[-1]), (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
                     fontsize=7, fontweight="bold", color=shade, annotation_clip=False,
                     arrowprops={"arrowstyle": "-", "color": shade, "linewidth": 0.6, "alpha": 0.6, "shrinkA": 0, "shrinkB": 2},
@@ -580,9 +502,6 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
     drawn = _draw_lines(ax, lines, tz, look, first, p.reading)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, ybottom, ytop, 0.07)
-    for s, (colour, xs, ys) in zip(lines, drawn):
-        if not s.low and len(lines) <= 2:  # a soft fade from the line to the floor (muddy with more lines, and a band says enough)
-            _gradient_under(ax, xs, ys, colour, ybottom)
     ax.set_ylim(ybottom, ytop)
     if marked and p.peaks == "aside":
         _mark_highs(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look)
