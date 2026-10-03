@@ -228,7 +228,7 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
         mon.station.data = then
         await mon.check()
     await weather(rain(0, 0, 0), rain(0, 0, 1))
-    await weather(rain(0, 0, 1, 1), rain(0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0))
+    await weather(rain(0, 0, 1, 1), rain(0, 0, 1, 1, *[0] * 13))
     await weather(gusts(10, 12), gusts(10, 12, 60))
     await weather(uv(3, 5), uv(3, 5, 10))
     assert kinds == ["rain", "rain", "gusts", "uv"]

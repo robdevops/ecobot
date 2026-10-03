@@ -192,7 +192,7 @@
     "id": "will-it-rain",
     "ask": "will it rain later?",
     "expect": {
-      "effort": "medium",
+      "effort": "low",
       "tools": [
         "weather_now"
       ]
@@ -1036,13 +1036,12 @@
   {
     "id": "hay-fever-today",
     "ask": "is the pollen bad today?",
-    "note": "the model calls the pollen tool",
+    "note": "a plain pollen question is answered in code",
     "expect": {
-      "fast": null,
-      "needs_data": true,
-      "tools": [
-        "pollen_asthma"
-      ]
+      "fast": {
+        "tool": "pollen_asthma"
+      },
+      "lookup": "pollen"
     },
     "covers": [
       "q:pollen"
@@ -1199,6 +1198,44 @@
   {
     "id": "lookup-hottest-vs",
     "ask": "is today hotter than yesterday",
+    "expect": {
+      "lookup": ""
+    }
+  },
+  {
+    "id": "average-temp-yesterday",
+    "ask": "average temp yesterday",
+    "note": "a plain average is answered in code",
+    "expect": {
+      "lookup": "extremes",
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "average": true,
+          "chart": false
+        }
+      }
+    }
+  },
+  {
+    "id": "highest-humidity-yesterday",
+    "ask": "highest humidity yesterday",
+    "expect": {
+      "lookup": "extremes"
+    }
+  },
+  {
+    "id": "pollen-tomorrow",
+    "ask": "will the pollen be bad tomorrow",
+    "note": "looking ahead stays with the model",
+    "expect": {
+      "lookup": ""
+    }
+  },
+  {
+    "id": "average-rain",
+    "ask": "average rain last week",
+    "note": "a rain total has no average: the model explains",
     "expect": {
       "lookup": ""
     }

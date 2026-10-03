@@ -108,7 +108,7 @@ async def main():
                 # Alerts
                 kinds = []
                 if eco:
-                    monitor = WeatherMonitor(eco, state, notify)
+                    monitor = WeatherMonitor(eco, state, notify, cfg.rain_stop_minutes * 60, cfg.rain_quiet_hours)
                     kinds += ["rain", "rain likely", "temperature crossing"]
                 if air:
                     air_monitor = AirMonitor(air, state, notify)

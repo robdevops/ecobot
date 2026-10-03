@@ -146,10 +146,16 @@ def lookup(kind: str, result: str | None, names: list[str], sides: list[str]) ->
         lines = reading_lines(data, names, sides)
     elif kind == "air":
         lines = air_lines(data, [k for k in names] or None)
-    elif kind == "extremes":   # the highs and lows of a short period: each with its day and time
+    elif kind == "extremes":   # the highs and lows (or averages) of a short period, each with its day and time
         series = data.get("series") or {}
-        keys = [k for k in series if k.endswith(".temperature")]
-        lines = [f"• {_range('Temperature' + (f' ({k.split(chr(46))[0]})' if len(keys) > 1 else ''), series[k], False)}" for k in keys]
+        wanted = [f for n in names if find(n) for f in (find(n).field, find(n).band_field) if f] or ["temperature"]   # wind: speed and gust
+        keys = [k for k in series if k.split(".", 1)[1] in wanted and "low" in series[k]]
+        lines = []
+        for k in keys:
+            group, field = k.split(".", 1)
+            label = ("Wind gust" if field == "wind_gust" else find(field).label if find(field) else field.replace("_", " ").capitalize()) + (
+                f" ({group})" if sum(x.split(".", 1)[1] == field for x in keys) > 1 else "")
+            lines.append(f"• {_range(label, series[k], 'average' in series[k])}")
         return "\n".join([_period(data), *lines]) if lines else None
     elif kind in ("pollen", "forecast"):
         lines = [f"• {line}" for line in data.get("lines", [])]

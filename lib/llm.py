@@ -12,7 +12,7 @@ from .tools import Tools, Turn
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 10
-MAX_HISTORY = 40  # messages kept per chat
+MAX_HISTORY = 16  # messages kept per chat (a follow-up needs the last few, every call resends them)
 
 LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data already fetched, "
                 "and briefly say if anything is missing.)")
@@ -67,7 +67,7 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None, on_text=None) -> str:
+                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
@@ -85,6 +85,7 @@ class Agent:
             return ("[You already made this exact call - same result as before. Don't repeat it; "
                     "change the request or answer now.]\n" + await cache[(name, args)])
 
+        schemas = self.tools.schemas_for(tool_names)   # only the tools the question can use: each definition is sent on every call
         llm_time = tool_time = 0.0
         first_step = 0
         try:
@@ -103,8 +104,8 @@ class Agent:
                 kwargs = {"model": self.model,
                           "messages": [{"role": "system", "content": system_prompt}, *messages],
                           "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
-                if self.tools.schemas:
-                    kwargs["tools"] = self.tools.schemas
+                if schemas:
+                    kwargs["tools"] = schemas
                     kwargs["tool_choice"] = ("none" if final or no_tools else
                                              "required" if step == 0 and require_tool else "auto")
                 if final:

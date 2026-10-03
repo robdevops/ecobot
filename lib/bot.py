@@ -471,7 +471,7 @@ class Bot:
         result = await self.agent.tools.call(name, json.dumps(args), turn)
         return report.lookup(read.lookup, result, read.lookup_arg, read.sides)
 
-    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft) -> str:
+    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, tool_names=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
         first = ([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None
@@ -480,7 +480,8 @@ class Bot:
             try:
                 return await asyncio.wait_for(
                     self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
-                                   no_tools=read.about_the_bot, turn=turn, **({"on_text": draft.update} if draft else {})), budget)
+                                   no_tools=read.about_the_bot, turn=turn, tool_names=tool_names,
+                                   **({"on_text": draft.update} if draft else {})), budget)
             except asyncio.TimeoutError:
                 lower = intent.lower_effort(effort)
                 if not lower or retried:
@@ -519,7 +520,7 @@ class Bot:
             new_from = len(working)
             ok, photos = True, []
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
-                        average_asked=read.average_asked)
+                        average_asked=read.average_asked, readings=read.readings, per_day=read.per_day)
             try:
                 reply = None
                 if read.fast and read.chart_in_code:   # drawn by the tool, captioned in code
@@ -533,9 +534,12 @@ class Bot:
                 if reply is not None:
                     working.append({"role": "assistant", "content": reply})
                 else:
+                    before = [str(m["content"]) for m in chat.history if m["role"] == "user"][-2:]
+                    found = intent.topics(str(working[new_from - 1]["content"]), before)
                     system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
-                                          read.about_the_bot, read.rain_caption)
-                    reply = await self._ask_model(working, system, read, turn, draft)
+                                          read.about_the_bot, read.rain_caption, found)
+                    tool_names = intent.tools_for(found)
+                    reply = await self._ask_model(working, system, read, turn, draft, tool_names)
                 chat.history = trim_history(strip_tool_turns(working))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:

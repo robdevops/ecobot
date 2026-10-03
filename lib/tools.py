@@ -20,6 +20,8 @@ class Turn:
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
     average_asked: bool = False                  # an average was asked for: the caption leads with it
+    readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others
+    per_day: bool = False                        # day by day figures were asked for: a long period keeps every day, not only its extremes
     forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
 
 
@@ -39,6 +41,10 @@ class Tools:
     def __init__(self, tools: list[Tool]):
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
+
+    def schemas_for(self, names=None) -> list[dict]:
+        """The tool definitions to send: those named (that exist), or all when no names are given."""
+        return self.schemas if names is None else [self.by_name[n].schema() for n in names if n in self.by_name]
 
     async def call(self, name: str, raw_args: str, turn: Turn | None = None) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""

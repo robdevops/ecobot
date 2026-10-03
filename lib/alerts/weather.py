@@ -1,8 +1,10 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
-  - Rain: "stopped" after 30 dry minutes, with how much fell; any rain after that is a new
+  - Rain: "stopped" after 60 dry minutes (RAIN_STOP_MINUTES), with how much fell; any rain after that is a new
     "started" (one tip of the gauge is enough). One rule both ways, so the alerts never contradict each other (no flapping).
+    Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am): those are kept quiet and one summary of the overnight
+    rain is sent after they end.
   - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
     Melbourne (see assess_rain). At most once every 6 hours.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
@@ -21,7 +23,7 @@ from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
 
-RAIN_STOP_DRY_SECONDS = 30 * 60
+RAIN_STOP_DRY_SECONDS = 60 * 60   # the default; RAIN_STOP_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 PREDICT_EVERY_SECONDS = 6 * 3600
 CROSS_MIN_SECONDS = 2 * 86400
 CROSS_MARGIN = 0.3
@@ -39,8 +41,17 @@ def side(r: dict) -> str | None:
 
 
 class WeatherMonitor:
-    def __init__(self, station, state, notify):
+    def __init__(self, station, state, notify, rain_stop_seconds: int = RAIN_STOP_DRY_SECONDS, quiet: tuple[int, int] | None = None):
         self.station, self.state, self.notify = station, state, notify
+        self.rain_stop_seconds = rain_stop_seconds
+        self.quiet = quiet   # (from hour, to hour) local, no rain alerts in between; None: always on
+
+    def _quiet(self, ts: int) -> bool:
+        if not self.quiet:
+            return False
+        start, end = self.quiet
+        hour = to_local(ts, self.tz).hour
+        return start <= hour < end if start < end else hour >= start or hour < end
 
     @property
     def tz(self):
@@ -72,6 +83,7 @@ class WeatherMonitor:
             return
         live = await self.station.live_rain()  # newer than the 5-minute history by up to 5 minutes
         await self._rain(rows + [live] if live and live[0] > rows[-1][0] else rows)
+        await self._night_summary(rows)
         await self._rain_likely(rows)
         await self._gusts(rows)
         await self._uv(rows)
@@ -82,6 +94,9 @@ class WeatherMonitor:
         m = self.state.monitor.setdefault("rain", {"raining": False, "since": None})
         wet = wet_flags(rows)
         latest_ts = wet[-1][0]
+        quiet = self._quiet(latest_ts)
+        if quiet:
+            self._note_night(rows, wet)
         wet_times = [ts for ts, w, _ in wet if w]
         last_wet = wet_times[-1] if wet_times else None
         if not m["raining"] and any(w for _, w, _ in wet[-2:]):
@@ -89,10 +104,13 @@ class WeatherMonitor:
             m.update(raining=True, since=next(ts for ts, w, _ in wet[-2:] if w))
             if not any(w for ts, w, _ in wet[:-1][-2:]):
                 log.info("Alerts: rain started, seen in the newest reading only (the live one when it is newer than the history)")
-            await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), kind="rain")
-        elif m["raining"] and (last_wet is None or latest_ts - last_wet >= RAIN_STOP_DRY_SECONDS):
+            if not quiet:
+                await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), kind="rain")
+        elif m["raining"] and (last_wet is None or latest_ts - last_wet >= self.rain_stop_seconds):
             if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
                 log.info("Alerts: rain ended while not watching; no alert")
+            elif quiet:
+                log.info("Alerts: rain stopped in quiet hours; the morning summary covers it")
             else:
                 since = m.get("since") or wet_times[0]
                 fell = rain_amount(rows, since, last_wet)
@@ -101,10 +119,41 @@ class WeatherMonitor:
                 await self.notify(f"\U0001f324️ The rain has stopped. {amount} over {took}.", kind="rain")
             m.update(raining=False, since=None)
 
+    def _note_night(self, rows: Rows, wet: list):
+        """In quiet hours: when it first and last rained since midnight, and the day's total so far (the gauge's running total)."""
+        latest = rows[-1][0]
+        today = to_local(latest, self.tz).date()
+        night = self.state.monitor.get("night")
+        if not night or night["date"] != today.isoformat():
+            night = self.state.monitor["night"] = {"date": today.isoformat(), "first": None, "last": None, "mm": 0.0}
+        for ts, w, _ in wet:
+            if w and to_local(ts, self.tz).date() == today and self._quiet(ts):
+                night["first"] = night["first"] or ts
+                night["last"] = ts
+        daily = rows[-1][1].get("rainfall.daily")
+        if daily is not None:
+            night["mm"] = max(night["mm"], daily)
+
+    async def _night_summary(self, rows: Rows):
+        """After quiet hours end: one message about the rain that fell in them (only if any did)."""
+        night = self.state.monitor.get("night")
+        latest = rows[-1][0]
+        if not night or self._quiet(latest):
+            return
+        self.state.monitor.pop("night")
+        if night["date"] != to_local(latest, self.tz).date().isoformat() or not night["first"]:
+            return   # an old note (the bot was down) or a dry night
+        clock = lambda ts: f"{to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
+        amount = f"{night['mm']:.1f} mm" if night["mm"] >= 0.1 else "a trace"
+        still = " It's still raining." if self.state.monitor.get("rain", {}).get("raining") else ""
+        await self.notify(f"\U0001f327️ Overnight rain: {amount}, from about {clock(night['first'])} to {clock(night['last'] + 300)}.{still}", kind="rain")
+
     async def _rain_likely(self, rows: Rows):
         """Not while raining or within an hour of rain; at most every 6 hours."""
         m = self.state.monitor.setdefault("predict", {"last": 0})
         latest_ts = rows[-1][0]
+        if self._quiet(latest_ts):
+            return
         if self.state.monitor.get("rain", {}).get("raining") or any(
                 w for ts, w, _ in wet_flags(rows) if latest_ts - ts < 3600):
             return

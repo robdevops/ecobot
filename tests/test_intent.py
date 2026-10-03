@@ -9,8 +9,8 @@ def call(text, ecowitt=True, air=True):
     return intent.fast_call(text, NOW, ecowitt, air)
 
 
-def test_only_predictions_and_descriptions_reason():
-    assert intent.reasoning_effort("will it rain later?") == "medium"
+def test_only_looking_ahead_and_descriptions_reason_a_little():
+    assert intent.reasoning_effort("will it rain later?") == "low"
     assert intent.reasoning_effort("what was yesterday like?") == "low"
     assert intent.reasoning_effort("what was this week's high and low") == "none"
     assert intent.reasoning_effort("how much rain fell today") == "none"
@@ -52,7 +52,7 @@ def test_last_24_hours_is_rolling():
 def test_anything_else_takes_the_normal_path():
     assert call("will it rain tomorrow?") is None
     assert call("compare this week and last week highs") is None
-    assert call("highest wind this week") is None
+    assert call("highest wind this week")[1]["groups"] == "wind"   # a plain highs question is answered in code
     assert call("hello") is None
 
 
@@ -150,7 +150,7 @@ def test_a_plain_wind_chart_takes_the_fast_path_with_the_period_read():
     assert name == "weather_history" and args["groups"] == "wind" and args["chart"] is True
     assert args["start_date"] == "2026-07-01 00:00:00" and args["end_date"] == "2026-09-29 23:59:59"
     assert call("graph the wind this week")[1]["groups"] == "wind"
-    for text in ("highest wind this week", "plot wind vs temperature 3m", "will the wind chart change", "why was the wind strong 3m"):
+    for text in ("plot wind vs temperature 3m", "will the wind chart change", "why was the wind strong 3m"):
         assert call(text) is None, text
 
 
@@ -200,7 +200,7 @@ def test_analysis_across_days_or_readings_gets_low_thinking():
     for text in ("what was this week's high and low", "how much rain fell yesterday", "weather 1m",
                  "what's the hottest day this year", "thanks!"):
         assert intent.reasoning_effort(text) == "none", text
-    assert intent.reasoning_effort("will it rain later?") == "medium"
+    assert intent.reasoning_effort("will it rain later?") == "low"
     assert intent.reasoning_effort("what was yesterday like?") == "low"
 
 
@@ -388,8 +388,33 @@ import pytest as _pytest
     ("how's the air", "air", []), ("pm10", "air", ["pm10"]), ("forecast", "forecast", []), ("7 day forecast", "forecast", []),
     ("pollen", "pollen", []), ("what can you do", "about", []),
     ("is it too cold to run", "", []), ("is the air ok for a run", "", []), ("will it rain", "", []), ("forecast tomorrow", "", []),
-    ("temperature today", "extremes", []), ("is it hotter than yesterday", "", []), ("why is it so humid", "", []),
+    ("temperature today", "extremes", ["temperature"]), ("is it hotter than yesterday", "", []), ("why is it so humid", "", []),
 ])
 def test_plain_lookups_are_answered_in_code_and_everything_else_is_left_to_the_model(text, kind, named):
     read = intent.read(text, datetime(2026, 10, 2, 12), True, True, True, True)
     assert (read.lookup, read.lookup_arg) == (kind, named)
+
+
+@_pytest.mark.parametrize("text, before, has, lacks", [
+    ("hottest day that also rained", [], {"days"}, {"air", "link"}),
+    ("did it rain on Sat 5 Sep", [], {"days"}, {"air"}),
+    ("is there a correlation between pressure and rainfall", [], {"link"}, {"air"}),
+    ("is the air ok for a run", [], {"air"}, {"days", "link", "compose"}),
+    ("plot air quality against rainfall", [], {"air", "compose"}, set()),
+    ("will it rain later", [], {"outlook", "forecast"}, {"air"}),
+    ("most common wind direction", [], {"wind"}, {"air"}),
+    ("describe what it was like on Monday", [], {"describe"}, set()),
+    ("add an alert when winds reach 100", [], {"bot"}, set()),
+    ("how cold is it", [], set(), {"bot", "days", "air", "link"}),
+    ("and indoors?", ["what was the hottest day this month"], {"days"}, set()),   # a follow-up keeps the topics of what came before
+    ("thanks, that's great", [], set(), {"air", "days", "link", "outlook", "wind", "bot"}),
+])
+def test_topics_pick_the_guidance_and_tools_a_question_needs(text, before, has, lacks):
+    found = intent.topics(text, before)
+    assert has <= found and not (lacks & found)
+
+
+def test_tools_follow_the_topics_and_the_basics_are_always_there():
+    assert intent.tools_for(set()) == ["weather_now", "weather_history", "air_quality"]
+    assert {"weather_days", "weather_link", "plot_chart", "air_link", "air_scan", "weather_forecast", "pollen_asthma"} <= set(
+        intent.tools_for({"days", "link", "compose", "forecast", "pollen"}))
