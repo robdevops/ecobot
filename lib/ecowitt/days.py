@@ -15,6 +15,8 @@ import logging
 import operator
 from datetime import date, datetime, timedelta, tzinfo
 
+from ..captions import COUNT_CHART_HINT
+from ..specs import Bars, Chart, Panel
 from ..timeutil import day_bounds, local_date, now_local
 from .calendar import PublicHolidays
 from .extremes import collect
@@ -100,7 +102,35 @@ def per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, f
     return out
 
 
-def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -> dict:
+PRETTY = {"temp": "temperature", "uv": "UV index", "dew_point": "dew point", "feels_like": "feels-like", "vpd": "VPD",
+          "wind_gust": "wind gust", "wind_speed": "wind speed", "rain_rate": "rain rate", "indoor_temp": "indoor temperature",
+          "indoor_humidity": "indoor humidity", "solar": "solar radiation"}
+SYMBOL = {">": ">", ">=": "\u2265", "<": "<", "<=": "\u2264", "=": "="}
+
+
+def describe_conditions(where: list[dict]) -> str:
+    """"UV index \u2265 10", "rain \u2265 1 mm and temperature > 30 \u00b0C": the conditions as the chart's title says them."""
+    parts = []
+    for c in where:
+        name = c["field"]
+        base = name.removesuffix("_max").removesuffix("_min")
+        word = PRETTY.get(base, base.replace("_", " "))
+        low = name.endswith("_min")
+        unit = FIELDS[name][3]
+        parts.append(f"{'lowest ' if low else ''}{word} {SYMBOL[c['op']]} {c['value']:g}" + (f" {unit}" if unit and unit != "" else ""))
+    return " and ".join(parts)
+
+
+def counts_chart(counts: dict[str, int], by: str, title: str, subtitle: str, tz: tzinfo) -> Chart:
+    """The days counted per month or year as bars (a bar's number above it)."""
+    starts = [datetime.strptime(k, "%Y-%m" if by == "month" else "%Y").date() for k in counts]
+    xs = [day_bounds(d, tz)[0] for d in starts]
+    width = 28 * 86400 if by == "month" else 365 * 86400
+    bars = Bars("Days", "days", xs, [float(v) for v in counts.values()], width, by, values=True)
+    return Chart(title, subtitle, [Panel("Days", "", bars=bars)])
+
+
+def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
     today = now.date()
     try:
         first = date.fromisoformat(str(args["start_date"])[:10])
@@ -190,6 +220,11 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
         for d in matches:
             counts[key(d)] += 1
         out[f"by_{args['group_by']}"] = counts
+        if turn is not None and counts:   # counts per month or year are a bar chart, not a list
+            title = f"Days with {describe_conditions(where)}" if where else "Days checked"
+            turn.charts.append(counts_chart(counts, args["group_by"], title,
+                                            f"{label(first)} \u2013 {label(last)}  \u00b7  {len(matches):,} of {len(checked):,} days  \u00b7  per {args['group_by']}", tz))
+            out["chart"] = COUNT_CHART_HINT
     if args.get("count_only"):
         rows, trace = [], []   # just the counts
     else:
@@ -213,7 +248,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     return out
 
 
-async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict) -> str:
+async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=None) -> str:
     now = now_local(tz)
-    result = await asyncio.to_thread(find_days, cache, mac, tz, args, now)
+    result = await asyncio.to_thread(find_days, cache, mac, tz, args, now, turn)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))

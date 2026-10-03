@@ -1263,5 +1263,22 @@
         }
       }
     }
+  },
+  {
+    "id": "uv-days-per-year",
+    "ask": "days over UVI 10 per year",
+    "note": "counts per year are a bar chart",
+    "expect": {
+      "lookup": "",
+      "tools": [
+        "weather_days"
+      ],
+      "args": {
+        "weather_days": {
+          "group_by": "year",
+          "count_only": true
+        }
+      }
+    }
   }
 ]

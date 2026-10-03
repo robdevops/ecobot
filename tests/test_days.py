@@ -271,3 +271,23 @@ async def test_count_only_gives_just_the_counts_and_group_by_month_gives_each_mo
     months = counted["by_month"]
     assert sum(months.values()) == counted["matching_days"] and list(months) == sorted(months) and len(months) >= 2
     assert "by_year" in await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="year")
+
+
+async def test_counts_per_month_or_year_are_drawn_as_a_bar_chart_with_a_title_that_says_the_condition(station):
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 70, 1)
+    where = [{"field": "temp_max", "op": ">=", "value": 0}]
+    turn = Turn()
+    out = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="month"), turn))
+    assert len(turn.charts) == 1 and "chart" in out and "caption" in out["chart"]
+    chart = turn.charts[0]
+    bars = chart.panels[0].bars
+    assert chart.title == "Days with temperature ≥ 0 °C" and bars.per == "month" and bars.values
+    assert [int(v) for v in bars.y] == list(out["by_month"].values()) and len(bars.x) == len(out["by_month"])
+    assert f"{out['matching_days']:,} of {out['days_checked']:,} days" in chart.subtitle
+    from lib.charts import render
+    assert render(chart, eco.tz)[:4] == b"\x89PNG"
+    plain = Turn()                                                  # no group_by: a count, no chart
+    await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=where, count_only=True), plain)
+    assert plain.charts == []

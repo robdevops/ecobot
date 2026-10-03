@@ -48,7 +48,8 @@ class Bars:
     x: list[int]                                       # each bar's start, epoch seconds
     y: list[float]
     width: int                                         # seconds
-    per: str = ""                                      # what a bar covers: "hour", "6 hours", "day"
+    per: str = ""                                      # what a bar covers: "hour", "6 hours", "day", "month", "year"
+    values: bool = False                               # write each bar's number above it (a few bars of counts)
 
     def __post_init__(self):
         if len(self.x) != len(self.y):

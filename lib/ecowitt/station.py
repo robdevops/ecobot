@@ -161,7 +161,7 @@ class Ecowitt:
         return await HistoryQuery(self.fetcher(groups), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
-        return await days_tool(self.cache, self.mac, self.tz, args)
+        return await days_tool(self.cache, self.mac, self.tz, args, turn)
 
     async def _link(self, args: dict, turn: Turn | None = None) -> str:
         return await link_tool(self.cache, self.mac, self.tz, args, turn or Turn())
