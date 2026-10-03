@@ -42,13 +42,13 @@ READING_COLOURS = {
     "uv": "#8B5CF6",            # violet
     "pressure": "#C04CE8",      # orchid
     "vpd": "#06B6D4",           # cyan
-    "humidity": "#2747C9",      # deep blue
+    "humidity": "#4F46E5",      # indigo
     "dew_point": "#13B8A6",     # teal
     "wind": "#64748B",          # slate grey
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
-# Indoors: red with peacock teal, blue with amber, teal with apricot, tangerine with azure.
-INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#F5A524", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
+# Indoors: red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
+INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
