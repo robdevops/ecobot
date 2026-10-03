@@ -341,6 +341,9 @@ def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     renderer = fig.canvas.get_renderer()
     names = title.split(", ")
     kept = len(names)
+    if head.get_window_extent(renderer).width > room:
+        names = [n for n in names if n != "Rain"]   # cut: "N more" counts the panels with their own heading, and rain is drawn behind a line
+        kept = len(names)
     while head.get_window_extent(renderer).width > room and kept > 2:   # a long list of readings: the first few "and N more"
         kept -= 1
         head.set_text(", ".join(names[:kept]) + f" and {len(names) - kept} more")

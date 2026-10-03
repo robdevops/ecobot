@@ -175,6 +175,9 @@ def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
         room = charts.AX_RECT[2] * fig.get_figwidth() * fig.dpi
         assert title.get_window_extent(fig.canvas.get_renderer()).width <= room
         assert title.get_text().startswith("Temperature, Humidity") and title.get_text().endswith(" more")
+        shown = title.get_text().split(" and ")[0].split(", ")
+        more = int(title.get_text().rsplit(" and ", 1)[1].split()[0])
+        assert len(shown) + more == 6 and "Rain" not in shown          # six panels have a heading; rain sits behind one of them
         charts._headline(fig, "Temperature", "sub", 8)
         assert fig.texts[2].get_text() == "Temperature"                                  # a short one is untouched
     finally:
