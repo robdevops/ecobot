@@ -146,6 +146,12 @@ def lookup(kind: str, result: str | None, names: list[str], sides: list[str]) ->
         lines = reading_lines(data, names, sides)
     elif kind == "air":
         lines = air_lines(data, [k for k in names] or None)
+    elif kind == "days":   # "137 of 1,454 days with UV index \u2265 10 (period)": the chart (if any) carries the breakdown
+        if "matching_days" not in data:
+            return None
+        what = f" with {data['condition']}" if data.get("condition") else ""
+        note = " Older days use averages, so a count near the limit may fall slightly short." if data.get("note_averaged") else ""
+        return f"{data['matching_days']:,} of {data['days_checked']:,} days{what} ({_period(data)}).{note}"
     elif kind == "extremes":   # the highs and lows (or averages) of a short period, each with its day and time
         series = data.get("series") or {}
         wanted = [f for n in names if find(n) for f in (find(n).field, find(n).band_field) if f] or ["temperature"]   # wind: speed and gust
@@ -194,8 +200,12 @@ def _year(text: str | None) -> str:
 
 
 def _period(data: dict) -> str:
-    """"Tue 29 Sep 2026 - Tue 06 Oct 2026" -> "Tue 29 Sep – Tue 06 Oct 2026"."""
-    return re.sub(r" 20\d\d\b(?= - )", "", data.get("period", "")).replace(" - ", " – ")
+    """"Tue 29 Sep 2026 - Tue 06 Oct 2026" -> "Tue 29 Sep – Tue 06 Oct 2026" (the first year is dropped only when it is the same year)."""
+    text = data.get("period", "")
+    years = re.findall(r" (20\d\d)\b", text)
+    if len(years) == 2 and years[0] == years[1]:
+        text = re.sub(r" 20\d\d\b(?= - )", "", text)
+    return text.replace(" - ", " – ")
 
 
 def _at(entry: dict, which: str) -> str:

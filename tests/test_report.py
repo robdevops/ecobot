@@ -216,3 +216,11 @@ def test_an_average_or_highs_lookup_covers_the_readings_named():
     assert report.lookup("extremes", result, ["temperature"], []).splitlines()[1] == "• Temperature: average 12.4 °C (low 9.0, high 16.2)"
     assert report.lookup("extremes", result, ["humidity"], []).splitlines()[1] == "• Humidity: low 40 %, Thu 1 Oct at 3pm · high 95 %, Thu 1 Oct at 5am"
     assert [line.split(":")[0] for line in report.lookup("extremes", result, ["wind"], []).splitlines()[1:]] == ["• Wind", "• Wind gust"]
+
+
+def test_a_days_count_lookup_gives_the_count_the_condition_and_the_period():
+    result = json.dumps({"period": "Wed 5 Oct 2022 - Sat 3 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"})
+    assert report.lookup("days", result, [], []) == "137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."
+    averaged = json.dumps({"period": "a - b", "days_checked": 10, "matching_days": 2, "note_averaged": "x"})
+    assert "may fall slightly short" in report.lookup("days", averaged, [], [])
+    assert report.lookup("days", json.dumps({"error": "bad"}), [], []) is None

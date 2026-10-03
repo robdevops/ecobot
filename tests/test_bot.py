@@ -439,3 +439,10 @@ async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_an
         pass
     await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "is it too cold to run")
     assert replies == ["\u26a0\ufe0f That's pulling in about 24k tokens of data, so it will take a little longer. Working on it...", "The answer."]
+
+
+async def test_a_days_over_a_limit_question_is_counted_in_code_with_no_model():
+    import json
+    result = json.dumps({"period": "Wed 5 Oct 2022 - Sat 3 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"})
+    replies, asked = await _ask_with(result, "days over UVI 10 by year")
+    assert not asked and replies == ["137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."]

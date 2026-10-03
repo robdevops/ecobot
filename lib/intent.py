@@ -486,9 +486,77 @@ COUNTING = re.compile(r"\b(count\w*|how many|how often|number of|days? (over|abo
                       r"(per|each|every) (year|month)|monthly|yearly|annual\w*|worst|rank\w*|top \d+)\b", I)
 
 
+# "days over UVI 10 by year", "count days over PM2.5 of 90 per year", "how many days was UV 9 or more": one reading against one limit,
+# counted in code with weather_days or air_days (the model is not asked, so the answer is always the same bar chart or count)
+GROUPING = re.compile(r"\b(?:per|by|each|every)\s+(year|month)\b|\b(yearly|annual\w*)\b|\b(monthly)\b", I)
+OR_MORE = re.compile(r"\bor (?:more|higher|above|greater|over)\b", I)
+OR_LESS = re.compile(r"\bor (?:less|lower|below|under)\b", I)
+AT_LEAST = re.compile(r"\b(?:at least|reach\w*|hit|hits)\b", I)
+ABOVE = re.compile(r"\b(?:over|above|more than|greater than|higher than|exceed\w*)\b", I)
+BELOW = re.compile(r"\b(?:under|below|less than|lower than|fewer than|at most)\b", I)
+DAY_COUNT = {"temperature": "temp", "humidity": "humidity", "pressure": "pressure", "dew_point": "dew_point", "feels_like": "feels_like",
+             "vpd": "vpd", "solar": "solar", "uv": "uv"}   # reading -> the stem of its daily field (temp_max, uv_max ...)
+HOLIDAYISH = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", I)
+
+
+def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+    """(tool, arguments, label) when the text asks how many days one reading was over or under one limit (optionally per year or month),
+    else None and the model decides."""
+    if (not re.search(r"\bdays?\b|\btimes\b", text, I) or any(p.search(text) for p in (FORECAST, LINK, THINK, DESCRIBE, HOLIDAYISH))
+            or re.search(r"\b(and|also|both|but)\b", text, I)):
+        return None
+    below, above = bool(BELOW.search(text) or OR_LESS.search(text)), bool(ABOVE.search(text) or OR_MORE.search(text) or AT_LEAST.search(text))
+    if below == above:   # neither, or both: not a plain comparison
+        return None
+    op = ">=" if OR_MORE.search(text) or AT_LEAST.search(text) else "<=" if OR_LESS.search(text) else "<" if below else ">"
+    group = GROUPING.search(text)
+    rest = GROUPING.sub(" ", text)
+    plain = NUMBERED_PERIOD.sub(" ", re.sub(r"\b(?:19|20)\d\d\b", " ", rest))
+    numbers = re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", plain)
+    if len(numbers) != 1:
+        return None
+    if mentions_air(text):
+        metrics = air_named(text)
+        if not air or len(metrics) != 1 or ALL.search(text):
+            return None
+        tool, field = "air_days", f"{metrics[0]}_{'min' if below else 'max'}"
+    else:
+        names = list(_named(text))
+        if not ecowitt or len(names) != 1:
+            return None
+        name = names[0]
+        if name == "rain":
+            field = "rain"
+        elif name == "wind":
+            field = "wind_gust"
+        elif name in DAY_COUNT:
+            field = f"{DAY_COUNT[name]}_{'min' if below and name not in ('uv', 'solar') else 'max'}"
+        else:
+            return None
+        tool = "weather_days"
+        if name == "uv" and op == ">":   # a UV index is quoted in whole numbers: "over 10" means the days that read 10
+            op = ">="
+    spans = spans_in(rest, now)
+    years = set(re.findall(r"\b((?:19|20)\d\d)\b", rest))
+    if len(spans) + len(years) > 1:
+        return None
+    if years:   # "in 2024": that calendar year (so far, if it is this one)
+        year = int(years.pop())
+        spans = [(str(year), datetime(year, 1, 1), min(datetime(year, 12, 31, 23, 59, 59), now))]
+    period = spans[0] if spans else ("on record", *span("on record", now))
+    _, start, end = period
+    args = {"where": [{"field": field, "op": op, "value": float(numbers[0])}], "count_only": True,
+            "start_date": start.strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}
+    if group:
+        args["group_by"] = "month" if (group.group(1) or "").lower() == "month" or group.group(3) else "year"
+    return tool, args, f"days count, {period[0]}"
+
+
 def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False,
               forecast: bool = False) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
+    if (counted := count_days_call(text, now, ecowitt, air)):
+        return counted
     if SPECIFIC_MOMENT.search(text) or COUNTING.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
     if air and (period := air_period(text, now)):
@@ -608,6 +676,8 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
     tool, args = fast[0], fast[1]
     if tool == "pollen_asthma":
         return "pollen", []
+    if tool in ("weather_days", "air_days"):
+        return "days", []
     if tool == "weather_forecast":
         return "forecast", []
     if any(p.search(text) for p in JUDGEMENT):
