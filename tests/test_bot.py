@@ -108,7 +108,7 @@ class DraftBot:
 
 
 class StreamingAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_note=None):
+    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None):
         await asyncio.sleep(0.05)       # "thinking"
         on_text("It is")
         await asyncio.sleep(0.05)
@@ -234,7 +234,7 @@ async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower
     efforts = []
 
     class SlowThenQuick:
-        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_note=None):
+        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None):
             efforts.append(effort)
             messages.append({"role": "assistant", "content": "(unfinished)"})
             if effort == "medium":
@@ -421,10 +421,10 @@ async def test_a_message_that_waited_hours_is_ignored_and_logged(caplog):
     assert "Ignored a message 120 minutes old" in caplog.text
 
 
-async def test_a_heads_up_from_the_model_is_sent_to_the_chat_before_the_answer():
+async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_and_the_answer_still_comes():
     class Agent:
-        async def run(self, messages, system, effort, on_note=None, **k):
-            await on_note("⚠️ That needs about 24 lookups, so it will take a minute.")
+        async def run(self, messages, system, effort, on_heavy=None, **k):
+            await on_heavy(24000)
             return "The answer."
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     replies = []
@@ -438,4 +438,4 @@ async def test_a_heads_up_from_the_model_is_sent_to_the_chat_before_the_answer()
     async def send_chat_action(*a, **k):
         pass
     await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "is it too cold to run")
-    assert replies == ["⚠️ That needs about 24 lookups, so it will take a minute.", "The answer."]
+    assert replies == ["\u26a0\ufe0f That's pulling in about 24k tokens of data, so it will take a little longer. Working on it...", "The answer."]

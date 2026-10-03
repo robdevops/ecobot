@@ -297,24 +297,35 @@ def test_the_capabilities_say_pollen_only_runs_october_to_december():
     assert "only run from October to December" in prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE])
 
 
-def test_the_prompt_asks_for_a_heads_up_line_before_a_big_job_instead_of_refusing():
+def test_the_prompt_leaves_the_heads_up_to_the_bot_and_points_at_the_count_tool():
     from datetime import datetime
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
-    assert "\u26a0\ufe0f That needs about 24 lookups" in text and "Then do it" in text and "decline" not in text.lower()
+    assert "the bot warns the chat by itself" in text and "\u26a0" not in text and "decline" not in text.lower()
     assert "uv_max >= 9" in text and "count_only" in text
 
 
-async def test_a_warning_the_model_writes_with_its_tool_calls_is_passed_on_at_once_and_ordinary_chatter_is_not():
-    notes = []
+async def test_the_chat_is_warned_once_before_the_model_is_sent_more_than_twice_a_500_point_querys_data():
+    from lib.timeutil import CHARS_PER_TOKEN, WARN_TOKENS
+    from lib.tools import Turn
+    warned, asked_after = [], []
 
-    async def on_note(text):
-        notes.append(text)
+    async def on_heavy(tokens):
+        warned.append(tokens)
+        asked_after.append(len(client.requests))   # how many model calls had been made when the warning was sent
 
-    async def handler(args, turn=None):
-        return json.dumps({"ok": True})
-    t = Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)])
-    call = [("weather_now", {})]
-    client = FakeLLM([("\u26a0\ufe0f That needs about 24 lookups, so it will take a minute.", call), ("Let me check that.", [("weather_now", {"x": 1})]), "Done."])
-    reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", on_note=on_note)
-    assert reply == "Done." and notes == ["\u26a0\ufe0f That needs about 24 lookups, so it will take a minute."]
+    async def big(args, turn=None):
+        return "x" * (WARN_TOKENS * CHARS_PER_TOKEN // 2 + 100)       # a bit over half the threshold each
+    t = Tools([Tool("weather_history", "d", {"type": "object", "properties": {}}, big)])
+    client = FakeLLM([[("weather_history", {"n": 1})], [("weather_history", {"n": 2})], [("weather_history", {"n": 3})], "Done."])
+    reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", turn=Turn(), on_heavy=on_heavy)
+    assert reply == "Done." and len(warned) == 1 and warned[0] > WARN_TOKENS
+    assert asked_after == [2]            # after the second result pushed it over, before the model was sent them
+
+    small = FakeLLM([[("weather_history", {"n": 1})], "Done."])
+    async def tiny(args, turn=None):
+        return "x" * 500
+    warned.clear()
+    t2 = Tools([Tool("weather_history", "d", {"type": "object", "properties": {}}, tiny)])
+    assert await llm.Agent(small, "m", t2).run([{"role": "user", "content": "q"}], "sys", "none", turn=Turn(), on_heavy=on_heavy) == "Done."
+    assert warned == []

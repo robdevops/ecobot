@@ -56,6 +56,10 @@ def parse_period(args: dict, today: date, default_days: int) -> tuple[date, date
 
 
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
+WARN_POINTS = 2 * POINT_BUDGET                      # a question that sends the model more than twice a 500-point query's data gets a heads-up
+TOKENS_PER_POINT = 10                               # a dated low/high row is about 10 tokens as the model reads it
+CHARS_PER_TOKEN = 4
+WARN_TOKENS = WARN_POINTS * TOKENS_PER_POINT        # 10,000 tokens: about $0.0125 of input at Grok 4.3's $1.25 per million, and it rides on every later step
 SLOT = 1800                                         # the 30-minute slots both devices are lined up on
 MIN_DAY_SLOTS = 24                                  # a day counts for a daily comparison with at least 12 hours of readings
 WIDTHS = (300, SLOT, 3600, 7200, 14400, 86400)      # bucket sizes a chart line can be drawn at: 5 min ... a day
