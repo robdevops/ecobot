@@ -1,19 +1,19 @@
-"""The period buttons under a chart: Week, Month, Quarter and Year (7, 30, 90 and 365 days), minus the one the chart already shows. Pressing one redraws the chart
+"""The period buttons under a chart: Week, Month and Quarter (7, 30 and 90 days), always all three. Pressing one redraws the chart
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 from collections import OrderedDict
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-PERIODS = (7, 30, 90, 365)
-NAMES = {7: "Week", 30: "Month", 90: "Quarter", 365: "Year"}   # what the buttons say
+PERIODS = (7, 30, 90)
+NAMES = {7: "Week", 30: "Month", 90: "Quarter"}   # what the buttons say
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose question is kept, newest first to stay
 
 
-def keyboard(current: int | None) -> InlineKeyboardMarkup:
-    """One row of the periods other than `current` (all four when the chart shows none of them, e.g. "this month")."""
-    return InlineKeyboardMarkup([[InlineKeyboardButton(NAMES[days], callback_data=f"{PREFIX}{days}") for days in PERIODS if days != current]])
+def keyboard() -> InlineKeyboardMarkup:
+    """The one row of period buttons."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(NAMES[days], callback_data=f"{PREFIX}{days}") for days in PERIODS]])
 
 
 def days_in(data: str | None) -> int | None:

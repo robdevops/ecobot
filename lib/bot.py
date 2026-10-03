@@ -324,14 +324,17 @@ class Bot:
         if not question:
             await query.answer("That chart is out of date, please ask again")
             return
-        await query.answer(f"Drawing {days} days...")
         now = now_local(self.cfg.tz)
+        if intent.period_days(question, now) == days:   # the chart already shows this period
+            await query.answer()
+            return
+        await query.answer(f"Drawing {days} days...")
         asked = intent.with_period(question, days, now)
         log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
         if cached := self.images.get(self.images.key(asked, days, now)):   # drawn lately: no new question
             png, title = cached
             try:
-                await message.edit_media(InputMediaPhoto(png, caption=title or None), reply_markup=periods.keyboard(days))
+                await message.edit_media(InputMediaPhoto(png, caption=title or None), reply_markup=periods.keyboard())
                 self.charted.remember(message.chat_id, message.message_id, asked)
                 log.info("Period button: chart from the cache")
                 return
@@ -612,7 +615,7 @@ class Bot:
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard() if self._keyboard_stale(msg) else None
-        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
+        row = periods.keyboard() if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo = []
         if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
             self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])

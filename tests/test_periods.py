@@ -15,11 +15,9 @@ def labels(markup):
     return [[(b.text, b.callback_data) for b in row] for row in markup.inline_keyboard]
 
 
-def test_the_row_has_the_other_periods_and_all_four_when_the_chart_is_none_of_them():
-    assert labels(periods.keyboard(30)) == [[("Week", "pd:7"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
-    assert [t for t, _ in labels(periods.keyboard(7))[0]] == ["Month", "Quarter", "Year"]
-    assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["Week", "Month", "Quarter", "Year"]
-    assert periods.days_in("pd:90") == 90 and periods.days_in("pd:5") is None and periods.days_in("al:on:x") is None
+def test_the_row_is_always_week_month_and_quarter():
+    assert labels(periods.keyboard()) == [[("Week", "pd:7"), ("Month", "pd:30"), ("Quarter", "pd:90")]]
+    assert periods.days_in("pd:90") == 90 and periods.days_in("pd:365") is None and periods.days_in("al:on:x") is None
 
 
 def test_a_question_keeps_its_words_and_swaps_its_period():
@@ -83,7 +81,7 @@ async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
-    assert caption == "Temperature" and labels(markup) == [[("Week", "pd:7"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
+    assert caption == "Temperature" and labels(markup) == [[("Week", "pd:7"), ("Month", "pd:30"), ("Quarter", "pd:90")]]
     assert bot.charted[(1, 101)] == "Temperature chart 30d"
 
 
@@ -101,7 +99,7 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     name, args = bot.agent.tools.calls[0]
     assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 90 days..."]
     caption, markup = edits[0]
-    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["Week", "Month", "Year"]
+    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["Week", "Month", "Quarter"]
     assert bot.charted[(1, 50)] == "Temperature chart 90d"
 
 
@@ -125,8 +123,8 @@ async def test_a_reply_with_period_buttons_leaves_the_persistent_keyboard_for_th
             sent.append(kw["reply_markup"])
             return NS(message_id=7)
     shown = []
-    carried = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard(7), sent_photo=shown)
-    assert carried is False and labels(sent[0])[0][0][0] == "Month" and shown[0].message_id == 7
+    carried = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard(), sent_photo=shown)
+    assert carried is False and labels(sent[0])[0][0][0] == "Week" and shown[0].message_id == 7
 
 
 def test_a_chart_drawn_lately_comes_back_from_the_cache_until_it_is_too_old_or_pushed_out():
@@ -153,11 +151,11 @@ async def test_toggling_back_to_a_period_just_drawn_uses_the_cached_image_and_as
     async def answer(text=None):
         answers.append(text)
     msg.message_id = 101
-    for days in (30, 7, 30, 7):
+    for days in (30, 30, 7, 30, 7):
         await bot.on_period_button(NS(callback_query=NS(data=f"pd:{days}", message=msg, answer=answer), effective_message=msg,
                                       effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")), CONTEXT)
-    assert len(bot.agent.tools.calls) == 2                      # the first send and the first 30d: the rest came from the cache
-    assert [e[0] for e in edits] == ["Temperature"] * 4 and bot.charted[(1, 101)] == "Temperature chart 7d"
+    assert len(bot.agent.tools.calls) == 2                      # the first send and the first 30d: the rest came from the cache (a press on the shown 30d does nothing)
+    assert [e[0] for e in edits] == ["Temperature"] * 4   # the repeated 30d press edited nothing and bot.charted[(1, 101)] == "Temperature chart 7d"
 
 
 async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(monkeypatch):
