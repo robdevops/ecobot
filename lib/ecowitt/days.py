@@ -59,6 +59,8 @@ PARAMETERS = {
         "only": {"type": "string", "enum": ["public_holiday", "weekend"],
                  "description": "Only look at public holidays in the owner's local area (the bot knows them: never pick "
                                 "holiday dates yourself) or only Saturdays and Sundays. Days are then counted from those only."},
+        "count_only": {"type": "boolean", "description": "true for \"how many days\": returns just the counts, no list of days (much smaller). Use it whenever the days themselves aren't asked for."},
+        "group_by": {"type": "string", "enum": ["month", "year"], "description": "Also count the matching days in each month or year (\"how many each month\"), months with none included."},
         "limit": {"type": "integer", "description": f"How many days to list (default 5, at most {MAX_LIMIT}). The total is always counted."},
     },
     "required": ["start_date", "end_date"],
@@ -68,7 +70,8 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "35°C\", \"how many days was UV 9 or more\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
                "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest), and a day's "
                "highest (_max) or lowest (_min) of every other reading: humidity, pressure, wind_speed, dew_point, feels_like, vpd, "
-               "indoor_temp, indoor_humidity (_max and _min); solar, uv, rain_rate (_max only), e.g. uv_max >= 9. Returns the total of matching "
+               "indoor_temp, indoor_humidity (_max and _min); solar, uv, rain_rate (_max only), e.g. uv_max >= 9. For \"how many\" use count_only "
+               "(group_by month or year for a breakdown). Returns the total of matching "
                "days and the top ones. For a record's value and the time it happened (hottest, coldest, fastest gust), use weather_history instead. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
@@ -180,7 +183,17 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
 
     exact_days = sorted(d for d in checked if source.get(d) != "daily")
     out = {"period": f"{label(first)} - {label(last)}", "days_checked": len(checked), "matching_days": len(matches),
-           "units": {n: FIELDS[n][3] for n in shown}, "days": rows}
+           "units": {n: FIELDS[n][3] for n in shown}}
+    if args.get("group_by") in ("month", "year"):
+        key = (lambda d: f"{d:%Y-%m}") if args["group_by"] == "month" else (lambda d: f"{d:%Y}")
+        counts = dict.fromkeys(sorted({key(d) for d in checked}), 0)
+        for d in matches:
+            counts[key(d)] += 1
+        out[f"by_{args['group_by']}"] = counts
+    if args.get("count_only"):
+        rows, trace = [], []   # just the counts
+    else:
+        out["days"] = rows
     if trace:
         out["trace_rain_days"] = [row(d) for d in trace]
         out["note_trace"] = (f"These days rank higher but had less than {rain_cond['value']:g} mm of rain (a trace), so they "

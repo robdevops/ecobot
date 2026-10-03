@@ -12,6 +12,7 @@ from .tools import Tools, Turn
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 10
+WARNING_SIGN = "\u26a0"   # a reply that starts with this, alongside tool calls, is a heads-up for the chat (see the prompt)
 MAX_HISTORY = 16  # messages kept per chat (a follow-up needs the last few, every call resends them)
 
 LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data already fetched, "
@@ -67,14 +68,15 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None) -> str:
+                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_note=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
         first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
         straight away, together, and the model is only invoked once the data is in. require_tool forces a
         fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft)."""
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft). on_note(text) is called with a
+        warning the model wrote before a big job: its reply to a step that also calls tools and starts with a warning sign."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:
@@ -114,6 +116,8 @@ class Agent:
 
                 content, tool_calls, secs = await self._complete(kwargs, step + 1, on_text)
                 llm_time += secs
+                if on_note and tool_calls and not final and content.strip().startswith(WARNING_SIGN):
+                    await on_note(content.strip())
                 entry = {"role": "assistant", "content": content}
                 if tool_calls and not final:
                     entry["tool_calls"] = [{"id": tc["id"], "type": "function",

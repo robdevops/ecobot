@@ -259,3 +259,15 @@ async def test_days_from_30_minute_data_say_their_peaks_are_averages(station):
     eco.cache.store(eco.mac, "30min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end)
     out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 9}])
     assert out["matching_days"] == out["days_checked"] > 0 and "average" in out["note_averaged"]
+
+
+async def test_count_only_gives_just_the_counts_and_group_by_month_gives_each_month(station):
+    eco, _ = station
+    first, last = dates(eco, 70, 1)
+    where = [{"field": "temp_max", "op": ">", "value": 0}]
+    full = await ask(eco, start_date=str(first), end_date=str(last), where=where, limit=5)
+    counted = await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="month")
+    assert "days" not in counted and counted["matching_days"] == full["matching_days"] and counted["days_checked"] == full["days_checked"]
+    months = counted["by_month"]
+    assert sum(months.values()) == counted["matching_days"] and list(months) == sorted(months) and len(months) >= 2
+    assert "by_year" in await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="year")

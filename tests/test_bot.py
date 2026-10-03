@@ -108,7 +108,7 @@ class DraftBot:
 
 
 class StreamingAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None):
+    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_note=None):
         await asyncio.sleep(0.05)       # "thinking"
         on_text("It is")
         await asyncio.sleep(0.05)
@@ -234,7 +234,7 @@ async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower
     efforts = []
 
     class SlowThenQuick:
-        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None):
+        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_note=None):
             efforts.append(effort)
             messages.append({"role": "assistant", "content": "(unfinished)"})
             if effort == "medium":
@@ -419,3 +419,23 @@ async def test_a_message_that_waited_hours_is_ignored_and_logged(caplog):
     with caplog.at_level("INFO", logger="lib.bot"):
         assert await _message_aged(2 * 3600) == []
     assert "Ignored a message 120 minutes old" in caplog.text
+
+
+async def test_a_heads_up_from_the_model_is_sent_to_the_chat_before_the_answer():
+    class Agent:
+        async def run(self, messages, system, effort, on_note=None, **k):
+            await on_note("⚠️ That needs about 24 lookups, so it will take a minute.")
+            return "The answer."
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
+    replies = []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "is it too cold to run")
+    assert replies == ["⚠️ That needs about 24 lookups, so it will take a minute.", "The answer."]

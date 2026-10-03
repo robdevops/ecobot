@@ -16,9 +16,12 @@ class FakeLLM:
     async def create(self, **kw):
         self.requests.append(kw)
         step = self.script.pop(0)
+        said = ""
+        if isinstance(step, tuple):   # (text, calls): words written alongside tool calls
+            said, step = step
         calls = None if isinstance(step, str) else [
             NS(id=f"c{i}", function=NS(name=n, arguments=json.dumps(a))) for i, (n, a) in enumerate(step)]
-        msg = NS(content=step if isinstance(step, str) else "", tool_calls=calls)
+        msg = NS(content=step if isinstance(step, str) else said, tool_calls=calls)
         return NS(choices=[NS(message=msg)], usage=None)
 
 
@@ -294,9 +297,24 @@ def test_the_capabilities_say_pollen_only_runs_october_to_december():
     assert "only run from October to December" in prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE])
 
 
-def test_the_prompt_tells_the_model_to_decline_questions_that_would_need_dozens_of_calls():
+def test_the_prompt_asks_for_a_heads_up_line_before_a_big_job_instead_of_refusing():
     from datetime import datetime
     from lib import prompt
     text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
-    assert "Never spend dozens of calls" in text and "I can't answer that efficiently" in text
-    assert "uv_max >= 9" in text
+    assert "\u26a0\ufe0f That needs about 24 lookups" in text and "Then do it" in text and "decline" not in text.lower()
+    assert "uv_max >= 9" in text and "count_only" in text
+
+
+async def test_a_warning_the_model_writes_with_its_tool_calls_is_passed_on_at_once_and_ordinary_chatter_is_not():
+    notes = []
+
+    async def on_note(text):
+        notes.append(text)
+
+    async def handler(args, turn=None):
+        return json.dumps({"ok": True})
+    t = Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)])
+    call = [("weather_now", {})]
+    client = FakeLLM([("\u26a0\ufe0f That needs about 24 lookups, so it will take a minute.", call), ("Let me check that.", [("weather_now", {"x": 1})]), "Done."])
+    reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", on_note=on_note)
+    assert reply == "Done." and notes == ["\u26a0\ufe0f That needs about 24 lookups, so it will take a minute."]
