@@ -113,14 +113,14 @@ async def main():
                 if air:
                     air_monitor = AirMonitor(air, state, notify)
                     tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
-                    kinds.append(f"air qual {AIR_CHECK_SECONDS // 60}m")
+                    kinds.append("air")
                 if forecast:
                     forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
                     kinds.append("forecast changes")
                 if pollen:
                     pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
-                    kinds += ["pollen", "thunderstorm asthma"]
-                log.info("Alerts: %s: %d chat(s)", ", ".join(kinds) or "none", len(state.alert_chats()))
+                    kinds += ["pollen", "asthma"]
+                log.info("Alerts: %s: %d chats", ", ".join(kinds) or "none", len(state.alert_chats()))
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
