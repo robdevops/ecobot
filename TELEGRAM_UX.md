@@ -6,7 +6,7 @@ Not built yet. This is the plan for making commands and common questions tappabl
 `lib/bot.py` registers `/start` and `/help`, `/reset` and `/alerts`, and sends every other text message to `Bot.respond`, which reads the sentence (`intent.read`), takes the fast path when the bot can fetch without the model, runs the model with the tools, and sends the answer with any charts. Replies are silent. A message in a group is answered only when the bot is mentioned or replied to. Questions in one chat are queued in order and given up on after 90 seconds.
 
 ## Built since: the thinking draft
-In private chats `Bot.respond` shows a `sendMessageDraft` ("Thinking...", then the answer streaming in) instead of "typing...", then sends the real reply as before (`lib/bot.py` `Draft`, `lib/llm.py` streaming).
+`Bot.respond` starts the "typing..." indicator the moment a question arrives (before it even waits its turn in the chat's queue). In private chats it also shows a `sendMessageDraft` ("Thinking...", then the answer streaming in) alongside it, then sends the real reply as before (`lib/bot.py` `Draft`, `lib/llm.py` streaming).
 
 ## Built since: the button keyboard
 Private chats get a persistent reply keyboard of template questions (`lib/templates.py`); a tap arrives as ordinary text, so the answer takes the usual path. `/keyboard` and `/keyboard off` show and hide it.

@@ -136,7 +136,7 @@ async def test_a_private_chat_shows_a_thinking_draft_that_streams_the_answer_the
     assert replies == ["It is 12 degrees."]
     assert bot.drafts[0][1] is None                                    # empty: "Thinking..."
     assert [t for _, t in bot.drafts][-1] == "It is 12 degrees." and len({d for d, _ in bot.drafts}) == 1
-    assert bot.typing == 0
+    assert bot.typing >= 1                                             # "typing..." runs alongside the draft
 
 
 async def test_an_idle_draft_is_refreshed_before_telegram_drops_it(monkeypatch):
@@ -350,3 +350,16 @@ async def test_a_lookup_that_cannot_be_written_falls_back_to_the_model():
 async def test_about_the_bot_is_answered_in_code_without_the_model():
     replies, asked = await _ask_with("{}", "what can you do")
     assert not asked and replies[0].startswith("• Temperature, humidity")
+
+
+async def test_typing_starts_before_the_model_is_asked_and_runs_alongside_the_draft():
+    seen = {}
+
+    class Agent:
+        async def run(self, *a, **k):
+            seen["typing_when_asked"], seen["drafts_when_asked"] = bot.typing, len(bot.drafts)
+            await asyncio.sleep(0.05)
+            return "ok"
+    bot = DraftBot()
+    assert await ask_private(Agent(), bot) == ["ok"]
+    assert seen["typing_when_asked"] >= 1 and bot.drafts
