@@ -331,21 +331,27 @@ def _named(text: str) -> dict[str, int]:
 FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
 VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
 ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")   # the panels of "weather all week", top to bottom
+INDOOR_READINGS = ("temperature", "humidity", "dew_point", "feels_like")   # what the indoor sensor measures
 LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
-    if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
+    if wants_chart_all(text):   # "weather all week", "chart all 90d", "weather chart 90d": every reading, a panel each
+        indoors = _sides(text) == ["indoor"]   # the indoor sensor only has these
         return [n for n in ALL_ORDER if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
-                and (VPD_IN_ALL or n != "vpd")]   # naming one still works
+                and (VPD_IN_ALL or n != "vpd") and (not indoors or n in INDOOR_READINGS)]   # naming one still works
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
 def wants_chart_all(text: str) -> bool:
-    """"weather all week": every reading, a panel each (the picture says it all: no caption)."""
-    return len(_named(text)) < 2 and bool(ALL.search(text) and WEATHER_WORD.search(text))
+    """"weather all week", "chart all 90d", "weather chart 90d": every reading, a panel each (the picture says it all: no caption).
+    A chart that names no reading is of all of them, not of temperature."""
+    named = len(_named(text))
+    if named < 2 and ALL.search(text) and WEATHER_WORD.search(text):
+        return True
+    return named == 0 and bool(GRAPH.search(text)) and not mentions_air(text) and not any(p.search(text) for p in JUDGEMENT)
 
 
 def chart_field(text: str) -> str | None:

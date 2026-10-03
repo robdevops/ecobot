@@ -1418,5 +1418,45 @@
       "lookup": "",
       "fast": null
     }
+  },
+  {
+    "id": "chart-weather-90d",
+    "ask": "weather chart 90d",
+    "note": "a chart naming no reading is every reading, a panel each",
+    "expect": {
+      "chart_fields": [
+        "temperature",
+        "humidity",
+        "solar",
+        "pressure",
+        "rain",
+        "dew_point",
+        "wind"
+      ]
+    },
+    "covers": [
+      "c:line",
+      "m:temperature"
+    ]
+  },
+  {
+    "id": "chart-all-90d",
+    "ask": "chart all 90d",
+    "note": "a chart naming no reading is every reading, a panel each",
+    "expect": {
+      "chart_fields": [
+        "temperature",
+        "humidity",
+        "solar",
+        "pressure",
+        "rain",
+        "dew_point",
+        "wind"
+      ]
+    },
+    "covers": [
+      "c:line",
+      "m:temperature"
+    ]
   }
 ]

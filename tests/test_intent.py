@@ -517,3 +517,15 @@ def test_weather_all_week_is_flagged_as_a_chart_with_no_caption_and_a_named_char
     now = datetime(2026, 10, 3, 12)
     assert intent.read("weather all week", now, True, True).chart_all and intent.read("ecowitt all week", now, True, True).chart_all
     assert not intent.read("plot temperature and rain", now, True, True).chart_all and not intent.read("temperature chart 7d", now, True, True).chart_all
+
+
+@_pytest.mark.parametrize("ask", ["weather chart 90d", "chart all 90d", "chart 90d", "chart"])
+def test_a_chart_that_names_no_reading_is_every_reading_not_temperature(ask):
+    read = intent.read(ask, NOW)
+    assert read.chart_all and read.chart_fields[:3] == ["temperature", "humidity", "solar"] and read.chart_fields[-1] == "wind"
+
+
+def test_a_named_reading_or_an_air_chart_is_not_every_reading_and_indoors_has_only_what_the_indoor_sensor_measures():
+    for ask in ("temperature chart 90d", "rain chart 7d", "chart air 90d", "plot pm2.5 90d"):
+        assert not intent.wants_chart_all(ask) and intent.chart_fields(ask) == []
+    assert intent.chart_fields("chart all 90d indoors") == ["temperature", "humidity", "dew_point"]

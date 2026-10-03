@@ -60,7 +60,7 @@ AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure frac
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
 LEADER_CLEARANCE = 0.05          # peak labels sit at least this share of the panel's width away from the peaks (shorter = closer)
-BARS_SHARE = 0.3                 # rain behind a line never rises past this share of the panel's height
+BARS_SHARE = 0.95                # rain behind a line is drawn over the panel's full height (the tallest bar nearly reaches the top), under the line
 
 
 @dataclass(frozen=True)
