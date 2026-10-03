@@ -9,7 +9,7 @@
     Melbourne (see assess_rain). At most once every 6 hours.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
-  - Strong sun: one alert when the UV index reaches 9, and no more until it has stayed below 9 for an hour.
+  - Strong sun: one alert when the UV index reaches 10, and no more until it has stayed below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler) after the other way
     round held for 2+ days. A 0.3 degree margin stops sensor noise flip-flopping.
 """
