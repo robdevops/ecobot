@@ -16,7 +16,7 @@ import operator
 import re
 from datetime import date, datetime, timedelta, tzinfo
 
-from ..daytable import analyse, parameters, validate
+from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
 from .calendar import PublicHolidays
 from .extremes import collect
@@ -200,6 +200,7 @@ async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=
         # only the years the calendar knows), so it is dropped
         log.warning("Ignored only=%s: the question doesn't mention holidays or weekends (%s)", args["only"], turn.text[:60])
         args = {k: v for k, v in args.items() if k != "only"}
+    args = grouped_as_asked(args, turn)
     now = now_local(tz)
     result = await asyncio.to_thread(find_days, cache, mac, tz, args, now, turn)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))

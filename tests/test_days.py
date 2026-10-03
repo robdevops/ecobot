@@ -346,3 +346,15 @@ async def test_a_chart_of_holiday_or_weekend_days_says_so_in_its_subtitle(statio
     await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}],
                                     count_only=True, group_by="month", only="weekend"), turn)
     assert turn.charts[0].subtitle.endswith("weekends only  ·  per month") or "weekends only" in turn.charts[0].subtitle
+
+
+async def test_group_by_is_added_from_the_question_when_the_model_leaves_it_out(station):
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 60, 1)
+    args = dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], count_only=True)
+    turn = Turn(text="days over 0 degrees by month")
+    out = json.loads(await eco.tools[2].handler(args, turn))
+    assert "by_month" in out and len(turn.charts) == 1                       # the model said nothing about months; the words did
+    plain = Turn(text="how many days over 0 degrees")
+    assert "by_month" not in json.loads(await eco.tools[2].handler(args, plain)) and plain.charts == []

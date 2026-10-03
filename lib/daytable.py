@@ -5,7 +5,9 @@ finds the days that meet the conditions, ranks them, counts them, and can total,
 reading per month or year. A count or figure per month or year is drawn as a bar chart (a number above each bar), not listed.
 """
 
+import logging
 import operator
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 from typing import Callable
@@ -13,6 +15,8 @@ from typing import Callable
 from .captions import COUNT_CHART_HINT
 from .specs import Bars, Chart, Panel
 from .timeutil import day_bounds
+
+log = logging.getLogger(__name__)
 
 OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le, "=": operator.eq}
 SYMBOL = {">": ">", ">=": "≥", "<": "<", "<=": "≤", "=": "="}
@@ -54,6 +58,22 @@ def parameters(fields: list[str], what: str, extra: dict | None = None) -> dict:
         },
         "required": ["start_date", "end_date"],
     }
+
+
+GROUPING = re.compile(r"\b(?:per|by|each|every)\s+(year|month)\b|\b(yearly|annual\w*)\b|\b(monthly)\b", re.I)
+
+
+def grouped_as_asked(args: dict, turn) -> dict:
+    """The arguments with group_by filled in from the person's words when the model left it out ("... by year", "per month"):
+    a count by year or month is a bar chart, never one overall number."""
+    if args.get("group_by") or turn is None or not getattr(turn, "text", ""):
+        return args
+    found = GROUPING.search(turn.text)
+    if not found:
+        return args
+    by = "month" if (found.group(1) or "").lower() == "month" or found.group(3) else "year"
+    log.info("group_by %s added: the question says %r", by, found.group(0))
+    return {**args, "group_by": by}
 
 
 def validate(args: dict, fields: dict[str, str]) -> str | None:
@@ -138,6 +158,8 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
     ranked = rank(matches)
     out = {"period": f"{label(first)} - {label(last)}", "days_checked": len(checked), "matching_days": len(matches),
            "units": {n: units[n] for n in shown}}
+    if where:
+        out["condition"] = conditions_text(where, units)
     stat, of, by = args.get("stat") or "count", args.get("of"), args.get("group_by")
     key = (lambda d: f"{d:%Y-%m}") if by == "month" else (lambda d: f"{d:%Y}")
     if stat != "count":

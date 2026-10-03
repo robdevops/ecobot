@@ -434,9 +434,36 @@ def test_questions_about_rain_so_far_do_not_fetch_the_forecast(text):
     assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []
 
 
-@_pytest.mark.parametrize("text", ["count days over PM2.5 of 90 per year", "days over UVI 10 per year", "how many days was PM2.5 over 25",
-                                   "rain total per month this year", "hottest day each year", "how many times did it rain this year",
-                                   "worst air quality day per month"])
+@_pytest.mark.parametrize("text", ["rain total per month this year", "hottest day each year", "how many times did it rain this year",
+                                   "worst air quality day per month", "days over 35 and also rained", "days over UVI 10 on weekends"])
 def test_counting_and_totalling_questions_are_never_turned_into_a_plain_chart(text):
     read = intent.read(text, datetime(2026, 10, 3, 12), True, True, True, True)
     assert read.fast is None and not read.chart_in_code and read.lookup == ""
+
+
+@_pytest.mark.parametrize("text, tool, field, op, value, group", [
+    ("days over UVI 10 by year", "weather_days", "uv_max", ">=", 10, "year"),
+    ("count days over PM2.5 of 90 per year", "air_days", "pm2_5_max", ">", 90, "year"),
+    ("how many days was UV 9 or more", "weather_days", "uv_max", ">=", 9, None),
+    ("days over 30 degrees per month this year", "weather_days", "temp_max", ">", 30, "month"),
+    ("how many days under 5 degrees", "weather_days", "temp_min", "<", 5, None),
+    ("days with rain over 5 mm", "weather_days", "rain", ">", 5, None),
+    ("how many days did the wind exceed 60 km/h", "weather_days", "wind_gust", ">", 60, None),
+    ("count the days humidity was below 30 per month", "weather_days", "humidity_min", "<", 30, "month"),
+    ("how many days was PM2.5 over 25 in 2024", "air_days", "pm2_5_max", ">", 25, None),
+])
+def test_one_reading_against_one_limit_is_counted_in_code(text, tool, field, op, value, group):
+    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    name, args, _ = read.fast
+    assert read.lookup == "days" and name == tool and args["count_only"] is True and args.get("group_by") == group
+    assert args["where"] == [{"field": field, "op": op, "value": float(value)}]
+
+
+def test_the_period_is_the_whole_record_unless_one_is_named():
+    now = datetime(2026, 10, 3, 12)
+    whole = intent.read("days over UVI 10 by year", now, True, True).fast[1]
+    assert whole["start_date"] == "2022-10-05" and whole["end_date"] == "2026-10-03"
+    named = intent.read("days over UVI 10 by month this year", now, True, True).fast[1]
+    assert named["start_date"] == "2026-01-01" and named["group_by"] == "month"
+    year = intent.read("how many days was PM2.5 over 25 in 2024", now, True, True).fast[1]
+    assert year["start_date"] == "2024-01-01" and year["end_date"] == "2024-12-31"

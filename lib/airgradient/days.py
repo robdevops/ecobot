@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import date, datetime, timedelta, tzinfo
 
-from ..daytable import analyse, parameters, validate
+from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
 from .metrics import ALL_METRICS, CHART_UNITS
 
@@ -78,5 +78,5 @@ def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> di
 
 
 async def air_days_tool(store, tz: tzinfo, args: dict, turn=None) -> str:
-    result = await asyncio.to_thread(find_air_days, store, tz, args, now_local(tz), turn)
+    result = await asyncio.to_thread(find_air_days, store, tz, grouped_as_asked(args, turn), now_local(tz), turn)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))

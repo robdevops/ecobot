@@ -1243,23 +1243,13 @@
   {
     "id": "uv-days-two-years",
     "ask": "how many times was UV 9 or more in the past two years?",
-    "note": "one weather_days call with uv_max >= 9",
+    "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "",
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "where": {
-            "has": [
-              {
-                "field": "uv_max",
-                "op": ">=",
-                "value": 9
-              }
-            ]
-          }
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
+          "count_only": true
         }
       }
     }
@@ -1267,16 +1257,14 @@
   {
     "id": "uv-days-per-year",
     "ask": "days over UVI 10 per year",
-    "note": "counts per year are a bar chart",
+    "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "",
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "group_by": "year",
-          "count_only": true
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
+          "count_only": true,
+          "group_by": "year"
         }
       }
     }
@@ -1319,14 +1307,13 @@
   {
     "id": "air-days-per-year",
     "ask": "days PM2.5 over 25 per year",
-    "note": "air counts per year are a bar chart",
+    "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "",
-      "tools": [
-        "air_days"
-      ],
-      "args": {
-        "air_days": {
+      "lookup": "days",
+      "fast": {
+        "tool": "air_days",
+        "args": {
+          "count_only": true,
           "group_by": "year"
         }
       }
@@ -1335,27 +1322,48 @@
   {
     "id": "count-pm25-days-per-year",
     "ask": "count days over PM2.5 of 90 per year",
-    "note": "was turned into a line chart of PM2.5 by the fast path; the model must count days",
+    "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "",
-      "fast": null,
-      "tools": [
-        "air_days"
-      ],
-      "args": {
-        "air_days": {
+      "lookup": "days",
+      "fast": {
+        "tool": "air_days",
+        "args": {
+          "count_only": true,
+          "group_by": "year"
+        }
+      }
+    }
+  },
+  {
+    "id": "days-over-limit-by-year",
+    "ask": "days over UVI 10 by year",
+    "note": "the model once answered with one overall count and no chart; now counted in code, per year, whole record",
+    "expect": {
+      "lookup": "days",
+      "fast": {
+        "tool": "weather_days",
+        "args": {
           "group_by": "year",
+          "count_only": true,
           "where": {
             "has": [
               {
-                "field": "pm2_5_max",
-                "op": ">",
-                "value": 90
+                "field": "uv_max",
+                "op": ">=",
+                "value": 10
               }
             ]
           }
         }
       }
+    }
+  },
+  {
+    "id": "days-two-readings-go-to-the-model",
+    "ask": "days over 35 and also rained",
+    "expect": {
+      "lookup": "",
+      "fast": null
     }
   }
 ]
