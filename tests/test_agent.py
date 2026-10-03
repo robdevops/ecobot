@@ -329,3 +329,10 @@ async def test_the_chat_is_warned_once_before_the_model_is_sent_more_than_twice_
     t2 = Tools([Tool("weather_history", "d", {"type": "object", "properties": {}}, tiny)])
     assert await llm.Agent(small, "m", t2).run([{"role": "user", "content": "q"}], "sys", "none", turn=Turn(), on_heavy=on_heavy) == "Done."
     assert warned == []
+
+
+def test_the_prompt_says_to_use_the_whole_record_without_a_period_and_holidays_only_when_asked():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
+    assert "use the whole record" in text and "only when the person's words say holidays or weekends" in text

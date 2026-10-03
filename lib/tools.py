@@ -20,6 +20,7 @@ class Turn:
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
     average_asked: bool = False                  # an average was asked for: the caption leads with it
+    text: str = ""                               # what the person said (a tool can check an argument against it)
     readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others
     per_day: bool = False                        # day by day figures were asked for: a long period keeps every day, not only its extremes
     result_chars: int = 0                        # the size of every tool result so far this question (what the model will be sent)

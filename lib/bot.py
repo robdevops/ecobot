@@ -536,7 +536,7 @@ class Bot:
             new_from = len(working)
             ok, photos = True, []
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
-                        average_asked=read.average_asked, readings=read.readings, per_day=read.per_day)
+                        average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text)
             try:
                 reply = None
                 if read.fast and read.chart_in_code:   # drawn by the tool, captioned in code

@@ -480,10 +480,16 @@ def reading_now(text: str) -> list[str] | None:
     return names
 
 
+# Counting, ranking or totalling over periods ("count days over PM2.5 of 90 per year", "how many times", "rain per month"): the model
+# picks the days tool, never a plain chart of the period
+COUNTING = re.compile(r"\b(count\w*|how many|how often|number of|days? (over|above|below|under|with|when|that|where)|"
+                      r"(per|each|every) (year|month)|monthly|yearly|annual\w*|worst|rank\w*|top \d+)\b", I)
+
+
 def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False,
               forecast: bool = False) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
-    if SPECIFIC_MOMENT.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
+    if SPECIFIC_MOMENT.search(text) or COUNTING.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
     if air and (period := air_period(text, now)):
         name, start, end = period
