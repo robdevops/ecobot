@@ -271,7 +271,14 @@ def _axes_width(chart: Chart) -> float:
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     """Title and subtitle at the top left; a unit that is not a degree goes in the title (ticks stay plain numbers)."""
     title = f"{title} ({unit})" if unit and _deg(unit) != "°" else title
-    fig.text(AX_RECT[0], 1 - 0.27 / height, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
+    head = fig.text(AX_RECT[0], 1 - 0.27 / height, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
+    room = AX_RECT[2] * fig.get_figwidth() * fig.dpi        # the width of the plots below
+    renderer = fig.canvas.get_renderer()
+    names = title.split(", ")
+    kept = len(names)
+    while head.get_window_extent(renderer).width > room and kept > 2:   # a long list of readings: the first few "and N more"
+        kept -= 1
+        head.set_text(", ".join(names[:kept]) + f" and {len(names) - kept} more")
     fig.text(AX_RECT[0], 1 - 0.52 / height, subtitle, fontsize=8.5, color=MUTED, va="center")
 
 

@@ -160,3 +160,19 @@ def test_a_chart_of_one_line_panel_gives_every_line_its_records_but_a_stack_does
 def test_the_vpd_chart_is_titled_with_the_full_name():
     from lib.series import WEATHER
     assert WEATHER["vpd"].label == "Vapour pressure deficit"
+
+
+def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
+    import matplotlib.pyplot as plt
+    from lib import charts
+    fig = plt.figure(figsize=(charts.W_IN, 8), dpi=charts.DPI)
+    try:
+        charts._headline(fig, "Temperature, Humidity, Pressure, Rain, Dew point, Solar radiation, Wind", "sub", 8)
+        title = fig.texts[0]
+        room = charts.AX_RECT[2] * fig.get_figwidth() * fig.dpi
+        assert title.get_window_extent(fig.canvas.get_renderer()).width <= room
+        assert title.get_text().startswith("Temperature, Humidity") and title.get_text().endswith(" more")
+        charts._headline(fig, "Temperature", "sub", 8)
+        assert fig.texts[2].get_text() == "Temperature"                                  # a short one is untouched
+    finally:
+        plt.close(fig)
