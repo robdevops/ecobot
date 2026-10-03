@@ -14,6 +14,9 @@ Private chats get a persistent reply keyboard of template questions (`lib/templa
 ## Built since: alert settings as buttons
 Every alert carries Subscribe | Unsubscribe buttons that expand in place into the alert types (Subscribe lists the ones that are off, Unsubscribe the ones that are on, so there are no buttons that do nothing); `/alerts` shows the same menu with its on/off summary. Callback data is `al:<action>:<kind>:<section>` (`lib/alerts/menu.py`, handled by `Bot.on_alert_button`); in groups only admins may change them.
 
+## Built since: messages sent during a restart
+Polling keeps what Telegram held while the bot was down or starting, and answers a message that is under 10 minutes old (`lib/bot.py` `PENDING_MAX_SECONDS`); older ones are ignored and logged.
+
 ## Principle
 A command or a button never does work of its own. It is turned into the plain sentence a person would have typed and handed to `Bot.respond`. The fast path, the period hints, the model, the queue, the timeout, the charts and the alerts all behave exactly as they do for typed text, and there is one place to fix them.
 

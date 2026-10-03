@@ -385,3 +385,37 @@ async def test_the_forecast_is_fetched_with_the_first_step_of_a_rain_ahead_quest
         pass
     await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "will it rain?")
     assert got == [[("weather_forecast", {"days": 3, "cached": True})]] and replies == ["Possibly."]
+
+
+async def _message_aged(seconds):
+    from datetime import datetime, timedelta, timezone
+    answered = []
+
+    class Agent:
+        async def run(self, *a, **k):
+            answered.append(True)
+            return "ok"
+    replies = []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+
+    async def send_chat_action(*a, **k):
+        pass
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text, text="how hot is it",
+             date=datetime.now(timezone.utc) - timedelta(seconds=seconds), chat=NS(type="private", title=None, id=1),
+             from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    bot = Bot(NS(tz=TZ), Agent(), [], None)
+    await bot.on_message(update, NS(bot=NS(send_chat_action=send_chat_action, id=99, username="b")))
+    return replies
+
+
+async def test_a_message_sent_while_the_bot_was_starting_is_answered(caplog):
+    assert await _message_aged(120) == ["ok"]
+
+
+async def test_a_message_that_waited_hours_is_ignored_and_logged(caplog):
+    with caplog.at_level("INFO", logger="lib.bot"):
+        assert await _message_aged(2 * 3600) == []
+    assert "Ignored a message 120 minutes old" in caplog.text
