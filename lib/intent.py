@@ -329,6 +329,7 @@ def _named(text: str) -> dict[str, int]:
 
 
 FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
+VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
 LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
@@ -336,7 +337,8 @@ def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
     if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
-        return [n for n in WEATHER_READINGS if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")]   # naming one still works
+        return [n for n in WEATHER_READINGS if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
+                and (VPD_IN_ALL or n != "vpd")]   # naming one still works
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 

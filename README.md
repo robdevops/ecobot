@@ -27,6 +27,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `RAIN_STOP_MINUTES` | optional: how long it must stay dry before "the rain has stopped" is sent (default 60, from 5 to 150) |
 | `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped, predicted), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
 | `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with no caption; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
+| `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
 
 ## Layout
 
