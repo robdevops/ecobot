@@ -292,3 +292,11 @@ def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecas
 def test_the_capabilities_say_pollen_only_runs_october_to_december():
     from lib import prompt
     assert "only run from October to December" in prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE])
+
+
+def test_the_prompt_tells_the_model_to_decline_questions_that_would_need_dozens_of_calls():
+    from datetime import datetime
+    from lib import prompt
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
+    assert "Never spend dozens of calls" in text and "I can't answer that efficiently" in text
+    assert "uv_max >= 9" in text

@@ -29,6 +29,16 @@ FIELDS = {
     "rain": ("rainfall", "daily", "high", "mm"),        # the day's total: the rain counter's highest reading
     "wind_gust": ("wind", "wind_gust", "high", "km/h"),
 }
+# every other reading the station has, a day's highest (_max) and lowest (_min): a day's peak UV, its driest air, its lowest pressure ...
+for _name, _group, _field, _unit in (
+        ("humidity", "outdoor", "humidity", "%"), ("pressure", "pressure", "relative", "hPa"), ("wind_speed", "wind", "wind_speed", "km/h"),
+        ("dew_point", "outdoor", "dew_point", "°C"), ("feels_like", "outdoor", "feels_like", "°C"), ("vpd", "outdoor", "vpd", "kPa"),
+        ("solar", "solar_and_uvi", "solar", "W/m²"), ("uv", "solar_and_uvi", "uvi", ""), ("rain_rate", "rainfall", "rain_rate", "mm/h"),
+        ("indoor_temp", "indoor", "temperature", "°C"), ("indoor_humidity", "indoor", "humidity", "%")):
+    FIELDS[f"{_name}_max"] = (_group, _field, "high", _unit)
+    if _name not in ("solar", "uv", "rain_rate", "wind_speed"):   # these have no interesting low: it is 0 every night or calm hour
+        FIELDS[f"{_name}_min"] = (_group, _field, "low", _unit)
+AVERAGED = {n for n in FIELDS if n not in ("temp_max", "temp_min", "rain", "wind_gust")}   # these have no range of their own at 30 minutes or daily
 ALWAYS_SHOWN = ("temp_max", "temp_min", "rain")
 OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le, "=": operator.eq}
 SUB_DAILY = ("5min", "30min")
@@ -55,8 +65,10 @@ PARAMETERS = {
 }
 DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking every day in the period: for questions that "
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
-               "35°C\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
-               "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest). Returns the total of matching "
+               "35°C\", \"how many days was UV 9 or more\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
+               "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest), and a day's "
+               "highest (_max) or lowest (_min) of every other reading: humidity, pressure, wind_speed, dew_point, feels_like, vpd, "
+               "indoor_temp, indoor_humidity (_max and _min); solar, uv, rain_rate (_max only), e.g. uv_max >= 9. Returns the total of matching "
                "days and the top ones. For a record's value and the time it happened (hottest, coldest, fastest gust), use weather_history instead. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
@@ -178,6 +190,10 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
         out["note_daily"] = ("Days marked \"daily\" come from daily readings that run 10am to 10am, so their rain and dates "
                              "are approximate (a morning shower can be counted on the day before). Say so briefly if any "
                              "listed day is marked daily, or if the period reaches back before exact_from.")
+    if AVERAGED & set(shown) and any(source.get(d) != "5min" for d in checked):
+        out["note_averaged"] = ("For these readings, days from 30-minute or daily data use each interval's average, so a day's true peak "
+                                "(or low) may be a little beyond what is listed: a count of days at or past a limit can fall slightly short "
+                                "near the limit. Say so briefly.")
     if not checked:
         out["note"] = "No cached readings for this period yet (the bot may still be downloading history)."
     log.info("Days %s to %s: %d checked, %d match, %d exact", first, last, len(checked), len(matches), len(exact_days))

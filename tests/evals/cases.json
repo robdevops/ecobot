@@ -1239,5 +1239,29 @@
     "expect": {
       "lookup": ""
     }
+  },
+  {
+    "id": "uv-days-two-years",
+    "ask": "how many times was UV 9 or more in the past two years?",
+    "note": "one weather_days call with uv_max >= 9",
+    "expect": {
+      "lookup": "",
+      "tools": [
+        "weather_days"
+      ],
+      "args": {
+        "weather_days": {
+          "where": {
+            "has": [
+              {
+                "field": "uv_max",
+                "op": ">=",
+                "value": 9
+              }
+            ]
+          }
+        }
+      }
+    }
   }
 ]
