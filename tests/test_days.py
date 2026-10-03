@@ -358,3 +358,12 @@ async def test_group_by_is_added_from_the_question_when_the_model_leaves_it_out(
     assert "by_month" in out and len(turn.charts) == 1                       # the model said nothing about months; the words did
     plain = Turn(text="how many days over 0 degrees")
     assert "by_month" not in json.loads(await eco.tools[2].handler(args, plain)) and plain.charts == []
+
+
+def test_the_field_list_is_in_the_tool_schema_once_and_a_wrong_sort_or_of_field_is_still_caught():
+    from lib.ecowitt import days
+    props = days.PARAMETERS["properties"]
+    assert "enum" in props["where"]["items"]["properties"]["field"] and "enum" not in props["sort_by"] and "enum" not in props["of"]
+    from lib.daytable import validate
+    units = {n: f[3] for n, f in days.FIELDS.items()}
+    assert "sort_by must be one of" in validate({"sort_by": "nonsense"}, units) and "needs `of`" in validate({"stat": "sum", "of": "nonsense"}, units)

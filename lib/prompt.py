@@ -112,9 +112,8 @@ BLOCKS = {
 - To ask whether rain comes WITH a change in pressure (or humidity or wind) - "is there a correlation between pressure and rainfall", "did the rain come with the pressure drop", "plot pressure against rainfall" - use weather_link in ONE call (default period: the last 90 days). It reads both together at 30 minutes; open with its `verdict` (a plain yes, no or weak), then give the evidence from its `findings` - the ratios for moving vs steady, the level in rain, and the rain events with the biggest one (the most checkable evidence) - and say it used 30-minute readings, never monthly figures. Never conclude 'no link' from the correlation alone; it is weak by design.
 """,
     "outlook": """RAIN AND SHORT-TERM OUTLOOK ("will it rain?", "do I need an umbrella?", "what's it doing later?")
-- Fetch in ONE step, both in parallel:
-  1. weather_now, groups "outdoor,pressure,rainfall,rainfall_piezo,wind"
-  2. weather_history for the last 3 hours up to now, same groups
+- The current reading (weather_now) and the last 3 hours (weather_history), groups "outdoor,pressure,rainfall,rainfall_piezo,wind", are normally
+  already in the conversation: use them. Fetch them in ONE step, in parallel, only if they are missing.
 - Pressure tendency (relative pressure, last 3 hours): falling if the high came before the low, rising if the low came first. Change = high minus low.
   Falling more than 3 hPa: unsettled, rain likely soon. Falling 1-3 hPa: rain possible. Steady (under 1 hPa) or rising: rain unlikely.
 - Pressure level: under 1005 hPa is unsettled; over 1020 hPa is settled.
@@ -128,6 +127,7 @@ BLOCKS = {
 - Wind direction has no low or high (it is circular: 350° and 10° are 20° apart). For "wind.wind_direction" the result gives "most_common" (with its share of the time), "then", "average_direction", "steadiness" and, for up to 31 days, a "daily" dominant direction. Answer from those with compass names, e.g. "mostly NE (34% of the time), then E; fairly steady". Never give degrees as a range, or say the wind swung "from 2° to 349°". Add any "note", "note_period" or "calm" briefly.
 """,
     "describe": """DESCRIBING A DAY
+For today or yesterday the day's readings are normally already in the conversation; fetch only if missing.
 - For "what was it like", "what would it have been like", "describe" or "imagine" questions, paint a short, vivid picture of the day in 2-4 sentences of plain prose, built only from the real readings (e.g. when the rain came, how cold it got, how windy), then give the key numbers in one short line. No bullet list for these.
 """,
 }

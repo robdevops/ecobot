@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, Defaults
 
+from lib import intent
 from lib.airgradient import AirGradient
 from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, Notifier, PollenMonitor, WeatherMonitor
 from lib.alerts.menu import available_kinds
@@ -67,6 +68,7 @@ def version() -> str:
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
+    intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     sources = await start_sources(cfg)
     if not sources:
         raise SystemExit("No data source is working - nothing to talk about")

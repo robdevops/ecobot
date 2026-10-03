@@ -40,7 +40,8 @@ class Agent:
         if usage:
             cached = getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
             thought = getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
-            detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached), "
+            share = "" if not cached or not usage.prompt_tokens else f", {100 * cached // usage.prompt_tokens}%"
+            detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached{share}), "
                       f"out {usage.completion_tokens} ({'?' if thought is None else thought} thinking)")
         log.info("LLM %d (%s%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
                  ", streamed" if on_text else "", elapsed, detail, len(calls), len(content))
@@ -68,14 +69,14 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_heavy=None) -> str:
+                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_heavy=None, conv_id: str | None = None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
         first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
         straight away, together, and the model is only invoked once the data is in. require_tool forces a
         fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft). on_heavy(tokens) is called once, before the model is
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft). conv_id names the conversation for the provider's prompt cache (see above); on_heavy(tokens) is called once, before the model is
         sent a lot of data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
         first. The work carries on; nothing waits for a reply."""
         cache: dict = {}  # identical tool calls within one question are only made once
@@ -119,6 +120,8 @@ class Agent:
                 kwargs = {"model": self.model,
                           "messages": [{"role": "system", "content": system_prompt}, *messages],
                           "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
+                if conv_id:   # the same id for every call of a chat sends them to the server holding its cached prompt
+                    kwargs["extra_headers"] = {"x-grok-conv-id": conv_id}
                 if schemas:
                     kwargs["tools"] = schemas
                     kwargs["tool_choice"] = ("none" if final or no_tools else
@@ -153,6 +156,29 @@ def strip_tool_turns(messages: list[dict]) -> list[dict]:
     later questions can't reuse old data (and requests stay small)."""
     return [m for m in messages
             if m["role"] == "user" or (m["role"] == "assistant" and not m.get("tool_calls") and m.get("content"))]
+
+
+OLD_ANSWER_CHARS = 300   # an older answer is kept to about this much: the last one stays whole, since follow-ups refer to it
+
+
+def shorten_old(messages: list[dict], limit: int = OLD_ANSWER_CHARS) -> list[dict]:
+    """The history with every assistant turn but the last cut to its first lines (about `limit` characters, ending "..."): a long list or
+    caption from several questions ago is rarely needed in full, and it is re-sent on every call."""
+    last = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
+    out = []
+    for i, m in enumerate(messages):
+        text = m.get("content")
+        if m["role"] != "assistant" or i == last or not isinstance(text, str) or len(text) <= limit:
+            out.append(m)
+            continue
+        lines = text.splitlines()
+        while len(lines) > 1 and len("\n".join(lines)) > limit:
+            lines.pop()
+        cut = "\n".join(lines)
+        if len(cut) > limit:
+            cut = cut[:limit].rsplit(" ", 1)[0]
+        out.append({**m, "content": cut.rstrip() + " \u2026"})
+    return out
 
 
 def trim_history(messages: list[dict], max_messages: int = MAX_HISTORY) -> list[dict]:

@@ -59,6 +59,7 @@ class Config:
     forecast_lat: float | None = None    # FORECAST_LAT / FORECAST_LON; the weather station's own location when unset
     forecast_lon: float | None = None
     rain_quiet_hours: tuple[int, int] | None = (0, 6)   # RAIN_QUIET_HOURS="0-6" (local hours; "off" for none): no rain alerts, a summary after
+    chart_all_feels_like: bool = False   # CHART_ALL_FEELS_LIKE=on: "weather all week" also draws the feels-like panel (off: it nearly repeats temperature)
     rain_stop_minutes: int = 60          # RAIN_STOP_MINUTES: dry for this long and "the rain has stopped" is sent (5 to 150)
 
     @property
@@ -90,6 +91,7 @@ class Config:
             forecast_lat=_number(env("FORECAST_LAT")),
             forecast_lon=_number(env("FORECAST_LON")),
             rain_quiet_hours=_hours(env("RAIN_QUIET_HOURS"), (0, 6)),
+            chart_all_feels_like=_on(env("CHART_ALL_FEELS_LIKE")),
             rain_stop_minutes=int(min(150, max(5, _number(env("RAIN_STOP_MINUTES")) or 60))),
         )
         if not (cfg.ecowitt or cfg.airgradient):

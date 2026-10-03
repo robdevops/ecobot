@@ -328,11 +328,14 @@ def _named(text: str) -> dict[str, int]:
     return found
 
 
+FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
+
+
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
     if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
-        return list(WEATHER_READINGS)
+        return [n for n in WEATHER_READINGS if FEELS_LIKE_IN_ALL or n != "feels_like"]   # naming it ("plot feels like") still works
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
@@ -655,10 +658,6 @@ OUTLOOK_WORDS = re.compile(r"\b(rain\w*|umbrella|showers?|wet|storms?|later|soon
 WIND_WORDS = re.compile(r"\b(wind\w*|gusts?|direction|breez\w*)\b", I)
 BOT_WORDS = re.compile(r"\b(can|could|do|does|are|will)\s+(you|the bot)\b|\b(alerts?|notify|notification\w*|support\w*|capabilit\w*|able to|add|set up|remind)\b", I)
 COMPARE = re.compile(r"\b(against|versus|vs|compare\w*|affect\w*|influence\w*|correlat\w*|relat\w*|link\w*|cause\w*)\b", I)
-# Words that carry no topic of their own: a follow-up made only of these takes the topics of the messages before it
-TOPIC_TOOLS = {"days": ["weather_days"], "link": ["weather_link"], "compose": ["plot_chart", "air_link", "air_scan"],
-               "forecast": ["weather_forecast"], "pollen": ["pollen_asthma"]}
-CORE_TOOLS = ("weather_now", "weather_history", "air_quality")
 
 
 def topics(text: str, before: list[str] = ()) -> set[str]:
@@ -686,17 +685,24 @@ RAIN_AHEAD = re.compile(r"\b(umbrella|chance of rain|(will|going to|gonna|likely
 WEEK_AHEAD = re.compile(r"\b(week|days|weekend|next \w+day)\b", I)
 
 
-def forecast_prefetch(text: str, forecast: bool) -> list[tuple[str, dict]]:
-    """The forecast fetched with the model's first step for a question about rain ahead (it is cached: no wait)."""
-    if not forecast or not RAIN_AHEAD.search(text):
-        return []
-    return [("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True})]
+def model_prefetch(text: str, now: datetime, ecowitt: bool, forecast: bool) -> list[tuple[str, dict]]:
+    """What the model would fetch first for these questions, fetched here instead (so it answers in one call, not two): for rain
+    ahead, the current reading, the last 3 hours and the forecast (cached); for a described today or yesterday, that day's readings."""
+    calls: list[tuple[str, dict]] = []
+    if RAIN_AHEAD.search(text):
+        if ecowitt:
+            groups = "outdoor,pressure,rainfall,rainfall_piezo,wind"
+            calls += [("weather_now", {"groups": groups}),
+                      ("weather_history", {"groups": groups, "start_date": (now - timedelta(hours=3)).strftime(FMT), "end_date": now.strftime(FMT)})]
+        if forecast:
+            calls.append(("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True}))
+    elif ecowitt and DESCRIBE.search(text) and not SPECIFIC_MOMENT.search(text):
+        spans = spans_in(text, now)
+        if len(spans) == 1 and spans[0][0] in ("yesterday", "today", "last 24 hours"):
+            _, start, end = spans[0]
+            calls.append(("weather_history", {"groups": "outdoor,indoor,rainfall,wind", "start_date": start.strftime(FMT), "end_date": end.strftime(FMT)}))
+    return calls
 
-
-def tools_for(found: set[str]) -> list[str]:
-    """The tool names a question can use: the basics, and what its topics add."""
-    extra = ["air_days"] if {"days", "air"} <= found else []   # counting or ranking days by an air metric
-    return [*CORE_TOOLS, *(t for topic in TOPIC_TOOLS if topic in found for t in TOPIC_TOOLS[topic]), *extra]
 
 
 @dataclass
@@ -767,4 +773,4 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
                    more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
-                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=forecast_prefetch(text, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
+                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, ecowitt, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
