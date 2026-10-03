@@ -154,3 +154,15 @@ def test_the_rain_quiet_hours_are_configurable():
     from lib.config import _hours
     assert _hours("", (0, 6)) == (0, 6) and _hours("22-6", (0, 6)) == (22, 6) and _hours("off", (0, 6)) is None
     assert _hours("junk", (0, 6)) == (0, 6) and _hours("6-6", (0, 6)) == (0, 6) and _hours("0-25", (0, 6)) == (0, 6)
+
+
+def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
+    from lib.config import Config
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("XAI_API_KEY", "k")
+    monkeypatch.setenv("ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("CHART_ALL_FEELS_LIKE", raising=False)
+    assert Config.from_env().chart_all_feels_like is False
+    monkeypatch.setenv("CHART_ALL_FEELS_LIKE", "on")
+    assert Config.from_env().chart_all_feels_like is True

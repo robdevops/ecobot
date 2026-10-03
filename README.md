@@ -26,6 +26,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
 | `RAIN_STOP_MINUTES` | optional: how long it must stay dry before "the rain has stopped" is sent (default 60, from 5 to 150) |
 | `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped, predicted), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
+| `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming it ("plot feels like") always works |
 
 ## Layout
 
