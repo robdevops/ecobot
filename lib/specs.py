@@ -130,13 +130,25 @@ class Chart:
                     line.records.pop("low", None)
 
 
-def _caption(self) -> str:
-    """The chart's caption: its title, then the time range (the first part of the subtitle, which always starts with it)."""
-    period = self.subtitle.split("  ·  ")[0].strip()
-    return f"{self.title}\n{period}" if period else self.title
+def _caption(self, today: date) -> str:
+    """The chart's caption. One panel: one line, "Temperature, since Tue 7 Jul 2026" (a period that runs up to today), "Temperature,
+    Wed 24 – Tue 30 Sep 2026" otherwise. Several panels: the title, then the time range on a line of its own."""
+    period = self.subtitle.split("  ·  ")[0].strip()   # always starts with the time range
+    if not period:
+        return self.title
+    if len(self.panels) != 1:
+        return f"{self.title}\n{period}"
+    day = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
+    left, _, right = period.partition(" – ")
+    if not right:   # one day
+        return f"{self.title}, {'today' if period == day(today) else period}"
+    if right != day(today):
+        return f"{self.title}, {period}"
+    first, last = left.split(), right.split()   # "Wed 24" / "Thu 27 Aug" take their month and year from the end of the range
+    return f"{self.title}, since {' '.join([*first, *last[len(first):]])}"
 
 
-Chart.caption = property(_caption)
+Chart.caption = _caption
 
 
 def period_text(a: date, b: date) -> str:
