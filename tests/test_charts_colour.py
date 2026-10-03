@@ -101,10 +101,11 @@ def test_these_readings_show_their_latest_value_beside_the_line(reading):
     assert "13.4" in labels_of(one_line(reading, ys))
 
 
-def test_a_zero_wind_or_solar_reading_is_labelled_but_a_zero_vpd_is_not_and_other_readings_are_not_labelled():
+@pytest.mark.parametrize("reading", ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd"])
+def test_a_latest_value_of_zero_is_not_labelled_for_any_of_them_and_other_readings_are_not_labelled(reading):
     flat = [5.0 + (i % 6) for i in range(40)] + [0.0]
-    assert "0" in labels_of(one_line("wind", flat)) and "0" in labels_of(one_line("solar", flat))
-    assert "0" not in labels_of(one_line("vpd", flat))
+    assert "0" not in labels_of(one_line(reading, flat))
+    assert "0.4" in labels_of(one_line(reading, flat[:-1] + [0.4]))       # a tiny but non-zero value still is
     assert "52.3" not in labels_of(one_line("humidity", [50.0 + (i % 7) for i in range(40)] + [52.3]))   # a peak or low is tagged, the latest is not
 
 

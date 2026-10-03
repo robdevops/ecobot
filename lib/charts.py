@@ -590,8 +590,10 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], tz, x0, x1, look, _deg(p.unit))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
-    if len(lines) > 1 or p.reading in END_LABELLED:   # VPD at zero (the air is saturated or it is night) is left unlabelled
-        _end_labels(ax, drawn, show_floor=len(lines) == 1 and p.reading != "vpd")
+    if len(lines) > 1:
+        _end_labels(ax, drawn)
+    elif p.reading in END_LABELLED and drawn[0][2][-1] != 0:   # a latest value of zero (night, calm) has nothing to say
+        _end_labels(ax, drawn, show_floor=True)
     entries = [(_colour(s, first + i, p.reading), s.label) for i, s in enumerate(lines)] + ([(RAIN, p.bars.label)] if p.bars else [])
     return len(lines), x1, entries
 
