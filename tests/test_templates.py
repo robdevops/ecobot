@@ -9,8 +9,8 @@ NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
 
 def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left_alone():
-    assert templates.sentence("\U0001f4cb Report") == "Report"
-    assert templates.sentence("\U0001f4c8 Temperature 7d") == "Temperature chart 7d"
+    assert templates.sentence("\U0001f4cb Status") == "Report"
+    assert templates.sentence("\U0001f4c8 Temperature") == "Temperature chart 7d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
     assert len(templates.LABELS) == 9
@@ -19,14 +19,18 @@ def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left
 def test_every_button_asks_something_the_bot_understands():
     def read(label):
         return intent.read(templates.sentence(label), NOW, True, True)
-    assert read("\U0001f4cb Report").report
-    for days in (7, 30, 90):
-        name, args, _ = read(f"\U0001f3ed Air Qual. {days}d").fast
-        assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10", "co2", "voc_index", "nox_index"}
-        weather = read(f"\U0001f326️ Weather {days}d")
-        assert weather.chart_all and weather.chart_in_code and weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
-    name, args, _ = read("\U0001f4c8 Temperature 7d").fast
-    assert name == "weather_history" and args["chart"] is True
+    assert read("\U0001f4cb Status").report
+    weather = read("\U0001f326️ Weather")
+    assert weather.chart_all and weather.chart_in_code and weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
+    for label, groups in (("\U0001f327️ Rain", "rainfall"), ("\U0001f4c8 Temperature", "outdoor,indoor"),
+                          ("\U0001f4a7 Humidity", "outdoor,indoor"), ("\U0001f4a8 Wind", "wind")):
+        name, args, _ = read(label).fast
+        assert name == "weather_history" and args["chart"] is True and args["groups"] == groups and read(label).chart_in_code
+    assert read("\U0001f4a7 Humidity").chart_field == "humidity" and read("\U0001f327️ Rain").rain_caption
+    name, args, _ = read("\U0001f3ed Air Quality").fast
+    assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10", "co2", "voc_index", "nox_index"}
+    name, args, _ = read("\U0001f52c Particulates").fast
+    assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
     assert read(templates.CAPABILITIES).about_the_bot
 
 
@@ -61,7 +65,7 @@ def message(text, chat_type="private"):
 
 async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both():
     bot = Recorder()
-    for text in ("\U0001f4cb Report", "weather now", templates.CAPABILITIES):
+    for text in ("\U0001f4cb Status", "weather now", templates.CAPABILITIES):
         await bot.on_message(message(text)[0], NS(bot=NS(username="b", id=99)))
     assert bot.asked == ["Report", "weather now"] and bot.alerts == 1       # capabilities are not sent to the model
 
@@ -87,8 +91,8 @@ async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off
 
 
 
-def test_report_is_on_the_right_hand_side_of_the_first_row():
-    assert [label for label, _ in templates.ROWS[0]][-1].endswith("Report")
+def test_status_is_on_the_right_hand_side_of_the_first_row():
+    assert [label for label, _ in templates.ROWS[0]][-1].endswith("Status")
 
 
 class Replies:

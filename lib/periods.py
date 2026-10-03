@@ -1,4 +1,4 @@
-"""The period buttons under a chart: 7d, 30d, 90d and 365d, minus the one the chart already shows. Pressing one redraws the chart
+"""The period buttons under a chart: Week, Month, Quarter and Year (7, 30, 90 and 365 days), minus the one the chart already shows. Pressing one redraws the chart
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 from collections import OrderedDict
@@ -6,13 +6,14 @@ from collections import OrderedDict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 PERIODS = (7, 30, 90, 365)
+NAMES = {7: "Week", 30: "Month", 90: "Quarter", 365: "Year"}   # what the buttons say
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose question is kept, newest first to stay
 
 
 def keyboard(current: int | None) -> InlineKeyboardMarkup:
     """One row of the periods other than `current` (all four when the chart shows none of them, e.g. "this month")."""
-    return InlineKeyboardMarkup([[InlineKeyboardButton(f"{days}d", callback_data=f"{PREFIX}{days}") for days in PERIODS if days != current]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(NAMES[days], callback_data=f"{PREFIX}{days}") for days in PERIODS if days != current]])
 
 
 def days_in(data: str | None) -> int | None:
@@ -30,3 +31,36 @@ class Charted(OrderedDict):
         self.move_to_end((chat_id, message_id))
         while len(self) > REMEMBERED:
             self.popitem(last=False)
+
+
+class ImageCache:
+    """The charts drawn lately, by question: toggling between the period buttons brings a chart back at once instead of drawing it
+    again. A chart is kept CHART_TTL seconds (the readings move slowly) and the newest CHART_IMAGES stay."""
+
+    CHART_TTL = 10 * 60
+    CHART_IMAGES = 60
+
+    def __init__(self, clock=None):
+        import time
+        self.clock = clock or time.monotonic
+        self.items: OrderedDict = OrderedDict()
+
+    @staticmethod
+    def key(question: str, days: int, now) -> str:
+        """The question with its period made explicit, so "Temperature chart 30d" and a button's "…30d" are the one chart."""
+        from . import intent
+        return intent.with_period(question, days, now).lower()
+
+    def get(self, key: str) -> tuple[bytes, str] | None:
+        entry = self.items.get(key)
+        if entry is None or self.clock() - entry[0] > self.CHART_TTL:
+            self.items.pop(key, None)
+            return None
+        self.items.move_to_end(key)
+        return entry[1], entry[2]
+
+    def put(self, key: str, png: bytes, title: str):
+        self.items[key] = (self.clock(), png, title)
+        self.items.move_to_end(key)
+        while len(self.items) > self.CHART_IMAGES:
+            self.items.popitem(last=False)

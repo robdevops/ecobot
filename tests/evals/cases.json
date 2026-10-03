@@ -311,23 +311,19 @@
   {
     "id": "pressure-week",
     "ask": "pressure week",
-    "note": "pressure needs the pressure group and a pressure chart",
+    "note": "a bare 'pressure week' is a chart of the pressure group, sent with no model call",
     "expect": {
-      "fast": null,
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "groups": "pressure",
+          "chart": true
+        }
+      },
       "chart_field": "relative",
       "hints": [
         "\"week\" = last 7 days"
-      ],
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "groups": {
-            "regex": "pressure"
-          }
-        }
-      }
+      ]
     },
     "covers": [
       "m:pressure",
@@ -337,25 +333,21 @@
   {
     "id": "wind-3m",
     "ask": "wind 3m",
-    "note": "wind 3m was read as 3 days",
+    "note": "wind 3m was read as 3 days; a bare reading and period is a chart",
     "expect": {
-      "fast": null,
-      "hints": [
-        "\"3m\" = last 3 months: 2026-07-01"
-      ],
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "groups": {
-            "regex": "wind"
-          },
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "groups": "wind",
+          "chart": true,
           "start_date": {
             "regex": "^2026-07-0[1-2]"
           }
         }
-      }
+      },
+      "hints": [
+        "\"3m\" = last 3 months: 2026-07-01"
+      ]
     },
     "covers": [
       "m:wind-speed",

@@ -280,6 +280,12 @@ def period_days(text: str, now: datetime) -> int:
     return max(1, round((end - start).total_seconds() / 86400))
 
 
+def _has_days(text: str, days: int, now: datetime | None = None) -> bool:
+    """Does the text name a period of at least this many days?"""
+    now = now or datetime.now()
+    return bool(spans_in(text, now)) and period_days(text, now) >= days
+
+
 def with_period(text: str, days: int, now: datetime) -> str:
     """The question with its period swapped for the last `days` days: "temperature chart 30d" -> "temperature chart 90d"; a question
     that names no period gets one added."""
@@ -371,7 +377,8 @@ def wants_chart_all(text: str) -> bool:
     named = len(_named(text))
     if named < 2 and ALL.search(text) and WEATHER_WORD.search(text):
         return True
-    return named == 0 and bool(GRAPH.search(text)) and not mentions_air(text) and not any(p.search(text) for p in JUDGEMENT)
+    asked = GRAPH.search(text) or WEATHER_WORD.search(text) and _has_days(text, 2)   # "weather 30d" is a chart too
+    return named == 0 and bool(asked) and not mentions_air(text) and not any(p.search(text) for p in JUDGEMENT)
 
 
 def chart_field(text: str) -> str | None:
@@ -398,10 +405,21 @@ def _sides(text: str) -> list[str]:
     return ["indoor"] if indoor and not outdoor else ["outdoor"] if outdoor and not indoor else ["outdoor", "indoor"]
 
 
+def bare_chart_ask(text: str, now: datetime) -> bool:
+    """Nothing but readings (or "weather") and a period: "humidity 7d", "weather 30d". Anything with a time range is a chart."""
+    if not _has_days(text, 2, now) or not (_named(text) or WEATHER_WORD.search(text)):
+        return False   # a day or less ("temperature today") is a figure to read, not a chart
+    rest = text
+    for said, _ in _periods(text, now).values():
+        rest = re.sub(rf"\b{re.escape(said)}\b", " ", rest, flags=I)
+    patterns = [re.compile(rf"({r.words}|weather|{_ECOWITT}|conditions|indoors?|outdoors?)", I) for r in WEATHER_READINGS.values()]
+    return all(word in FILLER or any(p.fullmatch(word) for p in patterns) for word in re.findall(r"[\w'’.]+", rest.lower()))
+
+
 def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, list[str]] | None:
     """(period name, start, end, Ecowitt groups) for a plain chart of named readings ("rain chart 7d", "plot temperature and
     humidity"), else None. A comparison, a forecast or a question that wants thinking is the model's."""
-    if (not GRAPH.search(text) or mentions_air(text) or _NOT_CHART.search(text)
+    if (not (GRAPH.search(text) or bare_chart_ask(text, now)) or mentions_air(text) or _NOT_CHART.search(text)
             or any(p.search(text) for p in JUDGEMENT) or not (fields := chart_fields(text) or list(_named(text)))):
         return None
     spans = spans_in(text, now)
@@ -447,7 +465,7 @@ def weather_groups(text: str) -> str:
 # ---------- air-quality fast path ----------
 # "how's the air?", "what's the AQI", "report my airgradient aq". History, comparisons and mixed
 # weather questions go the normal way.
-AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|{_AG})\b", I)
+AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|particulates?|particles?|{_AG})\b", I)
 AIR_QUALITY = re.compile(r"\bair quality\b", I)
 AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"
@@ -477,9 +495,12 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
     return spans[0] if len(spans) == 1 else None
 
 
+PARTICULATES = re.compile(r"\b(particulates?|particles?|particulate matter)\b", I)
+
+
 def air_named(text: str) -> list[str]:
     """The air readings the text names ("pm10", "co2"); all of them for "all"; none if it only says air."""
-    metrics = [m for _, m in AIR_METRICS] if ALL.search(text) else []
+    metrics = [m for _, m in AIR_METRICS] if ALL.search(text) else ["pm2_5", "pm10", "pm1"] if PARTICULATES.search(text) else []
     for pattern, metric in AIR_METRICS:
         if re.search(rf"\b({pattern})", text, I) and metric not in metrics:
             metrics.append(metric)

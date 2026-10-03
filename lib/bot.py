@@ -215,6 +215,7 @@ class Bot:
         self.cfg, self.agent, self.sources, self.state = cfg, agent, sources, state
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
+        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.charted = periods.Charted()   # the question behind each chart sent, for its period buttons
 
     def register(self, app):
@@ -324,8 +325,18 @@ class Bot:
             await query.answer("That chart is out of date, please ask again")
             return
         await query.answer(f"Drawing {days} days...")
-        asked = intent.with_period(question, days, now_local(self.cfg.tz))
+        now = now_local(self.cfg.tz)
+        asked = intent.with_period(question, days, now)
         log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
+        if cached := self.images.get(self.images.key(asked, days, now)):   # drawn lately: no new question
+            png, title = cached
+            try:
+                await message.edit_media(InputMediaPhoto(png, caption=title or None), reply_markup=periods.keyboard(days))
+                self.charted.remember(message.chat_id, message.message_id, asked)
+                log.info("Period button: chart from the cache")
+                return
+            except TelegramError as e:
+                log.warning("Couldn't edit the chart in place (%s); drawing it again", e)
         await self.respond(update, context, asked, redraw=message)
 
     async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str) -> bool:
@@ -602,6 +613,8 @@ class Bot:
         markup = templates.keyboard() if self._keyboard_stale(msg) else None
         row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo = []
+        if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
+            self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])
         try:
             if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
                 reply, photos, row = "", [], None
