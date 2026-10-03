@@ -280,7 +280,7 @@ async def test_counts_per_month_or_year_are_drawn_as_a_bar_chart_with_a_title_th
     where = [{"field": "temp_max", "op": ">=", "value": 0}]
     turn = Turn()
     out = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="month"), turn))
-    assert len(turn.charts) == 1 and "chart" in out and "caption" in out["chart"]
+    assert len(turn.charts) == 1 and "chart" in out and "message" in out["chart"]
     chart = turn.charts[0]
     bars = chart.panels[0].bars
     assert chart.title == "Days with temperature ≥ 0 °C" and bars.per == "month" and bars.values
