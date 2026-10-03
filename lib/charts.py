@@ -53,14 +53,14 @@ INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": 
 # Some readings are drawn in the colour of their own value, on one absolute scale (so a colour means the same on every chart):
 # (value, colour) stops, blended smoothly between, held at the ends. Every stop is deep enough for the white text of a value pill.
 GRADIENTS = {
-    "temperature": [(-5, "#4C1D95"), (5, "#2563EB"), (12, "#06B6D4"), (19, "#F59E0B"), (27, "#F97316"), (34, "#E11D48"), (42, "#A21CAF")],
+    "temperature": [(-5, "#312E81"), (5, "#4338CA"), (12, "#7E22CE"), (18, "#C026D3"), (24, "#F43F5E"), (30, "#F97316"), (38, "#F59E0B")],
     "humidity": [(15, "#D97706"), (40, "#0D9488"), (65, "#2563EB"), (100, "#6D28D9")],
     "dew_point": [(-5, "#6366F1"), (4, "#0EA5E9"), (11, "#14B8A6"), (16, "#0891B2"), (20, "#7C3AED"), (24, "#DB2777"), (28, "#BE185D")],
 }
 # The indoor sensor's lines are drawn by value too, on a scale of their own that shares no hue with the outdoor one
-# (emerald to olive, where outdoor runs violet, blue, cyan, amber, orange, crimson, magenta).
+# (deep cyan through teal and emerald to lime, where outdoor runs indigo, purple, magenta, rose, orange and amber).
 INDOOR_GRADIENTS = {
-    "temperature": [(14, "#065F46"), (19, "#059669"), (23, "#10B981"), (26, "#65A30D"), (30, "#4D7C0F")],
+    "temperature": [(12, "#155E75"), (18, "#0D9488"), (23, "#10B981"), (28, "#65A30D")],
 }
 
 

@@ -16,8 +16,8 @@ def luminance(hex_colour):
 
 def test_a_ramp_blends_between_its_stops_and_holds_at_the_ends():
     temp = charts.ramp("temperature")
-    assert temp(-50) == temp(-5) == "#4c1d95" and temp(99) == temp(42) == "#a21caf"
-    assert temp(5) == "#2563eb" and temp(10) != temp(20)
+    assert temp(-50) == temp(-5) == "#312e81" and temp(99) == temp(38) == "#f59e0b"
+    assert temp(5) == "#4338ca" and temp(10) != temp(20)
     assert charts.ramp("wind") is None and charts.ramp("pressure") is None
 
 
