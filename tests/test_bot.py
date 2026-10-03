@@ -171,22 +171,21 @@ async def test_a_generation_stopped_update_is_logged(caplog):
     assert "generation stopped" in caplog.text and "message_generation_stopped" in caplog.text
 
 
-async def test_a_long_answer_is_cut_to_fit_one_chart_message_not_sent_as_text_then_picture():
+async def test_a_chart_carries_only_its_title_and_any_answer_text_is_a_message_of_its_own():
     from lib import bot as botmod
-    answer = "Fri 25 Sep - Thu 01 Oct 2026\n" + "\n".join(f"Reading {i}: 10.0 to 20.0 °C, a long description of it" for i in range(40))
-    assert len(answer) > botmod.CAPTION_LIMIT
     sent = []
 
-    async def reply_photo(photo, caption=None, caption_entities=None):
+    async def reply_photo(photo, caption=None, **kw):
         sent.append(("photo", caption))
 
     async def reply_text(body, **kw):
         sent.append(("text", body))
-    await botmod.deliver(NS(reply_photo=reply_photo, reply_text=reply_text), answer, [b"png"], link=("live chart", "https://x"))
-    assert [kind for kind, _ in sent] == ["photo"]
-    caption = sent[0][1]
-    assert len(caption) <= botmod.CAPTION_LIMIT and caption.startswith("Fri 25 Sep") and "…" in caption and caption.endswith("live chart")
-    assert botmod.fit_caption("short answer") == "short answer"
+    msg = NS(reply_photo=reply_photo, reply_text=reply_text)
+    await botmod.deliver(msg, "", [b"png"], link=("live chart", "https://x"), titles=["Humidity"])
+    assert sent == [("photo", "Humidity")]                    # no text, no footer: just the title
+    sent.clear()
+    await botmod.deliver(msg, "Fri was the hottest day.", [b"png"], titles=["Temperature"])
+    assert sent == [("text", "Fri was the hottest day."), ("photo", "Temperature")]
 
 
 async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_model_is_not_asked():
@@ -302,7 +301,7 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
     await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "Humidity chart 7d")
     name, args = Agent.tools.calls[0]
     assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
-    assert sent and "Humidity: low 50 %, Fri 25 Sep at 5am · high 60 %, Sat 26 Sep at 3pm" in sent[0]
+    assert sent == ["Humidity"]    # the chart's title is its whole caption
 
 
 async def _ask_with(tool_result, text, monkeypatch=None):
@@ -479,7 +478,7 @@ async def test_every_model_call_sends_the_full_tool_list_not_a_per_question_one(
     assert seen == ["all", "all"]
 
 
-async def test_weather_all_week_is_sent_as_a_chart_with_no_caption(monkeypatch):
+async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title(monkeypatch):
     import json
     from lib import bot as botmod
     from lib.specs import Chart, Line, Panel
@@ -501,7 +500,7 @@ async def test_weather_all_week_is_sent_as_a_chart_with_no_caption(monkeypatch):
         sent.append(caption)
     monkeypatch.setattr(botmod, "render_chart", lambda spec, tz: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
-    for text, caption_wanted in (("ecowitt all week", False), ("temperature chart 7d", True)):
+    for text, caption_wanted in (("ecowitt all week", True), ("temperature chart 7d", True)):
         sent.clear()
         msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
                  chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -510,4 +509,4 @@ async def test_weather_all_week_is_sent_as_a_chart_with_no_caption(monkeypatch):
         async def send_chat_action(*a, **k):
             pass
         await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
-        assert len(sent) == 1 and bool(sent[0]) is caption_wanted, text
+        assert sent == ["t"], text

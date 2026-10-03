@@ -42,13 +42,13 @@ READING_COLOURS = {
     "uv": "#8B5CF6",            # violet
     "pressure": "#C04CE8",      # orchid
     "vpd": "#06B6D4",           # cyan
-    "humidity": "#2747C9",      # deep blue
+    "humidity": "#4F46E5",      # indigo
     "dew_point": "#13B8A6",     # teal
     "wind": "#64748B",          # slate grey
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
-# Indoors: red with peacock teal, blue with amber, teal with apricot, tangerine with azure.
-INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#F5A524", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
+# Indoors: red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
+INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
@@ -60,7 +60,7 @@ AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure frac
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
 LEADER_CLEARANCE = 0.05          # peak labels sit at least this share of the panel's width away from the peaks (shorter = closer)
-BARS_SHARE = 0.3                 # rain behind a line never rises past this share of the panel's height
+BARS_SHARE = 0.95                # rain behind a line is drawn over the panel's full height (the tallest bar nearly reaches the top), under the line
 
 
 @dataclass(frozen=True)
@@ -271,7 +271,14 @@ def _axes_width(chart: Chart) -> float:
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     """Title and subtitle at the top left; a unit that is not a degree goes in the title (ticks stay plain numbers)."""
     title = f"{title} ({unit})" if unit and _deg(unit) != "°" else title
-    fig.text(AX_RECT[0], 1 - 0.27 / height, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
+    head = fig.text(AX_RECT[0], 1 - 0.27 / height, title, fontsize=13, fontweight=TITLE_WEIGHT, color=TEXT, va="center")
+    room = AX_RECT[2] * fig.get_figwidth() * fig.dpi        # the width of the plots below
+    renderer = fig.canvas.get_renderer()
+    names = title.split(", ")
+    kept = len(names)
+    while head.get_window_extent(renderer).width > room and kept > 2:   # a long list of readings: the first few "and N more"
+        kept -= 1
+        head.set_text(", ".join(names[:kept]) + f" and {len(names) - kept} more")
     fig.text(AX_RECT[0], 1 - 0.52 / height, subtitle, fontsize=8.5, color=MUTED, va="center")
 
 

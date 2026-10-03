@@ -268,6 +268,32 @@ def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
     return [(name, *window) for window, (_, name) in _periods(text, now).items()]
 
 
+DEFAULT_CHART_DAYS = 7   # a chart with no period named is a week
+
+
+def period_days(text: str, now: datetime) -> int:
+    """How many days the period a question names covers (a week when it names none)."""
+    spans = spans_in(text, now)
+    if not spans:
+        return DEFAULT_CHART_DAYS
+    _, start, end = spans[0]
+    return max(1, round((end - start).total_seconds() / 86400))
+
+
+def _has_days(text: str, days: int, now: datetime | None = None) -> bool:
+    """Does the text name a period of at least this many days?"""
+    now = now or datetime.now()
+    return bool(spans_in(text, now)) and period_days(text, now) >= days
+
+
+def with_period(text: str, days: int, now: datetime) -> str:
+    """The question with its period swapped for the last `days` days: "temperature chart 30d" -> "temperature chart 90d"; a question
+    that names no period gets one added."""
+    for said, _ in _periods(text, now).values():
+        text = re.sub(rf"(?:\b(?:for|over|in|during|the|past)\s+)*\b{re.escape(said)}\b", "", text, flags=I)
+    return f"{' '.join(text.split())} {days}d"
+
+
 def period_hints(text: str, now: datetime) -> list[str]:
     """One line per period the person's words name, with its exact dates, for the model: "3m" = the last 3 months:
     2026-07-01 00:00:00 to 2026-09-30 23:59:59. The model otherwise guesses short forms (3m has been read as 3 days)."""
@@ -330,22 +356,29 @@ def _named(text: str) -> dict[str, int]:
 
 FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
 VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
+ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")   # the panels of "weather all week", top to bottom
+INDOOR_READINGS = ("temperature", "humidity", "dew_point", "feels_like")   # what the indoor sensor measures
 LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
-    if len(found) < 2 and ALL.search(text) and WEATHER_WORD.search(text):   # "weather all week": every reading, a panel each
-        every = [n for n in WEATHER_READINGS if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
-                 and (VPD_IN_ALL or n != "vpd")]   # naming one still works
-        return [*(n for n in every if n != "wind"), *(n for n in every if n == "wind")]   # wind is the bottom panel
+    if wants_chart_all(text):   # "weather all week", "chart all 90d", "weather chart 90d": every reading, a panel each
+        indoors = _sides(text) == ["indoor"]   # the indoor sensor only has these
+        return [n for n in ALL_ORDER if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
+                and (VPD_IN_ALL or n != "vpd") and (not indoors or n in INDOOR_READINGS)]   # naming one still works
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
 def wants_chart_all(text: str) -> bool:
-    """"weather all week": every reading, a panel each (the picture says it all: no caption)."""
-    return len(_named(text)) < 2 and bool(ALL.search(text) and WEATHER_WORD.search(text))
+    """"weather all week", "chart all 90d", "weather chart 90d": every reading, a panel each (the picture says it all: no caption).
+    A chart that names no reading is of all of them, not of temperature."""
+    named = len(_named(text))
+    if named < 2 and ALL.search(text) and WEATHER_WORD.search(text):
+        return True
+    asked = GRAPH.search(text) or WEATHER_WORD.search(text) and _has_days(text, 2)   # "weather 30d" is a chart too
+    return named == 0 and bool(asked) and not mentions_air(text) and not any(p.search(text) for p in JUDGEMENT)
 
 
 def chart_field(text: str) -> str | None:
@@ -372,10 +405,21 @@ def _sides(text: str) -> list[str]:
     return ["indoor"] if indoor and not outdoor else ["outdoor"] if outdoor and not indoor else ["outdoor", "indoor"]
 
 
+def bare_chart_ask(text: str, now: datetime) -> bool:
+    """Nothing but readings (or "weather") and a period: "humidity 7d", "weather 30d". Anything with a time range is a chart."""
+    if not _has_days(text, 2, now) or not (_named(text) or WEATHER_WORD.search(text)):
+        return False   # a day or less ("temperature today") is a figure to read, not a chart
+    rest = text
+    for said, _ in _periods(text, now).values():
+        rest = re.sub(rf"\b{re.escape(said)}\b", " ", rest, flags=I)
+    patterns = [re.compile(rf"({r.words}|weather|{_ECOWITT}|conditions|indoors?|outdoors?)", I) for r in WEATHER_READINGS.values()]
+    return all(word in FILLER or any(p.fullmatch(word) for p in patterns) for word in re.findall(r"[\w'’.]+", rest.lower()))
+
+
 def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, list[str]] | None:
     """(period name, start, end, Ecowitt groups) for a plain chart of named readings ("rain chart 7d", "plot temperature and
     humidity"), else None. A comparison, a forecast or a question that wants thinking is the model's."""
-    if (not GRAPH.search(text) or mentions_air(text) or _NOT_CHART.search(text)
+    if (not (GRAPH.search(text) or bare_chart_ask(text, now)) or mentions_air(text) or _NOT_CHART.search(text)
             or any(p.search(text) for p in JUDGEMENT) or not (fields := chart_fields(text) or list(_named(text)))):
         return None
     spans = spans_in(text, now)
@@ -421,7 +465,7 @@ def weather_groups(text: str) -> str:
 # ---------- air-quality fast path ----------
 # "how's the air?", "what's the AQI", "report my airgradient aq". History, comparisons and mixed
 # weather questions go the normal way.
-AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|{_AG})\b", I)
+AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|particulates?|particles?|{_AG})\b", I)
 AIR_QUALITY = re.compile(r"\bair quality\b", I)
 AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"
@@ -451,9 +495,12 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
     return spans[0] if len(spans) == 1 else None
 
 
+PARTICULATES = re.compile(r"\b(particulates?|particles?|particulate matter)\b", I)
+
+
 def air_named(text: str) -> list[str]:
     """The air readings the text names ("pm10", "co2"); all of them for "all"; none if it only says air."""
-    metrics = [m for _, m in AIR_METRICS] if ALL.search(text) else []
+    metrics = [m for _, m in AIR_METRICS] if ALL.search(text) else ["pm2_5", "pm10", "pm1"] if PARTICULATES.search(text) else []
     for pattern, metric in AIR_METRICS:
         if re.search(rf"\b({pattern})", text, I) and metric not in metrics:
             metrics.append(metric)

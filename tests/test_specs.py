@@ -148,11 +148,14 @@ def test_a_stacked_charts_subtitle_says_what_a_bar_covers_and_whether_a_range_is
     assert stack([Panel("T", "°C", [line("T")]), rating], date(2026, 9, 1), date(2026, 9, 1)).subtitle == "Tue 1 Sep 2026  ·  rating per hour"
 
 
-def test_a_chart_of_one_line_panel_gives_every_line_its_records_but_a_stack_does_not_and_peaks_are_validated():
+def test_every_line_gets_its_records_in_a_stack_too_except_the_low_of_sun_wind_and_rain_and_peaks_are_validated():
     alone = Chart("A", "s", [Panel("A", "", [Line("A", [1, 2, 3], [1.0, 5.0, 2.0], low=[0.0, 4.0, 1.0], high=[2.0, 9.0, 3.0])])])
     assert alone.panels[0].lines[0].records == {"high": (2, 9.0), "low": (1, 0.0)}           # the band's top and bottom
-    both = Chart("B", "s", [Panel("A", "", [line("A")]), Panel("B", "", [line("B")])])
-    assert not any(s.records for p in both.panels for s in p.lines)
+    both = Chart("B", "s", [Panel("A", "", [line("A")], reading="humidity"), Panel("B", "", [line("B")], reading="solar"),
+                            Panel("C", "", [line("C")], reading="wind"), Panel("D", "", [line("D")], reading="uv")])
+    humidity, solar, wind, uv = (p.lines[0].records for p in both.panels)
+    assert set(humidity) == {"high", "low"}
+    assert set(solar) == set(wind) == set(uv) == {"high"}
     with pytest.raises(ValueError):
         Panel("bad", "", [line()], peaks="beside")
 
@@ -160,3 +163,25 @@ def test_a_chart_of_one_line_panel_gives_every_line_its_records_but_a_stack_does
 def test_the_vpd_chart_is_titled_with_the_full_name():
     from lib.series import WEATHER
     assert WEATHER["vpd"].label == "Vapour pressure deficit"
+
+
+def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
+    import matplotlib.pyplot as plt
+    from lib import charts
+    fig = plt.figure(figsize=(charts.W_IN, 8), dpi=charts.DPI)
+    try:
+        charts._headline(fig, "Temperature, Humidity, Pressure, Rain, Dew point, Solar radiation, Wind", "sub", 8)
+        title = fig.texts[0]
+        room = charts.AX_RECT[2] * fig.get_figwidth() * fig.dpi
+        assert title.get_window_extent(fig.canvas.get_renderer()).width <= room
+        assert title.get_text().startswith("Temperature, Humidity") and title.get_text().endswith(" more")
+        charts._headline(fig, "Temperature", "sub", 8)
+        assert fig.texts[2].get_text() == "Temperature"                                  # a short one is untouched
+    finally:
+        plt.close(fig)
+
+
+def test_a_charts_caption_is_its_title_and_its_time_range():
+    chart = stack([Panel("Humidity", "%", [line("H")]), Panel("Rain", "mm", bars=bars())], date(2026, 9, 24), date(2026, 9, 30))
+    assert chart.caption == "Humidity, Rain\nThu 24 – Wed 30 Sep 2026"
+    assert Chart("Rain", "", [Panel("Rain", "mm", bars=bars())]).caption == "Rain"
