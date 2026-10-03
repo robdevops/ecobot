@@ -32,7 +32,6 @@ from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 log = logging.getLogger(__name__)
 
 TG_LIMIT = 4000
-CAPTION_LIMIT = 1024  # Telegram's limit for photo captions
 MAX_CHARTS = 3
 RETRY_SECONDS = 60           # the second try, one reasoning step lower, after a question timed out
 PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down) is not answered: its moment has passed
@@ -80,7 +79,7 @@ def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
     return chunks
 
 
-# The reply is the chart's caption, so wording about the chart itself is redundant
+# A chart's answer text sits beside the chart, so wording about the chart itself is redundant
 _CHART_WORDS = r"(chart|graph|plot)s?"
 _META_PREFIX = re.compile(
     rf"^\s*(here'?s|here is|i'?ve (sent|attached|made))?\s*(a|the|your)?\s*{_CHART_WORDS}\b[^.:\n]*?"
@@ -175,57 +174,36 @@ class Draft:
                     await asyncio.wait_for(stop.wait(), DRAFT_MIN_GAP)
 
 
-def fit_caption(text: str, link: tuple[str, str] | None = None) -> str:
-    """The text cut to what fits a photo's caption together with the footer: whole lines from the top, then a trailing
-    ellipsis (words, if the first line alone is too long)."""
-    room = CAPTION_LIMIT - len(with_footer("", link)[0]) - 1
-    lines = text.splitlines()
-    while len(lines) > 1 and len("\n".join(lines)) + 1 > room:
-        lines.pop()
-    cut = "\n".join(lines)
-    if len(cut) + 1 > room:
-        cut = cut[:room - 1].rsplit(" ", 1)[0]
-    return (cut.rstrip() + "…") if cut != text else text
-
-
-async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None) -> bool:
-    """Send the answer with any charts. A short answer goes in the photo's caption (one message);
-    a long one goes first as text, then the charts. If sending the chart fails the answer is still
-    sent as text. link = (label, url) adds a small italic link line at the end. markup (the button keyboard) rides on
-    the last text or the single photo; returns whether it was sent (a group of photos can't carry one)."""
+async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
+                  titles: list[str] | None = None) -> bool:
+    """Send the answer with any charts. A chart carries only its title as its caption; any answer text is its own message,
+    sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
+    the last text, or on the single photo when there is no text; returns whether it was sent (a group of photos can't carry one)."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
-    caption, entities = with_footer(text, link)
-    if photos and len(caption) > CAPTION_LIMIT:  # one message beats a text and then a picture: cut the text to fit
-        caption, entities = with_footer(fit_caption(text, link), link)
-    extra = {"reply_markup": markup} if markup else {}
-    if photos and len(caption) <= CAPTION_LIMIT:
-        try:
-            if len(photos) == 1:
-                await msg.reply_photo(photos[0], caption=caption or None, caption_entities=entities or None, **extra)
-                return bool(markup)
-            await msg.reply_media_group([InputMediaPhoto(p, caption=(caption or None) if i == 0 else None,
-                                                         caption_entities=(entities or None) if i == 0 else None)
-                                         for i, p in enumerate(photos)])
-            return False
-        except TelegramError:
-            log.exception("Couldn't send the chart; sending the answer as text")
-            photos = []
-    chunks = split_message(text)
-    for i, chunk in enumerate(chunks):
-        last = i == len(chunks) - 1
-        body, ents = with_footer(chunk, link) if last else (chunk, [])
-        await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True, **(extra if last else {}))
+    titles = titles or []
+    carried = False
+    if text:
+        chunks = split_message(text)
+        for i, chunk in enumerate(chunks):
+            last = i == len(chunks) - 1
+            body, ents = with_footer(chunk, link) if last else (chunk, [])
+            await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True,
+                                 **({"reply_markup": markup} if markup and last and not photos else {}))
+        carried = bool(markup) and not photos
     if photos:
+        caption = lambda i: (titles[i] if i < len(titles) else "") or None
         try:
             if len(photos) == 1:
-                await msg.reply_photo(photos[0])
-            else:
-                await msg.reply_media_group([InputMediaPhoto(p) for p in photos])
+                await msg.reply_photo(photos[0], caption=caption(0), **({"reply_markup": markup} if markup else {}))
+                return bool(markup)
+            await msg.reply_media_group([InputMediaPhoto(p, caption=caption(i)) for i, p in enumerate(photos)])
         except TelegramError:
             log.exception("Couldn't send the chart")
-    return bool(markup)
+            if not text:
+                await msg.reply_text("Sorry, I couldn't send that chart. Please try again in a moment.")
+    return carried
 
 
 class Bot:
@@ -474,7 +452,7 @@ class Bot:
         if caption is None:
             turn.charts.clear()
             turn.forecast_shown.clear()
-        return "" if read.chart_all and caption else caption   # "weather all week": the chart says it all
+        return caption
 
     async def _lookup_in_code(self, read, turn: Turn) -> str | None:
         """A plain lookup (a reading, the air, the pollen, the forecast, what the bot can do) answered from its one tool result; None
@@ -534,13 +512,14 @@ class Bot:
             stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
-            ok, photos = True, []
+            ok, photos, titles, silent = True, [], [], False
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text)
             try:
                 reply = None
-                if read.fast and read.chart_in_code:   # drawn by the tool, captioned in code
+                if read.fast and read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
                     reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
+                    silent = reply is not None
                 elif read.lookup:
                     reply = await asyncio.wait_for(self._lookup_in_code(read, turn), TURN_SECONDS)
                     if reply is None:
@@ -560,6 +539,7 @@ class Bot:
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
                         photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
+                        titles.append(spec.title)
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
             except asyncio.TimeoutError:
@@ -574,7 +554,9 @@ class Bot:
                 stop_typing.set()
                 await asyncio.gather(typing, *([drafting] if drafting else []))  # wait for any in-flight "typing" or draft so none is sent after the reply
 
-        if ok and not reply.strip() and not photos:   # a captionless chart that could not be drawn
+        if silent and photos:
+            reply = ""
+        if ok and not reply.strip() and not photos:   # a chart with no text that could not be drawn
             reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in working[new_from:] if m["role"] == "tool"]
         log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
@@ -584,7 +566,7 @@ class Bot:
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard() if self._keyboard_stale(msg) else None
         try:
-            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup)
+            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup, titles=titles)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown)
             if carried_keyboard:

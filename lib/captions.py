@@ -13,24 +13,24 @@ def wants_chart(args: dict, turn, start: datetime | None = None, end: datetime |
 
 
 # Added to a tool result when a chart was made, so the reply becomes a good caption
-CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
+CHART_HINT = ("Your reply is sent as a message just before a chart of this data, so keep it short: the period, then one line "
               "per series with its high and low, or its average if that is what was asked (for weather, one line each for Outdoor and Indoor when both were "
               "fetched; for air quality, the peak with its ready-made rating copied exactly, emoji included: \"high_rating\"). No other lists or breakdowns; don't mention or describe the chart.")
 
-AVERAGE_CHART_HINT = ("Your reply becomes the caption of a chart of this data, so keep it short: the period, then one line "
+AVERAGE_CHART_HINT = ("Your reply is sent as a message just before a chart of this data, so keep it short: the period, then one line "
                       "per series (Outdoor and Indoor when both were fetched) with its AVERAGE, copied from the series' "
                       "\"average\" field, and its low and high in brackets. Lead with the average: that is what was asked. "
                       "Don't mention or describe the chart.")
-LINK_CHART_HINT = ("Your reply becomes the caption of a chart with the reading as a line and rain as bars behind it, so keep "
+LINK_CHART_HINT = ("Your reply is sent as a message just before a chart with the reading as a line and rain as bars behind it, so keep "
                    "it short: the period, then the finding in one or two lines (how much of the rain fell while the reading "
                    "was falling, and the correlation), citing the numbers. Don't mention or describe the chart.")
-STACK_CHART_HINT = ("Your reply becomes the caption of a chart with these readings on one time axis, so keep it short: the "
+STACK_CHART_HINT = ("Your reply is sent as a message just before a chart with these readings on one time axis, so keep it short: the "
                     "period, then one line per reading: temperature and other readings with their high and low (or their "
                     "average if that was asked), rain with its total (\"rain_total_mm\"). Don't mention or describe the chart.")
-COMPOSED_CHART_HINT = ("Your reply becomes the caption of a chart of these readings on one time axis, so keep it short: the "
+COMPOSED_CHART_HINT = ("Your reply is sent as a message just before a chart of these readings on one time axis, so keep it short: the "
                        "period, then what the figures show about how they relate. Don't mention or describe the chart.")
-DIRECTION_CHART_HINT = ("Your reply becomes the caption of a chart of wind: average speed with the gusts, and a compass of "
+DIRECTION_CHART_HINT = ("Your reply is sent as a message just before a chart of wind: average speed with the gusts, and a compass of "
                         "where the wind came from. Keep it short: the period, the average speed and strongest gust, then the "
                         "most common direction and how steady it was. Don't mention or describe the chart.")
-COUNT_CHART_HINT = ("Your reply becomes the caption of a bar chart of these counts, so keep it to one short line: how many of the days "
+COUNT_CHART_HINT = ("Your reply is sent as a message just before a bar chart of these counts, so keep it to one short line: how many of the days "
                     "matched (matching_days of days_checked) and the period. Don't list the bars or describe the chart.")
