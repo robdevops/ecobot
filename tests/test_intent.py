@@ -434,7 +434,7 @@ def test_questions_about_rain_so_far_do_not_fetch_the_forecast(text):
     assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []
 
 
-@_pytest.mark.parametrize("text", ["rain total per month this year", "hottest day each year", "how many times did it rain this year",
+@_pytest.mark.parametrize("text", ["how many times did it rain this year",
                                    "worst air quality day per month", "days over 35 and also rained", "days over UVI 10 on weekends"])
 def test_counting_and_totalling_questions_are_never_turned_into_a_plain_chart(text):
     read = intent.read(text, datetime(2026, 10, 3, 12), True, True, True, True)
@@ -467,3 +467,27 @@ def test_the_period_is_the_whole_record_unless_one_is_named():
     assert named["start_date"] == "2026-01-01" and named["group_by"] == "month"
     year = intent.read("how many days was PM2.5 over 25 in 2024", now, True, True).fast[1]
     assert year["start_date"] == "2024-01-01" and year["end_date"] == "2024-12-31"
+
+
+@_pytest.mark.parametrize("text, tool, stat, of, group", [
+    ("rain by month for 2 years", "weather_days", "sum", "rain", "month"),
+    ("average temperature per year", "weather_days", "avg", "temp_avg", "year"),
+    ("hottest day each year", "weather_days", "max", "temp_max", "year"),
+    ("coldest night per month this year", "weather_days", "min", "temp_min", "month"),
+    ("humidity by month this year", "weather_days", "avg", "humidity_avg", "month"),
+    ("uv by month", "weather_days", "max", "uv_max", "month"),
+    ("windiest day per month", "weather_days", "max", "wind_gust", "month"),
+    ("highest PM2.5 by month", "air_days", "max", "pm2_5_max", "month"),
+    ("average co2 per year", "air_days", "avg", "co2_avg", "year"),
+])
+def test_one_reading_by_month_or_year_is_a_figure_per_period_worked_out_in_code(text, tool, stat, of, group):
+    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    name, args, _ = read.fast
+    assert read.lookup == "days" and (name, args["stat"], args["of"], args["group_by"]) == (tool, stat, of, group) and args["count_only"] is True
+
+
+@_pytest.mark.parametrize("text", ["pm2.5 and co2 by month", "rain by month on weekends", "air quality by month", "will it rain by month",
+                                   "days over 30 degrees and rain per month", "rain days per month"])
+def test_anything_beyond_one_reading_by_month_or_year_is_left_to_the_model(text):
+    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    assert read.lookup == "" and (read.fast is None or read.fast[0] not in ("weather_days", "air_days"))

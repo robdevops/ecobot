@@ -224,3 +224,11 @@ def test_a_days_count_lookup_gives_the_count_the_condition_and_the_period():
     averaged = json.dumps({"period": "a - b", "days_checked": 10, "matching_days": 2, "note_averaged": "x"})
     assert "may fall slightly short" in report.lookup("days", averaged, [], [])
     assert report.lookup("days", json.dumps({"error": "bad"}), [], []) is None
+
+
+def test_a_figure_per_period_lookup_gives_the_figure_over_the_whole_period():
+    result = json.dumps({"period": "Fri 4 Oct 2024 - Sat 3 Oct 2026", "days_checked": 731, "matching_days": 731,
+                         "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 1234.5, "by_month": {"2024-10": 0.0}})
+    assert report.lookup("days", result, [], []) == "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."
+    hot = json.dumps({"period": "a 2025 - b 2026", "days_checked": 3, "matching_days": 3, "stat": {"what": "Highest temperature", "of": "temp_max", "unit": "℃"}, "value": 41.2})
+    assert report.lookup("days", hot, [], []).startswith("Highest temperature: 41.2 °C over 3 days")

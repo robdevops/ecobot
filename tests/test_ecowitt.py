@@ -1187,3 +1187,30 @@ def test_naming_one_of_temperature_and_humidity_leaves_the_other_out_of_what_the
     assert q._in_focus("outdoor.humidity")
     q.turn = Turn()
     assert q._in_focus("outdoor.humidity")
+
+
+async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_records_and_by_month_when_asked(tmp_path):
+    from lib.ecowitt.query import HistoryQuery
+    from lib.ecowitt.store import HistoryCache
+    from lib.tools import Turn
+    from tests.fakes import TZ
+    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    today = datetime.now(TZ).date()
+    old = today - timedelta(days=500)
+    day_ts = lambda d: int(datetime.combine(d, datetime.min.time()).replace(tzinfo=TZ).timestamp()) + 10 * 3600   # a daily bucket starts 10am
+    days = [old + timedelta(days=k) for k in range(60)]
+    cache.store("M", "1day", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(day_ts(d)): "2.0" for d in days}}}},
+                day_ts(days[0]), day_ts(days[-1]) + 86400)
+    f = type("F", (), {})()
+    f.cache, f.mac, f.tz = cache, "M", TZ
+    f.epoch = lambda dt: int(dt.replace(tzinfo=TZ).timestamp())
+    q = HistoryQuery.__new__(HistoryQuery)
+    q.f, q.tz, q.turn = f, TZ, Turn()
+    q.start, q.end = datetime.combine(days[0], datetime.min.time()), datetime.combine(days[-1], datetime.max.time())
+    q.span = q.end - q.start
+    q.rain_from_daily = False
+    daily = await q._rain_bars()
+    assert q.rain_from_daily and len(daily.x) >= 59 and round(sum(daily.y), 1) == 120.0 and daily.per == "day"
+    q.turn = Turn(text="rain by month for 2 months")
+    monthly = await q._rain_bars()
+    assert monthly.per == "month" and monthly.values and round(sum(monthly.y), 1) == 120.0 and len(monthly.x) in (2, 3)

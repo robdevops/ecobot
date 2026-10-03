@@ -1,10 +1,10 @@
 """Rain from the station's running daily total, at 30-minute slots: how much fell in each, which slots make up a
 spell, and the bars a chart draws. Shared by the analyses and the charts."""
 
-from datetime import date, tzinfo
+from datetime import date, timedelta, tzinfo
 
 from .specs import Bars
-from .timeutil import SLOT, day_bounds
+from .timeutil import SLOT, day_bounds, to_local
 
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
 SPELL_MM = 1.0                 # a spell needs this much rain to count as an event
@@ -46,9 +46,11 @@ def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
             {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
 
 
-def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until: int | None = None) -> Bars:
+def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until: int | None = None, by: str | None = None) -> Bars:
     """Rain summed into bars (see bar_layout), one for every stretch of the period, dry ones included (a bar of 0), up to `until`
     (epoch, default the end of the last day)."""
+    if by in ("month", "year"):   # a figure per month or year was asked for: one bar for each, whatever the length
+        return _calendar_bars(rain, tz, first, last, by)
     origin, width, per = bar_layout(tz, first, last)
     end = min(day_bounds(last, tz)[1], until) if until else day_bounds(last, tz)[1]
     bars: dict[int, float] = dict.fromkeys(range(origin, end, width), 0.0)
@@ -58,3 +60,19 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until
             bars[k] = bars.get(k, 0.0) + mm
     xs = sorted(bars)
     return Bars("Rain", "mm", xs, [round(bars[k], 2) for k in xs], width, per)
+
+
+def _calendar_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, by: str) -> Bars:
+    """Rain summed per calendar month or year over the period (each with its figure above the bar)."""
+    key = (lambda d: (d.year, d.month)) if by == "month" else (lambda d: (d.year,))
+    totals: dict[tuple, float] = {}
+    day = first
+    while day <= last:   # every month or year of the period gets a bar, a dry one as 0
+        totals.setdefault(key(day), 0.0)
+        day += timedelta(days=1)
+    for t, mm in rain.items():
+        if mm > 0 and first <= (d := to_local(t, tz).date()) <= last:
+            totals[key(d)] += mm
+    starts = [date(k[0], k[1] if by == "month" else 1, 1) for k in totals]
+    return Bars("Rain", "mm", [day_bounds(d, tz)[0] for d in starts], [round(v, 1) for v in totals.values()],
+                28 * 86400 if by == "month" else 365 * 86400, by, values=True)

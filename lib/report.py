@@ -149,6 +149,9 @@ def lookup(kind: str, result: str | None, names: list[str], sides: list[str]) ->
     elif kind == "days":   # "137 of 1,454 days with UV index \u2265 10 (period)": the chart (if any) carries the breakdown
         if "matching_days" not in data:
             return None
+        if data.get("stat") and data.get("value") is not None:   # a total, average, highest or lowest over the period
+            unit = _units(data["stat"].get("unit")) or ""
+            return f"{data['stat']['what']}: {data['value']:g} {unit}".rstrip() + f" over {data['days_checked']:,} days ({_period(data)})."
         what = f" with {data['condition']}" if data.get("condition") else ""
         note = " Older days use averages, so a count near the limit may fall slightly short." if data.get("note_averaged") else ""
         return f"{data['matching_days']:,} of {data['days_checked']:,} days{what} ({_period(data)}).{note}"

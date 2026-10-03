@@ -17,8 +17,9 @@ from datetime import datetime, time, timedelta, timezone
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
+from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
-from ..timeutil import daily_summary, local_date, now_local
+from ..timeutil import day_bounds, daily_summary, local_date, now_local
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
@@ -73,6 +74,7 @@ class HistoryQuery:
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
         self.rain_bars = Bars("Rain", "mm", [], [], 86400, "day")   # for a stacked chart with rain
+        self.rain_from_daily = False                       # some of its days come from daily records (older than the 30-minute readings)
         self.compass: Compass | None = None                # the wind rose (counts per compass point by speed), drawn beside the wind chart
 
     async def run(self) -> str:
@@ -396,7 +398,8 @@ class HistoryQuery:
             field = "wind_speed" if self.compass and any(k.endswith(".wind_speed") for k in series_out) else next(iter(series_out)).split(".", 1)[-1]
             keys = [k for k in series_out if k.endswith("." + field)]
         if keys[0] == "rainfall.daily" and self.rain_bars.x:  # the day's counter is a running total: draw what fell, as columns
-            return Chart("Rain", f"{period_text(self.start.date(), self.end.date())}  ·  rain per {self.rain_bars.per}",
+            return Chart("Rain", f"{period_text(self.start.date(), self.end.date())}  ·  rain per {self.rain_bars.per}"
+                                 + ("  ·  older days from daily records (10am to 10am)" if self.rain_from_daily else ""),
                          [panel_for("rain", bars=self.rain_bars)])
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
@@ -454,10 +457,21 @@ class HistoryQuery:
         return line.spec(label or group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:
-        """Rain for the stacked chart: from the cached 30-minute readings (cache only), summed into bars."""
+        """Rain for the chart, summed into bars. From the cached 30-minute readings; days older than those (about a year) come from
+        the daily records, the day's total, which are approximate (10am to 10am). A figure per month or year asked for in the
+        person's words (`by`) gets one bar for each, whatever the length of the period."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
         (daily,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
-        return rain_bars(rain_slots(daily), self.tz, self.start.date(), self.end.date(), until=hi)
+        rain = rain_slots(daily)
+        held = {local_date(t, self.tz) for t in rain}
+        (old,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "1day", "rainfall", ["daily"], lo - 86400, hi + 86400)
+        for t, mm in old.items():   # a daily bucket is dated by the local day its 10am start falls on
+            day = local_date(t, self.tz)
+            if day not in held and self.start.date() <= day <= self.end.date():
+                rain[day_bounds(day, self.tz)[0] + 12 * 3600] = mm
+                self.rain_from_daily = True
+        by = grouping_in(self.turn.text) if self.span > timedelta(days=31) else None
+        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, by=by)
 
     def _stack_spec(self, names: list[str]) -> Chart | None:
         """The readings asked for, one panel each on a shared time axis (rain behind the first line); None if fewer than

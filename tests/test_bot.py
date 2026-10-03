@@ -446,3 +446,11 @@ async def test_a_days_over_a_limit_question_is_counted_in_code_with_no_model():
     result = json.dumps({"period": "Wed 5 Oct 2022 - Sat 3 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"})
     replies, asked = await _ask_with(result, "days over UVI 10 by year")
     assert not asked and replies == ["137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."]
+
+
+async def test_rain_by_month_is_worked_out_in_code_with_no_model():
+    import json
+    result = json.dumps({"period": "Fri 4 Oct 2024 - Sat 3 Oct 2026", "days_checked": 731, "matching_days": 731,
+                         "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 1234.5})
+    replies, asked = await _ask_with(result, "rain by month for 2 years")
+    assert not asked and replies == ["Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."]
