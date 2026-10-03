@@ -303,10 +303,11 @@ def test_dew_point_feels_like_and_vpd_are_charted_readings_that_outrank_temperat
 
 
 def test_weather_all_week_is_every_reading_stacked_except_feels_like_unless_configured(monkeypatch):
-    every = ["temperature", "humidity", "pressure", "wind", "rain", "dew_point", "vpd", "solar", "uv"]
+    every = ["temperature", "humidity", "pressure", "wind", "rain", "dew_point", "vpd", "solar"]   # no UV (the same shape as solar)
     assert intent.chart_fields("weather all week") == every
     monkeypatch.setattr(intent, "FEELS_LIKE_IN_ALL", True)
     assert intent.chart_fields("weather all week") == [*every[:6], "feels_like", *every[6:]]
+    assert intent.chart_fields("plot solar and uv") == ["solar", "uv"]                           # named: still charted
     monkeypatch.setattr(intent, "FEELS_LIKE_IN_ALL", False)
     assert intent.chart_fields("plot feels like and humidity") == ["humidity", "feels_like"] or intent.chart_fields("plot feels like and humidity") == ["feels_like", "humidity"]   # named: still charted
     assert intent.chart_fields("weather this week") == [] and intent.chart_fields("all the rain last week") == []

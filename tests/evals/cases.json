@@ -894,7 +894,7 @@
   {
     "id": "ecowitt-all-week",
     "ask": "ecowitt all week",
-    "note": "every reading stacked (feels like only when CHART_ALL_FEELS_LIKE is on)",
+    "note": "every reading stacked, except UV (same shape as solar) and feels like (unless CHART_ALL_FEELS_LIKE is on)",
     "expect": {
       "chart_fields": [
         "temperature",
@@ -904,8 +904,7 @@
         "rain",
         "dew_point",
         "vpd",
-        "solar",
-        "uv"
+        "solar"
       ]
     },
     "covers": [
