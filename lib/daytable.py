@@ -22,7 +22,7 @@ OPS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le,
 SYMBOL = {">": ">", ">=": "≥", "<": "<", "<=": "≤", "=": "="}
 STATS = ("count", "max", "min", "avg", "sum")
 MAX_LIMIT = 20
-PRETTY = {"temp": "temperature", "uv": "UV index", "dew_point": "dew point", "feels_like": "feels-like", "vpd": "VPD",
+PRETTY = {"temp": "temperature", "uv": "UV index", "dew_point": "dew point", "feels_like": "feels-like", "vpd": "vapour pressure deficit",
           "wind_gust": "wind gust", "wind_speed": "wind speed", "rain_rate": "rain rate", "indoor_temp": "indoor temperature",
           "indoor_humidity": "indoor humidity", "solar": "solar radiation", "pm2_5": "PM2.5", "pm10": "PM10", "pm1": "PM1",
           "co2": "CO₂", "voc_index": "VOC index", "nox_index": "NOx index"}

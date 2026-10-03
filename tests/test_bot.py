@@ -477,3 +477,37 @@ async def test_every_model_call_sends_the_full_tool_list_not_a_per_question_one(
             pass
         await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
     assert seen == ["all", "all"]
+
+
+async def test_weather_all_week_is_sent_as_a_chart_with_no_caption(monkeypatch):
+    import json
+    from lib import bot as botmod
+    from lib.specs import Chart, Line, Panel
+
+    class Tools:
+        async def call(self, name, raw, turn=None):
+            turn.charts.append(Chart("t", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]))
+            return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
+                "outdoor.temperature": {"unit": "℃", "low": "1", "high": "2"}}})
+
+    class Agent:
+        tools = Tools()
+
+        async def run(self, *a, **k):
+            raise AssertionError("no model for a chart")
+    sent = []
+
+    async def reply_photo(photo, caption=None, **kw):
+        sent.append(caption)
+    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz: b"png")
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
+    for text, caption_wanted in (("ecowitt all week", False), ("temperature chart 7d", True)):
+        sent.clear()
+        msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
+                 chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+        update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+        async def send_chat_action(*a, **k):
+            pass
+        await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
+        assert len(sent) == 1 and bool(sent[0]) is caption_wanted, text

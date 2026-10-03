@@ -474,7 +474,7 @@ class Bot:
         if caption is None:
             turn.charts.clear()
             turn.forecast_shown.clear()
-        return caption
+        return "" if read.chart_all and caption else caption   # "weather all week": the chart says it all
 
     async def _lookup_in_code(self, read, turn: Turn) -> str | None:
         """A plain lookup (a reading, the air, the pollen, the forecast, what the bot can do) answered from its one tool result; None
@@ -574,6 +574,8 @@ class Bot:
                 stop_typing.set()
                 await asyncio.gather(typing, *([drafting] if drafting else []))  # wait for any in-flight "typing" or draft so none is sent after the reply
 
+        if ok and not reply.strip() and not photos:   # a captionless chart that could not be drawn
+            reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in working[new_from:] if m["role"] == "tool"]
         log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
                  time.monotonic() - started, len(used), len(photos), len(reply), _short(reply, 30))

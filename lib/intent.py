@@ -339,6 +339,11 @@ def chart_fields(text: str) -> list[str]:
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
+def wants_chart_all(text: str) -> bool:
+    """"weather all week": every reading, a panel each (the picture says it all: no caption)."""
+    return len(_named(text)) < 2 and bool(ALL.search(text) and WEATHER_WORD.search(text))
+
+
 def chart_field(text: str) -> str | None:
     """The one reading a question is about, if it isn't temperature ("lowest and highest humidity"); None when it
     is about temperature, several readings, or none in particular."""
@@ -722,6 +727,7 @@ class Reading:
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
+    chart_all: bool = False               # "weather all week": every reading charted, sent with no caption
     readings: list[str] = field(default_factory=list)     # the readings the words name
     per_day: bool = False                 # figures day by day were asked for
     extra: list[tuple[str, dict]] = field(default_factory=list)   # fetched with the model's first step (the forecast, for "will it rain?")
@@ -772,5 +778,5 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
         calls = [("", {}), ("weather_now", {"groups": "rainfall"})]
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
+                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code, chart_all=in_code and wants_chart_all(text),
                    lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, ecowitt, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
