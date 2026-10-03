@@ -17,7 +17,7 @@ def labels(markup):
 
 def test_the_row_is_always_week_month_and_quarter():
     assert labels(periods.keyboard()) == [[("Week", "pd:7"), ("Month", "pd:30"), ("Quarter", "pd:90")]]
-    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["Week", "\u27a4 Month", "Quarter"]          # the chart's own period is marked
+    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["Week", "\u25cf Month", "Quarter"]          # the chart's own period is marked
     assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["Week", "Month", "Quarter"]
     assert periods.days_in("pd:90") == 90 and periods.days_in("pd:365") is None and periods.days_in("al:on:x") is None
 
@@ -91,7 +91,7 @@ async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
-    assert caption == "Temperature" and labels(markup) == [[("Week", "pd:7"), ("\u27a4 Month", "pd:30"), ("Quarter", "pd:90")]]
+    assert caption == "Temperature" and labels(markup) == [[("Week", "pd:7"), ("\u25cf Month", "pd:30"), ("Quarter", "pd:90")]]
     assert bot.charted[(1, 101)] == "Temperature chart 30d"
 
 
@@ -109,7 +109,7 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     name, args = bot.agent.tools.calls[0]
     assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 90 days..."]
     caption, markup = edits[0]
-    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["Week", "Month", "\u27a4 Quarter"]
+    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["Week", "Month", "\u25cf Quarter"]
     assert bot.charted[(1, 50)] == "Temperature chart 90d"
 
 
