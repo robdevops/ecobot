@@ -454,6 +454,7 @@ class HistoryQuery:
         if line is None:
             return None
         group = k.split(".", 1)[0]
+        line.unbanded(self.span.days + 1, keep=self._band_key(k) is not None)   # a short period: a clean line, except wind's gusts
         return line.spec(label or group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:

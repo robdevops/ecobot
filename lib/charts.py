@@ -23,7 +23,6 @@ import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib import font_manager  # noqa: E402
-from matplotlib import patheffects as pe  # noqa: E402
 from matplotlib.colors import to_rgb  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon  # noqa: E402
@@ -36,19 +35,20 @@ from .timeutil import to_local  # noqa: E402
 # rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
 READING_COLOURS = {
-    "temperature": "#E5383B",   # crimson
+    "temperature": "#FF9830",   # orange (indoors: purple)
     "feels_like": "#FF8C42",    # tangerine (beside the crimson, as blue sits beside violet)
     "solar": "#F5B83D",         # golden
     "uv": "#8B5CF6",            # violet
     "pressure": "#C04CE8",      # orchid
     "vpd": "#06B6D4",           # cyan
     "humidity": "#4F46E5",      # indigo
-    "dew_point": "#13B8A6",     # teal
+    "dew_point": "#5794F2",     # blue (indoors: yellow)
     "wind": "#64748B",          # slate grey
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
-# Indoors: red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
-INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
+# Indoors: the pair of the outdoor line in its panel. Temperature is orange outdoors and purple indoors, dew point blue and yellow
+# (Grafana's palette); humidity is indigo with gold, tangerine feels-like with azure.
+INDOOR_COLOURS = {"temperature": "#B877D9", "humidity": "#CA8A04", "dew_point": "#EBB700", "feels_like": "#2B9BD6"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
@@ -137,6 +137,12 @@ def _deg(unit: str) -> str:
     return "°" if unit.replace("º", "°") in ("°C", "°F", "°") else f" {unit}"
 
 
+def _ink_on(colour: str) -> str:
+    """The text colour for a label on this fill: white, or near-black on a light one (yellow, amber)."""
+    r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in to_rgb(colour))
+    return TEXT if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 else "white"
+
+
 def _box(colour: str, pad: float = 0.25, rounding: float = 0.6) -> dict:
     """The rounded coloured box behind a value label."""
     return {"boxstyle": f"round,pad={pad},rounding_size={rounding}", "fc": colour, "ec": "none"}
@@ -195,19 +201,8 @@ def _extent(lines: list[Line], extra: list[float] = ()) -> tuple[float, float]:
     return (min([min(s.low or s.y) for s in lines] + list(extra)), max([max(s.high or s.y) for s in lines] + list(extra)))
 
 
-def _gradient_under(ax, xs, ys, colour: str, ybottom: float, alpha: float = 0.22):
-    """A soft fade from the line down to the floor."""
-    poly = Polygon([(xs[0], ybottom), *zip(xs, ys), (xs[-1], ybottom)], closed=True, fc="none", ec="none")
-    ax.add_patch(poly)
-    rgba = np.zeros((256, 1, 4))
-    rgba[..., :3] = to_rgb(colour)
-    rgba[..., 3] = np.linspace(alpha, 0.0, 256)[:, None]
-    img = ax.imshow(rgba, aspect="auto", extent=[xs.min(), xs.max(), ybottom, ys.max()], origin="upper", zorder=2)
-    img.set_clip_path(poly)
-
-
 def _draw_lines(ax, lines: list[Line], tz: tzinfo, look: Look, first: int = 0, reading: str = "") -> list[tuple]:
-    """Each line's low-to-high range behind it, then the line with a soft glow and a dot on its end: [(colour, xs, ys)].
+    """Each line's low-to-high range behind it, then the line (crisp, no glow or fill) and a dot on its end: [(colour, xs, ys)].
     `first` is the colour index of the first line (the fallback colours cycle across a stack's panels)."""
     drawn = []
     dense = max(len(s.x) for s in lines) > 200
@@ -217,8 +212,7 @@ def _draw_lines(ax, lines: list[Line], tz: tzinfo, look: Look, first: int = 0, r
         if s.low:
             ax.fill_between(xs, s.low, s.high, color=colour, alpha=0.2, linewidth=0, zorder=3)
         w = 1.3 if len(lines) > 2 or s.low else 1.5 if dense else 2.2   # thinner where there are many lines, a band or many points
-        (line,) = ax.plot(xs, ys, color=colour, linewidth=w, solid_capstyle="round", solid_joinstyle="round", zorder=4)
-        line.set_path_effects([pe.Stroke(linewidth=w + 2.5, foreground=colour, alpha=0.10), pe.Normal()])
+        ax.plot(xs, ys, color=colour, linewidth=w, solid_capstyle="round", solid_joinstyle="round", zorder=4)   # a crisp line: no glow
         _dot(ax, xs[-1], ys[-1], colour, look.end_dot, look.end_rim, 5)
         drawn.append((colour, xs, ys))
     return drawn
@@ -263,9 +257,13 @@ def _bars_behind(ax, bars, tz: tzinfo) -> float:
     return _end_of(bx, bars.width, 0.0)
 
 
+END_LABELLED = ("pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd")   # one line, and still its latest value beside it
+
+
 def _axes_width(chart: Chart) -> float:
     """The plot's width: narrower when a panel has rain's scale or end labels on its right, to leave room for them."""
-    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 for p in chart.panels) else 0)
+    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 or (p.lines and p.reading in END_LABELLED)
+                                     for p in chart.panels) else 0)
 
 
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
@@ -276,6 +274,9 @@ def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     renderer = fig.canvas.get_renderer()
     names = title.split(", ")
     kept = len(names)
+    if head.get_window_extent(renderer).width > room:
+        names = [n for n in names if n != "Rain"]   # cut: "N more" counts the panels with their own heading, and rain is drawn behind a line
+        kept = len(names)
     while head.get_window_extent(renderer).width > room and kept > 2:   # a long list of readings: the first few "and N more"
         kept -= 1
         head.set_text(", ".join(names[:kept]) + f" and {len(names) - kept} more")
@@ -352,7 +353,7 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1:
                     left[5], right[5] = "right", "left"
     for rx, ry, text, colour, above, ha in pills:
         ax.annotate(text, (rx, ry), xytext=(0, look.pill_lift if above else -look.pill_lift), textcoords="offset points", ha=ha,
-                    va="bottom" if above else "top", fontsize=look.pill_font, fontweight="bold", color="white",
+                    va="bottom" if above else "top", fontsize=look.pill_font, fontweight="bold", color=_ink_on(colour),
                     bbox=_box(colour, *look.pill_box), zorder=look.pill_z + 1)
 
 
@@ -434,7 +435,7 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
             for i, (mx, my, colour) in enumerate(g):
                 _dot(ax, mx, my, colour)
                 ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(cx, y_hi - (10 + pitch * i) * per_pt), textcoords="data", ha="center",
-                            va="center", fontsize=size, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
+                            va="center", fontsize=size, fontweight="bold", color=_ink_on(colour), zorder=5, arrowprops=arrow(colour),
                             bbox=_box(colour))
         return
     placed = []                                                           # no empty column: the right margin, at the peaks' heights
@@ -443,24 +444,31 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
         placed.append(ly)
         _dot(ax, mx, my, colour)
         ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(1.03, ly), textcoords=("axes fraction", "data"), ha="left", va="center",
-                    fontsize=size, fontweight="bold", color="white", zorder=5, annotation_clip=False, arrowprops=arrow(colour),
+                    fontsize=size, fontweight="bold", color=_ink_on(colour), zorder=5, annotation_clip=False, arrowprops=arrow(colour),
                     bbox=_box(colour))
 
 
-def _end_labels(ax, drawn: list[tuple]):
-    """The latest value of each line in the margin beside it, nudged apart where they would touch."""
+def _figure(value: float) -> str:
+    """A latest value as written beside a line: three significant figures, but never in exponent form (1014.8, not 1.01e+03)."""
+    return f"{value:.1f}".rstrip("0").rstrip(".") if abs(value) >= 100 else f"{value:.3g}"
+
+
+def _end_labels(ax, drawn: list[tuple], show_floor: bool = False):
+    """The latest value of each line in the margin beside it, nudged apart where they would touch. Lines that all sit on the
+    floor have nothing to read off and get no label, unless `show_floor` (a zero wind or solar reading is worth saying)."""
     y_lo, y_hi = ax.get_ylim()
-    if max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
-        return  # everything sits on the floor: nothing to read off
+    if not show_floor and max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
+        return
     height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
     gap = 8 * (y_hi - y_lo) / height_pt                     # 8 points, in data units
     placed = []
     for colour, xs, ys in sorted(drawn, key=lambda d: d[2][-1]):
         y = max(ys[-1], placed[-1] + gap) if placed else ys[-1]
         placed.append(y)
-        ax.annotate(f"{ys[-1]:.3g}", (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
-                    fontsize=7, fontweight="bold", color=colour, annotation_clip=False,
-                    arrowprops={"arrowstyle": "-", "color": colour, "linewidth": 0.6, "alpha": 0.6, "shrinkA": 0, "shrinkB": 2},
+        shade = colour
+        ax.annotate(_figure(ys[-1]), (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
+                    fontsize=7, fontweight="bold", color=shade, annotation_clip=False,
+                    arrowprops={"arrowstyle": "-", "color": shade, "linewidth": 0.6, "alpha": 0.6, "shrinkA": 0, "shrinkB": 2},
                     bbox={"boxstyle": "round,pad=0.15", "fc": "none", "ec": "none"})
 
 
@@ -501,9 +509,6 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
     drawn = _draw_lines(ax, lines, tz, look, first, p.reading)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
         _shade_zones(ax, p.zones, ybottom, ytop, 0.07)
-    for s, (colour, xs, ys) in zip(lines, drawn):
-        if not s.low and len(lines) <= 2:  # a soft fade from the line to the floor (muddy with more lines, and a band says enough)
-            _gradient_under(ax, xs, ys, colour, ybottom)
     ax.set_ylim(ybottom, ytop)
     if marked and p.peaks == "aside":
         _mark_highs(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look)
@@ -513,6 +518,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         x1 = max(x1, _bars_behind(ax, p.bars, tz))
     if len(lines) > 1:
         _end_labels(ax, drawn)
+    elif p.reading in END_LABELLED and drawn[0][2][-1] != 0:   # a latest value of zero (night, calm) has nothing to say
+        _end_labels(ax, drawn, show_floor=True)
     entries = [(_colour(s, first + i, p.reading), s.label) for i, s in enumerate(lines)] + ([(RAIN, p.bars.label)] if p.bars else [])
     return len(lines), x1, entries
 
