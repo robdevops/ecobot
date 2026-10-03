@@ -35,19 +35,20 @@ from .timeutil import to_local  # noqa: E402
 # rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
 BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
 READING_COLOURS = {
-    "temperature": "#E5383B",   # crimson
+    "temperature": "#FF9830",   # orange (indoors: purple)
     "feels_like": "#FF8C42",    # tangerine (beside the crimson, as blue sits beside violet)
     "solar": "#F5B83D",         # golden
     "uv": "#8B5CF6",            # violet
     "pressure": "#C04CE8",      # orchid
     "vpd": "#06B6D4",           # cyan
     "humidity": "#4F46E5",      # indigo
-    "dew_point": "#13B8A6",     # teal
+    "dew_point": "#5794F2",     # blue (indoors: yellow)
     "wind": "#64748B",          # slate grey
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
-# Indoors (temperature is drawn by value, on its own scale): red with peacock teal, indigo with gold, teal with apricot, tangerine with azure.
-INDOOR_COLOURS = {"temperature": "#0FA3B1", "humidity": "#CA8A04", "dew_point": "#F28C3C", "feels_like": "#2B9BD6"}
+# Indoors: the pair of the outdoor line in its panel. Temperature is orange outdoors and purple indoors, dew point blue and yellow
+# (Grafana's palette); humidity is indigo with gold, tangerine feels-like with azure.
+INDOOR_COLOURS = {"temperature": "#B877D9", "humidity": "#CA8A04", "dew_point": "#EBB700", "feels_like": "#2B9BD6"}
 ZONE_COLOURS = ("#22C55E", "#EAB308", "#EF4444")  # good / poor / very poor
 FALLBACK = ["#10B981", "#EC4899", "#84CC16"]
 RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines and stays clear of every reading's colour
@@ -134,6 +135,12 @@ def _deg(unit: str) -> str:
     if not unit:
         return ""
     return "°" if unit.replace("º", "°") in ("°C", "°F", "°") else f" {unit}"
+
+
+def _ink_on(colour: str) -> str:
+    """The text colour for a label on this fill: white, or near-black on a light one (yellow, amber)."""
+    r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in to_rgb(colour))
+    return TEXT if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 else "white"
 
 
 def _box(colour: str, pad: float = 0.25, rounding: float = 0.6) -> dict:
@@ -346,7 +353,7 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1:
                     left[5], right[5] = "right", "left"
     for rx, ry, text, colour, above, ha in pills:
         ax.annotate(text, (rx, ry), xytext=(0, look.pill_lift if above else -look.pill_lift), textcoords="offset points", ha=ha,
-                    va="bottom" if above else "top", fontsize=look.pill_font, fontweight="bold", color="white",
+                    va="bottom" if above else "top", fontsize=look.pill_font, fontweight="bold", color=_ink_on(colour),
                     bbox=_box(colour, *look.pill_box), zorder=look.pill_z + 1)
 
 
@@ -428,7 +435,7 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
             for i, (mx, my, colour) in enumerate(g):
                 _dot(ax, mx, my, colour)
                 ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(cx, y_hi - (10 + pitch * i) * per_pt), textcoords="data", ha="center",
-                            va="center", fontsize=size, fontweight="bold", color="white", zorder=5, arrowprops=arrow(colour),
+                            va="center", fontsize=size, fontweight="bold", color=_ink_on(colour), zorder=5, arrowprops=arrow(colour),
                             bbox=_box(colour))
         return
     placed = []                                                           # no empty column: the right margin, at the peaks' heights
@@ -437,7 +444,7 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
         placed.append(ly)
         _dot(ax, mx, my, colour)
         ax.annotate(f"{round(my, 1):g}", (mx, my), xytext=(1.03, ly), textcoords=("axes fraction", "data"), ha="left", va="center",
-                    fontsize=size, fontweight="bold", color="white", zorder=5, annotation_clip=False, arrowprops=arrow(colour),
+                    fontsize=size, fontweight="bold", color=_ink_on(colour), zorder=5, annotation_clip=False, arrowprops=arrow(colour),
                     bbox=_box(colour))
 
 
