@@ -476,11 +476,13 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         b = p.bars
         bx = _nums(tz, b.x)
         top = max([*b.y, 1.0]) * 1.15
+        bottom = min([*b.y, 0.0]) * 1.3   # a figure can be below zero (a coldest night)
         _draw_bars(ax, bx, b.y, b.width / 86400 * 0.85, top, 3, alpha=0.75)
-        if b.values:   # a few bars of counts: the number above each
+        if b.values:   # a few bars of counts or figures: the number at the end of each
             for x, y in zip(bx, b.y):
-                ax.text(x + b.width / 86400 * 0.85 / 2, y + top * 0.015, f"{y:g}", ha="center", va="bottom", fontsize=8, color=TEXT, zorder=5)
-        ax.set_ylim(0, top)
+                ax.text(x + b.width / 86400 * 0.85 / 2, y + (top - bottom) * (0.015 if y >= 0 else -0.015), f"{y:g}", ha="center",
+                        va="bottom" if y >= 0 else "top", fontsize=8, color=TEXT, zorder=5)
+        ax.set_ylim(bottom, top)
         return 0, _end_of(bx, b.width, x1), []
     lines = p.lines
     marked = [i for i, s in enumerate(lines) if s.records and p.peaks != "none"]

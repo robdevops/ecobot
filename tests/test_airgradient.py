@@ -315,3 +315,36 @@ async def test_without_a_recent_previous_reading_the_latest_is_rated_alone_and_p
     assert pm["pm2_5"]["value"] == 40.0 and pm["pm2_5"]["band"] == "good" and pm["pm2_5"]["aqi_us"] <= 50   # the spike is not yet called moderate
     both = await current_with(tmp_path, {"pm2_5": 40.0, "voc": 100.0}, [{"pm2_5": 38.0, "voc": 100.0}])
     assert both["pm2_5"]["band"] == "unhealthy for sensitive groups" or both["pm2_5"]["band"] == "moderate"
+
+
+# ---------- air_days ----------
+def _air_store(tmp_path):
+    from lib.airgradient.store import AirStore
+    from tests.fakes import TZ
+    store = AirStore(tmp_path / "air.sqlite", "42", TZ)
+    start = datetime.now(TZ).date() - timedelta(days=40)
+    for k in range(40):
+        day = start + timedelta(days=k)
+        lo = int(datetime.combine(day, datetime.min.time()).replace(tzinfo=TZ).timestamp())
+        spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³
+        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if i == 100 else 5.0, "co2": 420.0 + i} for i in range(288)])
+    return store, start
+
+
+async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp_path):
+    from lib.airgradient.days import air_days_tool
+    from lib.tools import Turn
+    from tests.fakes import TZ
+    store, start = _air_store(tmp_path)
+    end = datetime.now(TZ).date() - timedelta(days=1)
+    turn = Turn()
+    out = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end),
+                                                          where=[{"field": "pm2_5_max", "op": ">", "value": 25}], count_only=True, group_by="month"), turn))
+    assert out["matching_days"] == 4 and out["days_checked"] == 40 and "days" not in out
+    assert sum(out["by_month"].values()) == 4 and turn.charts[0].title == "Days with PM2.5 > 25 µg/m³"
+    mean = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), stat="avg", of="co2_avg", count_only=True)))
+    assert mean["stat"]["what"] == "Average CO₂" and 500 < mean["value"] < 600       # 420 + the mean of 0..287
+    worst = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), sort_by="pm2_5_max", limit=2)))
+    assert [r["pm2_5_max"] for r in worst["days"]] == [40.0, 40.0]
+    bad = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
+    assert "unusable condition" in bad["error"]

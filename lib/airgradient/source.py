@@ -29,6 +29,7 @@ from ..specs import Chart, Line
 from ..timeutil import local_date, now_local, to_local
 from ..tools import Tool, Turn
 from ..warm import Warmer
+from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of
 from .store import AirStore
 
@@ -85,7 +86,7 @@ class AirGradient:
         self._locks: dict = {}
         self.requests = 0
         self.warmer = Warmer(self.warm)
-        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle)]
+        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle), Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
 
     async def start(self):
         try:
@@ -259,6 +260,10 @@ class AirGradient:
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
             return f"Error: couldn't read the air-quality sensor ({e})"
+
+    async def _days(self, args: dict, turn: Turn | None = None) -> str:
+        """The air_days tool: count, rank and total days from the stored readings."""
+        return await air_days_tool(self.store, self.tz, args, turn)
 
     async def _previous_row(self, ts: int) -> dict | None:
         """The newest of today's cached readings older than `ts` and within MAX_GAP_SECONDS of it, else None."""

@@ -291,3 +291,34 @@ async def test_counts_per_month_or_year_are_drawn_as_a_bar_chart_with_a_title_th
     plain = Turn()                                                  # no group_by: a count, no chart
     await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=where, count_only=True), plain)
     assert plain.charts == []
+
+
+async def test_a_total_highest_or_average_per_month_is_a_bar_chart_of_those_figures(station):
+    from collections import defaultdict
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 70, 1)
+    days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
+    args = dict(start_date=str(first), end_date=str(last), count_only=True, group_by="month")
+
+    rain = defaultdict(float)
+    top = {}
+    for d in days:
+        rain[f"{d:%Y-%m}"] += truth(d)[1]
+        top[f"{d:%Y-%m}"] = max(top.get(f"{d:%Y-%m}", -1e9), truth(d)[0])
+    turn = Turn()
+    out = json.loads(await eco.tools[2].handler({**args, "stat": "sum", "of": "rain"}, turn))
+    assert out["stat"]["what"] == "Total rain" and out["stat"]["unit"] == "mm" and "days" not in out
+    assert {k: v for k, v in out["by_month"].items()} == {k: round(v, 1) for k, v in sorted(rain.items())}
+    bars = turn.charts[0].panels[0].bars
+    assert turn.charts[0].title == "Total rain" and bars.unit == "mm" and bars.per == "month" and bars.y == list(out["by_month"].values())
+
+    hottest = json.loads(await eco.tools[2].handler({**args, "stat": "max", "of": "temp_max"}, Turn()))
+    assert hottest["stat"]["what"] == "Highest temperature" and hottest["by_month"] == {k: round(v, 1) for k, v in sorted(top.items())}
+
+    mean = json.loads(await eco.tools[2].handler({**args, "stat": "avg", "of": "temp_avg"}, Turn()))
+    assert mean["stat"]["what"] == "Average temperature" and all(v is not None for v in mean["by_month"].values())
+    overall = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), stat="max", of="temp_max", count_only=True), Turn()))
+    assert overall["value"] == round(max(top.values()), 1) and "by_month" not in overall
+    bad = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), stat="max"), Turn()))
+    assert "needs `of`" in bad["error"]

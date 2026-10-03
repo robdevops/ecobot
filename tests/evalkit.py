@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lib import compose, intent, prompt
-from lib.airgradient import source as air
+from lib.airgradient import days as air_days, source as air
 from lib.ecowitt import days, link, station
 from lib.forecast import source as forecast
 from lib.pollen import source as pollen
@@ -63,7 +63,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
 
 def tool_names() -> list[str]:
     return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link", "air_scan",
-            "pollen_asthma", "weather_forecast"]
+            "pollen_asthma", "weather_forecast", "air_days"]
 
 
 def make_tools(calls: list) -> Tools:
@@ -82,7 +82,8 @@ def make_tools(calls: list) -> Tools:
             ("air_link", compose.LINK_DESCRIPTION, compose.LINK_PARAMETERS),
             ("air_scan", compose.SCAN_DESCRIPTION, compose.SCAN_PARAMETERS),
             ("pollen_asthma", pollen.DESCRIPTION, pollen.PARAMETERS),
-            ("weather_forecast", forecast.DESCRIPTION, forecast.PARAMETERS)]
+            ("weather_forecast", forecast.DESCRIPTION, forecast.PARAMETERS),
+            ("air_days", air_days.DESCRIPTION, air_days.PARAMETERS)]
     return Tools([Tool(n, d, p, recorder(n)) for n, d, p in defs])
 
 
