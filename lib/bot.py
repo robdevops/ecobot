@@ -477,7 +477,7 @@ class Bot:
     async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, tool_names=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
-        first = ([read.fast[:2], *read.more] if read.more else read.fast[:2]) if read.fast else None
+        first = [*([read.fast[:2], *read.more] if read.fast else []), *read.extra] or None
         before, effort, budget, retried = list(working), read.effort, TURN_SECONDS, False
         while True:
             try:

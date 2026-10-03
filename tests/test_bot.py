@@ -363,3 +363,25 @@ async def test_typing_starts_before_the_model_is_asked_and_runs_alongside_the_dr
     bot = DraftBot()
     assert await ask_private(Agent(), bot) == ["ok"]
     assert seen["typing_when_asked"] >= 1 and bot.drafts
+
+
+async def test_the_forecast_is_fetched_with_the_first_step_of_a_rain_ahead_question():
+    got = []
+
+    class Agent:
+        async def run(self, messages, system, effort, first_call=None, **k):
+            got.append(first_call)
+            return "Possibly."
+    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "Forecast")]
+    replies = []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "will it rain?")
+    assert got == [[("weather_forecast", {"days": 3, "cached": True})]] and replies == ["Possibly."]

@@ -174,8 +174,8 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
-        messages, system, effort or r.effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None, require_tool=r.needs_data,
+        messages, system, effort or r.effort, first_call=[*([fast[:2], *r.more] if fast else []), *r.extra] or None, require_tool=r.needs_data,
         no_tools=r.about_the_bot, tool_names=intent.tools_for(found))
-    if fast:
-        calls[0:0] = [(fast[0], fast[1]), *r.more]  # the bot ran them itself, before the model
+    if fast or r.extra:
+        calls[0:0] = [*([(fast[0], fast[1]), *r.more] if fast else []), *r.extra]  # the bot ran them itself, before the model
     return calls, reply
