@@ -11,7 +11,7 @@
     it for an hour, so a blustery afternoon is one message, not twenty.
   - Strong sun: one alert when the UV index reaches 10, and no more until it has stayed below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler) after the other way
-    round held for 2+ days. A 0.3 degree margin stops sensor noise flip-flopping.
+    round held for 3+ hours, so at least 3 hours between alerts. A 0.3 degree margin stops sensor noise flip-flopping.
 """
 
 import logging
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 RAIN_STOP_DRY_SECONDS = 60 * 60   # the default; RAIN_STOP_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 PREDICT_EVERY_SECONDS = 6 * 3600
-CROSS_MIN_SECONDS = 2 * 86400
+CROSS_MIN_SECONDS = 3 * 3600   # the other way round for at least this long before a crossing is announced
 CROSS_MARGIN = 0.3
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600
@@ -218,6 +218,7 @@ class WeatherMonitor:
             held = ts - c["since"]
             if held >= CROSS_MIN_SECONDS:
                 o, i = r["outdoor.temperature"], r["indoor.temperature"]
+                was = f"{int(held // 86400)} days" if held >= 2 * 86400 else duration(held)
                 await self.notify(f"\U0001f321️ It's now {current} outside ({o:.1f}°C) than inside "
-                                  f"({i:.1f}°C), for the first time in {int(held // 86400)} days.", kind="temps")
+                                  f"({i:.1f}°C). It had been {c['side']} for {was}.", kind="temps")
             c.update(side=current, since=ts)
