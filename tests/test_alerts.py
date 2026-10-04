@@ -184,24 +184,40 @@ def temps(outdoor, indoor, ts=T0):
     return [(ts, {"outdoor.temperature": outdoor, "indoor.temperature": indoor})]
 
 
-async def test_temperature_crossing_needs_two_days_since_the_last_one(tmp_path):
+async def test_temperature_crossing_needs_three_hours_since_the_last_one(tmp_path):
     m, state, sent = monitor(tmp_path, temps(10, 20))
     await m.check()                                    # learns: outdoor cooler
-    m.station.data = temps(25, 20, T0 + 3 * 86400)     # flips after 3 days -> alert
+    m.station.data = temps(25, 20, T0 + 3 * 3600)      # flips after exactly 3 hours -> alert
     await m.check()
-    assert len(sent) == 1 and "warmer outside" in sent[0] and "3 days" in sent[0]
-    m.station.data = temps(10, 20, T0 + 3 * 86400 + 3600)  # flips back within a day -> quiet
-    await m.check()
-    assert len(sent) == 1
-    m.station.data = temps(25, 20, T0 + 3 * 86400 + 7200)
+    assert len(sent) == 1 and "warmer outside" in sent[0] and "cooler for 3h" in sent[0]
+    m.station.data = temps(10, 20, T0 + 3 * 3600 + 3600)   # flips back after an hour -> quiet
     await m.check()
     assert len(sent) == 1
-    m.station.data = temps(10, 20, T0 + 6 * 86400)     # "warmer" held ~3 days, then flips -> alert
+    m.station.data = temps(25, 20, T0 + 3 * 3600 + 7200)   # and again, still inside the 3 hours -> quiet
     await m.check()
-    assert len(sent) == 2 and "cooler outside" in sent[1]
-    m.station.data = temps(25, 20, T0 + 6 * 86400 + 60)  # and straight back -> quiet
+    assert len(sent) == 1
+    m.station.data = temps(10, 20, T0 + 3 * 3600 + 7200 + 4 * 3600)   # "warmer" held 4 hours, then flips -> alert
+    await m.check()
+    assert len(sent) == 2 and "cooler outside" in sent[1] and "warmer for 4h" in sent[1]
+    m.station.data = temps(25, 20, T0 + 3 * 3600 + 7200 + 4 * 3600 + 60)   # and straight back -> quiet
     await m.check()
     assert len(sent) == 2
+
+
+async def test_a_crossing_after_days_says_days(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    await m.check()
+    m.station.data = temps(25, 20, T0 + 3 * 86400)
+    await m.check()
+    assert len(sent) == 1 and "cooler for 3 days" in sent[0]
+
+
+async def test_a_crossing_within_three_hours_is_quiet(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    await m.check()
+    m.station.data = temps(25, 20, T0 + 3 * 3600 - 60)
+    await m.check()
+    assert not sent
 
 
 async def test_small_temperature_differences_are_noise(tmp_path):
