@@ -28,7 +28,7 @@ from lib.compose import Composer
 from lib.tools import Tools
 from lib.warm import every, safely
 
-logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")
