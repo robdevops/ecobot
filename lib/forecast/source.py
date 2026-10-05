@@ -20,12 +20,16 @@ from ..warm import Warmer, in_sync_hours
 log = logging.getLogger(__name__)
 
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
+ENSEMBLE = "https://ensemble-api.open-meteo.com/v1/ensemble"
+ENSEMBLE_MODEL = "ecmwf_ifs025"   # 51 members
+RAIN_MM = 1.0                     # "chance of at least 1 mm", as the Bureau of Meteorology says it
+MIN_HOURS = 20                    # a member's day counts only with this many hours of data
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
 FORECAST_REFRESH_SECONDS = 15 * 60
 FRESH_SECONDS = 10 * 60       # a question reuses a forecast this young
 
 DESCRIPTION = ("The weather forecast for the owner's location: today and the days ahead, "
-               "each with a summary, the lowest and highest temperature and the chance of rain. Use it for forecast "
+               "each with a summary, the lowest and highest temperature and the chance of at least 1 mm of rain. Use it for forecast "
                "questions ('what's tomorrow like', 'will it rain this week'). days = how many days from today (default 7, "
                "at most 7: the whole week; pass 1 for 'today' and 2 for 'tomorrow'). The result's \"lines\" are ready-made, emoji included: copy them as they are, and put the result's "
                "\"place\" in parentheses after the forecast heading, e.g. (Melbourne).")
@@ -66,7 +70,11 @@ def temps(d: dict) -> str | None:
 
 def describe_day(d: dict) -> str:
     """"🌧️ Rain. 11–17°C, 90% chance of rain" """
-    details = [temps(d)] + ([f"{d['rain_chance_pct']}% chance of rain"] if d.get("rain_chance_pct") is not None else [])
+    if d.get("rain_1mm_pct") is not None:
+        chance = f"{d['rain_1mm_pct']}% chance of at least 1 mm"
+    else:   # a day saved before the ensemble figure, or the ensemble was unavailable: Open-Meteo's own (more than 0.1 mm in the wettest hour)
+        chance = f"{d['rain_chance_pct']}% chance of rain" if d.get("rain_chance_pct") is not None else None
+    details = [temps(d)] + ([chance] if chance else [])
     rest = ", ".join(x for x in details if x)
     return " ".join(x for x in (decorate(d.get("summary") or ""), rest) if x) or "no data"
 
@@ -151,6 +159,37 @@ class Forecast:
              "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
             for i in range(len(dd["time"]))]
 
+    async def _ensemble(self, first: date, days: int) -> dict[date, int]:
+        """{local day: % of ensemble members with at least RAIN_MM that day}, to the nearest 5; a day with no usable members is left out.
+        Every `hourly` series named precipitation* is one member (the response names them by member and model)."""
+        lat, lon = self.location
+        d = await self._json(ENSEMBLE, latitude=lat, longitude=lon, timezone=str(self.tz), hourly="precipitation",
+                             models=ENSEMBLE_MODEL, forecast_days=min(days, 7))
+        hourly = d.get("hourly") or {}
+        days_of = [t[:10] for t in hourly.get("time", [])]
+        sums: dict[str, list[float]] = {}   # day -> each usable member's total
+        for key, series in hourly.items():
+            if not key.startswith("precipitation") or len(series) != len(days_of):
+                continue
+            totals: dict[str, list[float]] = {}
+            for day, mm in zip(days_of, series):
+                if mm is not None:
+                    totals.setdefault(day, []).append(mm)
+            for day, got in totals.items():
+                if len(got) >= MIN_HOURS:
+                    sums.setdefault(day, []).append(sum(got))
+        return {date.fromisoformat(day): 5 * round(100 * sum(t >= RAIN_MM for t in totals) / len(totals) / 5)
+                for day, totals in sums.items()}
+
+    async def _with_chance(self, source: str, days: list[dict]) -> list[dict]:
+        """The days with the ensemble's chance of at least 1 mm added; Open-Meteo's own figure stays where the ensemble has none."""
+        try:
+            chance = await self._ensemble(days[0]["date"], len(days)) if days else {}
+        except Exception as e:   # the forecast still works without it
+            log.warning("Ensemble rain chance unavailable (%s: %s); using Open-Meteo's own", type(e).__name__, e)
+            return days
+        return [{**d, "rain_1mm_pct": chance[d["date"]]} if d["date"] in chance else d for d in days]
+
     async def warm(self, fresh: bool = True) -> str:
         """Fetch when due: never outside the sync hours (unless nothing is cached), and not while the forecast is young."""
         age = time.time() - self.fetched_at
@@ -158,6 +197,7 @@ class Forecast:
             return "Forecast cached"
         before = self.requests
         self.source, self.days = await self._open_meteo()   # a failure raises: the warmer logs it
+        self.days = await self._with_chance(self.source, self.days)
         self.fetched_at = time.time()
         self._save()
         return f"Forecast {self.requests - before} req"

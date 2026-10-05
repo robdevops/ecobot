@@ -170,3 +170,14 @@ async def test_to_chat_goes_to_one_chat_and_forgets_a_blocked_one(tmp_path):
     notifier = Notifier(Bot(), state)
     assert await notifier.to_chat(1, "hello") is True and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
     assert await notifier.to_chat(2, "hello") is False and 2 not in state.chats
+
+
+def test_a_revision_compares_the_one_millimetre_chance_when_both_days_have_it_and_the_older_figure_otherwise():
+    from lib.alerts.forecast import revised
+    day = lambda **k: {"max_c": 18, **k}
+    assert revised(day(rain_1mm_pct=60), day(rain_1mm_pct=25))                       # rainy -> dry
+    assert revised(day(rain_1mm_pct=20), day(rain_1mm_pct=55))                       # dry -> rainy
+    assert not revised(day(rain_1mm_pct=45), day(rain_1mm_pct=35))                   # a wobble in between
+    assert not revised(day(rain_chance_pct=94, rain_1mm_pct=95), day(rain_chance_pct=20, rain_1mm_pct=90))   # the new figure decides
+    assert revised(day(rain_chance_pct=90), day(rain_chance_pct=10))                 # only the older figure on either side: as before
+    assert not revised(day(rain_chance_pct=94), day(rain_1mm_pct=50))                # an old baseline vs a new figure: not compared
