@@ -2,8 +2,9 @@
 
 When a chat has been shown a day's forecast (in the report or an answer) and a later refresh revises that day substantially,
 that chat gets one message with the old and the new line for each changed day. Substantial is:
-  - rain flips: it was rainy (chance of rain 50% or more) and is now dry (30% or less), or the other way round (the gap between
-    30 and 50 stops small wobbles flip-flopping);
+  - rain flips: it was rainy (chance of at least 1 mm of 50% or more) and is now dry (30% or less), or the other way round (the
+    gap between 30 and 50 stops small wobbles flip-flopping); a day with only Open-Meteo's older "chance of rain" figure is
+    compared on that;
   - the highest temperature differs by more than 2 degrees.
 After the alert, the day as now forecast is the chat's new baseline, so the same revision never repeats, a further one does.
 The forecast only refreshes from 6 am to 6 pm, so that is when this can fire.
@@ -22,7 +23,8 @@ TEMP_CHANGE_C = 2.0
 
 def revised(old: dict, new: dict) -> bool:
     """Is `new` a substantial revision of what was sent (`old`)?"""
-    before, after = old.get("rain_chance_pct"), new.get("rain_chance_pct")
+    key = "rain_1mm_pct" if old.get("rain_1mm_pct") is not None and new.get("rain_1mm_pct") is not None else "rain_chance_pct"
+    before, after = old.get(key), new.get(key)
     if before is not None and after is not None and (
             (before >= RAIN_FROM_PCT and after <= DRY_BELOW_PCT) or (before <= DRY_BELOW_PCT and after >= RAIN_FROM_PCT)):
         return True

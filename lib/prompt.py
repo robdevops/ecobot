@@ -186,7 +186,7 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
         lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme), tool pollen_asthma. "
                      "Both forecasts only run from October to December: outside those months the tool says so.")
     if "Open-Meteo" in have:
-        lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of rain), tool weather_forecast.")
+        lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of at least 1 mm of rain), tool weather_forecast.")
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
