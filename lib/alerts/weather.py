@@ -219,6 +219,7 @@ class WeatherMonitor:
             if held >= CROSS_MIN_SECONDS:
                 o, i = r["outdoor.temperature"], r["indoor.temperature"]
                 was = f"{int(held // 86400)} days" if held >= 2 * 86400 else duration(held)
-                await self.notify(f"\U0001f321️ It's now {current} outside ({o:.1f}°C) than inside "
-                                  f"({i:.1f}°C). It had been {c['side']} for {was}.", kind="temps")
+                icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
+                await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
+                                  f"({o:.1f}°C vs {i:.1f}°C). It had been {c['side']} for {was}.", kind="temps")
             c.update(side=current, since=ts)

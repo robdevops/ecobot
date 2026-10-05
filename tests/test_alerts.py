@@ -189,7 +189,7 @@ async def test_temperature_crossing_needs_three_hours_since_the_last_one(tmp_pat
     await m.check()                                    # learns: outdoor cooler
     m.station.data = temps(25, 20, T0 + 3 * 3600)      # flips after exactly 3 hours -> alert
     await m.check()
-    assert len(sent) == 1 and "warmer outside" in sent[0] and "cooler for 3h" in sent[0]
+    assert sent[0] == "\U0001f321️ It's now 5.0°C warmer outside than inside (25.0°C vs 20.0°C). It had been cooler for 3h."
     m.station.data = temps(10, 20, T0 + 3 * 3600 + 3600)   # flips back after an hour -> quiet
     await m.check()
     assert len(sent) == 1
@@ -198,7 +198,7 @@ async def test_temperature_crossing_needs_three_hours_since_the_last_one(tmp_pat
     assert len(sent) == 1
     m.station.data = temps(10, 20, T0 + 3 * 3600 + 7200 + 4 * 3600)   # "warmer" held 4 hours, then flips -> alert
     await m.check()
-    assert len(sent) == 2 and "cooler outside" in sent[1] and "warmer for 4h" in sent[1]
+    assert len(sent) == 2 and sent[1] == "\u2744\ufe0f It's now 10.0°C cooler outside than inside (10.0°C vs 20.0°C). It had been warmer for 4h."
     m.station.data = temps(25, 20, T0 + 3 * 3600 + 7200 + 4 * 3600 + 60)   # and straight back -> quiet
     await m.check()
     assert len(sent) == 2
