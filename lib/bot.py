@@ -292,18 +292,18 @@ class Bot:
         toast, opened = None, section or None
         if action in ("open", "close"):
             opened = arg if action == "open" else None
-            if opened in ("sub", "unsub") and not menu.options(self.state.muted(chat.id), kinds, opened):
+            if opened in ("sub", "unsub") and not menu.has_options(self.state.muted(chat.id), kinds, opened, parent):
                 await query.answer("You're subscribed to everything" if opened == "sub" else "No alerts are on")   # nothing to list
                 return
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")
-            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg].capitalize()} alerts"
+            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts"   # "UV alerts", not "Uv"
             toast = f"{what} {action} in this chat"
         else:
             await query.answer()
             return
         muted = self.state.muted(chat.id)
-        if opened in ("sub", "unsub") and not menu.options(muted, kinds, opened):
+        if opened in ("sub", "unsub") and not menu.has_options(muted, kinds, opened, parent):
             opened = None                                    # the last one was just turned on or off: close the section
         markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None, parent)
         await query.answer(toast)

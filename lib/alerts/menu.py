@@ -5,7 +5,7 @@ the title from what a chat has muted (the same menu goes under every alert and u
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
   al:open:sub | al:open:unsub | al:close | al:noop (the heading rows of messages sent by an earlier version)
   al:on:<kind|all>:<section> | al:off:<kind|all>:<section>      (section: sub or unsub, the part left open)
-An alert's buttons end with the alert's own type (parent), so the Unsubscribe list can mark it: al:open:unsub:rain, al:close:rain,
+An alert's buttons end with the alert's own type (parent): under an alert the Unsubscribe list is just that type (marked) and "all": al:open:unsub:rain, al:close:rain,
 al:off:uv:unsub:rain. A chat's /alerts message has no parent and no such field.
 """
 
@@ -33,19 +33,31 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
 
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None) -> InlineKeyboardMarkup:
     """The collapsed menu, or with one section open (open = "sub" or "unsub") and its options under it. `parent` is the type of the
-    alert the buttons sit under: it is marked in the Unsubscribe list and carried in every button. A list of one has no "all" button."""
+    alert the buttons sit under and is carried in every button. Under an alert the Unsubscribe list is that type (marked) and
+    "Unsubscribe from all"; on the /alerts message it lists every type that is on. "... all" is there only when it does something
+    different from the one type listed."""
     tail = f":{parent}" if parent else ""
     rows = [[_button(("▾ " if open == "sub" else "") + "➕ Subscribe", f"al:close{tail}" if open == "sub" else f"al:open:sub{tail}"),
              _button(("▾ " if open == "unsub" else "") + "➖ Unsubscribe", f"al:close{tail}" if open == "unsub" else f"al:open:unsub{tail}")]]
     if open in ("sub", "unsub"):
-        listed = options(muted, available, open)
         verb = "on" if open == "sub" else "off"
+        listed = options(muted, available, open)
+        if open == "unsub" and parent:
+            others = [k for k in listed if k != parent]
+            listed, show_all = [k for k in listed if k == parent], bool(others)
+        else:
+            show_all = len(listed) > 1
         mark = lambda k: f"● {LABELS[k]}" if open == "unsub" and k == parent else LABELS[k]   # the alert these buttons are under
         buttons = [_button(mark(k), f"al:{verb}:{k}:{open}{tail}") for k in listed]
         rows += [buttons[i:i + PER_ROW] for i in range(0, len(buttons), PER_ROW)]
-        if len(listed) > 1:
+        if show_all:
             rows.append([_button("Subscribe to all" if open == "sub" else "Unsubscribe from all", f"al:{verb}:{ALL}:{open}{tail}")])
     return InlineKeyboardMarkup(rows)
+
+
+def has_options(muted: set[str], available: list[str], section: str, parent: str | None = None) -> bool:
+    """Would this section show any button under its heading?"""
+    return len(keyboard(muted, available, section, parent).inline_keyboard) > 1
 
 
 def options(muted: set[str], available: list[str], section: str) -> list[str]:

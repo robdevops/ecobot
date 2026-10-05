@@ -255,15 +255,18 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     assert seen == ["forecast"]
 
 
-def test_the_alerts_own_type_is_marked_in_the_unsubscribe_list_and_carried_by_every_button():
+def test_under_an_alert_the_unsubscribe_list_is_just_its_type_and_all_and_every_button_carries_the_type():
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub", parent="uv"))
-    assert got[0] == [("➕ Subscribe", "al:open:sub:uv"), ("▾ ➖ Unsubscribe", "al:close:uv")]
-    names = {text: data for row in got[1:] for text, data in row}
-    assert names["● UV"] == "al:off:uv:unsub:uv" and "UV" not in names and names["rain"] == "al:off:rain:unsub:uv"
-    assert got[-1] == [("Unsubscribe from all", "al:off:all:unsub:uv")]
-    sub = rows(keyboard({"pollen", "forecast"}, KINDS, "sub", parent="uv"))
-    assert not any(text.startswith("●") for row in sub for text, _ in row)           # only the Unsubscribe list marks it
-    assert rows(keyboard(set(), KINDS, "unsub"))[1][0][0] == "rain"                  # the /alerts message has no parent: nothing marked
+    assert got == [[("➕ Subscribe", "al:open:sub:uv"), ("▾ ➖ Unsubscribe", "al:close:uv")],
+                   [("● UV", "al:off:uv:unsub:uv")], [("Unsubscribe from all", "al:off:all:unsub:uv")]]
+    only = rows(keyboard(set(KINDS) - {"uv"}, KINDS, "unsub", parent="uv"))              # the alert's type is the only one on: no "all"
+    assert only[1:] == [[("● UV", "al:off:uv:unsub:uv")]]
+    gone = rows(keyboard({"uv", "gusts"}, KINDS, "unsub", parent="uv"))                  # its type is already off, others on: just "all"
+    assert gone[1:] == [[("Unsubscribe from all", "al:off:all:unsub:uv")]]
+    assert len(rows(keyboard(set(KINDS), KINDS, "unsub", parent="uv"))) == 1             # nothing is on at all: nothing listed
+    sub = rows(keyboard({"pollen", "forecast"}, KINDS, "sub", parent="uv"))              # Subscribe is the types that are off, as ever
+    assert [t for row in sub[1:-1] for t, _ in row] == ["pollen & asthma", "forecast changes"] and sub[-1][0][0] == "Subscribe to all"
+    assert rows(keyboard(set(), KINDS, "unsub"))[1][0][0] == "rain"                      # the /alerts message has no parent: every type that is on
 
 
 def test_the_all_button_is_only_there_when_the_list_has_more_than_one_item():
@@ -274,19 +277,29 @@ def test_the_all_button_is_only_there_when_the_list_has_more_than_one_item():
     assert rows(keyboard(set(), KINDS, "unsub"))[-1][0][0] == "Unsubscribe from all"
 
 
-async def test_the_alerts_own_type_survives_opening_toggling_and_closing_the_menu_under_it(tmp_path):
+async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_the_menu_under_it(tmp_path):
     bot, state = make_bot(tmp_path)
     q = Query("al:open:unsub:uv", text="☀️ UV 10")
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0][1] == ("▾ ➖ Unsubscribe", "al:close:uv") and ("● UV", "al:off:uv:unsub:uv") in [b for row in drawn[1:] for b in row]
-    q = Query("al:off:gusts:unsub:uv", text="☀️ UV 10")                        # turn another type off: the mark stays on this alert's type
+    assert drawn[0][1] == ("▾ ➖ Unsubscribe", "al:close:uv") and drawn[1:] == [
+        [("● UV", "al:off:uv:unsub:uv")], [("Unsubscribe from all", "al:off:all:unsub:uv")]]
+    q = Query("al:off:uv:unsub:uv", text="☀️ UV 10")                           # unsubscribing from this type leaves "all" for the rest
     await press(bot, q)
-    drawn = rows(q.edits[0][1])
-    assert "gusts" not in [t for row in drawn[1:] for t, _ in row] and ("● UV", "al:off:uv:unsub:uv") in [b for row in drawn[1:] for b in row]
-    q = Query("al:close:uv", text="☀️ UV 10")
+    assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
+    assert rows(q.edits[0][1])[1:] == [[("Unsubscribe from all", "al:off:all:unsub:uv")]]
+    q = Query("al:off:all:unsub:uv", text="☀️ UV 10")                          # and "all" turns the rest off, closing the empty section
     await press(bot, q)
     assert rows(q.edits[0][1]) == [[("➕ Subscribe", "al:open:sub:uv"), ("➖ Unsubscribe", "al:open:unsub:uv")]]
-    q = Query("al:open:unsub:bogus", text="☀️ UV 10")                          # an unknown parent is ignored, not trusted
+    q = Query("al:open:unsub:uv", text="☀️ UV 10")                             # nothing is on now: a toast, no menu
     await press(bot, q)
-    assert not any(t.startswith("●") for row in rows(q.edits[0][1]) for t, _ in row)
+    assert q.toast == "No alerts are on" and not q.edits
+
+
+async def test_an_unknown_parent_in_a_button_is_ignored(tmp_path):
+    bot, state = make_bot(tmp_path)
+    q = Query("al:open:unsub:bogus", text="☀️ UV 10")
+    await press(bot, q)
+    drawn = rows(q.edits[0][1])
+    assert [t for row in drawn[1:] for t, _ in row][0] == "rain" and not any(t.startswith("●") for row in drawn for t, _ in row)
+    assert drawn[0][0][1] == "al:open:sub"                                       # and it is not carried on
