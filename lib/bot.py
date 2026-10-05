@@ -275,7 +275,8 @@ class Bot:
         or unsubscribe a type or all. In a group only admins may change them."""
         query = update.callback_query
         parts = (query.data or "").split(":")
-        action, arg, section = (parts + ["", "", ""])[1:4]
+        action, arg, section, tail = (parts + ["", "", "", ""])[1:5]
+        parent = section if action == "open" else arg if action == "close" else tail   # the alert's own type, when under an alert
         if action == "noop" or not self.state:
             await query.answer()
             return
@@ -287,6 +288,7 @@ class Bot:
                 await query.answer("Only group admins can change alerts")
                 return
         kinds = self._alert_kinds()
+        parent = parent if parent in kinds else None
         toast, opened = None, section or None
         if action in ("open", "close"):
             opened = arg if action == "open" else None
@@ -303,7 +305,7 @@ class Bot:
         muted = self.state.muted(chat.id)
         if opened in ("sub", "unsub") and not menu.options(muted, kinds, opened):
             opened = None                                    # the last one was just turned on or off: close the section
-        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None)
+        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None, parent)
         await query.answer(toast)
         try:
             if (message.text or "").startswith(menu.TITLE):   # the /alerts message: keep its on/off summary current

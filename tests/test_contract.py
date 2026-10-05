@@ -58,7 +58,7 @@ async def test_every_tool_result_keeps_its_shape(tmp_path, archived_cache):
     span = {"start_date": day(9), "end_date": f"{today - timedelta(days=2)} 23:59:59"}
     call = lambda i, args: eco.tools[i].handler(args)
     now = json.loads(await call(0, {"groups": "outdoor,indoor,pressure,wind,rainfall"}))
-    assert set(now) == {"time", "outdoor", "emoji"}
+    assert set(now) - {"rain_outlook"} == {"time", "outdoor", "emoji"}                 # the outlook line only appears when the data suggests rain
     history = json.loads(await call(1, {"groups": "outdoor", **span}))
     assert set(history) - {"chart"} == {"period", "series"}                    # "chart": a hint that appears when one was drawn
     assert set(history["series"]["outdoor.temperature"]) == {
