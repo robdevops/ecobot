@@ -53,13 +53,13 @@ def rain(*wet):
             for i, w in enumerate(wet)]
 
 
-async def test_rain_starts_once_then_stops_after_60_dry_minutes(tmp_path):
+async def test_rain_starts_once_then_stops_after_30_dry_minutes(tmp_path):
     m, state, sent = monitor(tmp_path, None)
     for data in (rain(0, 0, 0), rain(0, 0, 1), rain(0, 0, 1, 1), rain(0, 0, 1, 1, 0), rain(0, 0, 1, 1, 0, 0)):
         m.station.data = data
         await m.check()
     assert len(sent) == 1 and "started raining" in sent[0]
-    m.station.data = rain(0, 0, 1, 1, *[0] * 12)  # 60 dry minutes since the last wet reading
+    m.station.data = rain(0, 0, 1, 1, *[0] * 6)  # 30 dry minutes since the last wet reading
     await m.check()
     assert len(sent) == 2 and "stopped" in sent[1] and "mm fell" in sent[1]
 
@@ -184,24 +184,42 @@ def temps(outdoor, indoor, ts=T0):
     return [(ts, {"outdoor.temperature": outdoor, "indoor.temperature": indoor})]
 
 
-async def test_temperature_crossing_needs_half_an_hour_since_the_last_one(tmp_path):
+async def test_a_crossing_after_a_long_quiet_spell_is_announced_at_once(tmp_path):
     m, state, sent = monitor(tmp_path, temps(10, 20))
     await m.check()                                    # learns: outdoor cooler
-    m.station.data = temps(25, 20, T0 + 30 * 60)       # flips after exactly 30 minutes -> alert
+    m.station.data = temps(25, 20, T0 + 3 * 3600)
     await m.check()
-    assert sent[0] == "\U0001f321️ It's now 5.0°C warmer outside than inside (25.0°C vs 20.0°C). It had been cooler for 30 min."
-    m.station.data = temps(10, 20, T0 + 40 * 60)       # flips back after 10 minutes -> quiet
+    assert sent == ["\U0001f321️ It's now 5.0°C warmer outside than inside (25.0°C vs 20.0°C). It had been cooler for 3h."]
+
+
+async def test_crossing_back_inside_the_cooldown_is_announced_when_it_ends(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(10, 20))
     await m.check()
+    start = T0 + 3 * 3600
+    m.station.data = temps(25, 20, start)                       # warmer: alerted
+    await m.check()
+    for minutes in (10, 29):                                    # back to cooler inside the cooldown: held
+        m.station.data = temps(10, 20, start + minutes * 60)
+        await m.check()
     assert len(sent) == 1
-    m.station.data = temps(25, 20, T0 + 60 * 60)       # and again after 20 more, still inside the 30 minutes -> quiet
+    m.station.data = temps(10, 20, start + 30 * 60)             # the cooldown ends and it is still cooler
     await m.check()
-    assert len(sent) == 1
-    m.station.data = temps(10, 20, T0 + 105 * 60)      # "warmer" held 45 minutes, then flips -> alert
-    await m.check()
-    assert len(sent) == 2 and sent[1] == "\u2744\ufe0f It's now 10.0°C cooler outside than inside (10.0°C vs 20.0°C). It had been warmer for 45 min."
-    m.station.data = temps(25, 20, T0 + 106 * 60)      # and straight back -> quiet
+    assert len(sent) == 2 and sent[1] == "\u2744\ufe0f It's now 10.0°C cooler outside than inside (10.0°C vs 20.0°C). It had been warmer for 30 min."
+    m.station.data = temps(10, 20, start + 40 * 60)             # and once only
     await m.check()
     assert len(sent) == 2
+
+
+async def test_crossings_that_end_on_the_alerted_side_inside_the_cooldown_send_nothing(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    await m.check()
+    start = T0 + 3 * 3600
+    m.station.data = temps(25, 20, start)
+    await m.check()
+    for minutes, outdoor in ((10, 10), (20, 25), (30, 25), (60, 25)):   # cooler, warmer again, and on
+        m.station.data = temps(outdoor, 20, start + minutes * 60)
+        await m.check()
+    assert len(sent) == 1
 
 
 async def test_a_crossing_after_days_says_days(tmp_path):
@@ -212,12 +230,22 @@ async def test_a_crossing_after_days_says_days(tmp_path):
     assert len(sent) == 1 and "cooler for 3 days" in sent[0]
 
 
-async def test_a_crossing_within_half_an_hour_is_quiet(tmp_path):
+async def test_a_crossing_soon_after_the_state_was_learned_waits_out_the_cooldown(tmp_path):
     m, state, sent = monitor(tmp_path, temps(10, 20))
     await m.check()
-    m.station.data = temps(25, 20, T0 + 30 * 60 - 60)
+    m.station.data = temps(25, 20, T0 + 29 * 60)
     await m.check()
     assert not sent
+    m.station.data = temps(25, 20, T0 + 30 * 60)
+    await m.check()
+    assert len(sent) == 1 and "cooler for 30 min" in sent[0]
+
+
+async def test_crossing_state_saved_by_an_earlier_version_still_works(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(25, 20, T0 + 2 * 3600))
+    state.monitor["cross"] = {"side": "cooler", "since": T0}
+    await m.check()
+    assert len(sent) == 1 and "cooler for 2h" in sent[0] and state.monitor["cross"]["alerted_state"] == "warmer"
 
 
 async def test_small_temperature_differences_are_noise(tmp_path):
@@ -289,10 +317,10 @@ def test_alert_state_survives_restarts_and_opt_out(tmp_path):
     state.add_chat(1, "Home")
     state.add_chat(2, "Work")
     state.set_alerts(2, "Work", False)
-    state.monitor["rain"] = {"raining": True, "since": 5}
+    state.monitor["rain"] = {"alerted_state": "raining", "alerted_time": 5, "since": 5}
     state.save()
     again = AlertState(path)
-    assert again.alert_chats() == [1] and again.monitor["rain"]["raining"] and not again.alerts_on(2)
+    assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.alerts_on(2)
 
 
 def test_footer_marks_up_link_and_mute_hint():
@@ -431,15 +459,46 @@ async def test_no_pollen_alert_out_of_season_even_with_a_high_reading_cached(tmp
     assert len(sent) == 2
 
 
-async def test_the_time_dry_before_the_rain_stops_is_configurable(tmp_path):
+async def test_the_cooldown_sets_the_dry_time_before_the_rain_stops(tmp_path):
     m, state, sent = monitor(tmp_path, None)
-    m.rain_stop_seconds = 30 * 60
+    m.cooldown = 10 * 60
     for data in (rain(0, 0, 0), rain(0, 0, 1), rain(0, 0, 1, 1)):
         m.station.data = data
         await m.check()
-    m.station.data = rain(0, 0, 1, 1, 0, 0, 0, 0, 0, 0)   # 30 dry minutes
+    m.station.data = rain(0, 0, 1, 1, 0, 0)               # 10 dry minutes: a shorter cooldown
     await m.check()
     assert len(sent) == 2 and "stopped" in sent[1]
+
+
+def rain_at(flags, n):
+    return rain(*flags[:n])
+
+
+async def test_rain_that_starts_again_inside_the_cooldown_is_announced_when_it_ends_if_it_is_still_raining(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    flags = [0, 0, 1, 1] + [0] * 6 + [1] * 8                # starts, stops at reading 10 (30 dry minutes), starts again at 10, rains on
+    for n in (3, 4, 10):                                    # (reading numbers are counts, so 10 readings end at index 9)
+        m.station.data = rain_at(flags, n)
+        await m.check()
+    assert len(sent) == 2 and "started" in sent[0] and "stopped" in sent[1]
+    m.station.data = rain_at(flags, 11)                     # raining again 5 minutes after the "stopped": held
+    await m.check()
+    assert len(sent) == 2
+    m.station.data = rain_at(flags, 15)                     # 25 minutes after
+    await m.check()
+    assert len(sent) == 2
+    m.station.data = rain_at(flags, 16)                     # 30 minutes after the "stopped", still raining: now announced
+    await m.check()
+    assert len(sent) == 3 and "started raining" in sent[2]
+
+
+async def test_rain_that_comes_and_goes_inside_the_cooldown_and_ends_as_alerted_sends_nothing(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    flags = [0, 0, 1, 1] + [0] * 6 + [1] + [0] * 8          # stopped at reading 10, one wet reading, then dry again
+    for n in (3, 4, 10, 11, 14, 19):
+        m.station.data = rain_at(flags, n)
+        await m.check()
+    assert len(sent) == 2 and "stopped" in sent[1]          # no "started" for the shower, no second "stopped"
 
 
 def night_rain(start, *wet):

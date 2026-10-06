@@ -1,8 +1,7 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
-  - Rain: "stopped" after 60 dry minutes (RAIN_STOP_MINUTES), with how much fell; any rain after that is a new
-    "started" (one tip of the gauge is enough). One rule both ways, so the alerts never contradict each other (no flapping).
+  - Rain: "started" (one tip of the gauge is enough) and "stopped" (dry for ALERT_COOLDOWN_MINUTES), with how much fell.
     Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am): those are kept quiet and one summary of the overnight
     rain is sent after they end.
   - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
@@ -10,22 +9,23 @@
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
   - Strong sun: one alert when the UV index reaches 10, and no more until it has stayed below 10 for an hour.
-  - Temperatures crossing: outdoor becomes warmer than indoor (or cooler) after the other way
-    round held for 30+ minutes, so at least 30 minutes between alerts. A 0.3 degree margin stops sensor noise flip-flopping.
+  - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); a 0.3 degree margin stops sensor noise flip-flopping.
+  Rain and crossing share one back-off rule (backoff.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
+  announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
 
 import logging
 from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
+from .backoff import due, remember
 from ..ecowitt.outlook import PREDICT_MIN_SCORE, Rows, assess_rain, duration, rain_amount, wet_flags
 from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
 
-RAIN_STOP_DRY_SECONDS = 60 * 60   # the default; RAIN_STOP_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
+ALERT_COOLDOWN_SECONDS = 30 * 60   # the default; ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 PREDICT_EVERY_SECONDS = 6 * 3600
-CROSS_MIN_SECONDS = 30 * 60   # the other way round for at least this long before a crossing is announced
 CROSS_MARGIN = 0.3
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600
@@ -41,9 +41,9 @@ def side(r: dict) -> str | None:
 
 
 class WeatherMonitor:
-    def __init__(self, station, state, notify, rain_stop_seconds: int = RAIN_STOP_DRY_SECONDS, quiet: tuple[int, int] | None = None):
+    def __init__(self, station, state, notify, cooldown_seconds: int = ALERT_COOLDOWN_SECONDS, quiet: tuple[int, int] | None = None):
         self.station, self.state, self.notify = station, state, notify
-        self.rain_stop_seconds = rain_stop_seconds
+        self.cooldown = cooldown_seconds
         self.quiet = quiet   # (from hour, to hour) local, no rain alerts in between; None: always on
 
     def _quiet(self, ts: int) -> bool:
@@ -63,7 +63,8 @@ class WeatherMonitor:
         if "rain" not in m:
             wet = wet_flags(await self.station.recent(3))
             raining = any(w for _, w, _ in wet[-2:])
-            m["rain"] = {"raining": raining, "since": next((ts for ts, w, _ in wet if w), None) if raining else None}
+            m["rain"] = {"alerted_state": "raining" if raining else "dry", "alerted_time": None,
+                         "since": next((ts for ts, w, _ in wet if w), None) if raining else None}
         if "cross" not in m:
             now = self.station.now()
             rows = await self.station.readings("30min", now - timedelta(days=6, hours=23), now, ["outdoor", "indoor"])
@@ -73,7 +74,7 @@ class WeatherMonitor:
                 if s and s != current:
                     current, since = s, ts
             if current:
-                m["cross"] = {"side": current, "since": since}
+                m["cross"] = {"alerted_state": current, "alerted_time": since}   # the side it is on, from when it has been
         self.state.save()
 
     async def check(self):
@@ -91,7 +92,10 @@ class WeatherMonitor:
         self.state.save()
 
     async def _rain(self, rows: Rows):
-        m = self.state.monitor.setdefault("rain", {"raining": False, "since": None})
+        m = self.state.monitor.setdefault("rain", {})
+        if "raining" in m:   # saved by an earlier version
+            m["alerted_state"] = "raining" if m.pop("raining") else "dry"
+        m.setdefault("alerted_state", "dry")
         wet = wet_flags(rows)
         latest_ts = wet[-1][0]
         quiet = self._quiet(latest_ts)
@@ -99,16 +103,19 @@ class WeatherMonitor:
             self._note_night(rows, wet)
         wet_times = [ts for ts, w, _ in wet if w]
         last_wet = wet_times[-1] if wet_times else None
-        if not m["raining"] and any(w for _, w, _ in wet[-2:]):
-            rate = max(r for _, w, r in wet[-2:] if w)
-            m.update(raining=True, since=next(ts for ts, w, _ in wet[-2:] if w))
-            if not any(w for ts, w, _ in wet[:-1][-2:]):
-                log.info("Alerts: rain started, seen in the newest reading only (the live one when it is newer than the history)")
+        raining = last_wet is not None and latest_ts - last_wet < self.cooldown   # dry means no rain for the whole cooldown
+        state = "raining" if raining else "dry"
+        if not due(m, state, latest_ts, self.cooldown) and not (quiet and state != m["alerted_state"]):
+            return
+        if raining:
+            m["since"] = next(ts for ts in wet_times if latest_ts - ts < self.cooldown)
+            rate = next(r for ts, w, r in reversed(wet) if w)
             if not quiet:
                 await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), kind="rain")
-        elif m["raining"] and (last_wet is None or latest_ts - last_wet >= self.rain_stop_seconds):
+        elif m["alerted_state"] == "raining":
             if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
                 log.info("Alerts: rain ended while not watching; no alert")
+                quiet = True
             elif quiet:
                 log.info("Alerts: rain stopped in quiet hours; the morning summary covers it")
             else:
@@ -117,7 +124,8 @@ class WeatherMonitor:
                 amount = f"{fell:.1f} mm fell" if fell else "Only a trace fell"
                 took = duration(last_wet + 300 - since)
                 await self.notify(f"\U0001f324️ The rain has stopped. {amount} over {took}.", kind="rain")
-            m.update(raining=False, since=None)
+            m["since"] = None
+        remember(m, state, latest_ts, alerted=not quiet)
 
     def _note_night(self, rows: Rows, wet: list):
         """In quiet hours: when it first and last rained since midnight, and the day's total so far (the gauge's running total)."""
@@ -145,7 +153,7 @@ class WeatherMonitor:
             return   # an old note (the bot was down) or a dry night
         clock = lambda ts: f"{to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
         amount = f"{night['mm']:.1f} mm" if night["mm"] >= 0.1 else "a trace"
-        still = " It's still raining." if self.state.monitor.get("rain", {}).get("raining") else ""
+        still = " It's still raining." if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" else ""
         await self.notify(f"\U0001f327️ Overnight rain: {amount}, from about {clock(night['first'])} to {clock(night['last'] + 300)}.{still}", kind="rain")
 
     async def _rain_likely(self, rows: Rows):
@@ -154,7 +162,7 @@ class WeatherMonitor:
         latest_ts = rows[-1][0]
         if self._quiet(latest_ts):
             return
-        if self.state.monitor.get("rain", {}).get("raining") or any(
+        if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" or any(
                 w for ts, w, _ in wet_flags(rows) if latest_ts - ts < 3600):
             return
         if latest_ts - m.get("last", 0) < PREDICT_EVERY_SECONDS:
@@ -212,14 +220,15 @@ class WeatherMonitor:
         if current is None:
             return
         if c is None:
-            self.state.monitor["cross"] = {"side": current, "since": ts}
+            self.state.monitor["cross"] = {"alerted_state": current, "alerted_time": ts}
             return
-        if current != c["side"]:
-            held = ts - c["since"]
-            if held >= CROSS_MIN_SECONDS:
-                o, i = r["outdoor.temperature"], r["indoor.temperature"]
-                was = f"{int(held // 86400)} days" if held >= 2 * 86400 else duration(held)
-                icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
-                await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
-                                  f"({o:.1f}°C vs {i:.1f}°C). It had been {c['side']} for {was}.", kind="temps")
-            c.update(side=current, since=ts)
+        if "side" in c:   # saved by an earlier version
+            c["alerted_state"], c["alerted_time"] = c.pop("side"), c.pop("since")
+        if due(c, current, ts, self.cooldown):
+            o, i = r["outdoor.temperature"], r["indoor.temperature"]
+            held = ts - c["alerted_time"]   # how long the side we last told about has stood
+            was = f"{int(held // 86400)} days" if held >= 2 * 86400 else duration(held)
+            icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
+            await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
+                              f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps")
+            remember(c, current, ts)
