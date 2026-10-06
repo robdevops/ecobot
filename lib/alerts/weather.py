@@ -11,7 +11,7 @@
     it for an hour, so a blustery afternoon is one message, not twenty.
   - Strong sun: one alert when the UV index reaches 10, and no more until it has stayed below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler) after the other way
-    round held for 3+ hours, so at least 3 hours between alerts. A 0.3 degree margin stops sensor noise flip-flopping.
+    round held for 30+ minutes, so at least 30 minutes between alerts. A 0.3 degree margin stops sensor noise flip-flopping.
 """
 
 import logging
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 RAIN_STOP_DRY_SECONDS = 60 * 60   # the default; RAIN_STOP_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 PREDICT_EVERY_SECONDS = 6 * 3600
-CROSS_MIN_SECONDS = 3 * 3600   # the other way round for at least this long before a crossing is announced
+CROSS_MIN_SECONDS = 30 * 60   # the other way round for at least this long before a crossing is announced
 CROSS_MARGIN = 0.3
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600

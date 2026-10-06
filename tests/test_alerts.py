@@ -184,22 +184,22 @@ def temps(outdoor, indoor, ts=T0):
     return [(ts, {"outdoor.temperature": outdoor, "indoor.temperature": indoor})]
 
 
-async def test_temperature_crossing_needs_three_hours_since_the_last_one(tmp_path):
+async def test_temperature_crossing_needs_half_an_hour_since_the_last_one(tmp_path):
     m, state, sent = monitor(tmp_path, temps(10, 20))
     await m.check()                                    # learns: outdoor cooler
-    m.station.data = temps(25, 20, T0 + 3 * 3600)      # flips after exactly 3 hours -> alert
+    m.station.data = temps(25, 20, T0 + 30 * 60)       # flips after exactly 30 minutes -> alert
     await m.check()
-    assert sent[0] == "\U0001f321️ It's now 5.0°C warmer outside than inside (25.0°C vs 20.0°C). It had been cooler for 3h."
-    m.station.data = temps(10, 20, T0 + 3 * 3600 + 3600)   # flips back after an hour -> quiet
-    await m.check()
-    assert len(sent) == 1
-    m.station.data = temps(25, 20, T0 + 3 * 3600 + 7200)   # and again, still inside the 3 hours -> quiet
+    assert sent[0] == "\U0001f321️ It's now 5.0°C warmer outside than inside (25.0°C vs 20.0°C). It had been cooler for 30 min."
+    m.station.data = temps(10, 20, T0 + 40 * 60)       # flips back after 10 minutes -> quiet
     await m.check()
     assert len(sent) == 1
-    m.station.data = temps(10, 20, T0 + 3 * 3600 + 7200 + 4 * 3600)   # "warmer" held 4 hours, then flips -> alert
+    m.station.data = temps(25, 20, T0 + 60 * 60)       # and again after 20 more, still inside the 30 minutes -> quiet
     await m.check()
-    assert len(sent) == 2 and sent[1] == "\u2744\ufe0f It's now 10.0°C cooler outside than inside (10.0°C vs 20.0°C). It had been warmer for 4h."
-    m.station.data = temps(25, 20, T0 + 3 * 3600 + 7200 + 4 * 3600 + 60)   # and straight back -> quiet
+    assert len(sent) == 1
+    m.station.data = temps(10, 20, T0 + 105 * 60)      # "warmer" held 45 minutes, then flips -> alert
+    await m.check()
+    assert len(sent) == 2 and sent[1] == "\u2744\ufe0f It's now 10.0°C cooler outside than inside (10.0°C vs 20.0°C). It had been warmer for 45 min."
+    m.station.data = temps(25, 20, T0 + 106 * 60)      # and straight back -> quiet
     await m.check()
     assert len(sent) == 2
 
@@ -212,10 +212,10 @@ async def test_a_crossing_after_days_says_days(tmp_path):
     assert len(sent) == 1 and "cooler for 3 days" in sent[0]
 
 
-async def test_a_crossing_within_three_hours_is_quiet(tmp_path):
+async def test_a_crossing_within_half_an_hour_is_quiet(tmp_path):
     m, state, sent = monitor(tmp_path, temps(10, 20))
     await m.check()
-    m.station.data = temps(25, 20, T0 + 3 * 3600 - 60)
+    m.station.data = temps(25, 20, T0 + 30 * 60 - 60)
     await m.check()
     assert not sent
 
