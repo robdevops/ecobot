@@ -5,6 +5,7 @@ wind blew from each of the 16 compass points, plus a vector mean and how steady 
 import math
 from collections import Counter
 from datetime import tzinfo
+from statistics import fmean
 
 from ..timeutil import local_date
 
@@ -26,8 +27,8 @@ def _share(n: int, total: int) -> str:
 
 def vector_mean(degrees: list[float]) -> tuple[float, float]:
     """(mean direction in degrees, steadiness 0-1): 1 is the same direction throughout, near 0 is all over."""
-    x = sum(math.cos(math.radians(d)) for d in degrees) / len(degrees)
-    y = sum(math.sin(math.radians(d)) for d in degrees) / len(degrees)
+    x = fmean(math.cos(math.radians(d)) for d in degrees)
+    y = fmean(math.sin(math.radians(d)) for d in degrees)
     return math.degrees(math.atan2(y, x)) % 360, math.hypot(x, y)
 
 

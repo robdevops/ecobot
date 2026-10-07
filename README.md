@@ -2,15 +2,21 @@
 
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
-chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, UV index of 10 or more, indoor/outdoor temperatures crossing (at least 3 hours between crossings),
+chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, UV index of 10 or more, indoor/outdoor temperatures crossing (held back for the cooldown, then announced if it still stands),
 and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, rain predicted, gusts, UV, temperature crossing, air quality, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (and `/alerts on|off` still subscribes or unsubscribes every type). In a group only admins can change them (`lib/alerts/menu.py`).
 
 ## Run
 
+Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so older Pythons will not run it):
+
 ```
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python ecobot.py          # with the variables below in the environment
 ```
+Tests: `pip install -r requirements-dev.txt && python -m pytest` (and `python scripts/eval_prompts.py`); GitHub Actions runs both on every push and pull request (`.github/workflows/ci.yml`, Python 3.13). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
+
+### Chart pictures
+Seven fixed sample charts (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with matplotlib's own font, shrunk to 40% and cut to 64 colours, so each is 7 to 35 KB (about 140 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `matplotlib`, `numpy` and `Pillow` are pinned in `requirements.txt` because the pictures depend on them; Dependabot (`.github/dependabot.yml`) proposes updates to the three as one pull request, whose failing chart test is the cue to redo the images. Every Sunday a second CI job (`newest`) runs the tests with the newest versions of the three, advisory only. Optional alerts to Telegram: add repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 Under systemd see `ecobot.service` (it loads the environment file; the clone's location is its one `WorkingDirectory` line, the rest is relative).
 
 | Variable | Purpose |
@@ -24,7 +30,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High or Extreme. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
 | `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
 | `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
-| `RAIN_STOP_MINUTES` | optional: how long it must stay dry before "the rain has stopped" is sent (default 60, from 5 to 150) |
+| `ALERT_COOLDOWN_MINUTES` | optional: the rain and temperature-crossing alerts: how long it must stay dry before "the rain has stopped" is sent, and the least time between alerts of the same kind (default 30, from 5 to 150). A change that comes inside the cooldown is held and announced when it ends, if the state still differs from the last one alerted; if it is back where it was, nothing is sent |
 | `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped, predicted), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
 | `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
 | `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
@@ -52,7 +58,7 @@ lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (on
 lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, air, pollen
 lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
-tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases
+tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images
 scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
                         sent to the model for a question), check_rain.py (are rain totals trustworthy?),
                         dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)

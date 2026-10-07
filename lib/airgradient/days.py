@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import date, datetime, timedelta, tzinfo
+from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
@@ -14,7 +15,7 @@ from .metrics import ALL_METRICS, CHART_UNITS
 log = logging.getLogger(__name__)
 
 HOURLY_MAX_READINGS = 30   # a day with this few readings holds hourly averages (24), not 5-minute ones (288)
-SUFFIX_KIND = {"max": max, "min": min, "avg": lambda v: sum(v) / len(v)}
+SUFFIX_KIND = {"max": max, "min": min, "avg": fmean}
 FIELDS = {f"{m}_{kind}": CHART_UNITS[m] for m in ALL_METRICS for kind in SUFFIX_KIND}
 
 PARAMETERS = parameters(list(FIELDS), "pm2_5_max > 25 and co2_max > 800")

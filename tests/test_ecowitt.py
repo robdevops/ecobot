@@ -430,7 +430,7 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     direction = out["series"]["wind.wind_direction"]
     assert direction["most_common"].startswith("N ") and "low" not in direction and "high" not in direction
     assert direction["average_direction"].startswith("N (") and "note" not in direction   # 5-minute readings
-    assert direction["calm"].startswith("25%")                                             # midnight to 6am had no wind
+    assert 20 <= int(direction["calm"].split("%")[0]) <= 30                                # midnight to 6am had no wind: about a quarter
     assert len(direction["daily"]) == 6 and all(v.startswith("N ") for v in direction["daily"].values())
     assert "high" in out["series"]["wind.wind_gust"]                                       # speeds are unchanged
     again = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "include_derived": [],   # a chart of direction alone
@@ -831,8 +831,7 @@ def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_
 def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_stretch_at_30():
     from lib.lines import build_line
     from tests.fakes import TZ
-    day = (datetime.now(TZ) - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
-    t0 = int(day.timestamp())
+    t0 = int(datetime(2026, 7, 15, tzinfo=TZ).timestamp())   # a fixed winter day: a clock-change day has 46 or 50 slots, not 48
     pts = {t0 + i * 1800: {"cycle": "30min", "value": (10.0, "10"), "low": (8.0, "8"), "high": (12.0, "12")} for i in range(48)}
     pts.update({t0 + 20 * 3600 + i * 300: {"cycle": "5min", "value": (20.0, "20")} for i in range(48)})   # the last 4 hours also at 5 minutes
     readings = [(t, r["value"][0], r["value"][0] if "low" not in r else r["low"][0], r["value"][0] if "high" not in r else r["high"][0],

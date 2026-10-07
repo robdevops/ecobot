@@ -13,7 +13,7 @@ import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
@@ -134,7 +134,7 @@ async def keep_typing(bot, chat_id: int, thread_id, stop: asyncio.Event):
     while not stop.is_set() and time.monotonic() < deadline:
         with contextlib.suppress(Exception):
             await bot.send_chat_action(chat_id, ChatAction.TYPING, message_thread_id=thread_id)
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), 4.5)
 
 
@@ -170,7 +170,7 @@ class Draft:
                 for w in waits:
                     w.cancel()
             if self.changed.is_set() and not stop.is_set():
-                with contextlib.suppress(asyncio.TimeoutError):
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), DRAFT_MIN_GAP)
 
 
@@ -275,7 +275,8 @@ class Bot:
         or unsubscribe a type or all. In a group only admins may change them."""
         query = update.callback_query
         parts = (query.data or "").split(":")
-        action, arg, section = (parts + ["", "", ""])[1:4]
+        action, arg, section, tail = (parts + ["", "", "", ""])[1:5]
+        parent = section if action == "open" else arg if action == "close" else tail   # the alert's own type, when under an alert
         if action == "noop" or not self.state:
             await query.answer()
             return
@@ -287,23 +288,24 @@ class Bot:
                 await query.answer("Only group admins can change alerts")
                 return
         kinds = self._alert_kinds()
+        parent = parent if parent in kinds else None
         toast, opened = None, section or None
         if action in ("open", "close"):
             opened = arg if action == "open" else None
-            if opened in ("sub", "unsub") and not menu.options(self.state.muted(chat.id), kinds, opened):
+            if opened in ("sub", "unsub") and not menu.has_options(self.state.muted(chat.id), kinds, opened, parent):
                 await query.answer("You're subscribed to everything" if opened == "sub" else "No alerts are on")   # nothing to list
                 return
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")
-            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg].capitalize()} alerts"
+            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts"   # "UV alerts", not "Uv"
             toast = f"{what} {action} in this chat"
         else:
             await query.answer()
             return
         muted = self.state.muted(chat.id)
-        if opened in ("sub", "unsub") and not menu.options(muted, kinds, opened):
+        if opened in ("sub", "unsub") and not menu.has_options(muted, kinds, opened, parent):
             opened = None                                    # the last one was just turned on or off: close the section
-        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None)
+        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub") else None, parent)
         await query.answer(toast)
         try:
             if (message.text or "").startswith(menu.TITLE):   # the /alerts message: keep its on/off summary current
@@ -442,7 +444,7 @@ class Bot:
         msg = update.effective_message
         if not msg or not msg.text:
             return
-        waited = (datetime.now(timezone.utc) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
+        waited = (datetime.now(UTC) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
         if waited > PENDING_MAX_SECONDS:
             log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), _short(msg.text, 40))
             return
@@ -524,7 +526,7 @@ class Bot:
                     self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
                                    no_tools=read.about_the_bot, turn=turn, on_heavy=on_heavy, conv_id=conv_id,
                                    **({"on_text": draft.update} if draft else {})), budget)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 lower = intent.lower_effort(effort)
                 if not lower or retried:
                     raise
@@ -592,7 +594,7 @@ class Bot:
                         titles.append(spec.caption(now.date()))
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.error("Gave up after %ds on: %s", TURN_SECONDS, _short(text, 60))
                 ok, reply = False, "Sorry, that took too long. Please try again in a moment."
             except Exception as e:

@@ -13,7 +13,8 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 import asyncio
 import json
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, UTC
+from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
@@ -65,7 +66,7 @@ class HistoryQuery:
     def __init__(self, fetcher: Fetcher, args: dict, turn):
         self.f, self.tz, self.args, self.turn = fetcher, fetcher.tz, args, turn
         self.now = now_local(self.tz)
-        self.now_utc = datetime.now(timezone.utc)
+        self.now_utc = datetime.now(UTC)
         self.store: dict = {}       # "group.field" -> {"unit", "pts"}, filled by _fetch_period
         self.start = self.end = self.span = None          # the period, set by run()
         self.held = False                                  # the whole period is in the cache at 30 minutes, and fits the row budget
@@ -207,7 +208,7 @@ class HistoryQuery:
         for key, series in self.store.items():
             months: dict = {}
             for ts, rec in sorted(series["pts"].items()):
-                month = datetime.fromtimestamp(ts, timezone.utc).astimezone(self.tz).strftime("%b %Y")
+                month = datetime.fromtimestamp(ts, UTC).astimezone(self.tz).strftime("%b %Y")
                 fold(months.setdefault(month, {}), ts, rec)
             out[key] = months
         return out
@@ -371,7 +372,7 @@ class HistoryQuery:
         if not means:
             return
         fmt = lambda v: f"{v:.1f}"
-        entry["average"] = fmt(sum(means.values()) / len(means))
+        entry["average"] = fmt(fmean(means.values()))
         for d, v in means.items():
             table = entry.get("daily") if self.span <= timedelta(days=31) else entry.get("monthly")
             label = d.strftime("%a %d %b") if self.span <= timedelta(days=31) else d.strftime("%b %Y")
@@ -381,7 +382,7 @@ class HistoryQuery:
             for row in (table or {}).values():
                 values = row.pop("_sum", None)
                 if values:
-                    row["avg"] = fmt(sum(values) / len(values))
+                    row["avg"] = fmt(fmean(values))
 
     def _chart_spec(self, series_out: dict, field: str | None = None) -> Chart | None:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,

@@ -261,7 +261,7 @@ async def test_a_question_with_no_lower_step_or_a_second_timeout_gives_up(monkey
     bot = Bot(NS(tz=TZ), Hangs(), [], None)
     for text, expected in (("hello there", ["none"]), ("what do you think about the weather today?", ["medium", "low"])):
         efforts.clear()
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await bot._ask_model([], "sys", intent.read(text, datetime(2026, 10, 2, 12, 0)), Turn(), None)
         assert efforts == expected
 

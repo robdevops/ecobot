@@ -9,8 +9,9 @@ import logging
 import operator
 import re
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from datetime import date, datetime, tzinfo
-from typing import Callable
+from statistics import fmean
 
 from .captions import COUNT_CHART_HINT
 from .specs import Bars, Chart, Panel
@@ -86,7 +87,7 @@ def grouped_as_asked(args: dict, turn) -> dict:
 def validate(args: dict, fields: dict[str, str]) -> str | None:
     """An error message for arguments that can't be used, else None. `fields` maps each field name to its unit."""
     where = args.get("where") or []
-    bad = [c for c in where if c.get("field") not in fields or c.get("op") not in OPS or not isinstance(c.get("value"), (int, float))]
+    bad = [c for c in where if c.get("field") not in fields or c.get("op") not in OPS or not isinstance(c.get("value"), int | float)]
     if bad:
         return f"unusable condition(s) {bad}; fields are {', '.join(fields)}, ops {' '.join(OPS)}"
     if args.get("sort_by") and args["sort_by"] not in fields:
@@ -125,7 +126,7 @@ def phrase(stat: str, of: str) -> str:
 def aggregate(stat: str, numbers: list[float]) -> float | None:
     if not numbers:
         return None
-    return round({"max": max, "min": min, "sum": sum, "avg": lambda n: sum(n) / len(n)}[stat](numbers), 1)
+    return round({"max": max, "min": min, "sum": sum, "avg": fmean}[stat](numbers), 1)
 
 
 def bars_chart(figures: dict[str, float | None], by: str, title: str, subtitle: str, label: str, unit: str, tz: tzinfo) -> Chart:

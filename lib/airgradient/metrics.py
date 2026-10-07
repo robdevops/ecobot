@@ -77,7 +77,7 @@ def value_of(row: dict, name: str) -> float | None:
     """One metric from a raw reading (corrected value first), or None."""
     for field in METRICS[name][0]:
         v = row.get(field)
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             return float(v)
     return None
 

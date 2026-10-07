@@ -12,7 +12,7 @@ Not built yet. This is the plan for making commands and common questions tappabl
 Private chats get a persistent reply keyboard of template questions (`lib/templates.py`); a tap arrives as ordinary text, so the answer takes the usual path. `/keyboard` and `/keyboard off` show and hide it.
 
 ## Built since: alert settings as buttons
-Every alert carries Subscribe | Unsubscribe buttons that expand in place into the alert types (Subscribe lists the ones that are off, Unsubscribe the ones that are on, so there are no buttons that do nothing); `/alerts` shows the same menu with its on/off summary. Callback data is `al:<action>:<kind>:<section>` (`lib/alerts/menu.py`, handled by `Bot.on_alert_button`); in groups only admins may change them.
+Every alert carries Subscribe | Unsubscribe buttons that expand in place into the alert types (Subscribe lists the ones that are off, Unsubscribe the ones that are on, so there are no buttons that do nothing); `/alerts` shows the same menu with its on/off summary. Under an alert, Unsubscribe lists just that alert's own type (marked ●) and "Unsubscribe from all" (when other types are on too); on /alerts it lists every type that is on. "Subscribe to all" appears only when more than one type is off. Callback data is `al:<action>:<kind>:<section>[:<alert type>]` (`lib/alerts/menu.py`, handled by `Bot.on_alert_button`); in groups only admins may change them.
 
 ## Built since: messages sent during a restart
 Polling keeps what Telegram held while the bot was down or starting, and answers a message that is under 10 minutes old (`lib/bot.py` `PENDING_MAX_SECONDS`); older ones are ignored and logged.

@@ -154,7 +154,7 @@ class Notifier:
         """Send an alert (silently) to every chat subscribed to its type; forget chats the bot can no
         longer post to. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons."""
         text, entities = with_footer(text, link)
-        sent = sum([await self._send(chat_id, text, entities) for chat_id in self.state.alert_chats(kind)])
+        sent = sum([await self._send(chat_id, text, entities, kind) for chat_id in self.state.alert_chats(kind)])
         log.info("Alert sent to %d chat(s): %s", sent, text.replace("\n", " "))
 
     async def to_chat(self, chat_id: int, text: str, link: tuple[str, str] | None = None, kind: str | None = None) -> bool:
@@ -163,15 +163,15 @@ class Notifier:
         if not self.state.subscribed(chat_id, kind):
             return False
         text, entities = with_footer(text, link)
-        sent = await self._send(chat_id, text, entities)
+        sent = await self._send(chat_id, text, entities, kind)
         log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text.replace("\n", " "))
         return sent
 
-    async def _send(self, chat_id: int, text: str, entities) -> bool:
-        """Send silently; forget a chat the bot can no longer post to."""
+    async def _send(self, chat_id: int, text: str, entities, kind: str | None = None) -> bool:
+        """Send silently, with the settings buttons (which highlight this alert's own type); forget a chat the bot can no longer post to."""
         try:
             await self.bot.send_message(chat_id, text, entities=entities, disable_notification=True, disable_web_page_preview=True,
-                                        reply_markup=keyboard(self.state.muted(chat_id), self.kinds))
+                                        reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind))
             return True
         except Forbidden as e:  # kicked from the group, or blocked in a private chat
             self.state.remove_chat(chat_id, f"can't post: {e}")
