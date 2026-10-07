@@ -4,16 +4,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 21 * * 0"   # Sundays 21:17 UTC: the check against the newest matplotlib, numpy and Pillow (the "newest" job below)
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
+
+env:
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}   # optional: set both secrets to get failures as a Telegram message
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
 jobs:
   test:
+    # The gate: the exact versions in requirements.txt (the ones production runs), tests and chart images included.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,3 +36,51 @@ jobs:
         run: python -m pytest -q   # pytest.ini runs them in parallel (-n auto)
       - name: Prompt and routing evals
         run: python scripts/eval_prompts.py
+      - name: Chart pictures that differ
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-diffs
+          path: chart-diffs/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tell me on Telegram (main only)
+        if: failure() && github.ref == 'refs/heads/main' && env.TELEGRAM_BOT_TOKEN != ''
+        run: |
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CI failed on main: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
+
+  newest:
+    # Advisory, never blocks: the same tests with the newest matplotlib, numpy and Pillow. If the chart pictures differ, a new release
+    # draws things differently: look at the artifact, then bump the pins in requirements.txt and run scripts/update_charts.py.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt && pip install --upgrade matplotlib numpy pillow
+      - run: pip list | grep -i -E "^(matplotlib|numpy|pillow) "
+      - name: Tests (not the chart pictures)
+        run: python -m pytest -q -m "not golden"
+      - name: Chart pictures
+        id: pictures
+        continue-on-error: true
+        run: python -m pytest -q -m golden
+      - name: Chart pictures that differ
+        if: steps.pictures.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chart-diffs-newest
+          path: chart-diffs/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Tell me on Telegram
+        if: (failure() || steps.pictures.outcome == 'failure') && env.TELEGRAM_BOT_TOKEN != ''
+        run: |
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=The newest matplotlib/numpy/Pillow changes something: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true

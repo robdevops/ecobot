@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      charts:   # these decide how the chart pictures look: one pull request for all three, so the reference images are redone once
+        patterns: [matplotlib, numpy, pillow]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -11,3 +11,4 @@ bot_state.json.tmp
 *.db-*
 *.env
 mcp_ecowitt.json
+chart-diffs/
