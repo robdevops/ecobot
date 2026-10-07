@@ -9,8 +9,6 @@ import pytest
 from lib.ecowitt import Ecowitt
 from tests.fakes import TZ, archived_station, config, ecowitt_transport, rain_day, temp
 
-pytestmark = pytest.mark.asyncio
-
 
 def local_day(d):
     return int(datetime.combine(d, datetime.min.time()).replace(tzinfo=TZ).timestamp())

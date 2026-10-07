@@ -38,16 +38,22 @@ async def _inline(func, /, *args, **kwargs):
 
 @pytest.fixture(autouse=True)
 def no_request_spacing(monkeypatch):
+    """Also closes every SQLite connection a test opened, so none is left for the garbage collector (a ResourceWarning)."""
     import asyncio
     import sqlite3
     monkeypatch.setattr(asyncio, "to_thread", _inline)
     real_connect = sqlite3.connect
+    opened = []
 
     def fast_connect(*args, **kwargs):  # tests don't need the caches to survive a power cut
         db = real_connect(*args, **kwargs)
         db.execute("PRAGMA synchronous=OFF")
         db.execute("PRAGMA journal_mode=MEMORY")
+        opened.append(db)
         return db
     monkeypatch.setattr(sqlite3, "connect", fast_connect)
     from lib.ecowitt import api
     monkeypatch.setattr(api, "MIN_GAP_SECONDS", 0)
+    yield
+    for db in opened:
+        db.close()
