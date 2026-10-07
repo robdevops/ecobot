@@ -92,14 +92,13 @@ jobs:
 
   live-evals:
     # Advisory, never blocks: asks the real model the few questions in tests/evals/weekly.txt and checks which tool it calls. Needs the
-    # repository secrets XAI_API_KEY, XAI_BASE_URL and XAI_MODEL (skipped without a key). A failure is run once more before it is reported.
+    # repository secret XAI_API_KEY (skipped without it); XAI_MODEL is optional, for when production runs another model than grok-4.3. A failure is run once more before it is reported.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      XAI_BASE_URL: ${{ secrets.XAI_BASE_URL }}
-      XAI_MODEL: ${{ secrets.XAI_MODEL }}
+      XAI_MODEL: ${{ secrets.XAI_MODEL || 'grok-4.3' }}
       ALL_CASES: ${{ inputs.all_cases }}
     steps:
       - uses: actions/checkout@v7
