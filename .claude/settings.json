@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python scripts/eval_prompts.py)",
+      "Bash(git fetch *)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
