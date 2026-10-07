@@ -38,7 +38,7 @@ jobs:
         run: python scripts/eval_prompts.py
       - name: Chart pictures that differ
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: chart-diffs
           path: chart-diffs/
@@ -72,7 +72,7 @@ jobs:
         run: python -m pytest -q -m golden
       - name: Chart pictures that differ
         if: steps.pictures.outcome == 'failure'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: chart-diffs-newest
           path: chart-diffs/
