@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: "17 21 * * 0"   # Sundays 21:17 UTC: the check against the newest matplotlib, numpy and Pillow (the "newest" job below)
   workflow_dispatch:
+    inputs:
+      all_cases:
+        description: "Live evals: ask the model every saved question (87) instead of the few in tests/evals/weekly.txt"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -84,3 +89,35 @@ jobs:
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=The newest matplotlib/numpy/Pillow changes something: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
+
+  live-evals:
+    # Advisory, never blocks: asks the real model the few questions in tests/evals/weekly.txt and checks which tool it calls. Needs the
+    # repository secrets XAI_API_KEY, XAI_BASE_URL and XAI_MODEL (skipped without a key). A failure is run once more before it is reported.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      XAI_BASE_URL: ${{ secrets.XAI_BASE_URL }}
+      XAI_MODEL: ${{ secrets.XAI_MODEL }}
+      ALL_CASES: ${{ inputs.all_cases }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Ask the model
+        if: env.XAI_API_KEY != ''
+        run: |
+          ids=()
+          if [ "$ALL_CASES" != "true" ]; then ids=(--ids "$(paste -sd, tests/evals/weekly.txt)"); fi
+          python scripts/eval_prompts.py --live "${ids[@]}" || { echo "Failed: asking once more"; python scripts/eval_prompts.py --live "${ids[@]}"; }
+      - name: Tell me on Telegram
+        if: failure() && env.TELEGRAM_BOT_TOKEN != ''
+        run: |
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=The model answers differently to the saved questions: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
