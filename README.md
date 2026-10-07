@@ -7,10 +7,13 @@ and unhealthy air (with when it is safe again). Every alert carries Subscribe / 
 
 ## Run
 
+Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so older Pythons will not run it):
+
 ```
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python ecobot.py          # with the variables below in the environment
 ```
+Tests: `pip install -r requirements-dev.txt && python -m pytest` (and `python scripts/eval_prompts.py`); GitHub Actions runs both on every push and pull request (`.github/workflows/ci.yml`, Python 3.13). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 Under systemd see `ecobot.service` (it loads the environment file; the clone's location is its one `WorkingDirectory` line, the rest is relative).
 
 | Variable | Purpose |

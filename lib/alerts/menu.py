@@ -9,6 +9,8 @@ An alert's buttons end with the alert's own type (parent): under an alert the Un
 al:off:uv:unsub:rain. A chat's /alerts message has no parent and no such field.
 """
 
+from itertools import batched
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # kind -> the name on the button, in the order listed
@@ -49,7 +51,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
             show_all = len(listed) > 1
         mark = lambda k: f"● {LABELS[k]}" if open == "unsub" and k == parent else LABELS[k]   # the alert these buttons are under
         buttons = [_button(mark(k), f"al:{verb}:{k}:{open}{tail}") for k in listed]
-        rows += [buttons[i:i + PER_ROW] for i in range(0, len(buttons), PER_ROW)]
+        rows += map(list, batched(buttons, PER_ROW))
         if show_all:
             rows.append([_button("Subscribe to all" if open == "sub" else "Unsubscribe from all", f"al:{verb}:{ALL}:{open}{tail}")])
     return InlineKeyboardMarkup(rows)

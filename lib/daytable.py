@@ -10,7 +10,7 @@ import operator
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
-from typing import Callable
+from collections.abc import Callable
 
 from .captions import COUNT_CHART_HINT
 from .specs import Bars, Chart, Panel
@@ -86,7 +86,7 @@ def grouped_as_asked(args: dict, turn) -> dict:
 def validate(args: dict, fields: dict[str, str]) -> str | None:
     """An error message for arguments that can't be used, else None. `fields` maps each field name to its unit."""
     where = args.get("where") or []
-    bad = [c for c in where if c.get("field") not in fields or c.get("op") not in OPS or not isinstance(c.get("value"), (int, float))]
+    bad = [c for c in where if c.get("field") not in fields or c.get("op") not in OPS or not isinstance(c.get("value"), int | float)]
     if bad:
         return f"unusable condition(s) {bad}; fields are {', '.join(fields)}, ops {' '.join(OPS)}"
     if args.get("sort_by") and args["sort_by"] not in fields:

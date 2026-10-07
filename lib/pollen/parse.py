@@ -5,6 +5,7 @@ Department of Health and the Bureau of Meteorology, 1 Oct - 31 Dec). The site ha
 import re
 from datetime import datetime
 from html.parser import HTMLParser
+from itertools import pairwise
 
 LEVELS = ("Low", "Moderate", "High", "Extreme")
 LEVEL_EMOJI = {"Low": "🟢", "Moderate": "🟡", "High": "🟠", "Extreme": "🔴"}
@@ -48,7 +49,7 @@ def _section(lines: list[str], heading: str, stops: list[str]) -> list[str]:
 
 
 def _district_levels(lines: list[str]) -> dict[str, str]:
-    return {a: b for a, b in zip(lines, lines[1:]) if a in DISTRICTS and b in LEVELS}
+    return {a: b for a, b in pairwise(lines) if a in DISTRICTS and b in LEVELS}
 
 
 def _last_updated(lines: list[str]) -> str | None:

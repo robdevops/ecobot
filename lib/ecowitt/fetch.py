@@ -3,7 +3,7 @@ or from Ecowitt, within Ecowitt's per-request limits."""
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import datetime, timedelta, tzinfo, UTC
 
 from ..timeutil import local_epoch, to_local
 from .api import EcowittError, MAX_SPAN, RETENTION
@@ -115,7 +115,7 @@ class Fetcher:
     async def finer_cycle(self, ts: int, current: str, window_end: int, now_utc: datetime) -> str | None:
         """Finest cycle finer than `current` available for this window: still kept by Ecowitt,
         or already in the cache (e.g. archived 5-minute data). None if neither."""
-        age = (now_utc - datetime.fromtimestamp(ts, timezone.utc)).days
+        age = (now_utc - datetime.fromtimestamp(ts, UTC)).days
         for cycle in ("5min", "30min", "4hour"):
             if cycle == current:
                 return None

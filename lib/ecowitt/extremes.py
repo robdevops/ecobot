@@ -1,6 +1,6 @@
 """Turning Ecowitt readings into per-series points and finding their lowest and highest, with when each happened."""
 
-from datetime import date, datetime, timezone, tzinfo
+from datetime import date, datetime, tzinfo, UTC
 from typing import NamedTuple
 
 from ..timeutil import local_date
@@ -89,13 +89,13 @@ def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
     cycle. The wording already says "at" (5-minute readings), "around" (30-minute slots) or gives
     the window it happened in, so the model can copy it as is. The date is separate (so an emoji
     can go before it) and empty when the window spans two days, since then the wording has both."""
-    start = datetime.fromtimestamp(ts, timezone.utc).astimezone(tz)
+    start = datetime.fromtimestamp(ts, UTC).astimezone(tz)
     raw = start.strftime("%a %d %b %Y %H:%M")
     if cycle == "5min":
         return raw, f"at {_clock(start)}", _day(start)
     if cycle == "30min":
         return raw, f"around {_clock(start)}", _day(start)
-    end = datetime.fromtimestamp(ts + CYCLE_SECONDS[cycle], timezone.utc).astimezone(tz)
+    end = datetime.fromtimestamp(ts + CYCLE_SECONDS[cycle], UTC).astimezone(tz)
     if start.date() == end.date():
         return raw, f"sometime between {_clock(start)} and {_clock(end)}", _day(start)
     return raw, f"sometime between {_clock(start)} {_day(start)} and {_clock(end)} {_day(end)}", ""

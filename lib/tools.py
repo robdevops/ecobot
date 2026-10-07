@@ -60,7 +60,7 @@ class Tools:
         log.info("Tool call %s %s", name, raw_args[:300])
         try:
             out = await asyncio.wait_for(tool.handler(args, turn or Turn()), TOOL_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return f"Error: tool timed out after {TOOL_TIMEOUT}s"
         except Exception as e:
             log.exception("Tool %s failed", name)

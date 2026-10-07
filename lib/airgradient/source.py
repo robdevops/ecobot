@@ -16,7 +16,8 @@ import statistics
 import json
 import logging
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
+from itertools import pairwise
 
 import httpx
 
@@ -145,7 +146,7 @@ class AirGradient:
         return {d: stored[d] if self._final(d) else None for d in days}
 
     def _utc(self, local: datetime) -> str:
-        return local.replace(tzinfo=self.tz).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return local.replace(tzinfo=self.tz).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     async def _past(self, start: datetime, end: datetime) -> list[dict]:
         """Readings between two local times, normalised and oldest first."""
@@ -369,7 +370,7 @@ class AirGradient:
         pts = [(r["ts"], r[name]) for r in rows if name in r]
         if len(pts) < 2:
             return None
-        gap = max(60, round(statistics.median(b[0] - a[0] for a, b in zip(pts, pts[1:]))))
+        gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
         plotted = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
         if plotted is None:
             return None

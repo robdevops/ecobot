@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 from ..config import Config
 from ..intent import NOW_GROUPS
@@ -124,7 +124,7 @@ class Ecowitt:
         self.mac = str(device["mac"]).upper()
         self.station_name = device.get("name") or "station"
         try:
-            self.created = datetime.fromtimestamp(int(device["createtime"]), timezone.utc).astimezone(self.tz)
+            self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
         except (KeyError, TypeError, ValueError):
             pass
         try:
@@ -183,7 +183,7 @@ class Ecowitt:
                         newest = max(newest, int(obj.get("time") or 0))
                     except (TypeError, ValueError):
                         pass
-        when = datetime.fromtimestamp(newest, timezone.utc).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
+        when = datetime.fromtimestamp(newest, UTC).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
         outlook = await self._rain_outlook() if "rainfall" in groups else None
         return json.dumps({"time": when, **out, **({"rain_outlook": outlook} if outlook else {}), **({"emoji": emoji} if emoji else {})},
                           ensure_ascii=False, separators=(",", ":"))

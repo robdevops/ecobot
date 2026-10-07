@@ -2,7 +2,7 @@
 
 import math
 from bisect import bisect_left, bisect_right
-from datetime import date, datetime, time, timedelta, timezone, tzinfo
+from datetime import date, datetime, time, timedelta, tzinfo, UTC
 from itertools import accumulate
 
 
@@ -13,7 +13,7 @@ def now_local(tz: tzinfo) -> datetime:
 
 def to_local(ts: int, tz: tzinfo) -> datetime:
     """An epoch as an aware datetime in tz."""
-    return datetime.fromtimestamp(ts, timezone.utc).astimezone(tz)
+    return datetime.fromtimestamp(ts, UTC).astimezone(tz)
 
 
 def local_date(ts: int, tz: tzinfo) -> date:

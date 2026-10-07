@@ -9,7 +9,7 @@ means the archive hasn't finished or a range failed; it fills in on the next sta
 
 import sqlite3
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, UTC
 from pathlib import Path
 
 from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
@@ -19,7 +19,7 @@ from lib.ecowitt.store import horizon, subtract  # noqa: E402
 
 
 def day(ts: int) -> str:
-    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
 
 
 def ecowitt(path: Path):

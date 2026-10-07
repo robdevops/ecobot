@@ -34,7 +34,7 @@ GAP_FINAL_SECONDS = 2 * 86400
 HOT_TTL_SECONDS = 300   # recent readings are reused for this long
 HOT_SLACK_SECONDS = 60  # a response ending within this of its fetch time "reaches the present"
 
-Interval = tuple[int, int]
+type Interval = tuple[int, int]
 
 
 def horizon(cycle: str, now: float | None = None) -> int:

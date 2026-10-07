@@ -13,7 +13,7 @@ import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
@@ -134,7 +134,7 @@ async def keep_typing(bot, chat_id: int, thread_id, stop: asyncio.Event):
     while not stop.is_set() and time.monotonic() < deadline:
         with contextlib.suppress(Exception):
             await bot.send_chat_action(chat_id, ChatAction.TYPING, message_thread_id=thread_id)
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), 4.5)
 
 
@@ -170,7 +170,7 @@ class Draft:
                 for w in waits:
                     w.cancel()
             if self.changed.is_set() and not stop.is_set():
-                with contextlib.suppress(asyncio.TimeoutError):
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), DRAFT_MIN_GAP)
 
 
@@ -444,7 +444,7 @@ class Bot:
         msg = update.effective_message
         if not msg or not msg.text:
             return
-        waited = (datetime.now(timezone.utc) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
+        waited = (datetime.now(UTC) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
         if waited > PENDING_MAX_SECONDS:
             log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), _short(msg.text, 40))
             return
@@ -526,7 +526,7 @@ class Bot:
                     self.agent.run(working, system, effort, first_call=first, require_tool=read.needs_data,
                                    no_tools=read.about_the_bot, turn=turn, on_heavy=on_heavy, conv_id=conv_id,
                                    **({"on_text": draft.update} if draft else {})), budget)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 lower = intent.lower_effort(effort)
                 if not lower or retried:
                     raise
@@ -594,7 +594,7 @@ class Bot:
                         titles.append(spec.caption(now.date()))
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.error("Gave up after %ds on: %s", TURN_SECONDS, _short(text, 60))
                 ok, reply = False, "Sorry, that took too long. Please try again in a moment."
             except Exception as e:

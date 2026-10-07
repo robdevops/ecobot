@@ -17,7 +17,7 @@ from .timeutil import SLOT, WIDTH_NAMES, bucket_width, bucketed, daily_summary, 
 
 DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
-Reading = tuple[int, float, float | None, float | None, int]
+type Reading = tuple[int, float, float | None, float | None, int]
 SHORT_DAYS = 31   # up to this long a weather line is drawn with no shaded range (see Plotted.unbanded)
 
 

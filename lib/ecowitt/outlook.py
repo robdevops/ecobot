@@ -2,7 +2,7 @@
 and the status report."""
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import NamedTuple
 
 PREDICT_MIN_SCORE = 4
@@ -11,12 +11,12 @@ PREDICT_MIN_SCORE = 4
 TIDE_AMPLITUDE_HPA = 0.7
 NIGHT_HOURS = (20, 8)   # 8pm-8am: cooling alone brings the air close to its dew point
 
-Rows = list[tuple[int, dict]]  # [(epoch, {"group.field": value})], oldest first
+type Rows = list[tuple[int, dict]]  # [(epoch, {"group.field": value})], oldest first
 
 
 def tide(ts: int, longitude: float) -> float:
     """Expected pressure offset from the atmospheric tide at this moment (hPa)."""
-    utc = datetime.fromtimestamp(ts, timezone.utc)
+    utc = datetime.fromtimestamp(ts, UTC)
     solar_hour = (utc.hour + utc.minute / 60 + longitude / 15) % 24
     return TIDE_AMPLITUDE_HPA * math.cos(2 * math.pi * (solar_hour - 10) / 12)
 
@@ -83,7 +83,7 @@ def assess_rain(rows: Rows, tz, longitude: float) -> Outlook | None:
         return None
     score = 3 if drop >= 3 else 2 if drop >= 2 else 1
     reasons = [f"pressure down {raw_drop:.1f} hPa in 3 hours"]
-    hour = datetime.fromtimestamp(latest_ts, timezone.utc).astimezone(tz).hour
+    hour = datetime.fromtimestamp(latest_ts, UTC).astimezone(tz).hour
     night = hour >= NIGHT_HOURS[0] or hour < NIGHT_HOURS[1]
     temp, dew = latest.get("outdoor.temperature"), latest.get("outdoor.dew_point")
     if night:

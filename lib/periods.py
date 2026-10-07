@@ -19,9 +19,10 @@ def keyboard(current: int | None = None) -> InlineKeyboardMarkup:
 
 def days_in(data: str | None) -> int | None:
     """The period a button's callback data asks for, if it is one of ours."""
-    if data and data.startswith(PREFIX) and data[len(PREFIX):].isdigit() and int(data[len(PREFIX):]) in PERIODS:
-        return int(data[len(PREFIX):])
-    return None
+    if not data or not data.startswith(PREFIX):
+        return None
+    days = data.removeprefix(PREFIX)
+    return int(days) if days.isdigit() and int(days) in PERIODS else None
 
 
 class Charted:
