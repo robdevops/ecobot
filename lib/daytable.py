@@ -9,8 +9,9 @@ import logging
 import operator
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, tzinfo
 from collections.abc import Callable
+from datetime import date, datetime, tzinfo
+from statistics import fmean
 
 from .captions import COUNT_CHART_HINT
 from .specs import Bars, Chart, Panel
@@ -125,7 +126,7 @@ def phrase(stat: str, of: str) -> str:
 def aggregate(stat: str, numbers: list[float]) -> float | None:
     if not numbers:
         return None
-    return round({"max": max, "min": min, "sum": sum, "avg": lambda n: sum(n) / len(n)}[stat](numbers), 1)
+    return round({"max": max, "min": min, "sum": sum, "avg": fmean}[stat](numbers), 1)
 
 
 def bars_chart(figures: dict[str, float | None], by: str, title: str, subtitle: str, label: str, unit: str, tz: tzinfo) -> Chart:

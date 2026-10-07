@@ -15,6 +15,7 @@ import logging
 import operator
 import re
 from datetime import date, datetime, timedelta, tzinfo
+from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
@@ -84,7 +85,7 @@ def per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, f
         for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
             if (day := local_date(ts, tz)) in days and rec.get("value") is not None:
                 sums.setdefault(day, []).append(rec["value"][0])
-        return {d: sum(v) / len(v) for d, v in sums.items()}
+        return {d: fmean(v) for d, v in sums.items()}
     for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
         day = local_date(ts, tz)
         found = rec.get(kind) or rec.get("value")

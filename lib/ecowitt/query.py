@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, time, timedelta, UTC
+from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
@@ -371,7 +372,7 @@ class HistoryQuery:
         if not means:
             return
         fmt = lambda v: f"{v:.1f}"
-        entry["average"] = fmt(sum(means.values()) / len(means))
+        entry["average"] = fmt(fmean(means.values()))
         for d, v in means.items():
             table = entry.get("daily") if self.span <= timedelta(days=31) else entry.get("monthly")
             label = d.strftime("%a %d %b") if self.span <= timedelta(days=31) else d.strftime("%b %Y")
@@ -381,7 +382,7 @@ class HistoryQuery:
             for row in (table or {}).values():
                 values = row.pop("_sum", None)
                 if values:
-                    row["avg"] = fmt(sum(values) / len(values))
+                    row["avg"] = fmt(fmean(values))
 
     def _chart_spec(self, series_out: dict, field: str | None = None) -> Chart | None:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,

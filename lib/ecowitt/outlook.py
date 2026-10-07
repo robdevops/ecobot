@@ -3,6 +3,7 @@ and the status report."""
 
 import math
 from datetime import datetime, UTC
+from statistics import fmean
 from typing import NamedTuple
 
 PREDICT_MIN_SCORE = 4
@@ -105,7 +106,7 @@ def assess_rain(rows: Rows, tz, longitude: float) -> Outlook | None:
     gusts = [(ts, r["wind.wind_gust"]) for ts, r in rows if r.get("wind.wind_gust") is not None]
     now_gusts = [g for ts, g in gusts if latest_ts - ts <= 1800]
     earlier = [g for ts, g in gusts if latest_ts - ts > 1800]
-    if now_gusts and earlier and max(now_gusts) - sum(earlier) / len(earlier) >= 10:
+    if now_gusts and earlier and max(now_gusts) - fmean(earlier) >= 10:
         score += 1
         reasons.append(f"gusts picking up ({max(now_gusts):.0f} km/h)")
     return Outlook(score, reasons, raw_drop, drop, night)

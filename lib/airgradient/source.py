@@ -339,7 +339,7 @@ class AirGradient:
             lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
             entry = {"unit": unit, "low": lo[1], "low_time": self._when(lo[0]),
                      "high": hi[1], "high_time": self._when(hi[0]),
-                     "average": round(sum(v for _, v in pts) / len(pts), 1)}
+                     "average": round(statistics.fmean(v for _, v in pts), 1)}
             entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
             if name == "pm2_5":
                 entry["high_aqi_us"], entry["high_band"] = pm25_aqi(hi[1])

@@ -15,6 +15,7 @@ import math
 import threading
 from dataclasses import dataclass
 from datetime import tzinfo
+from statistics import fmean
 
 import matplotlib
 
@@ -424,7 +425,7 @@ def _mark_highs(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float,
     arrow = lambda colour: {"arrowstyle": "-", "color": colour, "linewidth": 0.8, "linestyle": (0, (1, 2)), "shrinkA": 1, "shrinkB": 2}
     columns, taken = [], []                                               # each group in the empty column nearest its own peaks
     for g in groups:
-        mx = sum(p[0] for p in g) / len(g)
+        mx = fmean(p[0] for p in g)
         options = [c for c in free if abs(c - mx) > LEADER_CLEARANCE * (x1 - x0) and all(abs(c - t) > 2.2 * reach for t in taken)]
         if not options:
             break

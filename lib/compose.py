@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from datetime import date, datetime, time, tzinfo
+from statistics import fmean
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
 from .analysis import scan
@@ -143,7 +144,7 @@ class Composer:
             for r in rows:
                 if metric in r:
                     slots.setdefault(r["ts"] // SLOT * SLOT, []).append(r[metric])
-            out[metric] = ({t: sum(v) / len(v) for t, v in slots.items()}, {t: min(v) for t, v in slots.items()},
+            out[metric] = ({t: fmean(v) for t, v in slots.items()}, {t: min(v) for t, v in slots.items()},
                            {t: max(v) for t, v in slots.items()})
         notes = {}
         if skipped:
@@ -290,4 +291,4 @@ class Composer:
     @staticmethod
     def _stats(values: dict, unit: str) -> dict:
         v = list(values.values())
-        return {"mean": round(sum(v) / len(v), 1), "min": round(min(v), 1), "max": round(max(v), 1), "unit": unit} if v else {}
+        return {"mean": round(fmean(v), 1), "min": round(min(v), 1), "max": round(max(v), 1), "unit": unit} if v else {}

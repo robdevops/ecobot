@@ -4,6 +4,7 @@ import math
 from bisect import bisect_left, bisect_right
 from datetime import date, datetime, time, timedelta, tzinfo, UTC
 from itertools import accumulate
+from statistics import fmean
 
 
 def now_local(tz: tzinfo) -> datetime:
@@ -86,8 +87,8 @@ def _summarise(points, key) -> dict:
     means: dict = {}
     for (k, _), got in slots.items():
         values = got.get(True) or got[False]
-        means.setdefault(k, []).append(sum(values) / len(values))
-    return {k: (sum(v) / len(v), *extremes[k]) for k, v in means.items()}
+        means.setdefault(k, []).append(fmean(values))
+    return {k: (fmean(v), *extremes[k]) for k, v in means.items()}
 
 
 def daily_summary(points, tz: tzinfo) -> dict[date, tuple[float, float, float]]:
