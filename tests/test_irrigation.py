@@ -145,13 +145,14 @@ def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one(
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Delay", "ir:open:delay")],
-                                          [("🔕 Battery alerts off", "ir:batt:on"), ("⏻ Switch", "ir:open:switch")]]
+                                          [("🔕 Battery alerts off", "ir:batt:on")]]
     assert rows(menu.keyboard(True))[1][0] == ("🔔 Battery alerts on", "ir:batt:off")
     water = rows(menu.keyboard(True, "water"))
-    assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
+    assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-2] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
+    assert water[-1] == [("On ✅", "ir:sw:on"), ("Off ❌", "ir:sw:off")]                     # the valve itself: on and off, under Water
     assert rows(menu.keyboard(True, "delay"))[-1] == [("Delay 24h", "ir:delay:24h"), ("Delay 48h", "ir:delay:48h"), ("Delay 72h", "ir:delay:72h"),
                                                       ("cancel", "ir:delay:cancel")]
-    assert rows(menu.keyboard(True, "switch"))[-1] == [("On ✅", "ir:sw:on"), ("Off ❌", "ir:sw:off")]
+    assert menu.SECTIONS == ("water", "delay") and len(rows(menu.keyboard(True, "switch"))) == 2      # there is no Switch menu any more
     for section in (None, *menu.SECTIONS):
         for sub in (True, False):
             assert all(len(data.encode()) <= 64 for row in rows(menu.keyboard(sub, section)) for _, data in row)
@@ -425,8 +426,9 @@ async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
     assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-1][0] == ("5 min", "ir:water:5") and device.commands == []
     q = await press(bot, "ir:close")
     assert len(rows(q.edits[0][1])) == 2
-    q = await press(bot, "ir:open:bogus")
-    assert len(rows(q.edits[0][1])) == 2                                                  # an unknown section is just closed
+    for gone in ("ir:open:bogus", "ir:open:switch"):                                     # an unknown section, or an old message's Switch, just closes
+        q = await press(bot, gone)
+        assert len(rows(q.edits[0][1])) == 2
 
 
 async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh_the_message(tmp_path):
