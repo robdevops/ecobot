@@ -4,11 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_call:          # the Ship workflow runs the gate (the `test` job only) on the dev branch
-    inputs:
-      gate_only:
-        type: boolean
-        default: false
   schedule:
     - cron: "17 21 * * 0"   # Sundays 21:17 UTC: the check against the newest matplotlib, numpy and Pillow (the "newest" job below)
   workflow_dispatch:
@@ -64,7 +59,7 @@ jobs:
   newest:
     # Advisory, never blocks: the same tests with the newest matplotlib, numpy and Pillow. If the chart pictures differ, a new release
     # draws things differently: look at the artifact, then bump the pins in requirements.txt and run scripts/update_charts.py.
-    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !inputs.gate_only
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -98,7 +93,7 @@ jobs:
   live-evals:
     # Advisory, never blocks: asks the real model the few questions in tests/evals/weekly.txt and checks which tool it calls. Needs the
     # repository secret XAI_API_KEY (skipped without it); XAI_MODEL is optional, for when production runs another model than grok-4.3. A failure is run once more before it is reported.
-    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !inputs.gate_only
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
