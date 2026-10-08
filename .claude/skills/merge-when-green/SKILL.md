@@ -35,3 +35,4 @@ Read the check runs on the **current head commit** (`get_check_runs`), not an ea
 - One pull request per invocation. "Merge them all" is a separate instruction, and each is still checked as above.
 - Never force-merge past a failing or missing required check, never `force` anything, and never merge a pull request you only watched unless the user named it.
 - Report outcomes plainly: what was green, what was skipped, what was merged, and anything left open.
+- Keep the final message to a couple of words ("Merged #32.", "CI red: test."). Say nothing about each notification along the way.
