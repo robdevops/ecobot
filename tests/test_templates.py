@@ -91,8 +91,8 @@ async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off
 
 
 
-def test_status_is_on_the_right_hand_side_of_the_first_row():
-    assert [label for label, _ in templates.ROWS[0]][-1].endswith("Status")
+def test_status_is_in_the_middle_of_the_first_row_and_rain_on_the_right():
+    assert [label.split(" ", 1)[1] for label, _ in templates.ROWS[0]] == ["Help & Alerts", "Status", "Rain"]
 
 
 class Replies:

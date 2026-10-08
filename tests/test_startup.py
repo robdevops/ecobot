@@ -177,3 +177,40 @@ def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monk
     assert Config.from_env().chart_all_vpd is False
     monkeypatch.setenv("CHART_ALL_VPD", "on")
     assert Config.from_env().chart_all_vpd is True
+
+
+async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog_and_closes_it(tmp_path, monkeypatch, caplog):
+    import httpx
+    from lib.irrigation import tuya as tuya_module
+    caplog.set_level("INFO")
+    cfg = config(tmp_path, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret="s")
+    eco_t, _ = ecowitt_transport(history_days=45)
+    air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    closed = []
+
+    def tuya(request):
+        if request.url.path.startswith("/v1.0/token"):
+            return httpx.Response(200, json={"success": True, "result": {"access_token": "t", "expire_time": 7200}})
+        return httpx.Response(200, json={"success": True, "result": [{"code": "battery_percentage", "value": 80}]})
+    app = FakeApp()
+    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
+    for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setattr(tuya_module.Tuya, "__init__", lambda self, c, transport=None, orig=tuya_module.Tuya.__init__: orig(self, c, httpx.MockTransport(tuya)))
+    monkeypatch.setattr(tuya_module.Tuya, "close", lambda self, orig=tuya_module.Tuya.close: closed.append(1) or orig(self))
+    monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
+    monkeypatch.setattr(archive, "PACE_SECONDS", 0)
+    monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
+    monkeypatch.setattr(air_source, "BACKFILL_EMPTY_STOP", 3)
+
+    async def stop_when_archived():
+        for _ in range(300):
+            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+                break
+            await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    stopper = asyncio.create_task(stop_when_archived())
+    await ecobot.main()
+    await stopper
+    assert "irrigation battery" in caplog.text                       # in the list of alert types
+    assert len(app.handlers) == 11 and closed == [1]                 # the irrigation buttons' handler, and the client closed at shutdown

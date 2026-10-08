@@ -473,7 +473,7 @@ class HistoryQuery:
                 rain[day_bounds(day, self.tz)[0] + 12 * 3600] = mm
                 self.rain_from_daily = True
         by = grouping_in(self.turn.text) if self.span > timedelta(days=31) else None
-        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, by=by)
+        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, by=by, since=lo)
 
     def _stack_spec(self, names: list[str]) -> Chart | None:
         """The readings asked for, one panel each on a shared time axis (rain behind the first line); None if fewer than

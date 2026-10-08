@@ -2,7 +2,7 @@
 # WorkingDirectory line: %h is the home directory of the User below, so a clone at ~/ecobot needs no editing, and any other
 # place needs only that line. The bot's code and data files (caches, state) are found relative to its own location.
 # The .venv is built with Python 3.13.5 (.python-version): python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
-# The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*, AIRGRADIENT_*,
+# The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
 # TELEGRAM_BOT_TOKEN, ...).
 [Unit]
 Description=ecobot (Telegram weather and air-quality bot)
