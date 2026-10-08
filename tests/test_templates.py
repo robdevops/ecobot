@@ -10,7 +10,7 @@ NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
 def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left_alone():
     assert templates.sentence("\U0001f4cb Status") == "Report"
-    assert templates.sentence("\U0001f4c8 Temperature") == "Temperature chart 7d"
+    assert templates.sentence("\U0001f4c8 Temperature") == "Temperature chart 1d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
     assert len(templates.LABELS) == 9
