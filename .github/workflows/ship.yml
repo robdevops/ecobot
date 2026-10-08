@@ -18,6 +18,8 @@ concurrency:
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
+    with:
+      gate_only: true
     secrets: inherit
 
   merge:
@@ -36,7 +38,7 @@ jobs:
           if [ "$branch" = main ]; then echo "Select the dev branch (not main) in 'Use workflow from'."; exit 1; fi
           git fetch origin main
           if [ -z "$(git log origin/main..HEAD --oneline)" ]; then echo "Nothing to ship: $branch has no commits main lacks."; exit 0; fi
-          if ! gh pr view "$branch" --json number >/dev/null 2>&1; then
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then   # not `gh pr view`: it finds merged ones
             gh pr create --base main --head "$branch" \
               --title "$(git log -1 --format=%s)" \
               --body "$(git log origin/main..HEAD --reverse --format='- %s')"
