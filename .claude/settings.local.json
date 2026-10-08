@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git add *)",
-      "Bash(git commit -q -m 'One-step ship: a Ship workflow tests, opens the PR, merges and fast-forwards the dev branch *)"
-    ]
-  }
-}
