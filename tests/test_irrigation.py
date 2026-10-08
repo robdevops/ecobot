@@ -188,9 +188,10 @@ def test_the_irrigation_button_takes_wind_s_place_only_when_configured_and_chang
 
 
 def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller():
-    assert available_kinds({"Ecowitt", "Irrigation"})[-1] == "irrigation" and "irrigation" not in available_kinds({"Ecowitt"})
+    assert available_kinds({"Ecowitt", "Irrigation"})[-2:] == ["irrigation", "irrigation_pause"]
+    assert "irrigation" not in available_kinds({"Ecowitt"}) and "irrigation_pause" not in available_kinds({"Ecowitt"})
     from lib.alerts.menu import LABELS, keyboard
-    assert LABELS["irrigation"] == "irrigation battery"
+    assert LABELS["irrigation"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
     unsub = rows(keyboard(set(), ["rain", "irrigation"], "unsub"))
     assert ("irrigation battery", "al:off:irrigation:unsub") in [b for row in unsub for b in row]
 
@@ -277,15 +278,17 @@ async def test_the_check_delays_a_day_when_more_than_1_mm_fell_or_is_likely(tmp_
     device = Device()
     m, state, sent = daily(tmp_path, device, station, forecast)
     await m.check(NOW)
-    assert device.commands == ([("delay", "24h")] if delayed else []) and sent == []
+    assert device.commands == ([("delay", "24h")] if delayed else [])
+    assert [(text.startswith("☔ Irrigation paused for 24 hours: ") and text.endswith("."), kw) for text, kw in sent] == (
+        [(True, {"kind": "irrigation_pause"})] if delayed else [])                  # told once when it paused, never otherwise
     assert state.monitor["irrigation"]["checked"] == "2026-10-08"
 
 
 async def test_a_delay_already_set_is_never_shortened_or_repeated(tmp_path):
     device = Device(weather_delay="72h")
-    m, _, _ = daily(tmp_path, device, Station(0, 5), Forecast(90, 90))
+    m, _, sent = daily(tmp_path, device, Station(0, 5), Forecast(90, 90))
     await m.check(NOW)
-    assert device.commands == []
+    assert device.commands == [] and sent == []                                          # nothing changed: nothing to tell
 
 
 async def test_a_battery_under_5_percent_is_told_once_a_day_to_the_irrigation_alert_type(tmp_path):
@@ -311,7 +314,7 @@ async def test_the_battery_is_still_told_when_the_delay_cannot_be_sent_and_not_t
     assert len(sent) == 1 and "checked" not in state.monitor["irrigation"]              # not recorded: the next try repeats the check
     with pytest.raises(IrrigationError):
         await m.check(NOW)
-    assert len(sent) == 1
+    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation"}                         # no "paused" alert for a pause that was not made
 
 
 def test_a_check_is_due_once_a_day_after_the_hour_and_the_next_is_the_following_18_00(tmp_path):
@@ -650,3 +653,57 @@ async def test_a_status_that_cannot_be_read_after_a_command_leaves_the_message_a
     device.delay = delay
     q = await press(bot, "ir:delay:48h")
     assert device.commands == [("delay", "48h")] and q.toast == "Timer paused 48h" and q.edits == []
+
+
+@pytest.mark.parametrize("station, forecast, why", [
+    (Station(0, 0.6, 0.6), None, "1.2 mm of rain in the last 24 hours"),
+    (None, Forecast(10, 50), "50% chance of at least 1 mm tomorrow"),
+    (None, Forecast(55, 0), "55% chance of at least 1 mm today"),
+    (Station(0, 3, 0), Forecast(90, 90), "3 mm of rain in the last 24 hours"),                    # what fell comes first
+])
+async def test_the_pause_alert_says_why(tmp_path, station, forecast, why):
+    m, _, sent = daily(tmp_path, Device(), station, forecast)
+    await m.check(NOW)
+    assert sent == [(f"☔ Irrigation paused for 24 hours: {why}.", {"kind": "irrigation_pause"})]
+
+
+async def test_a_pause_that_fails_and_is_retried_is_told_exactly_once(tmp_path):
+    class Flaky(Device):
+        failures = 1                                                                  # the first command is refused, the second goes through
+
+        async def delay(self, duration):
+            if self.failures:
+                self.failures -= 1
+                raise IrrigationError("Tuya request failed (ConnectError)")
+            await super().delay(duration)
+    device = Flaky()
+    m, state, sent = daily(tmp_path, device, None, Forecast(90, 90))
+    with pytest.raises(IrrigationError):
+        await m.check(NOW)
+    assert sent == [] and "checked" not in state.monitor["irrigation"]               # nothing told for a pause that was not made
+    await m.check(NOW)
+    assert device.commands == [("delay", "24h")] and len(sent) == 1 and state.monitor["irrigation"]["checked"] == "2026-10-08"
+
+
+async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu(tmp_path):
+    from lib.alerts import Notifier
+    state, delivered = AlertState(tmp_path / "s.json"), []
+    for chat in (1, 2, 3, -7):
+        state.add_chat(chat, str(chat))
+    state.set_kind(2, "irrigation_pause", False)                       # this chat turned the pause alerts off
+    state.set_kind(3, "irrigation", False)                             # ... and this one only the battery alerts: it still gets the pause
+
+    class Telegram:
+        async def send_message(self, chat_id, text, **kw):
+            delivered.append((chat_id, text, kw))
+    notifier = Notifier(Telegram(), state, available_kinds({"Ecowitt", "Irrigation"}))
+    m = IrrigationMonitor(Device(), state, notifier, TZ, 18, None, Forecast(90, 90))
+    await m.check(NOW)
+    assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
+    markup = delivered[0][2]["reply_markup"]
+    assert rows(markup) == [[("➕ Subscribe", "al:open:sub:irrigation_pause"), ("➖ Unsubscribe", "al:open:unsub:irrigation_pause")]]
+    from lib.alerts.menu import keyboard
+    kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
+    for section in (None, "sub", "unsub"):                              # every button's data fits Telegram's 64 bytes, for the new type too
+        for parent in (None, "irrigation_pause", "irrigation"):
+            assert all(len(data.encode()) <= 64 for row in rows(keyboard(set(), kinds, section, parent)) for _, data in row)

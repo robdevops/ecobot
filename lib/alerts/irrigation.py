@@ -2,7 +2,8 @@
 
   - a battery below 5% is told to the chats subscribed to "irrigation battery" (at most once a day, until it is charged);
   - if more than 1 mm of rain fell in the last 24 hours, or Open-Meteo gives today or tomorrow a 50% or better chance of at least
-    1 mm of rain, the controller is put on a 24 hour weather delay (it skips its own schedule). A longer delay already set is left alone.
+    1 mm of rain, the controller is put on a 24 hour weather delay (it skips its own schedule) and the chats subscribed to "irrigation
+    pause" are told why. A longer delay already set is left alone (nothing changes, so nothing is sent).
 
 The bot has no scheduler, so `run` sleeps until the next check time. If the controller can't be reached it tries again every 30 minutes
 until it works or the day ends. The date of the last completed check is saved, so a restart neither repeats a day nor skips one.
@@ -77,6 +78,7 @@ class IrrigationMonitor:
             if current in (None, "cancel"):
                 await self.device.delay("24h")
                 log.info("Irrigation: delayed 24 hours (%s)", reason)
+                await self.notify(f"☔ Irrigation paused for 24 hours: {reason}.", kind="irrigation_pause")
             else:
                 log.info("Irrigation: %s, but the delay is already %s", reason, current)
         else:
