@@ -144,14 +144,15 @@ def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one(
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
-    assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Pause schedule", "ir:open:delay")],
-                                          [("🔕 Battery alerts off", "ir:batt:on")]]
-    assert rows(menu.keyboard(True))[1][0] == ("🔔 Battery alerts on", "ir:batt:off")
+    assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Pause timer", "ir:open:delay")],
+                                          [("🔔 Enable battery alerts", "ir:batt:on")]]                   # not subscribed: the button subscribes
+    assert rows(menu.keyboard(True))[1][0] == ("🔕 Disable battery alerts", "ir:batt:off")                 # subscribed: it unsubscribes
     water = rows(menu.keyboard(True, "water"))
     assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-2] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
-    assert water[-1] == [("On ✅", "ir:sw:on"), ("Off ❌", "ir:sw:off")]                     # the valve itself: on and off, under Water
+    assert water[-1] == [("Off ❌", "ir:sw:off")]                                           # the valve itself: only off (a run is always timed)
+    assert "ir:sw:on" not in [data for row in water for _, data in row]
     assert rows(menu.keyboard(True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h"),
-                                                      ("cancel", "ir:delay:cancel")]
+                                                      ("unpause", "ir:delay:cancel")]
     assert menu.SECTIONS == ("water", "delay") and len(rows(menu.keyboard(True, "switch"))) == 2      # there is no Switch menu any more
     for section in (None, *menu.SECTIONS):
         for sub in (True, False):
@@ -423,7 +424,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
 async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
     bot, _, device = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:water")
-    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5") and rows(q.edits[0][1])[-1][0] == ("On ✅", "ir:sw:on") and device.commands == []
+    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5") and rows(q.edits[0][1])[-1][0] == ("Off ❌", "ir:sw:off") and device.commands == []
     q = await press(bot, "ir:close")
     assert len(rows(q.edits[0][1])) == 2
     for gone in ("ir:open:bogus", "ir:open:switch"):                                     # an unknown section, or an old message's Switch, just closes
@@ -439,13 +440,11 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
     q = await press(bot, "ir:sw:off")
     assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and bot.watchdog.off_at is None and "state: off ❌" in q.edits[0][1]
     q = await press(bot, "ir:delay:72h")
-    assert device.commands[-1] == ("delay", "72h") and q.toast == "Delayed 72h"
+    assert device.commands[-1] == ("delay", "72h") and q.toast == "Timer paused 72h"
     q = await press(bot, "ir:delay:cancel")
-    assert q.toast == "Delay cancelled"
-    q = await press(bot, "ir:sw:on")
-    assert device.commands[-1] == ("switch", True) and "stays on" in q.toast
+    assert q.toast == "Timer unpaused" and device.commands[-1] == ("delay", "cancel")                  # unpause is the device's own "cancel"
     n = len(device.commands)
-    for data in ("ir:water:7", "ir:water:x", "ir:delay:1h", "ir:sw:maybe", "ir:what", "ir:", "garbage"):   # nothing the buttons offer
+    for data in ("ir:water:7", "ir:water:x", "ir:delay:1h", "ir:sw:on", "ir:sw:maybe", "ir:what", "ir:", "garbage"):   # nothing the buttons offer (On is gone)
         q = await press(bot, data)
         assert q.edits == [] and q.toast is None, data
     assert len(device.commands) == n
@@ -455,9 +454,14 @@ async def test_the_battery_button_subscribes_or_unsubscribes_this_chat_to_the_al
     bot, state, _ = irrigation_bot(tmp_path)
     q = await press(bot, "ir:batt:off")
     assert state.muted(1) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
-    assert rows(q.edits[0][2])[1][0] == ("🔕 Battery alerts off", "ir:batt:on")             # the button now says off, and turns it back on
+    assert rows(q.edits[0][2])[1][0] == ("🔔 Enable battery alerts", "ir:batt:on")           # unsubscribed now: the button offers to enable
     q = await press(bot, "ir:batt:on")
-    assert state.muted(1) == set() and rows(q.edits[0][2])[1][0] == ("🔔 Battery alerts on", "ir:batt:off")
+    assert state.muted(1) == set() and rows(q.edits[0][2])[1][0] == ("🔕 Disable battery alerts", "ir:batt:off")
+    for _ in range(2):                                                                        # whatever the button says, pressing it does that
+        text, data = rows(menu.keyboard(bool(state.subscribed(1, "irrigation"))))[1][0]
+        was = state.subscribed(1, "irrigation")
+        await press(bot, data)
+        assert state.subscribed(1, "irrigation") is (text.startswith("🔔 Enable")), (text, was)
     assert state.alert_chats("irrigation") == [1]
 
 
@@ -568,7 +572,7 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
 async def test_in_a_group_only_admins_may_use_the_irrigation_buttons(tmp_path):
     bot, state, device = irrigation_bot(tmp_path)
     state.add_chat(-5, "Home")
-    for data in ("ir:open:water", "ir:water:10", "ir:sw:on", "ir:batt:off"):
+    for data in ("ir:open:water", "ir:water:10", "ir:sw:off", "ir:batt:off"):
         q = await press(bot, data, status="member", chat_id=-5, chat_type="supergroup")
         assert q.toast == "Only group admins can change irrigation" and q.edits == [], data
     assert device.commands == [] and state.muted(-5) == set()

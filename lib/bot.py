@@ -346,12 +346,12 @@ class Bot:
             return f"Watering for {arg} minutes"
         if action == "delay" and arg in irrigation_menu.DELAYS:
             await self.irrigation.delay(arg)
-            return "Delay cancelled" if arg == "cancel" else f"Delayed {arg}"
-        if action == "sw" and arg in ("on", "off"):
-            await self.irrigation.set_switch(arg == "on")
-            if arg == "off" and self.watchdog:
+            return "Timer unpaused" if arg == "cancel" else f"Timer paused {arg}"
+        if action == "sw" and arg == "off":   # there is no On: a run is always timed (Water). An old message's On button does nothing
+            await self.irrigation.set_switch(False)
+            if self.watchdog:
                 self.watchdog.disarm()
-            return "Switched on (it stays on until switched off)" if arg == "on" else "Switched off"
+            return "Switched off"
         if action == "batt" and arg in ("on", "off") and self.state and chat_id in self.state.chats:
             self.state.set_kind(chat_id, "irrigation", arg == "on")
             return f"Irrigation battery alerts {arg} in this chat"

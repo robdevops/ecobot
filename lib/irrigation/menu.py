@@ -1,10 +1,10 @@
 """The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
 
-Collapsed: [💧 Water] [⏸ Pause schedule] / [battery toggle]. A press on Water or Pause schedule opens its options under the rows (▾ marks the open
-one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes, then On and Off for the valve itself. Callback data (short, self-contained, so an old message's buttons still work after
+Collapsed: [💧 Water] [⏸ Pause timer] / [battery button]. A press on Water or Pause timer opens its options under the rows (▾ marks the
+open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes, then Off for the valve itself (a run is always timed). Callback data (short, self-contained, so an old message's buttons still work after
 a restart):
   ir:open:<water|delay> | ir:close
-  ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> | ir:sw:<on|off> | ir:batt:<on|off>
+  ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> (cancel = unpause) | ir:sw:off | ir:batt:<on|off> (on = subscribe)
 """
 
 import re
@@ -43,14 +43,14 @@ def status_text(status: dict) -> str:
 
 
 def keyboard(subscribed: bool, open: str | None = None) -> InlineKeyboardMarkup:
-    """The buttons under the status. `subscribed`: this chat gets the battery alerts (the toggle shows that, "on", and turns them off)."""
+    """The buttons under the status. `subscribed`: this chat gets the battery alerts; the button names what pressing it does (disable, or enable)."""
     def head(name: str, text: str) -> InlineKeyboardButton:
         return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
-    rows = [[head("water", "💧 Water"), head("delay", "⏸ Pause schedule")],
-            [_button("🔔 Battery alerts on" if subscribed else "🔕 Battery alerts off", f"ir:batt:{'off' if subscribed else 'on'}")]]
+    rows = [[head("water", "💧 Water"), head("delay", "⏸ Pause timer")],
+            [_button("🔕 Disable battery alerts" if subscribed else "🔔 Enable battery alerts", f"ir:batt:{'off' if subscribed else 'on'}")]]
     if open == "water":
         rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
-        rows.append([_button("On ✅", "ir:sw:on"), _button("Off ❌", "ir:sw:off")])
+        rows.append([_button("Off ❌", "ir:sw:off")])
     elif open == "delay":
-        rows.append([_button(d, f"ir:delay:{d}") for d in DELAYS])
+        rows.append([_button("unpause" if d == "cancel" else d, f"ir:delay:{d}") for d in DELAYS])
     return InlineKeyboardMarkup(rows)
