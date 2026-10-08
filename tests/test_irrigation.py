@@ -136,21 +136,21 @@ def rows(markup):
 
 def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one():
     assert menu.status_text({"switch": True, "battery_percentage": 73, "work_state": "auto", "weather_delay": "cancel"}) == (
-        "🌱 Irrigation\nswitch: on ✅\nbattery: 73% 🔋\nmode: auto")
+        "🌱 Irrigation\nstate: on ✅\nbattery: 73% 🔋\nmode: auto")
     assert menu.status_text({"switch": False, "battery_percentage": 9, "work_state": "idle", "weather_delay": "24h"}) == (
-        "🌱 Irrigation\nswitch: off ❌\nbattery: 9% 🪫\nmode: idle\nweather delay: 24h")
+        "🌱 Irrigation\nstate: off ❌\nbattery: 9% 🪫\nmode: idle\nweather delay: 24h")
     assert "🔋" in menu.status_text({"battery_percentage": 10}) and "🪫" in menu.status_text({"battery_percentage": 0})
-    assert menu.status_text({}) == "🌱 Irrigation\nswitch: off ❌"                                      # a missing reading is left out
+    assert menu.status_text({}) == "🌱 Irrigation\nstate: off ❌"                                      # a missing reading is left out
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
-    assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Delay", "ir:open:delay")],
+    assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Pause schedule", "ir:open:delay")],
                                           [("🔕 Battery alerts off", "ir:batt:on")]]
     assert rows(menu.keyboard(True))[1][0] == ("🔔 Battery alerts on", "ir:batt:off")
     water = rows(menu.keyboard(True, "water"))
     assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-2] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
     assert water[-1] == [("On ✅", "ir:sw:on"), ("Off ❌", "ir:sw:off")]                     # the valve itself: on and off, under Water
-    assert rows(menu.keyboard(True, "delay"))[-1] == [("Delay 24h", "ir:delay:24h"), ("Delay 48h", "ir:delay:48h"), ("Delay 72h", "ir:delay:72h"),
+    assert rows(menu.keyboard(True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h"),
                                                       ("cancel", "ir:delay:cancel")]
     assert menu.SECTIONS == ("water", "delay") and len(rows(menu.keyboard(True, "switch"))) == 2      # there is no Switch menu any more
     for section in (None, *menu.SECTIONS):
@@ -413,7 +413,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
              message_thread_id=None, is_topic_message=False)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob"))
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))                          # no model is involved (the agent is None)
-    assert sent[0][0].startswith("🌱 Irrigation\nswitch: off ❌\nbattery: 100% 🔋\nmode: idle")
+    assert sent[0][0].startswith("🌱 Irrigation\nstate: off ❌\nbattery: 100% 🔋\nmode: idle")
     assert rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water") and rows(sent[0][1]["reply_markup"])[1][0][1] == "ir:batt:off"   # every chat starts subscribed
     device.down = True
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))
@@ -423,7 +423,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
 async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
     bot, _, device = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:water")
-    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-1][0] == ("5 min", "ir:water:5") and device.commands == []
+    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5") and rows(q.edits[0][1])[-1][0] == ("On ✅", "ir:sw:on") and device.commands == []
     q = await press(bot, "ir:close")
     assert len(rows(q.edits[0][1])) == 2
     for gone in ("ir:open:bogus", "ir:open:switch"):                                     # an unknown section, or an old message's Switch, just closes
@@ -435,9 +435,9 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
     bot, state, device = irrigation_bot(tmp_path)
     q = await press(bot, "ir:water:10")
     assert device.commands == [("water", 10)] and q.toast == "Watering for 10 minutes" and bot.watchdog.off_at
-    assert q.edits[0][0] == "text" and "switch: on ✅" in q.edits[0][1] and "mode: manual" in q.edits[0][1]
+    assert q.edits[0][0] == "text" and "state: on ✅" in q.edits[0][1] and "mode: manual" in q.edits[0][1]
     q = await press(bot, "ir:sw:off")
-    assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and bot.watchdog.off_at is None and "switch: off ❌" in q.edits[0][1]
+    assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and bot.watchdog.off_at is None and "state: off ❌" in q.edits[0][1]
     q = await press(bot, "ir:delay:72h")
     assert device.commands[-1] == ("delay", "72h") and q.toast == "Delayed 72h"
     q = await press(bot, "ir:delay:cancel")
@@ -534,7 +534,7 @@ async def test_typing_irrigation_does_what_the_button_does_in_private_chats_and_
     for text in ("irrigation", "water", "turn the sprinkler on", templates.IRRIGATION):
         update, sent = private_message(text)
         await bot.on_message(update, ctx)
-        assert sent[0][0].startswith("🌱 Irrigation\nswitch: off ❌") and sent[0][1]["reply_markup"], text
+        assert sent[0][0].startswith("🌱 Irrigation\nstate: off ❌") and sent[0][1]["reply_markup"], text
     update, sent = group_message("@testbot irrigation")
     await bot.on_message(update, ctx)
     assert sent[0][0].startswith("🌱 Irrigation") and rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water")
