@@ -28,7 +28,7 @@ def test_a_question_keeps_its_words_and_swaps_its_period():
                           ("rain chart for the last week", "rain chart 90d"), ("weather chart", "weather chart 90d"),
                           ("plot humidity and rain 3m", "plot humidity and rain 90d")):
         assert intent.with_period(ask, 90, NOW) == expected
-    assert intent.period_days("Temperature chart 30d", NOW) == 30 and intent.period_days("weather chart", NOW) == 7
+    assert intent.period_days("Temperature chart 30d", NOW) == 30 and intent.period_days("weather chart", NOW) == 1
     assert intent.period_days("chart 24h", NOW) == 1 and intent.period_days("chart 365d", NOW) == 365
 
 

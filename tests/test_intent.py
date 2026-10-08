@@ -140,7 +140,7 @@ def test_a_period_we_cant_read_goes_to_the_model_not_to_a_default():
     for text in ("plot the weather over the last few months", "chart weather since march", "plot temperature this decade",
                  "graph the weather 3 days ago", "chart weather 3 months vs 6 months"):
         assert call(text) is None, text
-    assert call("chart weather")[1]["start_date"] == "2026-09-23 00:00:00"   # nothing period-like: a week
+    assert call("chart weather")[1]["start_date"] == "2026-09-28 14:05:00"   # nothing period-like: the last 24 hours
     assert call("chart the air quality")[1]["start_date"] == "2026-09-28 14:05:00"
     assert call("chart the air quality over the last few days") is None
 

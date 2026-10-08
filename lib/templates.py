@@ -7,8 +7,8 @@ from telegram import ReplyKeyboardMarkup
 
 CAPABILITIES = "\U0001f514 Help & Alerts"  # answered with what the bot can do, then the /alerts status
 
-# Every button but the first and last of the top row is a chart: the line charts of the last day, rain (bars) of the last 7 days (the period buttons under it change that)
-ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f327️ Rain", "Rain chart 7d"), ("\U0001f4cb Status", "Report")],
+# Every button but the first and last of the top row is a chart of the last day (the period buttons under it change that)
+ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f327️ Rain", "Rain chart 1d"), ("\U0001f4cb Status", "Report")],
         [("\U0001f326️ Weather", "Weather chart 1d"), ("\U0001f4c8 Temperature", "Temperature chart 1d"),
          ("\U0001f4a7 Humidity", "Humidity chart 1d")],
         [("\U0001f3ed Air Quality", "Air quality all metrics 1d"), ("\U0001f52c Particulates", "Particulates chart 1d"),

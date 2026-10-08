@@ -228,6 +228,11 @@ def span(name: str, now: datetime) -> tuple[datetime, datetime]:
 MAX_PERIOD_DAYS = 3650  # ten years: well past the four Ecowitt keeps, which the tools trim to what exists
 
 
+def default_span(now: datetime) -> tuple[str, datetime, datetime]:
+    """The period of a chart that names none: the last 24 hours."""
+    return numbered_span("24", "h", now)
+
+
 def numbered_span(count: str, unit: str, now: datetime) -> tuple[str, datetime, datetime] | None:
     """"4 months", "24h", "2 weeks": a rolling period ending now. One day means the last 24 hours;
     longer ones cover whole days up to today (a month is 30 days, a year 365, as in the named periods)."""
@@ -268,11 +273,11 @@ def spans_in(text: str, now: datetime) -> list[tuple[str, datetime, datetime]]:
     return [(name, *window) for window, (_, name) in _periods(text, now).items()]
 
 
-DEFAULT_CHART_DAYS = 7   # a chart with no period named is a week
+DEFAULT_CHART_DAYS = 1   # a chart with no period named is the last day
 
 
 def period_days(text: str, now: datetime) -> int:
-    """How many days the period a question names covers (a week when it names none)."""
+    """How many days the period a question names covers (a day when it names none)."""
     spans = spans_in(text, now)
     if not spans:
         return DEFAULT_CHART_DAYS
@@ -314,7 +319,7 @@ NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
 # Wind is fine for the fast path when it is a plain chart request ("wind direction plot 3m")
 WIND = re.compile(rf"\b({_WIND})\b", I)
 NOT_SIMPLE_WIND_OK = re.compile(rf"\b({_NOT_SIMPLE})\b", I)
-# What a chart request with no period must name to default to a week ("chart it" refers back instead)
+# What a chart request with no period must name to default to the last day ("chart it" refers back instead)
 WEATHER_SUBJECT = re.compile(rf"\b(weather|{_ECOWITT}|{_TEMP}|highs?|lows?|indoors?|outdoors?|inside|outside|station)\b", I)
 WEATHER_WORD = re.compile(rf"\b(weather|{_ECOWITT}|conditions)\b", I)
 # A period named on its own ("weather week", "aq month") is the rolling week, month or year ending today, not the calendar
@@ -337,7 +342,7 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
     if not (EXTREMES.search(text) or GRAPH.search(text) or named_weather):
         return None
     if not spans and GRAPH.search(text) and WEATHER_SUBJECT.search(text) and not TIME_WORDS.search(text):
-        spans = [("last 7 days", *span("last 7 days", now))]  # "chart weather": a week is the natural default
+        spans = [default_span(now)]  # "chart weather": the last day is the default
     return spans[0] if len(spans) == 1 else None  # none, or several ("this week vs last week"): the model decides
 
 
@@ -424,7 +429,7 @@ def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, li
         return None
     spans = spans_in(text, now)
     if not spans and not TIME_WORDS.search(text):
-        spans = [("last 7 days", *span("last 7 days", now))]   # a chart with no period is a week
+        spans = [default_span(now)]   # a chart with no period is the last day
     if len(spans) != 1:
         return None
     groups = list(dict.fromkeys(WEATHER_READINGS[f].group for f in fields))
