@@ -15,7 +15,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # kind -> the name on the button, in the order listed
 LABELS = {"rain": "rain", "rain_likely": "rain predicted", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
-          "air": "air quality", "pollen": "pollen & asthma", "forecast": "forecast changes"}
+          "air": "air quality", "pollen": "pollen & asthma", "forecast": "forecast changes",
+          "irrigation": "irrigation battery"}
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
 PER_ROW = 2
@@ -25,7 +26,7 @@ def available_kinds(sources: set[str]) -> list[str]:
     """The alert types the bot can send, from the names of its sources."""
     wanted = (["rain", "rain_likely", "gusts", "uv", "temps"] if "Ecowitt" in sources else []) + (
         ["air"] if "AirGradient" in sources else []) + (["pollen"] if "Pollen" in sources else []) + (
-        ["forecast"] if "Forecast" in sources else [])
+        ["forecast"] if "Forecast" in sources else []) + (["irrigation"] if "Irrigation" in sources else [])
     return wanted
 
 

@@ -16,12 +16,14 @@ from telegram.ext import Application, Defaults
 
 from lib import intent
 from lib.airgradient import AirGradient
-from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, Notifier, PollenMonitor, WeatherMonitor
+from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, PollenMonitor, WeatherMonitor
 from lib.alerts.menu import available_kinds
 from lib.bot import Bot, polling_error
 from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
+from lib.irrigation import Tuya
+from lib.irrigation.watchdog import CHECK_SECONDS as WATCHDOG_SECONDS
 from lib.llm import Agent
 from lib.pollen import Pollen
 from lib.compose import Composer
@@ -82,7 +84,8 @@ async def main():
     tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
     agent = Agent(AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url), cfg.xai_model, tools)
     state = AlertState(cfg.state_path)
-    bot = Bot(cfg, agent, sources, state)
+    irrigation = Tuya(cfg) if cfg.irrigation else None
+    bot = Bot(cfg, agent, sources, state, irrigation)
 
     app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
            .defaults(Defaults(disable_notification=True))  # silent messages
@@ -105,7 +108,7 @@ async def main():
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("@%s + %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
-                notify = Notifier(app.bot, state, available_kinds({s.name for s in sources}))
+                notify = Notifier(app.bot, state, available_kinds({s.name for s in sources} | ({"Irrigation"} if irrigation else set())))
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts
@@ -123,6 +126,11 @@ async def main():
                 if pollen:
                     pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
                     kinds += ["pollen", "asthma"]
+                if irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
+                    tasks.append(asyncio.create_task(IrrigationMonitor(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
+                                                                       eco, forecast).run()))
+                    tasks.append(asyncio.create_task(every(WATCHDOG_SECONDS, bot.watchdog.check)))
+                    kinds.append("irrigation battery")
                 log.info("Alerts: %s: %d chats", ", ".join(kinds) or "none", len(state.alert_chats()))
 
                 # Keeping warm: everything questions need, refreshed before they arrive
@@ -177,6 +185,8 @@ async def main():
     finally:
         for source in sources:
             await source.close()
+        if irrigation:
+            await irrigation.close()
 
 
 if __name__ == "__main__":

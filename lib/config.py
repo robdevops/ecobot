@@ -29,6 +29,12 @@ def _hours(value: str, default: tuple[int, int] | None) -> tuple[int, int] | Non
     return (start, end) if 0 <= start <= 23 and 0 <= end <= 24 and start != end else default
 
 
+def _hour(value: str, default: int) -> int:
+    """"18" -> 18; anything unreadable or outside 0 to 23 -> the default."""
+    number = _number(value)
+    return int(number) if number is not None and 0 <= number <= 23 else default
+
+
 def _number(value: str) -> float | None:
     try:
         return float(value)
@@ -61,11 +67,20 @@ class Config:
     rain_quiet_hours: tuple[int, int] | None = (0, 6)   # RAIN_QUIET_HOURS="0-6" (local hours; "off" for none): no rain alerts, a summary after
     chart_all_feels_like: bool = False   # CHART_ALL_FEELS_LIKE=on: "weather all week" also draws the feels-like panel (off: it nearly repeats temperature)
     chart_all_vpd: bool = False          # CHART_ALL_VPD=on: "weather all week" also draws the vapour pressure deficit panel (off: it is temperature and humidity combined)
+    tuya_device_id: str = ""             # TUYA_DEVICE_ID, TUYA_CLIENT_ID, TUYA_CLIENT_SECRET: all three switch the irrigation controller on
+    tuya_client_id: str = ""
+    tuya_client_secret: str = ""
+    tuya_base_url: str = "https://openapi.tuyaeu.com"   # TUYA_BASE_URL: the data centre's address (EU by default)
+    irrigation_check_hour: int = 18      # IRRIGATION_CHECK_HOUR: the local hour of the daily check (0 to 23)
     alert_cooldown_minutes: int = 30     # ALERT_COOLDOWN_MINUTES: the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts (5 to 150)
 
     @property
     def ecowitt(self) -> bool:
         return bool(self.ecowitt_api_key and self.ecowitt_app_key)
+
+    @property
+    def irrigation(self) -> bool:
+        return bool(self.tuya_device_id and self.tuya_client_id and self.tuya_client_secret)
 
     @property
     def airgradient(self) -> bool:
@@ -94,6 +109,11 @@ class Config:
             rain_quiet_hours=_hours(env("RAIN_QUIET_HOURS"), (0, 6)),
             chart_all_feels_like=_on(env("CHART_ALL_FEELS_LIKE")),
             chart_all_vpd=_on(env("CHART_ALL_VPD")),
+            tuya_device_id=env("TUYA_DEVICE_ID"),
+            tuya_client_id=env("TUYA_CLIENT_ID"),
+            tuya_client_secret=env("TUYA_CLIENT_SECRET"),
+            tuya_base_url=env("TUYA_BASE_URL", "https://openapi.tuyaeu.com").rstrip("/"),
+            irrigation_check_hour=_hour(env("IRRIGATION_CHECK_HOUR"), 18),
             alert_cooldown_minutes=int(min(150, max(5, _number(env("ALERT_COOLDOWN_MINUTES")) or 30))),
         )
         if not (cfg.ecowitt or cfg.airgradient):

@@ -23,6 +23,8 @@ from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler
 from . import intent, periods, prompt, report, templates
 from .alerts import menu
 from .alerts import AlertState, with_footer
+from .irrigation import IrrigationError, Watchdog
+from .irrigation import menu as irrigation_menu
 from .charts import render as render_chart
 from .tools import Turn
 from .config import Config
@@ -211,8 +213,11 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
 
 
 class Bot:
-    def __init__(self, cfg: Config, agent: Agent, sources: list, state: AlertState | None):
-        self.cfg, self.agent, self.sources, self.state = cfg, agent, sources, state
+    def __init__(self, cfg: Config, agent: Agent, sources: list, state: AlertState | None, irrigation=None):
+        """irrigation: the Tuya client of the irrigation controller, when one is configured (its button replaces Wind)."""
+        self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
+        self.watchdog = Watchdog(irrigation, state) if irrigation and state else None   # closes the valve after a run, however it ends
+        self.keyboard_version = templates.version(irrigation is not None)
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
@@ -224,6 +229,8 @@ class Bot:
         app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(CallbackQueryHandler(self.on_alert_button, pattern=r"^al:"))
+        if self.irrigation:
+            app.add_handler(CallbackQueryHandler(self.on_irrigation_button, pattern=r"^ir:"))
         app.add_handler(CallbackQueryHandler(self.on_period_button, pattern=rf"^{periods.PREFIX}"))
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -253,7 +260,7 @@ class Bot:
             self.state.remove_chat(change.chat.id, f"bot {status}")
 
     def _alert_kinds(self) -> list[str]:
-        return menu.available_kinds(set(self.by_name))
+        return menu.available_kinds(set(self.by_name) | ({"Irrigation"} if self.irrigation else set()))
 
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
@@ -312,6 +319,79 @@ class Bot:
                 await query.edit_message_text(menu.title(muted, kinds), reply_markup=markup)
             else:                                             # an alert: only its buttons change
                 await query.edit_message_reply_markup(reply_markup=markup)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                raise
+
+    # ---------- irrigation ----------
+    def _irrigation_keyboard(self, chat_id: int, opened: str | None = None):
+        return irrigation_menu.keyboard(bool(self.state and self.state.subscribed(chat_id, "irrigation")), opened)
+
+    async def send_irrigation(self, msg: Message):
+        """The Irrigation button: the controller's status, with its buttons."""
+        try:
+            status = await self.irrigation.status()
+        except IrrigationError as e:
+            log.warning("Irrigation status failed: %s", e)
+            await msg.reply_text("Sorry, I couldn't reach the irrigation controller.")
+            return
+        await msg.reply_text(irrigation_menu.status_text(status), reply_markup=self._irrigation_keyboard(msg.chat_id))
+
+    async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str | None:
+        """Do what a button asks. Returns the toast to show, or None for a button that means nothing. Raises IrrigationError."""
+        if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:
+            await self.irrigation.water(int(arg))
+            if self.watchdog:
+                self.watchdog.arm(int(arg))
+            return f"Watering for {arg} minutes"
+        if action == "delay" and arg in irrigation_menu.DELAYS:
+            await self.irrigation.delay(arg)
+            return "Delay cancelled" if arg == "cancel" else f"Delayed {arg}"
+        if action == "sw" and arg in ("on", "off"):
+            await self.irrigation.set_switch(arg == "on")
+            if arg == "off" and self.watchdog:
+                self.watchdog.disarm()
+            return "Switched on (it stays on until switched off)" if arg == "on" else "Switched off"
+        if action == "batt" and arg in ("on", "off") and self.state and chat_id in self.state.chats:
+            self.state.set_kind(chat_id, "irrigation", arg == "on")
+            return f"Irrigation battery warnings {arg} in this chat"
+        return None
+
+    async def on_irrigation_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """A press on the irrigation buttons: open or close a list of options, or water, delay, switch, or (un)subscribe; the
+        message then shows the controller's fresh status."""
+        query = update.callback_query
+        message = query.message
+        action, arg = ((query.data or "").split(":") + ["", ""])[1:3]
+        if not self.irrigation or not message:
+            await query.answer()
+            return
+        if action in ("open", "close"):
+            opened = arg if action == "open" and arg in irrigation_menu.SECTIONS else None
+            await query.answer()
+            await self._edit_irrigation(query, None, self._irrigation_keyboard(message.chat_id, opened))
+            return
+        try:
+            toast = await self._irrigation_act(action, arg, message.chat_id)
+            if toast is None:
+                await query.answer()
+                return
+            status = await self.irrigation.status()
+        except IrrigationError as e:
+            log.warning("Irrigation %s %s failed: %s", action, arg, e)
+            await query.answer("Couldn't reach the irrigation controller", show_alert=True)
+            return
+        log.info("Irrigation: %s %s in chat %s", action, arg, message.chat_id)
+        await query.answer(toast)
+        await self._edit_irrigation(query, irrigation_menu.status_text(status), self._irrigation_keyboard(message.chat_id))
+
+    @staticmethod
+    async def _edit_irrigation(query, text: str | None, markup):
+        try:
+            if text is None:
+                await query.edit_message_reply_markup(reply_markup=markup)
+            else:
+                await query.edit_message_text(text, reply_markup=markup)
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 raise
@@ -380,9 +460,9 @@ class Bot:
         private = update.effective_chat.type == ChatType.PRIVATE
         await update.effective_message.reply_text(
             HELP.format(user=update.effective_user.id, chat=update.effective_chat.id),
-            reply_markup=templates.keyboard() if private else None)
+            reply_markup=templates.keyboard(self.irrigation is not None) if private else None)
         if private and self.state:
-            self.state.set_keyboard(update.effective_chat.id, templates.VERSION)
+            self.state.set_keyboard(update.effective_chat.id, self.keyboard_version)
 
     async def refresh_keyboards(self, tg_bot) -> int:
         """At startup: tell each private chat whose buttons are out of date that they changed, with the new keyboard (silently).
@@ -390,24 +470,24 @@ class Bot:
         if not self.state:
             return 0
         sent = 0
-        for chat_id in [c for c in self.state.chats if c > 0 and self.state.keyboard(c) not in (templates.VERSION, templates.HIDDEN)]:
+        for chat_id in [c for c in self.state.chats if c > 0 and self.state.keyboard(c) not in (self.keyboard_version, templates.HIDDEN)]:
             try:
-                await tg_bot.send_message(chat_id, "Buttons updated.", reply_markup=templates.keyboard(), disable_notification=True)
-                self.state.set_keyboard(chat_id, templates.VERSION)
+                await tg_bot.send_message(chat_id, "Buttons updated.", reply_markup=templates.keyboard(self.irrigation is not None), disable_notification=True)
+                self.state.set_keyboard(chat_id, self.keyboard_version)
                 sent += 1
             except Forbidden as e:  # blocked the bot
                 self.state.remove_chat(chat_id, f"can't post: {e}")
             except TelegramError as e:
                 log.warning("Buttons update to %s failed: %s", chat_id, e)
         if sent:
-            log.info("Buttons: told %d private chat(s) the buttons changed (keyboard %s)", sent, templates.VERSION)
+            log.info("Buttons: told %d private chat(s) the buttons changed (keyboard %s)", sent, self.keyboard_version)
         return sent
 
     def _keyboard_stale(self, msg: Message) -> bool:
         """Does this private chat need the current buttons (it has never had them, or they have changed since)? Not when it
         hid them."""
         return bool(self.state and msg.chat.type == ChatType.PRIVATE
-                    and self.state.keyboard(msg.chat_id) not in (templates.VERSION, templates.HIDDEN))
+                    and self.state.keyboard(msg.chat_id) not in (self.keyboard_version, templates.HIDDEN))
 
     async def on_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/keyboard shows the buttons again, /keyboard off hides them (private chats only)."""
@@ -419,9 +499,9 @@ class Bot:
             if self.state:
                 self.state.set_keyboard(msg.chat_id, templates.HIDDEN)
         else:
-            await msg.reply_text("Here are the buttons.", reply_markup=templates.keyboard())
+            await msg.reply_text("Here are the buttons.", reply_markup=templates.keyboard(self.irrigation is not None))
             if self.state:
-                self.state.set_keyboard(msg.chat_id, templates.VERSION)
+                self.state.set_keyboard(msg.chat_id, self.keyboard_version)
 
     async def on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Errors raised inside handlers: network blips get one line, anything else a traceback."""
@@ -450,7 +530,9 @@ class Bot:
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
-            if msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
+            if self.irrigation and msg.text.strip() == templates.IRRIGATION:   # the controller's status and buttons (no model needed)
+                await self.send_irrigation(msg)
+            elif msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
                 await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
                                                                       "Pollen" in self.by_name, "Forecast" in self.by_name))
                 await self.on_alerts(update, context)
@@ -616,7 +698,7 @@ class Bot:
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
-        markup = templates.keyboard() if self._keyboard_stale(msg) else None
+        markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo = []
         if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
@@ -631,8 +713,8 @@ class Bot:
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown)
             if carried_keyboard:
-                log.info("Buttons: sent keyboard %s to chat %s (it had %s)", templates.VERSION, msg.chat_id, self.state.keyboard(msg.chat_id))
-                self.state.set_keyboard(msg.chat_id, templates.VERSION)
+                log.info("Buttons: sent keyboard %s to chat %s (it had %s)", self.keyboard_version, msg.chat_id, self.state.keyboard(msg.chat_id))
+                self.state.set_keyboard(msg.chat_id, self.keyboard_version)
             elif markup and not row:
                 log.info("Buttons: this reply couldn't carry the keyboard (several charts); will try the next one")
         except TelegramError:

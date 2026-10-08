@@ -6,6 +6,7 @@ import hashlib
 from telegram import ReplyKeyboardMarkup
 
 CAPABILITIES = "\U0001f514 Help & Alerts"  # answered with what the bot can do, then the /alerts status
+IRRIGATION = "\U0001f331 Irrigation"     # answered with the irrigation controller's status and buttons (only when it is configured)
 
 # Every button but the first and last of the top row is a chart of the last day (the period buttons under it change that)
 ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f327️ Rain", "Rain chart 1d"), ("\U0001f4cb Status", "Report")],
@@ -17,12 +18,23 @@ SENTENCES = dict(button for row in ROWS for button in row)
 LABELS = set(SENTENCES)
 # Telegram keeps the keyboard in each app until a message brings a new one; this changes whenever the buttons do, so a chat
 # whose stored value differs gets the current keyboard with its next reply. HIDDEN is what a chat that hid the buttons stores.
-VERSION = hashlib.md5("|".join(label for row in ROWS for label, _ in row).encode()).hexdigest()[:8]
 HIDDEN = "hidden"
 
 
-def keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([[label for label, _ in row] for row in ROWS], resize_keyboard=True, is_persistent=True,
+def rows(irrigation: bool = False) -> list[list[tuple[str, str]]]:
+    """The button rows. With the irrigation controller configured, its button takes the place of Wind (the last one)."""
+    return [*ROWS[:-1], [*ROWS[-1][:-1], (IRRIGATION, "")]] if irrigation else ROWS
+
+
+def version(irrigation: bool = False) -> str:
+    return hashlib.md5("|".join(label for row in rows(irrigation) for label, _ in row).encode()).hexdigest()[:8]
+
+
+VERSION = version()
+
+
+def keyboard(irrigation: bool = False) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([[label for label, _ in row] for row in rows(irrigation)], resize_keyboard=True, is_persistent=True,
                                input_field_placeholder="Ask about the weather or air…")
 
 
