@@ -76,7 +76,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
     assert "failed" not in final and "days (5min/30min/4h/1d)" in final
-    assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, alert buttons, period buttons, other updates, membership, messages, errors
+    assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
 
 
 async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(tmp_path, monkeypatch, caplog):
@@ -213,4 +213,4 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     await ecobot.main()
     await stopper
     assert "irrigation battery" in caplog.text                       # in the list of alert types
-    assert len(app.handlers) == 11 and closed == [1]                 # the irrigation buttons' handler, and the client closed at shutdown
+    assert len(app.handlers) == 10 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown

@@ -21,6 +21,7 @@ from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, periods, prompt, report, templates
+from .admins import Admins
 from .alerts import menu
 from .alerts import AlertState, with_footer
 from .irrigation import IrrigationError, Watchdog
@@ -41,10 +42,14 @@ TURN_SECONDS = 90            # a question that takes longer is given up on, so t
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
 IRRIGATION_SETTLE_SECONDS = 3   # after any irrigation action, the controller is given this long to report its new state before it is read and the message redrawn
+NOT_ADMIN = "Sorry, only group admins can use this bot."
+NOT_ADMIN_TOAST = "Only group admins can use this bot"
+STALE_BUTTON = "That button is out of date, please ask again"
+MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
-        "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe).\n"
+        "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
 @dataclass
@@ -219,6 +224,8 @@ class Bot:
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
         self.watchdog = Watchdog(irrigation, state) if irrigation and state else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
+        self.admin_only = bool(getattr(cfg, "admin_only", False))   # ADMIN_ONLY: only the admins of the groups the bot is in may use it
+        self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
@@ -229,14 +236,84 @@ class Bot:
         app.add_handler(CommandHandler("reset", self.on_reset))
         app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
-        app.add_handler(CallbackQueryHandler(self.on_alert_button, pattern=r"^al:"))
-        if self.irrigation:
-            app.add_handler(CallbackQueryHandler(self.on_irrigation_button, pattern=r"^ir:"))
-        app.add_handler(CallbackQueryHandler(self.on_period_button, pattern=rf"^{periods.PREFIX}"))
+        app.add_handler(CommandHandler("usage", self.on_usage))
+        app.add_handler(CallbackQueryHandler(self.on_button))   # every button press, whatever its data: see on_button
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
         app.add_error_handler(self.on_error)
+
+    # ---------- who may use the bot, and which button presses are believed ----------
+    @staticmethod
+    def _sender_ids(update: Update) -> list[int]:
+        """The ids that stand for the sender: their user id and, for a message an admin sends "as the group" (or as a channel), that
+        chat's id (a button press has no such thing: Telegram names the real user)."""
+        ids = [update.effective_user.id] if update.effective_user else []
+        msg = update.effective_message
+        if update.callback_query is None and msg is not None and getattr(msg, "sender_chat", None) is not None:
+            ids.append(msg.sender_chat.id)
+        return ids
+
+    async def _allowed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """With ADMIN_ONLY on, only known group admins (and ADMIN_CHAT_IDS) get through; anyone else is told so, once, and False is
+        returned. A group the bot hears from is remembered first: it has to be known for its admins to count."""
+        chat = update.effective_chat
+        if chat is not None and chat.type != ChatType.PRIVATE:
+            self.remember_chat(update)
+        if not self.admin_only or await self.admins.allowed(context.bot, self._sender_ids(update)):
+            return True
+        log.info("Refused %s: not a known group admin", describe_source(update))
+        with contextlib.suppress(TelegramError):
+            if update.callback_query is not None:
+                await update.callback_query.answer(NOT_ADMIN_TOAST)
+            elif update.effective_message is not None:
+                await update.effective_message.reply_text(NOT_ADMIN)
+        return False
+
+    @staticmethod
+    async def _is_group_admin(bot, chat_id: int, user_id: int) -> bool:
+        """Is this user an administrator or the creator of this group, by Telegram's own account of it?"""
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status in ("administrator", "creator")
+
+    @staticmethod
+    def _on_keyboard(message, data: str) -> bool:
+        """Is `data` the data of a button on this message's own inline keyboard? (An inaccessible message has no keyboard to look at.)"""
+        rows = getattr(getattr(message, "reply_markup", None), "inline_keyboard", None) or ()
+        return any(getattr(button, "callback_data", None) == data for row in rows for button in row)
+
+    async def _press(self, query) -> bool:
+        """Is this button press believable? A client can send any `data` for any message (Telegram does not check it against the
+        keyboard), so a press counts only when its data is short, plain text and is one of the buttons the message actually carries.
+        Otherwise it is answered with a toast, logged, and goes no further."""
+        data, message = getattr(query, "data", None), getattr(query, "message", None)
+        believed = (isinstance(data, str) and 0 < len(data.encode()) <= MAX_CALLBACK_BYTES and data.isprintable()
+                    and message is not None and self._on_keyboard(message, data))
+        if not believed:
+            log.info("Ignored a button press that is not on its message: %s", _short(repr(data), 60))
+            with contextlib.suppress(TelegramError):
+                await query.answer(STALE_BUTTON)
+        return believed
+
+    def buttons(self) -> dict:
+        """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button."""
+        return {"al:": self.on_alert_button, **({"ir:": self.on_irrigation_button} if self.irrigation else {}),
+                periods.PREFIX: self.on_period_button}
+
+    async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """The one place every button press comes in: believed (_press), a known family (a prefix nobody handles is refused, so a
+        new kind of button is dead until it is added to buttons()), allowed (ADMIN_ONLY), then handled."""
+        query = update.callback_query
+        if query is None or not await self._press(query):
+            return
+        handler = next((h for prefix, h in self.buttons().items() if query.data.startswith(prefix)), None)
+        if handler is None:
+            with contextlib.suppress(TelegramError):
+                await query.answer(STALE_BUTTON)
+            return
+        if not await self._allowed(update, context):
+            return
+        await handler(update, context)
 
     # ---------- alert chats ----------
     @staticmethod
@@ -267,16 +344,35 @@ class Bot:
         """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
         unsubscribe every type."""
         msg, chat = update.effective_message, update.effective_chat
+        in_group = chat.type != ChatType.PRIVATE
+        if not in_group and not await self._allowed(update, context):   # anyone in a group may look; a private chat is gated like the rest
+            return
         if not self.state:
             await msg.reply_text("Alerts aren't available: no sensor is connected.")
             return
         arg = context.args[0].lower() if context.args else ""
         self.remember_chat(update)
         if arg in ("on", "off"):
-            self.state.set_alerts(chat.id, self._title(update), arg == "on")
-            log.info("/alerts %s in %s", arg, describe_source(update))
+            if in_group and not (update.effective_user and await self._is_group_admin(context.bot, chat.id, update.effective_user.id)):
+                await msg.reply_text("Only group admins can change alerts")   # the menu below is still shown
+            else:
+                self.state.set_alerts(chat.id, self._title(update), arg == "on")
+                log.info("/alerts %s in %s", arg, describe_source(update))
         muted, kinds = self.state.muted(chat.id), self._alert_kinds()
         await msg.reply_text(menu.title(muted, kinds), reply_markup=menu.keyboard(muted, kinds))
+
+    async def _help_and_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """What the bot can do, then the alert settings: the Help & Alerts button and /usage."""
+        await update.effective_message.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
+                                                                              "Pollen" in self.by_name, "Forecast" in self.by_name))
+        await self.on_alerts(update, context)
+
+    async def on_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/usage: the same as the Help & Alerts button."""
+        if not await self._allowed(update, context):
+            return
+        self.remember_chat(update)
+        await self._help_and_alerts(update, context)
 
     async def on_alert_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on the alert settings buttons (under an alert or the /alerts message): open or close a section, or subscribe
@@ -290,11 +386,9 @@ class Bot:
             return
         message = query.message
         chat = message.chat
-        if chat.type != ChatType.PRIVATE:
-            member = await context.bot.get_chat_member(chat.id, query.from_user.id)
-            if member.status not in ("administrator", "creator"):
-                await query.answer("Only group admins can change alerts")
-                return
+        if chat.type != ChatType.PRIVATE and not await self._is_group_admin(context.bot, chat.id, query.from_user.id):
+            await query.answer("Only group admins can change alerts")
+            return
         kinds = self._alert_kinds()
         parent = parent if parent in kinds else None
         toast, opened = None, section or None
@@ -488,12 +582,16 @@ class Bot:
 
     async def on_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/reset: forget this chat's conversation."""
+        if not await self._allowed(update, context):
+            return
         msg = update.effective_message
         self.chats.pop(self._key(msg), None)
         log.info("/reset in %s", describe_source(update))
         await msg.reply_text("Conversation memory cleared.")
 
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._allowed(update, context):
+            return
         self.remember_chat(update)
         log.info("/start in %s", describe_source(update))
         private = update.effective_chat.type == ChatType.PRIVATE
@@ -530,6 +628,8 @@ class Bot:
 
     async def on_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/keyboard shows the buttons again, /keyboard off hides them (private chats only)."""
+        if not await self._allowed(update, context):
+            return
         msg = update.effective_message
         if update.effective_chat.type != ChatType.PRIVATE:
             await msg.reply_text("The buttons are only in private chats.")
@@ -567,14 +667,15 @@ class Bot:
         if waited > PENDING_MAX_SECONDS:
             log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), _short(msg.text, 40))
             return
+        private = msg.chat.type == ChatType.PRIVATE
+        if private and not await self._allowed(update, context):   # before remember_chat: a stranger never becomes an alert chat
+            return
         self.remember_chat(update)
-        if msg.chat.type == ChatType.PRIVATE:
+        if private:
             if self.irrigation and (msg.text.strip() == templates.IRRIGATION or irrigation_menu.asked(msg.text)):   # the controller's status and buttons (no model needed)
                 await self.send_irrigation(msg)
             elif msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
-                await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
-                                                                      "Pollen" in self.by_name, "Forecast" in self.by_name))
-                await self.on_alerts(update, context)
+                await self._help_and_alerts(update, context)
             else:
                 await self.respond(update, context, templates.sentence(msg.text) or msg.text)
             return
@@ -583,6 +684,8 @@ class Bot:
         replied_to_bot = (msg.reply_to_message is not None and msg.reply_to_message.from_user is not None
                           and msg.reply_to_message.from_user.id == context.bot.id)
         if mention.search(msg.text) or replied_to_bot:
+            if not await self._allowed(update, context):   # only a message meant for the bot is refused, never the group's own talk
+                return
             asked = mention.sub("", msg.text)
             if self.irrigation and irrigation_menu.asked(asked):   # "@bot irrigation": the controller, as in a private chat
                 await self.send_irrigation(msg)
