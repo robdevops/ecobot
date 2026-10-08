@@ -43,11 +43,11 @@ def status_text(status: dict) -> str:
 
 
 def keyboard(subscribed: bool, open: str | None = None) -> InlineKeyboardMarkup:
-    """The buttons under the status. `subscribed`: this chat gets the battery warnings (the toggle then offers to unsubscribe)."""
+    """The buttons under the status. `subscribed`: this chat gets the battery alerts (the toggle shows that, "on", and turns them off)."""
     def head(name: str, text: str) -> InlineKeyboardButton:
         return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
     rows = [[head("water", "💧 Water"), head("delay", "⏸ Delay")],
-            [_button("🔕 Stop battery warnings" if subscribed else "🔔 Battery warnings", f"ir:batt:{'off' if subscribed else 'on'}"),
+            [_button("🔔 Battery alerts on" if subscribed else "🔕 Battery alerts off", f"ir:batt:{'off' if subscribed else 'on'}"),
              head("switch", "⏻ Switch")]]
     if open == "water":
         rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])

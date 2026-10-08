@@ -145,8 +145,8 @@ def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one(
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Delay", "ir:open:delay")],
-                                          [("🔔 Battery warnings", "ir:batt:on"), ("⏻ Switch", "ir:open:switch")]]
-    assert rows(menu.keyboard(True))[1][0] == ("🔕 Stop battery warnings", "ir:batt:off")
+                                          [("🔕 Battery alerts off", "ir:batt:on"), ("⏻ Switch", "ir:open:switch")]]
+    assert rows(menu.keyboard(True))[1][0] == ("🔔 Battery alerts on", "ir:batt:off")
     water = rows(menu.keyboard(True, "water"))
     assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
     assert rows(menu.keyboard(True, "delay"))[-1] == [("Delay 24h", "ir:delay:24h"), ("Delay 48h", "ir:delay:48h"), ("Delay 72h", "ir:delay:72h"),
@@ -452,10 +452,10 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
 async def test_the_battery_button_subscribes_or_unsubscribes_this_chat_to_the_alert_type(tmp_path):
     bot, state, _ = irrigation_bot(tmp_path)
     q = await press(bot, "ir:batt:off")
-    assert state.muted(1) == {"irrigation"} and q.toast == "Irrigation battery warnings off in this chat"
-    assert rows(q.edits[0][2])[1][0] == ("🔔 Battery warnings", "ir:batt:on")             # the button now offers to turn it back on
+    assert state.muted(1) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
+    assert rows(q.edits[0][2])[1][0] == ("🔕 Battery alerts off", "ir:batt:on")             # the button now says off, and turns it back on
     q = await press(bot, "ir:batt:on")
-    assert state.muted(1) == set() and rows(q.edits[0][2])[1][0] == ("🔕 Stop battery warnings", "ir:batt:off")
+    assert state.muted(1) == set() and rows(q.edits[0][2])[1][0] == ("🔔 Battery alerts on", "ir:batt:off")
     assert state.alert_chats("irrigation") == [1]
 
 

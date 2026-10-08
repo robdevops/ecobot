@@ -354,7 +354,7 @@ class Bot:
             return "Switched on (it stays on until switched off)" if arg == "on" else "Switched off"
         if action == "batt" and arg in ("on", "off") and self.state and chat_id in self.state.chats:
             self.state.set_kind(chat_id, "irrigation", arg == "on")
-            return f"Irrigation battery warnings {arg} in this chat"
+            return f"Irrigation battery alerts {arg} in this chat"
         return None
 
     async def on_irrigation_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
