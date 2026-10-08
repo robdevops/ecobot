@@ -12,4 +12,7 @@ uv pip install --quiet --python .venv/bin/python -r requirements-dev.txt
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   echo "export VIRTUAL_ENV=\"$PWD/.venv\"" >> "$CLAUDE_ENV_FILE"
   echo "export PATH=\"$PWD/.venv/bin:\$PATH\"" >> "$CLAUDE_ENV_FILE"
+  # Draw charts as CI does: ignore a system matplotlibrc (this container's turns text hinting off), or the reference images drift.
+  echo "backend: agg" > .venv/matplotlibrc
+  echo "export MATPLOTLIBRC=\"$PWD/.venv/matplotlibrc\"" >> "$CLAUDE_ENV_FILE"
 fi
