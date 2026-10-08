@@ -1,13 +1,12 @@
 ---
 name: merge-when-green
-description: Merge a pull request once its CI has passed. Use only when the user asks for it ("merge when green", "merge it when CI passes", /merge-when-green); never merge on your own initiative.
+description: Merge a pull request once its CI has passed. This is the default for every pull request opened in this repo (a plain "pr" means open it and merge it when green); also use when the user says "merge" or runs /merge-when-green.
 argument-hint: "[pull request number; default: the open pull request for the current branch]"
-disable-model-invocation: true
 ---
 
 # Merge when green
 
-The user invoking this skill is their authorisation to merge **this one pull request** with a merge commit (their standing choice for this repo: `merge_method: "merge"`, not squash or rebase). It does not cover any other pull request.
+The user has made this the default for this repo: after opening a pull request for them ("pr"), follow this skill and merge it with a merge commit (`merge_method: "merge"`, not squash or rebase) as soon as CI is green, without asking again. Invoking it by hand, or saying "merge", covers any open pull request they name. The authorisation is for pull requests I opened or they named; it does not cover Dependabot or anyone else's pull requests unless they ask. If the user says "pr only" or "don't merge", open it and stop.
 
 ## 1. Find the pull request
 - With an argument, that number. Without one, the open pull request whose head is the current branch (`mcp__github__list_pull_requests`, state `open`, match `head.ref`). None, or more than one: say so and stop.
