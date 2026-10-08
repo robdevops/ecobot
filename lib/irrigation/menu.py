@@ -33,25 +33,27 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
 
 
 def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | None = None) -> str:
-    """The controller's state, in this order: on or off; the minutes left of a run (only while it is on and counting down); the pause
-    (the weather delay, only when one is active); the mode; the battery with whether this chat gets its alerts (`alerts`; left out when
-    not given) in brackets; and whether this chat gets the pause alerts (`pause_alerts`; left out when not given), always."""
+    """The controller's state, every line always there, in this order:
+      mode: auto
+      state: on ✅ (10 mins until off)        (the minutes only while it is on and counting down)
+      pause time: 24h (alerts: on)            ("inactive" when there is no pause)
+      battery: 80% 🔋 (alerts: on)
+    `alerts` and `pause_alerts`: whether this chat gets the battery / pause alerts (the brackets are left out when not given)."""
     on = bool(status.get("switch"))
-    lines = [TITLE, f"state: {'on ✅' if on else 'off ❌'}"]
     countdown = status.get("countdown")
+    left = ""
     if on and isinstance(countdown, (int, float)) and countdown > 0:
-        lines.append(f"time until state off: {math.ceil(countdown / 60)} min")
-    if status.get("weather_delay") not in (None, "cancel"):
-        lines.append(f"pause: {status['weather_delay']}")
-    if status.get("work_state"):
-        lines.append(f"mode: {status['work_state']}")
+        minutes = math.ceil(countdown / 60)
+        left = f" ({minutes} {'min' if minutes == 1 else 'mins'} until off)"
+    delay = status.get("weather_delay")
     battery = status.get("battery_percentage")
-    if battery is not None or alerts is not None:
-        level = f"{battery}% {'🔋' if battery >= LOW_BATTERY else '🪫'}" if battery is not None else "unknown"
-        lines.append(f"battery: {level}" + (f" (alerts: {'on' if alerts else 'off'})" if alerts is not None else ""))
-    if pause_alerts is not None:
-        lines.append(f"pause alerts: {'on' if pause_alerts else 'off'}")
-    return "\n".join(lines)
+    level = f"{battery}% {'🔋' if battery >= LOW_BATTERY else '🪫'}" if battery is not None else "unknown"
+    bracket = lambda on_: "" if on_ is None else f" (alerts: {'on' if on_ else 'off'})"
+    return "\n".join([TITLE,
+                      f"mode: {status.get('work_state') or 'unknown'}",
+                      f"state: {'on ✅' if on else 'off ❌'}{left}",
+                      f"pause time: {'inactive' if delay in (None, 'cancel') else delay}{bracket(pause_alerts)}",
+                      f"battery: {level}{bracket(alerts)}"])
 
 
 def keyboard(battery: bool, pause: bool, open: str | None = None) -> InlineKeyboardMarkup:
