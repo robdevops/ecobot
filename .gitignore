@@ -13,3 +13,4 @@ bot_state.json.tmp
 mcp_ecowitt.json
 chart-diffs/
 !tests/data/*.sqlite
+.claude/settings.local.json

@@ -1,5 +1,4 @@
 # Working in this repo
 
-- **Iterating:** the "dev branch" is whichever branch the session is on, any branch except `main`. Keep using it between iterations: commit and push each change to it, with no pull request, so the user can pull it into their test environment. Never reset or recreate it.
-- **Pull requests:** "pr" (or "merge") means: create the pull request to `main`, subscribe to its events so CI shows up here (no polling), merge it with a merge commit once CI is green, then fast-forward the dev branch to `main` (`git fetch origin main && git merge --ff-only origin/main && git push`) and unsubscribe. Do all of it without asking. Finish with a couple of words, e.g. "Merged #32." or "CI red: <check>." Do not narrate notifications or recap. See the `merge-when-green` skill. "pr only" or "don't merge" means open it and stop. Other people's and Dependabot's pull requests are merged only when asked.
+- **Iterating:** the "dev branch" is whichever branch the session is on, any branch except `main`. Keep using it between iterations: commit and push each change to it, so the user can pull it into their test environment. Never reset or recreate it.
 - **Checks before pushing:** `python -m pytest -q` and `python scripts/eval_prompts.py` (see `DEVELOPMENT.md`).
