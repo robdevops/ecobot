@@ -85,8 +85,8 @@ class Look:
     in_headline: bool        # the panel's name and unit are the figure's headline, and its colour key sits beside it
 
 
-BIG = Look(30, 1.5, 8.5, 18, 1.2, 9, (0.35, 0.8), 6, 17, 0.26, 8.5, 1, True, 5, False, True)
-SMALL = Look(20, 1.2, 7.5, 12, 0.8, 5, (0.25, 0.6), 4, 14, 0.3, 7, 2, False, 4, True, False)
+BIG = Look(30, 1.5, 8.5, 18, 1.2, 9, (0.35, 0.8), 6, 17, 0.26, 10, 1, True, 5, False, True)
+SMALL = Look(20, 1.2, 7.5, 12, 0.8, 5, (0.25, 0.6), 4, 14, 0.3, 8.5, 2, False, 4, True, False)
 
 
 def _look_for(chart: Chart) -> Look:
@@ -381,7 +381,7 @@ def _render_rose(fig, compass: Compass):
         a, b = compass.speed_steps
         fig.legend([Line2D([], [], marker="s", linestyle="", markersize=6, color=c) for c in WIND_STEPS],
                    [f"under {a}", f"{a}–{b}", f"{b}+ km/h"], loc="lower right", bbox_to_anchor=(0.985, 0.0), ncol=3,
-                   frameon=False, fontsize=7, labelcolor=MUTED, handletextpad=0.2, columnspacing=0.9)
+                   frameon=False, fontsize=8.5, labelcolor=MUTED, handletextpad=0.2, columnspacing=0.9)
 
 
 # ---------- several panels on one time axis ----------
@@ -461,14 +461,14 @@ def _end_labels(ax, drawn: list[tuple], show_floor: bool = False):
     if not show_floor and max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
         return
     height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
-    gap = 8 * (y_hi - y_lo) / height_pt                     # 8 points, in data units
+    gap = 10 * (y_hi - y_lo) / height_pt                    # 10 points, in data units
     placed = []
     for colour, xs, ys in sorted(drawn, key=lambda d: d[2][-1]):
         y = max(ys[-1], placed[-1] + gap) if placed else ys[-1]
         placed.append(y)
         shade = colour
         ax.annotate(_figure(ys[-1]), (xs[-1], ys[-1]), xytext=(1.014, y), textcoords=("axes fraction", "data"), va="center", ha="left",
-                    fontsize=7, fontweight="bold", color=shade, annotation_clip=False,
+                    fontsize=8.5, fontweight="bold", color=shade, annotation_clip=False,
                     arrowprops={"arrowstyle": "-", "color": shade, "linewidth": 0.6, "alpha": 0.6, "shrinkA": 0, "shrinkB": 2},
                     bbox={"boxstyle": "round,pad=0.15", "fc": "none", "ec": "none"})
 
@@ -485,7 +485,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
             base += np.asarray(column, dtype=float)
         ax.set_ylim(0, 100)
         ax.legend([Line2D([], [], marker="s", linestyle="", markersize=5, color=c) for c in ZONE_COLOURS],
-                  ["good", "poor", "very poor"], loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=7,
+                  ["good", "poor", "very poor"], loc="lower right", bbox_to_anchor=(1.0, 1.0), frameon=False, fontsize=8.5,
                   labelcolor=TEXT, ncol=3, handletextpad=0.2, columnspacing=0.9, borderaxespad=0.1)
         return 0, _end_of(bx, s.width, x1), []
     if not p.lines:  # rain on its own
