@@ -357,9 +357,9 @@ async def test_the_watchdog_leaves_a_closed_valve_alone_tries_again_on_failure_a
 
 # ---------- the buttons in the bot ----------
 class Query:
-    def __init__(self, data, chat_id=1):
-        self.data, self.message = data, NS(chat=NS(type="private", id=chat_id), chat_id=chat_id)
-        self.toast, self.edits, self.fail = "unset", [], None
+    def __init__(self, data, chat_id=1, chat_type="private", user=7):
+        self.data, self.message = data, NS(chat=NS(type=chat_type, id=chat_id), chat_id=chat_id)
+        self.from_user, self.toast, self.edits, self.fail = NS(id=user), "unset", [], None
 
     async def answer(self, text=None, **kw):
         self.toast = text
@@ -390,9 +390,15 @@ def irrigation_bot(tmp_path, device=None):
     return Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], state, device), state, device
 
 
-async def press(bot, data, **kw):
+def admin(status):
+    async def get_chat_member(chat_id, user_id):
+        return NS(status=status)
+    return NS(bot=NS(get_chat_member=get_chat_member))
+
+
+async def press(bot, data, status=None, **kw):
     q = Query(data, **kw)
-    await bot.on_irrigation_button(NS(callback_query=q), NS())
+    await bot.on_irrigation_button(NS(callback_query=q), admin(status) if status else NS())
     return q
 
 
@@ -481,3 +487,90 @@ async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_
     assert len(added) == len(added_plain) + 1
     assert "irrigation" in bot._alert_kinds() and "irrigation" not in plain._alert_kinds()
     assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.VERSION
+
+
+@pytest.mark.parametrize("text, yes", [
+    ("irrigation", True), ("Irrigation", True), ("water", True), ("tap", True), ("sprinkler", True), ("sprinklers on?", True),
+    ("turn the sprinkler on", True), ("is the tap on", True), ("watering", True), ("irrigate the garden", True), ("🌱 Irrigation", True),
+    ("how much water did the rain add this week", False),                       # a long question is the model's
+    ("tapestry", False), ("waterfall", False), ("taping", False), ("tapped out", False), ("rain", False), ("", False), ("   ", False),
+    ("temperature chart 1d", False), ("Weather", False)])
+def test_short_messages_with_a_keyword_ask_for_the_controller(text, yes):
+    assert menu.asked(text) is yes
+
+
+def private_message(text):
+    sent = []
+
+    async def reply_text(body, **kw):
+        sent.append((body, kw))
+    msg = NS(text=text, chat=NS(type="private", id=1, title=None), chat_id=1, reply_text=reply_text, reply_to_message=None,
+             message_thread_id=None, is_topic_message=False)
+    return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob")), sent
+
+
+def group_message(text, replied=False):
+    sent = []
+
+    async def reply_text(body, **kw):
+        sent.append((body, kw))
+    reply = NS(from_user=NS(id=99)) if replied else None
+    msg = NS(text=text, chat=NS(type="supergroup", id=-5, title="Home"), chat_id=-5, reply_text=reply_text, reply_to_message=reply,
+             message_thread_id=None, is_topic_message=False)
+    return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob")), sent
+
+
+class NoModel:
+    async def run(self, *a, **k):
+        raise AssertionError("the model was asked")
+
+
+async def test_typing_irrigation_does_what_the_button_does_in_private_chats_and_when_addressed_in_groups(tmp_path):
+    bot, state, device = irrigation_bot(tmp_path)
+    bot.agent = NoModel()
+    ctx = NS(bot=NS(username="testbot", id=99))
+    for text in ("irrigation", "water", "turn the sprinkler on", templates.IRRIGATION):
+        update, sent = private_message(text)
+        await bot.on_message(update, ctx)
+        assert sent[0][0].startswith("🌱 Irrigation\nswitch: off ❌") and sent[0][1]["reply_markup"], text
+    update, sent = group_message("@testbot irrigation")
+    await bot.on_message(update, ctx)
+    assert sent[0][0].startswith("🌱 Irrigation") and rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water")
+    update, sent = group_message("water", replied=True)                                   # a reply to the bot counts as addressing it
+    await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    assert sent == [] or sent[0][0].startswith("🌱 Irrigation")
+    update, sent = group_message("irrigation please")                                     # not addressed: ignored, as every group message is
+    await bot.on_message(update, ctx)
+    assert sent == []
+
+
+async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_model(tmp_path):
+    asked = []
+
+    class Agent:
+        async def run(self, working, *a, **k):
+            asked.append(working[-1]["content"])
+            return "ok"
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "Rob")
+    bot = Bot(NS(tz=TZ), Agent(), [], state, Remote())
+    update, sent = private_message("how much water did the rain add this week")
+    await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    assert asked == ["how much water did the rain add this week"]
+    plain = Bot(NS(tz=TZ), Agent(), [], AlertState(tmp_path / "t.json"))
+    update, sent = private_message("irrigation")
+    await plain.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    assert asked[-1] == "irrigation"                                                       # nothing to show: the model answers as before
+
+
+async def test_in_a_group_only_admins_may_use_the_irrigation_buttons(tmp_path):
+    bot, state, device = irrigation_bot(tmp_path)
+    state.add_chat(-5, "Home")
+    for data in ("ir:open:water", "ir:water:10", "ir:sw:on", "ir:batt:off"):
+        q = await press(bot, data, status="member", chat_id=-5, chat_type="supergroup")
+        assert q.toast == "Only group admins can change irrigation" and q.edits == [], data
+    assert device.commands == [] and state.muted(-5) == set()
+    q = await press(bot, "ir:water:10", status="administrator", chat_id=-5, chat_type="supergroup")
+    assert device.commands == [("water", 10)] and q.edits
+    q = await press(bot, "ir:delay:24h", status="creator", chat_id=-5, chat_type="group")
+    assert device.commands[-1] == ("delay", "24h")

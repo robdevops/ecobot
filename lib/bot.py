@@ -366,6 +366,11 @@ class Bot:
         if not self.irrigation or not message:
             await query.answer()
             return
+        if message.chat.type != ChatType.PRIVATE:   # in a group only admins may use the controls (the same rule as the alert settings)
+            member = await context.bot.get_chat_member(message.chat.id, query.from_user.id)
+            if member.status not in ("administrator", "creator"):
+                await query.answer("Only group admins can change irrigation")
+                return
         if action in ("open", "close"):
             opened = arg if action == "open" and arg in irrigation_menu.SECTIONS else None
             await query.answer()
@@ -530,7 +535,7 @@ class Bot:
             return
         self.remember_chat(update)
         if msg.chat.type == ChatType.PRIVATE:
-            if self.irrigation and msg.text.strip() == templates.IRRIGATION:   # the controller's status and buttons (no model needed)
+            if self.irrigation and (msg.text.strip() == templates.IRRIGATION or irrigation_menu.asked(msg.text)):   # the controller's status and buttons (no model needed)
                 await self.send_irrigation(msg)
             elif msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
                 await msg.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
@@ -544,7 +549,11 @@ class Bot:
         replied_to_bot = (msg.reply_to_message is not None and msg.reply_to_message.from_user is not None
                           and msg.reply_to_message.from_user.id == context.bot.id)
         if mention.search(msg.text) or replied_to_bot:
-            await self.respond(update, context, mention.sub("", msg.text))
+            asked = mention.sub("", msg.text)
+            if self.irrigation and irrigation_menu.asked(asked):   # "@bot irrigation": the controller, as in a private chat
+                await self.send_irrigation(msg)
+            else:
+                await self.respond(update, context, asked)
 
     def _content(self, msg: Message, text: str, bot_id: int) -> str:
         """The user turn: the message replied to (in any chat: "the lowest day" means the one in that answer), and

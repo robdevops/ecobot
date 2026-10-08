@@ -349,7 +349,10 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1:
             if p[4] == q[4] and abs(p[0] - q[0]) < (x1 - x0) * 0.08 and abs(p[1] - q[1]) < (y_hi - y_lo) * 0.15:
                 left, right = (p, q) if p[0] <= q[0] else (q, p)
                 if (left[0] - x0) / (x1 - x0) < 0.12 or (x1 - right[0]) / (x1 - x0) < 0.12:  # no room to push sideways
-                    (p if p[1] <= q[1] else q)[4] = False  # the lower one's pill goes below its point
+                    upper, lower = (p, q) if p[1] >= q[1] else (q, p)   # one above its point, the other below, whatever side both began on
+                    upper[4] = True
+                    if lower[1] - y_lo >= 0.16 * (y_hi - y_lo):   # not on the floor, where a pill below would run under the axis
+                        lower[4] = False
                 else:
                     left[5], right[5] = "right", "left"
     for rx, ry, text, colour, above, ha in pills:

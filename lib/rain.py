@@ -46,18 +46,22 @@ def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
             {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
 
 
-def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until: int | None = None, by: str | None = None) -> Bars:
+def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until: int | None = None, by: str | None = None,
+              since: int | None = None) -> Bars:
     """Rain summed into bars (see bar_layout), one for every stretch of the period, dry ones included (a bar of 0), up to `until`
-    (epoch, default the end of the last day)."""
+    (epoch, default the end of the last day). The bars start at local midnight of the first day, or with `since` (epoch, the period's
+    own start) at the bar that holds it: a rolling last 24 hours has no bars left of its data."""
     if by in ("month", "year"):   # a figure per month or year was asked for: one bar for each, whatever the length
         return _calendar_bars(rain, tz, first, last, by)
     origin, width, per = bar_layout(tz, first, last)
     end = min(day_bounds(last, tz)[1], until) if until else day_bounds(last, tz)[1]
-    bars: dict[int, float] = dict.fromkeys(range(origin, end, width), 0.0)
+    begin = origin + (since - origin) // width * width if since is not None and since > origin else origin
+    bars: dict[int, float] = dict.fromkeys(range(begin, end, width), 0.0)
     for t, mm in rain.items():
         if mm > 0:
             k = origin + (t - origin) // width * width
-            bars[k] = bars.get(k, 0.0) + mm
+            if k >= begin:   # rain before the period's start is not part of it
+                bars[k] = bars.get(k, 0.0) + mm
     xs = sorted(bars)
     return Bars("Rain", "mm", xs, [round(bars[k], 2) for k in xs], width, per)
 

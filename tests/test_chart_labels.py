@@ -54,3 +54,33 @@ def test_a_latest_value_of_zero_is_not_labelled_for_any_of_them_and_other_readin
 def test_an_end_value_is_never_written_in_exponent_form():
     assert charts._figure(1014.8) == "1014.8" and charts._figure(1015.0) == "1015" and charts._figure(67.53) == "67.5"
     assert charts._figure(0.858) == "0.858" and charts._figure(2.0) == "2" and charts._figure(0.0) == "0"
+
+
+def annotations_of(chart):
+    """[(text, which side of its point the pill sits)] for every label drawn."""
+    import matplotlib.pyplot as plt
+    seen = []
+    original = plt.Axes.annotate
+
+    def record(self, text, *a, **k):
+        seen.append((text, k.get("va")))
+        return original(self, text, *a, **k)
+    plt.Axes.annotate = record
+    try:
+        charts.render(chart, timezone.utc)
+    finally:
+        plt.Axes.annotate = original
+    return seen
+
+
+def test_two_lows_that_end_together_at_the_right_edge_get_pills_on_opposite_sides():
+    """Humidity outdoors and indoors both ending at their lows: the pills used to sit on top of each other (both below their points)."""
+    xs = list(range(1_790_000_000, 1_790_000_000 + 49 * 1800, 1800))
+    steps = range(49)
+    outdoor = [90.0 - 44.7 * i / 48 for i in steps]                  # ends at its low, 45.3
+    indoor = [58.0 - 10.0 * i / 48 for i in steps]                   # ends at its low, 48
+    floor = [30.0 + (i % 3) for i in steps]                          # something lower, so neither low is on the floor
+    chart = Chart("T", "s", [Panel("Humidity", "%", [Line("Outdoor", xs, outdoor, reading="humidity"), Line("Indoor", xs, indoor, reading="humidity"),
+                                                    Line("Other", xs, floor, reading="humidity")], reading="humidity")])
+    sides = dict(annotations_of(chart))
+    assert {sides["45.3 %"], sides["48.0 %"]} == {"top", "bottom"}, sides                       # never the same side

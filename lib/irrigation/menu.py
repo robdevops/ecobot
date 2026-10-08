@@ -7,6 +7,8 @@ a restart):
   ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> | ir:sw:<on|off> | ir:batt:<on|off>
 """
 
+import re
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 TITLE = "🌱 Irrigation"
@@ -14,6 +16,13 @@ WATER_MINUTES = (5, 10, 20, 30)
 DELAYS = ("24h", "48h", "72h", "cancel")
 SECTIONS = ("water", "delay", "switch")
 LOW_BATTERY = 10          # below this the battery shows as 🪫
+KEYWORDS = re.compile(r"\b(irrigation|irrigate|sprinklers?|taps?|water(?:ing)?)\b", re.IGNORECASE)
+MAX_WORDS = 6             # a longer message that happens to say "water" is a question for the model
+
+
+def asked(text: str) -> bool:
+    """Does this short message ask for the controller (irrigation, water, tap, sprinkler)? The same as pressing the Irrigation button."""
+    return 0 < len(text.split()) <= MAX_WORDS and bool(KEYWORDS.search(text))
 
 
 def _button(text: str, data: str) -> InlineKeyboardButton:
