@@ -1,11 +1,12 @@
 """The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
 
-Collapsed: [💧 Water] [⏸ Pause timer] / [🔔 Alerts] [🔄 Refresh]. A press on Water, Pause timer or Alerts opens its options under the rows
-(▾ marks the open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes, then Off for the valve itself (a run is
+Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the timer is paused the Pause button is [▶️ Unpause],
+one press that ends the pause. A press on Water, Pause or Alerts opens its options under the rows (▾ marks the open one; pressing
+it again closes them). Water lists 5, 10, 20 and 30 minutes, then Off for the valve itself (a run is
 always timed). Alerts has one button per alert type, each naming what pressing it does for this chat (enable or disable). Callback data
 (short, self-contained, so an old message's buttons still work after a restart):
   ir:open:<water|delay|alerts> | ir:close | ir:refresh (read the state again, change nothing)
-  ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> (cancel = unpause) | ir:sw:off
+  ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> (cancel = unpause, the Unpause button) | ir:sw:off
   ir:batt:<on|off> | ir:pause:<on|off>      (the irrigation battery and irrigation pause alerts; on = subscribe)
 """
 
@@ -27,6 +28,17 @@ MAX_WORDS = 6             # a longer message that happens to say "water" is a qu
 def asked(text: str) -> bool:
     """Does this short message ask for the controller (irrigation, water, tap, sprinkler)? The same as pressing the Irrigation button."""
     return 0 < len(text.split()) <= MAX_WORDS and bool(KEYWORDS.search(text))
+
+
+def is_paused(status: dict) -> bool:
+    """Is the timer paused (the controller has a weather delay other than "cancel")?"""
+    return status.get("weather_delay") not in (None, "cancel")
+
+
+def paused_in(text: str | None) -> bool:
+    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller."""
+    line = next((l for l in (text or "").splitlines() if l.startswith("pause time:")), "")
+    return bool(line) and not line.removeprefix("pause time:").strip().startswith("inactive")
 
 
 def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageEntity]]:
@@ -65,18 +77,19 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
                       f"battery: {level}{bracket(alerts)}"])
 
 
-def keyboard(battery: bool, pause: bool, open: str | None = None) -> InlineKeyboardMarkup:
+def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False) -> InlineKeyboardMarkup:
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
-    names what pressing it does (disable when it is on, enable when it is off)."""
+    names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its button unpauses."""
     def head(name: str, text: str) -> InlineKeyboardButton:
         return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
-    rows = [[head("water", "💧 Water"), head("delay", "⏸ Pause timer")],
+    delay = _button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
+    rows = [[head("water", "💧 Water"), delay],
             [head("alerts", "🔔 Alerts"), _button("🔄 Refresh", "ir:refresh")]]
     if open == "water":
         rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
         rows.append([_button("Off ❌", "ir:sw:off")])
-    elif open == "delay":
-        rows.append([_button("unpause" if d == "cancel" else d, f"ir:delay:{d}") for d in DELAYS])
+    elif open == "delay" and not paused:
+        rows.append([_button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
     elif open == "alerts":
         for on, kind, name in ((battery, "batt", "battery"), (pause, "pause", "pause")):
             rows.append([_button(f"🔕 Disable {name} alerts" if on else f"🔔 Enable {name} alerts", f"ir:{kind}:{'off' if on else 'on'}")])

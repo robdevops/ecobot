@@ -329,8 +329,8 @@ class Bot:
         """Does this chat get the irrigation battery alerts (kind "irrigation") or the pause alerts ("irrigation_pause")?"""
         return bool(self.state and self.state.subscribed(chat_id, kind))
 
-    def _irrigation_keyboard(self, chat_id: int, opened: str | None = None):
-        return irrigation_menu.keyboard(self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"), opened)
+    def _irrigation_keyboard(self, chat_id: int, opened: str | None = None, paused: bool = False):
+        return irrigation_menu.keyboard(self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"), opened, paused)
 
     def _irrigation_text(self, status: dict, chat_id: int) -> str:
         return irrigation_menu.status_text(status, self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"))
@@ -343,7 +343,7 @@ class Bot:
             log.warning("Irrigation status failed: %s", e)
             await msg.reply_text("Sorry, I couldn't reach the irrigation controller.")
             return
-        await msg.reply_text(self._irrigation_text(status, msg.chat_id), reply_markup=self._irrigation_keyboard(msg.chat_id))
+        await msg.reply_text(self._irrigation_text(status, msg.chat_id), reply_markup=self._irrigation_keyboard(msg.chat_id, None, irrigation_menu.is_paused(status)))
 
     async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str | None:
         """Do what a button asks. Returns the toast to show, or None for a button that means nothing. Raises IrrigationError."""
@@ -354,7 +354,7 @@ class Bot:
             return f"Watering for {arg} minutes"
         if action == "delay" and arg in irrigation_menu.DELAYS:
             await self.irrigation.delay(arg)
-            return "Timer unpaused" if arg == "cancel" else f"Timer paused {arg}"
+            return "Unpaused" if arg == "cancel" else f"Paused {arg}"
         if action == "sw" and arg == "off":   # there is no On: a run is always timed (Water). An old message's On button does nothing
             await self.irrigation.set_switch(False)
             if self.watchdog:
@@ -377,7 +377,8 @@ class Bot:
         if action in ("open", "close"):
             opened = arg if action == "open" and arg in irrigation_menu.SECTIONS else None
             await query.answer()
-            await self._edit_irrigation(query, None, self._irrigation_keyboard(message.chat_id, opened))
+            paused = irrigation_menu.paused_in(message.text)   # the message says it: no need to ask the controller to open a list
+            await self._edit_irrigation(query, None, self._irrigation_keyboard(message.chat_id, opened, paused))
             return
         if action == "refresh":   # read the controller again and redraw: nothing is sent to it, so no wait
             try:
@@ -387,7 +388,8 @@ class Bot:
                 await query.answer("Couldn't reach the irrigation controller", show_alert=True)
                 return
             await query.answer("Refreshed")
-            await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id))
+            await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id),
+                                        self._irrigation_keyboard(message.chat_id, None, irrigation_menu.is_paused(status)))
             return
         if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:   # not while the timer is paused
             try:
@@ -396,11 +398,11 @@ class Bot:
                 log.warning("Irrigation water %s failed: %s", arg, e)
                 await query.answer("Couldn't reach the irrigation controller", show_alert=True)
                 return
-            if status.get("weather_delay") not in (None, "cancel"):
+            if irrigation_menu.is_paused(status):
                 log.info("Irrigation: water %s refused, paused for %s (chat %s)", arg, status["weather_delay"], message.chat_id)
                 await query.answer(irrigation_menu.PAUSED_ERROR)
                 text, entities = irrigation_menu.with_error(self._irrigation_text(status, message.chat_id))
-                await self._edit_irrigation(query, text, self._irrigation_keyboard(message.chat_id), entities)   # nothing was sent: no wait
+                await self._edit_irrigation(query, text, self._irrigation_keyboard(message.chat_id, None, True), entities)   # nothing was sent: no wait
                 return
         try:
             toast = await self._irrigation_act(action, arg, message.chat_id)
@@ -420,7 +422,7 @@ class Bot:
             log.warning("Irrigation status after %s %s failed: %s", action, arg, e)   # the toast said what was done; the message stays as it was
             return
         stay = "alerts" if action in ("batt", "pause") else None   # the Alerts menu stays open after a toggle, to show the new label
-        await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id, stay))
+        await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id, stay, irrigation_menu.is_paused(status)))
 
     @staticmethod
     async def _edit_irrigation(query, text: str | None, markup, entities=None):

@@ -162,14 +162,18 @@ def test_the_status_always_shows_mode_state_pause_time_and_battery_in_that_order
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
-    collapsed = [[("💧 Water", "ir:open:water"), ("⏸ Pause timer", "ir:open:delay")], [("🔔 Alerts", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
+    collapsed = [[("💧 Water", "ir:open:water"), ("⏸ Pause", "ir:open:delay")], [("🔔 Alerts", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
     assert rows(menu.keyboard(False, False)) == collapsed == rows(menu.keyboard(True, True))              # the alert states show only once Alerts is open
     water = rows(menu.keyboard(True, True, "water"))
     assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-2] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
     assert water[-1] == [("Off ❌", "ir:sw:off")]                                           # the valve itself: only off (a run is always timed)
     assert "ir:sw:on" not in [data for row in water for _, data in row]
-    assert rows(menu.keyboard(True, True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h"),
-                                                            ("unpause", "ir:delay:cancel")]
+    assert rows(menu.keyboard(True, True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h")]
+    paused = rows(menu.keyboard(True, True, paused=True))                                      # paused: the button unpauses, in one press
+    assert paused[0] == [("💧 Water", "ir:open:water"), ("▶️ Unpause", "ir:delay:cancel")] and paused[1] == collapsed[1]
+    assert rows(menu.keyboard(True, True, "delay", paused=True)) == paused                      # no list of periods while paused
+    open_water = rows(menu.keyboard(True, True, "water", paused=True))
+    assert open_water[0] == [("▾ 💧 Water", "ir:close"), ("▶️ Unpause", "ir:delay:cancel")]
     assert menu.SECTIONS == ("water", "delay", "alerts") and len(rows(menu.keyboard(True, True, "switch"))) == 2   # no Switch menu any more
     for battery, pause, battery_button, pause_button in (
             (False, False, ("🔔 Enable battery alerts", "ir:batt:on"), ("🔔 Enable pause alerts", "ir:pause:on")),
@@ -396,7 +400,7 @@ async def test_the_watchdog_leaves_a_closed_valve_alone_tries_again_on_failure_a
 # ---------- the buttons in the bot ----------
 class Query:
     def __init__(self, data, chat_id=1, chat_type="private", user=7):
-        self.data, self.message = data, NS(chat=NS(type=chat_type, id=chat_id), chat_id=chat_id)
+        self.data, self.message = data, NS(chat=NS(type=chat_type, id=chat_id), chat_id=chat_id, text="")
         self.from_user, self.toast, self.edits, self.fail = NS(id=user), "unset", [], None
 
     async def answer(self, text=None, **kw):
@@ -472,9 +476,9 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
     q = await press(bot, "ir:sw:off")
     assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and bot.watchdog.off_at is None and "state: off ❌" in q.edits[0][1]
     q = await press(bot, "ir:delay:72h")
-    assert device.commands[-1] == ("delay", "72h") and q.toast == "Timer paused 72h"
+    assert device.commands[-1] == ("delay", "72h") and q.toast == "Paused 72h"
     q = await press(bot, "ir:delay:cancel")
-    assert q.toast == "Timer unpaused" and device.commands[-1] == ("delay", "cancel")                  # unpause is the device's own "cancel"
+    assert q.toast == "Unpaused" and device.commands[-1] == ("delay", "cancel")                  # unpause is the device's own "cancel"
     n = len(device.commands)
     for data in ("ir:water:7", "ir:water:x", "ir:delay:1h", "ir:sw:on", "ir:sw:maybe", "ir:what", "ir:", "garbage"):   # nothing the buttons offer (On is gone)
         q = await press(bot, data)
@@ -653,7 +657,7 @@ async def test_a_status_that_cannot_be_read_after_a_command_leaves_the_message_a
         device.down = True                                                                          # the command went through, then the line dropped
     device.delay = delay
     q = await press(bot, "ir:delay:48h")
-    assert device.commands == [("delay", "48h")] and q.toast == "Timer paused 48h" and q.edits == []
+    assert device.commands == [("delay", "48h")] and q.toast == "Paused 48h" and q.edits == []
 
 
 @pytest.mark.parametrize("station, forecast, why", [
@@ -744,9 +748,9 @@ async def test_every_member_of_a_group_may_use_the_irrigation_buttons(tmp_path):
     q = await press(bot, "ir:sw:off", **group)
     assert device.commands[-1] == ("switch", False) and q.toast == "Switched off"
     q = await press(bot, "ir:delay:24h", **group)
-    assert device.commands[-1] == ("delay", "24h") and q.toast == "Timer paused 24h"
+    assert device.commands[-1] == ("delay", "24h") and q.toast == "Paused 24h"
     q = await press(bot, "ir:delay:cancel", **group)
-    assert q.toast == "Timer unpaused"
+    assert q.toast == "Unpaused"
     q = await press(bot, "ir:refresh", **group)
     assert q.toast == "Refreshed" and q.edits
     q = await press(bot, "ir:batt:off", **group)
@@ -762,7 +766,7 @@ def test_the_error_footer_is_bold_and_positioned_in_utf16_units():
     assert bold.offset == units("🌱 Irrigation\nmode: idle\n\n") == len("🌱 Irrigation\nmode: idle\n\n") + 1      # the emoji counts twice
 
 
-async def test_water_is_refused_while_the_timer_is_paused_with_a_toast_and_a_bold_footer_until_it_is_unpaused(tmp_path, monkeypatch):
+async def test_water_is_refused_while_paused_with_a_toast_and_a_bold_footer_until_it_is_unpaused(tmp_path, monkeypatch):
     slept = []
 
     async def sleep(seconds):
@@ -795,3 +799,45 @@ async def test_water_while_the_status_cannot_be_read_says_so_and_sends_nothing(t
     device.down = True
     q = await press(bot, "ir:water:5")
     assert q.toast == "Couldn't reach the irrigation controller" and q.edits == [] and device.commands == []
+
+
+def test_a_status_message_says_whether_it_is_paused():
+    assert menu.is_paused({"weather_delay": "24h"}) and not menu.is_paused({"weather_delay": "cancel"}) and not menu.is_paused({})
+    assert menu.paused_in(menu.status_text({"weather_delay": "72h"}, True, True)) is True
+    assert menu.paused_in(menu.status_text({"weather_delay": "cancel"}, True, True)) is False
+    assert menu.paused_in(menu.status_text({}, True, True)) is False and menu.paused_in("") is False and menu.paused_in(None) is False
+
+
+async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(tmp_path):
+    bot, state, device = irrigation_bot(tmp_path)
+    update, sent = private_message("irrigation")
+    await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    assert rows(sent[0][1]["reply_markup"])[0][1] == ("⏸ Pause", "ir:open:delay")               # not paused
+    q = await press(bot, "ir:open:delay")
+    assert [b[0] for b in rows(q.edits[0][1])[-1]] == ["24h", "48h", "72h"]
+    q = await press(bot, "ir:delay:48h")                                                        # pause it
+    assert q.toast == "Paused 48h" and "pause time: 48h" in q.edits[0][1]
+    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")                       # the redrawn button follows the controller
+    shown = q.edits[0][1]
+    q = await press_on(bot, "ir:open:water", shown)                                              # opening another list keeps the Unpause button
+    assert rows(q.edits[0][1])[0][1] == ("▶️ Unpause", "ir:delay:cancel") and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5")
+    q = await press_on(bot, "ir:close", shown)
+    assert rows(q.edits[0][1])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
+    q = await press(bot, "ir:refresh")
+    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
+    q = await press(bot, "ir:delay:cancel")                                                     # the Unpause button
+    assert q.toast == "Unpaused" and device.commands[-1] == ("delay", "cancel") and "pause time: inactive" in q.edits[0][1]
+    assert rows(q.edits[0][2])[0][1] == ("⏸ Pause", "ir:open:delay")                            # and it is Pause again
+    device.status_now["weather_delay"] = "24h"                                                  # paused from the app
+    q = await press(bot, "ir:refresh")
+    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
+    q = await press(bot, "ir:water:5")                                                          # a refused water press keeps it too
+    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel") and q.edits[0][1].endswith("paused!")
+
+
+async def press_on(bot, data, text):
+    """A press under a message that currently reads `text`."""
+    q = Query(data)
+    q.message.text = text
+    await bot.on_irrigation_button(NS(callback_query=q), NS())
+    return q
