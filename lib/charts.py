@@ -85,8 +85,8 @@ class Look:
     in_headline: bool        # the panel's name and unit are the figure's headline, and its colour key sits beside it
 
 
-BIG = Look(30, 1.5, 7.5, 18, 1.2, 9, (0.35, 0.8), 6, 15, 0.26, 8.5, 1, True, 5, False, True)
-SMALL = Look(20, 1.2, 6.5, 12, 0.8, 5, (0.25, 0.6), 4, 12, 0.3, 7, 2, False, 4, True, False)
+BIG = Look(30, 1.5, 8.5, 18, 1.2, 9, (0.35, 0.8), 6, 17, 0.26, 8.5, 1, True, 5, False, True)
+SMALL = Look(20, 1.2, 7.5, 12, 0.8, 5, (0.25, 0.6), 4, 14, 0.3, 7, 2, False, 4, True, False)
 
 
 def _look_for(chart: Chart) -> Look:
