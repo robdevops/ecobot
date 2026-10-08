@@ -1,9 +1,9 @@
 """The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
 
-Collapsed: [💧 Water] [⏸ Pause timer] / [battery button]. A press on Water or Pause timer opens its options under the rows (▾ marks the
+Collapsed: [💧 Water] [⏸ Pause timer] / [battery button] [🔄 Refresh]. A press on Water or Pause timer opens its options under the rows (▾ marks the
 open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes, then Off for the valve itself (a run is always timed). Callback data (short, self-contained, so an old message's buttons still work after
 a restart):
-  ir:open:<water|delay> | ir:close
+  ir:open:<water|delay> | ir:close | ir:refresh (read the state again, change nothing)
   ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> (cancel = unpause) | ir:sw:off | ir:batt:<on|off> (on = subscribe)
 """
 
@@ -55,7 +55,8 @@ def keyboard(subscribed: bool, open: str | None = None) -> InlineKeyboardMarkup:
     def head(name: str, text: str) -> InlineKeyboardButton:
         return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
     rows = [[head("water", "💧 Water"), head("delay", "⏸ Pause timer")],
-            [_button("🔕 Disable battery alerts" if subscribed else "🔔 Enable battery alerts", f"ir:batt:{'off' if subscribed else 'on'}")]]
+            [_button("🔕 Disable battery alerts" if subscribed else "🔔 Enable battery alerts", f"ir:batt:{'off' if subscribed else 'on'}"),
+             _button("🔄 Refresh", "ir:refresh")]]
     if open == "water":
         rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
         rows.append([_button("Off ❌", "ir:sw:off")])

@@ -384,6 +384,16 @@ class Bot:
             await query.answer()
             await self._edit_irrigation(query, None, self._irrigation_keyboard(message.chat_id, opened))
             return
+        if action == "refresh":   # read the controller again and redraw: nothing is sent to it, so no wait
+            try:
+                status = await self.irrigation.status()
+            except IrrigationError as e:
+                log.warning("Irrigation refresh failed: %s", e)
+                await query.answer("Couldn't reach the irrigation controller", show_alert=True)
+                return
+            await query.answer("Refreshed")
+            await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id))
+            return
         try:
             toast = await self._irrigation_act(action, arg, message.chat_id)
         except IrrigationError as e:

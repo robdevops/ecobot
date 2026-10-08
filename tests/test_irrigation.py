@@ -164,8 +164,8 @@ def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one(
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     assert rows(menu.keyboard(False)) == [[("💧 Water", "ir:open:water"), ("⏸ Pause timer", "ir:open:delay")],
-                                          [("🔔 Enable battery alerts", "ir:batt:on")]]                   # not subscribed: the button subscribes
-    assert rows(menu.keyboard(True))[1][0] == ("🔕 Disable battery alerts", "ir:batt:off")                 # subscribed: it unsubscribes
+                                          [("🔔 Enable battery alerts", "ir:batt:on"), ("🔄 Refresh", "ir:refresh")]]   # not subscribed: the button subscribes
+    assert rows(menu.keyboard(True))[1] == [("🔕 Disable battery alerts", "ir:batt:off"), ("🔄 Refresh", "ir:refresh")]   # subscribed: it unsubscribes
     water = rows(menu.keyboard(True, "water"))
     assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-2] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
     assert water[-1] == [("Off ❌", "ir:sw:off")]                                           # the valve itself: only off (a run is always timed)
@@ -707,3 +707,35 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     for section in (None, "sub", "unsub"):                              # every button's data fits Telegram's 64 bytes, for the new type too
         for parent in (None, "irrigation_pause", "irrigation"):
             assert all(len(data.encode()) <= 64 for row in rows(keyboard(set(), kinds, section, parent)) for _, data in row)
+
+
+async def test_refresh_reads_the_controller_again_and_redraws_without_sending_anything_or_waiting(tmp_path, monkeypatch):
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 3)
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+    monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
+    bot, state, device = irrigation_bot(tmp_path)
+    device.status_now.update(switch=True, countdown=300, work_state="auto")              # changed on the controller (its own schedule, or the app)
+    q = await press(bot, "ir:refresh")
+    assert q.toast == "Refreshed" and device.commands == [] and slept == []
+    assert q.edits[0][0] == "text" and "state: on ✅\ntime until state off: 5 min" in q.edits[0][1] and "(alerts: on)" in q.edits[0][1]
+    assert rows(q.edits[0][2])[1][1] == ("🔄 Refresh", "ir:refresh")                       # the buttons come back collapsed
+    device.down = True
+    q = await press(bot, "ir:refresh")
+    assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []
+    q = Query("ir:refresh")                                                                # the same text again: Telegram says "not modified", which is fine
+    q.fail = BadRequest("Message is not modified: specified new message content and reply markup are exactly the same")
+    device.down = False
+    await bot.on_irrigation_button(NS(callback_query=q), NS())
+    assert q.toast == "Refreshed"
+
+
+async def test_in_a_group_only_admins_may_refresh_too(tmp_path):
+    bot, state, device = irrigation_bot(tmp_path)
+    state.add_chat(-5, "Home")
+    q = await press(bot, "ir:refresh", status="member", chat_id=-5, chat_type="supergroup")
+    assert q.toast == "Only group admins can change irrigation" and q.edits == []
+    q = await press(bot, "ir:refresh", status="administrator", chat_id=-5, chat_type="supergroup")
+    assert q.toast == "Refreshed" and q.edits
