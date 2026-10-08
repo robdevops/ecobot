@@ -15,7 +15,8 @@
       "ReadNotifications",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git checkout -B claude/envirobot-next origin/main)"
+      "Bash(git checkout -B claude/envirobot-next origin/main)",
+      "mcp__Claude_Code_Remote__read_documentation"
     ]
   },
   "hooks": {
