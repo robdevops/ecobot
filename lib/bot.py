@@ -317,7 +317,7 @@ class Bot:
                 raise
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """A press on 7d / 30d / 90d / 365d under a chart: ask the chart's question again for that period and put the new chart
+        """A press on 1D / 7D / 1M / Quarter / Year under a chart: ask the chart's question again for that period and put the new chart
         in the same message."""
         query = update.callback_query
         days = periods.days_in(query.data)
@@ -330,7 +330,7 @@ class Bot:
         if intent.period_days(question, now) == days:   # the chart already shows this period
             await query.answer()
             return
-        await query.answer(f"Drawing {days} days...")
+        await query.answer(f"Drawing {periods.NAMES[days]}...")
         asked = intent.with_period(question, days, now)
         log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
         if cached := self.images.get(self.images.key(asked, days, now)):   # drawn lately: no new question

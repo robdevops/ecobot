@@ -16,11 +16,11 @@ def labels(markup):
 
 
 def test_the_row_is_always_week_month_quarter_and_year():
-    assert labels(periods.keyboard()) == [[("Week", "pd:7"), ("Month", "pd:30"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
-    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["Week", "\u25cf Month", "Quarter", "Year"]          # the chart's own period is marked
-    assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["Week", "Month", "Quarter", "Year"]
+    assert labels(periods.keyboard()) == [[("1D", "pd:1"), ("7D", "pd:7"), ("1M", "pd:30"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
+    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["1D", "7D", "\u25cf 1M", "Quarter", "Year"]          # the chart's own period is marked
+    assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["1D", "7D", "1M", "Quarter", "Year"]
     assert [t for t, _ in labels(periods.keyboard(365))[0]][-1] == "\u25cf Year"
-    assert periods.days_in("pd:90") == 90 and periods.days_in("pd:365") == 365 and periods.days_in("pd:30000") is None and periods.days_in("al:on:x") is None
+    assert periods.days_in("pd:1") == 1 and periods.days_in("pd:90") == 90 and periods.days_in("pd:365") == 365 and periods.days_in("pd:30000") is None and periods.days_in("al:on:x") is None
 
 
 def test_a_question_keeps_its_words_and_swaps_its_period():
@@ -92,7 +92,7 @@ async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
-    assert caption == "Temperature" and labels(markup) == [[("Week", "pd:7"), ("\u25cf Month", "pd:30"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
+    assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("\u25cf 1M", "pd:30"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
     assert bot.charted[(1, 101)] == "Temperature chart 30d"
 
 
@@ -108,9 +108,9 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     update = NS(callback_query=query, effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.on_period_button(update, CONTEXT)
     name, args = bot.agent.tools.calls[0]
-    assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 90 days..."]
+    assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing Quarter..."]
     caption, markup = edits[0]
-    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["Week", "Month", "\u25cf Quarter", "Year"]
+    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "\u25cf Quarter", "Year"]
     assert bot.charted[(1, 50)] == "Temperature chart 90d"
 
 
@@ -135,7 +135,7 @@ async def test_a_reply_with_period_buttons_leaves_the_persistent_keyboard_for_th
             return NS(message_id=7)
     shown = []
     carried = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard(), sent_photo=shown)
-    assert carried is False and labels(sent[0])[0][0][0] == "Week" and shown[0].message_id == 7
+    assert carried is False and labels(sent[0])[0][0][0] == "1D" and shown[0].message_id == 7
 
 
 def test_a_chart_drawn_lately_comes_back_from_the_cache_until_it_is_too_old_or_pushed_out():
