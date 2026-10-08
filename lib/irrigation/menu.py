@@ -12,13 +12,14 @@ always timed). Alerts has one button per alert type, each naming what pressing i
 import math
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)
 DELAYS = ("24h", "48h", "72h", "cancel")
 SECTIONS = ("water", "delay", "alerts")
 LOW_BATTERY = 10          # below this the battery shows as 🪫
+PAUSED_ERROR = "error: can not turn on water while paused!"
 KEYWORDS = re.compile(r"\b(irrigation|irrigate|sprinklers?|taps?|water(?:ing)?)\b", re.IGNORECASE)
 MAX_WORDS = 6             # a longer message that happens to say "water" is a question for the model
 
@@ -26,6 +27,14 @@ MAX_WORDS = 6             # a longer message that happens to say "water" is a qu
 def asked(text: str) -> bool:
     """Does this short message ask for the controller (irrigation, water, tap, sprinkler)? The same as pressing the Irrigation button."""
     return 0 < len(text.split()) <= MAX_WORDS and bool(KEYWORDS.search(text))
+
+
+def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageEntity]]:
+    """The status with an error under it as a bold footer. Plain text plus entities (no markup to escape); Telegram counts
+    positions in UTF-16 code units, where an emoji is two."""
+    units = lambda s: len(s.encode("utf-16-le")) // 2
+    head = f"{text}\n\n"
+    return head + error, [MessageEntity(MessageEntity.BOLD, units(head), units(error))]
 
 
 def _button(text: str, data: str) -> InlineKeyboardButton:

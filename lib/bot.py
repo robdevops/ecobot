@@ -389,6 +389,19 @@ class Bot:
             await query.answer("Refreshed")
             await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id))
             return
+        if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:   # not while the timer is paused
+            try:
+                status = await self.irrigation.status()
+            except IrrigationError as e:
+                log.warning("Irrigation water %s failed: %s", arg, e)
+                await query.answer("Couldn't reach the irrigation controller", show_alert=True)
+                return
+            if status.get("weather_delay") not in (None, "cancel"):
+                log.info("Irrigation: water %s refused, paused for %s (chat %s)", arg, status["weather_delay"], message.chat_id)
+                await query.answer(irrigation_menu.PAUSED_ERROR)
+                text, entities = irrigation_menu.with_error(self._irrigation_text(status, message.chat_id))
+                await self._edit_irrigation(query, text, self._irrigation_keyboard(message.chat_id), entities)   # nothing was sent: no wait
+                return
         try:
             toast = await self._irrigation_act(action, arg, message.chat_id)
         except IrrigationError as e:
@@ -410,12 +423,12 @@ class Bot:
         await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id, stay))
 
     @staticmethod
-    async def _edit_irrigation(query, text: str | None, markup):
+    async def _edit_irrigation(query, text: str | None, markup, entities=None):
         try:
             if text is None:
                 await query.edit_message_reply_markup(reply_markup=markup)
             else:
-                await query.edit_message_text(text, reply_markup=markup)
+                await query.edit_message_text(text, reply_markup=markup, **({"entities": entities} if entities else {}))
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 raise

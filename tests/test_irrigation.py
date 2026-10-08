@@ -221,6 +221,7 @@ class Device:
     async def delay(self, duration):
         self._reachable()
         self.commands.append(("delay", duration))
+        self.status_now["weather_delay"] = duration                      # the controller reports it
 
     async def set_switch(self, on):
         self._reachable()
@@ -406,10 +407,10 @@ class Query:
             raise self.fail
         self.edits.append(("markup", reply_markup))
 
-    async def edit_message_text(self, text, reply_markup=None):
+    async def edit_message_text(self, text, reply_markup=None, entities=None):
         if self.fail:
             raise self.fail
-        self.edits.append(("text", text, reply_markup))
+        self.edits.append(("text", text, reply_markup) + ((entities,) if entities else ()))
 
 
 class Remote(Device):
@@ -627,7 +628,7 @@ async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_sh
     device.status = status
     monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
     q = await press(bot, "ir:water:5")
-    assert events == [("sleep", 3), ("status",)] and q.toast == "Watering for 5 minutes"           # the command, a wait, then the fresh state
+    assert events == [("status",), ("sleep", 3), ("status",)] and q.toast == "Watering for 5 minutes"   # a look at the pause, the command, a wait, the fresh state
     for data in ("ir:delay:24h", "ir:delay:cancel", "ir:sw:off", "ir:batt:off", "ir:batt:on"):   # every action waits the same 3 seconds
         events.clear()
         await press(bot, data)
@@ -750,3 +751,47 @@ async def test_every_member_of_a_group_may_use_the_irrigation_buttons(tmp_path):
     assert q.toast == "Refreshed" and q.edits
     q = await press(bot, "ir:batt:off", **group)
     assert state.muted(-5) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
+
+
+def test_the_error_footer_is_bold_and_positioned_in_utf16_units():
+    text, entities = menu.with_error("🌱 Irrigation\nmode: idle")
+    assert text == "🌱 Irrigation\nmode: idle\n\nerror: can not turn on water while paused!"
+    (bold,) = entities
+    units = lambda s: len(s.encode("utf-16-le")) // 2
+    assert bold.type == "bold" and bold.length == units(menu.PAUSED_ERROR) == len(menu.PAUSED_ERROR)
+    assert bold.offset == units("🌱 Irrigation\nmode: idle\n\n") == len("🌱 Irrigation\nmode: idle\n\n") + 1      # the emoji counts twice
+
+
+async def test_water_is_refused_while_the_timer_is_paused_with_a_toast_and_a_bold_footer_until_it_is_unpaused(tmp_path, monkeypatch):
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 3)
+    monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
+    bot, state, device = irrigation_bot(tmp_path)
+    await press(bot, "ir:delay:48h")                                                       # paused
+    device.commands.clear()
+    slept.clear()
+    for minutes in (5, 30):
+        q = await press(bot, f"ir:water:{minutes}")
+        assert device.commands == [] and bot.watchdog.off_at is None and slept == []        # nothing sent, no run to watch, no wait
+        assert q.toast == "error: can not turn on water while paused!"
+        kind, text, markup, entities = q.edits[0]
+        assert text.startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause time: 48h") and text.endswith("\n\nerror: can not turn on water while paused!")
+        assert [(e.type, e.length) for e in entities] == [("bold", len(menu.PAUSED_ERROR))] and len(rows(markup)) == 2    # collapsed
+    q = await press(bot, "ir:sw:off")                                                      # switching off is still allowed while paused
+    assert device.commands == [("switch", False)] and "error:" not in q.edits[0][1]
+    q = await press(bot, "ir:refresh")
+    assert "error:" not in q.edits[0][1]                                                    # the footer goes with the next redraw
+    await press(bot, "ir:delay:cancel")                                                    # unpaused: water works again
+    q = await press(bot, "ir:water:10")
+    assert device.commands[-1] == ("water", 10) and q.toast == "Watering for 10 minutes" and "error:" not in q.edits[0][1]
+    assert bot.watchdog.off_at and slept[-1] == 3
+
+
+async def test_water_while_the_status_cannot_be_read_says_so_and_sends_nothing(tmp_path):
+    bot, state, device = irrigation_bot(tmp_path)
+    device.down = True
+    q = await press(bot, "ir:water:5")
+    assert q.toast == "Couldn't reach the irrigation controller" and q.edits == [] and device.commands == []
