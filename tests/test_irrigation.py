@@ -26,7 +26,6 @@ from tests.fakes import TZ, config
 def settle_at_once(monkeypatch):
     """The irrigation buttons wait a couple of seconds before redrawing the message; the tests do not."""
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)
-    monkeypatch.setattr(bot_module, "IRRIGATION_WATER_EXTRA_SECONDS", 0)
 
 
 SECRET = "s3cret"
@@ -146,11 +145,19 @@ def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one(
     assert menu.status_text({"switch": True, "battery_percentage": 73, "work_state": "auto", "weather_delay": "cancel"}) == (
         "🌱 Irrigation\nstate: on ✅\nmode: auto\nbattery: 73% 🔋")
     assert menu.status_text({"switch": False, "battery_percentage": 9, "work_state": "idle", "weather_delay": "24h"}) == (
-        "🌱 Irrigation\nstate: off ❌\nmode: idle\nbattery: 9% 🪫\nweather delay: 24h")
+        "🌱 Irrigation\nstate: off ❌\npause: 24h\nmode: idle\nbattery: 9% 🪫")
     assert "🔋" in menu.status_text({"battery_percentage": 10}) and "🪫" in menu.status_text({"battery_percentage": 0})
     assert menu.status_text({}) == "🌱 Irrigation\nstate: off ❌"                                      # a missing reading is left out
     assert menu.status_text({"switch": True, "battery_percentage": 73, "work_state": "auto"}, True) == (
         "🌱 Irrigation\nstate: on ✅\nmode: auto\nbattery: 73% 🔋 (alerts: on)")             # state, mode, then the battery with this chat's alerts in brackets
+    full = {"switch": True, "countdown": 600, "weather_delay": "48h", "work_state": "manual", "battery_percentage": 80}
+    assert menu.status_text(full, True) == (                                                  # all of it, in order
+        "🌱 Irrigation\nstate: on ✅\ntime until state off: 10 min\npause: 48h\nmode: manual\nbattery: 80% 🔋 (alerts: on)")
+    for countdown, shown in ((600, "10 min"), (601, "11 min"), (30, "1 min"), (1, "1 min"), (5400, "90 min")):    # whole minutes, a started one counts
+        assert f"time until state off: {shown}\n" in menu.status_text({**full, "countdown": countdown})
+    for hidden in ({"countdown": 0}, {"countdown": None}, {"countdown": -5}, {"switch": False, "countdown": 600}, {"switch": False}):
+        assert "time until" not in menu.status_text({**full, **hidden}), hidden             # only while it is on and counting down
+    assert "pause:" not in menu.status_text({**full, "weather_delay": "cancel"}) and "pause:" not in menu.status_text({"switch": True})
     assert menu.status_text({"switch": False}, False) == "🌱 Irrigation\nstate: off ❌\nbattery: unknown (alerts: off)"      # no battery reading
     assert menu.status_text({"battery_percentage": 4}, False).endswith("battery: 4% 🪫 (alerts: off)")
 
@@ -401,7 +408,7 @@ class Remote(Device):
     async def water(self, minutes):
         self._reachable()
         self.commands.append(("water", minutes))
-        self.status_now.update(switch=True, work_state="manual")
+        self.status_now.update(switch=True, work_state="manual", countdown=minutes * 60)
 
 
 def irrigation_bot(tmp_path, device=None):
@@ -456,6 +463,7 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
     q = await press(bot, "ir:water:10")
     assert device.commands == [("water", 10)] and q.toast == "Watering for 10 minutes" and bot.watchdog.off_at
     assert q.edits[0][0] == "text" and "state: on ✅" in q.edits[0][1] and "mode: manual" in q.edits[0][1]
+    assert "time until state off: 10 min" in q.edits[0][1]
     q = await press(bot, "ir:sw:off")
     assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and bot.watchdog.off_at is None and "state: off ❌" in q.edits[0][1]
     q = await press(bot, "ir:delay:72h")
@@ -602,8 +610,7 @@ async def test_in_a_group_only_admins_may_use_the_irrigation_buttons(tmp_path):
 
 
 async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_shows_the_chat_s_battery_alerts(tmp_path, monkeypatch):
-    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 2)
-    monkeypatch.setattr(bot_module, "IRRIGATION_WATER_EXTRA_SECONDS", 1)
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 3)
     bot, state, device = irrigation_bot(tmp_path)
     events = []
 
@@ -617,18 +624,17 @@ async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_sh
     device.status = status
     monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
     q = await press(bot, "ir:water:5")
-    assert events == [("sleep", 3), ("status",)] and q.toast == "Watering for 5 minutes"           # the command, a wait (a second longer for a run), then the fresh state
-    events.clear()
-    await press(bot, "ir:delay:24h")
-    assert events == [("sleep", 2), ("status",)]                                                    # the other commands wait the usual 2 seconds
-    await press(bot, "ir:sw:off")
-    assert events[2:] == [("sleep", 2), ("status",)]
+    assert events == [("sleep", 3), ("status",)] and q.toast == "Watering for 5 minutes"           # the command, a wait, then the fresh state
+    for data in ("ir:delay:24h", "ir:delay:cancel", "ir:sw:off", "ir:batt:off", "ir:batt:on"):   # every action waits the same 3 seconds
+        events.clear()
+        await press(bot, data)
+        assert events == [("sleep", 3), ("status",)], data
     assert "(alerts: on)" in q.edits[0][1]
     events.clear()
     q = await press(bot, "ir:open:delay")                                                           # opening a list changes nothing: no wait
     assert events == [] and q.edits[0][0] == "markup"
-    q = await press(bot, "ir:batt:off")                                                             # nothing was sent to the controller: no wait either
-    assert events == [("status",)] and "(alerts: off)" in q.edits[0][1]
+    q = await press(bot, "ir:batt:off")                                                             # an action too, so the same wait
+    assert events == [("sleep", 3), ("status",)] and "(alerts: off)" in q.edits[0][1]
     events.clear()
     device.down = True
     q = await press(bot, "ir:delay:24h")                                                            # a failed command: no wait, no redraw

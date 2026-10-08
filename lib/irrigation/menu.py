@@ -7,6 +7,7 @@ a restart):
   ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> (cancel = unpause) | ir:sw:off | ir:batt:<on|off> (on = subscribe)
 """
 
+import math
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -30,17 +31,22 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
 
 
 def status_text(status: dict, alerts: bool | None = None) -> str:
-    """The controller's state, in this order: on or off, mode, the battery with whether this chat gets its alerts (`alerts`; left out
-    when not given) in brackets, and the weather delay when one is active."""
-    lines = [TITLE, f"state: {'on ✅' if status.get('switch') else 'off ❌'}"]
+    """The controller's state, in this order: on or off; the minutes left of a run (only while it is on and counting down); the pause
+    (the weather delay, only when one is active); the mode; and the battery with whether this chat gets its alerts (`alerts`; left out
+    when not given) in brackets."""
+    on = bool(status.get("switch"))
+    lines = [TITLE, f"state: {'on ✅' if on else 'off ❌'}"]
+    countdown = status.get("countdown")
+    if on and isinstance(countdown, (int, float)) and countdown > 0:
+        lines.append(f"time until state off: {math.ceil(countdown / 60)} min")
+    if status.get("weather_delay") not in (None, "cancel"):
+        lines.append(f"pause: {status['weather_delay']}")
     if status.get("work_state"):
         lines.append(f"mode: {status['work_state']}")
     battery = status.get("battery_percentage")
     if battery is not None or alerts is not None:
         level = f"{battery}% {'🔋' if battery >= LOW_BATTERY else '🪫'}" if battery is not None else "unknown"
         lines.append(f"battery: {level}" + (f" (alerts: {'on' if alerts else 'off'})" if alerts is not None else ""))
-    if status.get("weather_delay") not in (None, "cancel"):
-        lines.append(f"weather delay: {status['weather_delay']}")
     return "\n".join(lines)
 
 
