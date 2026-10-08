@@ -29,14 +29,16 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data)
 
 
-def status_text(status: dict) -> str:
-    """The controller's state: on or off, battery, mode, and the weather delay when one is active."""
+def status_text(status: dict, alerts: bool | None = None) -> str:
+    """The controller's state, in this order: on or off, mode, the battery with whether this chat gets its alerts (`alerts`; left out
+    when not given) in brackets, and the weather delay when one is active."""
     lines = [TITLE, f"state: {'on ✅' if status.get('switch') else 'off ❌'}"]
-    battery = status.get("battery_percentage")
-    if battery is not None:
-        lines.append(f"battery: {battery}% {'🔋' if battery >= LOW_BATTERY else '🪫'}")
     if status.get("work_state"):
         lines.append(f"mode: {status['work_state']}")
+    battery = status.get("battery_percentage")
+    if battery is not None or alerts is not None:
+        level = f"{battery}% {'🔋' if battery >= LOW_BATTERY else '🪫'}" if battery is not None else "unknown"
+        lines.append(f"battery: {level}" + (f" (alerts: {'on' if alerts else 'off'})" if alerts is not None else ""))
     if status.get("weather_delay") not in (None, "cancel"):
         lines.append(f"weather delay: {status['weather_delay']}")
     return "\n".join(lines)

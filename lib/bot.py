@@ -40,6 +40,7 @@ PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
+IRRIGATION_SETTLE_SECONDS = 2   # after an irrigation button, the controller is given this long to report its new state before the message is redrawn
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
@@ -324,8 +325,15 @@ class Bot:
                 raise
 
     # ---------- irrigation ----------
+    def _irrigation_alerts(self, chat_id: int) -> bool:
+        """Does this chat get the irrigation battery alerts?"""
+        return bool(self.state and self.state.subscribed(chat_id, "irrigation"))
+
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None):
-        return irrigation_menu.keyboard(bool(self.state and self.state.subscribed(chat_id, "irrigation")), opened)
+        return irrigation_menu.keyboard(self._irrigation_alerts(chat_id), opened)
+
+    def _irrigation_text(self, status: dict, chat_id: int) -> str:
+        return irrigation_menu.status_text(status, self._irrigation_alerts(chat_id))
 
     async def send_irrigation(self, msg: Message):
         """The Irrigation button: the controller's status, with its buttons."""
@@ -335,7 +343,7 @@ class Bot:
             log.warning("Irrigation status failed: %s", e)
             await msg.reply_text("Sorry, I couldn't reach the irrigation controller.")
             return
-        await msg.reply_text(irrigation_menu.status_text(status), reply_markup=self._irrigation_keyboard(msg.chat_id))
+        await msg.reply_text(self._irrigation_text(status, msg.chat_id), reply_markup=self._irrigation_keyboard(msg.chat_id))
 
     async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str | None:
         """Do what a button asks. Returns the toast to show, or None for a button that means nothing. Raises IrrigationError."""
@@ -378,17 +386,23 @@ class Bot:
             return
         try:
             toast = await self._irrigation_act(action, arg, message.chat_id)
-            if toast is None:
-                await query.answer()
-                return
-            status = await self.irrigation.status()
         except IrrigationError as e:
             log.warning("Irrigation %s %s failed: %s", action, arg, e)
             await query.answer("Couldn't reach the irrigation controller", show_alert=True)
             return
+        if toast is None:
+            await query.answer()
+            return
         log.info("Irrigation: %s %s in chat %s", action, arg, message.chat_id)
         await query.answer(toast)
-        await self._edit_irrigation(query, irrigation_menu.status_text(status), self._irrigation_keyboard(message.chat_id))
+        if action != "batt":   # a command was sent: the controller takes a moment to report the new state
+            await asyncio.sleep(IRRIGATION_SETTLE_SECONDS)
+        try:
+            status = await self.irrigation.status()
+        except IrrigationError as e:
+            log.warning("Irrigation status after %s %s failed: %s", action, arg, e)   # the toast said what was done; the message stays as it was
+            return
+        await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id))
 
     @staticmethod
     async def _edit_irrigation(query, text: str | None, markup):

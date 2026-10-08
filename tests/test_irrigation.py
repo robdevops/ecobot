@@ -11,6 +11,7 @@ import httpx
 import pytest
 from telegram.error import BadRequest
 
+import lib.bot as bot_module
 from lib import templates
 from lib.alerts import AlertState, IrrigationMonitor
 from lib.alerts import irrigation as monitor_module
@@ -20,6 +21,12 @@ from lib.config import Config
 from lib.irrigation import IrrigationError, Tuya, Watchdog, menu
 from lib.irrigation.tuya import sign
 from tests.fakes import TZ, config
+
+@pytest.fixture(autouse=True)
+def settle_at_once(monkeypatch):
+    """The irrigation buttons wait a couple of seconds before redrawing the message; the tests do not."""
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)
+
 
 SECRET = "s3cret"
 STATUS = [{"code": "switch", "value": False}, {"code": "battery_percentage", "value": 100}, {"code": "weather_delay", "value": "cancel"},
@@ -136,11 +143,15 @@ def rows(markup):
 
 def test_the_status_says_switch_battery_mode_and_a_delay_only_when_there_is_one():
     assert menu.status_text({"switch": True, "battery_percentage": 73, "work_state": "auto", "weather_delay": "cancel"}) == (
-        "🌱 Irrigation\nstate: on ✅\nbattery: 73% 🔋\nmode: auto")
+        "🌱 Irrigation\nstate: on ✅\nmode: auto\nbattery: 73% 🔋")
     assert menu.status_text({"switch": False, "battery_percentage": 9, "work_state": "idle", "weather_delay": "24h"}) == (
-        "🌱 Irrigation\nstate: off ❌\nbattery: 9% 🪫\nmode: idle\nweather delay: 24h")
+        "🌱 Irrigation\nstate: off ❌\nmode: idle\nbattery: 9% 🪫\nweather delay: 24h")
     assert "🔋" in menu.status_text({"battery_percentage": 10}) and "🪫" in menu.status_text({"battery_percentage": 0})
     assert menu.status_text({}) == "🌱 Irrigation\nstate: off ❌"                                      # a missing reading is left out
+    assert menu.status_text({"switch": True, "battery_percentage": 73, "work_state": "auto"}, True) == (
+        "🌱 Irrigation\nstate: on ✅\nmode: auto\nbattery: 73% 🔋 (alerts: on)")             # state, mode, then the battery with this chat's alerts in brackets
+    assert menu.status_text({"switch": False}, False) == "🌱 Irrigation\nstate: off ❌\nbattery: unknown (alerts: off)"      # no battery reading
+    assert menu.status_text({"battery_percentage": 4}, False).endswith("battery: 4% 🪫 (alerts: off)")
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
@@ -187,10 +198,16 @@ class Device:
             raise IrrigationError("Tuya request failed (ConnectError)")
         return dict(self.status_now)
 
+    def _reachable(self):
+        if self.down:
+            raise IrrigationError("Tuya request failed (ConnectError)")
+
     async def delay(self, duration):
+        self._reachable()
         self.commands.append(("delay", duration))
 
     async def set_switch(self, on):
+        self._reachable()
         self.commands.append(("switch", on))
         self.status_now["switch"] = on
 
@@ -381,6 +398,7 @@ class Remote(Device):
     """The controller as the bot's buttons see it: also water()."""
 
     async def water(self, minutes):
+        self._reachable()
         self.commands.append(("water", minutes))
         self.status_now.update(switch=True, work_state="manual")
 
@@ -414,7 +432,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
              message_thread_id=None, is_topic_message=False)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob"))
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))                          # no model is involved (the agent is None)
-    assert sent[0][0].startswith("🌱 Irrigation\nstate: off ❌\nbattery: 100% 🔋\nmode: idle")
+    assert sent[0][0].startswith("🌱 Irrigation\nstate: off ❌\nmode: idle\nbattery: 100% 🔋 (alerts: on)")
     assert rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water") and rows(sent[0][1]["reply_markup"])[1][0][1] == "ir:batt:off"   # every chat starts subscribed
     device.down = True
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))
@@ -580,3 +598,42 @@ async def test_in_a_group_only_admins_may_use_the_irrigation_buttons(tmp_path):
     assert device.commands == [("water", 10)] and q.edits
     q = await press(bot, "ir:delay:24h", status="creator", chat_id=-5, chat_type="group")
     assert device.commands[-1] == ("delay", "24h")
+
+
+async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_shows_the_chat_s_battery_alerts(tmp_path, monkeypatch):
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 2)
+    bot, state, device = irrigation_bot(tmp_path)
+    events = []
+
+    async def sleep(seconds):
+        events.append(("sleep", seconds))
+    original_status = device.status
+
+    async def status():
+        events.append(("status",))
+        return await original_status()
+    device.status = status
+    monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
+    q = await press(bot, "ir:water:5")
+    assert events == [("sleep", 2), ("status",)] and q.toast == "Watering for 5 minutes"           # the command, a wait, then the fresh state
+    assert "(alerts: on)" in q.edits[0][1]
+    events.clear()
+    q = await press(bot, "ir:open:delay")                                                           # opening a list changes nothing: no wait
+    assert events == [] and q.edits[0][0] == "markup"
+    q = await press(bot, "ir:batt:off")                                                             # nothing was sent to the controller: no wait either
+    assert events == [("status",)] and "(alerts: off)" in q.edits[0][1]
+    events.clear()
+    device.down = True
+    q = await press(bot, "ir:delay:24h")                                                            # a failed command: no wait, no redraw
+    assert events == [] and q.toast == "Couldn't reach the irrigation controller" and q.edits == []
+
+
+async def test_a_status_that_cannot_be_read_after_a_command_leaves_the_message_alone(tmp_path):
+    bot, state, device = irrigation_bot(tmp_path)
+
+    async def delay(duration):
+        device.commands.append(("delay", duration))
+        device.down = True                                                                          # the command went through, then the line dropped
+    device.delay = delay
+    q = await press(bot, "ir:delay:48h")
+    assert device.commands == [("delay", "48h")] and q.toast == "Timer paused 48h" and q.edits == []
