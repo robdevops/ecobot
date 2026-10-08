@@ -143,22 +143,22 @@ def rows(markup):
 
 def test_the_status_always_shows_mode_state_pause_time_and_battery_in_that_order():
     assert menu.status_text({"switch": True, "battery_percentage": 73, "work_state": "auto", "weather_delay": "cancel"}) == (
-        "🌱 Irrigation\nmode: auto\nstate: on ✅\npause time: inactive\nbattery: 73% 🔋")
+        "🌱 Irrigation\nmode: auto\nstate: on ✅\npause: not paused\nbattery: 73% 🔋")
     assert menu.status_text({"switch": False, "battery_percentage": 9, "work_state": "idle", "weather_delay": "24h"}) == (
-        "🌱 Irrigation\nmode: idle\nstate: off ❌\npause time: 24h\nbattery: 9% 🪫")
+        "🌱 Irrigation\nmode: idle\nstate: off ❌\npause: 24h\nbattery: 9% 🪫")
     assert "🔋" in menu.status_text({"battery_percentage": 10}) and "🪫" in menu.status_text({"battery_percentage": 0})
-    assert menu.status_text({}) == "🌱 Irrigation\nmode: unknown\nstate: off ❌\npause time: inactive\nbattery: unknown"   # every element, even unread
+    assert menu.status_text({}) == "🌱 Irrigation\nmode: unknown\nstate: off ❌\npause: not paused\nbattery: unknown"   # every element, even unread
     full = {"switch": True, "countdown": 600, "weather_delay": "48h", "work_state": "manual", "battery_percentage": 80}
     assert menu.status_text(full, True, False) == (                                          # all of it, with the chat's alerts in brackets
-        "🌱 Irrigation\nmode: manual\nstate: on ✅ (10 mins until off)\npause time: 48h (alerts: off)\nbattery: 80% 🔋 (alerts: on)")
-    assert menu.status_text({**full, "weather_delay": "cancel"}, False, True).splitlines()[3] == "pause time: inactive (alerts: on)"
+        "🌱 Irrigation\nmode: manual\nstate: on ✅ (10 mins until off)\npause: 48h (alerts: off)\nbattery: 80% 🔋 (alerts: on)")
+    assert menu.status_text({**full, "weather_delay": "cancel"}, False, True).splitlines()[3] == "pause: not paused (alerts: on)"
     for countdown, shown in ((600, "10 mins"), (601, "11 mins"), (30, "1 min"), (1, "1 min"), (5400, "90 mins")):    # whole minutes, a started one counts
         assert f"state: on ✅ ({shown} until off)\n" in menu.status_text({**full, "countdown": countdown})
     for hidden in ({"countdown": 0}, {"countdown": None}, {"countdown": -5}, {"switch": False, "countdown": 600}, {"switch": False}):
         assert "until off" not in menu.status_text({**full, **hidden}), hidden               # only while it is on and counting down
     assert menu.status_text({"switch": True}).splitlines()[2] == "state: on ✅"                 # on, but no countdown: just on
     assert "(alerts" not in menu.status_text(full)                                           # no chat given: no brackets
-    assert menu.status_text({"switch": False}, True).endswith("battery: unknown (alerts: on)") and "pause time: inactive\n" in menu.status_text({}, True)
+    assert menu.status_text({"switch": False}, True).endswith("battery: unknown (alerts: on)") and "pause: not paused\n" in menu.status_text({}, True)
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
@@ -449,7 +449,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
              message_thread_id=None, is_topic_message=False)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob"))
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))                          # no model is involved (the agent is None)
-    assert sent[0][0].startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause time: inactive (alerts: on)\nbattery: 100% 🔋 (alerts: on)")
+    assert sent[0][0].startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: on)")
     assert rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water") and rows(sent[0][1]["reply_markup"])[1][0] == ("🔔 Alerts", "ir:open:alerts")
     device.down = True
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))
@@ -493,10 +493,10 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
     q = await press(bot, "ir:batt:off")
     assert state.muted(1) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
     assert rows(q.edits[0][2])[2:] == [[("🔔 Enable battery alerts", "ir:batt:on")], [("🔕 Disable pause alerts", "ir:pause:off")]]   # still open
-    assert q.edits[0][1].endswith("pause time: inactive (alerts: on)\nbattery: 100% 🔋 (alerts: off)")        # the status text follows
+    assert q.edits[0][1].endswith("pause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: off)")        # the status text follows
     q = await press(bot, "ir:pause:off")
     assert state.muted(1) == {"irrigation", "irrigation_pause"} and q.toast == "Irrigation pause alerts off in this chat"
-    assert q.edits[0][1].endswith("pause time: inactive (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [("🔔 Enable pause alerts", "ir:pause:on")]
+    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [("🔔 Enable pause alerts", "ir:pause:on")]
     q = await press(bot, "ir:batt:on")
     assert state.muted(1) == {"irrigation_pause"} and q.toast == "Irrigation battery alerts on in this chat"           # the other type is untouched
     q = await press(bot, "ir:pause:on")
@@ -782,7 +782,7 @@ async def test_water_is_refused_while_paused_with_a_toast_and_a_bold_footer_unti
         assert device.commands == [] and bot.watchdog.off_at is None and slept == []        # nothing sent, no run to watch, no wait
         assert q.toast == "error: can not turn on water while paused!"
         kind, text, markup, entities = q.edits[0]
-        assert text.startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause time: 48h") and text.endswith("\n\nerror: can not turn on water while paused!")
+        assert text.startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause: 48h") and text.endswith("\n\nerror: can not turn on water while paused!")
         assert [(e.type, e.length) for e in entities] == [("bold", len(menu.PAUSED_ERROR))] and len(rows(markup)) == 2    # collapsed
     q = await press(bot, "ir:sw:off")                                                      # switching off is still allowed while paused
     assert device.commands == [("switch", False)] and "error:" not in q.edits[0][1]
@@ -806,6 +806,7 @@ def test_a_status_message_says_whether_it_is_paused():
     assert menu.paused_in(menu.status_text({"weather_delay": "72h"}, True, True)) is True
     assert menu.paused_in(menu.status_text({"weather_delay": "cancel"}, True, True)) is False
     assert menu.paused_in(menu.status_text({}, True, True)) is False and menu.paused_in("") is False and menu.paused_in(None) is False
+    assert menu.paused_in("mode: idle\npause time: 24h (alerts: on)") is True and menu.paused_in("pause time: inactive (alerts: on)") is False   # an older message
 
 
 async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(tmp_path):
@@ -816,7 +817,7 @@ async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(t
     q = await press(bot, "ir:open:delay")
     assert [b[0] for b in rows(q.edits[0][1])[-1]] == ["24h", "48h", "72h"]
     q = await press(bot, "ir:delay:48h")                                                        # pause it
-    assert q.toast == "Paused 48h" and "pause time: 48h" in q.edits[0][1]
+    assert q.toast == "Paused 48h" and "pause: 48h" in q.edits[0][1]
     assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")                       # the redrawn button follows the controller
     shown = q.edits[0][1]
     q = await press_on(bot, "ir:open:water", shown)                                              # opening another list keeps the Unpause button
@@ -826,7 +827,7 @@ async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(t
     q = await press(bot, "ir:refresh")
     assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
     q = await press(bot, "ir:delay:cancel")                                                     # the Unpause button
-    assert q.toast == "Unpaused" and device.commands[-1] == ("delay", "cancel") and "pause time: inactive" in q.edits[0][1]
+    assert q.toast == "Unpaused" and device.commands[-1] == ("delay", "cancel") and "pause: not paused" in q.edits[0][1]
     assert rows(q.edits[0][2])[0][1] == ("⏸ Pause", "ir:open:delay")                            # and it is Pause again
     device.status_now["weather_delay"] = "24h"                                                  # paused from the app
     q = await press(bot, "ir:refresh")

@@ -36,9 +36,11 @@ def is_paused(status: dict) -> bool:
 
 
 def paused_in(text: str | None) -> bool:
-    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller."""
-    line = next((l for l in (text or "").splitlines() if l.startswith("pause time:")), "")
-    return bool(line) and not line.removeprefix("pause time:").strip().startswith("inactive")
+    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller.
+    Messages sent before the line was reworded ("pause time: inactive") still read right."""
+    line = next((l for l in (text or "").splitlines() if l.startswith(("pause:", "pause time:"))), "")
+    value = line.partition(":")[2].strip()
+    return bool(value) and not value.startswith(("not paused", "inactive"))
 
 
 def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageEntity]]:
@@ -57,7 +59,7 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
     """The controller's state, every line always there, in this order:
       mode: auto
       state: on ✅ (10 mins until off)        (the minutes only while it is on and counting down)
-      pause time: 24h (alerts: on)            ("inactive" when there is no pause)
+      pause: 24h (alerts: on)                 ("not paused" when there is no pause)
       battery: 80% 🔋 (alerts: on)
     `alerts` and `pause_alerts`: whether this chat gets the battery / pause alerts (the brackets are left out when not given)."""
     on = bool(status.get("switch"))
@@ -73,7 +75,7 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
     return "\n".join([TITLE,
                       f"mode: {status.get('work_state') or 'unknown'}",
                       f"state: {'on ✅' if on else 'off ❌'}{left}",
-                      f"pause time: {'inactive' if delay in (None, 'cancel') else delay}{bracket(pause_alerts)}",
+                      f"pause: {'not paused' if delay in (None, 'cancel') else delay}{bracket(pause_alerts)}",
                       f"battery: {level}{bracket(alerts)}"])
 
 
