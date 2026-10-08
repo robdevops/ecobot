@@ -41,6 +41,7 @@ TURN_SECONDS = 90            # a question that takes longer is given up on, so t
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
 IRRIGATION_SETTLE_SECONDS = 2   # after an irrigation button, the controller is given this long to report its new state before the message is redrawn
+IRRIGATION_WATER_EXTRA_SECONDS = 1   # a run just started takes the longest to show: this much more after a Water button
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
@@ -396,7 +397,7 @@ class Bot:
         log.info("Irrigation: %s %s in chat %s", action, arg, message.chat_id)
         await query.answer(toast)
         if action != "batt":   # a command was sent: the controller takes a moment to report the new state
-            await asyncio.sleep(IRRIGATION_SETTLE_SECONDS)
+            await asyncio.sleep(IRRIGATION_SETTLE_SECONDS + (IRRIGATION_WATER_EXTRA_SECONDS if action == "water" else 0))
         try:
             status = await self.irrigation.status()
         except IrrigationError as e:

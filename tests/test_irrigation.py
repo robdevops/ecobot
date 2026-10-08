@@ -26,6 +26,7 @@ from tests.fakes import TZ, config
 def settle_at_once(monkeypatch):
     """The irrigation buttons wait a couple of seconds before redrawing the message; the tests do not."""
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(bot_module, "IRRIGATION_WATER_EXTRA_SECONDS", 0)
 
 
 SECRET = "s3cret"
@@ -602,6 +603,7 @@ async def test_in_a_group_only_admins_may_use_the_irrigation_buttons(tmp_path):
 
 async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_shows_the_chat_s_battery_alerts(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 2)
+    monkeypatch.setattr(bot_module, "IRRIGATION_WATER_EXTRA_SECONDS", 1)
     bot, state, device = irrigation_bot(tmp_path)
     events = []
 
@@ -615,7 +617,12 @@ async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_sh
     device.status = status
     monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
     q = await press(bot, "ir:water:5")
-    assert events == [("sleep", 2), ("status",)] and q.toast == "Watering for 5 minutes"           # the command, a wait, then the fresh state
+    assert events == [("sleep", 3), ("status",)] and q.toast == "Watering for 5 minutes"           # the command, a wait (a second longer for a run), then the fresh state
+    events.clear()
+    await press(bot, "ir:delay:24h")
+    assert events == [("sleep", 2), ("status",)]                                                    # the other commands wait the usual 2 seconds
+    await press(bot, "ir:sw:off")
+    assert events[2:] == [("sleep", 2), ("status",)]
     assert "(alerts: on)" in q.edits[0][1]
     events.clear()
     q = await press(bot, "ir:open:delay")                                                           # opening a list changes nothing: no wait
