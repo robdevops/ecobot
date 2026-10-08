@@ -1,4 +1,4 @@
-"""The period buttons under a chart: 1D, 7D, 1M, Quarter and Year (1, 7, 30, 90 and 365 days), always all five, the chart's own marked with ●. Pressing one redraws the chart
+"""The period buttons under a chart: 1D, 7D, 1M, 3M and 1Y (1, 7, 30, 90 and 365 days), always all five, the chart's own marked with ●. Pressing one redraws the chart
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 from collections import OrderedDict
@@ -6,7 +6,7 @@ from collections import OrderedDict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 PERIODS = (1, 7, 30, 90, 365)
-NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "Quarter", 365: "Year"}   # what the buttons say
+NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # what the buttons say
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose question is kept, newest first to stay
 

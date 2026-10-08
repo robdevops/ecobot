@@ -317,7 +317,7 @@ class Bot:
                 raise
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """A press on 1D / 7D / 1M / Quarter / Year under a chart: ask the chart's question again for that period and put the new chart
+        """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart
         in the same message."""
         query = update.callback_query
         days = periods.days_in(query.data)

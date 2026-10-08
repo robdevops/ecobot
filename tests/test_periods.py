@@ -16,10 +16,10 @@ def labels(markup):
 
 
 def test_the_row_is_always_week_month_quarter_and_year():
-    assert labels(periods.keyboard()) == [[("1D", "pd:1"), ("7D", "pd:7"), ("1M", "pd:30"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
-    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["1D", "7D", "\u25cf 1M", "Quarter", "Year"]          # the chart's own period is marked
-    assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["1D", "7D", "1M", "Quarter", "Year"]
-    assert [t for t, _ in labels(periods.keyboard(365))[0]][-1] == "\u25cf Year"
+    assert labels(periods.keyboard()) == [[("1D", "pd:1"), ("7D", "pd:7"), ("1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
+    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["1D", "7D", "\u25cf 1M", "3M", "1Y"]          # the chart's own period is marked
+    assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["1D", "7D", "1M", "3M", "1Y"]
+    assert [t for t, _ in labels(periods.keyboard(365))[0]][-1] == "\u25cf 1Y"
     assert periods.days_in("pd:1") == 1 and periods.days_in("pd:90") == 90 and periods.days_in("pd:365") == 365 and periods.days_in("pd:30000") is None and periods.days_in("al:on:x") is None
 
 
@@ -92,7 +92,7 @@ async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
-    assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("\u25cf 1M", "pd:30"), ("Quarter", "pd:90"), ("Year", "pd:365")]]
+    assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("\u25cf 1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
     assert bot.charted[(1, 101)] == "Temperature chart 30d"
 
 
@@ -108,9 +108,9 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     update = NS(callback_query=query, effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.on_period_button(update, CONTEXT)
     name, args = bot.agent.tools.calls[0]
-    assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing Quarter..."]
+    assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 3M..."]
     caption, markup = edits[0]
-    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "\u25cf Quarter", "Year"]
+    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "\u25cf 3M", "1Y"]
     assert bot.charted[(1, 50)] == "Temperature chart 90d"
 
 
