@@ -2,14 +2,30 @@
   "permissions": {
     "allow": [
       "Bash(python scripts/eval_prompts.py)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "mcp__github__pull_request_read",
+      "mcp__github__list_pull_requests",
+      "Bash(git push -u origin claude/envirobot-next)",
+      "mcp__github__create_pull_request",
+      "mcp__github__merge_pull_request",
+      "mcp__github__subscribe_pr_activity",
+      "mcp__github__unsubscribe_pr_activity",
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__Claude_Code_Remote__delete_trigger",
+      "ReadNotifications",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout -B claude/envirobot-next origin/main)"
     ]
   },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh" }
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh"
+          }
         ]
       }
     ]
