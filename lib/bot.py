@@ -374,11 +374,6 @@ class Bot:
         if not self.irrigation or not message:
             await query.answer()
             return
-        if message.chat.type != ChatType.PRIVATE:   # in a group only admins may use the controls (the same rule as the alert settings)
-            member = await context.bot.get_chat_member(message.chat.id, query.from_user.id)
-            if member.status not in ("administrator", "creator"):
-                await query.answer("Only group admins can change irrigation")
-                return
         if action in ("open", "close"):
             opened = arg if action == "open" and arg in irrigation_menu.SECTIONS else None
             await query.answer()

@@ -421,15 +421,9 @@ def irrigation_bot(tmp_path, device=None):
     return Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], state, device), state, device
 
 
-def admin(status):
-    async def get_chat_member(chat_id, user_id):
-        return NS(status=status)
-    return NS(bot=NS(get_chat_member=get_chat_member))
-
-
-async def press(bot, data, status=None, **kw):
+async def press(bot, data, **kw):
     q = Query(data, **kw)
-    await bot.on_irrigation_button(NS(callback_query=q), admin(status) if status else NS())
+    await bot.on_irrigation_button(NS(callback_query=q), NS())     # no chat-member lookup is available: none is made
     return q
 
 
@@ -599,19 +593,6 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
     assert asked[-1] == "irrigation"                                                       # nothing to show: the model answers as before
 
 
-async def test_in_a_group_only_admins_may_use_the_irrigation_buttons(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
-    state.add_chat(-5, "Home")
-    for data in ("ir:open:water", "ir:water:10", "ir:sw:off", "ir:batt:off"):
-        q = await press(bot, data, status="member", chat_id=-5, chat_type="supergroup")
-        assert q.toast == "Only group admins can change irrigation" and q.edits == [], data
-    assert device.commands == [] and state.muted(-5) == set()
-    q = await press(bot, "ir:water:10", status="administrator", chat_id=-5, chat_type="supergroup")
-    assert device.commands == [("water", 10)] and q.edits
-    q = await press(bot, "ir:delay:24h", status="creator", chat_id=-5, chat_type="group")
-    assert device.commands[-1] == ("delay", "24h")
-
-
 async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_shows_the_chat_s_battery_alerts(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 3)
     bot, state, device = irrigation_bot(tmp_path)
@@ -732,10 +713,21 @@ async def test_refresh_reads_the_controller_again_and_redraws_without_sending_an
     assert q.toast == "Refreshed"
 
 
-async def test_in_a_group_only_admins_may_refresh_too(tmp_path):
+async def test_every_member_of_a_group_may_use_the_irrigation_buttons(tmp_path):
     bot, state, device = irrigation_bot(tmp_path)
     state.add_chat(-5, "Home")
-    q = await press(bot, "ir:refresh", status="member", chat_id=-5, chat_type="supergroup")
-    assert q.toast == "Only group admins can change irrigation" and q.edits == []
-    q = await press(bot, "ir:refresh", status="administrator", chat_id=-5, chat_type="supergroup")
+    group = dict(chat_id=-5, chat_type="supergroup", user=42)                                 # an ordinary member: no admin check is made
+    q = await press(bot, "ir:open:water", **group)
+    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5")
+    q = await press(bot, "ir:water:10", **group)
+    assert device.commands == [("water", 10)] and q.toast == "Watering for 10 minutes" and "state: on ✅" in q.edits[0][1]
+    q = await press(bot, "ir:sw:off", **group)
+    assert device.commands[-1] == ("switch", False) and q.toast == "Switched off"
+    q = await press(bot, "ir:delay:24h", **group)
+    assert device.commands[-1] == ("delay", "24h") and q.toast == "Timer paused 24h"
+    q = await press(bot, "ir:delay:cancel", **group)
+    assert q.toast == "Timer unpaused"
+    q = await press(bot, "ir:refresh", **group)
     assert q.toast == "Refreshed" and q.edits
+    q = await press(bot, "ir:batt:off", **group)
+    assert state.muted(-5) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
