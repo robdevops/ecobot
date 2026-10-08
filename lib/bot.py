@@ -325,15 +325,15 @@ class Bot:
                 raise
 
     # ---------- irrigation ----------
-    def _irrigation_alerts(self, chat_id: int) -> bool:
-        """Does this chat get the irrigation battery alerts?"""
-        return bool(self.state and self.state.subscribed(chat_id, "irrigation"))
+    def _irrigation_alerts(self, chat_id: int, kind: str = "irrigation") -> bool:
+        """Does this chat get the irrigation battery alerts (kind "irrigation") or the pause alerts ("irrigation_pause")?"""
+        return bool(self.state and self.state.subscribed(chat_id, kind))
 
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None):
-        return irrigation_menu.keyboard(self._irrigation_alerts(chat_id), opened)
+        return irrigation_menu.keyboard(self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"), opened)
 
     def _irrigation_text(self, status: dict, chat_id: int) -> str:
-        return irrigation_menu.status_text(status, self._irrigation_alerts(chat_id))
+        return irrigation_menu.status_text(status, self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"))
 
     async def send_irrigation(self, msg: Message):
         """The Irrigation button: the controller's status, with its buttons."""
@@ -360,9 +360,9 @@ class Bot:
             if self.watchdog:
                 self.watchdog.disarm()
             return "Switched off"
-        if action == "batt" and arg in ("on", "off") and self.state and chat_id in self.state.chats:
-            self.state.set_kind(chat_id, "irrigation", arg == "on")
-            return f"Irrigation battery alerts {arg} in this chat"
+        if action in ("batt", "pause") and arg in ("on", "off") and self.state and chat_id in self.state.chats:
+            self.state.set_kind(chat_id, "irrigation" if action == "batt" else "irrigation_pause", arg == "on")
+            return f"Irrigation {'battery' if action == 'batt' else 'pause'} alerts {arg} in this chat"
         return None
 
     async def on_irrigation_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -406,7 +406,8 @@ class Bot:
         except IrrigationError as e:
             log.warning("Irrigation status after %s %s failed: %s", action, arg, e)   # the toast said what was done; the message stays as it was
             return
-        await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id))
+        stay = "alerts" if action in ("batt", "pause") else None   # the Alerts menu stays open after a toggle, to show the new label
+        await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id, stay))
 
     @staticmethod
     async def _edit_irrigation(query, text: str | None, markup):
