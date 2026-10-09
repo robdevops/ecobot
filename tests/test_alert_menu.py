@@ -85,7 +85,8 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     await notifier("Gusts", kind="gusts")
     assert [(c, t.split("\n")[0]) for c, t, _ in bot.sent] == [(1, "It's raining"), (1, "Gusts"), (2, "Gusts")]
     markup = bot.sent[0][2]["reply_markup"]
-    assert rows(markup) == [[("➕ Subscribe", "al:open:sub:rain"), ("➖ Unsubscribe", "al:open:unsub:rain")]]   # the alert's own type rides along
+    assert rows(markup) == [[("➕ Subscribe", "al:open:sub:rain"), ("➖ Unsubscribe", "al:open:unsub:rain"),
+                            ("⚙️ Settings", "al:open:set:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
     assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
 
@@ -204,7 +205,7 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     update = NS(effective_message=NS(reply_text=reply_text, chat_id=1), effective_chat=chat, effective_user=NS(full_name="Rob", username="rob"))
     await bot.on_alerts(update, NS(args=[]))
     assert replies[0][0].startswith(TITLE) and "✅ On: rain, rain predicted, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
-    assert rows(replies[0][1]["reply_markup"])[0] == [("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub")]
+    assert rows(replies[0][1]["reply_markup"])[0] == [("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub"), ("⚙️ Settings", "al:open:set")]
     await bot.on_alerts(update, NS(args=["off"]))
     assert not state.alerts_on(1) and "✅ On: nothing" in replies[1][0]
     await bot.on_alerts(update, NS(args=["on"]))
@@ -290,7 +291,8 @@ async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_th
     assert rows(q.edits[0][1])[1:] == [[("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
     q = Query("al:off:all:unsub:uv", text="☀️ UV 10")                          # and "all" turns the rest off, closing the empty section
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("➕ Subscribe", "al:open:sub:uv"), ("➖ Unsubscribe", "al:open:unsub:uv")]]
+    assert rows(q.edits[0][1]) == [[("➕ Subscribe", "al:open:sub:uv"), ("➖ Unsubscribe", "al:open:unsub:uv"),
+                                   ("⚙️ Settings", "al:open:set:uv")]]
     q = Query("al:open:unsub:uv", text="☀️ UV 10")                             # nothing is on now: a toast, no menu
     await press(bot, q)
     assert q.toast == "No alerts are on" and not q.edits
@@ -317,3 +319,72 @@ def test_every_alert_type_has_its_emoji_and_every_button_in_the_lists_starts_wit
             texts = [t for row in drawn[1:] for t, _ in row]
             assert texts and all(not t.removeprefix("● ")[0].isascii() for t in texts), texts      # every button under it starts with an emoji
     assert title(set(), ["rain"]) == f"{TITLE}\n✅ On: rain\n🔕 Off: nothing"                # the on/off summary and the toasts stay plain words
+
+
+async def test_settings_turn_the_notification_sound_on_and_off_per_type_in_private_chats_only(tmp_path):
+    bot, state = make_bot(tmp_path)
+    q = Query("al:open:set")                                                    # /alerts: one button per type
+    await press(bot, q)
+    drawn = rows(q.edits[0][1])
+    assert drawn[0][2] == ("▾ ⚙️ Settings", "al:close") and ("🔔 Enable rain sound", "al:snd:rain:on") in [b for r in drawn[1:] for b in r]
+    q = Query("al:snd:rain:on")
+    await press(bot, q)
+    assert state.loud(1) == {"rain"} and "make a sound" in q.toast
+    assert ("🔕 Disable rain sound", "al:snd:rain:off") in [b for r in rows(q.edits[0][1]) for b in r]   # stays open, now offering to turn it off
+    q = Query("al:open:set:uv", text="☀️ UV 10")                                # under an alert: just that type
+    await press(bot, q)
+    assert rows(q.edits[0][1])[1:] == [[("🔔 Enable UV sound", "al:snd:uv:on:uv")]]
+    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
+    await press(bot, q)
+    assert state.loud(1) == {"rain", "uv"} and rows(q.edits[0][1])[1:] == [[("🔕 Disable UV sound", "al:snd:uv:off:uv")]]
+    await press(bot, Query("al:snd:rain:off"))
+    assert state.loud(1) == {"uv"}
+    for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain"):         # nothing from the data reaches the state
+        await press(bot, Query(data))
+    assert state.loud(1) == {"uv"}
+    q = Query("al:snd:rain:on", chat_type="supergroup", chat_id=-5)              # groups have no sound settings
+    state.add_chat(-5, "G")
+    await press(bot, q)
+    assert state.loud(-5) == set() and q.edits == []
+
+
+async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_get_no_settings_button(tmp_path):
+    state, bot = AlertState(tmp_path / "s2.json"), Sent()
+    state.add_chat(1, "1")
+    state.add_chat(-5, "G")
+    state.set_sound(1, "rain", True)
+    notifier = Notifier(bot, state, KINDS)
+    await notifier("It's raining", kind="rain")
+    await notifier("UV", kind="uv")
+    flags = {(c, t.split("\n")[0]): kw["disable_notification"] for c, t, kw in bot.sent}
+    assert flags[(1, "It's raining")] is False and flags[(1, "UV")] is True and flags[(-5, "It's raining")] is True
+    group = next(kw for c, _, kw in bot.sent if c == -5)
+    assert [b[0] for b in rows(group["reply_markup"])[0]] == ["➕ Subscribe", "➖ Unsubscribe"]
+
+
+async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path):
+    from telegram.error import ChatMigrated
+
+    class Moved(Sent):
+        async def send_message(self, chat_id, text, **kw):
+            if chat_id == -5:
+                raise ChatMigrated(-1005)
+            await super().send_message(chat_id, text, **kw)
+
+    state, bot = AlertState(tmp_path / "s3.json"), Moved()
+    state.add_chat(-5, "G")
+    state.set_kind(-5, "uv", False)
+    await Notifier(bot, state, KINDS)("It's raining", kind="rain")
+    assert list(state.chats) == [-1005] and state.muted(-1005) == {"uv"} and [c for c, *_ in bot.sent] == [-1005]
+    state.add_chat(-7, "H")                                                    # a press under an old alert of a moved group
+    bot2, _ = make_bot(tmp_path)
+    bot2.state = state
+    q = Query("al:open:unsub", chat_type="supergroup", chat_id=-7)
+    q.message.reply_markup = keyboard(set(), KINDS)
+    q.message.chat.title = "H"
+
+    async def moved(*a, **k):
+        raise ChatMigrated(-1007)
+    bot2._is_group_admin = moved
+    await bot2.on_button(NS(callback_query=q, effective_user=NS(id=7), effective_message=q.message, effective_chat=q.message.chat), ctx())
+    assert -1007 in state.chats and -7 not in state.chats and "upgraded" in q.toast

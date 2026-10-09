@@ -165,15 +165,16 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     collapsed = [[("💧 Water", "ir:open:water"), ("⏸ Pause", "ir:open:delay")], [("🔔 Alerts", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
     assert rows(menu.keyboard(False, False)) == collapsed == rows(menu.keyboard(True, True))              # the alert states show only once Alerts is open
     water = rows(menu.keyboard(True, True, "water"))
-    assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-2] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
-    assert water[-1] == [("Off ❌", "ir:sw:off")]                                           # the valve itself: only off (a run is always timed)
+    assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
+    assert "ir:sw:off" not in [data for row in water for _, data in row]                    # Off is not in the Water list: it is a top-level row while on
+    assert rows(menu.keyboard(True, True, running=True)) == collapsed + [[("Water off ❌", "ir:sw:off")]]   # only while the valve is on
+    assert rows(menu.keyboard(True, True, paused=True, running=True))[-1] == [("Water off ❌", "ir:sw:off")]
     assert "ir:sw:on" not in [data for row in water for _, data in row]
     assert rows(menu.keyboard(True, True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h")]
     paused = rows(menu.keyboard(True, True, paused=True))                                      # paused: the button unpauses, in one press
-    assert paused[0] == [("💧 Water", "ir:open:water"), ("▶️ Unpause", "ir:delay:cancel")] and paused[1] == collapsed[1]
+    assert paused[0] == [("▶️ Unpause", "ir:delay:cancel")] and paused[1] == collapsed[1]   # no Water button while paused
     assert rows(menu.keyboard(True, True, "delay", paused=True)) == paused                      # no list of periods while paused
-    open_water = rows(menu.keyboard(True, True, "water", paused=True))
-    assert open_water[0] == [("▾ 💧 Water", "ir:close"), ("▶️ Unpause", "ir:delay:cancel")]
+    assert rows(menu.keyboard(True, True, "water", paused=True)) == paused                     # and no minutes or Off either
     assert menu.SECTIONS == ("water", "delay", "alerts") and len(rows(menu.keyboard(True, True, "switch"))) == 2   # no Switch menu any more
     for battery, pause, battery_button, pause_button in (
             (False, False, ("🔔 Enable battery alerts", "ir:batt:on"), ("🔔 Enable pause alerts", "ir:pause:on")),
@@ -459,7 +460,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
 async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
     bot, _, device = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:water")
-    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5") and rows(q.edits[0][1])[-1][0] == ("Off ❌", "ir:sw:off") and device.commands == []
+    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-1][0] == ("5 min", "ir:water:5") and device.commands == []
     q = await press(bot, "ir:close")
     assert len(rows(q.edits[0][1])) == 2
     for gone in ("ir:open:bogus", "ir:open:switch"):                                     # an unknown section, or an old message's Switch, just closes
@@ -508,9 +509,9 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
             await press(bot, data)
             assert state.subscribed(1, kind) is text.startswith("🔔 Enable"), (text, data)
     other = await press(bot, "ir:water:5")
-    assert len(rows(other.edits[0][2])) == 2                                                    # any other action redraws collapsed
+    assert len(rows(other.edits[0][2])) == 3                                                    # any other action redraws collapsed (3 rows: the valve is on)
     other = await press(bot, "ir:refresh")
-    assert len(rows(other.edits[0][2])) == 2
+    assert len(rows(other.edits[0][2])) == 3
 
 
 async def test_a_controller_that_cannot_be_reached_gives_a_toast_not_a_traceback_and_an_unchanged_message_is_fine(tmp_path):
@@ -707,7 +708,8 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     await m.check(NOW)
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
     markup = delivered[0][2]["reply_markup"]
-    assert rows(markup) == [[("➕ Subscribe", "al:open:sub:irrigation_pause"), ("➖ Unsubscribe", "al:open:unsub:irrigation_pause")]]
+    assert rows(markup) == [[("➕ Subscribe", "al:open:sub:irrigation_pause"), ("➖ Unsubscribe", "al:open:unsub:irrigation_pause"),
+                            ("⚙️ Settings", "al:open:set:irrigation_pause")]]
     from lib.alerts.menu import keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     for section in (None, "sub", "unsub"):                              # every button's data fits Telegram's 64 bytes, for the new type too
@@ -743,7 +745,7 @@ async def test_every_member_of_a_group_may_use_the_irrigation_buttons(tmp_path):
     state.add_chat(-5, "Home")
     group = dict(chat_id=-5, chat_type="supergroup", user=42)                                 # an ordinary member: no admin check is made
     q = await press(bot, "ir:open:water", **group)
-    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5")
+    assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-1][0] == ("5 min", "ir:water:5")
     q = await press(bot, "ir:water:10", **group)
     assert device.commands == [("water", 10)] and q.toast == "Watering for 10 minutes" and "state: on ✅" in q.edits[0][1]
     q = await press(bot, "ir:sw:off", **group)
@@ -819,22 +821,22 @@ async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(t
     assert [b[0] for b in rows(q.edits[0][1])[-1]] == ["24h", "48h", "72h"]
     q = await press(bot, "ir:delay:48h")                                                        # pause it
     assert q.toast == "Paused 48h" and "pause: 48h" in q.edits[0][1]
-    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")                       # the redrawn button follows the controller
+    assert rows(q.edits[0][2])[0][0] == ("▶️ Unpause", "ir:delay:cancel")                       # the redrawn button follows the controller
     shown = q.edits[0][1]
     q = await press_on(bot, "ir:open:water", shown)                                              # opening another list keeps the Unpause button
-    assert rows(q.edits[0][1])[0][1] == ("▶️ Unpause", "ir:delay:cancel") and rows(q.edits[0][1])[-2][0] == ("5 min", "ir:water:5")
+    assert rows(q.edits[0][1])[0] == [("▶️ Unpause", "ir:delay:cancel")] and len(rows(q.edits[0][1])) == 2   # no Water button, so no minutes
     q = await press_on(bot, "ir:close", shown)
-    assert rows(q.edits[0][1])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
+    assert rows(q.edits[0][1])[0][0] == ("▶️ Unpause", "ir:delay:cancel")
     q = await press(bot, "ir:refresh")
-    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
+    assert rows(q.edits[0][2])[0][0] == ("▶️ Unpause", "ir:delay:cancel")
     q = await press(bot, "ir:delay:cancel")                                                     # the Unpause button
     assert q.toast == "Unpaused" and device.commands[-1] == ("delay", "cancel") and "pause: not paused" in q.edits[0][1]
     assert rows(q.edits[0][2])[0][1] == ("⏸ Pause", "ir:open:delay")                            # and it is Pause again
     device.status_now["weather_delay"] = "24h"                                                  # paused from the app
     q = await press(bot, "ir:refresh")
-    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel")
+    assert rows(q.edits[0][2])[0][0] == ("▶️ Unpause", "ir:delay:cancel")
     q = await press(bot, "ir:water:5")                                                          # a refused water press keeps it too
-    assert rows(q.edits[0][2])[0][1] == ("▶️ Unpause", "ir:delay:cancel") and q.edits[0][1].endswith("paused!")
+    assert rows(q.edits[0][2])[0][0] == ("▶️ Unpause", "ir:delay:cancel") and q.edits[0][1].endswith("paused!")
 
 
 async def press_on(bot, data, text):
