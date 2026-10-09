@@ -75,7 +75,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     unsub_open = open in ("unsub", "other")
     def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:   # a menu button: ▸ closed, ▾ open
         return _button(f"▾ {text}" if is_open else f"{text} ▸", f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
-    rows = [[head(open == "sub", "➕ Subscribe", "sub"), head(unsub_open, "➖ Unsubscribe", "unsub")]]
+    rows = [[head(open == "sub", "➕ Sub", "sub"), head(unsub_open, "➖ Unsub", "unsub")]]
     if loud is not None:
         rows[0].append(head(open in SETTINGS, "⚙️ Settings", "set"))
     mark = lambda k: f"● {label(k)}" if k == parent else label(k)   # the alert these buttons are under

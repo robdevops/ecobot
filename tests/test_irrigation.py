@@ -708,7 +708,7 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     await m.check(NOW)
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
     markup = delivered[0][2]["reply_markup"]
-    assert rows(markup) == [[("➕ Subscribe ▸", "al:open:sub:irrigation_pause"), ("➖ Unsubscribe ▸", "al:open:unsub:irrigation_pause"),
+    assert rows(markup) == [[("➕ Sub ▸", "al:open:sub:irrigation_pause"), ("➖ Unsub ▸", "al:open:unsub:irrigation_pause"),
                             ("⚙️ Settings ▸", "al:open:set:irrigation_pause")]]
     from lib.alerts.menu import keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
