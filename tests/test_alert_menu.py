@@ -256,14 +256,20 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     assert seen == ["forecast"]
 
 
-def test_under_an_alert_the_unsubscribe_list_is_just_its_type_and_all_and_every_button_carries_the_type():
+def test_under_an_alert_the_unsubscribe_list_is_its_type_then_other_which_holds_the_rest_and_all():
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub", parent="uv"))
     assert got == [[("➕ Subscribe", "al:open:sub:uv"), ("▾ ➖ Unsubscribe", "al:close:uv")],
-                   [("● 🧴 UV", "al:off:uv:unsub:uv")], [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
-    only = rows(keyboard(set(KINDS) - {"uv"}, KINDS, "unsub", parent="uv"))              # the alert's type is the only one on: no "all"
+                   [("● 🧴 UV", "al:off:uv:unsub:uv")], [("Other ▸", "al:open:other:uv")]]
+    other = rows(keyboard({"pollen", "forecast"}, KINDS, "other", parent="uv"))
+    assert other[1:3] == [[("● 🧴 UV", "al:off:uv:other:uv")], [("▾ Other", "al:open:unsub:uv")]]
+    listed = [d for r in other[3:-1] for _, d in r]
+    assert listed and all(d.startswith("al:off:") and d.endswith(":other:uv") and ":uv:" not in d for d in listed)   # the rest, not its own type
+    assert other[-1] == [("🔕 Unsubscribe from all", "al:off:all:other:uv")]
+    only = rows(keyboard(set(KINDS) - {"uv"}, KINDS, "unsub", parent="uv"))              # the alert's type is the only one on: no Other
     assert only[1:] == [[("● 🧴 UV", "al:off:uv:unsub:uv")]]
-    gone = rows(keyboard({"uv", "gusts"}, KINDS, "unsub", parent="uv"))                  # its type is already off, others on: just "all"
-    assert gone[1:] == [[("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
+    assert rows(keyboard(set(KINDS) - {"uv"}, KINDS, "other", parent="uv")) == only       # and an open Other degrades to the plain list
+    gone = rows(keyboard({"uv", "gusts"}, KINDS, "unsub", parent="uv"))                  # its type is already off: a plain list of the rest, with "all"
+    assert "Other" not in str(gone) and gone[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]
     assert len(rows(keyboard(set(KINDS), KINDS, "unsub", parent="uv"))) == 1             # nothing is on at all: nothing listed
     sub = rows(keyboard({"pollen", "forecast"}, KINDS, "sub", parent="uv"))              # Subscribe is the types that are off, as ever
     assert [t for row in sub[1:-1] for t, _ in row] == ["🌼 pollen & asthma", "🔄 forecast changes"] and sub[-1][0][0] == "🔔 Subscribe to all"
@@ -284,11 +290,14 @@ async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_th
     await press(bot, q)
     drawn = rows(q.edits[0][1])
     assert drawn[0][1] == ("▾ ➖ Unsubscribe", "al:close:uv") and drawn[1:] == [
-        [("● 🧴 UV", "al:off:uv:unsub:uv")], [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
-    q = Query("al:off:uv:unsub:uv", text="☀️ UV 10")                           # unsubscribing from this type leaves "all" for the rest
+        [("● 🧴 UV", "al:off:uv:unsub:uv")], [("Other ▸", "al:open:other:uv")]]
+    q = Query("al:open:other:uv", text="☀️ UV 10")
+    await press(bot, q)
+    assert rows(q.edits[0][1])[-1] == [("🔕 Unsubscribe from all", "al:off:all:other:uv")]
+    q = Query("al:off:uv:unsub:uv", text="☀️ UV 10")                           # unsubscribing from this type leaves a plain list of the rest
     await press(bot, q)
     assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
-    assert rows(q.edits[0][1])[1:] == [[("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
+    assert "Other" not in str(rows(q.edits[0][1])) and rows(q.edits[0][1])[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]
     q = Query("al:off:all:unsub:uv", text="☀️ UV 10")                          # and "all" turns the rest off, closing the empty section
     await press(bot, q)
     assert rows(q.edits[0][1]) == [[("➕ Subscribe", "al:open:sub:uv"), ("➖ Unsubscribe", "al:open:unsub:uv"),
@@ -317,6 +326,7 @@ def test_every_alert_type_has_its_emoji_and_every_button_in_the_lists_starts_wit
         for parent in (None, "uv"):
             drawn = rows(keyboard(set(LABELS) if section == "sub" else set(), everything, section, parent))
             texts = [t for row in drawn[1:] for t, _ in row]
+            texts = [t for t in texts if "Other" not in t]                                    # (the Other menu is a word, not an alert type)
             assert texts and all(not t.removeprefix("● ")[0].isascii() for t in texts), texts      # every button under it starts with an emoji
     assert title(set(), ["rain"]) == f"{TITLE}\n✅ On: rain\n🔕 Off: nothing"                # the on/off summary and the toasts stay plain words
 
@@ -341,15 +351,27 @@ async def test_settings_hold_enable_and_disable_sub_menus_of_notification_sounds
     assert [b for r in rows(q.edits[0][1]) for b in r if b[1].startswith("al:snd")] == [("🌧️ rain", "al:snd:rain:off")]
     await press(bot, Query("al:snd:rain:off"))
     assert state.loud(1) == set()
-    q = Query("al:open:set:uv", text="☀️ UV 10")                                # under an alert: just that type
+    q = Query("al:open:snd_on:uv", text="☀️ UV 10")                             # under an alert: its own type, then Other
     await press(bot, q)
-    assert rows(q.edits[0][1])[1:] == [[("🔔 Enable notification sounds ▸", "al:open:snd_on:uv")]]
-    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
+    drawn = rows(q.edits[0][1])
+    assert drawn[2:] == [[("● 🧴 UV", "al:snd:uv:on:uv")], [("Other ▸", "al:open:snd_on_o:uv")]]
+    q = Query("al:open:snd_on_o:uv", text="☀️ UV 10")                           # Other holds the rest
     await press(bot, q)
-    assert state.loud(1) == {"uv"} and rows(q.edits[0][1])[1:] == [[("🔕 Disable notification sounds ▸", "al:open:snd_off:uv")]]
+    drawn = rows(q.edits[0][1])
+    assert drawn[3] == [("▾ Other", "al:open:snd_on:uv")] and ("🌧️ rain", "al:snd:rain:on:uv") in [b for r in drawn for b in r]
+    assert "al:snd:uv:on:uv" not in [d for r in drawn[4:] for _, d in r]
+    q = Query("al:snd:rain:on:uv", text="☀️ UV 10")                             # a press in Other stays in Other
+    await press(bot, q)
+    assert state.loud(1) == {"rain"} and ("▾ Other", "al:open:snd_on:uv") in [b for r in rows(q.edits[0][1]) for b in r]
+    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")                               # a press on its own type stays on its level
+    await press(bot, q)
+    assert state.loud(1) == {"rain", "uv"} and ("🔕 Disable notification sounds ▸", "al:open:snd_off:uv") in [b for r in rows(q.edits[0][1]) for b in r]
+    await press(bot, Query("al:snd:rain:off:uv", text="☀️ UV 10"))
+    await press(bot, Query("al:snd:uv:off:uv", text="☀️ UV 10"))
+    assert state.loud(1) == set()
     for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain"):         # nothing from the data reaches the state
         await press(bot, Query(data))
-    assert state.loud(1) == {"uv"}
+    assert state.loud(1) == set()
     q = Query("al:snd:rain:on", chat_type="supergroup", chat_id=-5)              # groups have no sound settings
     state.add_chat(-5, "G")
     await press(bot, q)

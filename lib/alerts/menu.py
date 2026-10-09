@@ -3,10 +3,10 @@ Unsubscribe the types that are on, so each list says by itself whether its alert
 the title from what a chat has muted (the same menu goes under every alert and under /alerts).
 
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
-  al:open:sub | al:open:unsub | al:open:set | al:open:snd_on | al:open:snd_off | al:close | al:noop (the heading rows of messages sent by an earlier version)
+  al:open:sub | al:open:unsub | al:open:other | al:open:set | al:open:snd_on | al:open:snd_off | al:close | al:noop (the heading rows of messages sent by an earlier version)
   al:snd:<kind>:<on|off>[:parent]      (notification sound for one type; Settings is in private chats only)
   al:on:<kind|all>:<section> | al:off:<kind|all>:<section>      (section: sub or unsub, the part left open)
-An alert's buttons end with the alert's own type (parent): under an alert the Unsubscribe list is just that type (marked) and "all": al:open:unsub:rain, al:close:rain,
+An alert's buttons end with the alert's own type (parent): under an alert the Unsubscribe list is its own type (marked ●) and "Other", which holds the rest and "all": al:open:unsub:rain, al:close:rain,
 al:off:uv:unsub:rain. A chat's /alerts message has no parent and no such field.
 """
 
@@ -24,7 +24,7 @@ EMOJI = {"rain": "\U0001f327️", "rain_likely": "\U0001f326️", "gusts": "\U00
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
 PER_ROW = 2
-SETTINGS = ("set", "snd_on", "snd_off")   # the open sections under the Settings button
+SETTINGS = ("set", "snd_on", "snd_off", "snd_on_o", "snd_off_o")   # (_o: the "Other" list inside a sound menu)
 
 
 def available_kinds(sources: set[str]) -> list[str]:
@@ -47,39 +47,51 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
              loud: set[str] | None = None) -> InlineKeyboardMarkup:
     """The collapsed menu, or with one section open (open = "sub" or "unsub") and its options under it. `parent` is the type of the
-    alert the buttons sit under and is carried in every button. Under an alert the Unsubscribe list is that type (marked) and
-    "Unsubscribe from all"; on the /alerts message it lists every type that is on. "... all" is there only when it does something
-    different from the one type listed. `loud`: the types whose alerts make a notification sound; None (a group) leaves out the Settings button,
-    which opens two sub-menus, enable and disable notification sounds, each listing the subscribed types (just the alert's own under an alert) it applies to."""
+    alert the buttons sit under and is carried in every button. Under an alert that is on, the Unsubscribe list is that type
+    (marked) and an "Other" menu (open = "other") holding the rest and "Unsubscribe from all"; on the /alerts message it lists every type
+    that is on, with "all" when more than one. `loud`: the types whose alerts make a notification sound; None (a group) leaves out the Settings button,
+    which opens two sub-menus, enable and disable notification sounds, each listing the subscribed types it applies to."""
     tail = f":{parent}" if parent else ""
+    listed = options(muted, available, "unsub")
+    nested = parent in listed and len(listed) > 1   # under an alert that is still on: its own type, then the others under "Other"
+    if open == "other" and not nested:
+        open = "unsub"
+    unsub_open = open in ("unsub", "other")
     rows = [[_button(("▾ " if open == "sub" else "") + "➕ Subscribe", f"al:close{tail}" if open == "sub" else f"al:open:sub{tail}"),
-             _button(("▾ " if open == "unsub" else "") + "➖ Unsubscribe", f"al:close{tail}" if open == "unsub" else f"al:open:unsub{tail}")]]
+             _button(("▾ " if unsub_open else "") + "➖ Unsubscribe", f"al:close{tail}" if unsub_open else f"al:open:unsub{tail}")]]
     if loud is not None:
         in_settings = open in SETTINGS
         rows[0].append(_button(("▾ " if in_settings else "") + "⚙️ Settings" + ("" if in_settings else " ▸"),
                                f"al:close{tail}" if in_settings else f"al:open:set{tail}"))
     if open in SETTINGS and loud is not None:
-        pool = [parent] if parent else [k for k in available if k not in muted]   # only the types this chat gets
+        pool = [k for k in available if k not in muted]   # only the types this chat gets
         for section, heading, items in (("snd_on", "🔔 Enable notification sounds", [k for k in pool if k not in loud]),
                                         ("snd_off", "🔕 Disable notification sounds", [k for k in pool if k in loud])):
             if not items:
                 continue
-            rows.append([_button(f"▾ {heading}" if open == section else f"{heading} ▸",
-                                 f"al:open:set{tail}" if open == section else f"al:open:{section}{tail}")])   # ▸ marks a menu, not an action
-            if open == section:
-                rows += map(list, batched([_button(label(k), f"al:snd:{k}:{'on' if section == 'snd_on' else 'off'}{tail}") for k in items], PER_ROW))
-    if open in ("sub", "unsub"):
+            here = open in (section, f"{section}_o")
+            rows.append([_button(f"▾ {heading}" if here else f"{heading} ▸",
+                                 f"al:open:set{tail}" if here else f"al:open:{section}{tail}")])   # ▸ marks a menu, not an action
+            if here:
+                button = lambda k: _button(f"● {label(k)}" if k == parent else label(k), f"al:snd:{k}:{'on' if section == 'snd_on' else 'off'}{tail}")
+                if parent in items and len(items) > 1:   # under an alert: its own type, then "Other" with the rest
+                    more = open == f"{section}_o"
+                    rows.append([button(parent)])
+                    rows.append([_button("▾ Other" if more else "Other ▸", f"al:open:{section}{tail}" if more else f"al:open:{section}_o{tail}")])
+                    items = [k for k in items if k != parent] if more else []
+                rows += map(list, batched([button(k) for k in items], PER_ROW))
+    if open in ("sub", "unsub", "other"):
         verb = "on" if open == "sub" else "off"
-        listed = options(muted, available, open)
-        if open == "unsub" and parent:
-            others = [k for k in listed if k != parent]
-            listed, show_all = [k for k in listed if k == parent], bool(others)
-        else:
-            show_all = len(listed) > 1
-        mark = lambda k: f"● {label(k)}" if open == "unsub" and k == parent else label(k)   # the alert these buttons are under
+        listed = options(muted, available, "sub" if open == "sub" else "unsub")
+        mark = lambda k: f"● {label(k)}" if open != "sub" and k == parent else label(k)   # the alert these buttons are under
+        if nested and open != "sub":
+            rows.append([_button(mark(parent), f"al:off:{parent}:{open}{tail}")])
+            rows.append([_button("▾ Other" if open == "other" else "Other ▸", f"al:open:unsub{tail}" if open == "other" else f"al:open:other{tail}")])
+            listed = listed if open == "other" else []
+            listed = [k for k in listed if k != parent]
         buttons = [_button(mark(k), f"al:{verb}:{k}:{open}{tail}") for k in listed]
         rows += map(list, batched(buttons, PER_ROW))
-        if show_all:
+        if len(listed) > 1 or (open == "other" and listed):
             rows.append([_button("🔔 Subscribe to all" if open == "sub" else "🔕 Unsubscribe from all", f"al:{verb}:{ALL}:{open}{tail}")])
     return InlineKeyboardMarkup(rows)
 
