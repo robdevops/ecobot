@@ -381,6 +381,11 @@ class Bot:
         self.remember_chat(update)
         await self._help_and_alerts(update, context)
 
+    @staticmethod
+    def _alerts_named(kind: str) -> str:
+        """"All alerts" or "UV alerts" (not "Uv"), for a toast."""
+        return "All alerts" if kind == menu.ALL else f"{menu.LABELS[kind][0].upper()}{menu.LABELS[kind][1:]} alerts"
+
     async def on_alert_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on the alert settings buttons (under an alert or the /alerts message): open or close a section, or subscribe
         or unsubscribe a type or all. In a group only admins may change them."""
@@ -414,12 +419,10 @@ class Bot:
             opened = "snd_on" if section == "on" else "snd_off"   # stay in the list (under an alert: in "Other" for another type)
             if parent and arg != parent:
                 opened += "_o"
-            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts"
-            toast = f"{what} {'now make' if section == 'on' else 'no longer make'} a sound"
+            toast = f"{self._alerts_named(arg)} {'now make' if section == 'on' else 'no longer make'} a sound"
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")
-            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts"   # "UV alerts", not "Uv"
-            toast = f"{what} {action} in this chat"
+            toast = f"{self._alerts_named(arg)} {action} in this chat"
         else:
             await query.answer()
             return
