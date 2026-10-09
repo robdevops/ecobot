@@ -15,7 +15,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # kind -> the name on the button, in the order listed
 LABELS = {"rain": "rain", "rain_likely": "rain predicted", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
-          "air": "air quality", "pollen": "pollen & asthma", "forecast": "forecast changes",
+          "air": "particulates", "pollen": "pollen & asthma", "forecast": "forecast changes",
           "irrigation": "irrigation battery", "irrigation_pause": "irrigation pause"}
 # the emoji on each type's button: the one its own alerts start with (every type has one: a test holds the two lists together)
 EMOJI = {"rain": "\U0001f327️", "rain_likely": "\U0001f326️", "gusts": "\U0001f4a8", "uv": "\U0001f9f4", "temps": "\U0001f321️",

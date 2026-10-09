@@ -23,7 +23,7 @@ def test_unsubscribe_opens_the_types_that_are_on_and_subscribe_the_types_that_ar
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub"))
     assert got[0] == [("➕ Subscribe", "al:open:sub"), ("▾ ➖ Unsubscribe", "al:close")]
     assert got[1] == [("🌧️ rain", "al:off:rain:unsub"), ("🌦️ rain predicted", "al:off:rain_likely:unsub")]
-    assert [text for row in got[1:-1] for text, _ in row] == ["🌧️ rain", "🌦️ rain predicted", "💨 gusts", "🧴 UV", "🌡️ temperature crossing", "😷 air quality"]
+    assert [text for row in got[1:-1] for text, _ in row] == ["🌧️ rain", "🌦️ rain predicted", "💨 gusts", "🧴 UV", "🌡️ temperature crossing", "😷 particulates"]
     assert got[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub")]
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "sub"))
     assert got[0][0] == ("▾ ➕ Subscribe", "al:close")
@@ -43,7 +43,7 @@ def test_only_the_types_the_bot_has_are_listed_and_every_callback_is_short():
 
 def test_the_title_lists_what_is_on_and_off():
     assert title({"gusts", "uv"}, KINDS[:5]) == f"{TITLE}\n✅ On: rain, rain predicted, temperature crossing\n🔕 Off: gusts, UV"
-    assert title(set(), ["air"]).endswith("🔕 Off: nothing") and title({"air"}, ["air"]).endswith("✅ On: nothing\n🔕 Off: air quality")
+    assert title(set(), ["air"]).endswith("🔕 Off: nothing") and title({"air"}, ["air"]).endswith("✅ On: nothing\n🔕 Off: particulates")
 
 
 def test_state_mutes_one_type_or_all_and_old_files_load(tmp_path):
@@ -203,7 +203,7 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     chat = NS(type="private", id=1, title=None)
     update = NS(effective_message=NS(reply_text=reply_text, chat_id=1), effective_chat=chat, effective_user=NS(full_name="Rob", username="rob"))
     await bot.on_alerts(update, NS(args=[]))
-    assert replies[0][0].startswith(TITLE) and "✅ On: rain, rain predicted, gusts, UV, temperature crossing, air quality, pollen & asthma, forecast changes" in replies[0][0]
+    assert replies[0][0].startswith(TITLE) and "✅ On: rain, rain predicted, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
     assert rows(replies[0][1]["reply_markup"])[0] == [("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub")]
     await bot.on_alerts(update, NS(args=["off"]))
     assert not state.alerts_on(1) and "✅ On: nothing" in replies[1][0]
