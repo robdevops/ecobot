@@ -204,7 +204,7 @@ def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller(
     from lib.alerts.menu import LABELS, keyboard
     assert LABELS["irrigation"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
     unsub = rows(keyboard(set(), ["rain", "irrigation"], "unsub"))
-    assert ("irrigation battery", "al:off:irrigation:unsub") in [b for row in unsub for b in row]
+    assert ("🪫 irrigation battery", "al:off:irrigation:unsub") in [b for row in unsub for b in row]
 
 
 # ---------- the daily check ----------
