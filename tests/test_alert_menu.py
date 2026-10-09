@@ -388,3 +388,16 @@ async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path)
     bot2._is_group_admin = moved
     await bot2.on_button(NS(callback_query=q, effective_user=NS(id=7), effective_message=q.message, effective_chat=q.message.chat), ctx())
     assert -1007 in state.chats and -7 not in state.chats and "upgraded" in q.toast
+
+
+async def test_the_settings_list_only_the_subscribed_types(tmp_path):
+    bot, state = make_bot(tmp_path)
+    state.set_kind(1, "rain", False)
+    q = Query("al:open:set")
+    await press(bot, q)
+    listed = [d for r in rows(q.edits[0][1])[1:] for _, d in r]
+    assert "al:snd:rain:on" not in listed and "al:snd:uv:on" in listed
+    state.set_kind(1, ALL, False)
+    q = Query("al:open:set")
+    await press(bot, q)
+    assert q.toast == "No alerts are on" and q.edits == []

@@ -401,6 +401,9 @@ class Bot:
         toast, opened = None, section or None
         if action in ("open", "close"):
             opened = arg if action == "open" else None
+            if opened == "set" and not parent and not menu.options(self.state.muted(chat.id), kinds, "unsub"):
+                await query.answer("No alerts are on")   # no subscribed type to set a sound for
+                return
             if opened in ("sub", "unsub") and not menu.has_options(self.state.muted(chat.id), kinds, opened, parent):
                 await query.answer("You're subscribed to everything" if opened == "sub" else "No alerts are on")   # nothing to list
                 return

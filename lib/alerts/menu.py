@@ -49,14 +49,14 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     alert the buttons sit under and is carried in every button. Under an alert the Unsubscribe list is that type (marked) and
     "Unsubscribe from all"; on the /alerts message it lists every type that is on. "... all" is there only when it does something
     different from the one type listed. `loud`: the types whose alerts make a notification sound; None (a group) leaves out the Settings button,
-    which opens one button per type (just the alert's own under an alert) that turns that sound on or off."""
+    which opens one button per subscribed type (just the alert's own under an alert) that turns that sound on or off."""
     tail = f":{parent}" if parent else ""
     rows = [[_button(("▾ " if open == "sub" else "") + "➕ Subscribe", f"al:close{tail}" if open == "sub" else f"al:open:sub{tail}"),
              _button(("▾ " if open == "unsub" else "") + "➖ Unsubscribe", f"al:close{tail}" if open == "unsub" else f"al:open:unsub{tail}")]]
     if loud is not None:
         rows[0].append(_button(("▾ " if open == "set" else "") + "⚙️ Settings", f"al:close{tail}" if open == "set" else f"al:open:set{tail}"))
     if open == "set" and loud is not None:
-        for k in ([parent] if parent else available):
+        for k in ([parent] if parent else [k for k in available if k not in muted]):   # only the types this chat gets
             on = k in loud
             rows.append([_button(f"🔕 Disable sound for {LABELS[k]} notification" if on else f"🔔 Enable sound for {LABELS[k]} notification", f"al:snd:{k}:{'off' if on else 'on'}{tail}")])
     if open in ("sub", "unsub"):
