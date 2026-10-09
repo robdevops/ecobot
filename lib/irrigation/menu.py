@@ -1,9 +1,8 @@
 """The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
 
-Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the timer is paused the Pause button is [▶️ Unpause] (one press ends the pause) and Water, with its Off, is
+Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the timer is paused the Pause button is [▶️ Unpause] (one press ends the pause) and Water is
 hidden. A press on Water, Pause or Alerts opens its options under the rows (▾ marks the open one; pressing
-it again closes them). Water lists 5, 10, 20 and 30 minutes, then Off for the valve itself (a run is
-always timed). Alerts has one button per alert type, each naming what pressing it does for this chat (enable or disable). Callback data
+it again closes them). Water lists 5, 10, 20 and 30 minutes (a run is always timed). While the valve is on, a Water off ❌ button is the third row. Alerts has one button per alert type, each naming what pressing it does for this chat (enable or disable). Callback data
 (short, self-contained, so an old message's buttons still work after a restart):
   ir:open:<water|delay|alerts> | ir:close | ir:refresh (read the state again, change nothing)
   ir:water:<minutes> | ir:delay:<24h|48h|72h|cancel> (cancel = unpause, the Unpause button) | ir:sw:off
@@ -43,6 +42,11 @@ def paused_in(text: str | None) -> bool:
     return bool(value) and not value.startswith(("not paused", "inactive"))
 
 
+def running_in(text: str | None) -> bool:
+    """Does a status message say the valve is on? (For redrawing only the buttons, as paused_in.)"""
+    return any(line.startswith("state: on") for line in (text or "").splitlines())
+
+
 def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageEntity]]:
     """The status with an error under it as a bold footer. Plain text plus entities (no markup to escape); Telegram counts
     positions in UTF-16 code units, where an emoji is two."""
@@ -79,17 +83,18 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
                       f"battery: {level}{bracket(alerts)}"])
 
 
-def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False) -> InlineKeyboardMarkup:
+def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False, running: bool = False) -> InlineKeyboardMarkup:
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
-    names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its button unpauses and Water (with its Off) is hidden."""
+    names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
     def head(name: str, text: str) -> InlineKeyboardButton:
         return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
     delay = _button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
     rows = [[delay] if paused else [head("water", "💧 Water"), delay],
             [head("alerts", "🔔 Alerts"), _button("🔄 Refresh", "ir:refresh")]]
+    if running:   # the valve is open: Off is one press away, whatever else is open
+        rows.append([_button("Water off ❌", "ir:sw:off")])
     if open == "water" and not paused:
         rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
-        rows.append([_button("Off ❌", "ir:sw:off")])
     elif open == "delay" and not paused:
         rows.append([_button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
     elif open == "alerts":

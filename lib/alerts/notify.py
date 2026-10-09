@@ -81,6 +81,22 @@ class AlertState:
             self.chats[chat_id].pop("muted", None)
         self.save()
 
+    def loud(self, chat_id: int) -> set[str]:
+        """The alert types this chat gets with notification sound (alerts are silent unless a chat turned the sound on)."""
+        return set(self.chats.get(chat_id, {}).get("loud", []))
+
+    def set_sound(self, chat_id: int, kind: str, on: bool):
+        """Notification sound on (on) or off for one alert type in a known chat."""
+        if chat_id not in self.chats or kind not in LABELS:
+            return
+        loud = self.loud(chat_id)
+        loud = loud | {kind} if on else loud - {kind}
+        if loud:
+            self.chats[chat_id]["loud"] = [k for k in LABELS if k in loud]
+        else:
+            self.chats[chat_id].pop("loud", None)
+        self.save()
+
     def keyboard(self, chat_id: int) -> str | None:
         """The version of the button keyboard this chat was last sent (or "hidden" if it hid it)."""
         return self.chats.get(chat_id, {}).get("keyboard")
@@ -168,10 +184,11 @@ class Notifier:
         return sent
 
     async def _send(self, chat_id: int, text: str, entities, kind: str | None = None) -> bool:
-        """Send silently, with the settings buttons (which highlight this alert's own type); forget a chat the bot can no longer post to."""
+        """Send silently, with the settings buttons (which highlight this alert's own type); with sound only if the chat turned it on for this type; forget a chat the bot can no longer post to."""
         try:
-            await self.bot.send_message(chat_id, text, entities=entities, disable_notification=True, disable_web_page_preview=True,
-                                        reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind))
+            await self.bot.send_message(chat_id, text, entities=entities, disable_notification=kind not in self.state.loud(chat_id),
+                                        disable_web_page_preview=True,
+                                        reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind, loud=self.state.loud(chat_id) if chat_id > 0 else None))
             return True
         except Forbidden as e:  # kicked from the group, or blocked in a private chat
             self.state.remove_chat(chat_id, f"can't post: {e}")

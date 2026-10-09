@@ -3,7 +3,8 @@ Unsubscribe the types that are on, so each list says by itself whether its alert
 the title from what a chat has muted (the same menu goes under every alert and under /alerts).
 
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
-  al:open:sub | al:open:unsub | al:close | al:noop (the heading rows of messages sent by an earlier version)
+  al:open:sub | al:open:unsub | al:open:set | al:close | al:noop (the heading rows of messages sent by an earlier version)
+  al:snd:<kind>:<on|off>[:parent]      (notification sound for one type; Settings is in private chats only)
   al:on:<kind|all>:<section> | al:off:<kind|all>:<section>      (section: sub or unsub, the part left open)
 An alert's buttons end with the alert's own type (parent): under an alert the Unsubscribe list is just that type (marked) and "all": al:open:unsub:rain, al:close:rain,
 al:off:uv:unsub:rain. A chat's /alerts message has no parent and no such field.
@@ -42,14 +43,22 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text, callback_data=data)
 
 
-def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None) -> InlineKeyboardMarkup:
+def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
+             loud: set[str] | None = None) -> InlineKeyboardMarkup:
     """The collapsed menu, or with one section open (open = "sub" or "unsub") and its options under it. `parent` is the type of the
     alert the buttons sit under and is carried in every button. Under an alert the Unsubscribe list is that type (marked) and
     "Unsubscribe from all"; on the /alerts message it lists every type that is on. "... all" is there only when it does something
-    different from the one type listed."""
+    different from the one type listed. `loud`: the types whose alerts make a notification sound; None (a group) leaves out the Settings button,
+    which opens one button per type (just the alert's own under an alert) that turns that sound on or off."""
     tail = f":{parent}" if parent else ""
     rows = [[_button(("▾ " if open == "sub" else "") + "➕ Subscribe", f"al:close{tail}" if open == "sub" else f"al:open:sub{tail}"),
              _button(("▾ " if open == "unsub" else "") + "➖ Unsubscribe", f"al:close{tail}" if open == "unsub" else f"al:open:unsub{tail}")]]
+    if loud is not None:
+        rows[0].append(_button(("▾ " if open == "set" else "") + "⚙️ Settings", f"al:close{tail}" if open == "set" else f"al:open:set{tail}"))
+    if open == "set" and loud is not None:
+        for k in ([parent] if parent else available):
+            on = k in loud
+            rows.append([_button(f"🔕 Disable {LABELS[k]} sound" if on else f"🔔 Enable {LABELS[k]} sound", f"al:snd:{k}:{'off' if on else 'on'}{tail}")])
     if open in ("sub", "unsub"):
         verb = "on" if open == "sub" else "off"
         listed = options(muted, available, open)
