@@ -1,7 +1,7 @@
 """The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
 
-Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the timer is paused the Pause button is [▶️ Unpause],
-one press that ends the pause. A press on Water, Pause or Alerts opens its options under the rows (▾ marks the open one; pressing
+Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the timer is paused the Pause button is [▶️ Unpause] (one press ends the pause) and Water, with its Off, is
+hidden. A press on Water, Pause or Alerts opens its options under the rows (▾ marks the open one; pressing
 it again closes them). Water lists 5, 10, 20 and 30 minutes, then Off for the valve itself (a run is
 always timed). Alerts has one button per alert type, each naming what pressing it does for this chat (enable or disable). Callback data
 (short, self-contained, so an old message's buttons still work after a restart):
@@ -81,13 +81,13 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
 
 def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False) -> InlineKeyboardMarkup:
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
-    names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its button unpauses."""
+    names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its button unpauses and Water (with its Off) is hidden."""
     def head(name: str, text: str) -> InlineKeyboardButton:
         return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
     delay = _button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
-    rows = [[head("water", "💧 Water"), delay],
+    rows = [[delay] if paused else [head("water", "💧 Water"), delay],
             [head("alerts", "🔔 Alerts"), _button("🔄 Refresh", "ir:refresh")]]
-    if open == "water":
+    if open == "water" and not paused:
         rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
         rows.append([_button("Off ❌", "ir:sw:off")])
     elif open == "delay" and not paused:
