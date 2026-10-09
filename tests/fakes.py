@@ -20,7 +20,7 @@ def config(tmp_path, **over) -> Config:
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
                 cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite",
-                conditions_cache_path=tmp_path / "conditions.sqlite")
+                conditions_cache_path=tmp_path / "conditions.sqlite", admin_only=False)   # tests that are about ADMIN_ONLY switch it on
     return Config(**{**base, **over})
 
 

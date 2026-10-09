@@ -3,7 +3,7 @@
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
 chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, UV index of 10 or more, indoor/outdoor temperatures crossing (held back for the cooldown, then announced if it still stands),
-and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, rain predicted, gusts, UV, temperature crossing, air quality, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (and `/alerts on|off` still subscribes or unsubscribes every type). In a group only admins can change them (`lib/alerts/menu.py`).
+and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, rain predicted, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (and `/alerts on|off` still subscribes or unsubscribes every type); `/usage` is the Help & Alerts button. In a group anyone can open `/alerts`, but only admins can change anything (`lib/alerts/menu.py`).
 
 ## Run
 
@@ -28,6 +28,8 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High or Extreme. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
 | `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
 | `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
+| `ADMIN_ONLY` | on by default: the bot answers nobody (private chats and groups alike) except the admins and creators of the groups it is in; anyone else gets "Sorry, only group admins can use this bot." when they address it (ordinary group talk is ignored). The one exception is `/alerts` in a group, which anyone may open (its buttons and `/alerts on|off` stay admin-only). `ADMIN_ONLY=off` answers everyone, as before. The admins are asked of Telegram and remembered for 10 minutes; a group counts once the bot is added to it or someone speaks there |
+| `ADMIN_CHAT_IDS` | optional, with `ADMIN_ONLY`: more ids allowed besides those admins (added to them, not instead of them), separated by commas or spaces. A user id (the same number as their private chat) lets someone in before the bot is in any group; a group id (negative) adds that group's admins and lets its anonymous admins (those who post "as the group") in |
 | `ALERT_COOLDOWN_MINUTES` | optional: the rain and temperature-crossing alerts: how long it must stay dry before "the rain has stopped" is sent, and the least time between alerts of the same kind (default 30, from 5 to 150). A change that comes inside the cooldown is held and announced when it ends, if the state still differs from the last one alerted; if it is back where it was, nothing is sent |
 | `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped, predicted), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
 | `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
@@ -39,7 +41,8 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 ```
 ecobot.py            wiring and lifecycle
 lib/config.py           settings
-lib/bot.py              Telegram handlers and replies
+lib/bot.py              Telegram handlers and replies; every button press comes in through one entry point that checks it first
+lib/admins.py           who may use the bot with ADMIN_ONLY: the admins of the groups it is in, plus ADMIN_CHAT_IDS
 lib/llm.py, prompt.py   tool-calling loop; system prompt
 lib/intent.py           intent.read(text) -> one Reading: effort, needs data, fast path, chart asks, period hints
 lib/tools.py, warm.py   tool registry and the per-question Turn; keep-warm helper shared by both sources

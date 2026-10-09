@@ -15,8 +15,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # kind -> the name on the button, in the order listed
 LABELS = {"rain": "rain", "rain_likely": "rain predicted", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
-          "air": "air quality", "pollen": "pollen & asthma", "forecast": "forecast changes",
+          "air": "particulates", "pollen": "pollen & asthma", "forecast": "forecast changes",
           "irrigation": "irrigation battery", "irrigation_pause": "irrigation pause"}
+# the emoji on each type's button: the one its own alerts start with (every type has one: a test holds the two lists together)
+EMOJI = {"rain": "\U0001f327️", "rain_likely": "\U0001f326️", "gusts": "\U0001f4a8", "uv": "\U0001f9f4", "temps": "\U0001f321️",
+         "air": "\U0001f637", "pollen": "\U0001f33c", "forecast": "\U0001f504", "irrigation": "\U0001faab", "irrigation_pause": "☔"}
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
 PER_ROW = 2
@@ -28,6 +31,11 @@ def available_kinds(sources: set[str]) -> list[str]:
         ["air"] if "AirGradient" in sources else []) + (["pollen"] if "Pollen" in sources else []) + (
         ["forecast"] if "Forecast" in sources else []) + (["irrigation", "irrigation_pause"] if "Irrigation" in sources else [])
     return wanted
+
+
+def label(kind: str) -> str:
+    """The name of an alert type on its button: its emoji, then its name."""
+    return f"{EMOJI[kind]} {LABELS[kind]}"
 
 
 def _button(text: str, data: str) -> InlineKeyboardButton:
@@ -50,11 +58,11 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
             listed, show_all = [k for k in listed if k == parent], bool(others)
         else:
             show_all = len(listed) > 1
-        mark = lambda k: f"● {LABELS[k]}" if open == "unsub" and k == parent else LABELS[k]   # the alert these buttons are under
+        mark = lambda k: f"● {label(k)}" if open == "unsub" and k == parent else label(k)   # the alert these buttons are under
         buttons = [_button(mark(k), f"al:{verb}:{k}:{open}{tail}") for k in listed]
         rows += map(list, batched(buttons, PER_ROW))
         if show_all:
-            rows.append([_button("Subscribe to all" if open == "sub" else "Unsubscribe from all", f"al:{verb}:{ALL}:{open}{tail}")])
+            rows.append([_button("🔔 Subscribe to all" if open == "sub" else "🔕 Unsubscribe from all", f"al:{verb}:{ALL}:{open}{tail}")])
     return InlineKeyboardMarkup(rows)
 
 

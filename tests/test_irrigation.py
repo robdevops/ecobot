@@ -204,7 +204,7 @@ def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller(
     from lib.alerts.menu import LABELS, keyboard
     assert LABELS["irrigation"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
     unsub = rows(keyboard(set(), ["rain", "irrigation"], "unsub"))
-    assert ("irrigation battery", "al:off:irrigation:unsub") in [b for row in unsub for b in row]
+    assert ("🪫 irrigation battery", "al:off:irrigation:unsub") in [b for row in unsub for b in row]
 
 
 # ---------- the daily check ----------
@@ -538,7 +538,8 @@ async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_
     plain = Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], AlertState(tmp_path / "t.json"))
     added_plain = []
     plain.register(NS(add_handler=lambda h, group=0: added_plain.append(h), add_error_handler=lambda h: None))
-    assert len(added) == len(added_plain) + 1
+    assert len(added) == len(added_plain)                                                    # one entry point for every button, with or without a controller
+    assert "ir:" in bot.buttons() and "ir:" not in plain.buttons() and {"al:", "pd:"} <= set(plain.buttons())
     assert "irrigation" in bot._alert_kinds() and "irrigation" not in plain._alert_kinds()
     assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.VERSION
 
