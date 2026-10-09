@@ -58,7 +58,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     if open == "set" and loud is not None:
         for k in ([parent] if parent else available):
             on = k in loud
-            rows.append([_button(f"🔕 Disable {LABELS[k]} sound" if on else f"🔔 Enable {LABELS[k]} sound", f"al:snd:{k}:{'off' if on else 'on'}{tail}")])
+            rows.append([_button(f"🔕 Disable sound for {LABELS[k]} notification" if on else f"🔔 Enable sound for {LABELS[k]} notification", f"al:snd:{k}:{'off' if on else 'on'}{tail}")])
     if open in ("sub", "unsub"):
         verb = "on" if open == "sub" else "off"
         listed = options(muted, available, open)

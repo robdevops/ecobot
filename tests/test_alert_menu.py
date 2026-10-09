@@ -326,17 +326,17 @@ async def test_settings_turn_the_notification_sound_on_and_off_per_type_in_priva
     q = Query("al:open:set")                                                    # /alerts: one button per type
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0][2] == ("▾ ⚙️ Settings", "al:close") and ("🔔 Enable rain sound", "al:snd:rain:on") in [b for r in drawn[1:] for b in r]
+    assert drawn[0][2] == ("▾ ⚙️ Settings", "al:close") and ("🔔 Enable sound for rain notification", "al:snd:rain:on") in [b for r in drawn[1:] for b in r]
     q = Query("al:snd:rain:on")
     await press(bot, q)
     assert state.loud(1) == {"rain"} and "make a sound" in q.toast
-    assert ("🔕 Disable rain sound", "al:snd:rain:off") in [b for r in rows(q.edits[0][1]) for b in r]   # stays open, now offering to turn it off
+    assert ("🔕 Disable sound for rain notification", "al:snd:rain:off") in [b for r in rows(q.edits[0][1]) for b in r]   # stays open, now offering to turn it off
     q = Query("al:open:set:uv", text="☀️ UV 10")                                # under an alert: just that type
     await press(bot, q)
-    assert rows(q.edits[0][1])[1:] == [[("🔔 Enable UV sound", "al:snd:uv:on:uv")]]
+    assert rows(q.edits[0][1])[1:] == [[("🔔 Enable sound for UV notification", "al:snd:uv:on:uv")]]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert state.loud(1) == {"rain", "uv"} and rows(q.edits[0][1])[1:] == [[("🔕 Disable UV sound", "al:snd:uv:off:uv")]]
+    assert state.loud(1) == {"rain", "uv"} and rows(q.edits[0][1])[1:] == [[("🔕 Disable sound for UV notification", "al:snd:uv:off:uv")]]
     await press(bot, Query("al:snd:rain:off"))
     assert state.loud(1) == {"uv"}
     for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain"):         # nothing from the data reaches the state
