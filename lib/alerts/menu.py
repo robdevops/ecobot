@@ -4,7 +4,7 @@ the title from what a chat has muted (the same menu goes under every alert and u
 
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
   al:open:sub | al:open:unsub | al:open:other | al:open:set | al:open:snd_on | al:open:snd_off | al:close | al:noop (the heading rows of messages sent by an earlier version)
-  al:snd:<kind>:<on|off>[:parent]      (notification sound for one type; Settings is in private chats only)
+  al:snd:<kind|all>:<on|off>[:parent]      (notification sound for one type; Settings is in private chats only)
   al:on:<kind|all>:<section> | al:off:<kind|all>:<section>      (section: sub or unsub, the part left open)
 An alert's buttons end with the alert's own type (parent): under an alert the Unsubscribe list is its own type (marked ●) and "Other", which holds the rest and "all": al:open:unsub:rain, al:close:rain,
 al:off:uv:unsub:rain. A chat's /alerts message has no parent and no such field.
@@ -80,6 +80,9 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
                     rows.append([_button("▾ Other" if more else "Other ▸", f"al:open:{section}{tail}" if more else f"al:open:{section}_o{tail}")])
                     items = [k for k in items if k != parent] if more else []
                 rows += map(list, batched([button(k) for k in items], PER_ROW))
+                if len(items) > 1 or (items and open == f"{section}_o"):   # "all": every type in this list (in Other, the alert's own type too)
+                    rows.append([_button("🔔 Enable all" if section == "snd_on" else "🔕 Disable all",
+                                         f"al:snd:{ALL}:{'on' if section == 'snd_on' else 'off'}{tail}")])
     if open in ("sub", "unsub", "other"):
         verb = "on" if open == "sub" else "off"
         listed = options(muted, available, "sub" if open == "sub" else "unsub")

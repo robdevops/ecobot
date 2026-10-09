@@ -407,13 +407,15 @@ class Bot:
             if opened in ("sub", "unsub", "other") and not menu.has_options(self.state.muted(chat.id), kinds, opened, parent):
                 await query.answer("You're subscribed to everything" if opened == "sub" else "No alerts are on")   # nothing to list
                 return
-        elif action == "snd" and chat.type == ChatType.PRIVATE and arg in kinds and section in ("on", "off") and chat.id in self.state.chats:
-            self.state.set_sound(chat.id, arg, section == "on")
+        elif action == "snd" and chat.type == ChatType.PRIVATE and (arg in kinds or arg == menu.ALL) and section in ("on", "off") and chat.id in self.state.chats:
+            for k in ([k for k in kinds if k not in self.state.muted(chat.id)] if arg == menu.ALL else [arg]):   # "all": the types offered here
+                self.state.set_sound(chat.id, k, section == "on")
             parent = tail if tail in kinds else None
             opened = "snd_on" if section == "on" else "snd_off"   # stay in the list (under an alert: in "Other" for another type)
             if parent and arg != parent:
                 opened += "_o"
-            toast = f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts {'now make' if section == 'on' else 'no longer make'} a sound"
+            what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts"
+            toast = f"{what} {'now make' if section == 'on' else 'no longer make'} a sound"
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")
             what = "All alerts" if arg == menu.ALL else f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts"   # "UV alerts", not "Uv"

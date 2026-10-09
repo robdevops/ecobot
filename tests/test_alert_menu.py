@@ -433,3 +433,25 @@ async def test_the_settings_list_only_the_subscribed_types(tmp_path):
     q = Query("al:open:set")
     await press(bot, q)
     assert q.toast == "No alerts are on" and q.edits == []
+
+
+async def test_the_sound_lists_have_an_all_button(tmp_path):
+    bot, state = make_bot(tmp_path)
+    state.set_kind(1, "gusts", False)
+    q = Query("al:open:snd_on")                                                 # /alerts: a flat list with "Enable all" last
+    await press(bot, q)
+    assert rows(q.edits[0][1])[-1] == [("🔔 Enable all", "al:snd:all:on")]
+    q = Query("al:snd:all:on")
+    await press(bot, q)
+    assert state.loud(1) == {k for k in KINDS if k != "gusts"} and q.toast == "All alerts now make a sound"   # only the types it gets
+    assert ("🔕 Disable notification sounds ▸", "al:open:snd_off") in [b for r in rows(q.edits[0][1]) for b in r]
+    q = Query("al:open:snd_off")
+    await press(bot, q)
+    assert rows(q.edits[0][1])[-1] == [("🔕 Disable all", "al:snd:all:off")]
+    await press(bot, Query("al:snd:all:off"))
+    assert state.loud(1) == set()
+    q = Query("al:open:snd_on_o:uv", text="☀️ UV 10")                           # under an alert, "all" sits in Other
+    await press(bot, q)
+    assert rows(q.edits[0][1])[-1] == [("🔔 Enable all", "al:snd:all:on:uv")]
+    await press(bot, Query("al:snd:all:on:uv", text="☀️ UV 10"))
+    assert "uv" in state.loud(1) and "rain" in state.loud(1) and "gusts" not in state.loud(1)
