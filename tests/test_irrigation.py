@@ -162,7 +162,7 @@ def test_the_status_always_shows_mode_state_pause_time_and_battery_in_that_order
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
-    collapsed = [[("💧 Water", "ir:open:water"), ("⏸ Pause", "ir:open:delay")], [("🔔 Alerts", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
+    collapsed = [[("💧 Water ▸", "ir:open:water"), ("⏸ Pause ▸", "ir:open:delay")], [("🔔 Alerts ▸", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
     assert rows(menu.keyboard(False, False)) == collapsed == rows(menu.keyboard(True, True))              # the alert states show only once Alerts is open
     water = rows(menu.keyboard(True, True, "water"))
     assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
@@ -451,7 +451,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob"))
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))                          # no model is involved (the agent is None)
     assert sent[0][0].startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: on)")
-    assert rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water") and rows(sent[0][1]["reply_markup"])[1][0] == ("🔔 Alerts", "ir:open:alerts")
+    assert rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water ▸", "ir:open:water") and rows(sent[0][1]["reply_markup"])[1][0] == ("🔔 Alerts ▸", "ir:open:alerts")
     device.down = True
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))
     assert sent[1][0] == "Sorry, I couldn't reach the irrigation controller." and len(sent) == 2
@@ -591,7 +591,7 @@ async def test_typing_irrigation_does_what_the_button_does_in_private_chats_and_
         assert sent[0][0].startswith("🌱 Irrigation\nmode: idle\nstate: off ❌") and sent[0][1]["reply_markup"], text
     update, sent = group_message("@testbot irrigation")
     await bot.on_message(update, ctx)
-    assert sent[0][0].startswith("🌱 Irrigation") and rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water", "ir:open:water")
+    assert sent[0][0].startswith("🌱 Irrigation") and rows(sent[0][1]["reply_markup"])[0][0] == ("💧 Water ▸", "ir:open:water")
     update, sent = group_message("water", replied=True)                                   # a reply to the bot counts as addressing it
     await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
     assert sent == [] or sent[0][0].startswith("🌱 Irrigation")
@@ -708,7 +708,7 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     await m.check(NOW)
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
     markup = delivered[0][2]["reply_markup"]
-    assert rows(markup) == [[("➕ Subscribe", "al:open:sub:irrigation_pause"), ("➖ Unsubscribe", "al:open:unsub:irrigation_pause"),
+    assert rows(markup) == [[("➕ Subscribe ▸", "al:open:sub:irrigation_pause"), ("➖ Unsubscribe ▸", "al:open:unsub:irrigation_pause"),
                             ("⚙️ Settings ▸", "al:open:set:irrigation_pause")]]
     from lib.alerts.menu import keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
@@ -816,7 +816,7 @@ async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(t
     bot, state, device = irrigation_bot(tmp_path)
     update, sent = private_message("irrigation")
     await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
-    assert rows(sent[0][1]["reply_markup"])[0][1] == ("⏸ Pause", "ir:open:delay")               # not paused
+    assert rows(sent[0][1]["reply_markup"])[0][1] == ("⏸ Pause ▸", "ir:open:delay")               # not paused
     q = await press(bot, "ir:open:delay")
     assert [b[0] for b in rows(q.edits[0][1])[-1]] == ["24h", "48h", "72h"]
     q = await press(bot, "ir:delay:48h")                                                        # pause it
@@ -831,7 +831,7 @@ async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(t
     assert rows(q.edits[0][2])[0][0] == ("▶️ Unpause", "ir:delay:cancel")
     q = await press(bot, "ir:delay:cancel")                                                     # the Unpause button
     assert q.toast == "Unpaused" and device.commands[-1] == ("delay", "cancel") and "pause: not paused" in q.edits[0][1]
-    assert rows(q.edits[0][2])[0][1] == ("⏸ Pause", "ir:open:delay")                            # and it is Pause again
+    assert rows(q.edits[0][2])[0][1] == ("⏸ Pause ▸", "ir:open:delay")                            # and it is Pause again
     device.status_now["weather_delay"] = "24h"                                                  # paused from the app
     q = await press(bot, "ir:refresh")
     assert rows(q.edits[0][2])[0][0] == ("▶️ Unpause", "ir:delay:cancel")

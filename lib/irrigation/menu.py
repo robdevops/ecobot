@@ -90,7 +90,7 @@ def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool =
     names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its
     button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
     def head(name: str, text: str) -> InlineKeyboardButton:
-        return _button(("▾ " if open == name else "") + text, "ir:close" if open == name else f"ir:open:{name}")
+        return _button(f"▾ {text}" if open == name else f"{text} ▸", "ir:close" if open == name else f"ir:open:{name}")   # ▸ closed, ▾ open
     delay = _button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
     rows = [[delay] if paused else [head("water", "💧 Water"), delay],
             [head("alerts", "🔔 Alerts"), _button("🔄 Refresh", "ir:refresh")]]
