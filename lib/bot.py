@@ -17,7 +17,7 @@ from datetime import datetime, UTC
 
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
-from telegram.error import BadRequest, Forbidden, NetworkError, TelegramError
+from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, TelegramError
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, periods, prompt, report, templates
@@ -313,7 +313,13 @@ class Bot:
             return
         if not await self._allowed(update, context):
             return
-        await handler(update, context)
+        try:
+            await handler(update, context)
+        except ChatMigrated as e:   # a press on an alert from before its group became a supergroup (the chat has a new id)
+            if self.state:
+                self.state.migrate_chat(query.message.chat.id, e.new_chat_id)
+            with contextlib.suppress(TelegramError):
+                await query.answer("This group was upgraded to a supergroup: please use the buttons on new alerts")
 
     # ---------- alert chats ----------
     @staticmethod

@@ -360,3 +360,31 @@ async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_
     assert flags[(1, "It's raining")] is False and flags[(1, "UV")] is True and flags[(-5, "It's raining")] is True
     group = next(kw for c, _, kw in bot.sent if c == -5)
     assert [b[0] for b in rows(group["reply_markup"])[0]] == ["➕ Subscribe", "➖ Unsubscribe"]
+
+
+async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path):
+    from telegram.error import ChatMigrated
+
+    class Moved(Sent):
+        async def send_message(self, chat_id, text, **kw):
+            if chat_id == -5:
+                raise ChatMigrated(-1005)
+            await super().send_message(chat_id, text, **kw)
+
+    state, bot = AlertState(tmp_path / "s3.json"), Moved()
+    state.add_chat(-5, "G")
+    state.set_kind(-5, "uv", False)
+    await Notifier(bot, state, KINDS)("It's raining", kind="rain")
+    assert list(state.chats) == [-1005] and state.muted(-1005) == {"uv"} and [c for c, *_ in bot.sent] == [-1005]
+    state.add_chat(-7, "H")                                                    # a press under an old alert of a moved group
+    bot2, _ = make_bot(tmp_path)
+    bot2.state = state
+    q = Query("al:open:unsub", chat_type="supergroup", chat_id=-7)
+    q.message.reply_markup = keyboard(set(), KINDS)
+    q.message.chat.title = "H"
+
+    async def moved(*a, **k):
+        raise ChatMigrated(-1007)
+    bot2._is_group_admin = moved
+    await bot2.on_button(NS(callback_query=q, effective_user=NS(id=7), effective_message=q.message, effective_chat=q.message.chat), ctx())
+    assert -1007 in state.chats and -7 not in state.chats and "upgraded" in q.toast

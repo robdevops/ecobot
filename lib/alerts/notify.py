@@ -12,7 +12,7 @@ import os
 from datetime import date
 
 from telegram import MessageEntity
-from telegram.error import BadRequest, Forbidden, TelegramError
+from telegram.error import BadRequest, ChatMigrated, Forbidden, TelegramError
 
 from .menu import ALL, LABELS, keyboard
 
@@ -64,6 +64,14 @@ class AlertState:
         """/alerts on and /alerts off: every type."""
         self.chats.setdefault(chat_id, {"title": title})
         self.set_kind(chat_id, ALL, on)
+
+    def migrate_chat(self, old: int, new: int):
+        """A group became a supergroup: its settings move to the new chat id."""
+        entry = self.chats.pop(old, None)
+        if entry is not None:
+            self.chats.setdefault(new, entry)
+            log.info("Alerts: chat %s became %s", old, new)
+            self.save()
 
     def muted(self, chat_id: int) -> set[str]:
         return set(self.chats.get(chat_id, {}).get("muted", []))
@@ -190,6 +198,9 @@ class Notifier:
                                         disable_web_page_preview=True,
                                         reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind, loud=self.state.loud(chat_id) if chat_id > 0 else None))
             return True
+        except ChatMigrated as e:  # the group became a supergroup: follow it, and send again there
+            self.state.migrate_chat(chat_id, e.new_chat_id)
+            return await self._send(e.new_chat_id, text, entities, kind) if e.new_chat_id != chat_id else False
         except Forbidden as e:  # kicked from the group, or blocked in a private chat
             self.state.remove_chat(chat_id, f"can't post: {e}")
         except BadRequest as e:
