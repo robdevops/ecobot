@@ -2,7 +2,7 @@
 
 Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the valve is on, a [Water off ❌] row follows. While the timer is paused,
 Pause is [▶️ Unpause] (one press ends the pause) and Water is hidden. A press on Water, Pause or Alerts opens its options under the
-rows (▾ marks the open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes (a run is always timed). Alerts has
+rows (▸ after the text marks a menu, ▾ the open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes (a run is always timed). Alerts has
 one button per alert type, each naming what pressing it does for this chat (enable or disable).
 Callback data
 (short, self-contained, so an old message's buttons still work after a restart):
@@ -15,6 +15,8 @@ import math
 import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
+
+from ..buttons import menu_text
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)
@@ -90,7 +92,7 @@ def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool =
     names what pressing it does (disable when it is on, enable when it is off). `paused`: the timer is paused, so its
     button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
     def head(name: str, text: str) -> InlineKeyboardButton:
-        return _button(f"▾ {text}" if open == name else f"{text} ▸", "ir:close" if open == name else f"ir:open:{name}")   # ▸ closed, ▾ open
+        return _button(menu_text(text, open == name), "ir:close" if open == name else f"ir:open:{name}")
     delay = _button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
     rows = [[delay] if paused else [head("water", "💧 Water"), delay],
             [head("alerts", "🔔 Alerts"), _button("🔄 Refresh", "ir:refresh")]]

@@ -165,7 +165,7 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     collapsed = [[("💧 Water ▸", "ir:open:water"), ("⏸ Pause ▸", "ir:open:delay")], [("🔔 Alerts ▸", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
     assert rows(menu.keyboard(False, False)) == collapsed == rows(menu.keyboard(True, True))              # the alert states show only once Alerts is open
     water = rows(menu.keyboard(True, True, "water"))
-    assert water[0][0] == ("▾ 💧 Water", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
+    assert water[0][0] == ("💧 Water ▾", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
     assert "ir:sw:off" not in [data for row in water for _, data in row]                    # Off is not in the Water list: it is a top-level row while on
     assert rows(menu.keyboard(True, True, running=True)) == collapsed + [[("Water off ❌", "ir:sw:off")]]   # only while the valve is on
     assert rows(menu.keyboard(True, True, paused=True, running=True))[-1] == [("Water off ❌", "ir:sw:off")]
@@ -182,7 +182,7 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
             (False, True, ("🔔 Enable battery alerts", "ir:batt:on"), ("🔕 Disable pause alerts", "ir:pause:off")),
             (True, True, ("🔕 Disable battery alerts", "ir:batt:off"), ("🔕 Disable pause alerts", "ir:pause:off"))):
         alerts = rows(menu.keyboard(battery, pause, "alerts"))
-        assert alerts[:2] == collapsed[:1] + [[("▾ 🔔 Alerts", "ir:close"), ("🔄 Refresh", "ir:refresh")]]
+        assert alerts[:2] == collapsed[:1] + [[("🔔 Alerts ▾", "ir:close"), ("🔄 Refresh", "ir:refresh")]]
         assert alerts[2:] == [[battery_button], [pause_button]]                                    # each names the action it takes
     for section in (None, *menu.SECTIONS):
         for battery in (True, False):

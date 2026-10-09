@@ -21,12 +21,12 @@ def test_the_collapsed_menu_is_subscribe_and_unsubscribe():
 
 def test_unsubscribe_opens_the_types_that_are_on_and_subscribe_the_types_that_are_off():
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub"))
-    assert got[0] == [("➕ Sub ▸", "al:open:sub"), ("▾ ➖ Unsub", "al:close")]
+    assert got[0] == [("➕ Sub ▸", "al:open:sub"), ("➖ Unsub ▾", "al:close")]
     assert got[1] == [("🌧️ rain", "al:off:rain:unsub"), ("🌦️ rain predicted", "al:off:rain_likely:unsub")]
     assert [text for row in got[1:-1] for text, _ in row] == ["🌧️ rain", "🌦️ rain predicted", "💨 gusts", "🧴 UV", "🌡️ temperature crossing", "😷 particulates"]
     assert got[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub")]
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "sub"))
-    assert got[0][0] == ("▾ ➕ Sub", "al:close")
+    assert got[0][0] == ("➕ Sub ▾", "al:close")
     assert got[1:] == [[("🌼 pollen & asthma", "al:on:pollen:sub"), ("🔄 forecast changes", "al:on:forecast:sub")], [("🔔 Subscribe to all", "al:on:all:sub")]]
     assert not any(data == "al:noop" for row in got for _, data in row)                  # no button that does nothing
     assert options({"pollen"}, KINDS, "sub") == ["pollen"] and options({"pollen"}, ["rain", "pollen"], "unsub") == ["rain"]
@@ -137,7 +137,7 @@ async def test_pressing_unsubscribe_then_a_type_updates_the_state_and_redraws_th
     await press(bot, q)
     assert state.muted(1) == {"rain"} and q.toast == "Rain alerts off in this chat"
     drawn = rows(q.edits[0][1])
-    assert drawn[0][1] == ("▾ ➖ Unsub", "al:close") and "🌧️ rain" not in [t for row in drawn[1:] for t, _ in row]
+    assert drawn[0][1] == ("➖ Unsub ▾", "al:close") and "🌧️ rain" not in [t for row in drawn[1:] for t, _ in row]
     q = Query("al:on:rain:sub")
     await press(bot, q)
     assert state.muted(1) == set() and q.toast == "Rain alerts on in this chat"
@@ -258,10 +258,10 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
 
 def test_under_an_alert_the_unsubscribe_list_is_its_type_then_other_which_holds_the_rest_and_all():
     got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub", parent="uv"))
-    assert got == [[("➕ Sub ▸", "al:open:sub:uv"), ("▾ ➖ Unsub", "al:close:uv")],
+    assert got == [[("➕ Sub ▸", "al:open:sub:uv"), ("➖ Unsub ▾", "al:close:uv")],
                    [("● 🧴 UV", "al:off:uv:unsub:uv")], [("Other ▸", "al:open:other:uv")]]
     other = rows(keyboard({"pollen", "forecast"}, KINDS, "other", parent="uv"))
-    assert other[1:3] == [[("● 🧴 UV", "al:off:uv:other:uv")], [("▾ Other", "al:open:unsub:uv")]]
+    assert other[1:3] == [[("● 🧴 UV", "al:off:uv:other:uv")], [("Other ▾", "al:open:unsub:uv")]]
     listed = [d for r in other[3:-1] for _, d in r]
     assert listed and all(d.startswith("al:off:") and d.endswith(":other:uv") and ":uv:" not in d for d in listed)   # the rest, not its own type
     assert other[-1] == [("🔕 Unsubscribe from all", "al:off:all:other:uv")]
@@ -289,7 +289,7 @@ async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_th
     q = Query("al:open:unsub:uv", text="☀️ UV 10")
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0][1] == ("▾ ➖ Unsub", "al:close:uv") and drawn[1:] == [
+    assert drawn[0][1] == ("➖ Unsub ▾", "al:close:uv") and drawn[1:] == [
         [("● 🧴 UV", "al:off:uv:unsub:uv")], [("Other ▸", "al:open:other:uv")]]
     q = Query("al:open:other:uv", text="☀️ UV 10")
     await press(bot, q)
@@ -336,11 +336,11 @@ async def test_settings_hold_enable_and_disable_sub_menus_of_notification_sounds
     q = Query("al:open:set")                                                    # /alerts: Settings opens the two sub-menus (▸ marks a menu)
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0][2] == ("▾ ⚙️ Settings", "al:close") and drawn[1:] == [[("🔔 Enable notification sounds ▸", "al:open:snd_on")]]
+    assert drawn[0][2] == ("⚙️ Settings ▾", "al:close") and drawn[1:] == [[("🔔 Enable notification sounds ▸", "al:open:snd_on")]]
     q = Query("al:open:snd_on")                                                 # only the types with the sound off, as buttons
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[1] == [("▾ 🔔 Enable notification sounds", "al:open:set")] and ("🌧️ rain", "al:snd:rain:on") in [b for r in drawn[2:] for b in r]
+    assert drawn[1] == [("🔔 Enable notification sounds ▾", "al:open:set")] and ("🌧️ rain", "al:snd:rain:on") in [b for r in drawn[2:] for b in r]
     q = Query("al:snd:rain:on")
     await press(bot, q)
     assert state.loud(1) == {"rain"} and "make a sound" in q.toast
@@ -358,11 +358,11 @@ async def test_settings_hold_enable_and_disable_sub_menus_of_notification_sounds
     q = Query("al:open:snd_on_o:uv", text="☀️ UV 10")                           # Other holds the rest
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[3] == [("▾ Other", "al:open:snd_on:uv")] and ("🌧️ rain", "al:snd:rain:on:uv") in [b for r in drawn for b in r]
+    assert drawn[3] == [("Other ▾", "al:open:snd_on:uv")] and ("🌧️ rain", "al:snd:rain:on:uv") in [b for r in drawn for b in r]
     assert "al:snd:uv:on:uv" not in [d for r in drawn[4:] for _, d in r]
     q = Query("al:snd:rain:on:uv", text="☀️ UV 10")                             # a press in Other stays in Other
     await press(bot, q)
-    assert state.loud(1) == {"rain"} and ("▾ Other", "al:open:snd_on:uv") in [b for r in rows(q.edits[0][1]) for b in r]
+    assert state.loud(1) == {"rain"} and ("Other ▾", "al:open:snd_on:uv") in [b for r in rows(q.edits[0][1]) for b in r]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")                               # a press on its own type stays on its level
     await press(bot, q)
     assert state.loud(1) == {"rain", "uv"} and ("🔕 Disable notification sounds ▸", "al:open:snd_off:uv") in [b for r in rows(q.edits[0][1]) for b in r]

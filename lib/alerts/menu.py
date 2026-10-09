@@ -14,6 +14,8 @@ from itertools import batched
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from ..buttons import menu_text
+
 # kind -> the name on the button, in the order listed
 LABELS = {"rain": "rain", "rain_likely": "rain predicted", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
           "air": "particulates", "pollen": "pollen & asthma", "forecast": "forecast changes",
@@ -51,7 +53,7 @@ def _type_rows(items: list[str], parent: str | None, more: bool, button, other_d
     one type. `button(kind)` draws one type."""
     rows: list[list] = []
     if parent in items and len(items) > 1:
-        rows += [[button(parent)], [_button("▾ Other" if more else "Other ▸", other_data[1] if more else other_data[0])]]
+        rows += [[button(parent)], [_button(menu_text("Other", more), other_data[1] if more else other_data[0])]]
         items = [k for k in items if k != parent] if more else []
     elif more:
         more = False   # nothing to put under Other
@@ -64,8 +66,8 @@ def _type_rows(items: list[str], parent: str | None, more: bool, button, other_d
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
              loud: set[str] | None = None) -> InlineKeyboardMarkup:
     """The menu: Subscribe, Unsubscribe and (private chats) Settings, one section open at a time (`open`: sub, unsub, other, set,
-    snd_on, snd_off, or snd_on_o / snd_off_o, the Other list of a sound menu) with its options under it. A ▸ marks a button that opens
-    a menu, ▾ the open one; the rest do something. `parent` is the type of the alert the buttons sit under (carried in every button):
+    snd_on, snd_off, or snd_on_o / snd_off_o, the Other list of a sound menu) with its options under it. A ▸ after the text marks a button that opens
+    a menu, ▾ (in the same place) the open one; the rest do something. `parent` is the type of the alert the buttons sit under (carried in every button):
     its lists put that type first (●) and the rest under "Other". `loud`: the types whose alerts make a notification sound; None (a
     group) leaves out Settings, which holds two menus, Enable and Disable notification sounds, over the subscribed types."""
     tail = f":{parent}" if parent else ""
@@ -73,8 +75,8 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     if open == "other" and not (parent in subscribed and len(subscribed) > 1):
         open = "unsub"
     unsub_open = open in ("unsub", "other")
-    def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:   # a menu button: ▸ closed, ▾ open
-        return _button(f"▾ {text}" if is_open else f"{text} ▸", f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
+    def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:
+        return _button(menu_text(text, is_open), f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
     rows = [[head(open == "sub", "➕ Sub", "sub"), head(unsub_open, "➖ Unsub", "unsub")]]
     if loud is not None:
         rows[0].append(head(open in SETTINGS, "⚙️ Settings", "set"))
@@ -85,7 +87,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
             here = open in (section, f"{section}_o")
             if not items:
                 continue
-            rows.append([_button(f"▾ {heading}" if here else f"{heading} ▸", f"al:open:set{tail}" if here else f"al:open:{section}{tail}")])
+            rows.append([_button(menu_text(heading, here), f"al:open:set{tail}" if here else f"al:open:{section}{tail}")])
             if here:
                 verb = "on" if section == "snd_on" else "off"
                 rows += _type_rows(items, parent, open == f"{section}_o", lambda k: _button(mark(k), f"al:snd:{k}:{verb}{tail}"),
