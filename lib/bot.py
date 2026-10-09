@@ -410,7 +410,7 @@ class Bot:
         elif action == "snd" and chat.type == ChatType.PRIVATE and arg in kinds and section in ("on", "off") and chat.id in self.state.chats:
             self.state.set_sound(chat.id, arg, section == "on")
             parent = tail if tail in kinds else None
-            opened = "set"
+            opened = "snd_on" if section == "on" else "snd_off"   # stay in the list; the keyboard closes it when it empties
             toast = f"{menu.LABELS[arg][0].upper()}{menu.LABELS[arg][1:]} alerts {'now make' if section == 'on' else 'no longer make'} a sound"
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")
@@ -423,7 +423,7 @@ class Bot:
         if opened in ("sub", "unsub") and not menu.has_options(muted, kinds, opened, parent):
             opened = None                                    # the last one was just turned on or off: close the section
         private = chat.type == ChatType.PRIVATE
-        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub", "set") else None, parent,
+        markup = menu.keyboard(muted, kinds, opened if opened in ("sub", "unsub", *menu.SETTINGS) else None, parent,
                                self.state.loud(chat.id) if private else None)
         await query.answer(toast)
         try:

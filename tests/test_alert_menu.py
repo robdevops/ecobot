@@ -86,7 +86,7 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     assert [(c, t.split("\n")[0]) for c, t, _ in bot.sent] == [(1, "It's raining"), (1, "Gusts"), (2, "Gusts")]
     markup = bot.sent[0][2]["reply_markup"]
     assert rows(markup) == [[("➕ Subscribe", "al:open:sub:rain"), ("➖ Unsubscribe", "al:open:unsub:rain"),
-                            ("⚙️ Settings", "al:open:set:rain")]]   # the alert's own type rides along
+                            ("⚙️ Settings ▸", "al:open:set:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
     assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
 
@@ -205,7 +205,7 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     update = NS(effective_message=NS(reply_text=reply_text, chat_id=1), effective_chat=chat, effective_user=NS(full_name="Rob", username="rob"))
     await bot.on_alerts(update, NS(args=[]))
     assert replies[0][0].startswith(TITLE) and "✅ On: rain, rain predicted, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
-    assert rows(replies[0][1]["reply_markup"])[0] == [("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub"), ("⚙️ Settings", "al:open:set")]
+    assert rows(replies[0][1]["reply_markup"])[0] == [("➕ Subscribe", "al:open:sub"), ("➖ Unsubscribe", "al:open:unsub"), ("⚙️ Settings ▸", "al:open:set")]
     await bot.on_alerts(update, NS(args=["off"]))
     assert not state.alerts_on(1) and "✅ On: nothing" in replies[1][0]
     await bot.on_alerts(update, NS(args=["on"]))
@@ -292,7 +292,7 @@ async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_th
     q = Query("al:off:all:unsub:uv", text="☀️ UV 10")                          # and "all" turns the rest off, closing the empty section
     await press(bot, q)
     assert rows(q.edits[0][1]) == [[("➕ Subscribe", "al:open:sub:uv"), ("➖ Unsubscribe", "al:open:unsub:uv"),
-                                   ("⚙️ Settings", "al:open:set:uv")]]
+                                   ("⚙️ Settings ▸", "al:open:set:uv")]]
     q = Query("al:open:unsub:uv", text="☀️ UV 10")                             # nothing is on now: a toast, no menu
     await press(bot, q)
     assert q.toast == "No alerts are on" and not q.edits
@@ -321,24 +321,32 @@ def test_every_alert_type_has_its_emoji_and_every_button_in_the_lists_starts_wit
     assert title(set(), ["rain"]) == f"{TITLE}\n✅ On: rain\n🔕 Off: nothing"                # the on/off summary and the toasts stay plain words
 
 
-async def test_settings_turn_the_notification_sound_on_and_off_per_type_in_private_chats_only(tmp_path):
+async def test_settings_hold_enable_and_disable_sub_menus_of_notification_sounds_in_private_chats_only(tmp_path):
     bot, state = make_bot(tmp_path)
-    q = Query("al:open:set")                                                    # /alerts: one button per type
+    q = Query("al:open:set")                                                    # /alerts: Settings opens the two sub-menus (▸ marks a menu)
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0][2] == ("▾ ⚙️ Settings", "al:close") and ("🔔 Enable sound for rain notification", "al:snd:rain:on") in [b for r in drawn[1:] for b in r]
+    assert drawn[0][2] == ("▾ ⚙️ Settings", "al:close") and drawn[1:] == [[("🔔 Enable notification sounds ▸", "al:open:snd_on")]]
+    q = Query("al:open:snd_on")                                                 # only the types with the sound off, as buttons
+    await press(bot, q)
+    drawn = rows(q.edits[0][1])
+    assert drawn[1] == [("▾ 🔔 Enable notification sounds", "al:open:set")] and ("🌧️ rain", "al:snd:rain:on") in [b for r in drawn[2:] for b in r]
     q = Query("al:snd:rain:on")
     await press(bot, q)
     assert state.loud(1) == {"rain"} and "make a sound" in q.toast
-    assert ("🔕 Disable sound for rain notification", "al:snd:rain:off") in [b for r in rows(q.edits[0][1]) for b in r]   # stays open, now offering to turn it off
+    drawn = rows(q.edits[0][1])                                                 # stays in the list, rain gone from it; Disable appears
+    assert "al:snd:rain:on" not in [d for r in drawn for _, d in r] and ("🔕 Disable notification sounds ▸", "al:open:snd_off") in [b for r in drawn for b in r]
+    q = Query("al:open:snd_off")
+    await press(bot, q)
+    assert [b for r in rows(q.edits[0][1]) for b in r if b[1].startswith("al:snd")] == [("🌧️ rain", "al:snd:rain:off")]
+    await press(bot, Query("al:snd:rain:off"))
+    assert state.loud(1) == set()
     q = Query("al:open:set:uv", text="☀️ UV 10")                                # under an alert: just that type
     await press(bot, q)
-    assert rows(q.edits[0][1])[1:] == [[("🔔 Enable sound for UV notification", "al:snd:uv:on:uv")]]
+    assert rows(q.edits[0][1])[1:] == [[("🔔 Enable notification sounds ▸", "al:open:snd_on:uv")]]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert state.loud(1) == {"rain", "uv"} and rows(q.edits[0][1])[1:] == [[("🔕 Disable sound for UV notification", "al:snd:uv:off:uv")]]
-    await press(bot, Query("al:snd:rain:off"))
-    assert state.loud(1) == {"uv"}
+    assert state.loud(1) == {"uv"} and rows(q.edits[0][1])[1:] == [[("🔕 Disable notification sounds ▸", "al:open:snd_off:uv")]]
     for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain"):         # nothing from the data reaches the state
         await press(bot, Query(data))
     assert state.loud(1) == {"uv"}
@@ -394,6 +402,8 @@ async def test_the_settings_list_only_the_subscribed_types(tmp_path):
     bot, state = make_bot(tmp_path)
     state.set_kind(1, "rain", False)
     q = Query("al:open:set")
+    await press(bot, q)
+    q = Query("al:open:snd_on")
     await press(bot, q)
     listed = [d for r in rows(q.edits[0][1])[1:] for _, d in r]
     assert "al:snd:rain:on" not in listed and "al:snd:uv:on" in listed
