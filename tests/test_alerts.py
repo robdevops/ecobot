@@ -541,3 +541,40 @@ async def test_a_dry_night_has_no_summary_and_quiet_hours_can_be_off(tmp_path):
     m.station.data = night_rain(int(datetime(2026, 9, 30, 2, 0, tzinfo=TZ).timestamp()), 0, 0, 1)
     await m.check()
     assert len(sent) == 1 and "started raining" in sent[0]
+
+
+def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tmp_path, monkeypatch):
+    from lib.alerts import menu, notify
+    state = notify.AlertState(tmp_path / "s.json")
+    for chat in (1, 2, 3):
+        state.add_chat(chat, str(chat))
+    state.set_kind(1, "all", False)                       # unsubscribe from all
+    state.set_kind(2, "rain", False)                      # just one type: the normal mode
+    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
+    assert not state.subscribed(1, "newthing") and state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
+    state.set_kind(1, "uv", True)                         # then one type back on: only that one
+    monkeypatch.setitem(menu.LABELS, "newer", "newer")
+    assert state.subscribed(1, "uv") and not state.subscribed(1, "rain") and not state.subscribed(1, "newer") and state.alert_chats("uv") == [1, 2, 3]
+    state.set_kind(1, "uv", False)
+    assert not state.subscribed(1)                        # nothing on at all
+    state.set_kind(1, "all", True)                        # subscribe to all: new types come on again
+    assert state.subscribed(1, "newer") and state.subscribed(1, "rain")
+    for kind in list(menu.LABELS):                        # turning every type off one by one is not "unsubscribe from all"
+        state.set_kind(3, kind, False)
+    monkeypatch.setitem(menu.LABELS, "newest", "newest")
+    assert state.subscribed(3, "newest")
+
+
+def test_chats_that_already_unsubscribed_from_all_load_as_opt_in(tmp_path, monkeypatch):
+    import json
+    from lib.alerts import menu, notify
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"chats": {"1": {"title": "a", "muted": list(menu.LABELS)}, "2": {"title": "b", "alerts": False},
+                                          "3": {"title": "c", "muted": ["rain"]}}}))
+    state = notify.AlertState(path)
+    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
+    assert not state.subscribed(1, "newthing") and not state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
+    state.set_kind(1, "uv", True)
+    state.save()
+    again = notify.AlertState(path)                       # and it survives a restart
+    assert again.subscribed(1, "uv") and not again.subscribed(1, "rain") and not again.subscribed(1, "newthing")
