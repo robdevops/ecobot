@@ -27,7 +27,7 @@ POLLEN_REFRESH_SECONDS = 30 * 60
 SEASON_MONTHS = (10, 11, 12)   # grass pollen and the thunderstorm asthma forecast run October to December: nothing else is fetched, shown or alerted
 OFF_SEASON = "Pollen and thunderstorm asthma forecasts only run from October to December."
 
-DESCRIPTION = ("Melbourne's grass pollen level today and the thunderstorm asthma risk (Low, Moderate, High or Extreme), from "
+DESCRIPTION = ("Melbourne's grass pollen level today and the thunderstorm asthma risk (Low, Moderate or High), from "
                "melbournepollen.com.au. Use it for pollen, hay fever and thunderstorm asthma questions. Takes no arguments. "
                "The result's \"lines\" are ready-made, emoji included: copy them as they are.")
 PARAMETERS = {"type": "object", "properties": {}}

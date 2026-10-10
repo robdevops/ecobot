@@ -33,9 +33,10 @@ class AlertState:
         except Exception:
             log.exception("Couldn't read %s - starting with no known chats", path)
         self.chats: dict[int, dict] = {int(k): v for k, v in data.get("chats", {}).items()}
-        for entry in self.chats.values():   # the old on/off flag: off becomes every type muted
-            if entry.pop("alerts", True) is False:
-                entry["muted"] = list(LABELS)
+        for entry in self.chats.values():   # the old on/off flag, and a chat with every type muted, are "unsubscribed from all"
+            if entry.pop("alerts", True) is False or set(entry.get("muted", [])) >= set(LABELS):
+                entry.pop("muted", None)
+                entry.update(optin=True, on=[])
         self.monitor: dict = data.get("monitor", {})
         self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
 
@@ -74,14 +75,33 @@ class AlertState:
             self.save()
 
     def muted(self, chat_id: int) -> set[str]:
-        return set(self.chats.get(chat_id, {}).get("muted", []))
+        """The types this chat does not get. A chat that unsubscribed from all is in opt-in mode (it keeps the types it turned on),
+        so a type added later is muted for it until it subscribes."""
+        entry = self.chats.get(chat_id, {})
+        if entry.get("optin"):
+            return set(LABELS) - set(entry.get("on", []))
+        return set(entry.get("muted", []))
 
     def set_kind(self, chat_id: int, kind: str, on: bool):
-        """Subscribe (on) or unsubscribe one alert type, or all of them (kind = "all")."""
+        """Subscribe (on) or unsubscribe one alert type, or all of them (kind = "all"). Unsubscribing from all also keeps
+        future types off for the chat; subscribing to all turns them on again."""
         if chat_id not in self.chats:
             return
+        entry = self.chats[chat_id]
+        if kind == ALL:   # on: back to the normal mode (new types come on); off: opt-in mode, where new types stay off
+            for key in ("muted", "optin", "on"):
+                entry.pop(key, None)
+            if not on:
+                entry.update(optin=True, on=[])
+            self.save()
+            return
+        kinds = {kind} & set(LABELS)
+        if entry.get("optin"):
+            turned_on = set(entry.get("on", [])) | kinds if on else set(entry.get("on", [])) - kinds
+            entry["on"] = [k for k in LABELS if k in turned_on]
+            self.save()
+            return
         muted = self.muted(chat_id)
-        kinds = set(LABELS) if kind == ALL else {kind} & set(LABELS)
         muted = muted - kinds if on else muted | kinds
         if muted:
             self.chats[chat_id]["muted"] = [k for k in LABELS if k in muted]

@@ -4,7 +4,7 @@ from types import SimpleNamespace as NS
 
 import httpx
 
-from lib.pollen import Pollen, parse_melbourne_pollen
+from lib.pollen import LEVEL_EMOJI, LEVELS, Pollen, parse_melbourne_pollen
 from lib.warm import in_sync_hours
 from tests.fakes import TZ, config
 
@@ -39,10 +39,10 @@ def make(tmp_path, html=None, hour=12, **over):
 
 
 def test_the_page_is_parsed_into_levels_districts_and_the_update_time():
-    got = parse_melbourne_pollen(page(grass="High", asthma="Extreme"))
+    got = parse_melbourne_pollen(page(grass="High", asthma="High"))
     assert got["melbourne_grass"] == "High" and got["melbourne_date"] == SEASON_DAY
     assert got["district_grass"] == {"Central": "High", "Mallee": "Moderate"}
-    assert got["thunderstorm_asthma"] == {"Central": "Extreme", "Wimmera": "High"}
+    assert got["thunderstorm_asthma"] == {"Central": "High", "Wimmera": "High"}
     assert got["asthma_updated"] == "1 Oct 2026 4:00pm"
 
 
@@ -53,9 +53,9 @@ def test_outside_the_asthma_season_there_is_no_asthma_forecast_and_an_unknown_pa
 
 
 async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path):
-    pollen, _ = make(tmp_path, lambda: page(grass="High", asthma="Extreme"))
+    pollen, _ = make(tmp_path, lambda: page(grass="High", asthma="High"))
     await pollen.start()
-    assert pollen.lines() == ["Grass pollen: 🟠 High", "Thunderstorm asthma risk: 🔴 Extreme"]
+    assert pollen.lines() == ["Grass pollen: 🔴 High", "Thunderstorm asthma risk: 🔴 High"]
     out = json.loads(await pollen.handle({}))
     assert out["lines"] == pollen.lines() and "Central" not in json.dumps(out) and out["asthma_updated"] == "1 Oct 2026 4:00pm"
     await pollen.close()
@@ -64,7 +64,7 @@ async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path
 async def test_a_forecast_for_another_day_and_a_missing_asthma_forecast_are_said_so(tmp_path):
     pollen, _ = make(tmp_path, lambda: page(grass="Moderate", day=SEASON_DAY + timedelta(days=1), season=False))
     await pollen.start()
-    assert pollen.lines() == ["Grass pollen: 🟡 Moderate (forecast for Wed 11 Nov)"]
+    assert pollen.lines() == ["Grass pollen: 🟠 Moderate (forecast for Wed 11 Nov)"]
     assert "asthma_note" in json.loads(await pollen.handle({}))
     await pollen.close()
 
@@ -148,7 +148,7 @@ async def test_last_seasons_page_is_not_shown_and_the_report_leaves_the_block_ou
     from lib import report
     pollen, _ = make_on(tmp_path, date(2026, 12, 20), html=lambda: page(grass="High", day=date(2026, 12, 20)))
     await pollen.start()
-    assert pollen.lines()[0].startswith("Grass pollen: 🟠 High")
+    assert pollen.lines()[0].startswith("Grass pollen: 🔴 High")
     await pollen.close()
     january, calls = make_on(tmp_path, date(2027, 1, 5))                # the saved page is still in the database
     await january.start()
@@ -170,3 +170,9 @@ async def test_the_first_warm_on_the_first_of_october_fetches_without_a_restart(
     await pollen.warm(True)
     assert len(calls) == 1 and pollen.lines()
     await pollen.close()
+
+
+def test_no_data_is_not_a_level_so_it_reads_as_no_forecast():
+    got = parse_melbourne_pollen(page(grass="No data", asthma="No data"))
+    assert got["melbourne_grass"] is None and got["thunderstorm_asthma"] == {"Wimmera": "High"}   # Central has none: Wimmera is another district
+    assert LEVELS == ("Low", "Moderate", "High") and [LEVEL_EMOJI[k] for k in LEVELS] == ["🟢", "🟠", "🔴"]

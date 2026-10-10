@@ -7,8 +7,8 @@ from datetime import datetime
 from html.parser import HTMLParser
 from itertools import pairwise
 
-LEVELS = ("Low", "Moderate", "High", "Extreme")
-LEVEL_EMOJI = {"Low": "🟢", "Moderate": "🟡", "High": "🟠", "Extreme": "🔴"}
+LEVELS = ("Low", "Moderate", "High")   # the site's scale; "No data" is not a level: it reads as if there were no forecast
+LEVEL_EMOJI = {"Low": "🟢", "Moderate": "🟠", "High": "🔴"}
 DISTRICTS = {"Central", "East Gippsland", "Mallee", "North Central", "North East",
              "Northern Country", "South West", "West and South Gippsland", "Wimmera"}
 

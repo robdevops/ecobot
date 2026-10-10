@@ -410,28 +410,28 @@ def pollen_monitor(tmp_path):
     return PollenMonitor(pollen, state, notify), pollen, sent
 
 
-async def test_high_or_extreme_pollen_and_asthma_alert_once_per_level_and_day(tmp_path):
+async def test_high_pollen_and_asthma_alert_once_per_metric_and_day(tmp_path):
     mon, pollen, sent = pollen_monitor(tmp_path)
-    for grass, asthma in (("Low", "Low"), ("Moderate", "Moderate")):
+    for grass, asthma in (("Low", "Low"), ("Moderate", "Moderate")):   # 🟢 and 🟠 are not warnings
         pollen.grass, pollen.asthma = grass, asthma
         await mon.check()
     assert sent == []
     pollen.grass = "High"
     await mon.check()
     await mon.check()                                                  # unchanged: nothing more
-    assert sent == ["🟠 Grass pollen is High."]
-    pollen.grass, pollen.asthma = "Extreme", "Extreme"
+    assert sent == ["🔴 Grass pollen is High."]
+    pollen.asthma = "High"
     await mon.check()
-    assert sent[1:] == ["🔴 Grass pollen is Extreme.", "🔴 Thunderstorm asthma risk is Extreme. Check your asthma action plan."]
+    assert sent[1:] == ["🔴 Thunderstorm asthma risk is High. Check your asthma action plan."]
     pollen.grass, pollen.asthma = "Low", "Moderate"                    # dropped below High: ready to warn again
     await mon.check()
     pollen.grass = "High"
     await mon.check()
-    assert len(sent) == 4 and sent[-1] == "🟠 Grass pollen is High."
+    assert len(sent) == 3 and sent[-1] == "🔴 Grass pollen is High."
     pollen.today += timedelta(days=1)                                  # a new day, still High
     pollen.fetched_at = time.time()
     await mon.check()
-    assert len(sent) == 5 and "Central" not in " ".join(sent)
+    assert len(sent) == 4 and "Central" not in " ".join(sent)
 
 
 async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stale_page_is_ignored(tmp_path):
@@ -444,14 +444,14 @@ async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stal
     await again.check()
     assert len(sent) == 1
     pollen.asthma = None                                               # off-season: nothing to say
-    pollen.grass, pollen.fetched_at = "Extreme", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
+    pollen.grass, pollen.fetched_at = "High", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
     await again.check()
     assert len(sent) == 1
 
 
 async def test_no_pollen_alert_out_of_season_even_with_a_high_reading_cached(tmp_path):
     mon, pollen, sent = pollen_monitor(tmp_path)
-    pollen.grass, pollen.asthma, pollen.season = "Extreme", "High", False
+    pollen.grass, pollen.asthma, pollen.season = "High", "High", False
     await mon.check()
     assert sent == []
     pollen.season = True
@@ -541,3 +541,40 @@ async def test_a_dry_night_has_no_summary_and_quiet_hours_can_be_off(tmp_path):
     m.station.data = night_rain(int(datetime(2026, 9, 30, 2, 0, tzinfo=TZ).timestamp()), 0, 0, 1)
     await m.check()
     assert len(sent) == 1 and "started raining" in sent[0]
+
+
+def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tmp_path, monkeypatch):
+    from lib.alerts import menu, notify
+    state = notify.AlertState(tmp_path / "s.json")
+    for chat in (1, 2, 3):
+        state.add_chat(chat, str(chat))
+    state.set_kind(1, "all", False)                       # unsubscribe from all
+    state.set_kind(2, "rain", False)                      # just one type: the normal mode
+    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
+    assert not state.subscribed(1, "newthing") and state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
+    state.set_kind(1, "uv", True)                         # then one type back on: only that one
+    monkeypatch.setitem(menu.LABELS, "newer", "newer")
+    assert state.subscribed(1, "uv") and not state.subscribed(1, "rain") and not state.subscribed(1, "newer") and state.alert_chats("uv") == [1, 2, 3]
+    state.set_kind(1, "uv", False)
+    assert not state.subscribed(1)                        # nothing on at all
+    state.set_kind(1, "all", True)                        # subscribe to all: new types come on again
+    assert state.subscribed(1, "newer") and state.subscribed(1, "rain")
+    for kind in list(menu.LABELS):                        # turning every type off one by one is not "unsubscribe from all"
+        state.set_kind(3, kind, False)
+    monkeypatch.setitem(menu.LABELS, "newest", "newest")
+    assert state.subscribed(3, "newest")
+
+
+def test_chats_that_already_unsubscribed_from_all_load_as_opt_in(tmp_path, monkeypatch):
+    import json
+    from lib.alerts import menu, notify
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"chats": {"1": {"title": "a", "muted": list(menu.LABELS)}, "2": {"title": "b", "alerts": False},
+                                          "3": {"title": "c", "muted": ["rain"]}}}))
+    state = notify.AlertState(path)
+    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
+    assert not state.subscribed(1, "newthing") and not state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
+    state.set_kind(1, "uv", True)
+    state.save()
+    again = notify.AlertState(path)                       # and it survives a restart
+    assert again.subscribed(1, "uv") and not again.subscribed(1, "rain") and not again.subscribed(1, "newthing")
