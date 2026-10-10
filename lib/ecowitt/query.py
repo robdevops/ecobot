@@ -254,7 +254,8 @@ class HistoryQuery:
             refined += len(windows)
             for (cycle, w_start, w_end), targets in windows.items():
                 fine: dict = {}
-                collect(fine, await f.get(cycle, f.local(w_start), min(f.local(w_end), self.now)), cycle)
+                for a, b in spans(cycle, f.local(w_start), min(f.local(w_end), self.now)):   # a UTC day is 25 local hours across a DST change
+                    collect(fine, await f.get(cycle, a, b), cycle)
                 for sid in targets:
                     key, want = sid[1], sid[-1]
                     found = series_extremes(fine[key], w_start, w_end).get(want) if key in fine else None
