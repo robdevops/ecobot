@@ -12,7 +12,8 @@ import time
 from datetime import date, datetime, timedelta, UTC
 from pathlib import Path
 
-from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
+from _common import parser  # noqa: E402  (also puts the repo on sys.path)
+from lib.config import data_dir  # noqa: E402
 
 from lib.ecowitt.api import GROUPS, RETENTION  # noqa: E402
 from lib.ecowitt.store import horizon, subtract  # noqa: E402
@@ -70,8 +71,8 @@ def airgradient(path: Path):
 
 if __name__ == "__main__":
     ap = parser(__doc__)
-    ap.add_argument("--ecowitt", type=Path, default=ROOT / "ecowitt_cache.sqlite")
-    ap.add_argument("--airgradient", type=Path, default=ROOT / "airgradient_cache.sqlite")
+    ap.add_argument("--ecowitt", type=Path, default=data_dir() / "ecowitt_cache.sqlite")
+    ap.add_argument("--airgradient", type=Path, default=data_dir() / "airgradient_cache.sqlite")
     args = ap.parse_args()
     for path, report in ((args.ecowitt, ecowitt), (args.airgradient, airgradient)):
         if path.exists():

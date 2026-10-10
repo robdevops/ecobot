@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
+from _common import parser  # noqa: E402  (also puts the repo on sys.path)
+from lib.config import data_dir  # noqa: E402
 
 from lib.ecowitt import days as day_tool  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
@@ -107,7 +108,7 @@ def report(res: dict):
 def main():
     ap = parser(__doc__)
     ap.add_argument("--days", type=int, default=88)
-    ap.add_argument("--cache", type=Path, default=ROOT / "ecowitt_cache.sqlite")
+    ap.add_argument("--cache", type=Path, default=data_dir() / "ecowitt_cache.sqlite")
     args = ap.parse_args()
     tz = ZoneInfo(os.getenv("TZ") or "Australia/Melbourne")
     macs = [m for (m,) in sqlite3.connect(f"file:{args.cache}?mode=ro", uri=True).execute("SELECT DISTINCT mac FROM coverage")]

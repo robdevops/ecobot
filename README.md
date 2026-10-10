@@ -24,6 +24,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `TZ` | e.g. `Australia/Melbourne` |
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient |
+| `DATA_DIR` | optional: the folder that holds the bot's state (`bot_state.json`) and its SQLite caches (`ecowitt_cache.sqlite`, `airgradient_cache.sqlite`, `conditions_cache.sqlite`), kept apart from the code so a container can mount it. A relative path is taken from the working directory; it is created if missing. Default: the app's own folder, where the files have always been |
 | `AIRGRADIENT_DASHBOARD_URL` | optional "live chart" link under air-quality replies and alerts |
 | `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
 | `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |

@@ -20,7 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from zoneinfo import ZoneInfo
 
-from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
+from _common import parser  # noqa: E402  (also puts the repo on sys.path)
+from lib.config import data_dir  # noqa: E402
 
 from lib import intent, prompt  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
@@ -61,7 +62,7 @@ def banner(text):
 async def main():
     ap = parser(__doc__)
     ap.add_argument("question")
-    ap.add_argument("--cache", type=Path, default=ROOT / "ecowitt_cache.sqlite")
+    ap.add_argument("--cache", type=Path, default=data_dir() / "ecowitt_cache.sqlite")
     ap.add_argument("--call", help="JSON tool call the stand-in model makes first")
     args = ap.parse_args()
 
