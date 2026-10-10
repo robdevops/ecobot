@@ -25,7 +25,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient |
 | `AIRGRADIENT_DASHBOARD_URL` | optional "live chart" link under air-quality replies and alerts |
-| `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High or Extreme. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
+| `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
 | `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
 | `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
 | `ADMIN_ONLY` | on by default: the bot answers nobody (private chats and groups alike) except the admins and creators of the groups it is in; anyone else gets "Sorry, only group admins can use this bot." when they address it (ordinary group talk is ignored). The one exception is `/alerts` in a group, which anyone may open (its buttons and `/alerts on|off` stay admin-only). `ADMIN_ONLY=off` answers everyone, as before. The admins are asked of Telegram and remembered for 10 minutes; a group counts once the bot is added to it or someone speaks there |

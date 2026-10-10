@@ -1,9 +1,9 @@
 """Pollen and thunderstorm asthma alerts, checked after every refresh of the Pollen source (every 30 minutes in the day, October to
 December only).
 
-A warning when grass pollen or the thunderstorm asthma risk is High 🟠 or Extreme 🔴. One alert per metric, level and day: another
-when it rises from High to Extreme, or on a new day that is still High or worse; none while it stays the same. Once it drops below
-High the metric is ready to warn again.
+A warning when grass pollen or the thunderstorm asthma risk is High 🔴 (the scale is Low 🟢, Moderate 🟠, High 🔴; "No data" counts
+as no reading). One alert per metric and day: another on a new day that is still High; none while it stays the same. Once it drops
+below High the metric is ready to warn again.
 """
 
 import logging

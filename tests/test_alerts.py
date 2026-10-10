@@ -410,28 +410,28 @@ def pollen_monitor(tmp_path):
     return PollenMonitor(pollen, state, notify), pollen, sent
 
 
-async def test_high_or_extreme_pollen_and_asthma_alert_once_per_level_and_day(tmp_path):
+async def test_high_pollen_and_asthma_alert_once_per_metric_and_day(tmp_path):
     mon, pollen, sent = pollen_monitor(tmp_path)
-    for grass, asthma in (("Low", "Low"), ("Moderate", "Moderate")):
+    for grass, asthma in (("Low", "Low"), ("Moderate", "Moderate")):   # 🟢 and 🟠 are not warnings
         pollen.grass, pollen.asthma = grass, asthma
         await mon.check()
     assert sent == []
     pollen.grass = "High"
     await mon.check()
     await mon.check()                                                  # unchanged: nothing more
-    assert sent == ["🟠 Grass pollen is High."]
-    pollen.grass, pollen.asthma = "Extreme", "Extreme"
+    assert sent == ["🔴 Grass pollen is High."]
+    pollen.asthma = "High"
     await mon.check()
-    assert sent[1:] == ["🔴 Grass pollen is Extreme.", "🔴 Thunderstorm asthma risk is Extreme. Check your asthma action plan."]
+    assert sent[1:] == ["🔴 Thunderstorm asthma risk is High. Check your asthma action plan."]
     pollen.grass, pollen.asthma = "Low", "Moderate"                    # dropped below High: ready to warn again
     await mon.check()
     pollen.grass = "High"
     await mon.check()
-    assert len(sent) == 4 and sent[-1] == "🟠 Grass pollen is High."
+    assert len(sent) == 3 and sent[-1] == "🔴 Grass pollen is High."
     pollen.today += timedelta(days=1)                                  # a new day, still High
     pollen.fetched_at = time.time()
     await mon.check()
-    assert len(sent) == 5 and "Central" not in " ".join(sent)
+    assert len(sent) == 4 and "Central" not in " ".join(sent)
 
 
 async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stale_page_is_ignored(tmp_path):
@@ -444,14 +444,14 @@ async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stal
     await again.check()
     assert len(sent) == 1
     pollen.asthma = None                                               # off-season: nothing to say
-    pollen.grass, pollen.fetched_at = "Extreme", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
+    pollen.grass, pollen.fetched_at = "High", time.time() - 3 * 3600  # and a page not fetched for 3 hours is not news
     await again.check()
     assert len(sent) == 1
 
 
 async def test_no_pollen_alert_out_of_season_even_with_a_high_reading_cached(tmp_path):
     mon, pollen, sent = pollen_monitor(tmp_path)
-    pollen.grass, pollen.asthma, pollen.season = "Extreme", "High", False
+    pollen.grass, pollen.asthma, pollen.season = "High", "High", False
     await mon.check()
     assert sent == []
     pollen.season = True

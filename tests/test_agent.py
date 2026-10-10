@@ -263,7 +263,7 @@ def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
     base = prompt.capabilities(["Ecowitt weather station"])
     assert "pollen and thunderstorm asthma" in base.split("Not available:")[1] and "forecasts (only a short read" in base
     both = prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE])
-    assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High or Extreme" in both
+    assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High" in both
     assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]
 
 

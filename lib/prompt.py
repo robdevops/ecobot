@@ -183,7 +183,7 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
                      "Use them for \"plot X against Y\", \"does rain affect air quality\" and \"is there a correlation between air "
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
     if "melbournepollen" in have:
-        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme), tool pollen_asthma. "
+        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High), tool pollen_asthma. "
                      "Both forecasts only run from October to December: outside those months the tool says so.")
     if "Open-Meteo" in have:
         lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of at least 1 mm of rain), tool weather_forecast.")
@@ -191,7 +191,7 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
     lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, UV index of 10 or more, "
-                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High or Extreme" if "melbournepollen" in have else "") + (
+                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High" if "melbournepollen" in have else "") + (
                      ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Open-Meteo" in have else "") + ". Each alert has buttons to subscribe or unsubscribe by type, and /alerts opens the same settings. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
     missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]

@@ -38,18 +38,18 @@ def test_the_connection_is_shared_and_closed_by_the_last_user(tmp_path):
 
 
 async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_without_fetching(tmp_path):
-    first, calls = make_pollen(tmp_path, lambda: page(grass="High", asthma="Extreme"))
+    first, calls = make_pollen(tmp_path, lambda: page(grass="High", asthma="High"))
     await first.start()
     assert len(calls) == 1
     await first.close()
     again, more = make_pollen(tmp_path, lambda: page(grass="Low"), hour=22)
     await again.start()
-    assert more == [] and again.lines() == ["Grass pollen: 🟠 High", "Thunderstorm asthma risk: 🔴 Extreme"]
+    assert more == [] and again.lines() == ["Grass pollen: 🔴 High", "Thunderstorm asthma risk: 🔴 High"]
     assert again.current()["fetched_at"] == first.fetched_at
     again.now = lambda: datetime.combine(SEASON_DAY, dtime(9, 0))
     await again.warm(True)                                   # next morning: asks with the saved validator
     assert len(more) == 1 and more[0].headers["if-none-match"] == "v1"
-    assert again.lines()[0].startswith("Grass pollen: 🟠 High")      # a 304: the saved page still stands
+    assert again.lines()[0].startswith("Grass pollen: 🔴 High")      # a 304: the saved page still stands
     await again.close()
 
 
