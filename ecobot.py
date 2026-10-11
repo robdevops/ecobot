@@ -6,9 +6,15 @@ answered by xAI Grok, with proactive alerts. Settings come from environment vari
 import asyncio
 import contextlib
 import logging
+import os
 import signal
-import subprocess
 import time
+
+from lib.config import ROOT, Config, data_dir
+
+# Matplotlib keeps its font cache here: a service user without a home directory would otherwise get a throw-away /tmp one on every start.
+# Set before anything imports Matplotlib; an MPLCONFIGDIR in the environment wins.
+os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
 from openai import AsyncOpenAI
 from telegram import Update
@@ -19,7 +25,6 @@ from lib.airgradient import AirGradient
 from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, PollenMonitor, WeatherMonitor
 from lib.alerts.menu import available_kinds
 from lib.bot import Bot, polling_error
-from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
@@ -60,9 +65,22 @@ async def start_sources(cfg: Config) -> list:
 
 def version() -> str:
     """The checked-out commit, so the log shows which code is running."""
+    return commit_in(ROOT / ".git")
+
+
+def commit_in(git_dir) -> str:
+    """The short hash HEAD points at, read from the repository's files rather than by running git (which refuses a folder owned by
+    another user, as when the service runs as its own user). "unknown" when it cannot be read."""
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
-                              timeout=5, check=True).stdout.strip() or "unknown"
+        head = (git_dir / "HEAD").read_text().strip()
+        if head.startswith("ref:"):
+            ref = head.split(None, 1)[1]
+            try:
+                head = (git_dir / ref).read_text().strip()
+            except FileNotFoundError:   # after `git pack-refs` or gc the branch is a line in packed-refs
+                head = next(line.split()[0] for line in (git_dir / "packed-refs").read_text().splitlines()
+                            if line.endswith(f" {ref}"))
+        return head[:7] if len(head) >= 7 and all(c in "0123456789abcdef" for c in head.lower()) else "unknown"
     except Exception:
         return "unknown"
 

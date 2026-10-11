@@ -14,9 +14,11 @@ log = logging.getLogger(__name__)
 
 def data_dir() -> Path:
     """Where the state file and the SQLite caches live: DATA_DIR (a relative path is taken from the working directory), else the
-    app's own folder, where they have always been. Kept apart from the code so a container can mount it."""
-    value = os.getenv("DATA_DIR", "").strip()
-    return Path(value).expanduser().resolve() if value else ROOT
+    folder systemd gives a service that has StateDirectory= (STATE_DIRECTORY), else the app's own folder, where they have always been.
+    Kept apart from the code so a container can mount it. Symlinks are left as written: /var/lib/ecobot, not the closed
+    /var/lib/private/ecobot behind it."""
+    value = os.getenv("DATA_DIR", "").strip() or os.getenv("STATE_DIRECTORY", "").split(":")[0].strip()
+    return Path(os.path.abspath(Path(value).expanduser())) if value else ROOT
 
 
 def _tz() -> tzinfo:
@@ -120,7 +122,14 @@ class Config:
     def from_env(cls) -> "Config":
         env = lambda k, default="": os.getenv(k, default).strip()
         data = data_dir()
-        data.mkdir(parents=True, exist_ok=True)
+        try:
+            data.mkdir(parents=True, exist_ok=True)
+            writable = os.access(data, os.W_OK | os.X_OK)
+        except OSError:
+            writable = False
+        if not writable:
+            raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
+                             "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
         cfg = cls(
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             xai_api_key=os.environ["XAI_API_KEY"],
