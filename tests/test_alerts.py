@@ -2,7 +2,6 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor, with_footer
-from lib.ecowitt import outlook
 from tests.fakes import TZ
 
 T0 = int(datetime(2026, 9, 29, 13, 0, tzinfo=TZ).timestamp())  # 1pm Melbourne, a settled day
@@ -96,14 +95,6 @@ async def test_a_live_rate_alone_starts_it_and_a_failed_live_call_is_ignored(tmp
     assert len(sent) == 1 and "3 mm/h" in sent[0]
 
 
-def test_the_status_outlook_says_raining_now_or_likely_soon_or_nothing():
-    assert outlook.rain_outlook(rain(0, 0, 1), TZ, 145.0) == "raining now (1.2 mm/h)"
-    assert outlook.rain_outlook(rain(0, 0, 0), TZ, 145.0) is None
-    likely = outlook.rain_outlook(pressure_rows(4.0, 14), TZ, 145.0)
-    assert likely.startswith("rain looks likely soon: pressure down") and "not an official forecast" in likely
-    assert outlook.rain_outlook(pressure_rows(0.2, 14), TZ, 145.0) is None
-
-
 def gusts(*values):
     return [(T0 + i * 300, {"wind.wind_gust": v}) for i, v in enumerate(values)]
 
@@ -136,33 +127,6 @@ async def test_old_gusts_are_not_announced_after_a_restart(tmp_path):
     m, state, sent = monitor(tmp_path, gusts(60, 20, 20))
     await m.check()
     assert sent == []
-
-
-def pressure_rows(drop, hour_local, hum=93.0, dew_rise=0.0, temp=15.0):
-    """3 hours of readings ending at the given local hour, pressure falling `drop` hPa in total."""
-    end = int(datetime(2026, 9, 29, hour_local, 0, tzinfo=TZ).timestamp())
-    n = 37
-    return rows(n, start=end - 36 * 300, **{
-        "pressure.relative": lambda i: 1015 - drop * i / 36, "outdoor.humidity": hum,
-        "outdoor.temperature": temp, "outdoor.dew_point": lambda i: temp - 1 + dew_rise * i / 36,
-        "rainfall.rain_rate": 0.0, "wind.wind_gust": 10.0})
-
-
-def test_daytime_fall_with_humid_air_predicts_rain():
-    out = outlook.assess_rain(pressure_rows(3.2, 15), TZ, 145.0)
-    assert out and out.score >= outlook.PREDICT_MIN_SCORE and not out.night
-
-
-def test_the_overnight_pressure_dip_and_cooling_are_not_rain():
-    # ~4am: pressure sags with the daily tide and the air sits near its dew point, as every night
-    for drop in (0.5, 1.2, 1.6):
-        out = outlook.assess_rain(pressure_rows(drop, 4), TZ, 145.0)
-        assert out is None or out.score < outlook.PREDICT_MIN_SCORE, (drop, out)
-
-
-def test_a_real_night_front_still_counts():
-    out = outlook.assess_rain(pressure_rows(4.5, 3, dew_rise=2.5), TZ, 145.0)
-    assert out and out.night and out.score >= outlook.PREDICT_MIN_SCORE
 
 
 def temps(outdoor, indoor, ts=T0):

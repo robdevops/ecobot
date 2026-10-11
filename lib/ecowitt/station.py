@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, UTC
 from ..config import Config
 from ..intent import NOW_GROUPS
 from ..timeutil import now_local
-from .outlook import rain_outlook
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import EcowittAPI, GROUPS, UNITS
@@ -85,8 +84,7 @@ HISTORY_DESCRIPTION = ("History from the owner's Ecowitt weather station: each d
                        "with times, for any range up to 4 years. Resolution and units are handled automatically.")
 REALTIME_PARAMS = {
     "type": "object",
-    "properties": {"groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. "
-                                                               "For rain outlooks: 'outdoor,pressure,rainfall,rainfall_piezo,wind'."}},
+    "properties": {"groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'."}},
 }
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
@@ -190,8 +188,7 @@ class Ecowitt:
                     except (TypeError, ValueError):
                         pass
         when = datetime.fromtimestamp(newest, UTC).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
-        outlook = await self._rain_outlook() if "rainfall" in groups else None
-        return json.dumps({"time": when, **out, **({"rain_outlook": outlook} if outlook else {}), **({"emoji": emoji} if emoji else {})},
+        return json.dumps({"time": when, **out, **({"emoji": emoji} if emoji else {})},
                           ensure_ascii=False, separators=(",", ":"))
 
     async def _live_data(self, groups: list[str]) -> dict:
@@ -224,14 +221,6 @@ class Ecowitt:
             log.info("Live rain reading recovered")
         self._live_ok = True
         return ts, row
-
-    async def _rain_outlook(self) -> str | None:
-        """Raining now, or likely soon, from the last 3 hours of readings."""
-        try:
-            return rain_outlook(await self.recent(3), self.tz, self.longitude)
-        except Exception as e:  # the current reading is still worth sending without it
-            log.warning("Rain outlook unavailable: %s", e)
-            return None
 
     # ---------- keeping warm ----------
     async def warm(self, fresh: bool = True) -> str:

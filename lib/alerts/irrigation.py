@@ -13,7 +13,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from ..ecowitt.outlook import rain_amount
+from ..ecowitt.rain import rain_amount
 from ..timeutil import now_local
 from .forecast import RAIN_FROM_PCT
 

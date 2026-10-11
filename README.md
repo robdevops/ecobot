@@ -57,7 +57,7 @@ lib/panels.py           how a reading becomes a panel (title, unit, colour key, 
 lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading
 lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
 lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
-                        days (rank/count days), outlook (raining / likely soon), station, nightly archive
+                        days (rank/count days), rain (rain times and amounts for the alerts), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
 lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation (battery and rain delay)
 lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)

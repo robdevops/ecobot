@@ -769,8 +769,7 @@ class Bot:
         question) when there is nothing to caption."""
         calls = [read.fast[:2], *read.more]
         results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
-        caption = report.chart_caption(read.fast[0], read.fast[1], results[0], turn, self.cfg.tz,
-                                       results[1] if len(results) > 1 else None)
+        caption = report.chart_caption(read.fast[0], read.fast[1], results[0], turn, self.cfg.tz)
         if caption is None:
             turn.charts.clear()
             turn.forecast_shown.clear()

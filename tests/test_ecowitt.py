@@ -568,27 +568,6 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
     await eco.close()
 
 
-async def test_weather_now_carries_the_rain_outlook_when_it_is_raining_or_likely(tmp_path, monkeypatch):
-    transport, _ = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    now = int(datetime.now(eco.tz).timestamp())
-    wet = [(now - 300 * i, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0}) for i in range(2, -1, -1)]
-    dry = [(now - 300 * i, {"rainfall.rain_rate": 0.0, "rainfall.daily": 2.0}) for i in range(2, -1, -1)]
-    rows = {"value": wet}
-
-    async def recent(hours):
-        return rows["value"]
-    monkeypatch.setattr(eco, "recent", recent)
-    out = json.loads(await eco.tools[0].handler({"groups": "outdoor,rainfall"}))
-    assert out["rain_outlook"] == "raining now (1.5 mm/h)"
-    rows["value"] = dry
-    assert "rain_outlook" not in json.loads(await eco.tools[0].handler({"groups": "outdoor,rainfall"}))
-    rows["value"] = wet
-    assert "rain_outlook" not in json.loads(await eco.tools[0].handler({"groups": "outdoor"}))     # no rain group asked for
-    await eco.close()
-
-
 def test_the_rolling_mean_smooths_a_staircase_without_moving_timestamps_or_crossing_gaps():
     from lib.timeutil import rolling_mean
     assert rolling_mean({0: 5.0, 300: 5.0, 600: 5.0}, 450) == {0: 5.0, 300: 5.0, 600: 5.0}

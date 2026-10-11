@@ -204,9 +204,8 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
 
 
 RAIN_CAPTION_SECTION = """
-THIS IS A RAIN CHART: its caption is ONLY the least and the most rain in the period (daily totals, mm, with the dated days), then one line
-saying whether rain is expected: call weather_now with groups "rainfall" and use its "rain_outlook" (raining now, or rain likely
-soon); with no rain_outlook, say no rain is expected soon. Nothing else: no averages, no other readings.
+THIS IS A RAIN CHART: its caption is ONLY the least and the most rain in the period (daily totals, mm, with the dated days).
+Nothing else: no averages, no other readings, no outlook.
 """
 
 

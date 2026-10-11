@@ -9,7 +9,6 @@ from .ecowitt.glance import solar_band
 from .series import WEATHER, find
 
 AIR_ROWS = (("pm2_5", "PM2.5"), ("pm10", "PM10"), ("pm1", "PM1"), ("co2", "CO₂"), ("voc_index", "VOC index"), ("nox_index", "NOx index"))
-OUTLOOK_NOTE = re.compile(r"\s*\(an estimate from the station's readings, not an official forecast\)", re.I)
 
 
 def _load(result: str | None) -> dict | None:
@@ -68,13 +67,9 @@ def weather_lines(now: dict) -> list[str]:
     """The weather station's bullets from a weather_now result: an emoji sits right before the reading it is keyed to."""
     get, tag = _getters(now)
     rain_rate = (now.get("rainfall") or {}).get("rain_rate", "")
-    outlook = OUTLOOK_NOTE.sub(" (an estimate)", now["rain_outlook"]) if now.get("rain_outlook") else None
-    if outlook and outlook.startswith("raining"):
-        outlook = tag("rainfall", "rain_rate", outlook)
-    elif not outlook and rain_rate.split()[:1] not in ([], ["0"], ["0.0"]):
-        outlook = tag("rainfall", "rain_rate", f"raining ({get('rainfall', 'rain_rate')})")
+    raining = tag("rainfall", "rain_rate", f"raining ({get('rainfall', 'rain_rate')})") if rain_rate.split()[:1] not in ([], ["0"], ["0.0"]) else None
     month = get("rainfall", "monthly")
-    rain = _join([_join([tag("rainfall", "daily"), f"(month total {month})" if month else None], " "), outlook], "; ")
+    rain = _join([_join([tag("rainfall", "daily"), f"(month total {month})" if month else None], " "), raining], "; ")
 
     degrees = (now.get("wind") or {}).get("wind_direction", "")
     calm = _zero(get("wind", "wind_speed")) and _zero(get("wind", "wind_gust"))    # no wind: no line
@@ -225,7 +220,7 @@ def _range(label: str, entry: dict, average: bool) -> str:
 
 
 def _rain_line(turn, tz) -> list[str]:
-    """Least and most rain in a period (the chart's own bars), then whether more is expected."""
+    """Least and most rain in a period (the chart's own bars)."""
     bars = next((p.bars for c in turn.charts for p in c.panels if p.bars and p.bars.x), None)
     if not bars:
         return []
@@ -236,18 +231,15 @@ def _rain_line(turn, tz) -> list[str]:
     return [f"☔ Rain{per}: least {bars.y[lo]:g} mm ({day(lo)}) · most {bars.y[hi]:g} mm ({day(hi)}) · {sum(bars.y):.1f} mm in all"]
 
 
-def _weather_caption(result: dict, args: dict, turn, tz, now_result: dict | None) -> list[str]:
+def _weather_caption(result: dict, args: dict, turn, tz) -> list[str]:
     series = result.get("series") or {}
     names = [n for n in dict.fromkeys(turn.chart_fields or [turn.chart_field or "temperature"]) if find(n)]
     lines: list[str] = []
     for name in names:
         reading = find(name)
         keys = [k for k in series if k.split(".", 1)[1] == reading.field]
-        if reading.field == "daily":   # rain: the amounts the chart draws, and what is expected
+        if reading.field == "daily":   # rain: the amounts the chart draws
             lines += _rain_line(turn, tz)
-            if now_result is not None:
-                outlook = OUTLOOK_NOTE.sub(" (an estimate)", now_result.get("rain_outlook") or "")
-                lines.append("☔ " + (outlook or "No rain is expected soon.").lstrip("☔ "))
             continue
         for key in keys:
             group = key.split(".", 1)[0]
@@ -275,14 +267,14 @@ def _air_caption(result: dict, args: dict, turn) -> list[str]:
     return lines
 
 
-def chart_caption(tool: str, args: dict, result: str | None, turn, tz, extra: str | None = None) -> str | None:
+def chart_caption(tool: str, args: dict, result: str | None, turn, tz) -> str | None:
     """The caption for a chart, from the tool's result: the period, then a line per reading. None when there is nothing to say (the
     model then takes the question)."""
     data = _load(result)
     if not data or not turn.charts:
         return None
     lines = (_air_caption(data, args, turn) if tool == "air_quality" else
-             _weather_caption(data, args, turn, tz, _load(extra) if extra is not None else None))
+             _weather_caption(data, args, turn, tz))
     if not lines:
         return None
     notes = (["(Older days are still downloading, so they are left out.)"] if data.get("note_missing") else

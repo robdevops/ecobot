@@ -17,7 +17,7 @@ from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
 from .backoff import due, remember
-from ..ecowitt.outlook import Rows, duration, rain_amount, wet_flags
+from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
 from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
