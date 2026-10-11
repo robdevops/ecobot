@@ -69,7 +69,7 @@ class Tools:
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
             out = out[:MAX_OUTPUT_CHARS] + "\n...[truncated - request a shorter range]"
-        log.info("Tool result %s: %s", name, out if len(out) < 70 else f"{len(out)} chars")
+        log.info("Tool result %s: %s", name, out if len(out) < 90 else f"{len(out)} chars")
         if turn:
             turn.result_chars += len(out)
         return out

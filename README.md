@@ -59,7 +59,7 @@ lib/captions.py         when a chart is drawn, and the hint that makes the model
 lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
                         days (rank/count days), outlook (raining / likely soon), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
-lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation_daily_check (battery and rain delay)
+lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation (battery and rain delay)
 lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)
 lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images

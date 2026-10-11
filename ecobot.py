@@ -22,7 +22,7 @@ from telegram.ext import Application, Defaults
 
 from lib import intent
 from lib.airgradient import AirGradient
-from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationDailyCheck, Notifier, ParticulatesMonitor,
+from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
 from lib.alerts.menu import LABELS, kinds_for
 from lib.bot import Bot, polling_error
@@ -165,10 +165,10 @@ async def main():
                     pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, state, notify).check)  # after each refresh (in the day)
                     running += PollenAndAsthmaMonitor.KINDS
                 if irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-                    tasks.append(asyncio.create_task(IrrigationDailyCheck(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
+                    tasks.append(asyncio.create_task(IrrigationMonitor(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
                                                                             eco, forecast).run()))
                     tasks.append(asyncio.create_task(every(WATCHDOG_SECONDS, bot.watchdog.check)))
-                    running += IrrigationDailyCheck.KINDS
+                    running += IrrigationMonitor.KINDS
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)

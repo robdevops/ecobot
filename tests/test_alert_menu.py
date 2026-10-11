@@ -461,7 +461,7 @@ def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_s
     import re
     from pathlib import Path
     from lib import alerts
-    monitors = [alerts.WeatherMonitor, alerts.ParticulatesMonitor, alerts.ForecastMonitor, alerts.PollenAndAsthmaMonitor, alerts.IrrigationDailyCheck]
+    monitors = [alerts.WeatherMonitor, alerts.ParticulatesMonitor, alerts.ForecastMonitor, alerts.PollenAndAsthmaMonitor, alerts.IrrigationMonitor]
     assert sorted(k for m in monitors for k in m.KINDS) == sorted(LABELS)       # every type has exactly one monitor
     for m in monitors:
         sent = set(re.findall(r'kind="(\w+)"', Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()))

@@ -13,8 +13,8 @@ from telegram.error import BadRequest
 
 import lib.bot as bot_module
 from lib import templates
-from lib.alerts import AlertState, IrrigationDailyCheck
-from lib.alerts import irrigation_daily_check as monitor_module
+from lib.alerts import AlertState, IrrigationMonitor
+from lib.alerts import irrigation as monitor_module
 from lib.alerts.menu import available_kinds
 from lib.bot import Bot
 from lib.config import Config
@@ -270,7 +270,7 @@ def daily(tmp_path, device, station=None, forecast=None):
 
     async def notify(text, link=None, **kw):
         sent.append((text, kw))
-    return IrrigationDailyCheck(device, state, notify, TZ, 18, station, forecast), state, sent
+    return IrrigationMonitor(device, state, notify, TZ, 18, station, forecast), state, sent
 
 
 @pytest.mark.parametrize("station, forecast, delayed", [
@@ -294,7 +294,7 @@ async def test_the_check_delays_a_day_when_more_than_1_mm_fell_or_is_likely(tmp_
     assert device.commands == ([("delay", "24h")] if delayed else [])
     assert [(text.startswith("☔ Irrigation paused for 24 hours: ") and text.endswith("."), kw) for text, kw in sent] == (
         [(True, {"kind": "irrigation_pause"})] if delayed else [])                  # told once when it paused, never otherwise
-    assert state.monitor["irrigation_daily_check"]["checked"] == "2026-10-08"
+    assert state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
 
 
 async def test_a_delay_already_set_is_never_shortened_or_repeated(tmp_path):
@@ -324,7 +324,7 @@ async def test_the_battery_is_still_told_when_the_delay_cannot_be_sent_and_not_t
     m, state, sent = daily(tmp_path, Failing(battery_percentage=2), None, Forecast(90, 90))
     with pytest.raises(IrrigationError):
         await m.check(NOW)
-    assert len(sent) == 1 and "checked" not in state.monitor["irrigation_daily_check"]              # not recorded: the next try repeats the check
+    assert len(sent) == 1 and "checked" not in state.monitor["irrigation_monitor"]              # not recorded: the next try repeats the check
     with pytest.raises(IrrigationError):
         await m.check(NOW)
     assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation_battery"}                         # no "paused" alert for a pause that was not made
@@ -333,7 +333,7 @@ async def test_the_battery_is_still_told_when_the_delay_cannot_be_sent_and_not_t
 def test_a_check_is_due_once_a_day_after_the_hour_and_the_next_is_the_following_18_00(tmp_path):
     m, state, _ = daily(tmp_path, Device())
     assert not m.due(datetime(2026, 10, 8, 17, 59)) and m.due(datetime(2026, 10, 8, 18, 0)) and m.due(datetime(2026, 10, 8, 23, 0))
-    state.monitor["irrigation_daily_check"] = {"checked": "2026-10-08"}
+    state.monitor["irrigation_monitor"] = {"checked": "2026-10-08"}
     assert not m.due(datetime(2026, 10, 8, 23, 0)) and not m.due(datetime(2026, 10, 9, 3, 0)) and m.due(datetime(2026, 10, 9, 18, 0))
     assert m.seconds_until_next(datetime(2026, 10, 8, 17, 0)) == 3600 and m.seconds_until_next(datetime(2026, 10, 8, 18, 0)) == 86400
     assert m.seconds_until_next(datetime(2026, 10, 8, 23, 30)) == 18.5 * 3600
@@ -356,7 +356,7 @@ async def test_run_checks_when_due_retries_after_a_failure_and_then_waits_for_to
     with pytest.raises(asyncio.CancelledError):
         await m.run()
     assert sleeps[0] == 1800 and device.commands == [("delay", "24h")]                    # tried, failed, waited 30 minutes, tried, did it
-    assert state.monitor["irrigation_daily_check"]["checked"] == "2026-10-08"
+    assert state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
     assert sleeps[1] == 86400                                                             # then until 18:00 tomorrow (now is exactly 18:00 here)
 
 
@@ -687,9 +687,9 @@ async def test_a_pause_that_fails_and_is_retried_is_told_exactly_once(tmp_path):
     m, state, sent = daily(tmp_path, device, None, Forecast(90, 90))
     with pytest.raises(IrrigationError):
         await m.check(NOW)
-    assert sent == [] and "checked" not in state.monitor["irrigation_daily_check"]               # nothing told for a pause that was not made
+    assert sent == [] and "checked" not in state.monitor["irrigation_monitor"]               # nothing told for a pause that was not made
     await m.check(NOW)
-    assert device.commands == [("delay", "24h")] and len(sent) == 1 and state.monitor["irrigation_daily_check"]["checked"] == "2026-10-08"
+    assert device.commands == [("delay", "24h")] and len(sent) == 1 and state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
 
 
 async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu(tmp_path):
@@ -704,7 +704,7 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
         async def send_message(self, chat_id, text, **kw):
             delivered.append((chat_id, text, kw))
     notifier = Notifier(Telegram(), state, available_kinds({"Ecowitt", "Irrigation"}))
-    m = IrrigationDailyCheck(Device(), state, notifier, TZ, 18, None, Forecast(90, 90))
+    m = IrrigationMonitor(Device(), state, notifier, TZ, 18, None, Forecast(90, 90))
     await m.check(NOW)
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
     markup = delivered[0][2]["reply_markup"]

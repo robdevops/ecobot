@@ -25,7 +25,7 @@ RETRY_SECONDS = 30 * 60
 MEASURED_HOURS = 24
 
 
-class IrrigationDailyCheck:
+class IrrigationMonitor:
     KINDS = ("irrigation_battery", "irrigation_pause")
 
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
@@ -34,7 +34,7 @@ class IrrigationDailyCheck:
         self.station, self.forecast = station, forecast
 
     def _memory(self) -> dict:
-        return self.state.monitor.setdefault("irrigation_daily_check", {})
+        return self.state.monitor.setdefault("irrigation_monitor", {})
 
     def due(self, now: datetime) -> bool:
         """Is today's check still to be done (it is past the check time and none is recorded for today)?"""
