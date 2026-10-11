@@ -20,7 +20,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, TelegramError
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, periods, prompt, report, templates
+from . import intent, periods, prompt, report, report_menu, templates
 from .admins import Admins
 from .alerts import menu
 from .alerts import AlertState, with_footer
@@ -298,7 +298,7 @@ class Bot:
     def buttons(self) -> dict:
         """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button."""
         return {"al:": self.on_alert_button, **({"ir:": self.on_irrigation_button} if self.irrigation else {}),
-                periods.PREFIX: self.on_period_button}
+                periods.PREFIX: self.on_period_button, report_menu.PREFIX: self.on_report_button}
 
     async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """The one place every button press comes in: believed (_press), a known family (a prefix nobody handles is refused, so a
@@ -553,6 +553,24 @@ class Bot:
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 raise
+
+    async def on_report_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """A press on Refresh under the report: read everything again and redraw the report in the same message. The chat's
+        conversation is not touched (this is not a new question)."""
+        query = update.callback_query
+        if query.data != report_menu.REFRESH:
+            await query.answer(STALE_BUTTON)
+            return
+        read = intent.read("Report", now_local(self.cfg.tz), "Ecowitt" in self.by_name, "AirGradient" in self.by_name,
+                           "Pollen" in self.by_name, "Forecast" in self.by_name)
+        try:
+            text = await asyncio.wait_for(self._written_in_code(read, Turn(text="Report")), TURN_SECONDS)
+        except Exception as e:   # the message stays as it was
+            log.warning("Report refresh failed: %s", e)
+            await query.answer("Couldn't refresh, please try again", show_alert=True)
+            return
+        await query.answer("Refreshed")
+        await self._edit_irrigation(query, text, report_menu.keyboard())
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart
@@ -870,15 +888,17 @@ class Bot:
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
-        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
+        refresh = ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
+        row =periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo = []
         if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
             self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])
         try:
             if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
                 reply, photos, row = "", [], None
-            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup,
-                                             titles=titles, period_row=row, sent_photo=sent_photo)
+            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
+                                             markup=markup or (report_menu.keyboard() if refresh else None),
+                                             titles=titles, period_row=row, sent_photo=sent_photo) and bool(markup)   # the refresh button is not the chat's keyboard
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
