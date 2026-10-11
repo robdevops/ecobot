@@ -75,6 +75,7 @@ def merge(intervals: list[Interval]) -> list[Interval]:
 class HistoryCache:
     def __init__(self, path, units: dict):
         self._lock = threading.Lock()
+        self.path = path
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
@@ -119,6 +120,15 @@ class HistoryCache:
     def _query(self, sql: str, *args) -> list:
         with self._lock:
             return self.db.execute(sql, args).fetchall()
+
+    def count(self, mac: str, cycle: str, grp: str, start: int, end: int) -> int:
+        """How many readings are held for this group at this resolution between two times (for diagnosing an empty answer)."""
+        return self._query("SELECT COUNT(*) FROM points WHERE mac=? AND cycle=? AND grp=? AND ts BETWEEN ? AND ?",
+                           mac, cycle, grp, start, end)[0][0]
+
+    def newest(self, mac: str, cycle: str) -> int | None:
+        """The time of the newest reading held at this resolution (None if none)."""
+        return self._query("SELECT MAX(ts) FROM points WHERE mac=? AND cycle=?", mac, cycle)[0][0]
 
     def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
         """Every time range held for this group at this resolution (merged, oldest first)."""

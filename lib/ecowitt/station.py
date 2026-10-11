@@ -5,12 +5,13 @@ readings ready, readings() feeds the alert monitors."""
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta, UTC
 
 from ..config import Config
 from ..intent import NOW_GROUPS
-from ..timeutil import now_local
+from ..timeutil import now_local, to_local
 from .outlook import rain_outlook
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
@@ -139,6 +140,14 @@ class Ecowitt:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
         log.info("Weather station: Ecowitt '%s' (%s)%s", self.station_name, self.mac,
                  f", devices found: {len(devices)}" if len(devices) > 1 else "")
+        try:
+            size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
+            newest = {c: (f"{to_local(t, self.tz):%d %b %H:%M}" if (t := await asyncio.to_thread(self.cache.newest, self.mac, c)) else "none")
+                      for c in ("5min", "30min", "4hour", "1day")}
+            log.info("History cache: %s (%.1f MB), newest reading %s, time zone %s", self.cache.path, size / 1e6,
+                     " / ".join(f"{c} {v}" for c, v in newest.items()), getattr(self.tz, "key", self.tz))
+        except Exception as e:   # only a log line
+            log.warning("History cache not readable: %s", e)
 
     def describe(self) -> str:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""

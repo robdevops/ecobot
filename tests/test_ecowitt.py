@@ -8,7 +8,7 @@ from lib import intent
 from lib.tools import Turn
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
-from tests.fakes import MAC, archived_station, config, ecowitt_transport
+from tests.fakes import MAC, FakeEcowitt, archived_station, config, ecowitt_transport
 
 
 @pytest.fixture
@@ -1213,3 +1213,24 @@ async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_re
     q.turn = Turn(text="rain by month for 2 months")
     monthly = await q._rain_bars()
     assert monthly.per == "month" and monthly.values and round(sum(monthly.y), 1) == 120.0 and len(monthly.x) in (2, 3)
+
+
+async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_says_which_cache_it_uses(tmp_path, caplog):
+    import logging
+
+    class Silent(FakeEcowitt):
+        @staticmethod
+        def _history(p):
+            return {}
+
+    transport, _ = ecowitt_transport(Silent())
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    with caplog.at_level(logging.INFO):
+        await eco.start()
+        today = datetime.now(eco.tz).date()
+        reply = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=1)} 00:00:00",
+                                            "end_date": f"{today} 23:59:59"})
+    assert reply.startswith("Error: no history data returned")
+    text = caplog.text
+    assert "History cache: " in text and str(eco.cache.path) in text and "newest reading 5min none" in text
+    assert "History query empty" in text and "readings held for the window {'5min': 0, '30min': 0, '1day': 0}" in text
