@@ -86,6 +86,9 @@ def commit_in(git_dir) -> str:
         return "unknown"
 
 
+INDENT = 13   # the continuation lines of a wrapped log line
+
+
 def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str:
     """head + the items joined by ", " + tail, over several lines when it is longer than `width`: a line breaks only between items,
     and the next one is indented."""
@@ -94,7 +97,7 @@ def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str
         piece = item + (", " if i < len(items) - 1 else tail)
         if line.strip() != head.strip() and len(line + piece.rstrip()) > width:
             lines.append(line.rstrip())
-            line = "    "
+            line = " " * INDENT
         line += piece
     return "\n".join([*lines, line])
 

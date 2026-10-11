@@ -247,3 +247,10 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     await stopper
     assert "irrigation battery" in caplog.text                       # in the list of alert types
     assert len(app.handlers) == 10 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
+
+
+def test_a_long_alerts_line_continues_indented_at_90_characters():
+    from lib.alerts.menu import LABELS
+    lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats").splitlines()
+    assert len(lines) > 1 and all(len(line) <= 90 for line in lines)
+    assert all(line.startswith(" " * 13) and not line.startswith(" " * 14) for line in lines[1:])
