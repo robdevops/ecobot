@@ -1,5 +1,4 @@
-"""Is it raining, or likely to soon? Read from the station's recent 5-minute readings, by one set of rules for the alerts
-and the status report."""
+"""Is it raining, or likely to soon? Read from the station's recent 5-minute readings (for the status report and the rain alerts)."""
 
 import math
 from datetime import datetime, UTC
@@ -113,7 +112,7 @@ def assess_rain(rows: Rows, tz, longitude: float) -> Outlook | None:
 
 
 def rain_outlook(rows: Rows, tz, longitude: float) -> str | None:
-    """"Raining now" or "rain likely soon", in words for a status report, by the same rules as the alerts; None when neither."""
+    """"Raining now" or "rain likely soon", in words for a status report; None when neither."""
     wet = wet_flags(rows)
     if any(w for _, w, _ in wet[-2:]):
         rate = max(r for _, w, r in wet[-2:] if w)

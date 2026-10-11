@@ -20,7 +20,9 @@ LABELS = {"grass": "Grass pollen", "asthma": "Thunderstorm asthma risk"}
 LINK = ("melbournepollen.com.au", "https://www.melbournepollen.com.au/")
 
 
-class PollenMonitor:
+class PollenAndAsthmaMonitor:
+    KINDS = ("pollen_and_asthma",)
+
     def __init__(self, pollen, state, notify):
         self.pollen, self.state, self.notify = pollen, state, notify
 
@@ -30,7 +32,7 @@ class PollenMonitor:
         cur = self.pollen.current()
         if not cur["fetched_at"] or time.time() - cur["fetched_at"] > STALE_SECONDS:
             return
-        m = self.state.monitor.setdefault("pollen", {})
+        m = self.state.monitor.setdefault("pollen_and_asthma", {})
         today = self.pollen.now().date()
         for key in ("grass", "asthma"):
             reading = cur[key]
@@ -45,5 +47,5 @@ class PollenMonitor:
                 m[key] = {"rank": rank, "day": day}
                 for_day = reading.get("date")
                 when = f" (forecast for {for_day:%a %d %b})" if for_day and for_day != today else ""
-                await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen")
+                await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen_and_asthma")
         self.state.save()

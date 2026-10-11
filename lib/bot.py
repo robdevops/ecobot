@@ -344,7 +344,7 @@ class Bot:
             self.state.remove_chat(change.chat.id, f"bot {status}")
 
     def _alert_kinds(self) -> list[str]:
-        return menu.available_kinds(set(self.by_name) | ({"Irrigation"} if self.irrigation else set()))
+        return menu.kinds_for(self.by_name, bool(self.irrigation))
 
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
@@ -443,8 +443,8 @@ class Bot:
                 raise
 
     # ---------- irrigation ----------
-    def _irrigation_alerts(self, chat_id: int, kind: str = "irrigation") -> bool:
-        """Does this chat get the irrigation battery alerts (kind "irrigation") or the pause alerts ("irrigation_pause")?"""
+    def _irrigation_alerts(self, chat_id: int, kind: str = "irrigation_battery") -> bool:
+        """Does this chat get the irrigation battery alerts (kind "irrigation_battery") or the pause alerts ("irrigation_pause")?"""
         return bool(self.state and self.state.subscribed(chat_id, kind))
 
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None, paused: bool = False, running: bool = False):
@@ -479,7 +479,7 @@ class Bot:
                 self.watchdog.disarm()
             return "Switched off"
         if action in ("batt", "pause") and arg in ("on", "off") and self.state and chat_id in self.state.chats:
-            self.state.set_kind(chat_id, "irrigation" if action == "batt" else "irrigation_pause", arg == "on")
+            self.state.set_kind(chat_id, "irrigation_battery" if action == "batt" else "irrigation_pause", arg == "on")
             return f"Irrigation {'battery' if action == 'batt' else 'pause'} alerts {arg} in this chat"
         return None
 

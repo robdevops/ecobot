@@ -8,7 +8,7 @@ from lib.alerts.menu import ALL, LABELS, TITLE, available_kinds, keyboard, optio
 from lib.bot import Bot
 from tests.fakes import TZ
 
-KINDS = ["rain", "rain_likely", "gusts", "uv", "temps", "air", "pollen", "forecast"]
+KINDS = ["rain", "gusts", "uv", "temps", "particulates", "pollen_and_asthma", "forecast"]
 
 
 def rows(markup):
@@ -20,30 +20,30 @@ def test_the_collapsed_menu_is_subscribe_and_unsubscribe():
 
 
 def test_unsubscribe_opens_the_types_that_are_on_and_subscribe_the_types_that_are_off():
-    got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub"))
+    got = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "unsub"))
     assert got[0] == [("➕ Sub ▸", "al:open:sub"), ("➖ Unsub ▾", "al:close")]
-    assert got[1] == [("🌧️ rain", "al:off:rain:unsub"), ("🌦️ rain predicted", "al:off:rain_likely:unsub")]
-    assert [text for row in got[1:-1] for text, _ in row] == ["🌧️ rain", "🌦️ rain predicted", "💨 gusts", "🧴 UV", "🌡️ temperature crossing", "😷 particulates"]
+    assert got[1] == [("🌧️ rain", "al:off:rain:unsub"), ("💨 gusts", "al:off:gusts:unsub")]
+    assert [text for row in got[1:-1] for text, _ in row] == ["🌧️ rain", "💨 gusts", "🧴 UV", "🌡️ temperature crossing", "😷 particulates"]
     assert got[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub")]
-    got = rows(keyboard({"pollen", "forecast"}, KINDS, "sub"))
+    got = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "sub"))
     assert got[0][0] == ("➕ Sub ▾", "al:close")
-    assert got[1:] == [[("🌼 pollen & asthma", "al:on:pollen:sub"), ("🔄 forecast changes", "al:on:forecast:sub")], [("🔔 Subscribe to all", "al:on:all:sub")]]
+    assert got[1:] == [[("🌼 pollen & asthma", "al:on:pollen_and_asthma:sub"), ("🔄 forecast changes", "al:on:forecast:sub")], [("🔔 Subscribe to all", "al:on:all:sub")]]
     assert not any(data == "al:noop" for row in got for _, data in row)                  # no button that does nothing
-    assert options({"pollen"}, KINDS, "sub") == ["pollen"] and options({"pollen"}, ["rain", "pollen"], "unsub") == ["rain"]
+    assert options({"pollen_and_asthma"}, KINDS, "sub") == ["pollen_and_asthma"] and options({"pollen_and_asthma"}, ["rain", "pollen_and_asthma"], "unsub") == ["rain"]
     assert len(rows(keyboard(set(), KINDS, "sub"))) == 1                                  # nothing off: nothing listed
 
 
 def test_only_the_types_the_bot_has_are_listed_and_every_callback_is_short():
-    assert available_kinds({"Ecowitt"}) == ["rain", "rain_likely", "gusts", "uv", "temps"]
-    assert available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast"}) == KINDS and available_kinds({"AirGradient"}) == ["air"]
+    assert available_kinds({"Ecowitt"}) == ["rain", "gusts", "uv", "temps"]
+    assert available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast"}) == KINDS and available_kinds({"AirGradient"}) == ["particulates"]
     for section in (None, "sub", "unsub"):
         for text, data in (b for row in rows(keyboard({"uv"}, KINDS, section)) for b in row):
             assert len(data.encode()) <= 64
 
 
 def test_the_title_lists_what_is_on_and_off():
-    assert title({"gusts", "uv"}, KINDS[:5]) == f"{TITLE}\n✅ On: rain, rain predicted, temperature crossing\n🔕 Off: gusts, UV"
-    assert title(set(), ["air"]).endswith("🔕 Off: nothing") and title({"air"}, ["air"]).endswith("✅ On: nothing\n🔕 Off: particulates")
+    assert title({"gusts", "uv"}, KINDS[:4]) == f"{TITLE}\n✅ On: rain, temperature crossing\n🔕 Off: gusts, UV"
+    assert title(set(), ["particulates"]).endswith("🔕 Off: nothing") and title({"particulates"}, ["particulates"]).endswith("✅ On: nothing\n🔕 Off: particulates")
 
 
 def test_state_mutes_one_type_or_all_and_old_files_load(tmp_path):
@@ -204,7 +204,7 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     chat = NS(type="private", id=1, title=None)
     update = NS(effective_message=NS(reply_text=reply_text, chat_id=1), effective_chat=chat, effective_user=NS(full_name="Rob", username="rob"))
     await bot.on_alerts(update, NS(args=[]))
-    assert replies[0][0].startswith(TITLE) and "✅ On: rain, rain predicted, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
+    assert replies[0][0].startswith(TITLE) and "✅ On: rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
     assert rows(replies[0][1]["reply_markup"])[0] == [("➕ Sub ▸", "al:open:sub"), ("➖ Unsub ▸", "al:open:unsub"), ("⚙️ Settings ▸", "al:open:set")]
     await bot.on_alerts(update, NS(args=["off"]))
     assert not state.alerts_on(1) and "✅ On: nothing" in replies[1][0]
@@ -213,7 +213,7 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
 
 
 async def test_every_monitors_alert_names_its_type(tmp_path):
-    from lib.alerts import AirMonitor, ForecastMonitor, PollenMonitor, WeatherMonitor
+    from lib.alerts import ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, WeatherMonitor
     from tests.test_alerts import FakePollen, FakeStation, air_reading, gusts, rain, uv
     from tests.test_forecast_alert import FakeForecast, day
     state = AlertState(tmp_path / "s.json")
@@ -234,15 +234,15 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     await weather(uv(3, 5), uv(3, 5, 10))
     assert kinds == ["rain", "rain", "gusts", "uv"]
     kinds.clear()
-    mask = AirMonitor(NS(tz=TZ, link=None), state, notify)
+    mask = ParticulatesMonitor(NS(tz=TZ, link=None), state, notify)
     for pm in (80, 80, 20, 20):
         await mask.check(air_reading(pm))
-    assert kinds == ["air", "air"]
+    assert kinds == ["particulates", "particulates"]
     kinds.clear()
     pollen = FakePollen()
     pollen.grass = "High"
-    await PollenMonitor(pollen, state, notify).check()
-    assert kinds == ["pollen"]
+    await PollenAndAsthmaMonitor(pollen, state, notify).check()
+    assert kinds == ["pollen_and_asthma"]
     seen = []
     notifier = Notifier(Sent(), state)
     real = notifier.to_chat
@@ -257,10 +257,10 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
 
 
 def test_under_an_alert_the_unsubscribe_list_is_its_type_then_other_which_holds_the_rest_and_all():
-    got = rows(keyboard({"pollen", "forecast"}, KINDS, "unsub", parent="uv"))
+    got = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "unsub", parent="uv"))
     assert got == [[("➕ Sub ▸", "al:open:sub:uv"), ("➖ Unsub ▾", "al:close:uv")],
                    [("● 🧴 UV", "al:off:uv:unsub:uv")], [("Other ▸", "al:open:other:uv")]]
-    other = rows(keyboard({"pollen", "forecast"}, KINDS, "other", parent="uv"))
+    other = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "other", parent="uv"))
     assert other[1:3] == [[("● 🧴 UV", "al:off:uv:other:uv")], [("Other ▾", "al:open:unsub:uv")]]
     listed = [d for r in other[3:-1] for _, d in r]
     assert listed and all(d.startswith("al:off:") and d.endswith(":other:uv") and ":uv:" not in d for d in listed)   # the rest, not its own type
@@ -271,13 +271,13 @@ def test_under_an_alert_the_unsubscribe_list_is_its_type_then_other_which_holds_
     gone = rows(keyboard({"uv", "gusts"}, KINDS, "unsub", parent="uv"))                  # its type is already off: a plain list of the rest, with "all"
     assert "Other" not in str(gone) and gone[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]
     assert len(rows(keyboard(set(KINDS), KINDS, "unsub", parent="uv"))) == 1             # nothing is on at all: nothing listed
-    sub = rows(keyboard({"pollen", "forecast"}, KINDS, "sub", parent="uv"))              # Subscribe is the types that are off, as ever
+    sub = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "sub", parent="uv"))              # Subscribe is the types that are off, as ever
     assert [t for row in sub[1:-1] for t, _ in row] == ["🌼 pollen & asthma", "🔄 forecast changes"] and sub[-1][0][0] == "🔔 Subscribe to all"
     assert rows(keyboard(set(), KINDS, "unsub"))[1][0][0] == "🌧️ rain"                      # the /alerts message has no parent: every type that is on
 
 
 def test_the_all_button_is_only_there_when_the_list_has_more_than_one_item():
-    assert not any("all" in data for row in rows(keyboard({"uv", "gusts", "rain", "rain_likely", "temps", "air", "pollen"}, KINDS, "unsub"))
+    assert not any("all" in data for row in rows(keyboard({"uv", "gusts", "rain", "temps", "particulates", "pollen_and_asthma"}, KINDS, "unsub"))
                    for _, data in row)                                               # one type on (forecast changes): no "Unsubscribe from all"
     assert not any("all" in data for row in rows(keyboard({"uv"}, KINDS, "sub")) for _, data in row)       # one type off: no "Subscribe to all"
     assert rows(keyboard({"uv", "gusts"}, KINDS, "sub"))[-1][0][0] == "🔔 Subscribe to all"
@@ -320,7 +320,7 @@ def test_every_alert_type_has_its_emoji_and_every_button_in_the_lists_starts_wit
     from lib.alerts.menu import EMOJI, label
     assert set(EMOJI) == set(LABELS)                                                     # a new type cannot be added without one
     assert len(set(EMOJI.values())) == len(EMOJI) and all(not e.isascii() for e in EMOJI.values())   # all different, all emoji
-    assert label("rain") == "🌧️ rain" and label("irrigation") == "🪫 irrigation battery" and label("irrigation_pause") == "☔ irrigation pause"
+    assert label("rain") == "🌧️ rain" and label("irrigation_battery") == "🪫 irrigation battery" and label("irrigation_pause") == "☔ irrigation pause"
     everything = list(LABELS)
     for section in ("sub", "unsub"):
         for parent in (None, "uv"):
@@ -455,3 +455,14 @@ async def test_the_sound_lists_have_an_all_button(tmp_path):
     assert rows(q.edits[0][1])[-1] == [("🔔 Enable all", "al:snd:all:on:uv")]
     await press(bot, Query("al:snd:all:on:uv", text="☀️ UV 10"))
     assert "uv" in state.loud(1) and "rain" in state.loud(1) and "gusts" not in state.loud(1)
+
+
+def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_sends():
+    import re
+    from pathlib import Path
+    from lib import alerts
+    monitors = [alerts.WeatherMonitor, alerts.ParticulatesMonitor, alerts.ForecastMonitor, alerts.PollenAndAsthmaMonitor, alerts.IrrigationDailyCheck]
+    assert sorted(k for m in monitors for k in m.KINDS) == sorted(LABELS)       # every type has exactly one monitor
+    for m in monitors:
+        sent = set(re.findall(r'kind="(\w+)"', Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()))
+        assert sent == set(m.KINDS), m.__name__

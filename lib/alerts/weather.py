@@ -4,8 +4,6 @@
   - Rain: "started" (one tip of the gauge is enough) and "stopped" (dry for ALERT_COOLDOWN_MINUTES), with how much fell.
     Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am): those are kept quiet and one summary of the overnight
     rain is sent after they end.
-  - Rain likely soon: pressure falling over 3 hours plus arriving moisture, scored, tuned for
-    Melbourne (see assess_rain). At most once every 6 hours.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
   - Strong sun: one alert when the UV index reaches 10, and no more until it has stayed below 10 for an hour.
@@ -19,13 +17,12 @@ from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
 from .backoff import due, remember
-from ..ecowitt.outlook import PREDICT_MIN_SCORE, Rows, assess_rain, duration, rain_amount, wet_flags
+from ..ecowitt.outlook import Rows, duration, rain_amount, wet_flags
 from ..timeutil import to_local
 
 log = logging.getLogger(__name__)
 
 ALERT_COOLDOWN_SECONDS = 30 * 60   # the default; ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
-PREDICT_EVERY_SECONDS = 6 * 3600
 CROSS_MARGIN = 0.3
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600
@@ -41,6 +38,8 @@ def side(r: dict) -> str | None:
 
 
 class WeatherMonitor:
+    KINDS = ("rain", "gusts", "uv", "temps")
+
     def __init__(self, station, state, notify, cooldown_seconds: int = ALERT_COOLDOWN_SECONDS, quiet: tuple[int, int] | None = None):
         self.station, self.state, self.notify = station, state, notify
         self.cooldown = cooldown_seconds
@@ -85,7 +84,6 @@ class WeatherMonitor:
         live = await self.station.live_rain()  # newer than the 5-minute history by up to 5 minutes
         await self._rain(rows + [live] if live and live[0] > rows[-1][0] else rows)
         await self._night_summary(rows)
-        await self._rain_likely(rows)
         await self._gusts(rows)
         await self._uv(rows)
         await self._cross(rows)
@@ -155,27 +153,6 @@ class WeatherMonitor:
         amount = f"{night['mm']:.1f} mm" if night["mm"] >= 0.1 else "a trace"
         still = " It's still raining." if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" else ""
         await self.notify(f"\U0001f327️ Overnight rain: {amount}, from about {clock(night['first'])} to {clock(night['last'] + 300)}.{still}", kind="rain")
-
-    async def _rain_likely(self, rows: Rows):
-        """Not while raining or within an hour of rain; at most every 6 hours."""
-        m = self.state.monitor.setdefault("predict", {"last": 0})
-        latest_ts = rows[-1][0]
-        if self._quiet(latest_ts):
-            return
-        if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" or any(
-                w for ts, w, _ in wet_flags(rows) if latest_ts - ts < 3600):
-            return
-        if latest_ts - m.get("last", 0) < PREDICT_EVERY_SECONDS:
-            return
-        outlook = assess_rain(rows, self.tz, self.station.longitude)
-        if outlook is None:
-            return
-        log.info("Rain-likely check: pressure fall %.1f hPa (%.1f beyond the tide), %s, score %d",
-                 outlook.raw_drop, outlook.drop, "night" if outlook.night else "day", outlook.score)
-        if outlook.score >= PREDICT_MIN_SCORE:
-            m["last"] = latest_ts
-            await self.notify("\U0001f326️ Rain looks likely soon: " + ", ".join(outlook.reasons[:3]) +
-                              ". (An estimate from the station's readings, not an official forecast.)", kind="rain_likely")
 
     async def _gusts(self, rows: Rows):
         """Only readings since the last check count, so a restart doesn't re-announce an old gust."""

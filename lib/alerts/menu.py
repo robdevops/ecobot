@@ -17,12 +17,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from ..buttons import menu_text
 
 # kind -> the name on the button, in the order listed
-LABELS = {"rain": "rain", "rain_likely": "rain predicted", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
-          "air": "particulates", "pollen": "pollen & asthma", "forecast": "forecast changes",
-          "irrigation": "irrigation battery", "irrigation_pause": "irrigation pause"}
+LABELS = {"rain": "rain", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
+          "particulates": "particulates", "pollen_and_asthma": "pollen & asthma", "forecast": "forecast changes",
+          "irrigation_battery": "irrigation battery", "irrigation_pause": "irrigation pause"}
 # the emoji on each type's button: the one its own alerts start with (every type has one: a test holds the two lists together)
-EMOJI = {"rain": "\U0001f327️", "rain_likely": "\U0001f326️", "gusts": "\U0001f4a8", "uv": "\U0001f9f4", "temps": "\U0001f321️",
-         "air": "\U0001f637", "pollen": "\U0001f33c", "forecast": "\U0001f504", "irrigation": "\U0001faab", "irrigation_pause": "☔"}
+EMOJI = {"rain": "\U0001f327️", "gusts": "\U0001f4a8", "uv": "\U0001f9f4", "temps": "\U0001f321️",
+         "particulates": "\U0001f637", "pollen_and_asthma": "\U0001f33c", "forecast": "\U0001f504", "irrigation_battery": "\U0001faab", "irrigation_pause": "☔"}
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
 PER_ROW = 2
@@ -31,10 +31,15 @@ SETTINGS = ("set", "snd_on", "snd_off", "snd_on_o", "snd_off_o")   # (_o: the "O
 
 def available_kinds(sources: set[str]) -> list[str]:
     """The alert types the bot can send, from the names of its sources."""
-    wanted = (["rain", "rain_likely", "gusts", "uv", "temps"] if "Ecowitt" in sources else []) + (
-        ["air"] if "AirGradient" in sources else []) + (["pollen"] if "Pollen" in sources else []) + (
-        ["forecast"] if "Forecast" in sources else []) + (["irrigation", "irrigation_pause"] if "Irrigation" in sources else [])
+    wanted = (["rain", "gusts", "uv", "temps"] if "Ecowitt" in sources else []) + (
+        ["particulates"] if "AirGradient" in sources else []) + (["pollen_and_asthma"] if "Pollen" in sources else []) + (
+        ["forecast"] if "Forecast" in sources else []) + (["irrigation_battery", "irrigation_pause"] if "Irrigation" in sources else [])
     return wanted
+
+
+def kinds_for(source_names, irrigation: bool) -> list[str]:
+    """The alert types the bot sends, from the names of its sources and whether an irrigation controller is configured."""
+    return available_kinds(set(source_names) | ({"Irrigation"} if irrigation else set()))
 
 
 def label(kind: str) -> str:

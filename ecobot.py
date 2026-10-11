@@ -22,8 +22,9 @@ from telegram.ext import Application, Defaults
 
 from lib import intent
 from lib.airgradient import AirGradient
-from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, PollenMonitor, WeatherMonitor
-from lib.alerts.menu import available_kinds
+from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationDailyCheck, Notifier, ParticulatesMonitor,
+                        PollenAndAsthmaMonitor, WeatherMonitor)
+from lib.alerts.menu import LABELS, kinds_for
 from lib.bot import Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
@@ -85,6 +86,19 @@ def commit_in(git_dir) -> str:
         return "unknown"
 
 
+def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str:
+    """head + the items joined by ", " + tail, over several lines when it is longer than `width`: a line breaks only between items,
+    and the next one is indented."""
+    lines, line = [], head
+    for i, item in enumerate(items):
+        piece = item + (", " if i < len(items) - 1 else tail)
+        if line.strip() != head.strip() and len(line + piece.rstrip()) > width:
+            lines.append(line.rstrip())
+            line = "    "
+        line += piece
+    return "\n".join([*lines, line])
+
+
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
@@ -132,30 +146,29 @@ async def main():
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("@%s + %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
-                notify = Notifier(app.bot, state, available_kinds({s.name for s in sources} | ({"Irrigation"} if irrigation else set())))
+                kinds = kinds_for((s.name for s in sources), irrigation is not None)
+                notify = Notifier(app.bot, state, kinds)
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts
-                kinds = []
+                running: list[str] = []   # the alert types whose monitors are hooked up (the weather ones once they have started)
                 if eco:
                     monitor = WeatherMonitor(eco, state, notify, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours)
-                    kinds += ["rain", "rain likely", "temp. crossing"]
                 if air:
-                    air_monitor = AirMonitor(air, state, notify)
-                    tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
-                    kinds.append("air")
+                    particulates_monitor = ParticulatesMonitor(air, state, notify)
+                    tasks.append(asyncio.create_task(every(PARTICULATES_CHECK_SECONDS, particulates_monitor.check)))
+                    running += ParticulatesMonitor.KINDS
                 if forecast:
                     forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
-                    kinds.append("forecast changes")
+                    running += ForecastMonitor.KINDS
                 if pollen:
-                    pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
-                    kinds += ["pollen", "asthma"]
+                    pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, state, notify).check)  # after each refresh (in the day)
+                    running += PollenAndAsthmaMonitor.KINDS
                 if irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-                    tasks.append(asyncio.create_task(IrrigationMonitor(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
-                                                                       eco, forecast).run()))
+                    tasks.append(asyncio.create_task(IrrigationDailyCheck(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
+                                                                            eco, forecast).run()))
                     tasks.append(asyncio.create_task(every(WATCHDOG_SECONDS, bot.watchdog.check)))
-                    kinds.append("irrigation battery")
-                log.info("Alerts: %s: %d chats", ", ".join(kinds) or "none", len(state.alert_chats()))
+                    running += IrrigationDailyCheck.KINDS
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
@@ -173,6 +186,7 @@ async def main():
                         try:
                             await monitor.init()
                             eco.warmer.after.append(monitor.check)  # checked on every fresh refresh
+                            running[:0] = WeatherMonitor.KINDS
                             await monitor.check()
                         except Exception:
                             log.exception("Weather alerts couldn't start")
@@ -196,6 +210,10 @@ async def main():
                         log.exception("Startup warm-up failed (the regular refreshes will catch up)")
                     log.info("Startup warm-up: %s, %.1fs", ", ".join(parts) or "nothing to fetch",
                              time.monotonic() - started)
+                    on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
+                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats"))
+                    if missing := [LABELS[k] for k in kinds if k not in running]:
+                        log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
                 tasks.append(asyncio.create_task(startup_warmup()))
                 await stop.wait()

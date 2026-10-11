@@ -319,7 +319,7 @@ async def test_alert_buttons_in_a_group_stay_admin_only_even_when_admin_only_is_
 def every_keyboard(bot):
     """Every inline keyboard the bot can draw, in every state."""
     kinds = menu.available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
-    muted_sets = [set(), {"rain"}, {"rain", "uv", "air"}, set(menu.LABELS)]
+    muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(menu.LABELS)]
     for muted in muted_sets:
         for opened in (None, "sub", "unsub"):
             for parent in (None, *kinds):

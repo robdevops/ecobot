@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timedelta, timezone
 
-from lib.alerts import AirMonitor, AlertState, Notifier, WeatherMonitor, with_footer
+from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor, with_footer
 from lib.ecowitt import outlook
 from tests.fakes import TZ
 
@@ -165,21 +165,6 @@ def test_a_real_night_front_still_counts():
     assert out and out.night and out.score >= outlook.PREDICT_MIN_SCORE
 
 
-async def test_rain_likely_alerts_at_most_every_6_hours(tmp_path):
-    m, state, sent = monitor(tmp_path, pressure_rows(3.5, 15))
-    await m.check()
-    await m.check()
-    assert [s for s in sent if "likely" in s].__len__() == 1
-
-
-async def test_no_rain_prediction_while_raining(tmp_path):
-    data = pressure_rows(3.5, 15)
-    data[-1][1]["rainfall.rain_rate"] = 2.0
-    m, state, sent = monitor(tmp_path, data)
-    await m.check()
-    assert not [s for s in sent if "likely" in s]
-
-
 def temps(outdoor, indoor, ts=T0):
     return [(ts, {"outdoor.temperature": outdoor, "indoor.temperature": indoor})]
 
@@ -269,7 +254,7 @@ async def test_mask_alert_needs_two_bad_checks_and_pairs_with_all_clear(tmp_path
 
     async def notify(text, link=None, **kw):
         sent.append((text, link))
-    mon = AirMonitor(FakeAir(), state, notify)
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
     await mon.check(air_reading(80))
     assert not sent                                   # one puff of smoke isn't enough
     await mon.check(air_reading(20))
@@ -290,7 +275,7 @@ async def test_mask_threshold_is_official_aqi_151(tmp_path):
 
     async def notify(text, link=None, **kw):
         sent.append(text)
-    mon = AirMonitor(FakeAir(), state, notify)
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
     for _ in range(3):
         await mon.check(air_reading(55.4))            # AQI 150: unhealthy for sensitive groups only
     assert not sent
@@ -304,7 +289,7 @@ async def test_stale_air_readings_are_ignored(tmp_path):
 
     async def notify(text, link=None, **kw):
         sent.append(text)
-    mon = AirMonitor(FakeAir(), state, notify)
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
     for _ in range(3):
         await mon.check(air_reading(200, age=timedelta(hours=3)))
     assert not sent
@@ -401,13 +386,13 @@ class FakePollen:
 
 
 def pollen_monitor(tmp_path):
-    from lib.alerts import PollenMonitor
+    from lib.alerts import PollenAndAsthmaMonitor
     state, sent = AlertState(tmp_path / "s.json"), []
 
     async def notify(text, link=None, **kw):
         sent.append(text)
     pollen = FakePollen()
-    return PollenMonitor(pollen, state, notify), pollen, sent
+    return PollenAndAsthmaMonitor(pollen, state, notify), pollen, sent
 
 
 async def test_high_pollen_and_asthma_alert_once_per_metric_and_day(tmp_path):
@@ -435,12 +420,12 @@ async def test_high_pollen_and_asthma_alert_once_per_metric_and_day(tmp_path):
 
 
 async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stale_page_is_ignored(tmp_path):
-    from lib.alerts import PollenMonitor
+    from lib.alerts import PollenAndAsthmaMonitor
     mon, pollen, sent = pollen_monitor(tmp_path)
     pollen.grass = "High"
     await mon.check()
     assert len(sent) == 1
-    again = PollenMonitor(pollen, mon.state, mon.notify)               # the state file keeps what was sent
+    again = PollenAndAsthmaMonitor(pollen, mon.state, mon.notify)               # the state file keeps what was sent
     await again.check()
     assert len(sent) == 1
     pollen.asthma = None                                               # off-season: nothing to say

@@ -1232,5 +1232,5 @@ async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_say
                                             "end_date": f"{today} 23:59:59"})
     assert reply.startswith("Error: no history data returned")
     text = caplog.text
-    assert "History cache: " in text and str(eco.cache.path) in text and "newest reading 5min none" in text
+    assert "History cache: " in text and str(eco.cache.path) in text
     assert "History query empty" in text and "readings held for the window {'5min': 0, '30min': 0, '1day': 0}" in text

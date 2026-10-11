@@ -1,6 +1,6 @@
 """The irrigation controller, checked once a day (18:00 local by default).
 
-  - a battery below 5% is told to the chats subscribed to "irrigation battery" (at most once a day, until it is charged);
+  - a battery below 5% is told to the chats subscribed to "irrigation battery" (kind irrigation_battery) (at most once a day, until it is charged);
   - if more than 1 mm of rain fell in the last 24 hours, or Open-Meteo gives today or tomorrow a 50% or better chance of at least
     1 mm of rain, the controller is put on a 24 hour weather delay (it skips its own schedule) and the chats subscribed to "irrigation
     pause" are told why. A longer delay already set is left alone (nothing changes, so nothing is sent).
@@ -25,14 +25,16 @@ RETRY_SECONDS = 30 * 60
 MEASURED_HOURS = 24
 
 
-class IrrigationMonitor:
+class IrrigationDailyCheck:
+    KINDS = ("irrigation_battery", "irrigation_pause")
+
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
         """station: the Ecowitt source (its recent() gives the measured rain); forecast: the Forecast source. Either may be None."""
         self.device, self.state, self.notify, self.tz, self.hour = device, state, notify, tz, hour
         self.station, self.forecast = station, forecast
 
     def _memory(self) -> dict:
-        return self.state.monitor.setdefault("irrigation", {})
+        return self.state.monitor.setdefault("irrigation_daily_check", {})
 
     def due(self, now: datetime) -> bool:
         """Is today's check still to be done (it is past the check time and none is recorded for today)?"""
@@ -71,7 +73,7 @@ class IrrigationMonitor:
             memory["battery_warned"] = today
             self.state.save()
             await self.notify(f"🪫 The irrigation battery is at {battery}%. Replace or recharge it soon, or watering will stop.",
-                              kind="irrigation")
+                              kind="irrigation_battery")
         reason = await self.rain_reason()
         if reason:
             current = status.get("weather_delay")

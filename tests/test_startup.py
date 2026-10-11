@@ -77,6 +77,39 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
     assert "failed" not in final and "days (5min/30min/4h/1d)" in final
     assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
+    assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
+
+
+async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not_start(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    cfg = config(tmp_path)
+    eco_t, _ = ecowitt_transport(history_days=45)
+    air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    app = FakeApp()
+    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
+    for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
+    monkeypatch.setattr(archive, "PACE_SECONDS", 0)
+    monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
+    monkeypatch.setattr(air_source, "BACKFILL_EMPTY_STOP", 3)
+
+    async def broken(self):
+        raise RuntimeError("no readings")
+    monkeypatch.setattr(ecobot.WeatherMonitor, "init", broken)
+
+    async def stop_when_archived():
+        for _ in range(300):
+            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+                break
+            await asyncio.sleep(0.1)
+        os.kill(os.getpid(), signal.SIGTERM)
+    stopper = asyncio.create_task(stop_when_archived())
+    await ecobot.main()
+    await stopper
+    log = caplog.text
+    assert "Weather alerts couldn't start" in log and "Alerts: particulates: 0 chats" in log
+    assert "Alerts NOT running: rain, gusts, UV, temperature crossing (see the error above)" in log
 
 
 async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(tmp_path, monkeypatch, caplog):

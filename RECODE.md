@@ -24,7 +24,7 @@
     88 lib/airgradient/metrics.py
     83 lib/ecowitt/direction.py
     71 lib/airgradient/store.py
-    59 lib/alerts/air.py
+    59 lib/alerts/particulates.py
     58 lib/config.py
     54 lib/tools.py
     51 lib/warm.py
