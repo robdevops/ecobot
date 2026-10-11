@@ -120,7 +120,7 @@ async def main():
     agent = Agent(AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url), cfg.xai_model, tools)
     state = AlertState(cfg.state_path)
     if cfg.admin_only:
-        log.info("Admin only: the bot answers the admins of the groups it is in%s",
+        log.info("Admin only: the bot answers the admins of the groups it is in%s; set ADMIN_CHAT_IDS for more",
                  f" and {len(cfg.admin_chat_ids)} listed id(s)" if cfg.admin_chat_ids else "")
         if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
             log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
