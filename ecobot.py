@@ -36,7 +36,18 @@ from lib.compose import Composer
 from lib.tools import Tools
 from lib.warm import every, safely
 
-logging.basicConfig(format="%(levelname)s %(name)s: %(message)s", level=logging.INFO)
+
+class LogFormat(logging.Formatter):
+    """"INFO message" for this file's own lines, "INFO lib.bot: message" for the rest: the module name says who spoke."""
+
+    def format(self, record):
+        record.where = "" if record.name == "ecobot" else f"{record.name}: "
+        return super().format(record)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(LogFormat("%(levelname)s %(where)s%(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")

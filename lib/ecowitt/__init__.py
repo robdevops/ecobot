@@ -1,4 +1,4 @@
 from .archive import Archive
-from .station import Ecowitt
+from .source import Ecowitt
 
 __all__ = ["Archive", "Ecowitt"]

@@ -973,7 +973,7 @@ async def test_weather_all_week_is_a_stack_of_every_reading_the_station_has(tmp_
 
 
 def test_a_reading_named_as_a_group_becomes_its_group_and_an_unknown_name_is_dropped():
-    from lib.ecowitt.station import parse_groups
+    from lib.ecowitt.source import parse_groups
     assert parse_groups("pressure,humidity") == ["pressure", "outdoor"]
     assert parse_groups("rain, dew_point, wind, outdoor") == ["rainfall", "outdoor", "wind"]
     assert parse_groups("outdoor.temperature,bogus") == ["outdoor"] and parse_groups("bogus") == ["outdoor", "indoor"]
@@ -1083,7 +1083,7 @@ async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers
     async def realtime(mac, groups):
         return answers.pop(0)
     monkeypatch.setattr(station.api, "realtime", realtime)
-    with caplog.at_level("INFO", logger="lib.ecowitt.station"):
+    with caplog.at_level("INFO", logger="lib.ecowitt.source"):
         assert await station.live_rain() is None and await station.live_rain() is None
         assert await station.live_rain() == (100, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0})
         await station.live_rain()
@@ -1213,3 +1213,12 @@ async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_say
     text = caplog.text
     assert "History cache: " in text and str(eco.cache.path) in text
     assert "History query empty" in text and "readings held for the window {'5min': 0, '30min': 0, '1day': 0}" in text
+
+
+def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is_missing():
+    from lib.ecowitt.source import live_summary
+    cell = lambda v, u: {"value": v, "unit": u}
+    data = {"rainfall": {"rain_rate": cell("0.0", "mm/hr"), "daily": cell("0.8", "mm")}, "outdoor": {"temperature": cell("20.3", "℃"), "humidity": cell("62", "%")},
+            "wind": {"wind_speed": cell("12", "km/h")}, "pressure": {"relative": cell("1013.2", "hPa")}}
+    assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm today, 20.3 °C, 62 %, wind 12 km/h, 1013.2 hPa"
+    assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm today" and live_summary({}) == "no readings"

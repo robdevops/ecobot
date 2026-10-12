@@ -93,6 +93,22 @@ LIVE_GROUPS = NOW_GROUPS.split(",")   # what the once-a-minute live reading asks
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
 
+def live_summary(data: dict) -> str:
+    """A live reading in a few words for the log: rain first, then outdoor temperature and humidity, wind and pressure. A reading the
+    response lacks is left out."""
+    def get(group: str, field: str) -> str | None:
+        obj = (data.get(group) or {}).get(field)
+        if not isinstance(obj, dict) or "value" not in obj:
+            return None
+        return f"{obj['value']} {obj.get('unit', '')}".replace("℃", "°C").replace("mm/hr", "mm/h").strip()
+    wind = get("wind", "wind_speed")
+    parts = [f"rain {rate}" if (rate := get("rainfall", "rain_rate")) else None,
+             f"{daily} today" if (daily := get("rainfall", "daily")) else None,
+             get("outdoor", "temperature"), get("outdoor", "humidity"),
+             f"wind {wind}" if wind else None, get("pressure", "relative")]
+    return ", ".join(p for p in parts if p) or "no readings"
+
+
 class Ecowitt:
     name = "Ecowitt"
 
@@ -212,13 +228,13 @@ class Ecowitt:
                 raise ValueError("no rain reading in the response")
         except Exception as e:  # the alert still works from the history
             if self._live_ok is not False:  # once per outage, not every minute
-                log.warning("Live rain reading failed (%s); the rain alert uses the 5-minute history", e)
+                log.warning("Live readings failed (%s); the rain alert uses the 5-minute history", e)
             self._live_ok = False
             return None
         if self._live_ok is None:
-            log.info("Live rain reading working (%.1f mm/h, %.1f mm today)", row.get("rainfall.rain_rate", 0), row.get("rainfall.daily", 0))
+            log.info("Live readings working (%s)", live_summary(data))
         elif not self._live_ok:
-            log.info("Live rain reading recovered")
+            log.info("Live readings recovered (%s)", live_summary(data))
         self._live_ok = True
         return ts, row
 

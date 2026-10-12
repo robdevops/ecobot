@@ -12,7 +12,7 @@
    267 lib/alerts/weather.py
    258 lib/correlate.py
    227 lib/ecowitt/store.py
-   203 lib/ecowitt/station.py
+   203 lib/ecowitt/source.py
    200 lib/prompt.py
    190 lib/ecowitt/days.py
    160 ecobot.py

@@ -1,5 +1,6 @@
 """Runs ecobot.main() end to end against fake sources and a fake Telegram."""
 
+import logging
 import asyncio
 import os
 import signal
@@ -254,3 +255,9 @@ def test_a_long_alerts_line_continues_indented_at_90_characters():
     lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats").splitlines()
     assert len(lines) > 1 and all(len(line) <= 90 for line in lines)
     assert all(line.startswith(" " * 13) and not line.startswith(" " * 14) for line in lines[1:])
+
+
+def test_log_lines_name_their_module_except_the_main_script():
+    fmt = ecobot.LogFormat("%(levelname)s %(where)s%(message)s")
+    record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
+    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO lib.bot: hello"

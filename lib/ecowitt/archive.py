@@ -75,8 +75,9 @@ class Archive:
         if todo:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
-            log.info("Ecowitt archive: %d req to fetch (about %s)", len(todo),
-                     f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
+            if seconds >= 60:   # a short run only gets the line when it finishes
+                log.info("Ecowitt archive: %d req to fetch (about %s)", len(todo),
+                         f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
         fetched = failed = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
             fetcher = self.station.fetcher(self.groups)

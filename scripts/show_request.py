@@ -25,7 +25,7 @@ from lib.config import data_dir  # noqa: E402
 
 from lib import intent, prompt  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
-from lib.ecowitt import days, station  # noqa: E402
+from lib.ecowitt import days, source as station  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
 from lib.ecowitt.store import HistoryCache  # noqa: E402
 from lib.llm import Agent  # noqa: E402
