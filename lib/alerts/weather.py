@@ -12,13 +12,17 @@
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
 
+import asyncio
 import logging
 from datetime import timedelta
 
+from .. import intent
+from ..charts import render
 from ..ecowitt.glance import UVI_ALERT
 from .backoff import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
-from ..timeutil import to_local
+from ..timeutil import now_local, to_local
+from ..tools import Turn
 
 log = logging.getLogger(__name__)
 
@@ -206,6 +210,21 @@ class WeatherMonitor:
             held = ts - c["alerted_time"]   # how long the side we last told about has stood
             was = f"{int(held // 86400)} days" if held >= 2 * 86400 else duration(held)
             icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
+            photo = await self._temperature_chart()
             await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
-                              f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps")
+                              f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps", **({"photo": photo} if photo else {}))
             remember(c, current, ts)
+
+    async def _temperature_chart(self) -> bytes | None:
+        """The "Temperature chart 1d" picture (outdoor and indoor, the last 24 hours), drawn as a typed request for it would be; None when
+        it cannot be made (the alert then goes out as text)."""
+        try:
+            text = "Temperature chart 1d"
+            read = intent.read(text, now_local(self.tz), True, False)
+            turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, text=text)
+            history = next(t for t in self.station.tools if t.name == "weather_history")
+            await history.handler(read.fast[1], turn)
+            return await asyncio.to_thread(render, turn.charts[0], self.tz)
+        except Exception as e:
+            log.warning("The temperature chart for the crossing alert couldn't be made: %s: %s", type(e).__name__, e)
+            return None

@@ -466,3 +466,35 @@ def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_s
     for m in monitors:
         sent = set(re.findall(r'kind="(\w+)"', Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()))
         assert sent == set(m.KINDS), m.__name__
+
+
+class SentWithPhotos(Sent):
+    def __init__(self, refuse=None):
+        super().__init__()
+        self.photos, self.refuse = [], refuse
+
+    async def send_photo(self, chat_id, photo, **kw):
+        if self.refuse:
+            raise self.refuse
+        self.photos.append((chat_id, photo, kw))
+
+
+async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_caption_and_the_buttons(tmp_path):
+    state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos()
+    state.add_chat(1, "one")
+    await Notifier(bot, state, KINDS)("It's warmer outside", kind="temps", photo=b"png")
+    assert bot.sent == [] and len(bot.photos) == 1
+    chat, photo, kw = bot.photos[0]
+    assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
+    assert rows(kw["reply_markup"])[0][0] == ("➕ Sub ▸", "al:open:sub:temps")                   # the alert's own buttons ride along
+
+
+async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_chat_is_still_forgotten(tmp_path):
+    from telegram.error import BadRequest
+    state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos(refuse=BadRequest("Wrong file identifier"))
+    state.add_chat(1, "one")
+    await Notifier(bot, state, KINDS)("It's warmer outside", kind="temps", photo=b"png")
+    assert bot.photos == [] and [(c, t) for c, t, _ in bot.sent] == [(1, "It's warmer outside")]
+    gone = SentWithPhotos(refuse=BadRequest("Chat not found"))
+    await Notifier(gone, state, KINDS)("again", kind="temps", photo=b"png")
+    assert gone.sent == [] and 1 not in state.chats

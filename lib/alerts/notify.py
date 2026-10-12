@@ -194,11 +194,12 @@ class Notifier:
         """kinds: the alert types this bot sends (the settings buttons under each alert list them)."""
         self.bot, self.state, self.kinds = bot, state, kinds or list(LABELS)
 
-    async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None):
+    async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None, photo: bytes | None = None):
         """Send an alert (silently) to every chat subscribed to its type; forget chats the bot can no
-        longer post to. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons."""
+        longer post to. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons.
+        photo: a picture the text is the caption of (the text alone if Telegram refuses the picture)."""
         text, entities = with_footer(text, link)
-        sent = sum([await self._send(chat_id, text, entities, kind) for chat_id in self.state.alert_chats(kind)])
+        sent = sum([await self._send(chat_id, text, entities, kind, photo) for chat_id in self.state.alert_chats(kind)])
         log.info("Alert sent to %d chat(s): %s", sent, text.replace("\n", " "))
 
     async def to_chat(self, chat_id: int, text: str, link: tuple[str, str] | None = None, kind: str | None = None) -> bool:
@@ -211,16 +212,28 @@ class Notifier:
         log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text.replace("\n", " "))
         return sent
 
-    async def _send(self, chat_id: int, text: str, entities, kind: str | None = None) -> bool:
-        """Send silently, with the settings buttons (which highlight this alert's own type); with sound only if the chat turned it on for this type; forget a chat the bot can no longer post to."""
+    async def _post(self, chat_id: int, text: str, entities, kind: str | None, photo: bytes | None):
+        """The message itself: silent unless the chat turned sound on for this type, with the settings buttons (which highlight this alert's own
+        type). With a photo it is the picture with the text as its caption; a picture Telegram refuses falls back to the text alone."""
+        common = dict(disable_notification=kind not in self.state.loud(chat_id),
+                      reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind, loud=self.state.loud(chat_id) if chat_id > 0 else None))
+        if photo:
+            try:
+                return await self.bot.send_photo(chat_id, photo, caption=text, caption_entities=entities, **common)
+            except BadRequest as e:
+                if "not found" in str(e).lower():
+                    raise
+                log.warning("Alert picture to %s failed (%s); sending the text alone", chat_id, e)
+        return await self.bot.send_message(chat_id, text, entities=entities, disable_web_page_preview=True, **common)
+
+    async def _send(self, chat_id: int, text: str, entities, kind: str | None = None, photo: bytes | None = None) -> bool:
+        """Send an alert (see _post); forget a chat the bot can no longer post to."""
         try:
-            await self.bot.send_message(chat_id, text, entities=entities, disable_notification=kind not in self.state.loud(chat_id),
-                                        disable_web_page_preview=True,
-                                        reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind, loud=self.state.loud(chat_id) if chat_id > 0 else None))
+            await self._post(chat_id, text, entities, kind, photo)
             return True
         except ChatMigrated as e:  # the group became a supergroup: follow it, and send again there
             self.state.migrate_chat(chat_id, e.new_chat_id)
-            return await self._send(e.new_chat_id, text, entities, kind) if e.new_chat_id != chat_id else False
+            return await self._send(e.new_chat_id, text, entities, kind, photo) if e.new_chat_id != chat_id else False
         except Forbidden as e:  # kicked from the group, or blocked in a private chat
             self.state.remove_chat(chat_id, f"can't post: {e}")
         except BadRequest as e:

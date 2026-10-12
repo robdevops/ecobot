@@ -527,3 +527,52 @@ def test_chats_that_already_unsubscribed_from_all_load_as_opt_in(tmp_path, monke
     state.save()
     again = notify.AlertState(path)                       # and it survives a restart
     assert again.subscribed(1, "uv") and not again.subscribed(1, "rain") and not again.subscribed(1, "newthing")
+
+
+async def test_the_crossing_alert_carries_the_temperature_chart_when_there_is_one(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    photos = []
+
+    async def notify(text, link=None, **kw):
+        sent.append(text)
+        photos.append(kw.get("photo"))
+    m.notify = notify
+
+    async def chart():
+        return b"png"
+    m._temperature_chart = chart
+    await m.check()                                    # learns: outdoor cooler
+    m.station.data = temps(25, 20, T0 + 3 * 3600)
+    await m.check()
+    assert len(sent) == 1 and photos == [b"png"]
+    m.station.data = temps(10, 20, T0 + 6 * 3600)      # and back, with no chart this time: the alert still goes out, as text
+    m._temperature_chart = lambda: _none()
+    await m.check()
+    assert len(sent) == 2 and photos[1] is None
+
+
+async def _none():
+    return None
+
+
+async def test_other_alerts_send_no_picture(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    seen = []
+
+    async def notify(text, link=None, **kw):
+        seen.append(kw)
+    m.notify = notify
+    for data in (rain(0, 0, 0), rain(0, 0, 1)):
+        m.station.data = data
+        await m.check()
+    assert seen and all("photo" not in kw for kw in seen)
+
+
+async def test_the_temperature_chart_is_the_one_day_chart_drawn_from_the_stations_history(tmp_path, archived_cache):
+    from tests.fakes import archived_station
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    m = WeatherMonitor(eco, AlertState(tmp_path / "s.json"), None)
+    png = await m._temperature_chart()
+    assert png and png[:4] == b"\x89PNG"
+    await eco.close()
+    assert await WeatherMonitor(FakeStation(), AlertState(tmp_path / "t.json"), None)._temperature_chart() is None     # a station without the tool: no chart, no error
