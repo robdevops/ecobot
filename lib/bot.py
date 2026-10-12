@@ -20,7 +20,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, TelegramError
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, periods, prompt, report, templates
+from . import intent, periods, prompt, report, report_menu, templates
 from .admins import Admins
 from .alerts import menu
 from .alerts import AlertState, with_footer
@@ -183,11 +183,12 @@ class Draft:
 
 
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
-                  titles: list[str] | None = None, period_row=None, sent_photo: list | None = None) -> bool:
+                  titles: list[str] | None = None, period_row=None, sent_photo: list | None = None, bold_headings: bool = False) -> bool:
     """Send the answer with any charts. A chart carries only its title as its caption; any answer text is its own message,
     sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
     the last text, or on the single photo when there is no text; returns whether it was sent (a group of photos can't carry one).
-    period_row (the period buttons) rides on a single photo instead, and then the keyboard waits; the photo's Message goes into sent_photo."""
+    period_row (the period buttons) rides on a single photo instead, and then the keyboard waits; the photo's Message goes into sent_photo.
+    bold_headings: the text is the report (or a pollen / forecast lookup), whose heading names are set in bold."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
@@ -198,6 +199,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
             body, ents = with_footer(chunk, link) if last else (chunk, [])
+            ents = [*(report.heading_entities(chunk) if bold_headings else []), *ents]
             await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True,
                                  **({"reply_markup": markup} if markup and last and not photos else {}))
         carried = bool(markup) and not photos
@@ -298,7 +300,7 @@ class Bot:
     def buttons(self) -> dict:
         """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button."""
         return {"al:": self.on_alert_button, **({"ir:": self.on_irrigation_button} if self.irrigation else {}),
-                periods.PREFIX: self.on_period_button}
+                periods.PREFIX: self.on_period_button, report_menu.PREFIX: self.on_report_button}
 
     async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """The one place every button press comes in: believed (_press), a known family (a prefix nobody handles is refused, so a
@@ -344,7 +346,7 @@ class Bot:
             self.state.remove_chat(change.chat.id, f"bot {status}")
 
     def _alert_kinds(self) -> list[str]:
-        return menu.available_kinds(set(self.by_name) | ({"Irrigation"} if self.irrigation else set()))
+        return menu.kinds_for(self.by_name, bool(self.irrigation))
 
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
@@ -443,8 +445,8 @@ class Bot:
                 raise
 
     # ---------- irrigation ----------
-    def _irrigation_alerts(self, chat_id: int, kind: str = "irrigation") -> bool:
-        """Does this chat get the irrigation battery alerts (kind "irrigation") or the pause alerts ("irrigation_pause")?"""
+    def _irrigation_alerts(self, chat_id: int, kind: str = "irrigation_battery") -> bool:
+        """Does this chat get the irrigation battery alerts (kind "irrigation_battery") or the pause alerts ("irrigation_pause")?"""
         return bool(self.state and self.state.subscribed(chat_id, kind))
 
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None, paused: bool = False, running: bool = False):
@@ -479,7 +481,7 @@ class Bot:
                 self.watchdog.disarm()
             return "Switched off"
         if action in ("batt", "pause") and arg in ("on", "off") and self.state and chat_id in self.state.chats:
-            self.state.set_kind(chat_id, "irrigation" if action == "batt" else "irrigation_pause", arg == "on")
+            self.state.set_kind(chat_id, "irrigation_battery" if action == "batt" else "irrigation_pause", arg == "on")
             return f"Irrigation {'battery' if action == 'batt' else 'pause'} alerts {arg} in this chat"
         return None
 
@@ -553,6 +555,24 @@ class Bot:
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 raise
+
+    async def on_report_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """A press on Refresh under the report: read everything again and redraw the report in the same message. The chat's
+        conversation is not touched (this is not a new question)."""
+        query = update.callback_query
+        if query.data != report_menu.REFRESH:
+            await query.answer(STALE_BUTTON)
+            return
+        read = intent.read("Report", now_local(self.cfg.tz), "Ecowitt" in self.by_name, "AirGradient" in self.by_name,
+                           "Pollen" in self.by_name, "Forecast" in self.by_name)
+        try:
+            text = await asyncio.wait_for(self._written_in_code(read, Turn(text="Report")), TURN_SECONDS)
+        except Exception as e:   # the message stays as it was
+            log.warning("Report refresh failed: %s", e)
+            await query.answer("Couldn't refresh, please try again", show_alert=True)
+            return
+        await query.answer()   # no toast: the times in the headings show what changed
+        await self._edit_irrigation(query, text, report_menu.keyboard(), report.heading_entities(text))
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart
@@ -751,8 +771,7 @@ class Bot:
         question) when there is nothing to caption."""
         calls = [read.fast[:2], *read.more]
         results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
-        caption = report.chart_caption(read.fast[0], read.fast[1], results[0], turn, self.cfg.tz,
-                                       results[1] if len(results) > 1 else None)
+        caption = report.chart_caption(read.fast[0], read.fast[1], results[0], turn, self.cfg.tz)
         if caption is None:
             turn.charts.clear()
             turn.forecast_shown.clear()
@@ -870,15 +889,18 @@ class Bot:
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
-        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
+        refresh = ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
+        row =periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo = []
         if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
             self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])
         try:
             if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
                 reply, photos, row = "", [], None
-            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None, markup=markup,
-                                             titles=titles, period_row=row, sent_photo=sent_photo)
+            carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
+                                             markup=markup or (report_menu.keyboard() if refresh else None),
+                                             titles=titles, period_row=row, sent_photo=sent_photo,
+                                             bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat

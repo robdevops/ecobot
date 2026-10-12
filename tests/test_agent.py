@@ -238,12 +238,12 @@ async def test_streamed_answers_give_the_same_result_and_report_the_text_so_far(
     assert msgs[1]["tool_calls"][0]["function"] == {"name": "weather_now", "arguments": '{"groups": "outdoor"}'}
 
 
-def test_a_rain_chart_caption_is_only_the_least_and_most_rain_and_whether_more_is_expected():
+def test_a_rain_chart_caption_is_only_the_least_and_most_rain():
     from datetime import datetime
     from lib import prompt
     now = datetime(2026, 9, 29, 14, 5)
     text = prompt.build(now, ["Ecowitt weather station"], rain_caption=True)
-    assert "THIS IS A RAIN CHART" in text and "rain_outlook" in text
+    assert "THIS IS A RAIN CHART" in text and "rain_outlook" not in text
     assert "THIS IS A RAIN CHART" not in prompt.build(now, ["Ecowitt weather station"])
 
 

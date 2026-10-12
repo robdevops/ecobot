@@ -393,7 +393,7 @@ def chart_field(text: str) -> str | None:
     return WEATHER_READINGS[found[0]].field if len(found) == 1 and found[0] != "temperature" else None
 
 
-# "rain chart 7d": a rain chart whose caption is just the least and most rain and whether more is expected
+# "rain chart 7d": a rain chart whose caption is just the least and most rain
 RAIN_CHART = re.compile(r"^\s*rain\s+(chart|graph|plot)\b[^,&+]*$", I)
 
 
@@ -781,7 +781,7 @@ class Reading:
     average_asked: bool = False
     more: list[tuple[str, dict]] = field(default_factory=list)   # the rest of the report's calls (fast is the first)
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
-    rain_caption: bool = False            # "rain chart 7d": the caption is the least and most rain and whether rain is expected
+    rain_caption: bool = False            # "rain chart 7d": the caption is just the least and most rain
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
     chart_all: bool = False               # "weather all week": every reading charted, sent with no caption
     readings: list[str] = field(default_factory=list)     # the readings the words name
@@ -830,8 +830,6 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
                    and not any(p.search(text) for p in JUDGEMENT))
     rain_caption = ecowitt and wants_rain_caption(text)
     lookup, named = plain_lookup(text, fast) if not (report or in_code) else ("", [])
-    if in_code and rain_caption:   # the caption also says whether rain is expected
-        calls = [("", {}), ("weather_now", {"groups": "rainfall"})]
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
                    more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code, chart_all=in_code and wants_chart_all(text),

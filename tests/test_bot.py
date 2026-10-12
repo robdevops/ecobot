@@ -510,3 +510,50 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
             pass
         await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
         assert sent == ["t"], text
+
+
+async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place():
+    import json
+    from lib import report_menu
+
+    class Tools:
+        reading = "12.3 ℃"
+
+        async def call(self, name, raw, turn=None):
+            return {"weather_now": json.dumps({"outdoor": {"temperature": self.reading}}),
+                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
+
+    class Agent:
+        tools = Tools()
+
+    class Query:
+        data, edits, toast = report_menu.REFRESH, [], None
+
+        async def answer(self, text=None, **kw):
+            self.toast = text
+
+        async def edit_message_text(self, text, reply_markup=None, **kw):
+            self.edits.append((text, reply_markup))
+            self.entities = kw.get("entities")
+    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "AirGradient")]
+    sent = []
+
+    async def reply_text(body, **kw):
+        sent.append((body, kw.get("reply_markup"), kw.get("entities")))
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    bot = Bot(NS(tz=TZ), Agent(), sources, None)
+    await bot.respond(update, context, "report")
+    await bot.respond(update, context, "weather now")
+    assert [b.callback_data for b in sent[0][1].inline_keyboard[0]] == [report_menu.REFRESH] and sent[1][1] is None
+    assert [e.type for e in sent[0][2]] == ["bold", "bold"] and sent[1][2] is None            # the report's headings are bold; "weather now" has none
+    Tools.reading = "13.0 ℃"
+    query = Query()
+    await bot.on_report_button(NS(callback_query=query), context)
+    assert query.toast is None and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH
+    assert [e.type for e in query.entities] == ["bold", "bold"]

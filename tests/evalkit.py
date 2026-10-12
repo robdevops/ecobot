@@ -14,7 +14,7 @@ from pathlib import Path
 
 from lib import compose, intent, prompt
 from lib.airgradient import days as air_days, source as air
-from lib.ecowitt import days, link, station
+from lib.ecowitt import days, link, source as station
 from lib.forecast import source as forecast
 from lib.pollen import source as pollen
 from lib.llm import Agent

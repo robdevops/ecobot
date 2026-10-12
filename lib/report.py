@@ -5,11 +5,12 @@ import json
 import re
 from datetime import datetime
 
+from telegram import MessageEntity
+
 from .ecowitt.glance import solar_band
 from .series import WEATHER, find
 
 AIR_ROWS = (("pm2_5", "PM2.5"), ("pm10", "PM10"), ("pm1", "PM1"), ("co2", "CO₂"), ("voc_index", "VOC index"), ("nox_index", "NOx index"))
-OUTLOOK_NOTE = re.compile(r"\s*\(an estimate from the station's readings, not an official forecast\)", re.I)
 
 
 def _load(result: str | None) -> dict | None:
@@ -46,9 +47,33 @@ def _join(parts: list[str | None], sep: str = ", ") -> str:
     return sep.join(p for p in parts if p)
 
 
+HEADINGS = ("Weather station", "Air quality", "Pollen & asthma", "Forecast")   # the names the report's sections (and the pollen and forecast lookups) start with
+HEADING_LINE = re.compile(rf"^({'|'.join(map(re.escape, HEADINGS))})(?= \(|$)", re.M)
+
+
+def heading_entities(text: str) -> list[MessageEntity]:
+    """Bold entities over the name of each heading line in `text` (not over its brackets). Telegram counts positions in UTF-16 code
+    units, where an emoji is two."""
+    units = lambda s: len(s.encode("utf-16-le")) // 2
+    return [MessageEntity(MessageEntity.BOLD, units(text[:m.start()]), units(m.group(1))) for m in HEADING_LINE.finditer(text)]
+
+
+def _stamp(result: dict) -> str | None:
+    """The time of day of the data, "11:45pm", from the result's "time" ("Sun 11 Oct 2026 23:50" from the station, "Sun 11 Oct 2026 11:45pm"
+    from the rest); None when it is missing or unreadable."""
+    for form in ("%a %d %b %Y %I:%M%p", "%a %d %b %Y %H:%M"):
+        try:
+            at = datetime.strptime(result.get("time") or "", form)
+        except ValueError:
+            continue
+        return f"{at.hour % 12 or 12}:{at:%M}{'am' if at.hour < 12 else 'pm'}"
+    return None
+
+
 def _heading(name: str, result: dict) -> str:
-    """"Forecast (Melbourne)": the place the result names, if it does."""
-    return f"{name} ({result['place']})" if result.get("place") else name
+    """"Forecast (Melbourne, 6:00pm)": the place the result names and the time of its data, whichever it has."""
+    note = ", ".join(x for x in (result.get("place"), _stamp(result)) if x)
+    return f"{name} ({note})" if note else name
 
 
 def _getters(now: dict):
@@ -68,13 +93,9 @@ def weather_lines(now: dict) -> list[str]:
     """The weather station's bullets from a weather_now result: an emoji sits right before the reading it is keyed to."""
     get, tag = _getters(now)
     rain_rate = (now.get("rainfall") or {}).get("rain_rate", "")
-    outlook = OUTLOOK_NOTE.sub(" (an estimate)", now["rain_outlook"]) if now.get("rain_outlook") else None
-    if outlook and outlook.startswith("raining"):
-        outlook = tag("rainfall", "rain_rate", outlook)
-    elif not outlook and rain_rate.split()[:1] not in ([], ["0"], ["0.0"]):
-        outlook = tag("rainfall", "rain_rate", f"raining ({get('rainfall', 'rain_rate')})")
+    raining = tag("rainfall", "rain_rate", f"raining ({get('rainfall', 'rain_rate')})") if rain_rate.split()[:1] not in ([], ["0"], ["0.0"]) else None
     month = get("rainfall", "monthly")
-    rain = _join([_join([tag("rainfall", "daily"), f"(month total {month})" if month else None], " "), outlook], "; ")
+    rain = _join([_join([tag("rainfall", "daily"), f"(month total {month})" if month else None], " "), raining], "; ")
 
     degrees = (now.get("wind") or {}).get("wind_direction", "")
     calm = _zero(get("wind", "wind_speed")) and _zero(get("wind", "wind_gust"))    # no wind: no line
@@ -185,10 +206,10 @@ def report(results: dict[str, str]) -> str:
     sections = []
     if "weather_now" in results:
         now = _load(results["weather_now"])
-        sections.append(["Weather station", *(weather_lines(now) if now else ["• not available right now"])])
+        sections.append([_heading("Weather station", now or {}), *(weather_lines(now) if now else ["• not available right now"])])
     if "air_quality" in results:
         air = _load(results["air_quality"])
-        sections.append(["Air quality", *(air_lines(air) if air else ["• not available right now"])])
+        sections.append([_heading("Air quality", air or {}), *(air_lines(air) if air else ["• not available right now"])])
     if pollen := _load(results.get("pollen_asthma")):
         sections.append([_heading("Pollen & asthma", pollen), *(f"• {line}" for line in pollen.get("lines", []))])
     if forecast := _load(results.get("weather_forecast")):
@@ -225,7 +246,7 @@ def _range(label: str, entry: dict, average: bool) -> str:
 
 
 def _rain_line(turn, tz) -> list[str]:
-    """Least and most rain in a period (the chart's own bars), then whether more is expected."""
+    """Least and most rain in a period (the chart's own bars)."""
     bars = next((p.bars for c in turn.charts for p in c.panels if p.bars and p.bars.x), None)
     if not bars:
         return []
@@ -236,18 +257,15 @@ def _rain_line(turn, tz) -> list[str]:
     return [f"☔ Rain{per}: least {bars.y[lo]:g} mm ({day(lo)}) · most {bars.y[hi]:g} mm ({day(hi)}) · {sum(bars.y):.1f} mm in all"]
 
 
-def _weather_caption(result: dict, args: dict, turn, tz, now_result: dict | None) -> list[str]:
+def _weather_caption(result: dict, args: dict, turn, tz) -> list[str]:
     series = result.get("series") or {}
     names = [n for n in dict.fromkeys(turn.chart_fields or [turn.chart_field or "temperature"]) if find(n)]
     lines: list[str] = []
     for name in names:
         reading = find(name)
         keys = [k for k in series if k.split(".", 1)[1] == reading.field]
-        if reading.field == "daily":   # rain: the amounts the chart draws, and what is expected
+        if reading.field == "daily":   # rain: the amounts the chart draws
             lines += _rain_line(turn, tz)
-            if now_result is not None:
-                outlook = OUTLOOK_NOTE.sub(" (an estimate)", now_result.get("rain_outlook") or "")
-                lines.append("☔ " + (outlook or "No rain is expected soon.").lstrip("☔ "))
             continue
         for key in keys:
             group = key.split(".", 1)[0]
@@ -275,14 +293,14 @@ def _air_caption(result: dict, args: dict, turn) -> list[str]:
     return lines
 
 
-def chart_caption(tool: str, args: dict, result: str | None, turn, tz, extra: str | None = None) -> str | None:
+def chart_caption(tool: str, args: dict, result: str | None, turn, tz) -> str | None:
     """The caption for a chart, from the tool's result: the period, then a line per reading. None when there is nothing to say (the
     model then takes the question)."""
     data = _load(result)
     if not data or not turn.charts:
         return None
     lines = (_air_caption(data, args, turn) if tool == "air_quality" else
-             _weather_caption(data, args, turn, tz, _load(extra) if extra is not None else None))
+             _weather_caption(data, args, turn, tz))
     if not lines:
         return None
     notes = (["(Older days are still downloading, so they are left out.)"] if data.get("note_missing") else

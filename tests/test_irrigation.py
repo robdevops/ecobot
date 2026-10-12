@@ -200,12 +200,12 @@ def test_the_irrigation_button_takes_wind_s_place_only_when_configured_and_chang
 
 
 def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller():
-    assert available_kinds({"Ecowitt", "Irrigation"})[-2:] == ["irrigation", "irrigation_pause"]
-    assert "irrigation" not in available_kinds({"Ecowitt"}) and "irrigation_pause" not in available_kinds({"Ecowitt"})
+    assert available_kinds({"Ecowitt", "Irrigation"})[-2:] == ["irrigation_battery", "irrigation_pause"]
+    assert "irrigation_battery" not in available_kinds({"Ecowitt"}) and "irrigation_pause" not in available_kinds({"Ecowitt"})
     from lib.alerts.menu import LABELS, keyboard
-    assert LABELS["irrigation"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
-    unsub = rows(keyboard(set(), ["rain", "irrigation"], "unsub"))
-    assert ("🪫 irrigation battery", "al:off:irrigation:unsub") in [b for row in unsub for b in row]
+    assert LABELS["irrigation_battery"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
+    unsub = rows(keyboard(set(), ["rain", "irrigation_battery"], "unsub"))
+    assert ("🪫 irrigation battery", "al:off:irrigation_battery:unsub") in [b for row in unsub for b in row]
 
 
 # ---------- the daily check ----------
@@ -294,7 +294,7 @@ async def test_the_check_delays_a_day_when_more_than_1_mm_fell_or_is_likely(tmp_
     assert device.commands == ([("delay", "24h")] if delayed else [])
     assert [(text.startswith("☔ Irrigation paused for 24 hours: ") and text.endswith("."), kw) for text, kw in sent] == (
         [(True, {"kind": "irrigation_pause"})] if delayed else [])                  # told once when it paused, never otherwise
-    assert state.monitor["irrigation"]["checked"] == "2026-10-08"
+    assert state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
 
 
 async def test_a_delay_already_set_is_never_shortened_or_repeated(tmp_path):
@@ -309,7 +309,7 @@ async def test_a_battery_under_5_percent_is_told_once_a_day_to_the_irrigation_al
     m, state, sent = daily(tmp_path, device)
     await m.check(NOW)
     await m.check(NOW)
-    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation"} and "4%" in sent[0][0] and "🪫" in sent[0][0]
+    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation_battery"} and "4%" in sent[0][0] and "🪫" in sent[0][0]
     await m.check(datetime(2026, 10, 9, 18, 0))                                          # the next day: again, until it is charged
     assert len(sent) == 2
     device.status_now["battery_percentage"] = 5                                         # 5% is not below 5%
@@ -324,16 +324,16 @@ async def test_the_battery_is_still_told_when_the_delay_cannot_be_sent_and_not_t
     m, state, sent = daily(tmp_path, Failing(battery_percentage=2), None, Forecast(90, 90))
     with pytest.raises(IrrigationError):
         await m.check(NOW)
-    assert len(sent) == 1 and "checked" not in state.monitor["irrigation"]              # not recorded: the next try repeats the check
+    assert len(sent) == 1 and "checked" not in state.monitor["irrigation_monitor"]              # not recorded: the next try repeats the check
     with pytest.raises(IrrigationError):
         await m.check(NOW)
-    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation"}                         # no "paused" alert for a pause that was not made
+    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation_battery"}                         # no "paused" alert for a pause that was not made
 
 
 def test_a_check_is_due_once_a_day_after_the_hour_and_the_next_is_the_following_18_00(tmp_path):
     m, state, _ = daily(tmp_path, Device())
     assert not m.due(datetime(2026, 10, 8, 17, 59)) and m.due(datetime(2026, 10, 8, 18, 0)) and m.due(datetime(2026, 10, 8, 23, 0))
-    state.monitor["irrigation"] = {"checked": "2026-10-08"}
+    state.monitor["irrigation_monitor"] = {"checked": "2026-10-08"}
     assert not m.due(datetime(2026, 10, 8, 23, 0)) and not m.due(datetime(2026, 10, 9, 3, 0)) and m.due(datetime(2026, 10, 9, 18, 0))
     assert m.seconds_until_next(datetime(2026, 10, 8, 17, 0)) == 3600 and m.seconds_until_next(datetime(2026, 10, 8, 18, 0)) == 86400
     assert m.seconds_until_next(datetime(2026, 10, 8, 23, 30)) == 18.5 * 3600
@@ -356,7 +356,7 @@ async def test_run_checks_when_due_retries_after_a_failure_and_then_waits_for_to
     with pytest.raises(asyncio.CancelledError):
         await m.run()
     assert sleeps[0] == 1800 and device.commands == [("delay", "24h")]                    # tried, failed, waited 30 minutes, tried, did it
-    assert state.monitor["irrigation"]["checked"] == "2026-10-08"
+    assert state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
     assert sleeps[1] == 86400                                                             # then until 18:00 tomorrow (now is exactly 18:00 here)
 
 
@@ -492,19 +492,19 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
     q = await press(bot, "ir:open:alerts")
     assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[2:]] == ["🔕 Disable battery alerts", "🔕 Disable pause alerts"]
     q = await press(bot, "ir:batt:off")
-    assert state.muted(1) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
+    assert state.muted(1) == {"irrigation_battery"} and q.toast == "Irrigation battery alerts off in this chat"
     assert rows(q.edits[0][2])[2:] == [[("🔔 Enable battery alerts", "ir:batt:on")], [("🔕 Disable pause alerts", "ir:pause:off")]]   # still open
     assert q.edits[0][1].endswith("pause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: off)")        # the status text follows
     q = await press(bot, "ir:pause:off")
-    assert state.muted(1) == {"irrigation", "irrigation_pause"} and q.toast == "Irrigation pause alerts off in this chat"
+    assert state.muted(1) == {"irrigation_battery", "irrigation_pause"} and q.toast == "Irrigation pause alerts off in this chat"
     assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [("🔔 Enable pause alerts", "ir:pause:on")]
     q = await press(bot, "ir:batt:on")
     assert state.muted(1) == {"irrigation_pause"} and q.toast == "Irrigation battery alerts on in this chat"           # the other type is untouched
     q = await press(bot, "ir:pause:on")
-    assert state.muted(1) == set() and state.alert_chats("irrigation") == [1] == state.alert_chats("irrigation_pause")
-    for kind, prefix in (("irrigation", "batt"), ("irrigation_pause", "pause")):               # whatever a button says, pressing it does that
+    assert state.muted(1) == set() and state.alert_chats("irrigation_battery") == [1] == state.alert_chats("irrigation_pause")
+    for kind, prefix in (("irrigation_battery", "batt"), ("irrigation_pause", "pause")):               # whatever a button says, pressing it does that
         for _ in range(2):
-            alerts = rows(menu.keyboard(state.subscribed(1, "irrigation"), state.subscribed(1, "irrigation_pause"), "alerts"))
+            alerts = rows(menu.keyboard(state.subscribed(1, "irrigation_battery"), state.subscribed(1, "irrigation_pause"), "alerts"))
             text, data = next(b for row in alerts[2:] for b in row if b[1].startswith(f"ir:{prefix}:"))
             await press(bot, data)
             assert state.subscribed(1, kind) is text.startswith("🔔 Enable"), (text, data)
@@ -541,7 +541,7 @@ async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_
     plain.register(NS(add_handler=lambda h, group=0: added_plain.append(h), add_error_handler=lambda h: None))
     assert len(added) == len(added_plain)                                                    # one entry point for every button, with or without a controller
     assert "ir:" in bot.buttons() and "ir:" not in plain.buttons() and {"al:", "pd:"} <= set(plain.buttons())
-    assert "irrigation" in bot._alert_kinds() and "irrigation" not in plain._alert_kinds()
+    assert "irrigation_battery" in bot._alert_kinds() and "irrigation_battery" not in plain._alert_kinds()
     assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.VERSION
 
 
@@ -687,9 +687,9 @@ async def test_a_pause_that_fails_and_is_retried_is_told_exactly_once(tmp_path):
     m, state, sent = daily(tmp_path, device, None, Forecast(90, 90))
     with pytest.raises(IrrigationError):
         await m.check(NOW)
-    assert sent == [] and "checked" not in state.monitor["irrigation"]               # nothing told for a pause that was not made
+    assert sent == [] and "checked" not in state.monitor["irrigation_monitor"]               # nothing told for a pause that was not made
     await m.check(NOW)
-    assert device.commands == [("delay", "24h")] and len(sent) == 1 and state.monitor["irrigation"]["checked"] == "2026-10-08"
+    assert device.commands == [("delay", "24h")] and len(sent) == 1 and state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
 
 
 async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu(tmp_path):
@@ -698,7 +698,7 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     for chat in (1, 2, 3, -7):
         state.add_chat(chat, str(chat))
     state.set_kind(2, "irrigation_pause", False)                       # this chat turned the pause alerts off
-    state.set_kind(3, "irrigation", False)                             # ... and this one only the battery alerts: it still gets the pause
+    state.set_kind(3, "irrigation_battery", False)                             # ... and this one only the battery alerts: it still gets the pause
 
     class Telegram:
         async def send_message(self, chat_id, text, **kw):
@@ -713,7 +713,7 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     from lib.alerts.menu import keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     for section in (None, "sub", "unsub"):                              # every button's data fits Telegram's 64 bytes, for the new type too
-        for parent in (None, "irrigation_pause", "irrigation"):
+        for parent in (None, "irrigation_pause", "irrigation_battery"):
             assert all(len(data.encode()) <= 64 for row in rows(keyboard(set(), kinds, section, parent)) for _, data in row)
 
 
@@ -757,7 +757,7 @@ async def test_every_member_of_a_group_may_use_the_irrigation_buttons(tmp_path):
     q = await press(bot, "ir:refresh", **group)
     assert q.toast == "Refreshed" and q.edits
     q = await press(bot, "ir:batt:off", **group)
-    assert state.muted(-5) == {"irrigation"} and q.toast == "Irrigation battery alerts off in this chat"
+    assert state.muted(-5) == {"irrigation_battery"} and q.toast == "Irrigation battery alerts off in this chat"
 
 
 def test_the_error_footer_is_bold_and_positioned_in_utf16_units():

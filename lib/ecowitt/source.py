@@ -5,13 +5,13 @@ readings ready, readings() feeds the alert monitors."""
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta, UTC
 
 from ..config import Config
 from ..intent import NOW_GROUPS
 from ..timeutil import now_local
-from .outlook import rain_outlook
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import EcowittAPI, GROUPS, UNITS
@@ -84,14 +84,29 @@ HISTORY_DESCRIPTION = ("History from the owner's Ecowitt weather station: each d
                        "with times, for any range up to 4 years. Resolution and units are handled automatically.")
 REALTIME_PARAMS = {
     "type": "object",
-    "properties": {"groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. "
-                                                               "For rain outlooks: 'outdoor,pressure,rainfall,rainfall_piezo,wind'."}},
+    "properties": {"groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'."}},
 }
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
 
 LIVE_GROUPS = NOW_GROUPS.split(",")   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
+
+
+def live_summary(data: dict) -> str:
+    """A live reading in a few words for the log: rain first, then outdoor temperature and humidity, wind and pressure. A reading the
+    response lacks is left out."""
+    def get(group: str, field: str) -> str | None:
+        obj = (data.get(group) or {}).get(field)
+        if not isinstance(obj, dict) or "value" not in obj:
+            return None
+        return f"{obj['value']} {obj.get('unit', '')}".replace("℃", "°C").replace("mm/hr", "mm/h").strip()
+    wind = get("wind", "wind_speed")
+    parts = [f"rain {rate}" if (rate := get("rainfall", "rain_rate")) else None,
+             f"{daily} today" if (daily := get("rainfall", "daily")) else None,
+             get("outdoor", "temperature"), get("outdoor", "humidity"),
+             f"wind {wind}" if wind else None, get("pressure", "relative")]
+    return ", ".join(p for p in parts if p) or "no readings"
 
 
 class Ecowitt:
@@ -139,6 +154,11 @@ class Ecowitt:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
         log.info("Weather station: Ecowitt '%s' (%s)%s", self.station_name, self.mac,
                  f", devices found: {len(devices)}" if len(devices) > 1 else "")
+        try:
+            size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
+            log.info("History cache: %s (%.1f MB)", self.cache.path, size / 1e6)
+        except Exception as e:   # only a log line
+            log.warning("History cache not readable: %s", e)
 
     def describe(self) -> str:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""
@@ -184,8 +204,7 @@ class Ecowitt:
                     except (TypeError, ValueError):
                         pass
         when = datetime.fromtimestamp(newest, UTC).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
-        outlook = await self._rain_outlook() if "rainfall" in groups else None
-        return json.dumps({"time": when, **out, **({"rain_outlook": outlook} if outlook else {}), **({"emoji": emoji} if emoji else {})},
+        return json.dumps({"time": when, **out, **({"emoji": emoji} if emoji else {})},
                           ensure_ascii=False, separators=(",", ":"))
 
     async def _live_data(self, groups: list[str]) -> dict:
@@ -209,23 +228,15 @@ class Ecowitt:
                 raise ValueError("no rain reading in the response")
         except Exception as e:  # the alert still works from the history
             if self._live_ok is not False:  # once per outage, not every minute
-                log.warning("Live rain reading failed (%s); the rain alert uses the 5-minute history", e)
+                log.warning("Live readings failed (%s); the rain alert uses the 5-minute history", e)
             self._live_ok = False
             return None
         if self._live_ok is None:
-            log.info("Live rain reading working (%.1f mm/h, %.1f mm today)", row.get("rainfall.rain_rate", 0), row.get("rainfall.daily", 0))
+            log.info("Working (%s)", live_summary(data))
         elif not self._live_ok:
-            log.info("Live rain reading recovered")
+            log.info("Recovered (%s)", live_summary(data))
         self._live_ok = True
         return ts, row
-
-    async def _rain_outlook(self) -> str | None:
-        """Raining now, or likely soon (the same rules as the alerts), from the last 3 hours of readings."""
-        try:
-            return rain_outlook(await self.recent(3), self.tz, self.longitude)
-        except Exception as e:  # the current reading is still worth sending without it
-            log.warning("Rain outlook unavailable: %s", e)
-            return None
 
     # ---------- keeping warm ----------
     async def warm(self, fresh: bool = True) -> str:

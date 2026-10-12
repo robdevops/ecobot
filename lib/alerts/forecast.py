@@ -33,6 +33,8 @@ def revised(old: dict, new: dict) -> bool:
 
 
 class ForecastMonitor:
+    KINDS = ("forecast",)
+
     def __init__(self, forecast, state, notify):
         """notify: the Notifier (its to_chat sends to one chat)."""
         self.forecast, self.state, self.notify = forecast, state, notify

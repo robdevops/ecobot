@@ -21,7 +21,7 @@ class Watchdog:
         self.device, self.state, self.clock = device, state, clock
 
     def _memory(self) -> dict:
-        return self.state.monitor.setdefault("irrigation", {})
+        return self.state.monitor.setdefault("irrigation_watchdog", {})
 
     def arm(self, minutes: int):
         """A run of this many minutes has started."""

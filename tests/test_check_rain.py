@@ -37,9 +37,9 @@ async def test_healthy_data_is_reported_as_matching(station, capsys):
 def average_the_thirty_minute_rain(eco, factor):
     """What averages look like: no daily_high field, and values a fraction of the real total."""
     with eco.cache._lock:
-        eco.cache.db.execute("DELETE FROM points WHERE cycle='30min' AND grp='rainfall' AND field IN ('daily_high','daily_low')")
-        eco.cache.db.execute("UPDATE points SET value = CAST(value AS REAL) * ? WHERE cycle='30min' AND grp='rainfall' AND field='daily'",
-                             (factor,))
+        ids = "(SELECT id FROM series WHERE cycle='30min' AND grp='rainfall' AND field {})"
+        eco.cache.db.execute("DELETE FROM points WHERE series IN " + ids.format("IN ('daily_high','daily_low')"))
+        eco.cache.db.execute("UPDATE points SET value = CAST(value AS REAL) * ? WHERE series IN " + ids.format("= 'daily'"), (factor,))
         eco.cache.db.commit()
 
 

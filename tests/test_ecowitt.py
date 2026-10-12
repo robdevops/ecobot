@@ -8,7 +8,7 @@ from lib import intent
 from lib.tools import Turn
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
-from tests.fakes import MAC, archived_station, config, ecowitt_transport
+from tests.fakes import MAC, FakeEcowitt, archived_station, config, ecowitt_transport
 
 
 @pytest.fixture
@@ -568,27 +568,6 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
     await eco.close()
 
 
-async def test_weather_now_carries_the_rain_outlook_when_it_is_raining_or_likely(tmp_path, monkeypatch):
-    transport, _ = ecowitt_transport()
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    now = int(datetime.now(eco.tz).timestamp())
-    wet = [(now - 300 * i, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0}) for i in range(2, -1, -1)]
-    dry = [(now - 300 * i, {"rainfall.rain_rate": 0.0, "rainfall.daily": 2.0}) for i in range(2, -1, -1)]
-    rows = {"value": wet}
-
-    async def recent(hours):
-        return rows["value"]
-    monkeypatch.setattr(eco, "recent", recent)
-    out = json.loads(await eco.tools[0].handler({"groups": "outdoor,rainfall"}))
-    assert out["rain_outlook"] == "raining now (1.5 mm/h)"
-    rows["value"] = dry
-    assert "rain_outlook" not in json.loads(await eco.tools[0].handler({"groups": "outdoor,rainfall"}))
-    rows["value"] = wet
-    assert "rain_outlook" not in json.loads(await eco.tools[0].handler({"groups": "outdoor"}))     # no rain group asked for
-    await eco.close()
-
-
 def test_the_rolling_mean_smooths_a_staircase_without_moving_timestamps_or_crossing_gaps():
     from lib.timeutil import rolling_mean
     assert rolling_mean({0: 5.0, 300: 5.0, 600: 5.0}, 450) == {0: 5.0, 300: 5.0, 600: 5.0}
@@ -994,7 +973,7 @@ async def test_weather_all_week_is_a_stack_of_every_reading_the_station_has(tmp_
 
 
 def test_a_reading_named_as_a_group_becomes_its_group_and_an_unknown_name_is_dropped():
-    from lib.ecowitt.station import parse_groups
+    from lib.ecowitt.source import parse_groups
     assert parse_groups("pressure,humidity") == ["pressure", "outdoor"]
     assert parse_groups("rain, dew_point, wind, outdoor") == ["rainfall", "outdoor", "wind"]
     assert parse_groups("outdoor.temperature,bogus") == ["outdoor"] and parse_groups("bogus") == ["outdoor", "indoor"]
@@ -1104,11 +1083,11 @@ async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers
     async def realtime(mac, groups):
         return answers.pop(0)
     monkeypatch.setattr(station.api, "realtime", realtime)
-    with caplog.at_level("INFO", logger="lib.ecowitt.station"):
+    with caplog.at_level("INFO", logger="lib.ecowitt.source"):
         assert await station.live_rain() is None and await station.live_rain() is None
         assert await station.live_rain() == (100, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0})
         await station.live_rain()
-    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "recovered" in caplog.records[1].message
+    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "Recovered" in caplog.records[1].message
 
 
 async def test_a_waiting_person_goes_before_the_background_requests_queued_ahead_of_them():
@@ -1213,3 +1192,33 @@ async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_re
     q.turn = Turn(text="rain by month for 2 months")
     monthly = await q._rain_bars()
     assert monthly.per == "month" and monthly.values and round(sum(monthly.y), 1) == 120.0 and len(monthly.x) in (2, 3)
+
+
+async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_says_which_cache_it_uses(tmp_path, caplog):
+    import logging
+
+    class Silent(FakeEcowitt):
+        @staticmethod
+        def _history(p):
+            return {}
+
+    transport, _ = ecowitt_transport(Silent())
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    with caplog.at_level(logging.INFO):
+        await eco.start()
+        today = datetime.now(eco.tz).date()
+        reply = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=1)} 00:00:00",
+                                            "end_date": f"{today} 23:59:59"})
+    assert reply.startswith("Error: no history data returned")
+    text = caplog.text
+    assert "History cache: " in text and str(eco.cache.path) in text
+    assert "History query empty" in text and "readings held for the window {'5min': 0, '30min': 0, '1day': 0}" in text
+
+
+def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is_missing():
+    from lib.ecowitt.source import live_summary
+    cell = lambda v, u: {"value": v, "unit": u}
+    data = {"rainfall": {"rain_rate": cell("0.0", "mm/hr"), "daily": cell("0.8", "mm")}, "outdoor": {"temperature": cell("20.3", "℃"), "humidity": cell("62", "%")},
+            "wind": {"wind_speed": cell("12", "km/h")}, "pressure": {"relative": cell("1013.2", "hPa")}}
+    assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm today, 20.3 °C, 62 %, wind 12 km/h, 1013.2 hPa"
+    assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm today" and live_summary({}) == "no readings"

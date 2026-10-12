@@ -99,12 +99,26 @@ class HistoryQuery:
             self.rain_bars = await self._rain_bars()
         await self._summarise_direction()
         if not self.store and not self.direction:
+            await self._log_empty()
             return "Error: no history data returned." + (
                 " Details: " + "; ".join(self.f.errors[:5]) if self.f.errors else "")
         self.overall = {k: ex for k, s in self.store.items() if len(ex := series_extremes(s)) == 2}
         self.monthly = self._monthly_extremes() if self.span > timedelta(days=31) else {}
         refined = await self._refine()
         return self._answer(refined)
+
+    async def _log_empty(self):
+        """Say why a query found nothing: what was asked, where it was answered from, and what the cache holds for the window."""
+        f = self.f
+        lo, hi = f.epoch(self.start), f.epoch(self.end)
+        try:
+            held = {c: sum([await asyncio.to_thread(f.cache.count, f.mac, c, g, lo, hi) for g in f.groups]) for c in ("5min", "30min", "1day")}
+        except Exception as e:
+            held = f"unreadable ({e})"
+        log.warning("History query empty: %s to %s (tz %s, epoch %d-%d), groups %s, %d ranges, %d from cache, %d from memory, %d requests, "
+                    "%d failed%s, cache %s, readings held for the window %s", f"{self.start:%Y-%m-%d %H:%M}", f"{self.end:%Y-%m-%d %H:%M}",
+                    getattr(self.tz, "key", self.tz), lo, hi, ",".join(f.groups), f.ranges, f.from_cache, f.from_memory, f.calls,
+                    len(f.errors), f" ({f.errors[0]})" if f.errors else "", getattr(f.cache, "path", "?"), held)
 
     async def _fine_ranges(self):
         """30-minute readings with no low and high of their own get them from the cached 5-minute readings (store.slot_ranges),

@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
+from _common import parser  # noqa: E402  (also puts the repo on sys.path)
+from lib.config import data_dir  # noqa: E402
 
 from lib.ecowitt import days as day_tool  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
@@ -34,7 +35,7 @@ RAINY = 1.0       # mm: the bot's line between a trace and a rainy day
 def fields_held(cache: HistoryCache, mac: str) -> dict[str, list[str]]:
     """Which rainfall fields are stored at each resolution."""
     with cache._lock:
-        rows = cache.db.execute("SELECT cycle, field FROM fields WHERE mac=? AND grp='rainfall' ORDER BY cycle, field", (mac,)).fetchall()
+        rows = cache.db.execute("SELECT cycle, field FROM series WHERE mac=? AND grp='rainfall' ORDER BY cycle, field", (mac,)).fetchall()
     out: dict[str, list[str]] = {}
     for cycle, field in rows:
         out.setdefault(cycle, []).append(field)
@@ -107,7 +108,7 @@ def report(res: dict):
 def main():
     ap = parser(__doc__)
     ap.add_argument("--days", type=int, default=88)
-    ap.add_argument("--cache", type=Path, default=ROOT / "ecowitt_cache.sqlite")
+    ap.add_argument("--cache", type=Path, default=data_dir() / "ecowitt_cache.sqlite")
     args = ap.parse_args()
     tz = ZoneInfo(os.getenv("TZ") or "Australia/Melbourne")
     macs = [m for (m,) in sqlite3.connect(f"file:{args.cache}?mode=ro", uri=True).execute("SELECT DISTINCT mac FROM coverage")]

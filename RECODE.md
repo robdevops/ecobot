@@ -12,7 +12,7 @@
    267 lib/alerts/weather.py
    258 lib/correlate.py
    227 lib/ecowitt/store.py
-   203 lib/ecowitt/station.py
+   203 lib/ecowitt/source.py
    200 lib/prompt.py
    190 lib/ecowitt/days.py
    160 ecobot.py
@@ -24,7 +24,7 @@
     88 lib/airgradient/metrics.py
     83 lib/ecowitt/direction.py
     71 lib/airgradient/store.py
-    59 lib/alerts/air.py
+    59 lib/alerts/particulates.py
     58 lib/config.py
     54 lib/tools.py
     51 lib/warm.py
@@ -49,7 +49,7 @@ What did change:
   `analysis/pairs.py` and the rain helpers in `rain.py`; `correlate.py` is `analysis/scan.py`;
 - one weather-series table (`series.py`) feeds the stack chart, the composer and the question recogniser;
 - `intent.read` returns one `Reading` used by the bot, the evals and `show_request`;
-- the station no longer imports the alert module (the rain outlook lives in `ecowitt/outlook.py`);
+- the station no longer imports the alert module (the rain helpers live in `ecowitt/rain.py`);
 - the renderer draws bands and lines in one place.
 
 Left as they were, on purpose: typed chart specs (dict specs are read by many tests and the tools), the alert rules

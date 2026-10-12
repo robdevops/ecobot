@@ -1,8 +1,8 @@
 """Where Ecowitt readings are kept between questions.
 
-HistoryCache (SQLite, survives restarts) holds settled readings per
-(mac, cycle, group, field, timestamp), plus which time ranges have been fetched per
-(mac, cycle, group). Coverage is recorded even when Ecowitt returns nothing (e.g. before
+HistoryCache (SQLite, survives restarts) holds settled readings per series and timestamp (a series is one
+(mac, cycle, group, field), kept once in the `series` table with its unit and a small integer id, so a reading's key is just that id and
+its time), plus which time ranges have been fetched per (mac, cycle, group). Coverage is recorded even when Ecowitt returns nothing (e.g. before
 the station existed), so those ranges aren't asked for again. The newest readings may
 still change (late uploads), so only buckets older than a per-cycle horizon are stored.
 
@@ -75,16 +75,17 @@ def merge(intervals: list[Interval]) -> list[Interval]:
 class HistoryCache:
     def __init__(self, path, units: dict):
         self._lock = threading.Lock()
+        self.path = path
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS series (
+                id INTEGER PRIMARY KEY, mac TEXT, cycle TEXT, grp TEXT, field TEXT, unit TEXT,
+                UNIQUE (mac, cycle, grp, field));
             CREATE TABLE IF NOT EXISTS points (
-                mac TEXT, cycle TEXT, grp TEXT, field TEXT, ts INTEGER, value TEXT,
-                PRIMARY KEY (mac, cycle, grp, field, ts)) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS fields (
-                mac TEXT, cycle TEXT, grp TEXT, field TEXT, unit TEXT,
-                PRIMARY KEY (mac, cycle, grp, field)) WITHOUT ROWID;
+                series INTEGER, ts INTEGER, value TEXT,
+                PRIMARY KEY (series, ts)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS coverage (mac TEXT, cycle TEXT, grp TEXT, start INTEGER, end INTEGER);
             CREATE INDEX IF NOT EXISTS coverage_key ON coverage (mac, cycle, grp);
         """)
@@ -93,7 +94,7 @@ class HistoryCache:
         row = self.db.execute("SELECT value FROM meta WHERE key = 'signature'").fetchone()
         if row and row[0] != signature:
             log.warning("History cache settings changed - clearing %s", path)
-            self.db.executescript("DELETE FROM points; DELETE FROM fields; DELETE FROM coverage;")
+            self.db.executescript("DELETE FROM points; DELETE FROM series; DELETE FROM coverage;")
         self.db.execute("INSERT OR REPLACE INTO meta VALUES ('signature', ?)", (signature,))
         self._convert_units()
         self.db.commit()
@@ -105,11 +106,10 @@ class HistoryCache:
         if (row := self.db.execute("SELECT value FROM meta WHERE key = 'unit_fixes'").fetchone()) and row[0] == done:
             return
         for (prefix, old), (unit, factor) in UNIT_FIXES.items():
-            for key in self.db.execute("SELECT mac, cycle, grp, field FROM fields WHERE unit = ? AND (field = ? OR substr(field, 1, ?) = ?)",
-                                       (old, prefix, len(prefix) + 1, prefix + "_")).fetchall():
-                self.db.execute("UPDATE points SET value = printf('%.3f', CAST(value AS REAL) * ?) "
-                                "WHERE mac=? AND cycle=? AND grp=? AND field=?", (factor, *key))
-                self.db.execute("UPDATE fields SET unit = ? WHERE mac=? AND cycle=? AND grp=? AND field=?", (unit, *key))
+            for (key,) in self.db.execute("SELECT id FROM series WHERE unit = ? AND (field = ? OR substr(field, 1, ?) = ?)",
+                                          (old, prefix, len(prefix) + 1, prefix + "_")).fetchall():
+                self.db.execute("UPDATE points SET value = printf('%.3f', CAST(value AS REAL) * ?) WHERE series=?", (factor, key))
+                self.db.execute("UPDATE series SET unit = ? WHERE id=?", (unit, key))
         self.db.execute("INSERT OR REPLACE INTO meta VALUES ('unit_fixes', ?)", (done,))
 
     def close(self):
@@ -120,6 +120,15 @@ class HistoryCache:
         with self._lock:
             return self.db.execute(sql, args).fetchall()
 
+    def count(self, mac: str, cycle: str, grp: str, start: int, end: int) -> int:
+        """How many readings are held for this group at this resolution between two times (for diagnosing an empty answer)."""
+        return self._query("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series "
+                           "WHERE s.mac=? AND s.cycle=? AND s.grp=? AND p.ts BETWEEN ? AND ?", mac, cycle, grp, start, end)[0][0]
+
+    def newest(self, mac: str, cycle: str) -> int | None:
+        """The time of the newest reading held at this resolution (None if none)."""
+        return self._query("SELECT MAX(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=? AND s.cycle=?", mac, cycle)[0][0]
+
     def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
         """Every time range held for this group at this resolution (merged, oldest first)."""
         return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
@@ -129,12 +138,13 @@ class HistoryCache:
 
     def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str] | None, start: int, end: int) -> dict:
         """A group's fields (all of them if `fields` is None) in Ecowitt's response shape: {field: {unit, list}}."""
-        pick = f" AND field IN ({','.join('?' * len(fields))})" if fields is not None else ""
+        pick = f" AND s.field IN ({','.join('?' * len(fields))})" if fields is not None else ""
         args = (mac, cycle, grp, *(fields or ()))
-        units = dict(self._query(f"SELECT field, unit FROM fields WHERE mac=? AND cycle=? AND grp=?{pick}", *args))
+        units = dict(self._query(f"SELECT s.field, s.unit FROM series s WHERE s.mac=? AND s.cycle=? AND s.grp=?{pick}", *args))
         out: dict = {}
-        for field, ts, value in self._query(f"SELECT field, ts, value FROM points WHERE mac=? AND cycle=? AND grp=?{pick} "
-                                            "AND ts BETWEEN ? AND ? ORDER BY ts", *args, start, end):
+        for field, ts, value in self._query("SELECT s.field, p.ts, p.value FROM series s JOIN points p ON p.series = s.id "
+                                            f"WHERE s.mac=? AND s.cycle=? AND s.grp=?{pick} AND p.ts BETWEEN ? AND ? ORDER BY p.ts",
+                                            *args, start, end):
             out.setdefault(field, {"unit": units.get(field, ""), "list": {}})["list"][str(ts)] = value
         return out
 
@@ -147,8 +157,9 @@ class HistoryCache:
         """(lows, highs) for 30-minute readings that have no range of their own (dew point, feels-like, VPD, solar, UV,
         pressure ...): the lowest and highest of the cached 5-minute readings inside each slot (and the slot's own value).
         Only what the cache holds; slots with fewer than two 5-minute readings get none."""
-        rows = self._query("SELECT ts, CAST(value AS REAL) FROM points WHERE mac=? AND cycle='5min' AND grp=? AND field=? "
-                           "AND ts BETWEEN ? AND ? ORDER BY ts", mac, grp, field, start, end)
+        rows = self._query("SELECT p.ts, CAST(p.value AS REAL) FROM points p JOIN series s ON s.id = p.series "
+                           "WHERE s.mac=? AND s.cycle='5min' AND s.grp=? AND s.field=? AND p.ts BETWEEN ? AND ? ORDER BY p.ts",
+                           mac, grp, field, start, end)
         times, fine = [ts for ts, _ in rows], [v for _, v in rows]
         lows, highs = {}, {}
         for t, v in values.items():
@@ -197,13 +208,17 @@ class HistoryCache:
         with self._lock:
             grown = set()   # groups that now carry a reading the cache has never had (Ecowitt added a metric)
             for _, _, grp, field, _ in units:
-                known = {r[0] for r in self.db.execute("SELECT field FROM fields WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))}
+                known = {r[0] for r in self.db.execute("SELECT field FROM series WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))}
                 if known and field not in known:
                     grown.add(grp)
             if grown:
                 log.info("Ecowitt added a metric to %s (%s): its history is fetched again to fill it in", ", ".join(sorted(grown)), cycle)
-            self.db.executemany("INSERT OR REPLACE INTO points VALUES (?,?,?,?,?,?)", rows)
-            self.db.executemany("INSERT OR REPLACE INTO fields VALUES (?,?,?,?,?)", units)
+            ids = {}
+            for key in units:   # a series is created the first time it is seen; its unit follows what Ecowitt says now
+                self.db.execute("INSERT OR IGNORE INTO series (mac, cycle, grp, field, unit) VALUES (?,?,?,?,?)", key)
+                self.db.execute("UPDATE series SET unit=? WHERE mac=? AND cycle=? AND grp=? AND field=?", (key[4], *key[:4]))
+                ids[key[:4]] = self.db.execute("SELECT id FROM series WHERE mac=? AND cycle=? AND grp=? AND field=?", key[:4]).fetchone()[0]
+            self.db.executemany("INSERT OR REPLACE INTO points VALUES (?,?,?)", [(ids[r[:4]], r[4], r[5]) for r in rows])
             for grp, cov_end in covered:
                 existing = [] if grp in grown else self.db.execute(   # the days held so far lack it: they are asked for again
                     "SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp)).fetchall()

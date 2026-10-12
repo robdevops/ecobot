@@ -6,9 +6,15 @@ answered by xAI Grok, with proactive alerts. Settings come from environment vari
 import asyncio
 import contextlib
 import logging
+import os
 import signal
-import subprocess
 import time
+
+from lib.config import ROOT, Config, data_dir
+
+# Matplotlib keeps its font cache here: a service user without a home directory would otherwise get a throw-away /tmp one on every start.
+# Set before anything imports Matplotlib; an MPLCONFIGDIR in the environment wins.
+os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
 from openai import AsyncOpenAI
 from telegram import Update
@@ -16,10 +22,10 @@ from telegram.ext import Application, Defaults
 
 from lib import intent
 from lib.airgradient import AirGradient
-from lib.alerts import AIR_CHECK_SECONDS, AirMonitor, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, PollenMonitor, WeatherMonitor
-from lib.alerts.menu import available_kinds
+from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
+                        PollenAndAsthmaMonitor, WeatherMonitor)
+from lib.alerts.menu import LABELS, kinds_for
 from lib.bot import Bot, polling_error
-from lib.config import ROOT, Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
@@ -30,7 +36,18 @@ from lib.compose import Composer
 from lib.tools import Tools
 from lib.warm import every, safely
 
-logging.basicConfig(format="%(levelname)s %(name)s: %(message)s", level=logging.INFO)
+
+class LogFormat(logging.Formatter):
+    """"INFO message" for this file's own lines, "INFO lib.bot: message" for the rest: the module name says who spoke."""
+
+    def format(self, record):
+        record.where = "" if record.name == "ecobot" else f"{record.name}: "
+        return super().format(record)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(LogFormat("%(levelname)s %(where)s%(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")
@@ -60,11 +77,40 @@ async def start_sources(cfg: Config) -> list:
 
 def version() -> str:
     """The checked-out commit, so the log shows which code is running."""
+    return commit_in(ROOT / ".git")
+
+
+def commit_in(git_dir) -> str:
+    """The short hash HEAD points at, read from the repository's files rather than by running git (which refuses a folder owned by
+    another user, as when the service runs as its own user). "unknown" when it cannot be read."""
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
-                              timeout=5, check=True).stdout.strip() or "unknown"
+        head = (git_dir / "HEAD").read_text().strip()
+        if head.startswith("ref:"):
+            ref = head.split(None, 1)[1]
+            try:
+                head = (git_dir / ref).read_text().strip()
+            except FileNotFoundError:   # after `git pack-refs` or gc the branch is a line in packed-refs
+                head = next(line.split()[0] for line in (git_dir / "packed-refs").read_text().splitlines()
+                            if line.endswith(f" {ref}"))
+        return head[:7] if len(head) >= 7 and all(c in "0123456789abcdef" for c in head.lower()) else "unknown"
     except Exception:
         return "unknown"
+
+
+INDENT = 13   # the continuation lines of a wrapped log line
+
+
+def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str:
+    """head + the items joined by ", " + tail, over several lines when it is longer than `width`: a line breaks only between items,
+    and the next one is indented."""
+    lines, line = [], head
+    for i, item in enumerate(items):
+        piece = item + (", " if i < len(items) - 1 else tail)
+        if line.strip() != head.strip() and len(line + piece.rstrip()) > width:
+            lines.append(line.rstrip())
+            line = " " * INDENT
+        line += piece
+    return "\n".join([*lines, line])
 
 
 async def main():
@@ -85,8 +131,7 @@ async def main():
     agent = Agent(AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url), cfg.xai_model, tools)
     state = AlertState(cfg.state_path)
     if cfg.admin_only:
-        log.info("Admin only: the bot answers the admins of the groups it is in%s",
-                 f" and {len(cfg.admin_chat_ids)} listed id(s)" if cfg.admin_chat_ids else "")
+        log.info("ADMIN_ONLY=on the bot only answers admins of known groups; set ADMIN_CHAT_IDS for more")
         if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
             log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                         "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
@@ -114,30 +159,29 @@ async def main():
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("@%s + %s (sources: %s)", app.bot.username, cfg.xai_model,
                          ", ".join(s.name for s in sources))
-                notify = Notifier(app.bot, state, available_kinds({s.name for s in sources} | ({"Irrigation"} if irrigation else set())))
+                kinds = kinds_for((s.name for s in sources), irrigation is not None)
+                notify = Notifier(app.bot, state, kinds)
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts
-                kinds = []
+                running: list[str] = []   # the alert types whose monitors are hooked up (the weather ones once they have started)
                 if eco:
                     monitor = WeatherMonitor(eco, state, notify, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours)
-                    kinds += ["rain", "rain likely", "temp. crossing"]
                 if air:
-                    air_monitor = AirMonitor(air, state, notify)
-                    tasks.append(asyncio.create_task(every(AIR_CHECK_SECONDS, air_monitor.check)))
-                    kinds.append("air")
+                    particulates_monitor = ParticulatesMonitor(air, state, notify)
+                    tasks.append(asyncio.create_task(every(PARTICULATES_CHECK_SECONDS, particulates_monitor.check)))
+                    running += ParticulatesMonitor.KINDS
                 if forecast:
                     forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
-                    kinds.append("forecast changes")
+                    running += ForecastMonitor.KINDS
                 if pollen:
-                    pollen.warmer.after.append(PollenMonitor(pollen, state, notify).check)  # after each refresh (in the day)
-                    kinds += ["pollen", "asthma"]
+                    pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, state, notify).check)  # after each refresh (in the day)
+                    running += PollenAndAsthmaMonitor.KINDS
                 if irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
                     tasks.append(asyncio.create_task(IrrigationMonitor(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
-                                                                       eco, forecast).run()))
+                                                                            eco, forecast).run()))
                     tasks.append(asyncio.create_task(every(WATCHDOG_SECONDS, bot.watchdog.check)))
-                    kinds.append("irrigation battery")
-                log.info("Alerts: %s: %d chats", ", ".join(kinds) or "none", len(state.alert_chats()))
+                    running += IrrigationMonitor.KINDS
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
@@ -155,6 +199,7 @@ async def main():
                         try:
                             await monitor.init()
                             eco.warmer.after.append(monitor.check)  # checked on every fresh refresh
+                            running[:0] = WeatherMonitor.KINDS
                             await monitor.check()
                         except Exception:
                             log.exception("Weather alerts couldn't start")
@@ -178,6 +223,10 @@ async def main():
                         log.exception("Startup warm-up failed (the regular refreshes will catch up)")
                     log.info("Startup warm-up: %s, %.1fs", ", ".join(parts) or "nothing to fetch",
                              time.monotonic() - started)
+                    on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
+                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats"))
+                    if missing := [LABELS[k] for k in kinds if k not in running]:
+                        log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
                 tasks.append(asyncio.create_task(startup_warmup()))
                 await stop.wait()

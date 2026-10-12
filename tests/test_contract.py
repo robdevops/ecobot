@@ -23,22 +23,25 @@ def tables(path) -> dict[str, list[str]]:
     return {n: [r[1] for r in db.execute(f"PRAGMA table_info({n})")] for n in names}
 
 
-def test_the_cache_schemas_are_unchanged():
-    assert tables(DATA / "ecowitt_cache.sqlite") == {
+def test_the_cache_schemas_are_unchanged(tmp_path):
+    layout = {
         "coverage": ["mac", "cycle", "grp", "start", "end"],
-        "fields": ["mac", "cycle", "grp", "field", "unit"],
         "meta": ["key", "value"],
-        "points": ["mac", "cycle", "grp", "field", "ts", "value"]}
+        "points": ["series", "ts", "value"],
+        "series": ["id", "mac", "cycle", "grp", "field", "unit"]}
+    assert tables(DATA / "ecowitt_cache.sqlite") == layout
+    HistoryCache(tmp_path / "fresh.sqlite", api.UNITS).close()                      # a new file gets the same tables
+    assert tables(tmp_path / "fresh.sqlite") == layout
     assert tables(DATA / "airgradient_cache.sqlite") == {
         "days": ["loc", "day", "n"],
         "readings": ["loc", "ts", "pm2_5", "pm10", "pm1", "co2", "voc_index", "nox_index"]}
 
 
-def test_a_cache_written_by_an_earlier_version_still_opens_and_reads(tmp_path):
+def test_a_recorded_cache_still_opens_and_reads(tmp_path):
     shutil.copy(DATA / "ecowitt_cache.sqlite", tmp_path / "eco.sqlite")
     shutil.copy(DATA / "airgradient_cache.sqlite", tmp_path / "air.sqlite")
     cache = HistoryCache(tmp_path / "eco.sqlite", api.UNITS)                       # the same units: nothing is cleared
-    now = cache._query("SELECT MAX(ts) FROM points WHERE cycle = '30min'")[0][0]    # the fixture's own newest reading, so the test does not age
+    now = cache._query("SELECT MAX(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.cycle = '30min'")[0][0]    # the fixture's own newest reading, so the test does not age
     for cycle, at_least in (("5min", 100), ("30min", 100), ("1day", 1)):
         temperature, = cache.slots(MAC, cycle, "outdoor", ["temperature"], now - 5 * 86400, now)
         assert len(temperature) >= at_least, cycle
@@ -58,7 +61,7 @@ async def test_every_tool_result_keeps_its_shape(tmp_path, archived_cache):
     span = {"start_date": day(9), "end_date": f"{today - timedelta(days=2)} 23:59:59"}
     call = lambda i, args: eco.tools[i].handler(args)
     now = json.loads(await call(0, {"groups": "outdoor,indoor,pressure,wind,rainfall"}))
-    assert set(now) - {"rain_outlook"} == {"time", "outdoor", "emoji"}                 # the outlook line only appears when the data suggests rain
+    assert set(now) == {"time", "outdoor", "emoji"}
     history = json.loads(await call(1, {"groups": "outdoor", **span}))
     assert set(history) - {"chart"} == {"period", "series"}                    # "chart": a hint that appears when one was drawn
     assert set(history["series"]["outdoor.temperature"]) == {

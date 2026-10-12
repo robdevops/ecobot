@@ -2,8 +2,8 @@
 
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
-chat it is in: rain starting/stopping, rain likely soon, gusts over 40 km/h, UV index of 10 or more, indoor/outdoor temperatures crossing (held back for the cooldown, then announced if it still stands),
-and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, rain predicted, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (in a private chat, a ⚙️ Settings button there and under each alert has Enable and Disable notification sounds sub-menus that list the alert types; alerts are silent unless you do; and `/alerts on|off` still subscribes or unsubscribes every type); `/usage` is the Help & Alerts button. In a group anyone can open `/alerts`, but only admins can change anything (`lib/alerts/menu.py`).
+chat it is in: rain starting/stopping, gusts over 40 km/h, UV index of 10 or more, indoor/outdoor temperatures crossing (held back for the cooldown, then announced if it still stands),
+and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (in a private chat, a ⚙️ Settings button there and under each alert has Enable and Disable notification sounds sub-menus that list the alert types; alerts are silent unless you do; and `/alerts on|off` still subscribes or unsubscribes every type); `/usage` is the Help & Alerts button. In a group anyone can open `/alerts`, but only admins can change anything (`lib/alerts/menu.py`).
 
 ## Run
 
@@ -24,6 +24,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `TZ` | e.g. `Australia/Melbourne` |
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient |
+| `DATA_DIR` | optional: the folder that holds the bot's state (`bot_state.json`) and its SQLite caches (`ecowitt_cache.sqlite`, `airgradient_cache.sqlite`, `conditions_cache.sqlite`), kept apart from the code so a container can mount it (e.g. `/data`). A relative path is also accepted and is taken from the working directory; the folder is created if missing. Unset, a systemd service with `StateDirectory=` uses that folder (`STATE_DIRECTORY`, e.g. `/var/lib/ecobot`), else the app's own folder. Matplotlib's font cache goes in a `matplotlib` sub-folder (unless `MPLCONFIGDIR` is set). Default: the app's own folder, where the files have always been |
 | `AIRGRADIENT_DASHBOARD_URL` | optional "live chart" link under air-quality replies and alerts |
 | `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed) |
 | `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
@@ -31,7 +32,7 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `ADMIN_ONLY` | on by default: the bot answers nobody (private chats and groups alike) except the admins and creators of the groups it is in; anyone else gets "Sorry, only group admins can use this bot." when they address it (ordinary group talk is ignored). The one exception is `/alerts` in a group, which anyone may open (its buttons and `/alerts on|off` stay admin-only). `ADMIN_ONLY=off` answers everyone, as before. The admins are asked of Telegram and remembered for 10 minutes; a group counts once the bot is added to it or someone speaks there |
 | `ADMIN_CHAT_IDS` | optional, with `ADMIN_ONLY`: more ids allowed besides those admins (added to them, not instead of them), separated by commas or spaces. A user id (the same number as their private chat) lets someone in before the bot is in any group; a group id (negative) adds that group's admins and lets its anonymous admins (those who post "as the group") in |
 | `ALERT_COOLDOWN_MINUTES` | optional: the rain and temperature-crossing alerts: how long it must stay dry before "the rain has stopped" is sent, and the least time between alerts of the same kind (default 30, from 5 to 150). A change that comes inside the cooldown is held and announced when it ends, if the state still differs from the last one alerted; if it is back where it was, nothing is sent |
-| `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped, predicted), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
+| `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
 | `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
 | `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET` | enables the irrigation controller (a Tuya smart irrigation timer, through the Tuya cloud API): an Irrigation button in private chats (it replaces Wind) with its status and buttons to water for 5 to 30 minutes or switch the valve off, pause for 24 to 72 hours (the Pause button becomes Unpause while paused), refresh, and an Alerts menu to turn the chat's irrigation battery and irrigation pause alerts on or off (or type irrigation, water, tap or sprinkler); a daily check at 18:00 that delays it 24 hours when more than 1 mm fell in the last 24 hours or Open-Meteo gives today or tomorrow a 50% or better chance of 1 mm (needs Ecowitt and `FORECAST=on` for each half); an "irrigation pause" alert when it does, and an "irrigation battery" alert below 5%. `TUYA_BASE_URL` (default `https://openapi.tuyaeu.com`, the EU data centre) and `IRRIGATION_CHECK_HOUR` (default `18`) are optional |
 | `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
@@ -56,14 +57,14 @@ lib/panels.py           how a reading becomes a panel (title, unit, colour key, 
 lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading
 lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
 lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
-                        days (rank/count days), outlook (raining / likely soon), station, nightly archive
+                        days (rank/count days), rain (rain times and amounts for the alerts), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
-lib/alerts/             notify (chats, silent send), weather, air, pollen, irrigation (the daily check)
+lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation (battery and rain delay)
 lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)
 lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images
 scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
-                        sent to the model for a question), check_rain.py (are rain totals trustworthy?),
+                        sent to the model for a question), check_rain.py (are rain totals trustworthy?), migrate_cache.py (one-off: converts an Ecowitt cache from before the series layout),
                         dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
 ```
 
@@ -88,7 +89,7 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed)
   data starts. Questions only go to the APIs for data the cache is missing.
 
 ## The report
-"report" (and "status", "sitrep") and "weather now" are written in code, with no model call (`lib/report.py`): the bot fetches the tools' results together and lays them out, so they are quick and always the same. Sun, UV and wind are left out when zero (night, calm). The report is: Weather station, Air quality, and Pollen & asthma and Forecast when those sources are on (pollen and forecast always come from the cache).
+"report" (and "status", "sitrep") and "weather now" are written in code, with no model call (`lib/report.py`): the bot fetches the tools' results together and lays them out, so they are quick and always the same. Sun, UV and wind are left out when zero (night, calm). The report is: Weather station, Air quality, and Pollen & asthma and Forecast when those sources are on (pollen and forecast always come from the cache). The report carries a 🔄 Refresh button that reads everything again and redraws it in the same message (`lib/report_menu.py`).
 
 A plain chart request ("rain chart 7d", "plot temperature and humidity", "air quality 30d", the chart buttons) is also drawn and written up in code, with no model call (the chart goes out with just its title as the caption; the write-up is kept in the chat's memory, not sent) (`intent.weather_chart`, `report.chart_caption`): the period, then low and high per reading (the average first if one was asked), the peak and rating for air quality, and for a rain chart the least and most rain and whether more is expected. Anything that asks for correlation, analysis, a forecast, thinking or a description, or compares readings or names a particular date or time, still goes to the model.
 

@@ -190,7 +190,7 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
-    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, rain likely soon, wind gusts over 40 km/h, UV index of 10 or more, "
+    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, wind gusts over 40 km/h, UV index of 10 or more, "
                  "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High" if "melbournepollen" in have else "") + (
                      ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Open-Meteo" in have else "") + ". Each alert has buttons to subscribe or unsubscribe by type, and /alerts opens the same settings. Custom alerts "
                  "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
@@ -204,9 +204,8 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
 
 
 RAIN_CAPTION_SECTION = """
-THIS IS A RAIN CHART: its caption is ONLY the least and the most rain in the period (daily totals, mm, with the dated days), then one line
-saying whether rain is expected: call weather_now with groups "rainfall" and use its "rain_outlook" (raining now, or rain likely
-soon); with no rain_outlook, say no rain is expected soon. Nothing else: no averages, no other readings.
+THIS IS A RAIN CHART: its caption is ONLY the least and the most rain in the period (daily totals, mm, with the dated days).
+Nothing else: no averages, no other readings, no outlook.
 """
 
 

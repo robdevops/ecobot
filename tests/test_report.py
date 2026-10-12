@@ -8,7 +8,7 @@ NOW = ('{"time":"Fri 02 Oct 2026 02:21","outdoor":{"temperature":"12.3 ℃","fee
        '"app_tempin":"18.7 ℃"},"solar_and_uvi":{"solar":"0.0 W/m²","uvi":"0"},"rainfall":{"rain_rate":"1.8 mm/hr","daily":"6.3 mm",'
        '"event":"49.8 mm","1_hour":"1.3 mm","weekly":"49.8 mm","monthly":"49.8 mm","yearly":"5105.7 mm"},"wind":{"wind_speed":"0.0 km/h",'
        '"wind_gust":"0.0 km/h","wind_direction":"131 º"},"pressure":{"relative":"1025.0 hPa","absolute":"1009.5 hPa"},'
-       '"rain_outlook":"raining now (4.8 mm/h)","emoji":{"outdoor.temperature":"🧥","outdoor.feels_like":"🧥","outdoor.app_temp":"🧥",'
+       '"emoji":{"outdoor.temperature":"🧥","outdoor.feels_like":"🧥","outdoor.app_temp":"🧥",'
        '"outdoor.humidity":"💦","indoor.temperature":"🧥","indoor.feels_like":"🧥","indoor.app_tempin":"🧥","rainfall.rain_rate":"🌧️",'
        '"rainfall.daily":"☔","pressure.relative":"🗜️"}}')
 AIR = ('{"sensor": "Fairleigh", "sensor_type": "outdoor", "time": "Fri 2 Oct 2026 2:22am", "pm2_5": {"value": 1.4, "unit": "µg/m³", '
@@ -16,23 +16,23 @@ AIR = ('{"sensor": "Fairleigh", "sensor_type": "outdoor", "time": "Fri 2 Oct 202
        '"unit": "µg/m³", "rating": "🟢 good"}, "co2": {"value": 433.0, "unit": "ppm", "rating": "🟢 good"}, "voc_index": {"value": 88.0, '
        '"unit": "relative index (100 = this sensor\'s recent average)", "rating": "🟢 good"}, "nox_index": {"value": 1.0, '
        '"unit": "relative index (1 = baseline)", "rating": "🟢 good"}}')
-POLLEN = '{"lines": ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 Low"], "place": "Melbourne", "source": "melbournepollen.com.au"}'
+POLLEN = '{"lines": ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 Low"], "place": "Melbourne", "source": "melbournepollen.com.au", "time": "Fri 2 Oct 2026 6:00pm"}'
 FORECAST = ('{"lines": ["Today: 🌦️ Showers. 11–16°C, 97% chance of rain", "Saturday: ⛈️ Thunderstorm. 12–20°C, 95% chance of rain"], '
-            '"place": "Melbourne", "source": "Open-Meteo"}')
+            '"place": "Melbourne", "source": "Open-Meteo", "time": "Fri 2 Oct 2026 6:05pm"}')
 
 WEATHER = """\
 • Outdoor: 🧥 12.3 °C, 💦 94 %, dew point 11.3 °C, VPD 0.085 kPa
 • Indoor: 🧥 18.3 °C, 63 %
 • Pressure: 🗜️ 1025.0 hPa
-• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining now (4.8 mm/h)"""   # night and calm: no Sun or Wind line
+• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"""   # night and calm: no Sun or Wind line
 
 
 def test_the_report_is_laid_out_in_code_with_emoji_before_the_readings_they_belong_to():
     got = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST})
-    assert got == f"""Weather station
+    assert got == f"""Weather station (2:21am)
 {WEATHER}
 
-Air quality
+Air quality (2:22am)
 • PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)
 • PM10: 3.0 µg/m³ 🟢 good
 • PM1: 1.0 µg/m³ 🟢 good
@@ -40,11 +40,11 @@ Air quality
 • VOC index: 88 🟢 good
 • NOx index: 1.0 🟢 good
 
-Pollen & asthma (Melbourne)
+Pollen & asthma (Melbourne, 6:00pm)
 • Grass pollen: 🟢 Low
 • Thunderstorm asthma risk: 🟢 Low
 
-Forecast (Melbourne)
+Forecast (Melbourne, 6:05pm)
 • Today: 🌦️ Showers. 11–16°C, 97% chance of rain
 • Saturday: ⛈️ Thunderstorm. 12–20°C, 95% chance of rain"""
     assert not got.startswith("Current report")
@@ -55,14 +55,11 @@ def test_weather_now_is_just_the_weather_stations_bullets():
     assert report.weather_now("Error calling tool: timed out") is None and report.weather_now(None) is None
 
 
-def test_a_dry_calm_day_has_no_rain_line_noise_and_a_likely_rain_outlook_is_shortened():
+def test_a_dry_calm_day_has_no_rain_line_noise():
     dry = ('{"outdoor":{"temperature":"21.0 ℃","humidity":"50 %"},"rainfall":{"rain_rate":"0.0 mm/hr","daily":"0.0 mm","monthly":"12.0 mm"},'
            '"wind":{"wind_speed":"12.0 km/h","wind_gust":"20.0 km/h","wind_direction":"270 º"},"emoji":{}}')
     lines = report.weather_now(dry).splitlines()
     assert lines == ["• Outdoor: 21.0 °C, 50 %", "• Rain today: 0.0 mm (month total 12.0 mm)", "• Wind: 12.0 km/h from 270°, gust 20.0 km/h"]
-    likely = dry.replace('"emoji"', '"rain_outlook":"rain looks likely soon: pressure down 3.0 hPa in 3 hours (an estimate from the station\'s '
-                                     'readings, not an official forecast)","emoji"')
-    assert "• Rain today: 0.0 mm (month total 12.0 mm); rain looks likely soon: pressure down 3.0 hPa in 3 hours (an estimate)" in report.weather_now(likely)
     drizzle = dry.replace('"0.0 mm/hr"', '"0.6 mm/hr"').replace('"emoji":{}', '"emoji":{"rainfall.rain_rate":"🌧️"}')
     assert "; 🌧️ raining (0.6 mm/h)" in report.weather_now(drizzle)
 
@@ -71,7 +68,7 @@ def test_a_failed_or_missing_source_is_left_out_or_said_so_and_the_forecast_with
     got = report.report({"weather_now": "Error calling tool: boom", "air_quality": AIR,
                          "pollen_asthma": '{"error": "No pollen levels are available right now."}',
                          "weather_forecast": '{"lines": ["Today: ☀️ Sunny. 20–25°C"]}'})
-    assert got.startswith("Weather station\n• not available right now\n\nAir quality\n• PM2.5:")
+    assert got.startswith("Weather station\n• not available right now\n\nAir quality (2:22am)\n• PM2.5:")
     assert "Pollen" not in got and got.endswith("Forecast\n• Today: ☀️ Sunny. 20–25°C")
     assert report.report({}) == "No readings are available right now."
 
@@ -150,17 +147,14 @@ def test_an_average_chart_caption_leads_with_the_average():
         "Temperature: average 15.2 °C (low 8.1, high 24.3)"
 
 
-def test_a_rain_chart_caption_is_the_least_and_most_rain_then_whether_more_is_expected():
+def test_a_rain_chart_caption_is_the_least_and_most_rain():
     from zoneinfo import ZoneInfo
     turn = _turn()
     turn.chart_fields = ["rain"]
     result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {"rainfall.daily": {"unit": "mm", "low": "0", "high": "7.2"}}})
-    now = json.dumps({"rain_outlook": "Rain looks likely soon: pressure falling. (An estimate from the station's readings, not an official forecast)"})
-    lines = report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC"), now).splitlines()
+    lines = report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC")).splitlines()
     assert lines[1].startswith("☔ Rain per day: least 0 mm (") and "most 7.2 mm (" in lines[1] and "8.6 mm in all" in lines[1]
-    assert lines[2] == "☔ Rain looks likely soon: pressure falling. (an estimate)"
-    dry = report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC"), "{}")
-    assert dry.splitlines()[2] == "☔ No rain is expected soon."
+    assert len(lines) == 2
 
 
 def test_an_air_chart_caption_gives_each_metrics_peak_rating_and_average():
@@ -188,14 +182,14 @@ def test_a_reading_lookup_prints_only_what_was_asked():
     assert report.reading_lines(now, ["humidity"], ["outdoor"]) == ["• Outdoor: 💦 94 %"]
     assert report.reading_lines(now, ["wind"], []) == ["• Wind: calm"]
     assert report.reading_lines(now, ["pressure"], []) == ["• Pressure: 🗜️ 1025.0 hPa"]
-    assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining now" in report.reading_lines(now, ["rain"], [])[0]
+    assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining (1.8 mm/h)" in report.reading_lines(now, ["rain"], [])[0]
 
 
 def test_air_pollen_and_forecast_lookups_print_the_tools_own_lines():
     assert report.lookup("air", AIR, ["pm10"], []) == "• PM10: 3.0 µg/m³ 🟢 good"
     assert report.lookup("air", AIR, [], []).splitlines()[0] == "• PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)"
-    assert report.lookup("pollen", POLLEN, [], []) == "Pollen & asthma (Melbourne)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
-    assert report.lookup("forecast", FORECAST, [], []).startswith("Forecast (Melbourne)\n• Today: ")
+    assert report.lookup("pollen", POLLEN, [], []) == "Pollen & asthma (Melbourne, 6:00pm)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
+    assert report.lookup("forecast", FORECAST, [], []).startswith("Forecast (Melbourne, 6:05pm)\n• Today: ")
     assert report.lookup("pollen", json.dumps({"error": "off season"}), [], []) is None
 
 
@@ -232,3 +226,34 @@ def test_a_figure_per_period_lookup_gives_the_figure_over_the_whole_period():
     assert report.lookup("days", result, [], []) == "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."
     hot = json.dumps({"period": "a 2025 - b 2026", "days_checked": 3, "matching_days": 3, "stat": {"what": "Highest temperature", "of": "temp_max", "unit": "℃"}, "value": 41.2})
     assert report.lookup("days", hot, [], []).startswith("Highest temperature: 41.2 °C over 3 days")
+
+
+def test_a_heading_carries_the_place_and_the_time_of_day_of_its_data():
+    assert report._heading("Forecast", {"place": "Melbourne", "time": "Fri 2 Oct 2026 6:05pm"}) == "Forecast (Melbourne, 6:05pm)"
+    assert report._heading("Weather station", {"time": "Fri 02 Oct 2026 00:07"}) == "Weather station (12:07am)"     # the station's 24-hour form
+    assert report._heading("Weather station", {"time": "Fri 02 Oct 2026 13:30"}) == "Weather station (1:30pm)"
+    assert report._heading("Air quality", {"time": "Fri 2 Oct 2026 12:00pm"}) == "Air quality (12:00pm)"
+    assert report._heading("Forecast", {"place": "Melbourne"}) == "Forecast (Melbourne)"                           # no time: as before
+    assert report._heading("Air quality", {"time": "yesterday"}) == "Air quality" and report._heading("Air quality", {"time": None}) == "Air quality"
+
+
+def test_when_gives_the_form_the_tools_use_in_their_time_field():
+    from datetime import datetime
+    from lib.timeutil import when
+    tz = ZoneInfo("Australia/Melbourne")
+    assert when(int(datetime(2026, 10, 2, 18, 5, tzinfo=tz).timestamp()), tz) == "Fri 2 Oct 2026 6:05pm"
+    assert when(int(datetime(2026, 10, 2, 0, 7, tzinfo=tz).timestamp()), tz) == "Fri 2 Oct 2026 12:07am"
+
+
+from zoneinfo import ZoneInfo  # noqa: E402
+
+
+def test_only_the_name_of_each_heading_is_bold_not_its_brackets_or_time():
+    text = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST})
+    units = lambda s: len(s.encode("utf-16-le")) // 2
+    names = [text.encode("utf-16-le")[2 * e.offset:2 * (e.offset + e.length)].decode("utf-16-le") for e in report.heading_entities(text)]
+    assert names == ["Weather station", "Air quality", "Pollen & asthma", "Forecast"]
+    assert all(e.type == "bold" for e in report.heading_entities(text))
+    after_emoji = report.heading_entities("• Rain today: ☔ 6.3 mm 🌧️\nForecast (Melbourne, 6:05pm)\n• Today")      # emoji count as two units
+    assert [(e.offset, e.length) for e in after_emoji] == [(units("• Rain today: ☔ 6.3 mm 🌧️\n"), len("Forecast"))]
+    assert report.heading_entities("Forecast\n• x") and report.heading_entities("• Forecast: sunny\nForecasts") == []

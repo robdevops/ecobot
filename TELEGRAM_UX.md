@@ -33,7 +33,7 @@ A command or a button never does work of its own. It is turned into the plain se
 | `/reset` | as today | (unchanged) |
 | `/help` | the command list | (unchanged) |
 
-Defaults: `/weather` and `/air` with no period are "now"; `/chart` with no reading is temperature; a chart with no period is 7 days. `/status` and `/report` use the sentence the bot already recognises (`intent.wants_report`), which fetches the weather and the air quality in one go and lists everything.
+Defaults: `/weather` and `/air` with no period are "now"; `/chart` with no reading is temperature; a chart with no period is 7 days. `/status` and `/report` use the sentence the bot already recognises (`intent.wants_report`), which fetches the weather and the air quality in one go and lists everything. The report has a 🔄 Refresh button (`rp:refresh`) that fetches it again and edits the same message.
 
 **Implementation.** A pure function `command_to_text(name, args) -> str` holds the table above. One generic `CommandHandler` for the new names calls it and then `Bot.respond(update, context, text)`. In groups, Telegram sends `/weather@ecobot`; `python-telegram-bot` strips the suffix, and a command reaches a bot in a group even with privacy mode on, so no mention is needed. Replies stay silent.
 

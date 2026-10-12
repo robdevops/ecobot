@@ -7,7 +7,7 @@ import pytest
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 
-from lib import periods, templates
+from lib import periods, report_menu, templates
 from lib.admins import Admins
 from lib.alerts import AlertState, menu
 from lib.bot import MAX_CALLBACK_BYTES, NOT_ADMIN, NOT_ADMIN_TOAST, STALE_BUTTON, Bot
@@ -319,7 +319,7 @@ async def test_alert_buttons_in_a_group_stay_admin_only_even_when_admin_only_is_
 def every_keyboard(bot):
     """Every inline keyboard the bot can draw, in every state."""
     kinds = menu.available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
-    muted_sets = [set(), {"rain"}, {"rain", "uv", "air"}, set(menu.LABELS)]
+    muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(menu.LABELS)]
     for muted in muted_sets:
         for opened in (None, "sub", "unsub"):
             for parent in (None, *kinds):
@@ -331,6 +331,7 @@ def every_keyboard(bot):
                     yield irrigation_menu.keyboard(battery, pause, opened, paused)
     for current in (None, *periods.PERIODS):
         yield periods.keyboard(current)
+    yield report_menu.keyboard()
 
 
 def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(tmp_path):
@@ -344,7 +345,7 @@ def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(t
                 assert 0 < len(data.encode()) <= MAX_CALLBACK_BYTES and data.isprintable(), data
                 assert sum(data.startswith(prefix) for prefix in table) == 1, data
                 assert bot._on_keyboard(NS(reply_markup=markup), data)
-    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX}
+    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX, report_menu.PREFIX}
     assert "ir:" not in make(tmp_path, irrigation=None)[0].buttons()
 
 
@@ -432,13 +433,13 @@ async def test_random_data_never_gets_past_the_entry_point(tmp_path):
     rng = random.Random(7)
     spy = Spy()
     bot, state, tg = make(tmp_path, irrigation=spy)
-    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), periods.keyboard(1)]
+    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), periods.keyboard(1), report_menu.keyboard()]
     known = {b.callback_data for board_ in boards for row in board_.inline_keyboard for b in row}
     pieces = ["ir", "al", "pd", "on", "off", "water", "delay", "sw", "batt", "pause", "refresh", "open", "close", "all", "sub", "unsub",
               "rain", "uv", "24h", "cancel", "5", "30", "99999", "-1", "", " ", "\n", "é", "💧", "*", "%s", "{}", "\\", ";", "$(x)", "None"]
     before = (dict(state.chats), dict(state.charts))
     for _ in range(3000):
-        data = rng.choice(["ir", "al", "pd", ""]) + ":" + ":".join(rng.choice(pieces) for _ in range(rng.randint(0, 4)))
+        data = rng.choice(["ir", "al", "pd", "rp", ""]) + ":" + ":".join(rng.choice(pieces) for _ in range(rng.randint(0, 4)))
         if data in known:
             continue
         press = await press_through(bot, tg, data, rng.choice(boards), user=rng.choice([ADMIN, STRANGER]))

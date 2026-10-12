@@ -12,6 +12,15 @@ ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger(__name__)
 
 
+def data_dir() -> Path:
+    """Where the state file and the SQLite caches live: DATA_DIR (a relative path is taken from the working directory), else the
+    folder systemd gives a service that has StateDirectory= (STATE_DIRECTORY), else the app's own folder, where they have always been.
+    Kept apart from the code so a container can mount it. Symlinks are left as written: /var/lib/ecobot, not the closed
+    /var/lib/private/ecobot behind it."""
+    value = os.getenv("DATA_DIR", "").strip() or os.getenv("STATE_DIRECTORY", "").split(":")[0].strip()
+    return Path(os.path.abspath(Path(value).expanduser())) if value else ROOT
+
+
 def _tz() -> tzinfo:
     name = os.getenv("TZ", "").lstrip(":")
     return ZoneInfo(name) if name else datetime.now().astimezone().tzinfo
@@ -112,6 +121,15 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         env = lambda k, default="": os.getenv(k, default).strip()
+        data = data_dir()
+        try:
+            data.mkdir(parents=True, exist_ok=True)
+            writable = os.access(data, os.W_OK | os.X_OK)
+        except OSError:
+            writable = False
+        if not writable:
+            raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
+                             "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
         cfg = cls(
             telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
             xai_api_key=os.environ["XAI_API_KEY"],
@@ -140,6 +158,10 @@ class Config:
             admin_only=_flag(env("ADMIN_ONLY"), True),
             admin_chat_ids=_ids(env("ADMIN_CHAT_IDS")),
             alert_cooldown_minutes=int(min(150, max(5, _number(env("ALERT_COOLDOWN_MINUTES")) or 30))),
+            state_path=data / "bot_state.json",
+            cache_path=data / "ecowitt_cache.sqlite",
+            air_cache_path=data / "airgradient_cache.sqlite",
+            conditions_cache_path=data / "conditions_cache.sqlite",
         )
         if not (cfg.ecowitt or cfg.airgradient):
             raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID")

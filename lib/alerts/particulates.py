@@ -1,4 +1,4 @@
-"""Air-quality alerts from the AirGradient sensor, checked every 30 minutes.
+"""Particulates alerts (PM2.5 and PM10) from the AirGradient sensor, checked every 30 minutes.
 
 "Wear a mask outside" when PM2.5 or PM10 reaches US AQI 151+ ("unhealthy", the official level
 at which masks are advised for everyone) for two checks in a row; "back to safe" when both are at
@@ -18,17 +18,19 @@ CONFIRM_CHECKS = 2                     # consecutive checks, so a passing puff o
 STALE_SECONDS = 2 * 3600               # ignore readings older than this (sensor offline)
 
 
-class AirMonitor:
+class ParticulatesMonitor:
+    KINDS = ("particulates",)
+
     def __init__(self, air, state, notify):
         self.air, self.state, self.notify = air, state, notify
 
     async def check(self, reading: dict | None = None, now: datetime | None = None):
         reading = reading if reading is not None else await self.air.current()
         now = now or datetime.now(self.air.tz)
-        m = self.state.monitor.setdefault("air", {"unsafe": False, "above": 0, "below": 0})
+        m = self.state.monitor.setdefault("particulates", {"unsafe": False, "above": 0, "below": 0})
         when = reading.get("_time_utc")
         if when and (now - when).total_seconds() > STALE_SECONDS:
-            log.info("Air quality: latest reading is stale (%s); skipping", when)
+            log.info("Particulates: latest reading is stale (%s); skipping", when)
             return
         pm25 = (reading.get("pm2_5") or {}).get("value")
         pm10 = (reading.get("pm10") or {}).get("value")
@@ -41,10 +43,10 @@ class AirMonitor:
         if not m["unsafe"] and m["above"] >= CONFIRM_CHECKS:
             m["unsafe"] = True
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
-                              link=self.air.link, kind="air")
+                              link=self.air.link, kind="particulates")
         elif m["unsafe"] and m["below"] >= CONFIRM_CHECKS:
             m["unsafe"] = False
-            await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="air")
+            await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates")
         self.state.save()
 
     @staticmethod

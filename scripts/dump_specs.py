@@ -18,7 +18,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
-from _common import ROOT, parser  # noqa: E402  (also puts the repo on sys.path)
+from _common import parser  # noqa: E402  (also puts the repo on sys.path)
+from lib.config import data_dir  # noqa: E402
 
 from lib.airgradient import AirGradient  # noqa: E402
 from lib.charts import render  # noqa: E402
@@ -103,7 +104,7 @@ def copy_db(src: Path, dest: Path):
 async def main():
     logging.disable(logging.WARNING)  # the fetchers log every refused request
     ap = parser(__doc__)
-    ap.add_argument("--data-dir", default=str(ROOT), help="folder holding ecowitt_cache.sqlite and airgradient_cache.sqlite")
+    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecowitt_cache.sqlite and airgradient_cache.sqlite")
     ap.add_argument("--tz", default="Australia/Melbourne")
     ap.add_argument("--out", default="chart_dump")
     args = ap.parse_args()

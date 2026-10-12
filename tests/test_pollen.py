@@ -149,6 +149,7 @@ async def test_last_seasons_page_is_not_shown_and_the_report_leaves_the_block_ou
     pollen, _ = make_on(tmp_path, date(2026, 12, 20), html=lambda: page(grass="High", day=date(2026, 12, 20)))
     await pollen.start()
     assert pollen.lines()[0].startswith("Grass pollen: 🔴 High")
+    assert json.loads(await pollen.handle({"cached": True}))["time"]      # when the page was fetched, for the report's heading
     await pollen.close()
     january, calls = make_on(tmp_path, date(2027, 1, 5))                # the saved page is still in the database
     await january.start()
