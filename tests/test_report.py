@@ -246,3 +246,14 @@ def test_when_gives_the_form_the_tools_use_in_their_time_field():
 
 
 from zoneinfo import ZoneInfo  # noqa: E402
+
+
+def test_only_the_name_of_each_heading_is_bold_not_its_brackets_or_time():
+    text = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST})
+    units = lambda s: len(s.encode("utf-16-le")) // 2
+    names = [text.encode("utf-16-le")[2 * e.offset:2 * (e.offset + e.length)].decode("utf-16-le") for e in report.heading_entities(text)]
+    assert names == ["Weather station", "Air quality", "Pollen & asthma", "Forecast"]
+    assert all(e.type == "bold" for e in report.heading_entities(text))
+    after_emoji = report.heading_entities("• Rain today: ☔ 6.3 mm 🌧️\nForecast (Melbourne, 6:05pm)\n• Today")      # emoji count as two units
+    assert [(e.offset, e.length) for e in after_emoji] == [(units("• Rain today: ☔ 6.3 mm 🌧️\n"), len("Forecast"))]
+    assert report.heading_entities("Forecast\n• x") and report.heading_entities("• Forecast: sunny\nForecasts") == []

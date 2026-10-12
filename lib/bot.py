@@ -183,11 +183,12 @@ class Draft:
 
 
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
-                  titles: list[str] | None = None, period_row=None, sent_photo: list | None = None) -> bool:
+                  titles: list[str] | None = None, period_row=None, sent_photo: list | None = None, bold_headings: bool = False) -> bool:
     """Send the answer with any charts. A chart carries only its title as its caption; any answer text is its own message,
     sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
     the last text, or on the single photo when there is no text; returns whether it was sent (a group of photos can't carry one).
-    period_row (the period buttons) rides on a single photo instead, and then the keyboard waits; the photo's Message goes into sent_photo."""
+    period_row (the period buttons) rides on a single photo instead, and then the keyboard waits; the photo's Message goes into sent_photo.
+    bold_headings: the text is the report (or a pollen / forecast lookup), whose heading names are set in bold."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
@@ -198,6 +199,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
             body, ents = with_footer(chunk, link) if last else (chunk, [])
+            ents = [*(report.heading_entities(chunk) if bold_headings else []), *ents]
             await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True,
                                  **({"reply_markup": markup} if markup and last and not photos else {}))
         carried = bool(markup) and not photos
@@ -570,7 +572,7 @@ class Bot:
             await query.answer("Couldn't refresh, please try again", show_alert=True)
             return
         await query.answer()   # no toast: the times in the headings show what changed
-        await self._edit_irrigation(query, text, report_menu.keyboard())
+        await self._edit_irrigation(query, text, report_menu.keyboard(), report.heading_entities(text))
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart
@@ -897,7 +899,8 @@ class Bot:
                 reply, photos, row = "", [], None
             carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
                                              markup=markup or (report_menu.keyboard() if refresh else None),
-                                             titles=titles, period_row=row, sent_photo=sent_photo) and bool(markup)   # the refresh button is not the chat's keyboard
+                                             titles=titles, period_row=row, sent_photo=sent_photo,
+                                             bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat

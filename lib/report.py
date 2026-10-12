@@ -5,6 +5,8 @@ import json
 import re
 from datetime import datetime
 
+from telegram import MessageEntity
+
 from .ecowitt.glance import solar_band
 from .series import WEATHER, find
 
@@ -43,6 +45,17 @@ def _band(solar: str | None) -> str:
 
 def _join(parts: list[str | None], sep: str = ", ") -> str:
     return sep.join(p for p in parts if p)
+
+
+HEADINGS = ("Weather station", "Air quality", "Pollen & asthma", "Forecast")   # the names the report's sections (and the pollen and forecast lookups) start with
+HEADING_LINE = re.compile(rf"^({'|'.join(map(re.escape, HEADINGS))})(?= \(|$)", re.M)
+
+
+def heading_entities(text: str) -> list[MessageEntity]:
+    """Bold entities over the name of each heading line in `text` (not over its brackets). Telegram counts positions in UTF-16 code
+    units, where an emoji is two."""
+    units = lambda s: len(s.encode("utf-16-le")) // 2
+    return [MessageEntity(MessageEntity.BOLD, units(text[:m.start()]), units(m.group(1))) for m in HEADING_LINE.finditer(text)]
 
 
 def _stamp(result: dict) -> str | None:
