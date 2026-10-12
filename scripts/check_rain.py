@@ -35,7 +35,7 @@ RAINY = 1.0       # mm: the bot's line between a trace and a rainy day
 def fields_held(cache: HistoryCache, mac: str) -> dict[str, list[str]]:
     """Which rainfall fields are stored at each resolution."""
     with cache._lock:
-        rows = cache.db.execute("SELECT cycle, field FROM fields WHERE mac=? AND grp='rainfall' ORDER BY cycle, field", (mac,)).fetchall()
+        rows = cache.db.execute("SELECT cycle, field FROM series WHERE mac=? AND grp='rainfall' ORDER BY cycle, field", (mac,)).fetchall()
     out: dict[str, list[str]] = {}
     for cycle, field in rows:
         out.setdefault(cycle, []).append(field)

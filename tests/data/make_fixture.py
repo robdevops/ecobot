@@ -1,5 +1,6 @@
 """Writes the two small cache files in this folder. They were generated ONCE by the pre-recode code; the tests load them
-to prove that caches written by older versions still open and read the same. Do not regenerate them from new code."""
+to prove that a recorded cache still opens and reads the same. Do not regenerate them from new code. (The Ecowitt one was later
+converted, with its data untouched, to the series layout by scripts/migrate_cache.py.)"""
 import asyncio
 import sys
 import tempfile

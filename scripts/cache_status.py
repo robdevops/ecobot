@@ -26,8 +26,8 @@ def day(ts: int) -> str:
 def ecowitt(path: Path):
     db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     for (mac,) in db.execute("SELECT DISTINCT mac FROM coverage").fetchall():
-        first = db.execute("SELECT MIN(ts) FROM points WHERE mac=?", (mac,)).fetchone()[0]
-        rows = db.execute("SELECT COUNT(*) FROM points WHERE mac=?", (mac,)).fetchone()[0]
+        first = db.execute("SELECT MIN(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=?", (mac,)).fetchone()[0]
+        rows = db.execute("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=?", (mac,)).fetchone()[0]
         print(f"Ecowitt {mac}: {rows:,} readings, station data from {day(first) if first else 'n/a'}")
         now = time.time()
         for cycle in ("5min", "30min", "4hour", "1day"):
@@ -42,7 +42,7 @@ def ecowitt(path: Path):
                 gaps = subtract((int(start), int(end)), cov)
                 if gaps and gaps[-1][1] >= end - 1 and gaps[-1][0] >= end - 2 * 86400:
                     gaps.pop()  # the newest day or two: still settling, filled in by the next archive run
-                stored = db.execute("SELECT COUNT(*) FROM points WHERE mac=? AND cycle=? AND grp=?",
+                stored = db.execute("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=? AND s.cycle=? AND s.grp=?",
                                     (mac, cycle, group)).fetchone()[0]
                 span = f"{day(min(c[0] for c in cov))} to {day(max(c[1] for c in cov))}"
                 if not gaps:
