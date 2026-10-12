@@ -232,9 +232,9 @@ class Ecowitt:
             self._live_ok = False
             return None
         if self._live_ok is None:
-            log.info("Live readings working (%s)", live_summary(data))
+            log.info("Working (%s)", live_summary(data))
         elif not self._live_ok:
-            log.info("Live readings recovered (%s)", live_summary(data))
+            log.info("Recovered (%s)", live_summary(data))
         self._live_ok = True
         return ts, row
 
