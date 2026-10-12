@@ -95,6 +95,7 @@ async def test_the_place_is_the_configured_name(tmp_path):
     forecast, _ = make(tmp_path, place="Geelong")
     await forecast.start()
     assert json.loads(await forecast.handle({}))["place"] == "Geelong"
+    assert json.loads(await forecast.handle({}))["time"]                    # when it was fetched, for the report's heading
     await forecast.close()
 
 

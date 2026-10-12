@@ -553,4 +553,4 @@ async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place():
     Tools.reading = "13.0 ℃"
     query = Query()
     await bot.on_report_button(NS(callback_query=query), context)
-    assert query.toast == "Refreshed" and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH
+    assert query.toast is None and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH

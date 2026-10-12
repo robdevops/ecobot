@@ -14,7 +14,7 @@ import httpx
 from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import now_local
+from ..timeutil import now_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer, in_sync_hours
 from .parse import LEVEL_EMOJI, parse_melbourne_pollen
@@ -151,6 +151,8 @@ class Pollen:
         cur = self.current()
         out = {"lines": lines, "place": self.place, "source": "melbournepollen.com.au (grass pollen from pollen-trap data; asthma risk from the "
                                          "Victorian Department of Health and BOM, 1 Oct - 31 Dec)"}
+        if cur["fetched_at"]:
+            out["time"] = when(int(cur["fetched_at"]), self.tz)   # when the page was last fetched
         if cur["asthma"] and cur["asthma"]["updated"]:
             out["asthma_updated"] = cur["asthma"]["updated"]
         if not cur["asthma"]:

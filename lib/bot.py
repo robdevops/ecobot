@@ -569,7 +569,7 @@ class Bot:
             log.warning("Report refresh failed: %s", e)
             await query.answer("Couldn't refresh, please try again", show_alert=True)
             return
-        await query.answer("Refreshed")
+        await query.answer()   # no toast: the times in the headings show what changed
         await self._edit_irrigation(query, text, report_menu.keyboard())
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

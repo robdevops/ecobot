@@ -45,9 +45,22 @@ def _join(parts: list[str | None], sep: str = ", ") -> str:
     return sep.join(p for p in parts if p)
 
 
+def _stamp(result: dict) -> str | None:
+    """The time of day of the data, "11:45pm", from the result's "time" ("Sun 11 Oct 2026 23:50" from the station, "Sun 11 Oct 2026 11:45pm"
+    from the rest); None when it is missing or unreadable."""
+    for form in ("%a %d %b %Y %I:%M%p", "%a %d %b %Y %H:%M"):
+        try:
+            at = datetime.strptime(result.get("time") or "", form)
+        except ValueError:
+            continue
+        return f"{at.hour % 12 or 12}:{at:%M}{'am' if at.hour < 12 else 'pm'}"
+    return None
+
+
 def _heading(name: str, result: dict) -> str:
-    """"Forecast (Melbourne)": the place the result names, if it does."""
-    return f"{name} ({result['place']})" if result.get("place") else name
+    """"Forecast (Melbourne, 6:00pm)": the place the result names and the time of its data, whichever it has."""
+    note = ", ".join(x for x in (result.get("place"), _stamp(result)) if x)
+    return f"{name} ({note})" if note else name
 
 
 def _getters(now: dict):
@@ -180,10 +193,10 @@ def report(results: dict[str, str]) -> str:
     sections = []
     if "weather_now" in results:
         now = _load(results["weather_now"])
-        sections.append(["Weather station", *(weather_lines(now) if now else ["• not available right now"])])
+        sections.append([_heading("Weather station", now or {}), *(weather_lines(now) if now else ["• not available right now"])])
     if "air_quality" in results:
         air = _load(results["air_quality"])
-        sections.append(["Air quality", *(air_lines(air) if air else ["• not available right now"])])
+        sections.append([_heading("Air quality", air or {}), *(air_lines(air) if air else ["• not available right now"])])
     if pollen := _load(results.get("pollen_asthma")):
         sections.append([_heading("Pollen & asthma", pollen), *(f"• {line}" for line in pollen.get("lines", []))])
     if forecast := _load(results.get("weather_forecast")):

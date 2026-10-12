@@ -13,7 +13,7 @@ import httpx
 from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import now_local
+from ..timeutil import now_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer, in_sync_hours
 
@@ -227,4 +227,5 @@ class Forecast:
             return json.dumps({"error": "No forecast is available right now."})
         if turn:
             turn.forecast_shown.extend(self.upcoming(count))   # remembered for the chat once the answer is sent
-        return json.dumps({"lines": lines, "place": self.place, "source": self.source}, ensure_ascii=False)
+        stamped = {"time": when(int(self.fetched_at), self.tz)} if self.fetched_at else {}   # when it was last fetched
+        return json.dumps({"lines": lines, "place": self.place, "source": self.source, **stamped}, ensure_ascii=False)

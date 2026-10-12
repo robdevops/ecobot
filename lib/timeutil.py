@@ -17,6 +17,12 @@ def to_local(ts: int, tz: tzinfo) -> datetime:
     return datetime.fromtimestamp(ts, UTC).astimezone(tz)
 
 
+def when(ts: int, tz: tzinfo) -> str:
+    """An epoch as "Sun 11 Oct 2026 11:45pm" in tz (the form the tools put in their "time" field)."""
+    dt = to_local(ts, tz)
+    return f"{dt:%a} {dt.day} {dt:%b %Y} {dt:%I:%M%p}".replace(" 0", " ").replace("AM", "am").replace("PM", "pm")
+
+
 def local_date(ts: int, tz: tzinfo) -> date:
     return to_local(ts, tz).date()
 

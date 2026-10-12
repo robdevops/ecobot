@@ -27,7 +27,7 @@ from ..config import Config
 from ..lines import Plotted, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import local_date, now_local, to_local
+from ..timeutil import local_date, now_local, to_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
@@ -124,10 +124,6 @@ class AirGradient:
 
     def _now(self) -> datetime:
         return now_local(self.tz)
-
-    def _when(self, ts: int) -> str:
-        dt = to_local(ts, self.tz)
-        return f"{dt:%a} {dt.day} {dt:%b %Y} {dt:%I:%M%p}".replace(" 0", " ").replace("AM", "am").replace("PM", "pm")
 
     # ---------- cached data ----------
     async def _current_row(self, refresh: bool = False) -> dict:
@@ -278,7 +274,7 @@ class AirGradient:
         row = await self._current_row()
         previous = await self._previous_row(epoch(row["timestamp"])) if row.get("timestamp") else None
         out = {"sensor": row.get("locationName"), "sensor_type": row.get("locationType"),
-               "time": self._when(epoch(row["timestamp"])) if row.get("timestamp") else None}
+               "time": when(epoch(row["timestamp"]), self.tz) if row.get("timestamp") else None}
         if row.get("timestamp"):  # for the air alerts' staleness check (removed before the model sees it)
             out["_time_utc"] = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
         for name, (_, unit) in METRICS.items():
@@ -337,8 +333,8 @@ class AirGradient:
             if not pts:
                 continue
             lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-            entry = {"unit": unit, "low": lo[1], "low_time": self._when(lo[0]),
-                     "high": hi[1], "high_time": self._when(hi[0]),
+            entry = {"unit": unit, "low": lo[1], "low_time": when(lo[0], self.tz),
+                     "high": hi[1], "high_time": when(hi[0], self.tz),
                      "average": round(statistics.fmean(v for _, v in pts), 1)}
             entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
             if name == "pm2_5":
