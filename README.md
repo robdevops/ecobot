@@ -2,8 +2,8 @@
 
 A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
 Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
-chat it is in: rain starting/stopping, gusts over 40 km/h, UV index of 10 or more, indoor/outdoor temperatures crossing (held back for the cooldown, then announced if it still stands, with the last day's temperature chart),
-and unhealthy air (with when it is safe again). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (in a private chat, a ⚙️ Settings button there and under each alert has Enable and Disable notification sounds sub-menus that list the alert types; alerts are silent unless you do; and `/alerts on|off` still subscribes or unsubscribes every type); `/usage` is the Help & Alerts button. In a group anyone can open `/alerts`, but only admins can change anything (`lib/alerts/menu.py`).
+chat it is in: rain starting/stopping, gusts over 40 km/h (with the last day's wind chart), UV index of 10 or more, indoor/outdoor temperatures crossing (held back for the cooldown, then announced if it still stands, with the last day's temperature chart),
+and unhealthy air (with when it is safe again; both with the last day's particulates chart). Every alert carries Subscribe / Unsubscribe buttons that expand into the alert types (rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes): Subscribe lists the types that are off, Unsubscribe the ones that are on; `/alerts` opens the same settings (in a private chat, a ⚙️ Settings button there and under each alert has Enable and Disable notification sounds sub-menus that list the alert types; alerts are silent unless you do; and `/alerts on|off` still subscribes or unsubscribes every type); `/usage` is the Help & Alerts button. In a group anyone can open `/alerts`, but only admins can change anything (`lib/alerts/menu.py`).
 
 ## Run
 

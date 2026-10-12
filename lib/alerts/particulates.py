@@ -9,6 +9,8 @@ filter particles, not gases like CO2/VOC/NOx.
 import logging
 from datetime import datetime
 
+from . import pictures
+
 log = logging.getLogger(__name__)
 
 CHECK_SECONDS = 30 * 60
@@ -42,12 +44,19 @@ class ParticulatesMonitor:
         m["below"] = m["below"] + 1 if good else 0
         if not m["unsafe"] and m["above"] >= CONFIRM_CHECKS:
             m["unsafe"] = True
+            photo = await self._picture()
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
-                              link=self.air.link, kind="particulates")
+                              link=self.air.link, kind="particulates", **({"photo": photo} if photo else {}))
         elif m["unsafe"] and m["below"] >= CONFIRM_CHECKS:
             m["unsafe"] = False
-            await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates")
+            photo = await self._picture()
+            await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates",
+                              **({"photo": photo} if photo else {}))
         self.state.save()
+
+    async def _picture(self) -> bytes | None:
+        """The 1-day particulates chart (what the Particulates button gives), for the alert; None when it cannot be made."""
+        return await pictures.chart(self.air, "Particulates chart 1d", self.air.tz)
 
     @staticmethod
     def _levels(reading: dict) -> str:
