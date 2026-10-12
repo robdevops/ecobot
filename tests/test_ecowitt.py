@@ -1087,7 +1087,7 @@ async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers
         assert await station.live_rain() is None and await station.live_rain() is None
         assert await station.live_rain() == (100, {"rainfall.rain_rate": 1.5, "rainfall.daily": 2.0})
         await station.live_rain()
-    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "recovered" in caplog.records[1].message
+    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"] and "Recovered" in caplog.records[1].message
 
 
 async def test_a_waiting_person_goes_before_the_background_requests_queued_ahead_of_them():
