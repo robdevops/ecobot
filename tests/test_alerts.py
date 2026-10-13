@@ -634,3 +634,20 @@ async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sou
     assert await pictures.chart(FakeStation(), "Wind chart 1d", TZ) is None        # a source without the tool: no chart, no error
     await eco.close()
     await air.close()
+
+
+async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path):
+    from lib import intent
+    from lib.airgradient import AirGradient
+    from lib.timeutil import now_local
+    from lib.tools import Turn
+    from tests.fakes import air_transport, config
+    transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.start()
+    read = intent.read("Particulates chart 1d", now_local(TZ), True, True)
+    turn = Turn(chart_asked=read.chart_asked, text="Particulates chart 1d")
+    await air.handle(read.fast[1], turn)
+    (panel,) = turn.charts[0].panels
+    assert sorted(line.label for line in panel.lines) == ["PM1", "PM10", "PM2.5"]
+    await air.close()
