@@ -108,7 +108,7 @@ class FakeEcowitt:
         first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            named = {"outdoor": [("temperature", temp), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index)]}
+            named = {"outdoor": [("temperature", temp), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)]):
                 for ts in range(first, end + 1, step):

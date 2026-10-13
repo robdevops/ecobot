@@ -435,6 +435,9 @@ class HistoryQuery:
             lines.append(line)
         if not lines:
             return None
+        group = keys[0].split(".", 1)[0]
+        if len(lines) == 1 and group not in ("outdoor", "indoor") and (reading := find(field)):
+            lines[0].label = reading.label   # "UV index", not the group's name ("Solar and uvi"); outdoor and indoor keep theirs: they tell the lines apart
         title = field.replace("_", " ").capitalize()
         subtitle = (f"{period_text(self.start.date(), self.end.date())}  ·  {resolution}"
                     + (", shaded up to the gusts" if banded and ranged else ", range shaded" if ranged else "")
