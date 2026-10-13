@@ -622,7 +622,7 @@ async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sou
     from lib.alerts import pictures
     from tests.fakes import air_transport, archived_station, config
     eco, _ = await archived_station(tmp_path, archived_cache)
-    for text in ("Temperature chart 1d", "Wind chart 1d"):
+    for text in ("Temperature chart 1d", "Wind chart 1d", "UV chart 1d"):
         png = await pictures.chart(eco, text, TZ)
         assert png and png[:4] == b"\x89PNG", text
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
@@ -651,3 +651,33 @@ async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path)
     (panel,) = turn.charts[0].panels
     assert sorted(line.label for line in panel.lines) == ["PM1", "PM10", "PM2.5"]
     await air.close()
+
+
+async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
+    vals = [3, 5]
+    m, state, sent = monitor(tmp_path, uv(*vals))
+    seen = []
+
+    async def notify(text, link=None, **kw):
+        seen.append((text, kw.get("photo")))
+    m.notify = notify
+    asked = asking(m)
+    await m.check()                                    # the first look sets the mark
+    m.station.data = uv(3, 5, 11)
+    await m.check()
+    assert len(seen) == 1 and "UV index 11" in seen[0][0] and seen[0][1] == b"png" and asked == ["UV chart 1d"]
+    m.station.data = uv(3, 5, 11, 12)                  # the same spell: nothing more, and no second chart is made
+    await m.check()
+    assert len(seen) == 1 and asked == ["UV chart 1d"]
+    (tmp_path / "b").mkdir()
+    plain, _, _ = monitor(tmp_path / "b", uv(3, 5))
+    got = []
+
+    async def notify2(text, link=None, **kw):
+        got.append(kw)
+    plain.notify = notify2
+    asking(plain, photo=None)
+    await plain.check()
+    plain.station.data = uv(3, 5, 11)
+    await plain.check()
+    assert got == [{"kind": "uv"}]                     # no chart: text only

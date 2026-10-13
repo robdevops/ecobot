@@ -185,8 +185,10 @@ class WeatherMonitor:
             if not m["active"]:
                 m["active"] = True
                 uv, ts = max(over)
+                photo = await self._picture("UV chart 1d")
                 await self.notify(f"\U0001f9f4 UV index {uv:g} at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-                                  + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv")
+                                  + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
+                                  **({"photo": photo} if photo else {}))
         elif m["active"]:
             m["calm_since"] = m["calm_since"] or latest_ts
             if latest_ts - m["calm_since"] >= UV_REARM_SECONDS:
