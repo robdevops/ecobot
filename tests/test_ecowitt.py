@@ -1222,3 +1222,23 @@ def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is
             "wind": {"wind_speed": cell("12", "km/h")}, "pressure": {"relative": cell("1013.2", "hPa")}}
     assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm today, 20.3 °C, 62 %, wind 12 km/h, 1013.2 hPa"
     assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm today" and live_summary({}) == "no readings"
+
+
+async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group(tmp_path, archived_cache):
+    from datetime import datetime
+    from lib import intent
+    from lib.timeutil import now_local
+    from tests.fakes import archived_station
+    eco, _ = await archived_station(tmp_path, archived_cache)
+
+    async def lines(text):
+        read = intent.read(text, now_local(eco.tz), True, True)
+        turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, text=text)
+        await eco.tools[1].handler(read.fast[1], turn)
+        (panel,) = turn.charts[0].panels
+        return [line.label for line in panel.lines]
+    assert await lines("UV chart 1d") == ["UV index"]                  # not "Solar and uvi"
+    assert await lines("Solar radiation chart 1d") == ["Solar radiation"]
+    assert sorted(await lines("Temperature chart 1d")) == ["Indoor", "Outdoor"]    # these two tell the lines apart, so they keep their names
+    assert await lines("Wind chart 1d") == ["Wind"]
+    await eco.close()

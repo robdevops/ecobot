@@ -65,6 +65,14 @@ def wind_speed(ts: int) -> float:
     return 0.0 if hour < 6 else 10.0 if hour < 18 else 25.0
 
 
+@lru_cache(maxsize=None)
+def uv_index(ts: int) -> float:
+    """Dark until 7am local, a daytime hump peaking at 11 around 1pm, dark again from 7pm."""
+    local = datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ)
+    hours = local.hour + local.minute / 60
+    return 0.0 if hours < 7 or hours > 19 else round(11 * (1 - ((hours - 13) / 6) ** 2), 1)
+
+
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
@@ -100,7 +108,7 @@ class FakeEcowitt:
         first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            named = {"outdoor": [("temperature", temp), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)]}
+            named = {"outdoor": [("temperature", temp), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)]):
                 for ts in range(first, end + 1, step):
@@ -119,9 +127,9 @@ def ecowitt_transport(fake: FakeEcowitt | None = None, history_days: int = HISTO
     return httpx.MockTransport(fake), fake
 
 
-def air_row(ts: datetime, pm25: float = 5.0, pm10: float = 8.0) -> dict:
+def air_row(ts: datetime, pm25: float = 5.0, pm10: float = 8.0, pm1: float = 3.0) -> dict:
     return {"timestamp": ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "locationName": "Outdoor",
-            "locationType": "outdoor", "pm02_corrected": pm25, "pm10_corrected": pm10, "rco2_corrected": 450,
+            "locationType": "outdoor", "pm02_corrected": pm25, "pm10_corrected": pm10, "pm01_corrected": pm1, "rco2_corrected": 450,
             "tvocIndex": 100, "noxIndex": 1}
 
 

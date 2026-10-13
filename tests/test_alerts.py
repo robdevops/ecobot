@@ -312,12 +312,16 @@ async def test_a_uv_index_of_10_alerts_once_and_again_only_after_an_hour_below_i
     await step(9.9)
     assert sent == []
     await step(10)
-    assert len(sent) == 1 and "UV index 10" in sent[0] and "1:15pm" in sent[0] and "alerts at 10 and above" in sent[0]
-    await step(11, 7, *[6] * 11)                       # still the same spell, then under an hour below 10
-    await step(10.5)
+    assert sent == []                                  # one reading at 10 is not enough
+    await step(11)
+    assert len(sent) == 1 and "UV index 11" in sent[0] and "1:20pm" in sent[0] and "alerts at 10 and above" in sent[0]   # the run's highest
+    await step(7, *[6] * 11)                           # still the same spell, then under an hour below 10
+    await step(10.5, 10.5)
     assert len(sent) == 1
     await step(*[5] * 12)                              # a calm hour starts counting
     await step(*[5] * 12)                              # an hour below 10 re-arms it
+    await step(10)
+    assert len(sent) == 1                              # one reading again
     await step(10)
     assert len(sent) == 2
 
@@ -527,3 +531,226 @@ def test_chats_that_already_unsubscribed_from_all_load_as_opt_in(tmp_path, monke
     state.save()
     again = notify.AlertState(path)                       # and it survives a restart
     assert again.subscribed(1, "uv") and not again.subscribed(1, "rain") and not again.subscribed(1, "newthing")
+
+
+def asking(mon, photo=b"png"):
+    """Replace a monitor's chart maker with one that records what was asked and answers `photo`; returns the list of requests."""
+    asked = []
+
+    async def picture(*text):
+        asked.append(text[-1] if text else "particulates")
+        return photo
+    mon._picture = picture
+    return asked
+
+
+async def test_the_crossing_alert_carries_the_temperature_chart_when_there_is_one(tmp_path):
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    photos = []
+
+    async def notify(text, link=None, **kw):
+        sent.append(text)
+        photos.append(kw.get("photo"))
+    m.notify = notify
+    asked = asking(m)
+    await m.check()                                    # learns: outdoor cooler
+    m.station.data = temps(25, 20, T0 + 3 * 3600)
+    await m.check()
+    assert len(sent) == 1 and photos == [b"png"] and asked == ["Temperature chart 1d"]
+    m.station.data = temps(10, 20, T0 + 6 * 3600)      # and back, with no chart this time: the alert still goes out, as text
+    asking(m, photo=None)
+    await m.check()
+    assert len(sent) == 2 and photos[1] is None
+
+
+async def test_the_gusts_alert_carries_the_wind_chart(tmp_path):
+    vals = [10, 12]
+    m, state, sent = monitor(tmp_path, [(T0 + i * 300, {"wind.wind_gust": v}) for i, v in enumerate(vals)])
+    seen = []
+
+    async def notify(text, link=None, **kw):
+        seen.append((text, kw.get("photo")))
+    m.notify = notify
+    asked = asking(m)
+    await m.check()                                    # the first look sets the mark
+    m.station.data = [(T0 + i * 300, {"wind.wind_gust": v}) for i, v in enumerate([10, 12, 55])]
+    await m.check()
+    assert len(seen) == 1 and "Strong gusts" in seen[0][0] and seen[0][1] == b"png" and asked == ["Wind chart 1d"]
+    (tmp_path / "b").mkdir()
+    m2, _, _ = monitor(tmp_path / "b", [(T0, {"wind.wind_gust": 10}), (T0 + 300, {"wind.wind_gust": 12})])
+    plain = []
+
+    async def notify2(text, link=None, **kw):
+        plain.append(kw)
+    m2.notify = notify2
+    asking(m2, photo=None)
+    await m2.check()
+    m2.station.data = [(T0, {"wind.wind_gust": 10}), (T0 + 300, {"wind.wind_gust": 12}), (T0 + 600, {"wind.wind_gust": 70})]
+    await m2.check()
+    assert plain == [{"kind": "gusts"}]                # no chart: text only
+
+
+async def test_both_particulates_alerts_carry_the_particulates_chart(tmp_path):
+    state, seen = AlertState(tmp_path / "s.json"), []
+
+    async def notify(text, link=None, **kw):
+        seen.append((text, kw.get("photo")))
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
+    asked = asking(mon)
+    for pm in (90, 90, 30, 30):
+        await mon.check(air_reading(pm))
+    assert [("mask" in t, "safe again" in t, p) for t, p in seen] == [(True, False, b"png"), (False, True, b"png")] and asked == ["particulates"] * 2
+    quiet = ParticulatesMonitor(FakeAir(), AlertState(tmp_path / "t.json"), notify)
+    asking(quiet, photo=None)
+    seen.clear()
+    for pm in (90, 90):
+        await quiet.check(air_reading(pm))
+    assert seen == [(seen[0][0], None)]
+
+
+async def test_other_alerts_send_no_picture(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    seen = []
+
+    async def notify(text, link=None, **kw):
+        seen.append(kw)
+    m.notify = notify
+    for data in (rain(0, 0, 0), rain(0, 0, 1)):
+        m.station.data = data
+        await m.check()
+    assert seen and all("photo" not in kw for kw in seen)
+
+
+async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sources_history(tmp_path, archived_cache):
+    from lib.airgradient import AirGradient
+    from lib.alerts import pictures
+    from tests.fakes import air_transport, archived_station, config
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    for text in ("Temperature chart 1d", "Wind chart 1d", "UV chart 1d"):
+        png = await pictures.chart(eco, text, TZ)
+        assert png and png[:4] == b"\x89PNG", text
+    transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    (tmp_path / "air").mkdir()
+    air = AirGradient(config(tmp_path / "air"), transport=transport)
+    await air.start()
+    png = await pictures.chart(air, "Particulates chart 1d", TZ)
+    assert png and png[:4] == b"\x89PNG"
+    assert await pictures.chart(FakeStation(), "Wind chart 1d", TZ) is None        # a source without the tool: no chart, no error
+    await eco.close()
+    await air.close()
+
+
+async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path):
+    from lib import intent
+    from lib.airgradient import AirGradient
+    from lib.timeutil import now_local
+    from lib.tools import Turn
+    from tests.fakes import air_transport, config
+    transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.start()
+    read = intent.read("Particulates chart 1d", now_local(TZ), True, True)
+    turn = Turn(chart_asked=read.chart_asked, text="Particulates chart 1d")
+    await air.handle(read.fast[1], turn)
+    (panel,) = turn.charts[0].panels
+    assert sorted(line.label for line in panel.lines) == ["PM1", "PM10", "PM2.5"]
+    await air.close()
+
+
+async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
+    vals = [3, 5]
+    m, state, sent = monitor(tmp_path, uv(*vals))
+    seen = []
+
+    async def notify(text, link=None, **kw):
+        seen.append((text, kw.get("photo")))
+    m.notify = notify
+    asked = asking(m)
+    await m.check()                                    # the first look sets the mark
+    m.station.data = uv(3, 5, 11, 12)
+    await m.check()
+    assert len(seen) == 1 and "UV index 12" in seen[0][0] and seen[0][1] == b"png" and asked == ["UV chart 1d"]
+    m.station.data = uv(3, 5, 11, 12, 12)              # the same spell: nothing more, and no second chart is made
+    await m.check()
+    assert len(seen) == 1 and asked == ["UV chart 1d"]
+    (tmp_path / "b").mkdir()
+    plain, _, _ = monitor(tmp_path / "b", uv(3, 5))
+    got = []
+
+    async def notify2(text, link=None, **kw):
+        got.append(kw)
+    plain.notify = notify2
+    asking(plain, photo=None)
+    await plain.check()
+    plain.station.data = uv(3, 5, 11, 12)
+    await plain.check()
+    assert got == [{"kind": "uv"}]                     # no chart: text only
+
+
+def test_the_confirmation_rule_counts_distinct_readings_in_a_row():
+    from lib.alerts import confirm
+    saved = {}
+    assert confirm.new_reading(saved, 100) and not confirm.new_reading(saved, 100) and not confirm.new_reading(saved, 50) and confirm.new_reading(saved, 101)
+    assert confirm.run(saved, "n", True) == 1 and confirm.run(saved, "n", True) == 2
+    assert confirm.run(saved, "n", None) == 2                      # a reading with no value changes nothing
+    assert confirm.run(saved, "n", False) == 0 and confirm.run(saved, "n", True) == 1
+
+
+async def test_uv_needs_two_distinct_readings_even_across_checks_and_a_restart(tmp_path):
+    m, state, sent = monitor(tmp_path, uv(3, 5))
+    await m.check()                                    # the first look sets the mark
+    m.station.data = uv(3, 5, 10)
+    await m.check()
+    await m.check()                                    # the same reading looked at again does not count twice
+    assert sent == []
+    restarted = WeatherMonitor(m.station, AlertState(state.path), m.notify)    # a restart: the run is in the state file
+    sent2 = []
+
+    async def notify(text, link=None, **kw):
+        sent2.append(text)
+    restarted.notify = notify
+    restarted.station.data = uv(3, 5, 10, 10.5)
+    await restarted.check()
+    assert len(sent2) == 1 and "UV index 10.5" in sent2[0]
+    (tmp_path / "x").mkdir()
+    m3, _, sent3 = monitor(tmp_path / "x", uv(3, 5))
+    await m3.check()
+    m3.station.data = [(T0 + 600, {"solar_and_uvi.uvi": 11}), (T0 + 900, {"solar_and_uvi.uvi": 9.9}), (T0 + 1200, {"solar_and_uvi.uvi": 11})]
+    await m3.check()
+    assert sent3 == []                                 # a reading below 10 ends the run
+    m3.station.data += [(T0 + 1500, {}), (T0 + 1800, {"solar_and_uvi.uvi": 12})]
+    await m3.check()
+    assert len(sent3) == 1                             # a reading with no value is skipped: 11 then 12 is a run
+
+
+async def test_a_difference_of_a_degree_or_less_is_not_a_crossing(tmp_path):
+    from lib.alerts.weather import side
+    assert side({"outdoor.temperature": 21.0, "indoor.temperature": 20.0}) is None and side({"outdoor.temperature": 19.0, "indoor.temperature": 20.0}) is None
+    assert side({"outdoor.temperature": 21.1, "indoor.temperature": 20.0}) == "warmer" and side({"outdoor.temperature": 18.9, "indoor.temperature": 20.0}) == "cooler"
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    await m.check()
+    m.station.data = temps(20.9, 20, T0 + 3 * 3600)    # only 0.9 degrees: not warmer
+    await m.check()
+    assert sent == []
+    m.station.data = temps(21.1, 20, T0 + 3 * 3600 + 300)
+    await m.check()
+    assert len(sent) == 1 and "warmer outside" in sent[0]
+
+
+async def test_particulates_count_readings_not_checks(tmp_path):
+    state, sent = AlertState(tmp_path / "s.json"), []
+
+    async def notify(text, link=None, **kw):
+        sent.append(text)
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
+    first = air_reading(90)
+    await mon.check(first)
+    await mon.check(first)                             # the sensor said nothing new: still one reading
+    assert sent == []
+    await mon.check(air_reading(30))                   # a reading that is not unhealthy ends the run
+    await mon.check(first)                             # and an old reading is not counted again
+    assert sent == []
+    again = ParticulatesMonitor(FakeAir(), AlertState(tmp_path / "s.json"), notify)        # a restart keeps what was counted
+    await again.check(air_reading(90))
+    await again.check(air_reading(90))
+    assert len(sent) == 1 and "mask" in sent[0]
