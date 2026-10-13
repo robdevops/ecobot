@@ -312,12 +312,16 @@ async def test_a_uv_index_of_10_alerts_once_and_again_only_after_an_hour_below_i
     await step(9.9)
     assert sent == []
     await step(10)
-    assert len(sent) == 1 and "UV index 10" in sent[0] and "1:15pm" in sent[0] and "alerts at 10 and above" in sent[0]
-    await step(11, 7, *[6] * 11)                       # still the same spell, then under an hour below 10
-    await step(10.5)
+    assert sent == []                                  # one reading at 10 is not enough
+    await step(11)
+    assert len(sent) == 1 and "UV index 11" in sent[0] and "1:20pm" in sent[0] and "alerts at 10 and above" in sent[0]   # the run's highest
+    await step(7, *[6] * 11)                           # still the same spell, then under an hour below 10
+    await step(10.5, 10.5)
     assert len(sent) == 1
     await step(*[5] * 12)                              # a calm hour starts counting
     await step(*[5] * 12)                              # an hour below 10 re-arms it
+    await step(10)
+    assert len(sent) == 1                              # one reading again
     await step(10)
     assert len(sent) == 2
 
@@ -663,10 +667,10 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # the first look sets the mark
-    m.station.data = uv(3, 5, 11)
+    m.station.data = uv(3, 5, 11, 12)
     await m.check()
-    assert len(seen) == 1 and "UV index 11" in seen[0][0] and seen[0][1] == b"png" and asked == ["UV chart 1d"]
-    m.station.data = uv(3, 5, 11, 12)                  # the same spell: nothing more, and no second chart is made
+    assert len(seen) == 1 and "UV index 12" in seen[0][0] and seen[0][1] == b"png" and asked == ["UV chart 1d"]
+    m.station.data = uv(3, 5, 11, 12, 12)              # the same spell: nothing more, and no second chart is made
     await m.check()
     assert len(seen) == 1 and asked == ["UV chart 1d"]
     (tmp_path / "b").mkdir()
@@ -678,6 +682,75 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     plain.notify = notify2
     asking(plain, photo=None)
     await plain.check()
-    plain.station.data = uv(3, 5, 11)
+    plain.station.data = uv(3, 5, 11, 12)
     await plain.check()
     assert got == [{"kind": "uv"}]                     # no chart: text only
+
+
+def test_the_confirmation_rule_counts_distinct_readings_in_a_row():
+    from lib.alerts import confirm
+    saved = {}
+    assert confirm.new_reading(saved, 100) and not confirm.new_reading(saved, 100) and not confirm.new_reading(saved, 50) and confirm.new_reading(saved, 101)
+    assert confirm.run(saved, "n", True) == 1 and confirm.run(saved, "n", True) == 2
+    assert confirm.run(saved, "n", None) == 2                      # a reading with no value changes nothing
+    assert confirm.run(saved, "n", False) == 0 and confirm.run(saved, "n", True) == 1
+
+
+async def test_uv_needs_two_distinct_readings_even_across_checks_and_a_restart(tmp_path):
+    m, state, sent = monitor(tmp_path, uv(3, 5))
+    await m.check()                                    # the first look sets the mark
+    m.station.data = uv(3, 5, 10)
+    await m.check()
+    await m.check()                                    # the same reading looked at again does not count twice
+    assert sent == []
+    restarted = WeatherMonitor(m.station, AlertState(state.path), m.notify)    # a restart: the run is in the state file
+    sent2 = []
+
+    async def notify(text, link=None, **kw):
+        sent2.append(text)
+    restarted.notify = notify
+    restarted.station.data = uv(3, 5, 10, 10.5)
+    await restarted.check()
+    assert len(sent2) == 1 and "UV index 10.5" in sent2[0]
+    (tmp_path / "x").mkdir()
+    m3, _, sent3 = monitor(tmp_path / "x", uv(3, 5))
+    await m3.check()
+    m3.station.data = [(T0 + 600, {"solar_and_uvi.uvi": 11}), (T0 + 900, {"solar_and_uvi.uvi": 9.9}), (T0 + 1200, {"solar_and_uvi.uvi": 11})]
+    await m3.check()
+    assert sent3 == []                                 # a reading below 10 ends the run
+    m3.station.data += [(T0 + 1500, {}), (T0 + 1800, {"solar_and_uvi.uvi": 12})]
+    await m3.check()
+    assert len(sent3) == 1                             # a reading with no value is skipped: 11 then 12 is a run
+
+
+async def test_a_difference_of_a_degree_or_less_is_not_a_crossing(tmp_path):
+    from lib.alerts.weather import side
+    assert side({"outdoor.temperature": 21.0, "indoor.temperature": 20.0}) is None and side({"outdoor.temperature": 19.0, "indoor.temperature": 20.0}) is None
+    assert side({"outdoor.temperature": 21.1, "indoor.temperature": 20.0}) == "warmer" and side({"outdoor.temperature": 18.9, "indoor.temperature": 20.0}) == "cooler"
+    m, state, sent = monitor(tmp_path, temps(10, 20))
+    await m.check()
+    m.station.data = temps(20.9, 20, T0 + 3 * 3600)    # only 0.9 degrees: not warmer
+    await m.check()
+    assert sent == []
+    m.station.data = temps(21.1, 20, T0 + 3 * 3600 + 300)
+    await m.check()
+    assert len(sent) == 1 and "warmer outside" in sent[0]
+
+
+async def test_particulates_count_readings_not_checks(tmp_path):
+    state, sent = AlertState(tmp_path / "s.json"), []
+
+    async def notify(text, link=None, **kw):
+        sent.append(text)
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
+    first = air_reading(90)
+    await mon.check(first)
+    await mon.check(first)                             # the sensor said nothing new: still one reading
+    assert sent == []
+    await mon.check(air_reading(30))                   # a reading that is not unhealthy ends the run
+    await mon.check(first)                             # and an old reading is not counted again
+    assert sent == []
+    again = ParticulatesMonitor(FakeAir(), AlertState(tmp_path / "s.json"), notify)        # a restart keeps what was counted
+    await again.check(air_reading(90))
+    await again.check(air_reading(90))
+    assert len(sent) == 1 and "mask" in sent[0]

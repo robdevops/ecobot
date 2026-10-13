@@ -6,8 +6,10 @@
     rain is sent after they end.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
-  - Strong sun: one alert when the UV index reaches 10, and no more until it has stayed below 10 for an hour.
-  - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); a 0.3 degree margin stops sensor noise flip-flopping.
+  - Strong sun: one alert when the UV index is 10 or more in two readings in a row (confirm.py), and no more until it has stayed
+    below 10 for an hour.
+  - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); it has to differ by more than 1 degree, which stops
+    sensor noise flip-flopping.
   Rain and crossing share one back-off rule (backoff.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
@@ -16,7 +18,7 @@ import logging
 from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
-from . import pictures
+from . import confirm, pictures
 from .backoff import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
 from ..timeutil import to_local
@@ -24,7 +26,7 @@ from ..timeutil import to_local
 log = logging.getLogger(__name__)
 
 ALERT_COOLDOWN_SECONDS = 30 * 60   # the default; ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
-CROSS_MARGIN = 0.3
+CROSS_MARGIN = 1.0
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600
 UV_REARM_SECONDS = 3600
@@ -175,24 +177,34 @@ class WeatherMonitor:
                 m.update(active=False, calm_since=None)
 
     async def _uv(self, rows: Rows):
-        """Like the gusts: only readings since the last check count, one alert per spell at or above UVI_ALERT."""
+        """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (confirm.py); only readings newer than the last
+        one counted are looked at, so a restart doesn't re-announce an old spell."""
         m = self.state.monitor.setdefault("uv", {"active": False, "calm_since": None})
         latest_ts = rows[-1][0]
-        seen, m["checked"] = m.get("checked", latest_ts), latest_ts
-        over = [(u, ts) for ts, r in rows if ts > seen and (u := r.get("solar_and_uvi.uvi")) is not None and u >= UVI_ALERT]
-        if over:
+        m.setdefault("stamp", m.pop("checked", latest_ts))   # the first look only sets the mark
+        high = False
+        for ts, r in rows:
+            if not confirm.new_reading(m, ts):
+                continue
+            u = r.get("solar_and_uvi.uvi")
+            hit = None if u is None else u >= UVI_ALERT
+            streak = confirm.run(m, "streak", hit)
+            if hit and (streak == 1 or u > m["peak"][0]):    # the run's highest reading is the one told
+                m["peak"] = [u, ts]
+            high = high or bool(hit)
+        if high:
             m["calm_since"] = None
-            if not m["active"]:
-                m["active"] = True
-                uv, ts = max(over)
-                photo = await self._picture("UV chart 1d")
-                await self.notify(f"\U0001f9f4 UV index {uv:g} at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-                                  + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
-                                  **({"photo": photo} if photo else {}))
         elif m["active"]:
             m["calm_since"] = m["calm_since"] or latest_ts
             if latest_ts - m["calm_since"] >= UV_REARM_SECONDS:
                 m.update(active=False, calm_since=None)
+        if m.get("streak", 0) >= confirm.CONFIRM_READINGS and not m["active"]:
+            m["active"] = True
+            uv, ts = m["peak"]
+            photo = await self._picture("UV chart 1d")
+            await self.notify(f"\U0001f9f4 UV index {uv:g} at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
+                              + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
+                              **({"photo": photo} if photo else {}))
 
     async def _cross(self, rows: Rows):
         ts, r = rows[-1]

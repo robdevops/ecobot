@@ -1,22 +1,21 @@
 """Particulates alerts (PM2.5 and PM10) from the AirGradient sensor, checked every 30 minutes.
 
 "Wear a mask outside" when PM2.5 or PM10 reaches US AQI 151+ ("unhealthy", the official level
-at which masks are advised for everyone) for two checks in a row; "back to safe" when both are at
-AQI 100 or below for two checks in a row. Every episode gets the pair. Particles only: masks
+at which masks are advised for everyone) in two readings in a row; "back to safe" when both are at
+AQI 100 or below in two readings in a row (confirm.py: a check that brings no new reading counts for nothing). Every episode gets the pair. Particles only: masks
 filter particles, not gases like CO2/VOC/NOx.
 """
 
 import logging
 from datetime import datetime
 
-from . import pictures
+from . import confirm, pictures
 
 log = logging.getLogger(__name__)
 
 CHECK_SECONDS = 30 * 60
 MASK_PM25, MASK_PM10 = 55.5, 255.0     # US AQI 151+
 SAFE_PM25, SAFE_PM10 = 35.4, 154.0     # US AQI 100 or better
-CONFIRM_CHECKS = 2                     # consecutive checks, so a passing puff of smoke doesn't count
 STALE_SECONDS = 2 * 3600               # ignore readings older than this (sensor offline)
 
 
@@ -38,16 +37,18 @@ class ParticulatesMonitor:
         pm10 = (reading.get("pm10") or {}).get("value")
         if pm25 is None and pm10 is None:
             return
+        if when is not None and not confirm.new_reading(m, when.timestamp()):   # the sensor has said nothing new since the last check
+            return
         bad = (pm25 is not None and pm25 >= MASK_PM25) or (pm10 is not None and pm10 >= MASK_PM10)
         good = (pm25 is None or pm25 <= SAFE_PM25) and (pm10 is None or pm10 <= SAFE_PM10)
-        m["above"] = m["above"] + 1 if bad else 0
-        m["below"] = m["below"] + 1 if good else 0
-        if not m["unsafe"] and m["above"] >= CONFIRM_CHECKS:
+        confirm.run(m, "above", bad)
+        confirm.run(m, "below", good)
+        if not m["unsafe"] and m["above"] >= confirm.CONFIRM_READINGS:
             m["unsafe"] = True
             photo = await self._picture()
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
                               link=self.air.link, kind="particulates", **({"photo": photo} if photo else {}))
-        elif m["unsafe"] and m["below"] >= CONFIRM_CHECKS:
+        elif m["unsafe"] and m["below"] >= confirm.CONFIRM_READINGS:
             m["unsafe"] = False
             photo = await self._picture()
             await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates",
