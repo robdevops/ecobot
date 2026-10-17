@@ -25,7 +25,7 @@ from lib.airgradient import AirGradient
 from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
 from lib.alerts.menu import LABELS, kinds_for
-from lib.bot import Bot, polling_error
+from lib.bot import PREDRAW_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
@@ -223,6 +223,7 @@ async def main():
                         log.exception("Startup warm-up failed (the regular refreshes will catch up)")
                     log.info("Startup warm-up: %s, %.1fs", ", ".join(parts) or "nothing to fetch",
                              time.monotonic() - started)
+                    tasks.append(asyncio.create_task(every(PREDRAW_SECONDS, bot.predraw)))   # the button charts, ready before they are pressed
                     on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
                     log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats"))
                     if missing := [LABELS[k] for k in kinds if k not in running]:

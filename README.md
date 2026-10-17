@@ -82,7 +82,9 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed)
 - The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
   model is called once, at the end, just to word the answer.
-- Recent readings are prefetched when a question arrives and refreshed every 4 minutes.
+- Recent readings are kept in memory, refreshed every minute (the weather station) and every 4 minutes (the air sensor); a question that may need them starts a refresh as it arrives (a chart made in code doesn't: it reads just what it needs). A question never waits for a refresh in flight when the cache and memory already hold what it needs, and its own Ecowitt requests go before the background ones.
+- The chart buttons' charts are drawn ahead every 5 minutes, one at a time and never while a question is being answered: a press is sent the one drawn in the last 5½ minutes at once (its write-up kept in the chat's memory, as for one drawn on the spot); an alert's chart is still drawn when it goes out, so it shows the reading the alert is about. A chart is uploaded once: sending it again (to the next chat an alert goes to, toggling back to a period drawn lately, the next press of a button) uses Telegram's copy.
+- Each chart reply logs where its time went: `Chart times: data 12 ms, calculation 6 ms, drawing 112 ms, PNG 41 ms (22 KB), sending 812 ms`, or `drawn 40s before, sending 210 ms (Telegram's copy)` for one drawn ahead.
 - The whole history of both sensors is kept in SQLite (`ecowitt_cache.sqlite`,
   `airgradient_cache.sqlite`): a background archive copies every Ecowitt cycle (5-minute, 30-minute,
   4-hour, daily) before Ecowitt expires it, and backfills AirGradient day by day to where the sensor's

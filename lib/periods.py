@@ -67,15 +67,22 @@ class Drawn:
     png: bytes
     title: str
     file_id: str | None = None   # Telegram's copy, once the chart has been sent: it is sent again by this, not uploaded
+    caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
+
+    @property
+    def photo(self) -> bytes | str:
+        return self.file_id or self.png
 
 
 class ImageCache:
     """The charts drawn lately, by question: toggling between the period buttons brings a chart back at once instead of drawing it
     again, and once it has been sent, as Telegram's copy instead of an upload. A chart is kept CHART_TTL seconds (the readings move
-    slowly) and the newest CHART_IMAGES stay."""
+    slowly) and the newest CHART_IMAGES stay. The button charts are also drawn ahead (Bot.predraw): one drawn in the last FRESH
+    seconds is the answer to its question (ready)."""
 
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
+    FRESH = 330   # a little over the time between two rounds of drawing ahead, so a press always finds one
 
     def __init__(self, clock=None):
         import time
@@ -88,6 +95,14 @@ class ImageCache:
         from . import intent
         return intent.with_period(question, days, now).lower()
 
+    @classmethod
+    def canonical(cls, question: str, now) -> str | None:
+        """The key of a question that is its own key, word for word ("Temperature chart 7d", a button's): its chart is the same
+        whoever asks it. None for any other ("temperature chart today" is kept under the 1d key, but it is another chart)."""
+        from . import intent
+        key = cls.key(question, intent.period_days(question, now), now)
+        return key if key == " ".join(question.split()).lower() else None
+
     def get(self, key: str) -> tuple[bytes | str, str] | None:
         """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
         entry = self.items.get(key)
@@ -95,10 +110,24 @@ class ImageCache:
             self.items.pop(key, None)
             return None
         self.items.move_to_end(key)
-        return entry.file_id or entry.png, entry.title
+        return entry.photo, entry.title
 
-    def put(self, key: str, png: bytes, title: str):
-        self.items[key] = Drawn(self.clock(), png, title)
+    def ready(self, question: str, now) -> Drawn | None:
+        """The chart made in code for exactly these words in the last FRESH seconds (drawn ahead, or for someone's question),
+        with the text that went with it; None if there is none."""
+        key = self.canonical(question, now)
+        entry = self.items.get(key) if key else None
+        if entry is None or entry.caption is None or self.clock() - entry.at > self.FRESH:
+            return None
+        self.items.move_to_end(key)
+        return entry
+
+    def age(self, entry: Drawn) -> float:
+        return self.clock() - entry.at
+
+    def put(self, key: str, png: bytes, title: str, caption: str | None = None):
+        """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready)."""
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption)
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)

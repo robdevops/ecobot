@@ -47,6 +47,7 @@ NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
+PREDRAW_SECONDS = 300        # the button charts are drawn ahead this often (a press finds one drawn within periods.ImageCache.FRESH)
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
@@ -243,7 +244,12 @@ class Bot:
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
-        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
+        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant (and the buttons' drawn ahead)
+        self.answering = 0                   # questions being answered right now: charts are drawn ahead only when there are none
+        self.idle = asyncio.Event()
+        self.idle.set()
+        self.predrawn = False                # the first round of charts drawn ahead has been logged
+        self.predraw_failing: set[str] = set()   # button charts that couldn't be drawn ahead (said once, until they can again)
         self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
 
     def register(self, app):
@@ -822,7 +828,52 @@ class Bot:
                 working[:] = before          # the unfinished attempt's turns are dropped
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
+    async def predraw(self):
+        """Draw the charts the buttons ask for ahead of the press: one pressed in the next ImageCache.FRESH seconds is sent at once.
+        One chart at a time, and never while a question is being answered (its own drawing would wait behind these). Run every
+        PREDRAW_SECONDS; the first round is logged, and a chart that can't be drawn once, until it can again."""
+        started, done = time.monotonic(), []
+        for text in dict.fromkeys(question for row in templates.rows(self.irrigation is not None) for _, question in row if question):
+            await self.idle.wait()
+            now = now_local(self.cfg.tz)
+            read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
+                               "Forecast" in self.by_name)
+            key = self.images.canonical(text, now)
+            if not (read.fast and read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
+                continue
+            turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                        average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, ahead=True)
+            try:
+                caption = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
+                if caption is None or len(turn.charts) != 1:
+                    raise ValueError("no chart came of it")
+                png = await asyncio.to_thread(render_chart, turn.charts[0], self.cfg.tz)
+            except Exception as e:
+                if text not in self.predraw_failing:
+                    self.predraw_failing.add(text)
+                    log.warning("Couldn't draw %r ahead (%s: %s); pressing it draws it", text, type(e).__name__, e)
+                continue
+            self.images.put(key, png, turn.charts[0].caption(now.date()), caption)
+            done.append(text)
+            if text in self.predraw_failing:
+                self.predraw_failing.discard(text)
+                log.info("Drawn ahead again: %s", text)
+        if not self.predrawn:
+            self.predrawn = True
+            log.info("Button charts drawn ahead every %ds: %s (%.1fs)", PREDRAW_SECONDS, ", ".join(done) or "none", time.monotonic() - started)
+
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
+        """Answer a question (_respond), counted while it runs: no chart is drawn ahead meanwhile."""
+        self.answering += 1
+        self.idle.clear()
+        try:
+            await self._respond(update, context, text, redraw)
+        finally:
+            self.answering -= 1
+            if not self.answering:
+                self.idle.set()
+
+    async def _respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
         msg = update.effective_message
         text = text.strip()
         if not text:
@@ -856,9 +907,12 @@ class Bot:
             made = None   # how long the tool took when the chart is made in code, for the timing line
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text)
+            ready = self.images.ready(text, now) if read.fast and read.chart_in_code and redraw is None else None
             try:
                 reply = None
-                if read.fast and read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
+                if ready:   # drawn moments ago (ahead, or for someone's same question): sent as it is, its text kept for the history
+                    reply, photos, titles, silent = ready.caption, [ready.photo], [ready.title], True
+                elif read.fast and read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
                     began = time.monotonic()
                     reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
                     silent = reply is not None
@@ -897,6 +951,7 @@ class Bot:
                 stop_typing.set()
                 await asyncio.gather(*[t for t in (typing, drafting) if t])  # wait for any in-flight "typing" or draft so none is sent after the reply
 
+        caption = reply if silent else None   # a chart made in code: its text, kept with the chart for the next to ask the same
         if silent and photos:
             reply = ""
         if ok and not reply.strip() and not photos:   # a chart with no text that could not be drawn
@@ -912,8 +967,8 @@ class Bot:
         row =periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo, drawn = [], list(photos)
         kept = self.images.key(text, intent.period_days(text, now), now) if row and ok and not reply.strip() else None
-        if kept:   # a chart and nothing else: keep it for the period buttons
-            self.images.put(kept, photos[0], titles[0])
+        if kept and not ready:   # a chart and nothing else: keep it for the period buttons (and, its words being its key, for the next to ask them)
+            self.images.put(kept, photos[0], titles[0], caption if kept == self.images.canonical(text, now) else None)
         try:
             began = time.monotonic()
             if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text, kept):
@@ -922,7 +977,10 @@ class Bot:
                                              markup=markup or (report_menu.keyboard() if refresh else None),
                                              titles=titles, period_row=row, sent_photo=sent_photo,
                                              bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
-            if drawn:
+            if ready:
+                log.info("Chart times: drawn %.0fs before, sending %.0f ms%s", self.images.age(ready), (time.monotonic() - began) * 1000,
+                         " (Telegram's copy)" if isinstance(drawn[0], str) else "")
+            elif drawn:
                 log.info("Chart times: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)

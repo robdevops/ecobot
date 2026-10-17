@@ -209,3 +209,66 @@ async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(monke
     assert actions == [] and drafts == []
     await bot.respond(update, context, "Temperature chart 7d")          # a question of its own still does
     assert actions
+
+
+def pressed(bot, sent):
+    """A private chat's message whose photos land in `sent` as (photo, caption)."""
+    async def reply_photo(photo, caption=None, **kw):
+        sent.append((photo, caption))
+        return NS(message_id=100 + len(sent), photo=(NS(file_id="small"), NS(file_id=f"copy {len(sent)}")))
+    msg = NS(chat_id=1, message_id=50, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+
+async def test_the_button_charts_are_drawn_ahead_and_a_press_is_sent_one_at_once(monkeypatch, caplog):
+    bot, sent = make_bot(monkeypatch), []
+    with caplog.at_level("INFO"):
+        await bot.predraw()
+    calls = len(bot.agent.tools.calls)
+    assert calls >= 1 and all(name == "weather_history" for name, _ in bot.agent.tools.calls)   # the station's buttons (no air sensor here)
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("Tool ")] == []      # quiet: nobody asked
+    assert any(r.getMessage().startswith("Button charts drawn ahead every 300s: ") for r in caplog.records)
+    update = pressed(bot, sent)
+    await bot.respond(update, CONTEXT, "Temperature chart 1d")
+    assert len(bot.agent.tools.calls) == calls and sent == [(b"png", "Temperature")]                 # no new question: the one drawn ahead
+    history = bot.chats[(1, None)].history
+    assert history[-1]["role"] == "assistant" and history[-1]["content"]                             # its text is kept, as a drawn one's is
+    await bot.respond(update, CONTEXT, "Temperature chart 1d")
+    assert len(bot.agent.tools.calls) == calls and sent[-1] == ("copy 1", "Temperature")             # and once sent, by Telegram's copy
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        await bot.predraw()
+    assert not any("drawn ahead" in r.getMessage() for r in caplog.records)                          # only the first round is logged
+
+
+async def test_a_chart_drawn_ahead_is_drawn_again_once_it_is_stale_and_never_answers_other_words(monkeypatch):
+    clock = [0.0]
+    bot, sent = make_bot(monkeypatch), []
+    bot.images = periods.ImageCache(lambda: clock[0])
+    await bot.predraw()
+    calls = len(bot.agent.tools.calls)
+    await bot.respond(pressed(bot, sent), CONTEXT, "temperature chart today")     # kept under the 1d key, but since midnight: drawn
+    assert len(bot.agent.tools.calls) == calls + 1
+    await bot.predraw()
+    calls = len(bot.agent.tools.calls)
+    clock[0] = periods.ImageCache.FRESH + 1
+    await bot.respond(pressed(bot, sent), CONTEXT, "Temperature chart 1d")        # too old to send as it is
+    assert len(bot.agent.tools.calls) == calls + 1
+
+
+async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(monkeypatch):
+    import asyncio
+    bot = make_bot(monkeypatch)
+    bot.answering = 1
+    bot.idle.clear()
+    drawing = asyncio.create_task(bot.predraw())
+    await asyncio.sleep(0.05)
+    assert bot.agent.tools.calls == []
+    bot.answering = 0
+    bot.idle.set()
+    await drawing
+    assert bot.agent.tools.calls
+    await bot.respond(pressed(bot, []), CONTEXT, "Temperature chart 7d")
+    assert bot.answering == 0 and bot.idle.is_set()                    # counted while it ran, and let go after
+

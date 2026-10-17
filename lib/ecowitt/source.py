@@ -179,7 +179,7 @@ class Ecowitt:
         named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
         if (r := find(named)) and r.group not in groups:
             groups.append(r.group)
-        return await HistoryQuery(self.fetcher(groups, urgent=True), args, turn).run()
+        return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
         return await days_tool(self.cache, self.mac, self.tz, args, turn)

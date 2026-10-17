@@ -193,6 +193,10 @@ async def test_a_questions_requests_go_before_the_background_ones_and_the_refres
     await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=20)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=10)} 23:59:59"}, Turn())
     assert marked and all(marked)   # the question's own, and its wind rose's
+    marked.clear()
+    await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=40)} 00:00:00",
+                                "end_date": f"{today - timedelta(days=30)} 23:59:59"}, Turn(ahead=True))
+    assert marked and not any(marked)   # a chart drawn ahead: nobody is waiting for it
 
 
 async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypatch):
