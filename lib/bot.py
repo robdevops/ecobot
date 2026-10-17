@@ -604,23 +604,25 @@ class Bot:
         await query.answer(f"Drawing {periods.NAMES[days]}...")
         asked = intent.with_period(question, days, now)
         log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
-        if cached := self.images.get(self.images.key(asked, days, now)):   # drawn lately: no new question
-            png, title = cached
+        key = self.images.key(asked, days, now)
+        if cached := self.images.get(key):   # drawn lately: no new question
+            photo, title = cached
             try:
                 began = time.monotonic()
-                await message.edit_media(InputMediaPhoto(png, caption=title or None), reply_markup=periods.keyboard(days))
+                self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=periods.keyboard(days)))
                 self.charted.remember(message.chat_id, message.message_id, asked)
-                log.info("Period button: chart from the cache, sent in %.0f ms", (time.monotonic() - began) * 1000)
+                log.info("Period button: chart from the cache, sent in %.0f ms%s", (time.monotonic() - began) * 1000,
+                         " (Telegram's copy)" if isinstance(photo, str) else "")
                 return
             except TelegramError as e:
                 log.warning("Couldn't edit the chart in place (%s); drawing it again", e)
         await self.respond(update, context, asked, redraw=message)
 
-    async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str) -> bool:
+    async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str, key: str | None = None) -> bool:
         """Put a new chart into the message a period button was pressed under (its answer text, if any, follows as a message of
-        its own). False when Telegram refuses, and the chart is then sent as a new message."""
+        its own). False when Telegram refuses, and the chart is then sent as a new message. key: where the image cache keeps it."""
         try:
-            await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=row)
+            self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=row))
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 log.warning("Couldn't edit the chart in place (%s); sending a new one", e)
@@ -909,11 +911,12 @@ class Bot:
         refresh = ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
         row =periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
         sent_photo, drawn = [], list(photos)
-        if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
-            self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])
+        kept = self.images.key(text, intent.period_days(text, now), now) if row and ok and not reply.strip() else None
+        if kept:   # a chart and nothing else: keep it for the period buttons
+            self.images.put(kept, photos[0], titles[0])
         try:
             began = time.monotonic()
-            if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
+            if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text, kept):
                 reply, photos, row = "", [], None
             carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
                                              markup=markup or (report_menu.keyboard() if refresh else None),
@@ -923,6 +926,7 @@ class Bot:
                 log.info("Chart times: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
+                self.images.sent(kept, sent_photo[0])
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown)
             if carried_keyboard:

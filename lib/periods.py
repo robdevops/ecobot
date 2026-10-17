@@ -2,6 +2,7 @@
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -59,9 +60,19 @@ class Charted:
             self.save()
 
 
+@dataclass
+class Drawn:
+    """A chart in the ImageCache."""
+    at: float                    # when it was drawn (the cache's clock)
+    png: bytes
+    title: str
+    file_id: str | None = None   # Telegram's copy, once the chart has been sent: it is sent again by this, not uploaded
+
+
 class ImageCache:
     """The charts drawn lately, by question: toggling between the period buttons brings a chart back at once instead of drawing it
-    again. A chart is kept CHART_TTL seconds (the readings move slowly) and the newest CHART_IMAGES stay."""
+    again, and once it has been sent, as Telegram's copy instead of an upload. A chart is kept CHART_TTL seconds (the readings move
+    slowly) and the newest CHART_IMAGES stay."""
 
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
@@ -77,16 +88,22 @@ class ImageCache:
         from . import intent
         return intent.with_period(question, days, now).lower()
 
-    def get(self, key: str) -> tuple[bytes, str] | None:
+    def get(self, key: str) -> tuple[bytes | str, str] | None:
+        """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
         entry = self.items.get(key)
-        if entry is None or self.clock() - entry[0] > self.CHART_TTL:
+        if entry is None or self.clock() - entry.at > self.CHART_TTL:
             self.items.pop(key, None)
             return None
         self.items.move_to_end(key)
-        return entry[1], entry[2]
+        return entry.file_id or entry.png, entry.title
 
     def put(self, key: str, png: bytes, title: str):
-        self.items[key] = (self.clock(), png, title)
+        self.items[key] = Drawn(self.clock(), png, title)
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)
+
+    def sent(self, key: str | None, message):
+        """`message` (as Telegram returned it) carries the chart kept under `key`: later sends of it use Telegram's copy."""
+        if (entry := self.items.get(key)) is not None and (sizes := getattr(message, "photo", None)):
+            entry.file_id = sizes[-1].file_id   # the largest size: the picture as it was sent

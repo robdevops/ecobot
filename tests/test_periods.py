@@ -169,6 +169,29 @@ async def test_toggling_back_to_a_period_just_drawn_uses_the_cached_image_and_as
     assert [e[0] for e in edits] == ["Temperature"] * 4   # the repeated 30d press edited nothing and bot.charted[(1, 101)] == "Temperature chart 7d"
 
 
+async def test_a_chart_once_sent_goes_again_as_telegrams_copy_not_a_new_upload(monkeypatch):
+    bot, uploads, edits = make_bot(monkeypatch), [], []
+
+    async def reply_photo(photo, caption=None, **kw):
+        uploads.append(photo)
+        return NS(message_id=101, photo=(NS(file_id="small"), NS(file_id="7d")))
+
+    async def edit_media(media, reply_markup=None):
+        edits.append(media.media if isinstance(media.media, str) else "upload")
+        return NS(photo=(NS(file_id="small"), NS(file_id=f"edit {len(edits)}")))
+    msg = NS(chat_id=1, message_id=101, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo, edit_media=edit_media,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    await bot.respond(update, CONTEXT, "Temperature chart 7d")
+
+    async def answer(text=None):
+        pass
+    for days in (30, 7, 30):
+        await bot.on_period_button(NS(callback_query=NS(data=f"pd:{days}", message=msg, answer=answer), effective_message=msg,
+                                      effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")), CONTEXT)
+    assert uploads == [b"png"] and edits == ["upload", "7d", "edit 1"]   # 30d drawn and uploaded once; then both by Telegram's copy
+
+
 async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(monkeypatch):
     bot = make_bot(monkeypatch)
     actions = []
