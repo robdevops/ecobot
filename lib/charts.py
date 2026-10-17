@@ -13,6 +13,7 @@ import glob
 import io
 import math
 import threading
+import time
 from dataclasses import dataclass
 from datetime import tzinfo
 from statistics import fmean
@@ -544,9 +545,10 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
     return len(lines), x1, entries
 
 
-def _render(chart: Chart, tz: tzinfo) -> bytes:
+def _render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
     """The panels top to bottom on one time axis, so the rain (or another reading) lines up with what the others were doing.
     A chart of one panel of lines is the same thing drawn BIG (and with its wind rose beside it, when it has one)."""
+    started = time.perf_counter()
     panels, n = chart.panels, len(chart.panels)
     look = _look_for(chart)
     height = H_IN if n <= 2 else H_IN + PANEL_IN * (n - 2)
@@ -596,7 +598,7 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
     except Exception:
         plt.close(fig)
         raise
-    return _png(fig)
+    return _png(fig, times, started)
 
 
 def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list[int], np.ndarray]:
@@ -619,11 +621,13 @@ def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list
     return taken, nearest
 
 
-def _png(fig) -> bytes:
+def _png(fig, times: dict | None = None, started: float = 0.0) -> bytes:
     """The figure as a PNG of at most 256 colours (see _palette): well under half the size of a full-colour one, and quicker to
-    write. A chart has a few thousand colours, nearly all of them the in-between shades on the edges of lines and letters."""
+    write. A chart has a few thousand colours, nearly all of them the in-between shades on the edges of lines and letters.
+    times: the seconds since `started` (the clock when the figure was begun) are added to its "draw", and the PNG's to its "png"."""
     try:
         fig.canvas.draw()
+        drawn = time.perf_counter()
         width, height = fig.canvas.get_width_height(physical=True)
         pixels = np.frombuffer(fig.canvas.buffer_rgba(), "<u4") & 0xFFFFFF   # each pixel as one number: red + green·256 + blue·65536 (it is opaque)
         colours, counts = np.unique(pixels, return_counts=True)
@@ -635,6 +639,9 @@ def _png(fig) -> bytes:
         image.putpalette(rgb[taken].astype(np.uint8).tobytes())
         buf = io.BytesIO()
         image.save(buf, format="png", dpi=(DPI, DPI))
+        if times is not None:
+            times["draw"] = times.get("draw", 0.0) + drawn - started
+            times["png"] = times.get("png", 0.0) + time.perf_counter() - drawn
         return buf.getvalue()
     finally:
         plt.close(fig)
@@ -643,7 +650,8 @@ def _png(fig) -> bytes:
 _DRAWING = threading.Lock()   # pyplot keeps global state (current figure, rcParams): one chart is drawn at a time
 
 
-def render(chart: Chart, tz: tzinfo) -> bytes:
-    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads."""
+def render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
+    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads.
+    times (a Turn's): the seconds spent drawing the figure and writing the PNG are added to its "draw" and "png"."""
     with _DRAWING:
-        return _render(chart, tz)
+        return _render(chart, tz, times)

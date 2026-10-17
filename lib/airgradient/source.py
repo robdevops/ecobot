@@ -322,8 +322,9 @@ class AirGradient:
         if t0 >= t1:
             return {"error": "start must be before end"}
         chart = wants_chart({"chart": chart}, turn, t0, t1)
-        before = self.requests
+        before, started = self.requests, time.perf_counter()
         rows, hourly, skipped = await self.rows(t0, t1)
+        turn.times["data"] = turn.times.get("data", 0.0) + time.perf_counter() - started   # for the reply's timing line
         log.info("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}", f"{t1:%m-%d %H:%M}", len(rows),
                  self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",

@@ -25,6 +25,7 @@ class Turn:
     per_day: bool = False                        # day by day figures were asked for: a long period keeps every day, not only its extremes
     result_chars: int = 0                        # the size of every tool result so far this question (what the model will be sent)
     forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
+    times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
 
 
 @dataclass

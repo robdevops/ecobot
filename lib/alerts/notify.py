@@ -9,6 +9,7 @@ settings buttons and, when there is one, a small italic footer with a link label
 import json
 import logging
 import os
+import time
 from datetime import date
 
 from telegram import MessageEntity
@@ -199,8 +200,9 @@ class Notifier:
         longer post to. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons.
         photo: a picture the text is the caption of (the text alone if Telegram refuses the picture)."""
         text, entities = with_footer(text, link)
+        started = time.monotonic()
         sent = sum([await self._send(chat_id, text, entities, kind, photo) for chat_id in self.state.alert_chats(kind)])
-        log.info("Alert sent to %d chat(s): %s", sent, text.replace("\n", " "))
+        log.info("Alert sent to %d chat(s) in %.1fs: %s", sent, time.monotonic() - started, text.replace("\n", " "))
 
     async def to_chat(self, chat_id: int, text: str, link: tuple[str, str] | None = None, kind: str | None = None) -> bool:
         """An alert for one chat (the one that was sent something that has since changed), if it is subscribed to the type.

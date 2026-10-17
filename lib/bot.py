@@ -74,6 +74,19 @@ def _short(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float) -> str:
+    """A reply's chart timings for the log: "data 12 ms, calculation 3 ms, drawing 98 ms, PNG 41 ms (23 KB), sending 812 ms". times is
+    the question's Turn.times; made is how long the tool took when the chart was made in code (the calculation is that less its
+    data), else None. A step that wasn't timed is left out."""
+    ms = lambda seconds: f"{seconds * 1000:.0f} ms"
+    parts = [f"data {ms(times['data'])}"] if "data" in times else []
+    if made is not None:
+        parts.append(f"calculation {ms(max(0.0, made - times.get('data', 0.0)))}")
+    if "draw" in times:
+        parts += [f"drawing {ms(times['draw'])}", f"PNG {ms(times['png'])} ({sum(map(len, pngs)) / 1024:.0f} KB)"]
+    return ", ".join([*parts, f"sending {ms(sending)}"])
+
+
 def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
     chunks = []
     while len(text) > limit:
@@ -594,9 +607,10 @@ class Bot:
         if cached := self.images.get(self.images.key(asked, days, now)):   # drawn lately: no new question
             png, title = cached
             try:
+                began = time.monotonic()
                 await message.edit_media(InputMediaPhoto(png, caption=title or None), reply_markup=periods.keyboard(days))
                 self.charted.remember(message.chat_id, message.message_id, asked)
-                log.info("Period button: chart from the cache")
+                log.info("Period button: chart from the cache, sent in %.0f ms", (time.monotonic() - began) * 1000)
                 return
             except TelegramError as e:
                 log.warning("Couldn't edit the chart in place (%s); drawing it again", e)
@@ -837,13 +851,16 @@ class Bot:
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             ok, photos, titles, silent = True, [], [], False
+            made = None   # how long the tool took when the chart is made in code, for the timing line
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text)
             try:
                 reply = None
                 if read.fast and read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
+                    began = time.monotonic()
                     reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
                     silent = reply is not None
+                    made = time.monotonic() - began if silent else None
                 elif read.lookup:
                     reply = await asyncio.wait_for(self._lookup_in_code(read, turn), TURN_SECONDS)
                     if reply is None:
@@ -862,7 +879,7 @@ class Bot:
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
-                        photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
+                        photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz, turn.times))
                         titles.append(spec.caption(now.date()))
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
@@ -891,16 +908,19 @@ class Bot:
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         refresh = ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
         row =periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
-        sent_photo = []
+        sent_photo, drawn = [], list(photos)
         if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
             self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])
         try:
+            began = time.monotonic()
             if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
                 reply, photos, row = "", [], None
             carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
                                              markup=markup or (report_menu.keyboard() if refresh else None),
                                              titles=titles, period_row=row, sent_photo=sent_photo,
                                              bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
+            if drawn:
+                log.info("Chart times: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat

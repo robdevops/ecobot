@@ -2,7 +2,9 @@
 or from Ecowitt, within Ecowitt's per-request limits."""
 
 import asyncio
+import functools
 import logging
+import time
 from datetime import datetime, timedelta, tzinfo, UTC
 
 from ..timeutil import local_epoch, to_local
@@ -41,6 +43,18 @@ def merge_data(into: dict, new: dict, window: tuple[int, int] | None = None):
 REJECTIONS_STOP = 2             # requests Ecowitt refuses in one job before the rest are not sent
 
 
+def timed(method):
+    """A Fetcher method whose time (waits included) is added to the fetcher's `seconds`."""
+    @functools.wraps(method)
+    async def run(self, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return await method(self, *args, **kwargs)
+        finally:
+            self.seconds += time.perf_counter() - started
+    return run
+
+
 class Fetcher:
     """History for one job (a question, a refresh, an alert check): from the disk cache where
     possible, recent readings from memory if fresh, the rest from Ecowitt."""
@@ -52,6 +66,7 @@ class Fetcher:
         self.ranges = self.from_cache = self.from_memory = self.calls = 0
         self.errors: list[str] = []
         self.rejected = 0  # requests Ecowitt itself refused (not network trouble or a busy server)
+        self.seconds = 0.0  # time spent reading (the cache, memory, Ecowitt), for the reply's timing line
 
     def epoch(self, local: datetime) -> int:
         return local_epoch(local, self.tz)
@@ -59,6 +74,7 @@ class Fetcher:
     def local(self, epoch: int) -> datetime:
         return to_local(epoch, self.tz).replace(tzinfo=None)
 
+    @timed
     async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
         """Readings for [start, end] (local time). refresh=True ignores the in-memory copy (used by
         the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
@@ -105,6 +121,12 @@ class Fetcher:
             self.rejected += not e.transient
             return None
 
+    @timed
+    async def read(self, fn, *args):
+        """fn(*args), a read of the cache's own (slots, slot ranges), in a thread."""
+        return await asyncio.to_thread(fn, *args)
+
+    @timed
     async def covered(self, cycle: str, start: int, end: int) -> bool:
         """True if the cache holds every group for [start, end] (epoch seconds)."""
         for g in self.groups:

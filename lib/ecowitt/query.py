@@ -77,8 +77,15 @@ class HistoryQuery:
         self.rain_bars = Bars("Rain", "mm", [], [], 86400, "day")   # for a stacked chart with rain
         self.rain_from_daily = False                       # some of its days come from daily records (older than the 30-minute readings)
         self.compass: Compass | None = None                # the wind rose (counts per compass point by speed), drawn beside the wind chart
+        self.wind: Fetcher | None = None                   # the wind rose's own (5-minute readings), made when wind direction is counted
 
     async def run(self) -> str:
+        try:
+            return await self._run()
+        finally:   # for the reply's timing line
+            self.turn.times["data"] = self.turn.times.get("data", 0.0) + self.f.seconds + (self.wind.seconds if self.wind else 0.0)
+
+    async def _run(self) -> str:
         today = self.now.date()
         try:
             start = datetime.fromisoformat(str(self.args.get("start_date") or today).replace("T", " "))
@@ -130,8 +137,8 @@ class HistoryQuery:
             pts = series["pts"]
             if derives_range(field) and pts and not any(r["cycle"] != "30min" or "low" in r or "high" in r for r in pts.values()):
                 wanted[key] = (group, field, {t: r["value"][0] for t, r in pts.items() if "value" in r})
-        ranges = await asyncio.to_thread(lambda: {key: self.f.cache.slot_ranges(self.f.mac, group, field, values, lo, hi)
-                                                  for key, (group, field, values) in wanted.items()})
+        ranges = await self.f.read(lambda: {key: self.f.cache.slot_ranges(self.f.mac, group, field, values, lo, hi)
+                                            for key, (group, field, values) in wanted.items()})
         for key, (lows, highs) in ranges.items():
             pts = self.store[key]["pts"]
             for t in lows:
@@ -186,7 +193,7 @@ class HistoryQuery:
         if not keys:
             return
         f = self.f
-        wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz)
+        wind = self.wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz)
         first = max(self.start, self.end - timedelta(days=DIRECTION_DAYS))
         for key in keys:
             fine: dict = {}
@@ -481,10 +488,10 @@ class HistoryQuery:
         the daily records, the day's total, which are approximate (10am to 10am). A figure per month or year asked for in the
         person's words (`by`) gets one bar for each, whatever the length of the period."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
-        (daily,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
+        (daily,) = await self.f.read(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
         rain = rain_slots(daily)
         held = {local_date(t, self.tz) for t in rain}
-        (old,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "1day", "rainfall", ["daily"], lo - 86400, hi + 86400)
+        (old,) = await self.f.read(self.f.cache.slots, self.f.mac, "1day", "rainfall", ["daily"], lo - 86400, hi + 86400)
         for t, mm in old.items():   # a daily bucket is dated by the local day its 10am start falls on
             day = local_date(t, self.tz)
             if day not in held and self.start.date() <= day <= self.end.date():
