@@ -137,10 +137,10 @@ async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monk
 async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     air, _ = await make(tmp_path)
     ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))  # 40 days at 1-minute readings
-    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
+    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]
     assert len(line.x) <= 500
-    assert line.records["high"] == (ts[5000], 305.0) and "low" not in line.records          # PM's lowest is often 0: not marked
+    assert line.records["high"][1] == 305.0 and "low" not in line.records          # PM's lowest is often 0: not marked
     rows = [{"ts": t, "co2": 450.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
     assert air._chart(["co2"], rows, "period").panels[0].lines[0].records["low"][1] == 450.0   # CO2's lowest is
     await air.close()
@@ -150,7 +150,7 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
     from lib.charts import _extreme
     air, _ = await make(tmp_path)
     ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))
-    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
+    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 40 days: 4-hour buckets
     assert line.low is not None and max(line.y) < 305.0 and max(line.high) == 305.0
     assert _extreme(line, "high", range(len(line.x)))[1] == 305.0   # the label is the true peak, at the band's top
@@ -326,8 +326,8 @@ def _air_store(tmp_path):
     for k in range(40):
         day = start + timedelta(days=k)
         lo = int(datetime.combine(day, datetime.min.time()).replace(tzinfo=TZ).timestamp())
-        spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³
-        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if i == 100 else 5.0, "co2": 420.0 + i} for i in range(288)])
+        spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³ (for three readings: the air, not a glitch)
+        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if 100 <= i <= 102 else 5.0, "co2": 420.0 + i} for i in range(288)])
     return store, start
 
 
@@ -348,3 +348,81 @@ async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp
     assert [r["pm2_5_max"] for r in worst["days"]] == [40.0, 40.0]
     bad = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
     assert "unusable condition" in bad["error"]
+
+
+def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_lasting_rise_is_not():
+    from lib.airgradient.metrics import without_spikes
+    base = 1_790_000_000
+    row = lambda i, pm1, pm25, pm10, co2=450: {"ts": base + 300 * i, "pm1": pm1, "pm2_5": pm25, "pm10": pm10, "co2": co2}
+    rows = [row(0, 1, 2, 3), row(1, 1, 2, 4), row(2, 15.3, 14.2, 28.7, 900), row(3, 3, 8, 10), row(4, 2, 4, 5), row(5, 2, 3, 4)]
+    kept = without_spikes(rows)
+    assert [r["ts"] for r in kept] == [r["ts"] for r in rows]                               # the moment stays, for CO2
+    assert "pm10" not in kept[2] and "pm1" not in kept[2] and "pm2_5" not in kept[2] and kept[2]["co2"] == 900
+    assert all(r == o for i, (r, o) in enumerate(zip(kept, rows)) if i != 2)                # nothing else is touched
+    lasting = [row(0, 1, 2, 3), row(1, 1, 2, 4), row(2, 20, 20, 30), row(3, 22, 21, 32), row(4, 2, 4, 5)]
+    assert without_spikes(lasting) == lasting                                                # two readings in a row: the air
+    gentle = [row(0, 3, 4, 5), row(1, 3, 4, 9), row(2, 3, 4, 5)]
+    assert without_spikes(gentle) == gentle                                                  # high, but not by 5 µg/m³ and 2.5 times
+    ends = [row(0, 1, 2, 40), row(1, 1, 2, 3), row(2, 1, 2, 3)]
+    assert without_spikes(ends) == ends                                                      # the first reading has one side only
+    apart = [row(0, 1, 2, 3), {**row(1, 1, 2, 60), "ts": base + 3600}, {**row(2, 1, 2, 3), "ts": base + 7200}]
+    assert without_spikes(apart) == apart                                                    # hours from its neighbours: not a spike in a series
+
+
+async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path):
+    from datetime import timedelta
+    from lib.airgradient.days import daily_values
+    from lib.timeutil import local_date
+    from tests.fakes import TZ
+    air, _ = await make(tmp_path)
+    start = air._now().replace(hour=0, minute=0, second=0) - timedelta(hours=6)
+    t0 = int(start.replace(tzinfo=TZ).timestamp())
+    levels = [(1, 2, 3), (1, 2, 4), (15.3, 14.2, 28.7), (3, 8, 10), (2, 4, 5), (2, 3, 4)]
+    rows = [{"ts": t0 + 300 * i, "pm1": a, "pm2_5": b, "pm10": c} for i, (a, b, c) in enumerate(levels)]
+
+    async def held(t0_, t1_):
+        return rows, 0, []
+    air.rows = held
+    out = await air.history(start.strftime("%Y-%m-%d %H:%M:%S"), None)
+    assert out["pm10"]["high"] == 10 and out["pm2_5"]["high"] == 8 and out["pm1"]["high"] == 3      # not 28.7, 14.2 and 15.3
+    assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
+    assert daily_values(rows, ["pm10_max", "pm2_5_max"], TZ)["pm10_max"][local_date(t0, TZ)] == 10
+    await air.close()
+
+
+def test_the_readings_a_rise_needs_are_set_by_the_antispike_setting():
+    from lib.airgradient import metrics
+    from lib.airgradient.metrics import without_spikes
+    base = 1_790_000_000
+    row = lambda i, v: {"ts": base + 300 * i, "pm10": v}
+    two = [row(0, 3), row(1, 4), row(2, 30), row(3, 31), row(4, 4), row(5, 3)]          # two readings in a row
+    one = [row(0, 3), row(1, 4), row(2, 30), row(3, 4), row(4, 3)]
+    assert without_spikes(two) == two                                                    # the default, 2: two in a row is the air
+    assert [r.get("pm10") for r in without_spikes(two, require=3)] == [3, 4, None, None, 4, 3]
+    assert without_spikes(one, require=1) == one                                         # 1: the rule is off
+    assert [r.get("pm10") for r in without_spikes(one)] == [3, 4, None, 4, 3]
+    metrics.REQUIRE_CONSECUTIVE = 3
+    try:
+        assert [r.get("pm10") for r in without_spikes(two)] == [3, 4, None, None, 4, 3]  # the module's setting is the default
+    finally:
+        metrics.REQUIRE_CONSECUTIVE = 2
+
+
+async def test_current_gives_the_lowest_of_the_last_readings_for_the_alerts_and_not_to_the_model(tmp_path):
+    from lib.airgradient import metrics
+    air, _ = await make(tmp_path)
+    out = await air.current()
+    assert set(out["_sustained"]) >= {"pm2_5"} and out["_sustained"]["pm2_5"] <= out["pm2_5"]["value"]
+    assert "_sustained" not in json.loads(await air.handle({}, None))
+    await air.close()
+
+
+def test_the_antispike_setting_is_a_number_of_readings_default_2_and_off_is_1(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("ANTISPIKE_REQUIRE_CONSECUTIVE", raising=False)
+    assert Config.from_env().antispike_require_consecutive == 2
+    for value, want in (("3", 3), ("1", 1), ("0", 1), ("off", 1), ("junk", 2), ("", 2)):
+        monkeypatch.setenv("ANTISPIKE_REQUIRE_CONSECUTIVE", value)
+        assert Config.from_env().antispike_require_consecutive == want, value

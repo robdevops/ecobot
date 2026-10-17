@@ -31,6 +31,7 @@ from .tools import Turn
 from .config import Config
 from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
+from .logs import QUOTES
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
+PREDRAW_SECONDS = 300        # the button charts are drawn ahead this often (a press finds one drawn within periods.ImageCache.FRESH)
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
@@ -72,6 +74,19 @@ async def watchdog(label: str, seconds: float):
 def _short(text: str, limit: int = 200) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[:limit] + "..."
+
+
+def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float) -> str:
+    """A reply's chart timings for the log: "data 12, calc 3, draw 98, PNG 41 (23 KB), send 812" (ms). times is
+    the question's Turn.times; made is how long the tool took when the chart was made in code (the calculation is that less its
+    data), else None. A step that wasn't timed is left out."""
+    ms = lambda seconds: f"{seconds * 1000:.0f}"
+    parts = [f"data {ms(times['data'])}"] if "data" in times else []
+    if made is not None:
+        parts.append(f"calc {ms(max(0.0, made - times.get('data', 0.0)))}")
+    if "draw" in times:
+        parts += [f"draw {ms(times['draw'])}", f"PNG {ms(times['png'])} ({sum(map(len, pngs)) / 1024:.0f} KB)"]
+    return ", ".join([*parts, f"send {ms(sending)}"])
 
 
 def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
@@ -230,7 +245,15 @@ class Bot:
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
-        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
+        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant (and the buttons' drawn ahead)
+        self.answering = 0                   # questions being answered right now: charts are drawn ahead only when there are none
+        self.idle = asyncio.Event()
+        self.idle.set()
+        self.predrawn = False                # the first round of charts drawn ahead has been logged
+        self.predraw_failing: set[str] = set()   # button charts that couldn't be drawn ahead (said once, until they can again)
+        self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
+        self.preload_off = False                 # Telegram refused an upload to that chat: no more are tried until restart
+        self.background: set[asyncio.Task] = set()   # tasks running on their own, kept so they aren't dropped
         self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
 
     def register(self, app):
@@ -590,23 +613,27 @@ class Bot:
             return
         await query.answer(f"Drawing {periods.NAMES[days]}...")
         asked = intent.with_period(question, days, now)
-        log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
-        if cached := self.images.get(self.images.key(asked, days, now)):   # drawn lately: no new question
-            png, title = cached
+        log.info("Period button %s: %s", periods.NAMES[days], question, extra=QUOTES)
+        key = self.images.key(asked, days, now)
+        if cached := self.images.get(key):   # drawn lately: no new question
+            photo, title = cached
             try:
-                await message.edit_media(InputMediaPhoto(png, caption=title or None), reply_markup=periods.keyboard(days))
+                began = time.monotonic()
+                self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=periods.keyboard(days)))
                 self.charted.remember(message.chat_id, message.message_id, asked)
-                log.info("Period button: chart from the cache")
+                self.preload_soon(context.bot, asked)
+                log.info("Period button: cached chart sent in %.0f ms%s", (time.monotonic() - began) * 1000,
+                         " (Telegram's copy)" if isinstance(photo, str) else "")
                 return
             except TelegramError as e:
                 log.warning("Couldn't edit the chart in place (%s); drawing it again", e)
         await self.respond(update, context, asked, redraw=message)
 
-    async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str) -> bool:
+    async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str, key: str | None = None) -> bool:
         """Put a new chart into the message a period button was pressed under (its answer text, if any, follows as a message of
-        its own). False when Telegram refuses, and the chart is then sent as a new message."""
+        its own). False when Telegram refuses, and the chart is then sent as a new message. key: where the image cache keeps it."""
         try:
-            await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=row)
+            self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=row))
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 log.warning("Couldn't edit the chart in place (%s); sending a new one", e)
@@ -710,7 +737,7 @@ class Bot:
             return
         waited = (datetime.now(UTC) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
         if waited > PENDING_MAX_SECONDS:
-            log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), _short(msg.text, 40))
+            log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), msg.text, extra=QUOTES)
             return
         private = msg.chat.type == ChatType.PRIVATE
         if private and not await self._allowed(update, context):   # before remember_chat: a stranger never becomes an alert chat
@@ -762,7 +789,7 @@ class Bot:
     async def _warn(self, msg: Message, tokens: int):
         """A heads-up before a big job: the question has pulled in a lot of data. Sent now, silently; the answer follows by itself."""
         text = f"\u26a0\ufe0f That's pulling in about {tokens / 1000:.0f}k tokens of data, so it will take a little longer. Working on it..."
-        log.info("Heads-up sent: %s", text)
+        log.info("Heads-up sent: %s", text, extra=QUOTES)
         with contextlib.suppress(TelegramError):
             await msg.reply_text(text)
 
@@ -806,7 +833,105 @@ class Bot:
                 working[:] = before          # the unfinished attempt's turns are dropped
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
+    async def _draw_ahead(self, text: str, now) -> tuple[str, bytes, str, str] | None:
+        """(image key, PNG, title, write-up) of the chart `text` asks for when it is one made in code with its own words as its key;
+        None otherwise. Raises when it can't be drawn. Nobody is waiting: its requests are not urgent and its logs are quiet."""
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
+                           "Forecast" in self.by_name)
+        key = self.images.canonical(text, now)
+        if not (read.fast and read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
+            return None
+        turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                    average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, ahead=True)
+        caption = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
+        if caption is None or len(turn.charts) != 1:
+            raise ValueError("no chart came of it")
+        png = await asyncio.to_thread(render_chart, turn.charts[0], self.cfg.tz)
+        return key, png, turn.charts[0].caption(now.date()), caption
+
+    def preload_soon(self, bot, question: str):
+        """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question in the background."""
+        chat = getattr(self.cfg, "telegram_preload_chat", None)
+        if chat is None or self.preload_off or question in self.preloading:
+            return
+        self.preloading.add(question)
+        task = asyncio.create_task(self.preload(bot, chat, question))
+        self.background.add(task)
+        task.add_done_callback(self.background.discard)
+
+    async def preload(self, bot, chat: int, question: str):
+        """Upload (silently, to `chat`) the chart for each other period of `question`, so a press of a period button edits the message by
+        Telegram's copy and uploads nothing. One at a time and never while a question is being answered."""
+        started, done = time.monotonic(), []
+        try:
+            for days in periods.PERIODS:
+                await self.idle.wait()
+                now = now_local(self.cfg.tz)
+                if days == intent.period_days(question, now):
+                    continue
+                asked = intent.with_period(question, days, now)
+                if self.images.has_copy(self.images.key(asked, days, now)):
+                    continue
+                try:
+                    drawn = await self._draw_ahead(asked, now)
+                except Exception as e:
+                    log.debug("Couldn't draw %r to preload: %s: %s", asked, type(e).__name__, e)
+                    continue
+                if drawn is None:
+                    return
+                key, png, title, caption = drawn
+                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL)
+                try:
+                    self.images.sent(key, await bot.send_photo(chat, png, caption=title or None, disable_notification=True))
+                except TelegramError as e:
+                    self.preload_off = True
+                    log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
+                    return
+                done.append(periods.NAMES[days])
+        finally:
+            self.preloading.discard(question)
+        if done:
+            log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(done), question, chat, time.monotonic() - started,
+                     extra=QUOTES)
+
+    async def predraw(self):
+        """Draw the charts the buttons ask for ahead of the press: one pressed in the next ImageCache.FRESH seconds is sent at once.
+        One chart at a time, and never while a question is being answered (its own drawing would wait behind these). Run every
+        PREDRAW_SECONDS; the first round is logged, and a chart that can't be drawn once, until it can again."""
+        started, done = time.monotonic(), []
+        for text in dict.fromkeys(question for row in templates.rows(self.irrigation is not None) for _, question in row if question):
+            await self.idle.wait()
+            try:
+                drawn = await self._draw_ahead(text, now_local(self.cfg.tz))
+                if drawn is None:
+                    continue
+            except Exception as e:
+                if text not in self.predraw_failing:
+                    self.predraw_failing.add(text)
+                    log.warning("Can't draw %r ahead: %s: %s", text, type(e).__name__, e)
+                continue
+            key, png, title, caption = drawn
+            self.images.put(key, png, title, caption)
+            done.append(text)
+            if text in self.predraw_failing:
+                self.predraw_failing.discard(text)
+                log.info("Drawn ahead again: %s", text)
+        if not self.predrawn:
+            self.predrawn = True
+            log.info("Button charts drawn ahead every %ds: %d in %.1fs", PREDRAW_SECONDS, len(done), time.monotonic() - started)
+
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
+        """Answer a question (_respond), counted while it runs: no chart is drawn ahead meanwhile."""
+        self.answering += 1
+        self.idle.clear()
+        try:
+            await self._respond(update, context, text, redraw)
+        finally:
+            self.answering -= 1
+            if not self.answering:
+                self.idle.set()
+
+    async def _respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
         msg = update.effective_message
         text = text.strip()
         if not text:
@@ -819,9 +944,9 @@ class Bot:
         read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
                            "Forecast" in self.by_name)
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
-                 _short(text))
+                 text, extra=QUOTES)
         for source in self.sources:  # fetch recent readings while the model thinks
-            if source.wants(text):
+            if source.wants(text) and not (read.fast and read.chart_in_code):   # a chart made in code reads just what it needs, first in line
                 source.poke()
         if read.fast:
             log.info("Fast path: %s", read.fast[2])
@@ -837,13 +962,19 @@ class Bot:
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             ok, photos, titles, silent = True, [], [], False
+            made = None   # how long the tool took when the chart is made in code, for the timing line
             turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
                         average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text)
+            ready = self.images.ready(text, now) if read.fast and read.chart_in_code and redraw is None else None
             try:
                 reply = None
-                if read.fast and read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
+                if ready:   # drawn moments ago (ahead, or for someone's same question): sent as it is, its text kept for the history
+                    reply, photos, titles, silent = ready.caption, [ready.photo], [ready.title], True
+                elif read.fast and read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
+                    began = time.monotonic()
                     reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
                     silent = reply is not None
+                    made = time.monotonic() - began if silent else None
                 elif read.lookup:
                     reply = await asyncio.wait_for(self._lookup_in_code(read, turn), TURN_SECONDS)
                     if reply is None:
@@ -862,12 +993,12 @@ class Bot:
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
-                        photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz))
+                        photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz, turn.times))
                         titles.append(spec.caption(now.date()))
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
             except TimeoutError:
-                log.error("Gave up after %ds on: %s", TURN_SECONDS, _short(text, 60))
+                log.error("Gave up after %ds on: %s", TURN_SECONDS, text, extra=QUOTES)
                 ok, reply = False, "Sorry, that took too long. Please try again in a moment."
             except Exception as e:
                 log.exception("Agent error")
@@ -878,31 +1009,42 @@ class Bot:
                 stop_typing.set()
                 await asyncio.gather(*[t for t in (typing, drafting) if t])  # wait for any in-flight "typing" or draft so none is sent after the reply
 
+        caption = reply if silent else None   # a chart made in code: its text, kept with the chart for the next to ask the same
         if silent and photos:
             reply = ""
         if ok and not reply.strip() and not photos:   # a chart with no text that could not be drawn
             reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in working[new_from:] if m["role"] == "tool"]
         log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
-                 time.monotonic() - started, len(used), len(photos), len(reply), _short(reply, 30))
+                 time.monotonic() - started, len(used), len(photos), len(reply), reply, extra=QUOTES)
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         refresh = ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
         row =periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
-        sent_photo = []
-        if row and ok and not reply.strip():   # a chart and nothing else: keep it for the period buttons
-            self.images.put(self.images.key(text, intent.period_days(text, now), now), photos[0], titles[0])
+        sent_photo, drawn = [], list(photos)
+        kept = self.images.key(text, intent.period_days(text, now), now) if row and ok and not reply.strip() else None
+        if kept and not ready:   # a chart and nothing else: keep it for the period buttons (and, its words being its key, for the next to ask them)
+            self.images.put(kept, photos[0], titles[0], caption if kept == self.images.canonical(text, now) else None)
         try:
-            if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text):
+            began = time.monotonic()
+            if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text, kept):
                 reply, photos, row = "", [], None
             carried_keyboard = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
                                              markup=markup or (report_menu.keyboard() if refresh else None),
                                              titles=titles, period_row=row, sent_photo=sent_photo,
                                              bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
+            if ready:
+                log.info("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(ready), (time.monotonic() - began) * 1000,
+                         " (Telegram's copy)" if isinstance(drawn[0], str) else "")
+            elif drawn:
+                log.info("Chart ms: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
+                self.images.sent(kept, sent_photo[0])
+            if kept and read.fast and read.chart_in_code:   # a chart with period buttons, made in code: its other periods are uploaded ahead
+                self.preload_soon(context.bot, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown)
             if carried_keyboard:

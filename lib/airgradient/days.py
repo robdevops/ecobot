@@ -10,7 +10,7 @@ from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
-from .metrics import ALL_METRICS, CHART_UNITS
+from .metrics import ALL_METRICS, CHART_UNITS, without_spikes
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ DESCRIPTION = ("Find, rank or count DAYS by the air-quality sensor's readings, f
 def daily_values(rows: list[dict], shown: list[str], tz: tzinfo) -> dict[str, dict[date, float]]:
     """{field: {local day: that day's highest, lowest or mean}} from the stored readings."""
     by_day: dict[date, list[dict]] = {}
-    for r in rows:
+    for r in without_spikes(rows):   # a single-reading spike of the particles is a glitch of the sensor, not a day's highest
         by_day.setdefault(local_date(r["ts"], tz), []).append(r)
     values: dict[str, dict[date, float]] = {n: {} for n in shown}
     for name in shown:

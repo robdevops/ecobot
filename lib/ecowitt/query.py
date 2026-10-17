@@ -13,7 +13,7 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 import asyncio
 import json
 import logging
-from datetime import datetime, time, timedelta, UTC
+from datetime import date, datetime, time, timedelta, UTC
 from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
@@ -51,6 +51,17 @@ FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a 
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
 
 
+def consecutive(days: list[date]) -> list[list[date]]:
+    """Sorted days in runs of consecutive ones: [1, 2, 3, 5, 6] -> [[1, 2, 3], [5, 6]]."""
+    runs: list[list[date]] = []
+    for day in days:
+        if runs and day - runs[-1][-1] == timedelta(days=1):
+            runs[-1].append(day)
+        else:
+            runs.append([day])
+    return runs
+
+
 def stack_names(args: dict, turn) -> list[str]:
     """The readings to put side by side (from the person's words, else the model's chart_fields), two or more."""
     raw = turn.chart_fields or args.get("chart_fields") or []
@@ -77,8 +88,15 @@ class HistoryQuery:
         self.rain_bars = Bars("Rain", "mm", [], [], 86400, "day")   # for a stacked chart with rain
         self.rain_from_daily = False                       # some of its days come from daily records (older than the 30-minute readings)
         self.compass: Compass | None = None                # the wind rose (counts per compass point by speed), drawn beside the wind chart
+        self.wind: Fetcher | None = None                   # the wind rose's own (5-minute readings), made when wind direction is counted
 
     async def run(self) -> str:
+        try:
+            return await self._run()
+        finally:   # for the reply's timing line
+            self.turn.times["data"] = self.turn.times.get("data", 0.0) + self.f.seconds + (self.wind.seconds if self.wind else 0.0)
+
+    async def _run(self) -> str:
         today = self.now.date()
         try:
             start = datetime.fromisoformat(str(self.args.get("start_date") or today).replace("T", " "))
@@ -130,8 +148,8 @@ class HistoryQuery:
             pts = series["pts"]
             if derives_range(field) and pts and not any(r["cycle"] != "30min" or "low" in r or "high" in r for r in pts.values()):
                 wanted[key] = (group, field, {t: r["value"][0] for t, r in pts.items() if "value" in r})
-        ranges = await asyncio.to_thread(lambda: {key: self.f.cache.slot_ranges(self.f.mac, group, field, values, lo, hi)
-                                                  for key, (group, field, values) in wanted.items()})
+        ranges = await self.f.read(lambda: {key: self.f.cache.slot_ranges(self.f.mac, group, field, values, lo, hi)
+                                            for key, (group, field, values) in wanted.items()})
         for key, (lows, highs) in ranges.items():
             pts = self.store[key]["pts"]
             for t in lows:
@@ -143,10 +161,7 @@ class HistoryQuery:
         f = self.f
         if (self.span.days + 1) * 48 * len(f.groups) * FIELDS_PER_GROUP > MAX_ROWS:
             return False
-        for t, e in spans("30min", self.start, self.end - timedelta(days=1)):
-            if not await f.covered("30min", f.epoch(t), f.epoch(e)):
-                return False
-        return True
+        return all(await f.covered_each("30min", [(f.epoch(t), f.epoch(e)) for t, e in spans("30min", self.start, self.end - timedelta(days=1))]))
 
     async def _chunks(self, cycle: str, t: datetime, until: datetime):
         for a, b in spans(cycle, t, until):
@@ -186,17 +201,20 @@ class HistoryQuery:
         if not keys:
             return
         f = self.f
-        wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz)
+        wind = self.wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz, f.urgent)
         first = max(self.start, self.end - timedelta(days=DIRECTION_DAYS))
+        bounds = {}   # each day of the period: its part of it, local times
+        for n in range((self.end.date() - first.date()).days + 1):
+            day = first.date() + timedelta(days=n)
+            a, b = max(first, datetime.combine(day, time())), min(self.end, datetime.combine(day, time(23, 59, 59)))
+            if a < b:
+                bounds[day] = a, b
+        held = await wind.covered_each("5min", [(wind.epoch(a), wind.epoch(b)) for a, b in bounds.values()])
+        fine_days = {day for day, whole in zip(bounds, held) if whole or day == self.end.date()}   # today's comes from memory or one request
+        fine: dict = {}
+        for run in consecutive(sorted(fine_days)):   # a run of days is one read
+            collect(fine, await wind.get("5min", bounds[run[0]][0], bounds[run[-1]][1]), "5min")
         for key in keys:
-            fine: dict = {}
-            fine_days = set()
-            for n in range((self.end.date() - first.date()).days + 1):
-                day = first.date() + timedelta(days=n)
-                a, b = max(first, datetime.combine(day, time())), min(self.end, datetime.combine(day, time(23, 59, 59)))
-                if a < b and (day == self.end.date() or await wind.covered("5min", wind.epoch(a), wind.epoch(b))):
-                    collect(fine, await wind.get("5min", a, b), "5min")  # today's comes from memory or one request
-                    fine_days.add(day)
             pts = self.store.pop(key)["pts"]
             speed_key = key[:-len("wind_direction")] + "wind_speed"
             speeds = {t: r["value"][0] for src in (self.store, fine) for t, r in src.get(speed_key, {}).get("pts", {}).items()
@@ -221,8 +239,11 @@ class HistoryQuery:
         out = {}
         for key, series in self.store.items():
             months: dict = {}
+            until = None   # the end of the local day the reading falls in (epoch), its month worked out once a day
             for ts, rec in sorted(series["pts"].items()):
-                month = datetime.fromtimestamp(ts, UTC).astimezone(self.tz).strftime("%b %Y")
+                if until is None or ts >= until:
+                    day = local_date(ts, self.tz)
+                    month, until = day.strftime("%b %Y"), day_bounds(day, self.tz)[1]
                 fold(months.setdefault(month, {}), ts, rec)
             out[key] = months
         return out
@@ -298,9 +319,9 @@ class HistoryQuery:
                       if key.split(".", 1)[-1] not in DERIVED or key.split(".", 1)[-1] in wanted}  # the rest: cached, not sent
         series_out.update(self.direction)
         shown = {k: v for k, v in series_out.items() if self._in_focus(k)}   # what the model is sent (charts use all of series_out)
-        log.info("%s to %s: %d ranges, %d cached, %d in mem, %d req%s, %d series, %d refined",
-                 f"{self.start:%Y-%m-%d}", f"{self.end:%m-%d %H:%M}", f.ranges, f.from_cache, f.from_memory, f.calls,
-                 f", {len(f.errors)} failed" if f.errors else "", len(series_out), refined)
+        log.log(logging.DEBUG if self.turn.ahead else logging.INFO, "%s..%s: %d reads (%d cache, %d mem), %d req%s, %d refined",
+                f"{self.start:%m-%d}", f"{self.end:%m-%d}", f.ranges, f.from_cache, f.from_memory, f.calls,
+                f", {len(f.errors)} failed" if f.errors else "", refined)
         out = {"period": f"{self.start:%a %d %b %Y} - {self.end:%a %d %b %Y}", "series": shown if shown else series_out}
         if self.monthly and not self.detailed:
             out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "
@@ -481,10 +502,10 @@ class HistoryQuery:
         the daily records, the day's total, which are approximate (10am to 10am). A figure per month or year asked for in the
         person's words (`by`) gets one bar for each, whatever the length of the period."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
-        (daily,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
+        (daily,) = await self.f.read(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
         rain = rain_slots(daily)
         held = {local_date(t, self.tz) for t in rain}
-        (old,) = await asyncio.to_thread(self.f.cache.slots, self.f.mac, "1day", "rainfall", ["daily"], lo - 86400, hi + 86400)
+        (old,) = await self.f.read(self.f.cache.slots, self.f.mac, "1day", "rainfall", ["daily"], lo - 86400, hi + 86400)
         for t, mm in old.items():   # a daily bucket is dated by the local day its 10am start falls on
             day = local_date(t, self.tz)
             if day not in held and self.start.date() <= day <= self.end.date():

@@ -133,6 +133,14 @@ class HistoryCache:
         """Every time range held for this group at this resolution (merged, oldest first)."""
         return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
 
+    def coverage_of(self, mac: str, cycle: str, groups: list[str]) -> dict[str, list[Interval]]:
+        """coverage() of each of these groups, in one query."""
+        held: dict[str, list[Interval]] = {g: [] for g in groups}
+        for grp, start, end in self._query(f"SELECT grp, start, end FROM coverage WHERE mac=? AND cycle=? AND grp IN ({','.join('?' * len(held))})",
+                                           mac, cycle, *held):
+            held[grp].append((start, end))
+        return {g: merge(spans) for g, spans in held.items()}
+
     def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
         return subtract((start, end), self.coverage(mac, cycle, grp))
 

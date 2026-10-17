@@ -290,7 +290,7 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
 
     async def reply_photo(photo, caption=None, **kw):
         sent.append(caption)
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz: b"png")
+    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -302,6 +302,79 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
     name, args = Agent.tools.calls[0]
     assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
     assert sent == ["Humidity"]    # the chart's title is its whole caption
+
+
+async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(monkeypatch):
+    """The chart's own reads go first in line; a refresh started beside them would only queue requests ahead of the next ones."""
+    import json
+    from lib import bot as botmod
+    from lib.specs import Chart, Line, Panel
+    pokes = []
+
+    class Tools:
+        async def call(self, name, raw, turn=None):
+            turn.charts.append(Chart("t", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]))
+            return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
+                "outdoor.temperature": {"unit": "℃", "low": "1", "high": "2"}}})
+
+    class Agent:
+        tools = Tools()
+
+        async def run(self, *a, **k):
+            return "It is 12 degrees."
+
+    async def reply(*a, **k):
+        return NS(message_id=7)
+    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: pokes.append(1), describe=lambda: "Ecowitt")]
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply, reply_text=reply,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    bot, context = Bot(NS(tz=TZ), Agent(), sources, None), NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    await bot.respond(update, context, "Temperature chart 7d")
+    assert pokes == []
+    await bot.respond(update, context, "what do you think about the weather today?")
+    assert pokes == [1]
+
+
+async def test_a_chart_reply_logs_how_long_each_step_took(tmp_path, monkeypatch, caplog):
+    """One line per chart reply: reading the data, the calculation, drawing, the PNG (and its size) and sending it."""
+    import re
+    from lib.ecowitt import Ecowitt, api
+    from lib.tools import Tools
+    from tests.fakes import config, ecowitt_transport
+    monkeypatch.setattr(api, "MIN_GAP_SECONDS", 0)
+    eco = Ecowitt(config(tmp_path), transport=ecowitt_transport()[0])
+    await eco.start()
+
+    class Agent:
+        tools = Tools(eco.tools)
+
+        async def run(self, *a, **k):
+            raise AssertionError("no model for a plain chart")
+    sent = []
+
+    async def reply_photo(photo, caption=None, **kw):
+        sent.append(photo)
+        return NS(message_id=7)
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    with caplog.at_level("INFO"):
+        await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)),
+                                                             "Temperature chart 1d")
+    await eco.close()
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
+    assert len(sent) == 1 and len(lines) == 1, lines
+    kb = round(len(sent[0]) / 1024)
+    assert re.fullmatch(rf"Chart ms: data \d+, calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
 
 
 async def _ask_with(tool_result, text, monkeypatch=None):
@@ -498,7 +571,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
 
     async def reply_photo(photo, caption=None, **kw):
         sent.append(caption)
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz: b"png")
+    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     for text, caption_wanted in (("ecowitt all week", True), ("temperature chart 7d", True)):
         sent.clear()

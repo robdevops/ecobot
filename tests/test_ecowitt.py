@@ -152,6 +152,62 @@ async def test_warm_then_question_needs_no_new_requests_for_the_tail(station):
     assert fake.calls == []  # recent tail came from memory
 
 
+async def test_a_question_the_cache_and_memory_can_answer_does_not_wait_for_a_refresh_that_is_fetching(tmp_path):
+    import httpx
+    fake, answering = FakeEcowitt(), asyncio.Event()
+    answering.set()
+
+    async def handler(request):
+        await answering.wait()
+        return fake(request)
+    eco = Ecowitt(config(tmp_path), transport=httpx.MockTransport(handler))
+    await eco.start()
+    await eco.warm(True)                                   # memory holds the newest readings
+    answering.clear()                                      # Ecowitt goes quiet
+    refresh = asyncio.create_task(eco.warm(True))
+    await asyncio.sleep(0.05)                              # the refresh's requests are out, holding the 5-minute and 30-minute fetches
+    now = eco.now()
+    question = eco.fetcher(["outdoor"], urgent=True)
+    data = await asyncio.wait_for(question.get("5min", now - timedelta(hours=3), now), 2)
+    assert data["outdoor"]["temperature"]["list"] and question.calls == 0 and question.from_memory == 1
+    assert not refresh.done()
+    answering.set()
+    await refresh
+    await eco.close()
+
+
+async def test_a_questions_requests_go_before_the_background_ones_and_the_refreshes_wait_their_turn(station, monkeypatch):
+    eco, _ = station
+    marked = []   # each history request's urgent flag
+    send = eco.api._get
+
+    async def watch(path, urgent=False, **params):
+        if path == "history":
+            marked.append(urgent)
+        return await send(path, urgent, **params)
+    monkeypatch.setattr(eco.api, "_get", watch)
+    await eco.warm(True)
+    assert marked and not any(marked)
+    marked.clear()
+    today = eco.now().date()
+    await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=20)} 00:00:00",
+                                "end_date": f"{today - timedelta(days=10)} 23:59:59"}, Turn())
+    assert marked and all(marked)   # the question's own, and its wind rose's
+    marked.clear()
+    await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=40)} 00:00:00",
+                                "end_date": f"{today - timedelta(days=30)} 23:59:59"}, Turn(ahead=True))
+    assert marked and not any(marked)   # a chart drawn ahead: nobody is waiting for it
+
+
+async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypatch):
+    from lib.ecowitt import fetch
+    eco, fake = station
+    merged = []
+    monkeypatch.setattr(fetch, "merge_data", lambda *a, **k: merged.append(a))
+    await eco.warm(True)
+    assert any(c["path"] == "history" for c in fake.calls) and merged == []
+
+
 # ---------- the whole history is cached ----------
 async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
@@ -263,7 +319,7 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
-    assert arch.held() == "0/0/0/0 days (5min/30min/4h/1d)"
+    assert arch.held() == "0/0/0/0 days (5m/30m/4h/1d)"
     await arch.run_once()
     held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
     assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
@@ -438,6 +494,29 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
                                                    "end_date": f"{today - timedelta(days=2)} 23:59:59"}, Turn()))
     assert "wind.wind_direction" in again["series"]
     await eco.close()
+
+
+async def test_the_wind_rose_reads_its_5_minute_readings_in_runs_of_days_not_a_day_at_a_time(tmp_path, archived_cache, monkeypatch):
+    from lib.ecowitt import query
+    from lib.ecowitt.query import consecutive
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    made = []
+
+    class Recorded(query.Fetcher):   # the wind rose's own fetcher, whose reads are counted
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made.append(self)
+    monkeypatch.setattr(query, "Fetcher", Recorded)
+    today = eco.now().date()
+    turn = Turn(chart_field="wind")
+    out = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind",
+                                                 "start_date": f"{today - timedelta(days=30)} 00:00:00"}, turn))
+    assert out["series"]["wind.wind_direction"] and turn.charts[0].compass
+    assert len(made) == 1 and made[0].ranges == 1           # the archived days and today in one read, not one for each of 31 days
+    await eco.close()
+    day = lambda n: today + timedelta(days=n)
+    assert consecutive([day(1), day(2), day(3), day(5), day(6), day(9)]) == [[day(1), day(2), day(3)], [day(5), day(6)], [day(9)]]
+    assert consecutive([]) == []
 
 
 async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path, archived_cache):
@@ -989,7 +1068,7 @@ async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
     class Refusing:
         calls = 0
 
-        async def history(self, *a):
+        async def history(self, *a, **k):
             Refusing.calls += 1
             raise EcowittError("humidity is invalid", transient=False)
 
@@ -1017,7 +1096,7 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
 
 async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings(tmp_path):
     import time as _time
-    from types import SimpleNamespace as NS
+    from lib.ecowitt.fetch import Fetcher
     from lib.ecowitt.query import HistoryQuery
     from lib.ecowitt.store import HistoryCache
     from tests.fakes import TZ
@@ -1027,7 +1106,9 @@ async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_fi
     five = {"solar_and_uvi": {"solar": {"unit": "W/m2", "list": {str(base + 300 * i): str(10.0 + i) for i in range(12)}}}}   # two slots of six
     cache.store("M", "5min", ["solar_and_uvi"], five, base, base + 3600)
     start, end = datetime(2026, 1, 1), datetime(2026, 1, 2)
-    q = HistoryQuery(NS(tz=TZ, epoch=lambda d: base if d == start else base + 7200, cache=cache, mac="M"), {}, Turn())
+    fetcher = Fetcher(None, cache, None, "M", [], TZ)
+    fetcher.epoch = lambda d: base if d == start else base + 7200
+    q = HistoryQuery(fetcher, {}, Turn())
     q.start, q.end = start, end
     q.store = {"solar_and_uvi.solar": {"unit": "W/m²", "pts": {base: {"cycle": "30min", "value": (12.0, "12")},
                                                                base + 1800: {"cycle": "30min", "value": (18.0, "18")}}},
@@ -1125,6 +1206,20 @@ async def test_a_cancelled_waiter_does_not_block_the_lock():
     lock.release()
 
 
+async def test_a_waiter_cancelled_just_as_the_request_ahead_finishes_is_a_clean_cancel():
+    from lib.ecowitt.api import _TurnLock
+    lock = _TurnLock()
+    await lock.acquire()                                # a request in flight
+    waiting = asyncio.create_task(lock.acquire())
+    await asyncio.sleep(0)                              # one queued behind it
+    waiting.cancel()                                    # its question gives up ...
+    lock.release()                                      # ... and the request ahead finishes before it has seen that
+    with pytest.raises(asyncio.CancelledError):
+        await waiting                                   # cancelled, as asked (not a ValueError from the queue)
+    await asyncio.wait_for(lock.acquire(), 1)           # and the lock is free
+    lock.release()
+
+
 async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_afresh_when_it_cannot(station):
     import time
     eco, fake = station
@@ -1168,6 +1263,7 @@ def test_naming_one_of_temperature_and_humidity_leaves_the_other_out_of_what_the
 
 
 async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_records_and_by_month_when_asked(tmp_path):
+    from lib.ecowitt.fetch import Fetcher
     from lib.ecowitt.query import HistoryQuery
     from lib.ecowitt.store import HistoryCache
     from lib.tools import Turn
@@ -1179,8 +1275,7 @@ async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_re
     days = [old + timedelta(days=k) for k in range(60)]
     cache.store("M", "1day", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(day_ts(d)): "2.0" for d in days}}}},
                 day_ts(days[0]), day_ts(days[-1]) + 86400)
-    f = type("F", (), {})()
-    f.cache, f.mac, f.tz = cache, "M", TZ
+    f = Fetcher(None, cache, None, "M", [], TZ)
     f.epoch = lambda dt: int(dt.replace(tzinfo=TZ).timestamp())
     q = HistoryQuery.__new__(HistoryQuery)
     q.f, q.tz, q.turn = f, TZ, Turn()
@@ -1220,8 +1315,8 @@ def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is
     cell = lambda v, u: {"value": v, "unit": u}
     data = {"rainfall": {"rain_rate": cell("0.0", "mm/hr"), "daily": cell("0.8", "mm")}, "outdoor": {"temperature": cell("20.3", "℃"), "humidity": cell("62", "%")},
             "wind": {"wind_speed": cell("12", "km/h")}, "pressure": {"relative": cell("1013.2", "hPa")}}
-    assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm today, 20.3 °C, 62 %, wind 12 km/h, 1013.2 hPa"
-    assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm today" and live_summary({}) == "no readings"
+    assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm/day, 20.3°C, 62%, wind 12 km/h, 1013.2 hPa"
+    assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm/day" and live_summary({}) == "no readings"
 
 
 async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group(tmp_path, archived_cache):

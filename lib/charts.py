@@ -6,13 +6,14 @@ axis (see specs.py):
   - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
     at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
   - several panels are stacked, the figure growing a little taller with each one past two (four panels: 1280x1160).
-Rain (bars) sits behind the lines of the panel it belongs to, on its own right-hand axis.
+Rain (bars) sits behind the lines of the panel it belongs to, on a scale of its own read on the right.
 """
 
 import glob
 import io
 import math
 import threading
+import time
 from dataclasses import dataclass
 from datetime import tzinfo
 from statistics import fmean
@@ -24,10 +25,13 @@ import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib import font_manager  # noqa: E402
+from matplotlib.collections import PatchCollection, PolyCollection  # noqa: E402
 from matplotlib.colors import to_rgb  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
-from matplotlib.patches import Polygon  # noqa: E402
+from matplotlib.patches import Polygon, Rectangle, Wedge  # noqa: E402
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: E402
+from matplotlib.transforms import ScaledTranslation  # noqa: E402
+from PIL import Image  # noqa: E402
 
 from .specs import Chart, Compass, Line, Panel  # noqa: E402
 from .timeutil import to_local  # noqa: E402
@@ -150,8 +154,10 @@ def _box(colour: str, pad: float = 0.25, rounding: float = 0.6) -> dict:
 
 
 def _dot(ax, x: float, y: float, colour: str, size: float = 12, edge: float = 0.8, z: int = 4):
-    """A small dot with a white rim, marking a point on a line."""
-    ax.scatter([x], [y], s=size, color=colour, edgecolors="white", linewidths=edge, zorder=z)
+    """A small dot with a white rim, marking a point on a line (`size` is its area in pt², as scatter takes it). It is a one-point
+    line's marker: drawn just as a one-point scatter is, at a fraction of the cost."""
+    ax.add_line(Line2D([x], [y], marker="o", linestyle="", markersize=math.sqrt(size), color=colour, markeredgecolor="white",
+                       markeredgewidth=edge, zorder=z))
 
 
 def _to_dt(tz: tzinfo):
@@ -182,12 +188,12 @@ def _style_axis(ax, size: float = 7.5, pad: float = 5, grid: float = 0.8, below:
         ax.set_axisbelow(True)
 
 
-def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float):
+def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float, zorder: float = 0):
     """Faint rating zones behind a line: good up to z1, poor up to z2, very poor above."""
     z1, z2 = zones
     for lo, hi, colour in ((ybottom, z1, ZONE_COLOURS[0]), (z1, z2, ZONE_COLOURS[1]), (z2, ytop, ZONE_COLOURS[2])):
         if hi > ybottom and lo < ytop:
-            ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=0)
+            ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=zorder)
 
 
 def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16, floor: float | None = None):
@@ -219,42 +225,38 @@ def _draw_lines(ax, lines: list[Line], tz: tzinfo, look: Look, first: int = 0, r
     return drawn
 
 
-def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: float = 0.5):
+def _columns(ax, x, heights, width: float, bottom=0.0, **style):
+    """Bars from each x to x + width, as one collection of rectangles: what ax.bar draws, without a patch (and its bookkeeping)
+    for every bar. The axes' limits are the caller's to set."""
+    x = np.asarray(x, dtype=float)
+    low = np.broadcast_to(np.asarray(bottom, dtype=float), x.shape)
+    high = low + np.asarray(heights, dtype=float)
+    corners = np.stack([np.column_stack(xy) for xy in ((x, low), (x + width, low), (x + width, high), (x, high))], axis=1)
+    ax.add_collection(PolyCollection(corners, edgecolors="none", linewidths=0, **style), autolim=False)
+
+
+def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: float = 0.5, **kw):
     """Rain bars: a pale body (RAIN blended with white by `alpha`, so solid and nothing behind it shows through) with a
-    brighter cap, so each reads as a little column."""
+    brighter cap, so each reads as a little column. `kw` goes to both (for rain behind a line, the transform)."""
     ys = np.asarray(ys, dtype=float)
-    ax.bar(bx, ys, width=width, align="edge", color=_mix(RAIN, 1 - alpha), linewidth=0, zorder=zorder)
+    _columns(ax, bx, ys, width, facecolors=_mix(RAIN, 1 - alpha), zorder=zorder, **kw)
     cap = axis_top * 0.014
-    ax.bar(bx, np.minimum(cap, ys), bottom=np.maximum(ys - cap, 0), width=width, align="edge", color=RAIN, alpha=0.95,
-           linewidth=0, zorder=zorder)
+    _columns(ax, bx, np.minimum(cap, ys), width, np.maximum(ys - cap, 0), facecolors=RAIN, alpha=0.95, zorder=zorder, **kw)
 
 
 def _bars_behind(ax, bars, tz: tzinfo) -> float:
-    """Bars (rain) on their own right-hand axis, behind the panel's lines and never taller than BARS_SHARE of it. Returns
-    where the last bar ends (matplotlib date number)."""
+    """Bars (rain) behind the panel's lines and over its grid, on a scale of their own read on the right: the tallest reaches
+    BARS_SHARE of the panel's height. They are drawn in the panel itself (x on its time axis, y as a share of its height), and
+    the scale's two labels sit where a right-hand axis would put them. Returns where the last bar ends (matplotlib date number)."""
     bx = _nums(tz, bars.x)
-    ax2 = ax.twinx()
-    weight = ax.yaxis.get_gridlines()[0].get_linewidth() if ax.yaxis.get_gridlines() else 0.8
-    ax.grid(False)       # the grid is drawn by an axes of its own under the rain (sharing this one's scale): grid, rain, lines
-    under = ax.figure.add_axes(ax.get_position(), sharex=ax, sharey=ax, facecolor=ax.get_facecolor())
-    for side in ("top", "right", "left", "bottom"):
-        under.spines[side].set_visible(False)
-    under.tick_params(axis="both", length=0, labelleft=False, labelbottom=False)
-    under.grid(axis="y", color=GRID, linewidth=weight)
-    under.set_axisbelow(True)
-    under.set_zorder(ax2.get_zorder() - 1)
     top = max([*bars.y, 1.0])
-    _draw_bars(ax2, bx, bars.y, bars.width / 86400 * 0.85, top / BARS_SHARE, 1)
-    ax2.set_ylim(0, top / BARS_SHARE)
-    ax2.axhline(top, color=RAIN, linewidth=0.7, linestyle=(0, (1, 2)), alpha=0.8, zorder=1)  # the top of the rain scale, on its own
-    ax2.yaxis.set_major_locator(FixedLocator([0, top]))
-    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g} {bars.unit}" if v else "0"))
-    for side in ("top", "right", "left", "bottom"):
-        ax2.spines[side].set_visible(False)
-    ax2.tick_params(axis="y", length=0, labelsize=7, labelcolor=RAIN_TEXT, pad=4)
-    ax.set_zorder(ax2.get_zorder() + 1)  # the lines above the bars
-    ax.patch.set_visible(False)
-    ax2.patch.set_visible(False)     # so the grid beneath shows between the bars (set last: the line above re-shows it)
+    _draw_bars(ax, bx, np.asarray(bars.y, dtype=float) * (BARS_SHARE / top), bars.width / 86400 * 0.85, 1.0, 1,
+               transform=ax.get_xaxis_transform())
+    ax.add_line(Line2D([0, 1], [BARS_SHARE, BARS_SHARE], transform=ax.transAxes, color=RAIN, linewidth=0.7, linestyle=(0, (1, 2)),
+                       alpha=0.8, zorder=1))   # the top of the rain scale, on its own
+    beside = ax.transAxes + ScaledTranslation(4 / 72, 0, ax.figure.dpi_scale_trans)   # 4 pt right of the panel, as tick labels sit
+    for y, label in ((0, "0"), (BARS_SHARE, f"{top:g} {bars.unit}")):
+        ax.text(1, y, label, transform=beside, ha="left", va="center_baseline", fontsize=7, color=RAIN_TEXT)
     return _end_of(bx, bars.width, 0.0)
 
 
@@ -361,17 +363,32 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], tz: tzinfo, x0: float, x1:
                     bbox=_box(colour, *look.pill_box), zorder=look.pill_z + 1)
 
 
+def _rose_radius(outer: np.ndarray) -> float:
+    """The rose's radius for wedges ending at `outer` (16 compass points x 3 speed steps, out from the centre): the one matplotlib
+    gives bars that long, 5% beyond the longest wedge, or right at its end when that wedge ends in an empty step (the base of a
+    bar is a sticky edge). Worked out as matplotlib does, so the rose is the size it always was."""
+    longest = float(outer[:, -1].max())
+    if not longest:
+        return 1.0   # nothing to draw
+    ends = outer[:, :-1][outer[:, :-1] >= longest - 1e-5 * longest]   # a step's base at the end of a longest wedge: nothing beyond it
+    return float(ends.min()) if ends.size else longest + longest * 0.05
+
+
 def _render_rose(fig, compass: Compass):
     """The whole period as a wind rose (N up, clockwise): each of the 16 wedges is the share of readings from that
-    way, stacked by wind speed. It sits beside the wind speed line."""
+    way, stacked by wind speed. It sits beside the wind speed line. The wedges are one collection in the polar axes' own
+    units (the centre at 0.5, 0.5 and the edge at radius 0.5): 48 polar bars cost several times as much to make and draw."""
     counts = np.asarray(compass.rose, dtype=float)                        # 16 compass points x 3 speed steps
     ax = fig.add_axes([0.685, 0.12, 0.27, 0.62], projection="polar")
-    theta = np.deg2rad(np.arange(16) * 22.5)
-    percent = counts / max(counts.sum(), 1) * 100
-    bottom = np.zeros(16)
-    for i, colour in enumerate(WIND_STEPS):
-        ax.bar(theta, percent[:, i], width=np.deg2rad(20), bottom=bottom, color=colour, edgecolor=BG, linewidth=0.4)
-        bottom += percent[:, i]
+    outer = np.cumsum(counts / max(counts.sum(), 1) * 100, axis=1)        # where each step ends, out from the centre
+    radius = _rose_radius(outer)
+    ax.set_ylim(0, radius)                                                # the grid's rings follow it
+    half = 0.5 / radius
+    steps = [(k, i) for i in range(3) for k in range(16) if outer[k, i]]  # step by step, each over the one before; nothing at the centre
+    wedges = [Wedge((0.5, 0.5), outer[k, i] * half, 80 - 22.5 * k, 100 - 22.5 * k, width=(outer[k, i] - (outer[k, i - 1] if i else 0)) * half)
+              for k, i in steps]                                          # 20° wide around each compass point, clockwise from N
+    ax.add_collection(PatchCollection(wedges, facecolors=[WIND_STEPS[i] for _, i in steps], edgecolors=BG, linewidths=0.4,
+                                      transform=ax.transAxes), autolim=False)
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
     ax.set_xticks(np.deg2rad([0, 90, 180, 270]))
@@ -484,7 +501,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
         bx = _nums(tz, s.x)
         base = np.zeros(len(bx))
         for column, colour in zip((s.good, s.poor, s.very_poor), ZONE_COLOURS):
-            ax.bar(bx, column, bottom=base, width=s.width / 86400 * 0.85, align="edge", color=colour, linewidth=0, zorder=3)
+            _columns(ax, bx, column, s.width / 86400 * 0.85, base, facecolors=colour, zorder=3)
             base += np.asarray(column, dtype=float)
         ax.set_ylim(0, 100)
         ax.legend([Line2D([], [], marker="s", linestyle="", markersize=5, color=c) for c in ZONE_COLOURS],
@@ -511,8 +528,8 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
                 floor=0)
     ybottom, ytop = ax.get_ylim()
     drawn = _draw_lines(ax, lines, tz, look, first, p.reading)
-    if p.zones:  # a rated reading: its good / poor / very poor zones behind the line
-        _shade_zones(ax, p.zones, ybottom, ytop, 0.07)
+    if p.zones:  # a rated reading: its good / poor / very poor zones behind the line (and over any rain behind it, as always)
+        _shade_zones(ax, p.zones, ybottom, ytop, 0.07, 1.5 if p.bars else 0)
     ax.set_ylim(ybottom, ytop)
     if marked and p.peaks == "aside":
         _mark_highs(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look)
@@ -528,9 +545,10 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
     return len(lines), x1, entries
 
 
-def _render(chart: Chart, tz: tzinfo) -> bytes:
+def _render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
     """The panels top to bottom on one time axis, so the rain (or another reading) lines up with what the others were doing.
     A chart of one panel of lines is the same thing drawn BIG (and with its wind rose beside it, when it has one)."""
+    started = time.perf_counter()
     panels, n = chart.panels, len(chart.panels)
     look = _look_for(chart)
     height = H_IN if n <= 2 else H_IN + PANEL_IN * (n - 2)
@@ -541,21 +559,18 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
         body = height - HEAD_IN - FOOT_IN
         gap = 0.27 if n > 2 else 0.22
         each = (body - gap * (n - 1)) / n
-        xs = _nums(tz, [t for p in panels for t in p.xs])
+        xs = _nums(tz, {t for p in panels for t in p.xs})   # each time once: only the range is wanted
         x0, x1 = float(xs.min()), float(xs.max())
         axes, used = [], 0
         for i, p in enumerate(panels):
             bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
             rect = [AX_RECT[0], bottom, width, each / height]
-            if look.card:
-                card = fig.add_axes(rect, facecolor=CARD, zorder=-1)  # the faint tint behind the panel
-                card.set_xticks([])
-                card.set_yticks([])
-                for side in card.spines.values():
-                    side.set_visible(False)
+            if look.card:   # the faint tint behind the panel: a rectangle on the figure (an axes of its own costs far more)
+                fig.add_artist(Rectangle(rect[:2], rect[2], rect[3], transform=fig.transFigure, facecolor=CARD, edgecolor="none",
+                                         linewidth=0, zorder=-1))
             ax = fig.add_axes(rect, facecolor="none" if look.card else BG, sharex=axes[0] if axes else None)
             axes.append(ax)
-            _style_axis(ax, grid=0 if p.bars and p.lines else 0.8)   # with rain behind, the grid is drawn under it (_bars_behind)
+            _style_axis(ax)
             count, x1, entries = _draw_panel(ax, p, tz, used, x0, x1, look)
             used += count
             if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
@@ -570,9 +585,9 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
             ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _, u=tick_unit: f"{v:g}{u}"))
             if not look.in_headline:
                 title = f"{p.label} ({p.unit})" if p.unit and not tick_unit else p.label
-                ax.set_title(title, loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4)
+                ax.set_title(title, loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4, y=1.0)   # y: placed, not searched for
             if i < n - 1:
-                plt.setp(ax.get_xticklabels(), visible=False)
+                ax.xaxis.set_visible(False)   # the time is read off the bottom panel (these ticks have no length and no grid)
         margin = (x1 - x0) * 0.015  # room for the end dots
         axes[0].set_xlim(x0 - margin, x1 + margin)
         _time_axis(axes[-1], x1 - x0, panels[-1].bars if not panels[-1].lines else None, tz)
@@ -583,13 +598,61 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
     except Exception:
         plt.close(fig)
         raise
-    return _png(fig)
+    return _png(fig, times, started)
 
 
-def _png(fig) -> bytes:
+def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list[int], np.ndarray]:
+    """Up to `size` of these colours (rows of `rgb`, each with its count of pixels) for a palette, and the nearest of them for every
+    colour. It starts from the commonest; each next one is the colour the palette so far draws worst (its pixels times its squared
+    distance to the nearest colour taken), so the colours that cover an area are kept exactly and the in-between shades of
+    anti-aliased edges come out within a few levels. With `size` colours or fewer, every one is kept. Whole numbers throughout, so
+    the picks are exact (ties go to the first colour)."""
+    red, green, blue = (np.ascontiguousarray(rgb[:, i], dtype=np.int64) for i in range(3))
+    weight = np.asarray(counts, dtype=np.int64)
+
+    def distance_to(k: int) -> np.ndarray:   # every colour's squared distance to colour k
+        distance = (red - red[k]) ** 2
+        distance += (green - green[k]) ** 2
+        distance += (blue - blue[k]) ** 2
+        return distance
+    taken = [int(np.argmax(weight))]
+    error = distance_to(taken[0])                                         # each colour's squared distance to its nearest taken one
+    score = weight * error                                                # how badly the palette so far draws its pixels
+    nearest = np.zeros(len(rgb), np.uint8)
+    while len(taken) < min(size, len(rgb)):
+        pick = int(np.argmax(score))
+        if not error[pick]:
+            break
+        distance = distance_to(pick)
+        closer = np.flatnonzero(distance < error)                         # only these colours' error and score change
+        error[closer] = distance[closer]
+        score[closer] = weight[closer] * distance[closer]
+        nearest[closer] = len(taken)
+        taken.append(pick)
+    return taken, nearest
+
+
+def _png(fig, times: dict | None = None, started: float = 0.0) -> bytes:
+    """The figure as a PNG of at most 256 colours (see _palette): well under half the size of a full-colour one, and quicker to
+    write. A chart has a few thousand colours, nearly all of them the in-between shades on the edges of lines and letters.
+    times: the seconds since `started` (the clock when the figure was begun) are added to its "draw", and the PNG's to its "png"."""
     try:
+        fig.canvas.draw()
+        drawn = time.perf_counter()
+        width, height = fig.canvas.get_width_height(physical=True)
+        pixels = np.frombuffer(fig.canvas.buffer_rgba(), "<u4") & 0xFFFFFF   # each pixel as one number: red + green·256 + blue·65536 (it is opaque)
+        colours, counts = np.unique(pixels, return_counts=True)
+        rgb = np.stack([colours & 255, colours >> 8 & 255, colours >> 16], axis=1)
+        taken, nearest = _palette(rgb, counts)
+        lookup = np.empty(1 << 24, np.uint8)                                 # each colour's place in the palette
+        lookup[colours] = nearest
+        image = Image.frombuffer("P", (width, height), lookup[pixels], "raw", "P", 0, 1)
+        image.putpalette(rgb[taken].astype(np.uint8).tobytes())
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
+        image.save(buf, format="png", dpi=(DPI, DPI))
+        if times is not None:
+            times["draw"] = times.get("draw", 0.0) + drawn - started
+            times["png"] = times.get("png", 0.0) + time.perf_counter() - drawn
         return buf.getvalue()
     finally:
         plt.close(fig)
@@ -598,7 +661,8 @@ def _png(fig) -> bytes:
 _DRAWING = threading.Lock()   # pyplot keeps global state (current figure, rcParams): one chart is drawn at a time
 
 
-def render(chart: Chart, tz: tzinfo) -> bytes:
-    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads."""
+def render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
+    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads.
+    times (a Turn's): the seconds spent drawing the figure and writing the PNG are added to its "draw" and "png"."""
     with _DRAWING:
-        return _render(chart, tz)
+        return _render(chart, tz, times)

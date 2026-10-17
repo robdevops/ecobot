@@ -51,6 +51,31 @@ def test_a_latest_value_of_zero_is_not_labelled_for_any_of_them_and_other_readin
     assert "52.3" not in labels_of(one_line("humidity", [50.0 + (i % 7) for i in range(40)] + [52.3]))   # a peak or low is tagged, the latest is not
 
 
+def test_the_wind_rose_is_scaled_as_matplotlib_scales_its_bars():
+    """The rose is one collection of wedges, not polar bars, so its radius is set by hand: it must be the one the bars got (5% room
+    past the longest wedge, none when that wedge ends in an empty step), so the rose keeps its size whatever the readings."""
+    import random
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+    rng = random.Random(3)
+    roses = [[[4, 2, 1]] * 16, [[3 + k % 5, 0, 0] for k in range(16)], [[0, 0, 0]] * 3 + [[5, 0, 2]] + [[0, 0, 0]] * 12,
+             [[4, 2, 1]] * 5 + [[9, 4, 0]] + [[4, 2, 1]] * 10]
+    for _ in range(20):
+        rose = [[rng.choice([0, 0, rng.randint(1, 40)]) for _ in range(3)] for _ in range(16)]
+        rose[rng.randrange(16)][0] += 1                                       # a rose is only drawn when there are readings
+        roses.append(rose)
+    for rose in roses:
+        percent = np.asarray(rose, dtype=float) / np.sum(rose) * 100
+        ax = plt.figure().add_axes([0, 0, 1, 1], projection="polar")
+        bottom = np.zeros(16)
+        for i in range(3):                                                    # the rose as it was drawn before
+            ax.bar(np.deg2rad(np.arange(16) * 22.5), percent[:, i], width=np.deg2rad(20), bottom=bottom)
+            bottom += percent[:, i]
+        assert charts._rose_radius(np.cumsum(percent, axis=1)) == pytest.approx(ax.get_ylim()[1], rel=1e-12), rose
+        plt.close(ax.figure)
+
+
 def test_an_end_value_is_never_written_in_exponent_form():
     assert charts._figure(1014.8) == "1014.8" and charts._figure(1015.0) == "1015" and charts._figure(67.53) == "67.5"
     assert charts._figure(0.858) == "0.858" and charts._figure(2.0) == "2" and charts._figure(0.0) == "0"

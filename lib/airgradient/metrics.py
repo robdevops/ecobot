@@ -37,6 +37,35 @@ MARK_LOW = ("co2",)
 # is left out.
 AIR_PANELS = (("pm1", "pm2_5", "pm10"), ("co2",), ("voc_index",), ("nox_index",))
 
+PARTICLES = AIR_PANELS[0]
+SPIKE_RATIO = 2.5    # a particle reading that is this many times the readings either side of it ...
+SPIKE_RISE = 5.0     # ... and this far (µg/m³) above both, with nothing like it next to it, is a glitch of the sensor, not the air
+SPIKE_NEIGHBOUR = 900   # the readings either side must be within this many seconds
+REQUIRE_CONSECUTIVE = 2   # ANTISPIKE_REQUIRE_CONSECUTIVE: readings in a row a rise needs to be the air (set at startup); 1 turns the rule off
+
+
+def without_spikes(rows: list[dict], require: int | None = None) -> list[dict]:
+    """The readings with each spike of the particles taken out, for drawing and for the figures: a stretch of fewer than `require`
+    readings in a row (REQUIRE_CONSECUTIVE) of PM1, PM2.5 or PM10 that are each at least SPIKE_RATIO times, and SPIKE_RISE above, the readings
+    either side of the stretch. All the particle readings of those moments go (they spike together). A rise that lasts `require`
+    readings or more is the air, and stays; so do the first and last readings (they have one side). require 1: nothing is taken out."""
+    require = REQUIRE_CONSECUTIVE if require is None else require
+    drop: set[int] = set()
+    for name in PARTICLES:
+        have = [(i, r["ts"], r[name]) for i, r in enumerate(rows) if name in r]
+        for a in range(1, len(have) - 1):
+            for length in range(1, require):
+                b = a + length - 1                                   # the stretch is have[a..b]
+                if b + 1 >= len(have):
+                    break
+                (_, t0, before), (_, t1, after) = have[a - 1], have[b + 1]
+                near = max(before, after)
+                if have[a][1] - t0 <= SPIKE_NEIGHBOUR and t1 - have[b][1] <= SPIKE_NEIGHBOUR and all(
+                        v >= SPIKE_RATIO * near and v - near >= SPIKE_RISE for _, _, v in have[a:b + 1]):
+                    drop.update(i for i, _, _ in have[a:b + 1])
+    return [{k: v for k, v in r.items() if k not in PARTICLES} if i in drop else r for i, r in enumerate(rows)]
+
+
 # US EPA 2024 PM2.5 breakpoints: (conc low, conc high, AQI low, AQI high, band)
 PM25_AQI = [
     (0.0, 9.0, 0, 50, "good"),

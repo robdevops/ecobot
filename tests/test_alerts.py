@@ -754,3 +754,24 @@ async def test_particulates_count_readings_not_checks(tmp_path):
     await again.check(air_reading(90))
     await again.check(air_reading(90))
     assert len(sent) == 1 and "mask" in sent[0]
+
+
+async def test_a_single_spike_never_makes_the_air_unhealthy_but_two_readings_in_a_row_do(tmp_path):
+    state, sent = AlertState(tmp_path / "s.json"), []
+
+    async def notify(text, link=None, **kw):
+        sent.append(text)
+    mon = ParticulatesMonitor(FakeAir(), state, notify)
+    stamp = datetime.now(timezone.utc)
+
+    def reading(minutes, latest, before):
+        r = air_reading(latest)
+        r["_time_utc"] = stamp + timedelta(minutes=minutes)
+        r["_sustained"] = {"pm2_5": min(latest, before)}            # what air.current() gives: the lowest of the last readings
+        return r
+    await mon.check(reading(0, 90, 5))                              # a spike: the reading before it was clean
+    await mon.check(reading(30, 90, 5))                             # and again at the next check, still alone
+    assert not sent and state.monitor["particulates"]["above"] == 0
+    await mon.check(reading(60, 90, 80))                            # two in a row at this check ...
+    await mon.check(reading(90, 85, 90))                            # ... and at the next
+    assert len(sent) == 1 and "Unhealthy air" in sent[0]

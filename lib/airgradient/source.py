@@ -31,7 +31,8 @@ from ..timeutil import local_date, now_local, to_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
-from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of
+from . import metrics
+from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of, without_spikes
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -253,6 +254,7 @@ class AirGradient:
                                   ensure_ascii=False)
             reading = await self.current()
             reading.pop("_time_utc", None)
+            reading.pop("_sustained", None)
             return json.dumps(reading, ensure_ascii=False)
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
@@ -267,6 +269,17 @@ class AirGradient:
         today = to_local(ts, self.tz).date()
         rows = [r for r in await self._day_rows(today) if r["ts"] < ts]
         return rows[-1] if rows and ts - rows[-1]["ts"] <= MAX_GAP_SECONDS else None
+
+    async def _previous_rows(self, ts: int, count: int) -> list[dict]:
+        """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first."""
+        today = to_local(ts, self.tz).date()
+        earlier, got, after = [r for r in await self._day_rows(today) if r["ts"] < ts], [], ts
+        for r in reversed(earlier):
+            if len(got) >= count or after - r["ts"] > MAX_GAP_SECONDS:
+                break
+            got.insert(0, r)
+            after = r["ts"]
+        return got
 
     async def current(self) -> dict:
         """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
@@ -289,9 +302,16 @@ class AirGradient:
         if "pm2_5" in out:
             aqi, band = pm25_aqi(out["pm2_5"]["_rated"])
             out["pm2_5"].update(aqi_us=aqi, band=band)
+        sustained = {}   # each metric's lowest value over the last REQUIRE_CONSECUTIVE readings: what the air has been for that long
+        if row.get("timestamp"):
+            earlier = await self._previous_rows(epoch(row["timestamp"]), max(metrics.REQUIRE_CONSECUTIVE - 1, 0))
+            for name, entry in out.items():
+                if isinstance(entry, dict) and "value" in entry:
+                    sustained[name] = min([entry["value"], *(r[name] for r in earlier if name in r)])
         for entry in out.values():
             if isinstance(entry, dict):
                 entry.pop("_rated", None)
+        out["_sustained"] = sustained   # for the alerts (removed before the model sees it)
         return out
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
@@ -322,10 +342,12 @@ class AirGradient:
         if t0 >= t1:
             return {"error": "start must be before end"}
         chart = wants_chart({"chart": chart}, turn, t0, t1)
-        before = self.requests
+        before, started = self.requests, time.perf_counter()
         rows, hourly, skipped = await self.rows(t0, t1)
-        log.info("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}", f"{t1:%m-%d %H:%M}", len(rows),
-                 self.requests - before)
+        turn.times["data"] = turn.times.get("data", 0.0) + time.perf_counter() - started   # for the reply's timing line
+        rows = without_spikes(rows)   # a single-reading spike of the particles is a glitch of the sensor: in no figure or chart
+        log.log(logging.DEBUG if turn.ahead else logging.INFO, "AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}",
+                f"{t1:%m-%d %H:%M}", len(rows), self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",
                "readings": len(rows)}
         for name, (_, unit) in METRICS.items():
@@ -376,6 +398,7 @@ class AirGradient:
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
         shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
+        rows = without_spikes(rows)   # (a no-op for the rows history() gives it; a caller with its own rows gets the same drawing)
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None

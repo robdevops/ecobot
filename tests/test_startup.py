@@ -51,7 +51,8 @@ class FakeBuilder:
 
 async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
     caplog.set_level("INFO")
-    cfg = config(tmp_path)
+    cfg = config(tmp_path, log_width=120)
+    monkeypatch.setattr(ecobot._handler.formatter, "width", 0)   # put back after the test
     eco_t, _ = ecowitt_transport(history_days=45)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
@@ -65,7 +66,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
 
     async def stop_when_archived():  # the background archives finish, then we shut down
         for _ in range(300):
-            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+            if " req, held " in caplog.text and "days cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -75,10 +76,11 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     log = caplog.text
     assert "Weather station: Ecowitt 'Fairleigh'" in log and "@testbot + " in log
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
-    final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
-    assert "failed" not in final and "days (5min/30min/4h/1d)" in final
+    final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
+    assert "failed" not in final and "days (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
     assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
+    assert ecobot._handler.formatter.width == 120                   # LOG_WIDTH reaches the bot's own log lines
 
 
 async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not_start(tmp_path, monkeypatch, caplog):
@@ -101,7 +103,7 @@ async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+            if " req, held " in caplog.text and "days cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -239,7 +241,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+            if " req, held " in caplog.text and "days cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -257,7 +259,67 @@ def test_a_long_alerts_line_continues_indented_at_90_characters():
     assert all(line.startswith(" " * 13) and not line.startswith(" " * 14) for line in lines[1:])
 
 
-def test_log_lines_name_their_module_except_the_main_script():
-    fmt = ecobot.LogFormat("%(levelname)s %(where)s%(message)s")
+def test_log_lines_do_not_name_their_module():
+    fmt = ecobot.LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
-    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO lib.bot: hello"
+    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO hello"
+
+
+def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line():
+    from lib.logs import QUOTES, LogFormat
+    fmt = LogFormat("%(levelname)s %(message)s", width=40)
+
+    def line(msg, *args, quotes=True):
+        record = logging.LogRecord("lib.bot", logging.INFO, __file__, 1, msg, args, None)
+        if quotes:
+            record.__dict__.update(QUOTES)
+        return fmt.format(record)
+    asked = "what was the hottest it got last week, and when?"
+    assert line("[@rob] %s", "how hot\nis  it") == "INFO [@rob] how hot is it"        # short enough: whole, on one line
+    assert line("[@rob] %s", asked) == "INFO [@rob] what was the hottest it got…"               # 40 characters, the ellipsis included
+    timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
+    assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
+    assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
+    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is shown whole
+        record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
+        assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
+    fmt.width = 0
+    assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
+    assert line(timings, quotes=False) == "INFO " + timings
+
+
+def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LOG_WIDTH", raising=False)
+    assert Config.from_env().log_width == 71
+    for value, want in (("120", 120), ("0", 0), ("junk", 71), ("-5", 71), ("7.5", 71), ("²", 71)):
+        monkeypatch.setenv("LOG_WIDTH", value)
+        assert Config.from_env().log_width == want, value
+
+
+def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("TELEGRAM_PRELOAD_CHAT", raising=False)
+    assert Config.from_env().telegram_preload_chat is None
+    for value, want in (("-1001234567890", -1001234567890), ("42", 42), ("", None), ("junk", None)):
+        monkeypatch.setenv("TELEGRAM_PRELOAD_CHAT", value)
+        assert Config.from_env().telegram_preload_chat == want, value
+
+
+def test_the_http_clients_lines_do_not_start_with_http_request():
+    from lib.logs import LogFormat
+    fmt = LogFormat("%(levelname)s %(message)s", width=80)
+    record = logging.LogRecord("httpx2", logging.INFO, __file__, 1, 'HTTP Request: %s %s "%s %d %s"',
+                               ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
+    assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
+    assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
+
+
+def test_the_alerts_list_wraps_at_the_log_width():
+    from lib.alerts.menu import LABELS
+    lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats", 40).splitlines()
+    assert len(lines) > 1 and all(len(line) <= 40 for line in lines)

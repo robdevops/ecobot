@@ -107,7 +107,7 @@ class _TurnLock:
         except asyncio.CancelledError:
             if waiter.done() and not waiter.cancelled():   # the turn was already handed to us: pass it on
                 self.release()
-            else:
+            elif waiter in self._queues[urgent]:            # (a release since the cancel has already dropped it)
                 self._queues[urgent].remove(waiter)
             raise
 
@@ -172,8 +172,8 @@ class EcowittAPI:
     async def realtime(self, mac: str, groups: str, urgent: bool = False) -> dict:
         return fix_units(await self._get("real_time", urgent=urgent, mac=mac, call_back=groups, **UNIT_IDS))
 
-    async def history(self, mac: str, cycle: str, start: datetime, end: datetime, groups: str) -> dict:
-        """{group: {field: {"unit", "list": {epoch: value}}}}; empty when there is no data."""
-        data = await self._get("history", mac=mac, call_back=groups, cycle_type=cycle,
+    async def history(self, mac: str, cycle: str, start: datetime, end: datetime, groups: str, urgent: bool = False) -> dict:
+        """{group: {field: {"unit", "list": {epoch: value}}}}; empty when there is no data. urgent: as for _get."""
+        data = await self._get("history", urgent=urgent, mac=mac, call_back=groups, cycle_type=cycle,
                                start_date=start.strftime(FMT), end_date=end.strftime(FMT), **UNIT_IDS)
         return fix_units(data) if isinstance(data, dict) else {}

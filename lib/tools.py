@@ -6,6 +6,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from .logs import QUOTES
+
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_CHARS = 60000
@@ -25,6 +27,8 @@ class Turn:
     per_day: bool = False                        # day by day figures were asked for: a long period keeps every day, not only its extremes
     result_chars: int = 0                        # the size of every tool result so far this question (what the model will be sent)
     forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
+    times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
+    ahead: bool = False                          # a chart drawn ahead, nobody waiting: its requests wait their turn and its routine log lines are quiet
 
 
 @dataclass
@@ -57,7 +61,8 @@ class Tools:
             args = json.loads(raw_args) if raw_args else {}
         except json.JSONDecodeError as e:
             return f"Error: tool arguments were not valid JSON ({e})"
-        log.info("Tool call %s %s", name, raw_args[:300])
+        level = logging.DEBUG if turn and turn.ahead else logging.INFO
+        log.log(level, "Tool call %s %s", name, raw_args, extra=QUOTES)
         try:
             out = await asyncio.wait_for(tool.handler(args, turn or Turn()), TOOL_TIMEOUT)
         except TimeoutError:
@@ -69,7 +74,7 @@ class Tools:
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
             out = out[:MAX_OUTPUT_CHARS] + "\n...[truncated - request a shorter range]"
-        log.info("Tool result %s: %s", name, out if len(out) < 90 else f"{len(out)} chars")
+        log.log(level, "Tool result %s: %s", name, out if len(out) < 90 else f"{len(out)} chars", extra=QUOTES)
         if turn:
             turn.result_chars += len(out)
         return out

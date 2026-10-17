@@ -489,6 +489,18 @@ async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_capti
     assert rows(kw["reply_markup"])[0][0] == ("➕ Sub ▸", "al:open:sub:temps")                   # the alert's own buttons ride along
 
 
+async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_telegrams_copy(tmp_path):
+    class Keeps(SentWithPhotos):   # Telegram answers with the photo it now holds, in its sizes (the largest last)
+        async def send_photo(self, chat_id, photo, **kw):
+            await super().send_photo(chat_id, photo, **kw)
+            return NS(photo=(NS(file_id="small"), NS(file_id="large")))
+    state, bot = AlertState(tmp_path / "s.json"), Keeps()
+    for chat in (1, 2, 3):
+        state.add_chat(chat, str(chat))
+    await Notifier(bot, state, KINDS)("It's warmer outside", kind="temps", photo=b"png")
+    assert [(chat, photo) for chat, photo, _ in bot.photos] == [(1, b"png"), (2, "large"), (3, "large")]
+
+
 async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_chat_is_still_forgotten(tmp_path):
     from telegram.error import BadRequest
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos(refuse=BadRequest("Wrong file identifier"))

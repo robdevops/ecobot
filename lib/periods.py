@@ -2,6 +2,7 @@
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -59,12 +60,31 @@ class Charted:
             self.save()
 
 
+@dataclass
+class Drawn:
+    """A chart in the ImageCache."""
+    at: float                    # when it was drawn (the cache's clock)
+    png: bytes
+    title: str
+    file_id: str | None = None   # Telegram's copy, once the chart has been sent: it is sent again by this, not uploaded
+    caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
+    ttl: float = 10 * 60         # how long it is kept (ImageCache.CHART_TTL; PRELOAD_TTL for one uploaded ahead)
+
+    @property
+    def photo(self) -> bytes | str:
+        return self.file_id or self.png
+
+
 class ImageCache:
     """The charts drawn lately, by question: toggling between the period buttons brings a chart back at once instead of drawing it
-    again. A chart is kept CHART_TTL seconds (the readings move slowly) and the newest CHART_IMAGES stay."""
+    again, and once it has been sent, as Telegram's copy instead of an upload. A chart is kept CHART_TTL seconds (the readings move
+    slowly) and the newest CHART_IMAGES stay. The button charts are also drawn ahead (Bot.predraw): one drawn in the last FRESH
+    seconds is the answer to its question (ready)."""
 
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
+    PRELOAD_TTL = 30 * 60   # a chart uploaded ahead (TELEGRAM_PRELOAD_CHAT) is used for this long, then drawn afresh
+    FRESH = 330   # a little over the time between two rounds of drawing ahead, so a press always finds one
 
     def __init__(self, clock=None):
         import time
@@ -77,16 +97,49 @@ class ImageCache:
         from . import intent
         return intent.with_period(question, days, now).lower()
 
-    def get(self, key: str) -> tuple[bytes, str] | None:
+    @classmethod
+    def canonical(cls, question: str, now) -> str | None:
+        """The key of a question that is its own key, word for word ("Temperature chart 7d", a button's): its chart is the same
+        whoever asks it. None for any other ("temperature chart today" is kept under the 1d key, but it is another chart)."""
+        from . import intent
+        key = cls.key(question, intent.period_days(question, now), now)
+        return key if key == " ".join(question.split()).lower() else None
+
+    def get(self, key: str) -> tuple[bytes | str, str] | None:
+        """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
         entry = self.items.get(key)
-        if entry is None or self.clock() - entry[0] > self.CHART_TTL:
+        if entry is None or self.clock() - entry.at > entry.ttl:
             self.items.pop(key, None)
             return None
         self.items.move_to_end(key)
-        return entry[1], entry[2]
+        return entry.photo, entry.title
 
-    def put(self, key: str, png: bytes, title: str):
-        self.items[key] = (self.clock(), png, title)
+    def has_copy(self, key: str) -> bool:
+        """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
+        entry = self.items.get(key)
+        return entry is not None and entry.file_id is not None and self.clock() - entry.at <= entry.ttl
+
+    def ready(self, question: str, now) -> Drawn | None:
+        """The chart made in code for exactly these words in the last FRESH seconds (drawn ahead, or for someone's question),
+        with the text that went with it; None if there is none."""
+        key = self.canonical(question, now)
+        entry = self.items.get(key) if key else None
+        if entry is None or entry.caption is None or self.clock() - entry.at > self.FRESH:
+            return None
+        self.items.move_to_end(key)
+        return entry
+
+    def age(self, entry: Drawn) -> float:
+        return self.clock() - entry.at
+
+    def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None):
+        """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready)."""
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL)
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)
+
+    def sent(self, key: str | None, message):
+        """`message` (as Telegram returned it) carries the chart kept under `key`: later sends of it use Telegram's copy."""
+        if (entry := self.items.get(key)) is not None and (sizes := getattr(message, "photo", None)):
+            entry.file_id = sizes[-1].file_id   # the largest size: the picture as it was sent

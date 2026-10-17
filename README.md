@@ -36,12 +36,16 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
 | `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET` | enables the irrigation controller (a Tuya smart irrigation timer, through the Tuya cloud API): an Irrigation button in private chats (it replaces Wind) with its status and buttons to water for 5 to 30 minutes or switch the valve off, pause for 24 to 72 hours (the Pause button becomes Unpause while paused), refresh, and an Alerts menu to turn the chat's irrigation battery and irrigation pause alerts on or off (or type irrigation, water, tap or sprinkler); a daily check at 18:00 that delays it 24 hours when more than 1 mm fell in the last 24 hours or Open-Meteo gives today or tomorrow a 50% or better chance of 1 mm (needs Ecowitt and `FORECAST=on` for each half); an "irrigation pause" alert when it does, and an "irrigation battery" alert below 5%. `TUYA_BASE_URL` (default `https://openapi.tuyaeu.com`, the EU data centre) and `IRRIGATION_CHECK_HOUR` (default `18`) are optional |
 | `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
+| `TELEGRAM_PRELOAD_CHAT` | optional: a chat id (negative for a group or channel) the bot silently uploads charts to ahead of need. With it set, each chart sent with period buttons has its other periods drawn and uploaded there in the background (one at a time, never while a question is being answered), so pressing a period button edits the message with Telegram's copy and uploads nothing. A chart uploaded this way is used for 30 minutes, then drawn afresh. The bot must be able to post in that chat; the uploaded messages are left there. Unset: off |
+| `ANTISPIKE_REQUIRE_CONSECUTIVE` | optional: how many readings in a row a rise of the particles (PM1, PM2.5, PM10) needs to count as the air rather than a glitch of the sensor. Default `2`: a single-reading spike (at least 2.5 times, and 5 µg/m³ above, the readings either side) is left out of PM charts and of every air figure (highs, lows, averages, days over a limit), and the unhealthy-air alert counts a check only when the sensor's last 2 readings are all over the mask level. `3` also drops two-reading spikes, and so on; `1` or `off` turns the rule off. The live "air now" reading and the "safe again" check are unchanged |
+| `LOG_WIDTH` | optional: the most characters of a log line, cut with an ellipsis (…); `0` cuts none. Default 71. Every INFO line obeys it; a `WARN` or `ERROR` entry is never cut (a warning is printed as `WARN`); a request, chat message, reply or alert is also put on one line, and the startup "Alerts:" list wraps at it (at 90 when `0`) |
 
 ## Layout
 
 ```
 ecobot.py            wiring and lifecycle
 lib/config.py           settings
+lib/logs.py             how log lines look: the module that spoke, and quoted requests and chat messages cut to LOG_WIDTH
 lib/bot.py              Telegram handlers and replies; every button press comes in through one entry point that checks it first
 lib/admins.py           who may use the bot with ADMIN_ONLY: the admins of the groups it is in, plus ADMIN_CHAT_IDS
 lib/llm.py, prompt.py   tool-calling loop; system prompt
@@ -82,7 +86,9 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed)
 - The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
   model is called once, at the end, just to word the answer.
-- Recent readings are prefetched when a question arrives and refreshed every 4 minutes.
+- Recent readings are kept in memory, refreshed every minute (the weather station) and every 4 minutes (the air sensor); a question that may need them starts a refresh as it arrives (a chart made in code doesn't: it reads just what it needs). A question never waits for a refresh in flight when the cache and memory already hold what it needs, and its own Ecowitt requests go before the background ones.
+- The chart buttons' charts are drawn ahead every 5 minutes, one at a time and never while a question is being answered: a press is sent the one drawn in the last 5½ minutes at once (its write-up kept in the chat's memory, as for one drawn on the spot); an alert's chart is still drawn when it goes out, so it shows the reading the alert is about. A chart is uploaded once: sending it again (to the next chat an alert goes to, toggling back to a period drawn lately, the next press of a button) uses Telegram's copy.
+- Each chart reply logs where its time went: `Chart ms: data 12, calc 6, draw 112, PNG 41 (22 KB), send 812`, or `Chart ms: drawn 40s ago, send 210 (Telegram's copy)` for one drawn ahead.
 - The whole history of both sensors is kept in SQLite (`ecowitt_cache.sqlite`,
   `airgradient_cache.sqlite`): a background archive copies every Ecowitt cycle (5-minute, 30-minute,
   4-hour, daily) before Ecowitt expires it, and backfills AirGradient day by day to where the sensor's

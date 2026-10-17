@@ -100,10 +100,11 @@ def live_summary(data: dict) -> str:
         obj = (data.get(group) or {}).get(field)
         if not isinstance(obj, dict) or "value" not in obj:
             return None
-        return f"{obj['value']} {obj.get('unit', '')}".replace("℃", "°C").replace("mm/hr", "mm/h").strip()
+        unit = obj.get("unit", "").replace("℃", "°C").replace("mm/hr", "mm/h")
+        return f"{obj['value']}{'' if unit in ('°C', '%') else ' '}{unit}".strip()
     wind = get("wind", "wind_speed")
     parts = [f"rain {rate}" if (rate := get("rainfall", "rain_rate")) else None,
-             f"{daily} today" if (daily := get("rainfall", "daily")) else None,
+             f"{daily}/day" if (daily := get("rainfall", "daily")) else None,
              get("outdoor", "temperature"), get("outdoor", "humidity"),
              f"wind {wind}" if wind else None, get("pressure", "relative")]
     return ", ".join(p for p in parts if p) or "no readings"
@@ -164,8 +165,9 @@ class Ecowitt:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""
         return f"Ecowitt weather station '{self.station_name}'{created} (people say \"ecowitt\" or \"weather\")"
 
-    def fetcher(self, groups: list[str]) -> Fetcher:
-        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz)
+    def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
+        """urgent: for a question (its requests go before the background ones)."""
+        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent)
 
     def now(self) -> datetime:
         return now_local(self.tz)
@@ -178,7 +180,7 @@ class Ecowitt:
         named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
         if (r := find(named)) and r.group not in groups:
             groups.append(r.group)
-        return await HistoryQuery(self.fetcher(groups), args, turn).run()
+        return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
         return await days_tool(self.cache, self.mac, self.tz, args, turn)
@@ -228,7 +230,7 @@ class Ecowitt:
                 raise ValueError("no rain reading in the response")
         except Exception as e:  # the alert still works from the history
             if self._live_ok is not False:  # once per outage, not every minute
-                log.warning("Live readings failed (%s); the rain alert uses the 5-minute history", e)
+                log.warning("Live readings failed: %s; rain alert uses history", e)
             self._live_ok = False
             return None
         if self._live_ok is None:

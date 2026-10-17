@@ -76,7 +76,7 @@ class Archive:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
             if seconds >= 60:   # a short run only gets the line when it finishes
-                log.info("Ecowitt archive: %d req to fetch (about %s)", len(todo),
+                log.info("Ecowitt: %d req to fetch (about %s)", len(todo),
                          f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
         fetched = failed = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
@@ -87,7 +87,7 @@ class Archive:
             else:
                 fetched += 1
             if i % 20 == 0 and i < len(todo):
-                log.info("Ecowitt archive: %d of %d req done", i, len(todo))
+                log.info("Ecowitt: %d of %d req done", i, len(todo))
             await asyncio.sleep(self.pace)
         return fetched, failed
 
@@ -114,7 +114,7 @@ class Archive:
         """Days of history held per resolution, e.g. "88/363/728/1456 days (5min/30min/4h/1d)" """
         cycles = ("5min", "30min", "4hour", "1day")
         days = "/".join(str(self.station.cache.days_held(self.station.mac, c, self.groups)) for c in cycles)
-        return f"{days} days (5min/30min/4h/1d)"
+        return f"{days} days (5m/30m/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:
         now = datetime.now(self.station.tz)
@@ -129,7 +129,7 @@ class Archive:
             try:
                 started = datetime.now()
                 fetched, failed = await self.run_once()
-                log.info("Ecowitt archive: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
+                log.info("Ecowitt: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
                          self.held(), (datetime.now() - started).total_seconds())
             except asyncio.CancelledError:
                 raise
