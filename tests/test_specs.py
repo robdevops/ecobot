@@ -100,6 +100,32 @@ def test_a_taller_chart_for_more_panels():
     assert sizes[0] == sizes[1] == (1280, 720) and sizes[2][1] > 720 and sizes[3][1] > sizes[2][1]
 
 
+def test_a_chart_is_a_png_of_at_most_256_colours_and_its_own_colours_are_exact():
+    from PIL import Image
+    import io
+    image = Image.open(io.BytesIO(render(Chart("One", "x", [Panel("Temperature", "°C", [line("Outdoor", reading="temperature")])]), TZ)))
+    colours = image.convert("RGB").getcolors(256)
+    assert image.mode == "P" and colours is not None                                   # None: more than 256
+    assert image.convert("RGB").getpixel((0, 0)) == (255, 255, 255)                  # the background is pure white
+    assert (0xFF, 0x98, 0x30) in {rgb for _, rgb in colours}                          # and the line its own orange
+
+
+def test_the_palette_keeps_every_colour_when_there_are_few_and_the_common_ones_when_there_are_many():
+    import numpy as np
+    from lib.charts import _palette
+    rng = np.random.default_rng(1)
+    few = rng.integers(0, 256, (200, 3)).astype(float)
+    taken, nearest = _palette(few, rng.integers(1, 1000, 200))
+    assert sorted(taken) == list(range(200)) and [taken[i] for i in nearest] == list(range(200))   # each colour is its own entry
+    many = rng.integers(0, 256, (3000, 3)).astype(float)
+    counts = rng.integers(1, 10, 3000)
+    counts[:20] = 100_000                                                              # a few colours cover areas
+    taken, nearest = _palette(many, counts)
+    assert len(taken) == 256 and set(range(20)) <= set(taken)                          # they are kept exactly
+    distance = ((many[:, None, :] - many[taken][None, :, :]) ** 2).sum(axis=2)
+    assert np.array_equal(distance[np.arange(len(many)), nearest], distance.min(axis=1))   # and every colour is drawn in its nearest
+
+
 def test_a_daily_air_line_has_its_range_band_alone_and_in_a_multi_panel_chart():
     class Air:
         tz = TZ

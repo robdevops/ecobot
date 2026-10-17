@@ -30,6 +30,7 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Polygon, Rectangle, Wedge  # noqa: E402
 from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: E402
 from matplotlib.transforms import ScaledTranslation  # noqa: E402
+from PIL import Image  # noqa: E402
 
 from .specs import Chart, Compass, Line, Panel  # noqa: E402
 from .timeutil import to_local  # noqa: E402
@@ -598,10 +599,42 @@ def _render(chart: Chart, tz: tzinfo) -> bytes:
     return _png(fig)
 
 
+def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list[int], np.ndarray]:
+    """Up to `size` of these colours (rows of `rgb`, each with its count of pixels) for a palette, and the nearest of them for every
+    colour. It starts from the commonest; each next one is the colour the palette so far draws worst (its pixels times its squared
+    distance to the nearest colour taken), so the colours that cover an area are kept exactly and the in-between shades of
+    anti-aliased edges come out within a few levels. With `size` colours or fewer, every one is kept."""
+    taken = [int(np.argmax(counts))]
+    error = ((rgb - rgb[taken[0]]) ** 2).sum(axis=1)                      # each colour's squared distance to its nearest taken one
+    nearest = np.zeros(len(rgb), np.uint8)
+    weight = counts.astype(float)
+    while len(taken) < min(size, len(rgb)):
+        pick = int(np.argmax(weight * error))
+        if not error[pick]:
+            break
+        distance = ((rgb - rgb[pick]) ** 2).sum(axis=1)
+        closer = distance < error
+        error[closer], nearest[closer] = distance[closer], len(taken)
+        taken.append(pick)
+    return taken, nearest
+
+
 def _png(fig) -> bytes:
+    """The figure as a PNG of at most 256 colours (see _palette): well under half the size of a full-colour one, and quicker to
+    write. A chart has a few thousand colours, nearly all of them the in-between shades on the edges of lines and letters."""
     try:
+        fig.canvas.draw()
+        width, height = fig.canvas.get_width_height(physical=True)
+        pixels = np.frombuffer(fig.canvas.buffer_rgba(), "<u4") & 0xFFFFFF   # each pixel as one number: red + green·256 + blue·65536 (it is opaque)
+        colours, counts = np.unique(pixels, return_counts=True)
+        rgb = np.stack([colours & 255, colours >> 8 & 255, colours >> 16], axis=1).astype(float)
+        taken, nearest = _palette(rgb, counts)
+        lookup = np.empty(1 << 24, np.uint8)                                 # each colour's place in the palette
+        lookup[colours] = nearest
+        image = Image.frombuffer("P", (width, height), lookup[pixels], "raw", "P", 0, 1)
+        image.putpalette(rgb[taken].astype(np.uint8).tobytes())
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=DPI, facecolor=BG)
+        image.save(buf, format="png", dpi=(DPI, DPI))
         return buf.getvalue()
     finally:
         plt.close(fig)
