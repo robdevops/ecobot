@@ -76,7 +76,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     log = caplog.text
     assert "Weather station: Ecowitt 'Fairleigh'" in log and "@testbot + " in log
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
-    final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
+    final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
     assert "failed" not in final and "days (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
     assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
