@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, tzinfo, UTC
 
 from ..timeutil import local_epoch, to_local
 from .api import EcowittError, MAX_SPAN, RETENTION
-from .store import HistoryCache, HotStore, merge as merge_intervals
+from .store import HistoryCache, HotStore, merge as merge_intervals, subtract
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class Fetcher:
     async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> dict | None:
         """[s, e] (epoch seconds) from the cache, its newest readings from memory, and (fetch) what neither holds from Ecowitt, which
         is then cached and kept in memory. None, with nothing counted, when fetch is False and the cache and memory lack some of it."""
-        missing = {g: await asyncio.to_thread(self.cache.missing, self.mac, cycle, g, s, e) for g in self.groups}
+        (missing,) = await self._missing(cycle, [(s, e)])
         gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
         fresh: dict = {}
         from_memory = 0
@@ -141,13 +141,20 @@ class Fetcher:
         """fn(*args), a read of the cache's own (slots, slot ranges), in a thread."""
         return await asyncio.to_thread(fn, *args)
 
-    @timed
+    async def _missing(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
+        """For each window (epoch seconds), the parts of it the cache lacks, by group: one read of the coverage in one thread hop
+        (the hop costs more than the query, and far more while a chart is being drawn)."""
+        held = await asyncio.to_thread(self.cache.coverage_of, self.mac, cycle, self.groups) if self.groups else {}
+        return [{g: subtract(w, held[g]) for g in self.groups} for w in windows]
+
     async def covered(self, cycle: str, start: int, end: int) -> bool:
         """True if the cache holds every group for [start, end] (epoch seconds)."""
-        for g in self.groups:
-            if await asyncio.to_thread(self.cache.missing, self.mac, cycle, g, start, end):
-                return False
-        return bool(self.groups)
+        return (await self.covered_each(cycle, [(start, end)]))[0]
+
+    @timed
+    async def covered_each(self, cycle: str, windows: list[tuple[int, int]]) -> list[bool]:
+        """covered() for each of these windows, from one read of the coverage."""
+        return [bool(self.groups) and not any(missing.values()) for missing in await self._missing(cycle, windows)]
 
     async def finer_cycle(self, ts: int, current: str, window_end: int, now_utc: datetime) -> str | None:
         """Finest cycle finer than `current` available for this window: still kept by Ecowitt,

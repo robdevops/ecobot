@@ -27,6 +27,18 @@ def test_only_settled_readings_are_kept(tmp_path):
     assert cache.missing("M", "5min", "outdoor", fresh, now)  # the unsettled tail is still to fetch
 
 
+def test_the_coverage_of_several_groups_is_each_groups_own_read_at_once(tmp_path):
+    cache, now = make(tmp_path), int(time.time())
+    old = now - 9 * 86400
+    both = {"outdoor": data(old)["outdoor"], "wind": {"wind_speed": {"unit": "km/h", "list": {str(old): "3"}}}}
+    cache.store("M", "30min", ["outdoor", "wind"], both, old, old + 86400)
+    cache.store("M", "30min", ["outdoor"], data(old + 3 * 86400), old + 3 * 86400, old + 4 * 86400)
+    cache.store("M", "5min", ["wind"], both, old, old + 3600)                                   # another cycle: not counted
+    held = cache.coverage_of("M", "30min", ["outdoor", "wind", "rainfall"])
+    assert held == {g: cache.coverage("M", "30min", g) for g in ("outdoor", "wind", "rainfall")}
+    assert len(held["outdoor"]) == 2 and len(held["wind"]) == 1 and held["rainfall"] == []
+
+
 def test_empty_old_ranges_are_remembered(tmp_path):
     cache, now = make(tmp_path), int(time.time())
     start, end = now - 30 * 86400, now - 29 * 86400

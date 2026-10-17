@@ -492,6 +492,29 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     await eco.close()
 
 
+async def test_the_wind_rose_reads_its_5_minute_readings_in_runs_of_days_not_a_day_at_a_time(tmp_path, archived_cache, monkeypatch):
+    from lib.ecowitt import query
+    from lib.ecowitt.query import consecutive
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    made = []
+
+    class Recorded(query.Fetcher):   # the wind rose's own fetcher, whose reads are counted
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made.append(self)
+    monkeypatch.setattr(query, "Fetcher", Recorded)
+    today = eco.now().date()
+    turn = Turn(chart_field="wind")
+    out = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind",
+                                                 "start_date": f"{today - timedelta(days=30)} 00:00:00"}, turn))
+    assert out["series"]["wind.wind_direction"] and turn.charts[0].compass
+    assert len(made) == 1 and made[0].ranges == 1           # the archived days and today in one read, not one for each of 31 days
+    await eco.close()
+    day = lambda n: today + timedelta(days=n)
+    assert consecutive([day(1), day(2), day(3), day(5), day(6), day(9)]) == [[day(1), day(2), day(3)], [day(5), day(6)], [day(9)]]
+    assert consecutive([]) == []
+
+
 async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path, archived_cache):
     from lib.charts import render
     eco, _ = await archived_station(tmp_path, archived_cache)

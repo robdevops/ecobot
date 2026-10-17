@@ -13,7 +13,7 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 import asyncio
 import json
 import logging
-from datetime import datetime, time, timedelta, UTC
+from datetime import date, datetime, time, timedelta, UTC
 from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
@@ -49,6 +49,17 @@ FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a 
 # Fields Ecowitt derives from the others (feels-like, dew point ...): left out of results unless the question asks for them
 # (or charts one), so an "averaged data" note can't be misapplied to them.
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
+
+
+def consecutive(days: list[date]) -> list[list[date]]:
+    """Sorted days in runs of consecutive ones: [1, 2, 3, 5, 6] -> [[1, 2, 3], [5, 6]]."""
+    runs: list[list[date]] = []
+    for day in days:
+        if runs and day - runs[-1][-1] == timedelta(days=1):
+            runs[-1].append(day)
+        else:
+            runs.append([day])
+    return runs
 
 
 def stack_names(args: dict, turn) -> list[str]:
@@ -150,10 +161,7 @@ class HistoryQuery:
         f = self.f
         if (self.span.days + 1) * 48 * len(f.groups) * FIELDS_PER_GROUP > MAX_ROWS:
             return False
-        for t, e in spans("30min", self.start, self.end - timedelta(days=1)):
-            if not await f.covered("30min", f.epoch(t), f.epoch(e)):
-                return False
-        return True
+        return all(await f.covered_each("30min", [(f.epoch(t), f.epoch(e)) for t, e in spans("30min", self.start, self.end - timedelta(days=1))]))
 
     async def _chunks(self, cycle: str, t: datetime, until: datetime):
         for a, b in spans(cycle, t, until):
@@ -195,15 +203,18 @@ class HistoryQuery:
         f = self.f
         wind = self.wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz, f.urgent)
         first = max(self.start, self.end - timedelta(days=DIRECTION_DAYS))
+        bounds = {}   # each day of the period: its part of it, local times
+        for n in range((self.end.date() - first.date()).days + 1):
+            day = first.date() + timedelta(days=n)
+            a, b = max(first, datetime.combine(day, time())), min(self.end, datetime.combine(day, time(23, 59, 59)))
+            if a < b:
+                bounds[day] = a, b
+        held = await wind.covered_each("5min", [(wind.epoch(a), wind.epoch(b)) for a, b in bounds.values()])
+        fine_days = {day for day, whole in zip(bounds, held) if whole or day == self.end.date()}   # today's comes from memory or one request
+        fine: dict = {}
+        for run in consecutive(sorted(fine_days)):   # a run of days is one read
+            collect(fine, await wind.get("5min", bounds[run[0]][0], bounds[run[-1]][1]), "5min")
         for key in keys:
-            fine: dict = {}
-            fine_days = set()
-            for n in range((self.end.date() - first.date()).days + 1):
-                day = first.date() + timedelta(days=n)
-                a, b = max(first, datetime.combine(day, time())), min(self.end, datetime.combine(day, time(23, 59, 59)))
-                if a < b and (day == self.end.date() or await wind.covered("5min", wind.epoch(a), wind.epoch(b))):
-                    collect(fine, await wind.get("5min", a, b), "5min")  # today's comes from memory or one request
-                    fine_days.add(day)
             pts = self.store.pop(key)["pts"]
             speed_key = key[:-len("wind_direction")] + "wind_speed"
             speeds = {t: r["value"][0] for src in (self.store, fine) for t, r in src.get(speed_key, {}).get("pts", {}).items()
@@ -228,8 +239,11 @@ class HistoryQuery:
         out = {}
         for key, series in self.store.items():
             months: dict = {}
+            until = None   # the end of the local day the reading falls in (epoch), its month worked out once a day
             for ts, rec in sorted(series["pts"].items()):
-                month = datetime.fromtimestamp(ts, UTC).astimezone(self.tz).strftime("%b %Y")
+                if until is None or ts >= until:
+                    day = local_date(ts, self.tz)
+                    month, until = day.strftime("%b %Y"), day_bounds(day, self.tz)[1]
                 fold(months.setdefault(month, {}), ts, rec)
             out[key] = months
         return out
