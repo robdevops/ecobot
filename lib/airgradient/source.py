@@ -325,6 +325,7 @@ class AirGradient:
         before, started = self.requests, time.perf_counter()
         rows, hourly, skipped = await self.rows(t0, t1)
         turn.times["data"] = turn.times.get("data", 0.0) + time.perf_counter() - started   # for the reply's timing line
+        rows = without_spikes(rows)   # a single-reading spike of the particles is a glitch of the sensor: in no figure or chart
         log.log(logging.DEBUG if turn.ahead else logging.INFO, "AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}",
                 f"{t1:%m-%d %H:%M}", len(rows), self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",
@@ -376,9 +377,8 @@ class AirGradient:
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone). A single-reading spike of the particles is
-        left out of the drawing (and of its records), as a glitch of the sensor."""
-        rows = without_spikes(rows)
+        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
+        rows = without_spikes(rows)   # (a no-op for the rows history() gives it; a caller with its own rows gets the same drawing)
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None

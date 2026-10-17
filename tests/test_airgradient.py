@@ -326,8 +326,8 @@ def _air_store(tmp_path):
     for k in range(40):
         day = start + timedelta(days=k)
         lo = int(datetime.combine(day, datetime.min.time()).replace(tzinfo=TZ).timestamp())
-        spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³
-        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if i == 100 else 5.0, "co2": 420.0 + i} for i in range(288)])
+        spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³ (for three readings: the air, not a glitch)
+        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if 100 <= i <= 102 else 5.0, "co2": 420.0 + i} for i in range(288)])
     return store, start
 
 
@@ -367,3 +367,24 @@ def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_la
     assert without_spikes(ends) == ends                                                      # the first reading has one side only
     apart = [row(0, 1, 2, 3), {**row(1, 1, 2, 60), "ts": base + 3600}, {**row(2, 1, 2, 3), "ts": base + 7200}]
     assert without_spikes(apart) == apart                                                    # hours from its neighbours: not a spike in a series
+
+
+async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path):
+    from datetime import timedelta
+    from lib.airgradient.days import daily_values
+    from lib.timeutil import local_date
+    from tests.fakes import TZ
+    air, _ = await make(tmp_path)
+    start = air._now().replace(hour=0, minute=0, second=0) - timedelta(hours=6)
+    t0 = int(start.replace(tzinfo=TZ).timestamp())
+    levels = [(1, 2, 3), (1, 2, 4), (15.3, 14.2, 28.7), (3, 8, 10), (2, 4, 5), (2, 3, 4)]
+    rows = [{"ts": t0 + 300 * i, "pm1": a, "pm2_5": b, "pm10": c} for i, (a, b, c) in enumerate(levels)]
+
+    async def held(t0_, t1_):
+        return rows, 0, []
+    air.rows = held
+    out = await air.history(start.strftime("%Y-%m-%d %H:%M:%S"), None)
+    assert out["pm10"]["high"] == 10 and out["pm2_5"]["high"] == 8 and out["pm1"]["high"] == 3      # not 28.7, 14.2 and 15.3
+    assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
+    assert daily_values(rows, ["pm10_max", "pm2_5_max"], TZ)["pm10_max"][local_date(t0, TZ)] == 10
+    await air.close()
