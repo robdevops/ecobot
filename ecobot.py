@@ -219,7 +219,7 @@ async def main():
                              time.monotonic() - started)
                     tasks.append(asyncio.create_task(every(PREDRAW_SECONDS, bot.predraw)))   # the button charts, ready before they are pressed
                     on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
-                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats"))
+                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats", cfg.log_width or 90))
                     if missing := [LABELS[k] for k in kinds if k not in running]:
                         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
