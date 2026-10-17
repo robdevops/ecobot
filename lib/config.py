@@ -70,6 +70,13 @@ def _whole(value: str, default: int) -> int:
     return int(value) if value.isdecimal() else default
 
 
+def _readings_in_a_row(value: str, default: int) -> int:
+    """"3" -> 3; "off", "0" or "1" -> 1 (no rule); anything unreadable -> the default."""
+    if value.lower() in ("off", "no", "false", "none"):
+        return 1
+    return max(1, int(value)) if value.isdecimal() else default
+
+
 def _chat_id(value: str, name: str) -> int | None:
     """A Telegram chat id (negative for a group or channel); None, with a warning, when it is not a whole number."""
     if not value:
@@ -122,6 +129,7 @@ class Config:
     admin_chat_ids: frozenset[int] = frozenset()   # ADMIN_CHAT_IDS: more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = 30     # ALERT_COOLDOWN_MINUTES: the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts (5 to 150)
     telegram_preload_chat: int | None = None   # TELEGRAM_PRELOAD_CHAT: a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
+    antispike_require_consecutive: int = 2   # ANTISPIKE_REQUIRE_CONSECUTIVE: readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
     log_width: int = 71                  # LOG_WIDTH: the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
 
     @property
@@ -177,6 +185,7 @@ class Config:
             admin_chat_ids=_ids(env("ADMIN_CHAT_IDS")),
             alert_cooldown_minutes=int(min(150, max(5, _number(env("ALERT_COOLDOWN_MINUTES")) or 30))),
             log_width=_whole(env("LOG_WIDTH"), 71),
+            antispike_require_consecutive=_readings_in_a_row(env("ANTISPIKE_REQUIRE_CONSECUTIVE"), 2),
             telegram_preload_chat=_chat_id(env("TELEGRAM_PRELOAD_CHAT"), "TELEGRAM_PRELOAD_CHAT"),
             state_path=data / "bot_state.json",
             cache_path=data / "ecowitt_cache.sqlite",

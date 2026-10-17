@@ -31,6 +31,7 @@ from ..timeutil import local_date, now_local, to_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
+from . import metrics
 from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of, without_spikes
 from .store import AirStore
 
@@ -253,7 +254,7 @@ class AirGradient:
                                   ensure_ascii=False)
             reading = await self.current()
             reading.pop("_time_utc", None)
-            reading.pop("_both", None)
+            reading.pop("_sustained", None)
             return json.dumps(reading, ensure_ascii=False)
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
@@ -268,6 +269,17 @@ class AirGradient:
         today = to_local(ts, self.tz).date()
         rows = [r for r in await self._day_rows(today) if r["ts"] < ts]
         return rows[-1] if rows and ts - rows[-1]["ts"] <= MAX_GAP_SECONDS else None
+
+    async def _previous_rows(self, ts: int, count: int) -> list[dict]:
+        """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first."""
+        today = to_local(ts, self.tz).date()
+        earlier, got, after = [r for r in await self._day_rows(today) if r["ts"] < ts], [], ts
+        for r in reversed(earlier):
+            if len(got) >= count or after - r["ts"] > MAX_GAP_SECONDS:
+                break
+            got.insert(0, r)
+            after = r["ts"]
+        return got
 
     async def current(self) -> dict:
         """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
@@ -290,11 +302,16 @@ class AirGradient:
         if "pm2_5" in out:
             aqi, band = pm25_aqi(out["pm2_5"]["_rated"])
             out["pm2_5"].update(aqi_us=aqi, band=band)
-        both = {name: entry["_rated"] for name, entry in out.items() if isinstance(entry, dict) and "_rated" in entry}
+        sustained = {}   # each metric's lowest value over the last REQUIRE_CONSECUTIVE readings: what the air has been for that long
+        if row.get("timestamp"):
+            earlier = await self._previous_rows(epoch(row["timestamp"]), max(metrics.REQUIRE_CONSECUTIVE - 1, 0))
+            for name, entry in out.items():
+                if isinstance(entry, dict) and "value" in entry:
+                    sustained[name] = min([entry["value"], *(r[name] for r in earlier if name in r)])
         for entry in out.values():
             if isinstance(entry, dict):
                 entry.pop("_rated", None)
-        out["_both"] = both   # each metric's lower value of the last two readings, for the alerts (removed before the model sees it)
+        out["_sustained"] = sustained   # for the alerts (removed before the model sees it)
         return out
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:

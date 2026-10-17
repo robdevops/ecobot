@@ -388,3 +388,41 @@ async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path)
     assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
     assert daily_values(rows, ["pm10_max", "pm2_5_max"], TZ)["pm10_max"][local_date(t0, TZ)] == 10
     await air.close()
+
+
+def test_the_readings_a_rise_needs_are_set_by_the_antispike_setting():
+    from lib.airgradient import metrics
+    from lib.airgradient.metrics import without_spikes
+    base = 1_790_000_000
+    row = lambda i, v: {"ts": base + 300 * i, "pm10": v}
+    two = [row(0, 3), row(1, 4), row(2, 30), row(3, 31), row(4, 4), row(5, 3)]          # two readings in a row
+    one = [row(0, 3), row(1, 4), row(2, 30), row(3, 4), row(4, 3)]
+    assert without_spikes(two) == two                                                    # the default, 2: two in a row is the air
+    assert [r.get("pm10") for r in without_spikes(two, require=3)] == [3, 4, None, None, 4, 3]
+    assert without_spikes(one, require=1) == one                                         # 1: the rule is off
+    assert [r.get("pm10") for r in without_spikes(one)] == [3, 4, None, 4, 3]
+    metrics.REQUIRE_CONSECUTIVE = 3
+    try:
+        assert [r.get("pm10") for r in without_spikes(two)] == [3, 4, None, None, 4, 3]  # the module's setting is the default
+    finally:
+        metrics.REQUIRE_CONSECUTIVE = 2
+
+
+async def test_current_gives_the_lowest_of_the_last_readings_for_the_alerts_and_not_to_the_model(tmp_path):
+    from lib.airgradient import metrics
+    air, _ = await make(tmp_path)
+    out = await air.current()
+    assert set(out["_sustained"]) >= {"pm2_5"} and out["_sustained"]["pm2_5"] <= out["pm2_5"]["value"]
+    assert "_sustained" not in json.loads(await air.handle({}, None))
+    await air.close()
+
+
+def test_the_antispike_setting_is_a_number_of_readings_default_2_and_off_is_1(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("ANTISPIKE_REQUIRE_CONSECUTIVE", raising=False)
+    assert Config.from_env().antispike_require_consecutive == 2
+    for value, want in (("3", 3), ("1", 1), ("0", 1), ("off", 1), ("junk", 2), ("", 2)):
+        monkeypatch.setenv("ANTISPIKE_REQUIRE_CONSECUTIVE", value)
+        assert Config.from_env().antispike_require_consecutive == want, value

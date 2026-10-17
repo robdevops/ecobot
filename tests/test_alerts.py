@@ -767,7 +767,7 @@ async def test_a_single_spike_never_makes_the_air_unhealthy_but_two_readings_in_
     def reading(minutes, latest, before):
         r = air_reading(latest)
         r["_time_utc"] = stamp + timedelta(minutes=minutes)
-        r["_both"] = {"pm2_5": min(latest, before)}                 # what air.current() gives: the lower of the last two readings
+        r["_sustained"] = {"pm2_5": min(latest, before)}            # what air.current() gives: the lowest of the last readings
         return r
     await mon.check(reading(0, 90, 5))                              # a spike: the reading before it was clean
     await mon.check(reading(30, 90, 5))                             # and again at the next check, still alone

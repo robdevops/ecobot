@@ -22,6 +22,7 @@ from telegram.ext import Application, Defaults
 
 from lib import intent
 from lib.airgradient import AirGradient
+from lib.airgradient import metrics as air_metrics
 from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
 from lib.alerts.menu import LABELS, kinds_for
@@ -111,6 +112,7 @@ async def main():
     cfg = Config.from_env()
     _handler.formatter.width = cfg.log_width   # every log line is cut to it from here on
     WRAP = max(cfg.log_width - len("INFO "), 30) if cfg.log_width else 90   # where the lists in the log wrap
+    air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd
     sources = await start_sources(cfg)
