@@ -310,6 +310,15 @@ def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
         assert Config.from_env().telegram_preload_chat == want, value
 
 
+def test_the_http_clients_lines_do_not_start_with_http_request():
+    from lib.logs import LogFormat
+    fmt = LogFormat("%(levelname)s %(message)s", width=80)
+    record = logging.LogRecord("httpx2", logging.INFO, __file__, 1, 'HTTP Request: %s %s "%s %d %s"',
+                               ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
+    assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
+    assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
+
+
 def test_the_alerts_list_wraps_at_the_log_width():
     from lib.alerts.menu import LABELS
     lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats", 40).splitlines()

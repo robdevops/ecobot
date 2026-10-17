@@ -22,12 +22,14 @@ class LogFormat(logging.Formatter):
         self.width = width
 
     def format(self, record):
-        shown = record.levelname
+        shown, text = record.levelname, record.msg
         record.levelname = "WARN" if shown == "WARNING" else shown
+        if isinstance(text, str):   # the HTTP client's own lines: "POST https://... "HTTP/1.1 200 OK"", not "HTTP Request: POST ..."
+            record.msg = text.removeprefix("HTTP Request: ")
         try:
             line = super().format(record)
         finally:
-            record.levelname = shown
+            record.levelname, record.msg = shown, text
         quote = str(record.args[-1]) if getattr(record, "quotes", False) and isinstance(record.args, tuple) and record.args else None
         if quote and line.endswith(quote):   # (not when a traceback follows it)
             line = line[:len(line) - len(quote)] + " ".join(quote.split())   # the quote on one line
