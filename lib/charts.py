@@ -605,18 +605,29 @@ def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list
     """Up to `size` of these colours (rows of `rgb`, each with its count of pixels) for a palette, and the nearest of them for every
     colour. It starts from the commonest; each next one is the colour the palette so far draws worst (its pixels times its squared
     distance to the nearest colour taken), so the colours that cover an area are kept exactly and the in-between shades of
-    anti-aliased edges come out within a few levels. With `size` colours or fewer, every one is kept."""
-    taken = [int(np.argmax(counts))]
-    error = ((rgb - rgb[taken[0]]) ** 2).sum(axis=1)                      # each colour's squared distance to its nearest taken one
+    anti-aliased edges come out within a few levels. With `size` colours or fewer, every one is kept. Whole numbers throughout, so
+    the picks are exact (ties go to the first colour)."""
+    red, green, blue = (np.ascontiguousarray(rgb[:, i], dtype=np.int64) for i in range(3))
+    weight = np.asarray(counts, dtype=np.int64)
+
+    def distance_to(k: int) -> np.ndarray:   # every colour's squared distance to colour k
+        distance = (red - red[k]) ** 2
+        distance += (green - green[k]) ** 2
+        distance += (blue - blue[k]) ** 2
+        return distance
+    taken = [int(np.argmax(weight))]
+    error = distance_to(taken[0])                                         # each colour's squared distance to its nearest taken one
+    score = weight * error                                                # how badly the palette so far draws its pixels
     nearest = np.zeros(len(rgb), np.uint8)
-    weight = counts.astype(float)
     while len(taken) < min(size, len(rgb)):
-        pick = int(np.argmax(weight * error))
+        pick = int(np.argmax(score))
         if not error[pick]:
             break
-        distance = ((rgb - rgb[pick]) ** 2).sum(axis=1)
-        closer = distance < error
-        error[closer], nearest[closer] = distance[closer], len(taken)
+        distance = distance_to(pick)
+        closer = np.flatnonzero(distance < error)                         # only these colours' error and score change
+        error[closer] = distance[closer]
+        score[closer] = weight[closer] * distance[closer]
+        nearest[closer] = len(taken)
         taken.append(pick)
     return taken, nearest
 
@@ -631,7 +642,7 @@ def _png(fig, times: dict | None = None, started: float = 0.0) -> bytes:
         width, height = fig.canvas.get_width_height(physical=True)
         pixels = np.frombuffer(fig.canvas.buffer_rgba(), "<u4") & 0xFFFFFF   # each pixel as one number: red + green·256 + blue·65536 (it is opaque)
         colours, counts = np.unique(pixels, return_counts=True)
-        rgb = np.stack([colours & 255, colours >> 8 & 255, colours >> 16], axis=1).astype(float)
+        rgb = np.stack([colours & 255, colours >> 8 & 255, colours >> 16], axis=1)
         taken, nearest = _palette(rgb, counts)
         lookup = np.empty(1 << 24, np.uint8)                                 # each colour's place in the palette
         lookup[colours] = nearest
