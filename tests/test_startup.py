@@ -278,7 +278,7 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
     assert line("[@rob] %s", "how hot\nis  it") == "INFO [@rob] how hot is it"        # short enough: whole, on one line
     assert line("[@rob] %s", asked) == "INFO [@rob] what was the hottest it got…"               # 40 characters, the ellipsis included
     timings = "Chart times: data 12 ms, calculation 6 ms, drawing 112 ms, PNG 41 ms"
-    assert line(timings, quotes=False) == "INFO Chart times: data 12 ms, calculation …"      # a line that quotes nothing is cut too
+    assert line(timings, quotes=False) == "INFO Chart times: data 12 ms, calculati…"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
     fmt.width = 0
     assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
