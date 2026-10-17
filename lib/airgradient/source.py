@@ -253,6 +253,7 @@ class AirGradient:
                                   ensure_ascii=False)
             reading = await self.current()
             reading.pop("_time_utc", None)
+            reading.pop("_both", None)
             return json.dumps(reading, ensure_ascii=False)
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
@@ -289,9 +290,11 @@ class AirGradient:
         if "pm2_5" in out:
             aqi, band = pm25_aqi(out["pm2_5"]["_rated"])
             out["pm2_5"].update(aqi_us=aqi, band=band)
+        both = {name: entry["_rated"] for name, entry in out.items() if isinstance(entry, dict) and "_rated" in entry}
         for entry in out.values():
             if isinstance(entry, dict):
                 entry.pop("_rated", None)
+        out["_both"] = both   # each metric's lower value of the last two readings, for the alerts (removed before the model sees it)
         return out
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
