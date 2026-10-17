@@ -39,7 +39,7 @@ from lib.warm import every, safely
 
 
 _handler = logging.StreamHandler()
-_handler.setFormatter(LogFormat("%(levelname)s %(where)s%(message)s"))
+_handler.setFormatter(LogFormat("%(levelname)s %(message)s"))
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.

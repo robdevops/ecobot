@@ -259,15 +259,15 @@ def test_a_long_alerts_line_continues_indented_at_90_characters():
     assert all(line.startswith(" " * 13) and not line.startswith(" " * 14) for line in lines[1:])
 
 
-def test_log_lines_name_their_module_except_the_main_script():
-    fmt = ecobot.LogFormat("%(levelname)s %(where)s%(message)s")
+def test_log_lines_do_not_name_their_module():
+    fmt = ecobot.LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
-    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO lib.bot: hello"
+    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO hello"
 
 
 def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line():
     from lib.logs import QUOTES, LogFormat
-    fmt = LogFormat("%(levelname)s %(where)s%(message)s", width=40)
+    fmt = LogFormat("%(levelname)s %(message)s", width=40)
 
     def line(msg, *args, quotes=True):
         record = logging.LogRecord("lib.bot", logging.INFO, __file__, 1, msg, args, None)
@@ -275,14 +275,14 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
             record.__dict__.update(QUOTES)
         return fmt.format(record)
     asked = "what was the hottest it got last week, and when?"
-    assert line("[@rob] %s", "how hot\nis  it") == "INFO lib.bot: [@rob] how hot is it"        # short enough: whole, on one line
-    assert line("[@rob] %s", asked) == "INFO lib.bot: [@rob] what was the hotte…"               # 40 characters, the ellipsis included
+    assert line("[@rob] %s", "how hot\nis  it") == "INFO [@rob] how hot is it"        # short enough: whole, on one line
+    assert line("[@rob] %s", asked) == "INFO [@rob] what was the hottest it got…"               # 40 characters, the ellipsis included
     timings = "Chart times: data 12 ms, calculation 6 ms, drawing 112 ms, PNG 41 ms"
-    assert line(timings, quotes=False) == "INFO lib.bot: Chart times: data 12 ms, …"      # a line that quotes nothing is cut too
+    assert line(timings, quotes=False) == "INFO Chart times: data 12 ms, calculation …"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
     fmt.width = 0
-    assert line("[@rob] %s", asked) == "INFO lib.bot: [@rob] " + asked                           # 0 cuts none
-    assert line(timings, quotes=False) == "INFO lib.bot: " + timings
+    assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
+    assert line(timings, quotes=False) == "INFO " + timings
 
 
 def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):

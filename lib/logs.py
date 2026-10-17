@@ -12,7 +12,7 @@ def fit(text: str, room: int) -> str:
 
 
 class LogFormat(logging.Formatter):
-    """"INFO message" for the main script's own lines, "INFO lib.bot: message" for the rest: the module name says who spoke."""
+    """"INFO message": the level and the message, with no module name. Cuts each line to the width."""
 
     def __init__(self, fmt: str, width: int = 0):
         """width: the most characters of a line of the log; 0 cuts none."""
@@ -20,7 +20,6 @@ class LogFormat(logging.Formatter):
         self.width = width
 
     def format(self, record):
-        record.where = "" if record.name == "ecobot" else f"{record.name}: "
         line = super().format(record)
         quote = str(record.args[-1]) if getattr(record, "quotes", False) and isinstance(record.args, tuple) and record.args else None
         if quote and line.endswith(quote):   # (not when a traceback follows it)
