@@ -31,7 +31,7 @@ from ..timeutil import local_date, now_local, to_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
-from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of
+from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of, without_spikes
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -376,7 +376,9 @@ class AirGradient:
 
     def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
+        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone). A single-reading spike of the particles is
+        left out of the drawing (and of its records), as a glitch of the sensor."""
+        rows = without_spikes(rows)
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None

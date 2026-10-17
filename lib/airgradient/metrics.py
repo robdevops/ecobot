@@ -37,6 +37,26 @@ MARK_LOW = ("co2",)
 # is left out.
 AIR_PANELS = (("pm1", "pm2_5", "pm10"), ("co2",), ("voc_index",), ("nox_index",))
 
+PARTICLES = AIR_PANELS[0]
+SPIKE_RATIO = 2.5    # a particle reading that is this many times the readings either side of it ...
+SPIKE_RISE = 5.0     # ... and this far (µg/m³) above both, with nothing like it next to it, is a glitch of the sensor, not the air
+SPIKE_NEIGHBOUR = 900   # the readings either side must be within this many seconds
+
+
+def without_spikes(rows: list[dict]) -> list[dict]:
+    """The readings with each single-reading spike of the particles taken out, for drawing: a reading of PM1, PM2.5 or PM10 that is at
+    least SPIKE_RATIO times, and SPIKE_RISE above, both the readings next to it. All the particle readings of that moment go (they spike
+    together). A rise that lasts two readings or more is the air, and stays. The first and last readings are kept: they have one side."""
+    drop: set[int] = set()
+    for name in PARTICLES:
+        have = [(i, r["ts"], r[name]) for i, r in enumerate(rows) if name in r]
+        for (_, t0, before), (i, t, v), (_, t1, after) in zip(have, have[1:], have[2:]):
+            near = max(before, after)
+            if v >= SPIKE_RATIO * near and v - near >= SPIKE_RISE and t - t0 <= SPIKE_NEIGHBOUR and t1 - t <= SPIKE_NEIGHBOUR:
+                drop.add(i)
+    return [{k: v for k, v in r.items() if k not in PARTICLES} if i in drop else r for i, r in enumerate(rows)]
+
+
 # US EPA 2024 PM2.5 breakpoints: (conc low, conc high, AQI low, AQI high, band)
 PM25_AQI = [
     (0.0, 9.0, 0, 50, "good"),

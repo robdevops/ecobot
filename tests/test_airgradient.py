@@ -137,10 +137,10 @@ async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monk
 async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     air, _ = await make(tmp_path)
     ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))  # 40 days at 1-minute readings
-    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
+    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]
     assert len(line.x) <= 500
-    assert line.records["high"] == (ts[5000], 305.0) and "low" not in line.records          # PM's lowest is often 0: not marked
+    assert line.records["high"][1] == 305.0 and "low" not in line.records          # PM's lowest is often 0: not marked
     rows = [{"ts": t, "co2": 450.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
     assert air._chart(["co2"], rows, "period").panels[0].lines[0].records["low"][1] == 450.0   # CO2's lowest is
     await air.close()
@@ -150,7 +150,7 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
     from lib.charts import _extreme
     air, _ = await make(tmp_path)
     ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))
-    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if t == ts[5000] else 0.0)} for t in ts]
+    rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 40 days: 4-hour buckets
     assert line.low is not None and max(line.y) < 305.0 and max(line.high) == 305.0
     assert _extreme(line, "high", range(len(line.x)))[1] == 305.0   # the label is the true peak, at the band's top
@@ -348,3 +348,22 @@ async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp
     assert [r["pm2_5_max"] for r in worst["days"]] == [40.0, 40.0]
     bad = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
     assert "unusable condition" in bad["error"]
+
+
+def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_lasting_rise_is_not():
+    from lib.airgradient.metrics import without_spikes
+    base = 1_790_000_000
+    row = lambda i, pm1, pm25, pm10, co2=450: {"ts": base + 300 * i, "pm1": pm1, "pm2_5": pm25, "pm10": pm10, "co2": co2}
+    rows = [row(0, 1, 2, 3), row(1, 1, 2, 4), row(2, 15.3, 14.2, 28.7, 900), row(3, 3, 8, 10), row(4, 2, 4, 5), row(5, 2, 3, 4)]
+    kept = without_spikes(rows)
+    assert [r["ts"] for r in kept] == [r["ts"] for r in rows]                               # the moment stays, for CO2
+    assert "pm10" not in kept[2] and "pm1" not in kept[2] and "pm2_5" not in kept[2] and kept[2]["co2"] == 900
+    assert all(r == o for i, (r, o) in enumerate(zip(kept, rows)) if i != 2)                # nothing else is touched
+    lasting = [row(0, 1, 2, 3), row(1, 1, 2, 4), row(2, 20, 20, 30), row(3, 22, 21, 32), row(4, 2, 4, 5)]
+    assert without_spikes(lasting) == lasting                                                # two readings in a row: the air
+    gentle = [row(0, 3, 4, 5), row(1, 3, 4, 9), row(2, 3, 4, 5)]
+    assert without_spikes(gentle) == gentle                                                  # high, but not by 5 µg/m³ and 2.5 times
+    ends = [row(0, 1, 2, 40), row(1, 1, 2, 3), row(2, 1, 2, 3)]
+    assert without_spikes(ends) == ends                                                      # the first reading has one side only
+    apart = [row(0, 1, 2, 3), {**row(1, 1, 2, 60), "ts": base + 3600}, {**row(2, 1, 2, 3), "ts": base + 7200}]
+    assert without_spikes(apart) == apart                                                    # hours from its neighbours: not a spike in a series
