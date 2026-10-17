@@ -1206,6 +1206,20 @@ async def test_a_cancelled_waiter_does_not_block_the_lock():
     lock.release()
 
 
+async def test_a_waiter_cancelled_just_as_the_request_ahead_finishes_is_a_clean_cancel():
+    from lib.ecowitt.api import _TurnLock
+    lock = _TurnLock()
+    await lock.acquire()                                # a request in flight
+    waiting = asyncio.create_task(lock.acquire())
+    await asyncio.sleep(0)                              # one queued behind it
+    waiting.cancel()                                    # its question gives up ...
+    lock.release()                                      # ... and the request ahead finishes before it has seen that
+    with pytest.raises(asyncio.CancelledError):
+        await waiting                                   # cancelled, as asked (not a ValueError from the queue)
+    await asyncio.wait_for(lock.acquire(), 1)           # and the lock is free
+    lock.release()
+
+
 async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_afresh_when_it_cannot(station):
     import time
     eco, fake = station

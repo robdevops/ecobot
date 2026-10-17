@@ -107,7 +107,7 @@ class _TurnLock:
         except asyncio.CancelledError:
             if waiter.done() and not waiter.cancelled():   # the turn was already handed to us: pass it on
                 self.release()
-            else:
+            elif waiter in self._queues[urgent]:            # (a release since the cancel has already dropped it)
                 self._queues[urgent].remove(waiter)
             raise
 
