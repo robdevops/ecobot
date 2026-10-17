@@ -100,10 +100,11 @@ def live_summary(data: dict) -> str:
         obj = (data.get(group) or {}).get(field)
         if not isinstance(obj, dict) or "value" not in obj:
             return None
-        return f"{obj['value']} {obj.get('unit', '')}".replace("℃", "°C").replace("mm/hr", "mm/h").strip()
+        unit = obj.get("unit", "").replace("℃", "°C").replace("mm/hr", "mm/h")
+        return f"{obj['value']}{'' if unit in ('°C', '%') else ' '}{unit}".strip()
     wind = get("wind", "wind_speed")
     parts = [f"rain {rate}" if (rate := get("rainfall", "rain_rate")) else None,
-             f"{daily} today" if (daily := get("rainfall", "daily")) else None,
+             f"{daily}/day" if (daily := get("rainfall", "daily")) else None,
              get("outdoor", "temperature"), get("outdoor", "humidity"),
              f"wind {wind}" if wind else None, get("pressure", "relative")]
     return ", ".join(p for p in parts if p) or "no readings"
@@ -229,7 +230,7 @@ class Ecowitt:
                 raise ValueError("no rain reading in the response")
         except Exception as e:  # the alert still works from the history
             if self._live_ok is not False:  # once per outage, not every minute
-                log.warning("Live readings failed (%s); the rain alert uses the 5-minute history", e)
+                log.warning("Live readings failed: %s; rain alert uses history", e)
             self._live_ok = False
             return None
         if self._live_ok is None:

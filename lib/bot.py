@@ -77,16 +77,16 @@ def _short(text: str, limit: int = 200) -> str:
 
 
 def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float) -> str:
-    """A reply's chart timings for the log: "data 12 ms, calculation 3 ms, drawing 98 ms, PNG 41 ms (23 KB), sending 812 ms". times is
+    """A reply's chart timings for the log: "data 12, calc 3, draw 98, PNG 41 (23 KB), send 812" (ms). times is
     the question's Turn.times; made is how long the tool took when the chart was made in code (the calculation is that less its
     data), else None. A step that wasn't timed is left out."""
-    ms = lambda seconds: f"{seconds * 1000:.0f} ms"
+    ms = lambda seconds: f"{seconds * 1000:.0f}"
     parts = [f"data {ms(times['data'])}"] if "data" in times else []
     if made is not None:
-        parts.append(f"calculation {ms(max(0.0, made - times.get('data', 0.0)))}")
+        parts.append(f"calc {ms(max(0.0, made - times.get('data', 0.0)))}")
     if "draw" in times:
-        parts += [f"drawing {ms(times['draw'])}", f"PNG {ms(times['png'])} ({sum(map(len, pngs)) / 1024:.0f} KB)"]
-    return ", ".join([*parts, f"sending {ms(sending)}"])
+        parts += [f"draw {ms(times['draw'])}", f"PNG {ms(times['png'])} ({sum(map(len, pngs)) / 1024:.0f} KB)"]
+    return ", ".join([*parts, f"send {ms(sending)}"])
 
 
 def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
@@ -622,7 +622,7 @@ class Bot:
                 self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=periods.keyboard(days)))
                 self.charted.remember(message.chat_id, message.message_id, asked)
                 self.preload_soon(context.bot, asked)
-                log.info("Period button: chart from the cache, sent in %.0f ms%s", (time.monotonic() - began) * 1000,
+                log.info("Period button: cached chart sent in %.0f ms%s", (time.monotonic() - began) * 1000,
                          " (Telegram's copy)" if isinstance(photo, str) else "")
                 return
             except TelegramError as e:
@@ -908,7 +908,7 @@ class Bot:
             except Exception as e:
                 if text not in self.predraw_failing:
                     self.predraw_failing.add(text)
-                    log.warning("Couldn't draw %r ahead (%s: %s); pressing it draws it", text, type(e).__name__, e)
+                    log.warning("Can't draw %r ahead: %s: %s", text, type(e).__name__, e)
                 continue
             key, png, title, caption = drawn
             self.images.put(key, png, title, caption)
@@ -918,7 +918,7 @@ class Bot:
                 log.info("Drawn ahead again: %s", text)
         if not self.predrawn:
             self.predrawn = True
-            log.info("Button charts drawn ahead every %ds: %s (%.1fs)", PREDRAW_SECONDS, ", ".join(done) or "none", time.monotonic() - started)
+            log.info("Button charts drawn ahead every %ds: %d in %.1fs", PREDRAW_SECONDS, len(done), time.monotonic() - started)
 
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
         """Answer a question (_respond), counted while it runs: no chart is drawn ahead meanwhile."""
@@ -1036,10 +1036,10 @@ class Bot:
                                              titles=titles, period_row=row, sent_photo=sent_photo,
                                              bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
             if ready:
-                log.info("Chart times: drawn %.0fs before, sending %.0f ms%s", self.images.age(ready), (time.monotonic() - began) * 1000,
+                log.info("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(ready), (time.monotonic() - began) * 1000,
                          " (Telegram's copy)" if isinstance(drawn[0], str) else "")
             elif drawn:
-                log.info("Chart times: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
+                log.info("Chart ms: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
                 self.images.sent(kept, sent_photo[0])

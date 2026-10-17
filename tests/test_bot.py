@@ -371,10 +371,10 @@ async def test_a_chart_reply_logs_how_long_each_step_took(tmp_path, monkeypatch,
         await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)),
                                                              "Temperature chart 1d")
     await eco.close()
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart times:")]
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
     assert len(sent) == 1 and len(lines) == 1, lines
     kb = round(len(sent[0]) / 1024)
-    assert re.fullmatch(rf"Chart times: data \d+ ms, calculation \d+ ms, drawing \d+ ms, PNG \d+ ms \({kb} KB\), sending \d+ ms", lines[0])
+    assert re.fullmatch(rf"Chart ms: data \d+, calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
 
 
 async def _ask_with(tool_result, text, monkeypatch=None):

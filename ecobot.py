@@ -109,7 +109,8 @@ def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
-    _handler.formatter.width = cfg.log_width   # lines quoting a request or a chat message are cut to it from here on
+    _handler.formatter.width = cfg.log_width   # every log line is cut to it from here on
+    WRAP = max(cfg.log_width - len("INFO "), 30) if cfg.log_width else 90   # where the lists in the log wrap
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd
     sources = await start_sources(cfg)
@@ -125,7 +126,7 @@ async def main():
     agent = Agent(AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url), cfg.xai_model, tools)
     state = AlertState(cfg.state_path)
     if cfg.admin_only:
-        log.info("ADMIN_ONLY=on the bot only answers admins of known groups; set ADMIN_CHAT_IDS for more")
+        log.info("ADMIN_ONLY=on: only admins are answered (more: ADMIN_CHAT_IDS)")
         if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
             log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                         "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
@@ -151,8 +152,8 @@ async def main():
             await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
                                             error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
-                log.info("@%s + %s (sources: %s)", app.bot.username, cfg.xai_model,
-                         ", ".join(s.name for s in sources))
+                log.info("@%s + %s", app.bot.username, cfg.xai_model)
+                log.info("Sources: %s", ", ".join(s.name for s in sources))
                 kinds = kinds_for((s.name for s in sources), irrigation is not None)
                 notify = Notifier(app.bot, state, kinds)
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
@@ -179,7 +180,7 @@ async def main():
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
+                log.info("%s", wrapped("Keeping warm: ", [f"{s.name} {s.warmer.interval:.0f}s" for s in sources], "", WRAP))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""
@@ -208,7 +209,7 @@ async def main():
                     async def air_backfill():
                         started = time.monotonic()
                         fetched, failed, total = await air.backfill()
-                        log.info("AirGradient archive: %d day(s) cached, %d failed, %d day(s) held, %.0fs",
+                        log.info("AirGradient archive: %d days cached, %d failed, %d held, %.0fs",
                                  fetched, failed, total, time.monotonic() - started)
 
                     try:
@@ -219,7 +220,7 @@ async def main():
                              time.monotonic() - started)
                     tasks.append(asyncio.create_task(every(PREDRAW_SECONDS, bot.predraw)))   # the button charts, ready before they are pressed
                     on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
-                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats", cfg.log_width or 90))
+                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats", WRAP))
                     if missing := [LABELS[k] for k in kinds if k not in running]:
                         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 

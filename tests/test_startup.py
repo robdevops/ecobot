@@ -66,7 +66,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
 
     async def stop_when_archived():  # the background archives finish, then we shut down
         for _ in range(300):
-            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+            if " req, held " in caplog.text and "days cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -77,7 +77,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "Weather station: Ecowitt 'Fairleigh'" in log and "@testbot + " in log
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt archive:" in line and " req, held " in line)
-    assert "failed" not in final and "days (5min/30min/4h/1d)" in final
+    assert "failed" not in final and "days (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
     assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
     assert ecobot._handler.formatter.width == 120                   # LOG_WIDTH reaches the bot's own log lines
@@ -103,7 +103,7 @@ async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+            if " req, held " in caplog.text and "days cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -241,7 +241,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "day(s) cached" in caplog.text:
+            if " req, held " in caplog.text and "days cached" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -277,8 +277,8 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
     asked = "what was the hottest it got last week, and when?"
     assert line("[@rob] %s", "how hot\nis  it") == "INFO [@rob] how hot is it"        # short enough: whole, on one line
     assert line("[@rob] %s", asked) == "INFO [@rob] what was the hottest it got…"               # 40 characters, the ellipsis included
-    timings = "Chart times: data 12 ms, calculation 6 ms, drawing 112 ms, PNG 41 ms"
-    assert line(timings, quotes=False) == "INFO Chart times: data 12 ms, calculati…"      # a line that quotes nothing is cut too
+    timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
+    assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
     fmt.width = 0
     assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none

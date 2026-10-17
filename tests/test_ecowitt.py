@@ -319,7 +319,7 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
-    assert arch.held() == "0/0/0/0 days (5min/30min/4h/1d)"
+    assert arch.held() == "0/0/0/0 days (5m/30m/4h/1d)"
     await arch.run_once()
     held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
     assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
@@ -1315,8 +1315,8 @@ def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is
     cell = lambda v, u: {"value": v, "unit": u}
     data = {"rainfall": {"rain_rate": cell("0.0", "mm/hr"), "daily": cell("0.8", "mm")}, "outdoor": {"temperature": cell("20.3", "℃"), "humidity": cell("62", "%")},
             "wind": {"wind_speed": cell("12", "km/h")}, "pressure": {"relative": cell("1013.2", "hPa")}}
-    assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm today, 20.3 °C, 62 %, wind 12 km/h, 1013.2 hPa"
-    assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm today" and live_summary({}) == "no readings"
+    assert live_summary(data) == "rain 0.0 mm/h, 0.8 mm/day, 20.3°C, 62%, wind 12 km/h, 1013.2 hPa"
+    assert live_summary({"rainfall": {"daily": cell("0.8", "mm")}}) == "0.8 mm/day" and live_summary({}) == "no readings"
 
 
 async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group(tmp_path, archived_cache):

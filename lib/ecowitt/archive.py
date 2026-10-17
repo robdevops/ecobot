@@ -114,7 +114,7 @@ class Archive:
         """Days of history held per resolution, e.g. "88/363/728/1456 days (5min/30min/4h/1d)" """
         cycles = ("5min", "30min", "4hour", "1day")
         days = "/".join(str(self.station.cache.days_held(self.station.mac, c, self.groups)) for c in cycles)
-        return f"{days} days (5min/30min/4h/1d)"
+        return f"{days} days (5m/30m/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:
         now = datetime.now(self.station.tz)
