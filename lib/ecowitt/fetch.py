@@ -59,8 +59,9 @@ class Fetcher:
     """History for one job (a question, a refresh, an alert check): from the disk cache where
     possible, recent readings from memory if fresh, the rest from Ecowitt."""
 
-    def __init__(self, api, cache: HistoryCache, hot: HotStore, mac: str, groups: list[str], tz: tzinfo):
-        self.api, self.cache, self.hot, self.tz = api, cache, hot, tz
+    def __init__(self, api, cache: HistoryCache, hot: HotStore, mac: str, groups: list[str], tz: tzinfo, urgent: bool = False):
+        """urgent: someone is waiting for the answer, so its requests go before the background ones queued for Ecowitt."""
+        self.api, self.cache, self.hot, self.tz, self.urgent = api, cache, hot, tz, urgent
         self.mac = mac.strip().upper()
         self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
         self.ranges = self.from_cache = self.from_memory = self.calls = 0
@@ -78,32 +79,46 @@ class Fetcher:
     async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
         """Readings for [start, end] (local time). refresh=True ignores the in-memory copy (used by
         the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
-        skips building the result nobody will read (the refresh and the archive)."""
+        skips building the result nobody will read (the refresh and the archive).
+        When the cache and memory hold it all (the usual case) it is read at once, even while a refresh is fetching; otherwise
+        it waits for any fetch of this cycle in flight (which may bring it), so the same thing isn't asked of Ecowitt twice."""
         self.ranges += 1
         s, e = self.epoch(start), self.epoch(end)
+        if not refresh and (held := await self._read(cycle, s, e, load, fetch=False)) is not None:
+            return held
         async with self.hot.lock(self.mac, cycle):
-            missing = {g: await asyncio.to_thread(self.cache.missing, self.mac, cycle, g, s, e) for g in self.groups}
-            gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
-            if not gaps:
-                self.from_cache += 1
-            fresh: dict = {}
-            for gap_start, gap_end in gaps:
-                need = [g for g in self.groups if any(a <= gap_end and b >= gap_start for a, b in missing[g])]
-                hot = {} if refresh else {g: self.hot.get(self.mac, cycle, g, gap_start, gap_end) for g in need}
-                if hot and all(v is not None for v in hot.values()):
-                    self.from_memory += 1
+            return await self._read(cycle, s, e, load, fetch=True, refresh=refresh)
+
+    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> dict | None:
+        """[s, e] (epoch seconds) from the cache, its newest readings from memory, and (fetch) what neither holds from Ecowitt, which
+        is then cached and kept in memory. None, with nothing counted, when fetch is False and the cache and memory lack some of it."""
+        missing = {g: await asyncio.to_thread(self.cache.missing, self.mac, cycle, g, s, e) for g in self.groups}
+        gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
+        fresh: dict = {}
+        from_memory = 0
+        for gap_start, gap_end in gaps:
+            need = [g for g in self.groups if any(a <= gap_end and b >= gap_start for a, b in missing[g])]
+            hot = {} if refresh else {g: self.hot.get(self.mac, cycle, g, gap_start, gap_end) for g in need}
+            if hot and all(v is not None for v in hot.values()):
+                from_memory += 1
+                if load:
                     merge_data(fresh, hot, (gap_start, gap_end))
-                    continue
-                data = await self._fetch(cycle, self.local(gap_start), self.local(gap_end), need)
-                if data is None:
-                    continue  # failed: not recorded as fetched, so it's retried next time
-                await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, gap_start, gap_end)
-                for g in need:
-                    self.hot.put(self.mac, cycle, g, gap_start, gap_end, data.get(g) or {})
+                continue
+            if not fetch:
+                return None
+            data = await self._fetch(cycle, self.local(gap_start), self.local(gap_end), need)
+            if data is None:
+                continue  # failed: not recorded as fetched, so it's retried next time
+            await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, gap_start, gap_end)
+            for g in need:
+                self.hot.put(self.mac, cycle, g, gap_start, gap_end, data.get(g) or {})
+            if load:
                 merge_data(fresh, data)
-            if not load:
-                return {}
-            result = await asyncio.to_thread(self.cache.load, self.mac, cycle, self.groups, s, e)
+        self.from_cache += not gaps
+        self.from_memory += from_memory
+        if not load:
+            return {}
+        result = await asyncio.to_thread(self.cache.load, self.mac, cycle, self.groups, s, e)
         merge_data(result, fresh, (s, e))  # recent readings aren't on disk; use the fresh ones
         return result
 
@@ -113,7 +128,7 @@ class Fetcher:
             return None
         self.calls += 1
         try:
-            return await self.api.history(self.mac, cycle, start, end, ",".join(groups))
+            return await self.api.history(self.mac, cycle, start, end, ",".join(groups), urgent=self.urgent)
         except EcowittError as e:
             label = f"{cycle} {start:%d %b %Y} - {end:%d %b %Y}"
             log.warning("History request failed (%s): %s", label, e)

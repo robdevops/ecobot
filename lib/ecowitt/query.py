@@ -193,7 +193,7 @@ class HistoryQuery:
         if not keys:
             return
         f = self.f
-        wind = self.wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz)
+        wind = self.wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz, f.urgent)
         first = max(self.start, self.end - timedelta(days=DIRECTION_DAYS))
         for key in keys:
             fine: dict = {}

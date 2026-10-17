@@ -152,6 +152,58 @@ async def test_warm_then_question_needs_no_new_requests_for_the_tail(station):
     assert fake.calls == []  # recent tail came from memory
 
 
+async def test_a_question_the_cache_and_memory_can_answer_does_not_wait_for_a_refresh_that_is_fetching(tmp_path):
+    import httpx
+    fake, answering = FakeEcowitt(), asyncio.Event()
+    answering.set()
+
+    async def handler(request):
+        await answering.wait()
+        return fake(request)
+    eco = Ecowitt(config(tmp_path), transport=httpx.MockTransport(handler))
+    await eco.start()
+    await eco.warm(True)                                   # memory holds the newest readings
+    answering.clear()                                      # Ecowitt goes quiet
+    refresh = asyncio.create_task(eco.warm(True))
+    await asyncio.sleep(0.05)                              # the refresh's requests are out, holding the 5-minute and 30-minute fetches
+    now = eco.now()
+    question = eco.fetcher(["outdoor"], urgent=True)
+    data = await asyncio.wait_for(question.get("5min", now - timedelta(hours=3), now), 2)
+    assert data["outdoor"]["temperature"]["list"] and question.calls == 0 and question.from_memory == 1
+    assert not refresh.done()
+    answering.set()
+    await refresh
+    await eco.close()
+
+
+async def test_a_questions_requests_go_before_the_background_ones_and_the_refreshes_wait_their_turn(station, monkeypatch):
+    eco, _ = station
+    marked = []   # each history request's urgent flag
+    send = eco.api._get
+
+    async def watch(path, urgent=False, **params):
+        if path == "history":
+            marked.append(urgent)
+        return await send(path, urgent, **params)
+    monkeypatch.setattr(eco.api, "_get", watch)
+    await eco.warm(True)
+    assert marked and not any(marked)
+    marked.clear()
+    today = eco.now().date()
+    await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=20)} 00:00:00",
+                                "end_date": f"{today - timedelta(days=10)} 23:59:59"}, Turn())
+    assert marked and all(marked)   # the question's own, and its wind rose's
+
+
+async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypatch):
+    from lib.ecowitt import fetch
+    eco, fake = station
+    merged = []
+    monkeypatch.setattr(fetch, "merge_data", lambda *a, **k: merged.append(a))
+    await eco.warm(True)
+    assert any(c["path"] == "history" for c in fake.calls) and merged == []
+
+
 # ---------- the whole history is cached ----------
 async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
@@ -989,7 +1041,7 @@ async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
     class Refusing:
         calls = 0
 
-        async def history(self, *a):
+        async def history(self, *a, **k):
             Refusing.calls += 1
             raise EcowittError("humidity is invalid", transient=False)
 

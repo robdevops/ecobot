@@ -164,8 +164,9 @@ class Ecowitt:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""
         return f"Ecowitt weather station '{self.station_name}'{created} (people say \"ecowitt\" or \"weather\")"
 
-    def fetcher(self, groups: list[str]) -> Fetcher:
-        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz)
+    def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
+        """urgent: for a question (its requests go before the background ones)."""
+        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent)
 
     def now(self) -> datetime:
         return now_local(self.tz)
@@ -178,7 +179,7 @@ class Ecowitt:
         named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
         if (r := find(named)) and r.group not in groups:
             groups.append(r.group)
-        return await HistoryQuery(self.fetcher(groups), args, turn).run()
+        return await HistoryQuery(self.fetcher(groups, urgent=True), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
         return await days_tool(self.cache, self.mac, self.tz, args, turn)

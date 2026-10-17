@@ -835,7 +835,7 @@ class Bot:
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  _short(text))
         for source in self.sources:  # fetch recent readings while the model thinks
-            if source.wants(text):
+            if source.wants(text) and not (read.fast and read.chart_in_code):   # a chart made in code reads just what it needs, first in line
                 source.poke()
         if read.fast:
             log.info("Fast path: %s", read.fast[2])
