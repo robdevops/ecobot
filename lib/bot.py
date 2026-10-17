@@ -251,6 +251,9 @@ class Bot:
         self.idle.set()
         self.predrawn = False                # the first round of charts drawn ahead has been logged
         self.predraw_failing: set[str] = set()   # button charts that couldn't be drawn ahead (said once, until they can again)
+        self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
+        self.preload_off = False                 # Telegram refused an upload to that chat: no more are tried until restart
+        self.background: set[asyncio.Task] = set()   # tasks running on their own, kept so they aren't dropped
         self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
 
     def register(self, app):
@@ -618,6 +621,7 @@ class Bot:
                 began = time.monotonic()
                 self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=periods.keyboard(days)))
                 self.charted.remember(message.chat_id, message.message_id, asked)
+                self.preload_soon(context.bot, asked)
                 log.info("Period button: chart from the cache, sent in %.0f ms%s", (time.monotonic() - began) * 1000,
                          " (Telegram's copy)" if isinstance(photo, str) else "")
                 return
@@ -829,6 +833,67 @@ class Bot:
                 working[:] = before          # the unfinished attempt's turns are dropped
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
+    async def _draw_ahead(self, text: str, now) -> tuple[str, bytes, str, str] | None:
+        """(image key, PNG, title, write-up) of the chart `text` asks for when it is one made in code with its own words as its key;
+        None otherwise. Raises when it can't be drawn. Nobody is waiting: its requests are not urgent and its logs are quiet."""
+        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
+                           "Forecast" in self.by_name)
+        key = self.images.canonical(text, now)
+        if not (read.fast and read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
+            return None
+        turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                    average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, ahead=True)
+        caption = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
+        if caption is None or len(turn.charts) != 1:
+            raise ValueError("no chart came of it")
+        png = await asyncio.to_thread(render_chart, turn.charts[0], self.cfg.tz)
+        return key, png, turn.charts[0].caption(now.date()), caption
+
+    def preload_soon(self, bot, question: str):
+        """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question in the background."""
+        chat = getattr(self.cfg, "telegram_preload_chat", None)
+        if chat is None or self.preload_off or question in self.preloading:
+            return
+        self.preloading.add(question)
+        task = asyncio.create_task(self.preload(bot, chat, question))
+        self.background.add(task)
+        task.add_done_callback(self.background.discard)
+
+    async def preload(self, bot, chat: int, question: str):
+        """Upload (silently, to `chat`) the chart for each other period of `question`, so a press of a period button edits the message by
+        Telegram's copy and uploads nothing. One at a time and never while a question is being answered."""
+        started, done = time.monotonic(), []
+        try:
+            for days in periods.PERIODS:
+                await self.idle.wait()
+                now = now_local(self.cfg.tz)
+                if days == intent.period_days(question, now):
+                    continue
+                asked = intent.with_period(question, days, now)
+                if self.images.has_copy(self.images.key(asked, days, now)):
+                    continue
+                try:
+                    drawn = await self._draw_ahead(asked, now)
+                except Exception as e:
+                    log.debug("Couldn't draw %r to preload: %s: %s", asked, type(e).__name__, e)
+                    continue
+                if drawn is None:
+                    return
+                key, png, title, caption = drawn
+                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL)
+                try:
+                    self.images.sent(key, await bot.send_photo(chat, png, caption=title or None, disable_notification=True))
+                except TelegramError as e:
+                    self.preload_off = True
+                    log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
+                    return
+                done.append(periods.NAMES[days])
+        finally:
+            self.preloading.discard(question)
+        if done:
+            log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(done), question, chat, time.monotonic() - started,
+                     extra=QUOTES)
+
     async def predraw(self):
         """Draw the charts the buttons ask for ahead of the press: one pressed in the next ImageCache.FRESH seconds is sent at once.
         One chart at a time, and never while a question is being answered (its own drawing would wait behind these). Run every
@@ -836,25 +901,17 @@ class Bot:
         started, done = time.monotonic(), []
         for text in dict.fromkeys(question for row in templates.rows(self.irrigation is not None) for _, question in row if question):
             await self.idle.wait()
-            now = now_local(self.cfg.tz)
-            read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
-                               "Forecast" in self.by_name)
-            key = self.images.canonical(text, now)
-            if not (read.fast and read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
-                continue
-            turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
-                        average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, ahead=True)
             try:
-                caption = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
-                if caption is None or len(turn.charts) != 1:
-                    raise ValueError("no chart came of it")
-                png = await asyncio.to_thread(render_chart, turn.charts[0], self.cfg.tz)
+                drawn = await self._draw_ahead(text, now_local(self.cfg.tz))
+                if drawn is None:
+                    continue
             except Exception as e:
                 if text not in self.predraw_failing:
                     self.predraw_failing.add(text)
                     log.warning("Couldn't draw %r ahead (%s: %s); pressing it draws it", text, type(e).__name__, e)
                 continue
-            self.images.put(key, png, turn.charts[0].caption(now.date()), caption)
+            key, png, title, caption = drawn
+            self.images.put(key, png, title, caption)
             done.append(text)
             if text in self.predraw_failing:
                 self.predraw_failing.discard(text)
@@ -986,6 +1043,8 @@ class Bot:
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
                 self.images.sent(kept, sent_photo[0])
+            if kept and read.fast and read.chart_in_code:   # a chart with period buttons, made in code: its other periods are uploaded ahead
+                self.preload_soon(context.bot, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown)
             if carried_keyboard:

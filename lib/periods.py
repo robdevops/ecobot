@@ -68,6 +68,7 @@ class Drawn:
     title: str
     file_id: str | None = None   # Telegram's copy, once the chart has been sent: it is sent again by this, not uploaded
     caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
+    ttl: float = 10 * 60         # how long it is kept (ImageCache.CHART_TTL; PRELOAD_TTL for one uploaded ahead)
 
     @property
     def photo(self) -> bytes | str:
@@ -82,6 +83,7 @@ class ImageCache:
 
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
+    PRELOAD_TTL = 30 * 60   # a chart uploaded ahead (TELEGRAM_PRELOAD_CHAT) is used for this long, then drawn afresh
     FRESH = 330   # a little over the time between two rounds of drawing ahead, so a press always finds one
 
     def __init__(self, clock=None):
@@ -106,11 +108,16 @@ class ImageCache:
     def get(self, key: str) -> tuple[bytes | str, str] | None:
         """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
         entry = self.items.get(key)
-        if entry is None or self.clock() - entry.at > self.CHART_TTL:
+        if entry is None or self.clock() - entry.at > entry.ttl:
             self.items.pop(key, None)
             return None
         self.items.move_to_end(key)
         return entry.photo, entry.title
+
+    def has_copy(self, key: str) -> bool:
+        """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
+        entry = self.items.get(key)
+        return entry is not None and entry.file_id is not None and self.clock() - entry.at <= entry.ttl
 
     def ready(self, question: str, now) -> Drawn | None:
         """The chart made in code for exactly these words in the last FRESH seconds (drawn ahead, or for someone's question),
@@ -125,9 +132,9 @@ class ImageCache:
     def age(self, entry: Drawn) -> float:
         return self.clock() - entry.at
 
-    def put(self, key: str, png: bytes, title: str, caption: str | None = None):
+    def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None):
         """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready)."""
-        self.items[key] = Drawn(self.clock(), png, title, caption=caption)
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL)
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)

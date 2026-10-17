@@ -294,3 +294,14 @@ def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):
     for value, want in (("120", 120), ("0", 0), ("junk", 71), ("-5", 71), ("7.5", 71), ("²", 71)):
         monkeypatch.setenv("LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
+
+
+def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("TELEGRAM_PRELOAD_CHAT", raising=False)
+    assert Config.from_env().telegram_preload_chat is None
+    for value, want in (("-1001234567890", -1001234567890), ("42", 42), ("", None), ("junk", None)):
+        monkeypatch.setenv("TELEGRAM_PRELOAD_CHAT", value)
+        assert Config.from_env().telegram_preload_chat == want, value

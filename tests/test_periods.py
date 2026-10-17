@@ -272,3 +272,74 @@ async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(mon
     await bot.respond(pressed(bot, []), CONTEXT, "Temperature chart 7d")
     assert bot.answering == 0 and bot.idle.is_set()                    # counted while it ran, and let go after
 
+
+
+def preloading_bot(monkeypatch, refuse=None, clock=None):
+    """A bot with TELEGRAM_PRELOAD_CHAT set, and the (chat, photo, silent) of every upload to it."""
+    bot, uploads = make_bot(monkeypatch), []
+    bot.cfg = NS(tz=TZ, telegram_preload_chat=-1001)
+    if clock:
+        bot.images = periods.ImageCache(lambda: clock[0])
+
+    async def send_photo(chat, photo, caption=None, disable_notification=False):
+        if refuse:
+            raise refuse
+        uploads.append((chat, photo, disable_notification))
+        return NS(photo=(NS(file_id="small"), NS(file_id=f"file {len(uploads)}")))
+    return bot, uploads, NS(bot=NS(send_chat_action=send_chat_action, send_photo=send_photo, id=99))
+
+
+async def settle(bot):
+    import asyncio
+    await asyncio.gather(*bot.background)
+
+
+async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits_by_file_id(monkeypatch):
+    bot, uploads, context = preloading_bot(monkeypatch)
+    sent, edits = [], []
+
+    async def edit_media(media, reply_markup=None):
+        edits.append(media.media)
+        return NS(photo=())
+    msg = chat_message(sent, edits)
+    msg.edit_media, msg.message_id = edit_media, 101
+    await bot.respond(NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")),
+                      context, "Temperature chart 7d")
+    await settle(bot)
+    assert [(c, p, silent) for c, p, silent in uploads] == [(-1001, b"png", True)] * 4        # 1D, 1M, 3M, 1Y: not the 7D just sent
+    calls = len(bot.agent.tools.calls)
+
+    async def answer(text=None):
+        pass
+    await bot.on_period_button(NS(callback_query=NS(data="pd:90", message=msg, answer=answer), effective_message=msg,
+                                  effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")), context)
+    assert len(bot.agent.tools.calls) == calls and edits[0].startswith("file ")               # Telegram's copy, no new question or upload
+
+
+async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_upload_stops_it_with_one_warning(monkeypatch, caplog):
+    bot, uploads, context = preloading_bot(monkeypatch)
+    bot.cfg = NS(tz=TZ)
+    update = pressed(bot, [])
+    await bot.respond(update, context, "Temperature chart 7d")
+    await settle(bot)
+    assert uploads == [] and not bot.background
+    from telegram.error import BadRequest
+    bot, uploads, context = preloading_bot(monkeypatch, refuse=BadRequest("Chat not found"))
+    with caplog.at_level("WARNING"):
+        await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
+        await settle(bot)
+        await bot.respond(pressed(bot, []), context, "Temperature chart 30d")
+        await settle(bot)
+    assert [r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()].__len__() == 1 and uploads == []
+
+
+async def test_a_chart_uploaded_ahead_is_used_for_30_minutes_and_then_drawn_afresh(monkeypatch):
+    clock = [0.0]
+    bot, uploads, context = preloading_bot(monkeypatch, clock=clock)
+    await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
+    await settle(bot)
+    key = bot.images.key("Temperature chart 30d", 30, NOW)
+    clock[0] = 29 * 60
+    assert bot.images.has_copy(key) and isinstance(bot.images.get(key)[0], str)
+    clock[0] = 31 * 60
+    assert not bot.images.has_copy(key) and bot.images.get(key) is None
