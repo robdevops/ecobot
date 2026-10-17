@@ -31,6 +31,7 @@ from .tools import Turn
 from .config import Config
 from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
+from .logs import QUOTES
 
 log = logging.getLogger(__name__)
 
@@ -609,7 +610,7 @@ class Bot:
             return
         await query.answer(f"Drawing {periods.NAMES[days]}...")
         asked = intent.with_period(question, days, now)
-        log.info("Period button: %s -> %s", _short(question, 40), _short(asked, 40))
+        log.info("Period button %s: %s", periods.NAMES[days], question, extra=QUOTES)
         key = self.images.key(asked, days, now)
         if cached := self.images.get(key):   # drawn lately: no new question
             photo, title = cached
@@ -732,7 +733,7 @@ class Bot:
             return
         waited = (datetime.now(UTC) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
         if waited > PENDING_MAX_SECONDS:
-            log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), _short(msg.text, 40))
+            log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), msg.text, extra=QUOTES)
             return
         private = msg.chat.type == ChatType.PRIVATE
         if private and not await self._allowed(update, context):   # before remember_chat: a stranger never becomes an alert chat
@@ -784,7 +785,7 @@ class Bot:
     async def _warn(self, msg: Message, tokens: int):
         """A heads-up before a big job: the question has pulled in a lot of data. Sent now, silently; the answer follows by itself."""
         text = f"\u26a0\ufe0f That's pulling in about {tokens / 1000:.0f}k tokens of data, so it will take a little longer. Working on it..."
-        log.info("Heads-up sent: %s", text)
+        log.info("Heads-up sent: %s", text, extra=QUOTES)
         with contextlib.suppress(TelegramError):
             await msg.reply_text(text)
 
@@ -886,7 +887,7 @@ class Bot:
         read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
                            "Forecast" in self.by_name)
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
-                 _short(text))
+                 text, extra=QUOTES)
         for source in self.sources:  # fetch recent readings while the model thinks
             if source.wants(text) and not (read.fast and read.chart_in_code):   # a chart made in code reads just what it needs, first in line
                 source.poke()
@@ -940,7 +941,7 @@ class Bot:
                     except Exception:
                         log.exception("Chart failed; sending the answer without it")
             except TimeoutError:
-                log.error("Gave up after %ds on: %s", TURN_SECONDS, _short(text, 60))
+                log.error("Gave up after %ds on: %s", TURN_SECONDS, text, extra=QUOTES)
                 ok, reply = False, "Sorry, that took too long. Please try again in a moment."
             except Exception as e:
                 log.exception("Agent error")
@@ -958,7 +959,7 @@ class Bot:
             reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in working[new_from:] if m["role"] == "tool"]
         log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if ok else "Error reply", msg.chat_id,
-                 time.monotonic() - started, len(used), len(photos), len(reply), _short(reply, 30))
+                 time.monotonic() - started, len(used), len(photos), len(reply), reply, extra=QUOTES)
         used_air = any(tc["function"]["name"] == "air_quality"
                        for m in working[new_from:] for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")

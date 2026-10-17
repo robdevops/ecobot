@@ -36,12 +36,14 @@ Under systemd see `ecobot.service` (it loads the environment file; the clone's l
 | `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
 | `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET` | enables the irrigation controller (a Tuya smart irrigation timer, through the Tuya cloud API): an Irrigation button in private chats (it replaces Wind) with its status and buttons to water for 5 to 30 minutes or switch the valve off, pause for 24 to 72 hours (the Pause button becomes Unpause while paused), refresh, and an Alerts menu to turn the chat's irrigation battery and irrigation pause alerts on or off (or type irrigation, water, tap or sprinkler); a daily check at 18:00 that delays it 24 hours when more than 1 mm fell in the last 24 hours or Open-Meteo gives today or tomorrow a 50% or better chance of 1 mm (needs Ecowitt and `FORECAST=on` for each half); an "irrigation pause" alert when it does, and an "irrigation battery" alert below 5%. `TUYA_BASE_URL` (default `https://openapi.tuyaeu.com`, the EU data centre) and `IRRIGATION_CHECK_HOUR` (default `18`) are optional |
 | `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
+| `LOG_WIDTH` | optional: the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); `0` cuts none. Default 71. Only the quoted text is cut (what was asked, the tool request, the reply, an alert): what comes before it on the line, and every other line (timings, counts, warnings), is always whole |
 
 ## Layout
 
 ```
 ecobot.py            wiring and lifecycle
 lib/config.py           settings
+lib/logs.py             how log lines look: the module that spoke, and quoted requests and chat messages cut to LOG_WIDTH
 lib/bot.py              Telegram handlers and replies; every button press comes in through one entry point that checks it first
 lib/admins.py           who may use the bot with ADMIN_ONLY: the admins of the groups it is in, plus ADMIN_CHAT_IDS
 lib/llm.py, prompt.py   tool-calling loop; system prompt

@@ -65,6 +65,11 @@ def _ids(value: str) -> frozenset[int]:
     return frozenset(found)
 
 
+def _whole(value: str, default: int) -> int:
+    """"100" -> 100, "0" -> 0; anything but a whole number of 0 or more -> the default."""
+    return int(value) if value.isdecimal() else default
+
+
 def _number(value: str) -> float | None:
     try:
         return float(value)
@@ -105,6 +110,7 @@ class Config:
     admin_only: bool = True              # ADMIN_ONLY (on by default): the bot answers nobody but the admins of the groups it is in
     admin_chat_ids: frozenset[int] = frozenset()   # ADMIN_CHAT_IDS: more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = 30     # ALERT_COOLDOWN_MINUTES: the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts (5 to 150)
+    log_width: int = 71                  # LOG_WIDTH: the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
 
     @property
     def ecowitt(self) -> bool:
@@ -158,6 +164,7 @@ class Config:
             admin_only=_flag(env("ADMIN_ONLY"), True),
             admin_chat_ids=_ids(env("ADMIN_CHAT_IDS")),
             alert_cooldown_minutes=int(min(150, max(5, _number(env("ALERT_COOLDOWN_MINUTES")) or 30))),
+            log_width=_whole(env("LOG_WIDTH"), 71),
             state_path=data / "bot_state.json",
             cache_path=data / "ecowitt_cache.sqlite",
             air_cache_path=data / "airgradient_cache.sqlite",

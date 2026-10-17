@@ -15,6 +15,7 @@ from datetime import date
 from telegram import MessageEntity
 from telegram.error import BadRequest, ChatMigrated, Forbidden, TelegramError
 
+from ..logs import QUOTES
 from .menu import ALL, LABELS, keyboard
 
 log = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ class Notifier:
             sent += ok
             if photo and (sizes := getattr(message, "photo", None)):
                 photo = sizes[-1].file_id   # the largest size: the picture as sent
-        log.info("Alert sent to %d chat(s) in %.1fs: %s", sent, time.monotonic() - started, text.replace("\n", " "))
+        log.info("Alert sent to %d chat(s) in %.1fs: %s", sent, time.monotonic() - started, text, extra=QUOTES)
 
     async def to_chat(self, chat_id: int, text: str, link: tuple[str, str] | None = None, kind: str | None = None) -> bool:
         """An alert for one chat (the one that was sent something that has since changed), if it is subscribed to the type.
@@ -216,7 +217,7 @@ class Notifier:
             return False
         text, entities = with_footer(text, link)
         sent, _ = await self._send(chat_id, text, entities, kind)
-        log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text.replace("\n", " "))
+        log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text, extra=QUOTES)
         return sent
 
     async def _post(self, chat_id: int, text: str, entities, kind: str | None, photo: bytes | str | None):

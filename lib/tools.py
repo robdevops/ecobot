@@ -6,6 +6,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from .logs import QUOTES
+
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_CHARS = 60000
@@ -60,7 +62,7 @@ class Tools:
         except json.JSONDecodeError as e:
             return f"Error: tool arguments were not valid JSON ({e})"
         level = logging.DEBUG if turn and turn.ahead else logging.INFO
-        log.log(level, "Tool call %s %s", name, raw_args[:300])
+        log.log(level, "Tool call %s %s", name, raw_args, extra=QUOTES)
         try:
             out = await asyncio.wait_for(tool.handler(args, turn or Turn()), TOOL_TIMEOUT)
         except TimeoutError:
@@ -72,7 +74,7 @@ class Tools:
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
             out = out[:MAX_OUTPUT_CHARS] + "\n...[truncated - request a shorter range]"
-        log.log(level, "Tool result %s: %s", name, out if len(out) < 90 else f"{len(out)} chars")
+        log.log(level, "Tool result %s: %s", name, out if len(out) < 90 else f"{len(out)} chars", extra=QUOTES)
         if turn:
             turn.result_chars += len(out)
         return out

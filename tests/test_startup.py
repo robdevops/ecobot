@@ -51,7 +51,8 @@ class FakeBuilder:
 
 async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
     caplog.set_level("INFO")
-    cfg = config(tmp_path)
+    cfg = config(tmp_path, log_width=55)
+    monkeypatch.setattr(ecobot._handler.formatter, "width", 0)   # put back after the test
     eco_t, _ = ecowitt_transport(history_days=45)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
@@ -79,6 +80,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "failed" not in final and "days (5min/30min/4h/1d)" in final
     assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
     assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
+    assert ecobot._handler.formatter.width == 55                    # LOG_WIDTH reaches the bot's own log lines
 
 
 async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not_start(tmp_path, monkeypatch, caplog):
@@ -261,3 +263,34 @@ def test_log_lines_name_their_module_except_the_main_script():
     fmt = ecobot.LogFormat("%(levelname)s %(where)s%(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
     assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO lib.bot: hello"
+
+
+def test_a_line_quoting_a_request_or_a_message_is_cut_to_the_log_width_and_no_other_line_is():
+    from lib.logs import QUOTES, LogFormat
+    fmt = LogFormat("%(levelname)s %(where)s%(message)s", width=40)
+
+    def line(msg, *args, quotes=True):
+        record = logging.LogRecord("lib.bot", logging.INFO, __file__, 1, msg, args, None)
+        if quotes:
+            record.__dict__.update(QUOTES)
+        return fmt.format(record)
+    asked = "what was the hottest it got last week, and when?"
+    assert line("[@rob] %s", "how hot\nis  it") == "INFO lib.bot: [@rob] how hot is it"        # short enough: whole, on one line
+    assert line("[@rob] %s", asked) == "INFO lib.bot: [@rob] what was the hotte…"               # 40 characters, the ellipsis included
+    assert line("Replied -1001234567890 in 12.3s, tools 2, charts 0, 1234 chars: %s", "It was warm").endswith(
+        ", 1234 chars: …")                                                                        # only the quote is cut, never what comes before it
+    timings = "Chart times: data 12 ms, calculation 6 ms, drawing 112 ms, PNG 41 ms"
+    assert line(timings, quotes=False) == "INFO lib.bot: " + timings                              # a line that quotes nothing is never cut
+    fmt.width = 0
+    assert line("[@rob] %s", asked) == "INFO lib.bot: [@rob] " + asked                           # 0 cuts none
+
+
+def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LOG_WIDTH", raising=False)
+    assert Config.from_env().log_width == 71
+    for value, want in (("120", 120), ("0", 0), ("junk", 71), ("-5", 71), ("7.5", 71), ("²", 71)):
+        monkeypatch.setenv("LOG_WIDTH", value)
+        assert Config.from_env().log_width == want, value

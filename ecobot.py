@@ -31,18 +31,11 @@ from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as WATCHDOG_SECONDS
 from lib.llm import Agent
+from lib.logs import LogFormat
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.tools import Tools
 from lib.warm import every, safely
-
-
-class LogFormat(logging.Formatter):
-    """"INFO message" for this file's own lines, "INFO lib.bot: message" for the rest: the module name says who spoke."""
-
-    def format(self, record):
-        record.where = "" if record.name == "ecobot" else f"{record.name}: "
-        return super().format(record)
 
 
 _handler = logging.StreamHandler()
@@ -116,6 +109,7 @@ def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
+    _handler.formatter.width = cfg.log_width   # lines quoting a request or a chat message are cut to it from here on
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd
     sources = await start_sources(cfg)
