@@ -280,6 +280,9 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
     timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
     assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
+    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is shown whole
+        record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
+        assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
     fmt.width = 0
     assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
     assert line(timings, quotes=False) == "INFO " + timings
