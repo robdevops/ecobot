@@ -310,6 +310,77 @@ async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
     assert all(kw["disable_notification"] for _, kw in calls) and 2 not in state.chats and 1 in state.chats
 
 
+def test_a_damaged_state_file_is_kept_aside_not_overwritten(tmp_path, caplog):
+    path = tmp_path / "s.json"
+    path.write_text('{"chats": {"1": {"title": "Home"}}, "monitor": {"rain": {"alerted_st')   # cut short
+    state = AlertState(path)
+    assert state.chats == {}
+    state.add_chat(2, "Work")                                      # the next save
+    aside = list(tmp_path.glob("s.json.damaged-*"))
+    assert len(aside) == 1 and aside[0].read_text().startswith('{"chats": {"1"') and "moved it to" in caplog.text
+    assert AlertState(path).chats == {2: {"title": "Work"}}
+
+
+def test_a_save_is_on_disk_before_it_replaces_the_old_file(tmp_path, monkeypatch):
+    from lib.alerts import notify
+    calls, replace = [], notify.os.replace
+    monkeypatch.setattr(notify.os, "fsync", lambda fd: calls.append("fsync"))
+    monkeypatch.setattr(notify.os, "replace", lambda a, b: (calls.append("replace"), replace(a, b)))
+    AlertState(tmp_path / "s.json").add_chat(1, "Home")
+    assert calls == ["fsync", "replace"]
+
+
+async def test_one_chat_failing_never_stops_the_alert_reaching_the_others(tmp_path, monkeypatch):
+    from telegram.error import Forbidden
+    state = AlertState(tmp_path / "s.json")
+    for chat in (1, 2, 3):
+        state.add_chat(chat, f"chat {chat}")
+    got = []
+
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            if chat_id == 1:
+                raise Forbidden("bot was blocked")
+            got.append(chat_id)
+
+    def full():
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(state, "save", full)                       # forgetting chat 1 can't be saved
+    await Notifier(Bot(), state)("hi")
+    assert got == [2, 3]
+
+
+@pytest.mark.filterwarnings("ignore:Deprecated since version v22.2")   # python-telegram-bot 22: retry_after will be a timedelta
+async def test_a_short_flood_wait_or_a_dropped_connection_is_tried_once_more_and_a_timeout_is_not(tmp_path, monkeypatch):
+    from telegram.error import NetworkError, RetryAfter, TimedOut
+    from lib.alerts import notify
+    waits = []
+
+    async def sleep(seconds):
+        waits.append(seconds)
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+    flood, long_flood = RetryAfter(5), RetryAfter(300)
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "chat")
+
+    class Bot:
+        def __init__(self, *errors):
+            self.errors, self.tries = list(errors), 0
+
+        async def send_message(self, chat_id, text, **kw):
+            self.tries += 1
+            if self.errors:
+                raise self.errors.pop(0)
+    cases = [((flood,), True, 2, [5]), ((NetworkError("Connection reset by peer"),), True, 2, [3]),
+             ((NetworkError("down"), NetworkError("down")), False, 2, [3]),    # once more, not twice
+             ((TimedOut(),), False, 1, []),                                   # it may have arrived
+             ((long_flood,), False, 1, [])]                                   # not waited out
+    for errors, sent, tries, waited in cases:
+        waits.clear()
+        bot = Bot(*errors)
+        assert (await Notifier(bot, state).to_chat(1, "hi"), bot.tries, waits) == (sent, tries, waited), errors
+
+
 def uv(*values, start=T0):
     return [(start + i * 300, {"solar_and_uvi.uvi": v}) for i, v in enumerate(values)]
 

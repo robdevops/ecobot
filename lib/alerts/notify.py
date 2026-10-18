@@ -6,19 +6,44 @@ monitor state live in a small JSON file, so restarts neither forget chats nor re
 settings buttons and, when there is one, a small italic footer with a link label.
 """
 
+import asyncio
 import json
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 
 from telegram import MessageEntity
-from telegram.error import BadRequest, ChatMigrated, Forbidden, TelegramError
+from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 
 from ..logs import QUOTES
 from .menu import ALL, LABELS, alert_keyboard
 
 log = logging.getLogger(__name__)
+
+RETRY_SECONDS = 3       # before sending an alert again after a dropped connection
+FLOOD_WAIT_MAX = 60     # Telegram's flood limit asks to wait: a longer wait is not waited out (that chat misses the alert)
+
+
+def _load(path) -> dict:
+    """The saved state, {} when there is none. A file that can't be read is moved aside, as the next save would replace it,
+    so its chats and settings can still be recovered by hand."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        aside = f"{path}.damaged-{time.strftime('%Y%m%d-%H%M%S')}"
+        os.replace(path, aside)
+        log.error("Couldn't read %s (%s): moved it to %s and starting with no known chats", path, e, aside)
+        return {}
+
+
+def _flood_wait(e: RetryAfter) -> float:
+    """The seconds Telegram asks to wait (python-telegram-bot gives a number, or a timedelta once PTB_TIMEDELTA is set)."""
+    wait = e.retry_after
+    return wait.total_seconds() if isinstance(wait, timedelta) else wait
 
 
 class AlertState:
@@ -26,14 +51,7 @@ class AlertState:
 
     def __init__(self, path):
         self.path = path
-        data: dict = {}
-        try:
-            with open(path) as f:
-                data = json.load(f)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            log.exception("Couldn't read %s - starting with no known chats", path)
+        data = _load(path)
         self.chats: dict[int, dict] = {int(k): v for k, v in data.get("chats", {}).items()}
         for entry in self.chats.values():   # the old on/off flag, and a chat with every type muted, are "unsubscribed from all"
             if entry.pop("alerts", True) is False or set(entry.get("muted", [])) >= set(LABELS):
@@ -43,9 +61,12 @@ class AlertState:
         self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
 
     def save(self):
+        """Written in full to a new file that then replaces the old one, on disk first, so a crash leaves one or the other whole."""
         tmp = f"{self.path}.tmp"
         with open(tmp, "w") as f:
             json.dump({"chats": {str(k): v for k, v in self.chats.items()}, "monitor": self.monitor, "charts": self.charts}, f, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, self.path)
 
     def add_chat(self, chat_id: int, title: str):
@@ -231,20 +252,30 @@ class Notifier:
                 log.warning("Alert picture to %s failed (%s); sending the text alone", chat_id, e)
         return await self.bot.send_message(chat_id, text, entities=entities, disable_web_page_preview=True, **common)
 
-    async def _send(self, chat_id: int, text: str, entities, kind: str | None = None, photo: bytes | str | None = None) -> tuple[bool, object]:
-        """Send an alert (see _post); forget a chat the bot can no longer post to. (whether it was sent, the message sent)"""
+    async def _send(self, chat_id: int, text: str, entities, kind: str | None = None, photo: bytes | str | None = None,
+                    again: bool = True) -> tuple[bool, object]:
+        """Send an alert (see _post) to one chat; forget a chat the bot can no longer post to. Telegram's flood limit (when it asks
+        for a short wait) and a dropped connection get one more try; a timeout doesn't, as the message may have arrived. Whatever
+        fails for one chat is logged, so the others still get the alert. (whether it was sent, the message sent)"""
         try:
-            return True, await self._post(chat_id, text, entities, kind, photo)
-        except ChatMigrated as e:  # the group became a supergroup: follow it, and send again there
-            self.state.migrate_chat(chat_id, e.new_chat_id)
-            return await self._send(e.new_chat_id, text, entities, kind, photo) if e.new_chat_id != chat_id else (False, None)
-        except Forbidden as e:  # kicked from the group, or blocked in a private chat
-            self.state.remove_chat(chat_id, f"can't post: {e}")
-        except BadRequest as e:
-            if "not found" in str(e).lower():
+            try:
+                return True, await self._post(chat_id, text, entities, kind, photo)
+            except ChatMigrated as e:  # the group became a supergroup: follow it, and send again there
+                self.state.migrate_chat(chat_id, e.new_chat_id)
+                return await self._send(e.new_chat_id, text, entities, kind, photo) if e.new_chat_id != chat_id else (False, None)
+            except Forbidden as e:  # kicked from the group, or blocked in a private chat
+                self.state.remove_chat(chat_id, f"can't post: {e}")
+            except BadRequest as e:
+                if "not found" not in str(e).lower():
+                    raise
                 self.state.remove_chat(chat_id, f"chat gone: {e}")
-            else:
-                log.warning("Alert to %s failed: %s", chat_id, e)
-        except TelegramError as e:
-            log.warning("Alert to %s failed: %s", chat_id, e)
+            except (RetryAfter, NetworkError) as e:   # BadRequest, a NetworkError too, is caught above
+                wait = _flood_wait(e) if isinstance(e, RetryAfter) else RETRY_SECONDS
+                if not again or isinstance(e, TimedOut) or wait > FLOOD_WAIT_MAX:
+                    raise
+                log.info("Alert to %s: %s; trying again in %gs", chat_id, e, wait)
+                await asyncio.sleep(wait)
+                return await self._send(chat_id, text, entities, kind, photo, again=False)
+        except Exception as e:   # Telegram refused it, or the state file couldn't be saved
+            log.warning("Alert to %s failed: %s", chat_id, e, exc_info=not isinstance(e, TelegramError))
         return False, None
