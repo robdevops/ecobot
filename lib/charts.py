@@ -19,21 +19,20 @@ from datetime import UTC, datetime, tzinfo
 from statistics import fmean
 
 import matplotlib
+import matplotlib.dates as mdates
+import numpy as np
+from matplotlib import font_manager
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.collections import PatchCollection, PolyCollection
+from matplotlib.colors import to_rgb
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle, Wedge
+from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator
+from matplotlib.transforms import ScaledTranslation
+from PIL import Image
 
-matplotlib.use("Agg")  # no display on the server
-import matplotlib.dates as mdates  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-from matplotlib import font_manager  # noqa: E402
-from matplotlib.collections import PatchCollection, PolyCollection  # noqa: E402
-from matplotlib.colors import to_rgb  # noqa: E402
-from matplotlib.lines import Line2D  # noqa: E402
-from matplotlib.patches import Polygon, Rectangle, Wedge  # noqa: E402
-from matplotlib.ticker import FixedLocator, FuncFormatter, MaxNLocator  # noqa: E402
-from matplotlib.transforms import ScaledTranslation  # noqa: E402
-from PIL import Image  # noqa: E402
-
-from .specs import Chart, Compass, Line, Panel  # noqa: E402
+from .specs import Chart, Compass, Line, Panel
 
 # Palette. Slate neutrals for the furniture; one hue per reading (weather and air quality, kept clear of the green/yellow/red
 # rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
@@ -112,7 +111,7 @@ def _setup_fonts() -> str:
     installed = {f.name for f in font_manager.fontManager.ttflist}
     family = next((n for n in ("Inter", "Roboto", "Helvetica Neue", "Arial", "Liberation Sans") if n in installed),
                   "DejaVu Sans")
-    plt.rcParams.update({"font.family": family, "axes.unicode_minus": False})
+    matplotlib.rcParams.update({"font.family": family, "axes.unicode_minus": False})
     return family
 
 
@@ -542,60 +541,56 @@ def _draw_panel(ax, p: Panel, first: int, x0: float, x1: float, look: Look):
     return len(lines), x1, entries
 
 
-def _render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
+def _build(chart: Chart, tz: tzinfo) -> Figure:
     """The panels top to bottom on one time axis, so the rain (or another reading) lines up with what the others were doing.
     A chart of one panel of lines is the same thing drawn BIG (and with its wind rose beside it, when it has one)."""
-    started = time.perf_counter()
     panels, n = chart.panels, len(chart.panels)
     look = _look_for(chart)
     height = H_IN if n <= 2 else H_IN + PANEL_IN * (n - 2)
-    fig = plt.figure(figsize=(W_IN, height), dpi=DPI, facecolor=BG)
-    try:
-        _headline(fig, panels[0].label if look.in_headline else chart.title, chart.subtitle, height, panels[0].unit if look.in_headline else "")
-        width = _axes_width(chart)
-        body = height - HEAD_IN - FOOT_IN
-        gap = 0.27 if n > 2 else 0.22
-        each = (body - gap * (n - 1)) / n
-        xs = _nums({t for p in panels for t in p.xs})   # each time once: only the range is wanted
-        x0, x1 = float(xs.min()), float(xs.max())
-        axes, used = [], 0
-        for i, p in enumerate(panels):
-            bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
-            rect = [AX_RECT[0], bottom, width, each / height]
-            if look.card:   # the faint tint behind the panel: a rectangle on the figure (an axes of its own costs far more)
-                fig.add_artist(Rectangle(rect[:2], rect[2], rect[3], transform=fig.transFigure, facecolor=CARD, edgecolor="none",
-                                         linewidth=0, zorder=-1))
-            ax = fig.add_axes(rect, facecolor="none" if look.card else BG, sharex=axes[0] if axes else None)
-            axes.append(ax)
-            _style_axis(ax)
-            count, x1, entries = _draw_panel(ax, p, used, x0, x1, look)
-            used += count
-            if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
-                key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / height)) if look.in_headline else \
-                    dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
-                _legend_dots(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
-                             fontsize=look.legend_font, **key)
-            deg = _deg(p.unit)
-            tick_unit = deg if deg == "°" else ""
-            ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10],
-                                                   integer=bool(p.bars and not p.lines and p.bars.unit == "days")))
-            ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _, u=tick_unit: f"{v:g}{u}"))
-            if not look.in_headline:
-                title = f"{p.label} ({p.unit})" if p.unit and not tick_unit else p.label
-                ax.set_title(title, loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4, y=1.0)   # y: placed, not searched for
-            if i < n - 1:
-                ax.xaxis.set_visible(False)   # the time is read off the bottom panel (these ticks have no length and no grid)
-        margin = (x1 - x0) * 0.015  # room for the end dots
-        axes[0].set_xlim(x0 - margin, x1 + margin)
-        _time_axis(axes[-1], x1 - x0, tz, panels[-1].bars if not panels[-1].lines else None)
-        if chart.compass:  # beside the wind line
-            pos = axes[0].get_position()
-            axes[0].set_position([pos.x0, pos.y0, 0.57, pos.height])
-            _render_rose(fig, chart.compass)
-    except Exception:
-        plt.close(fig)
-        raise
-    return _png(fig, times, started)
+    fig = Figure(figsize=(W_IN, height), dpi=DPI, facecolor=BG)
+    FigureCanvasAgg(fig)   # drawn on its own canvas: no pyplot, whose figures would need closing
+    _headline(fig, panels[0].label if look.in_headline else chart.title, chart.subtitle, height, panels[0].unit if look.in_headline else "")
+    width = _axes_width(chart)
+    body = height - HEAD_IN - FOOT_IN
+    gap = 0.27 if n > 2 else 0.22
+    each = (body - gap * (n - 1)) / n
+    xs = _nums({t for p in panels for t in p.xs})   # each time once: only the range is wanted
+    x0, x1 = float(xs.min()), float(xs.max())
+    axes, used = [], 0
+    for i, p in enumerate(panels):
+        bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
+        rect = [AX_RECT[0], bottom, width, each / height]
+        if look.card:   # the faint tint behind the panel: a rectangle on the figure (an axes of its own costs far more)
+            fig.add_artist(Rectangle(rect[:2], rect[2], rect[3], transform=fig.transFigure, facecolor=CARD, edgecolor="none",
+                                     linewidth=0, zorder=-1))
+        ax = fig.add_axes(rect, facecolor="none" if look.card else BG, sharex=axes[0] if axes else None)
+        axes.append(ax)
+        _style_axis(ax)
+        count, x1, entries = _draw_panel(ax, p, used, x0, x1, look)
+        used += count
+        if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
+            key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - 0.27 / height)) if look.in_headline else \
+                dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
+            _legend_dots(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
+                         fontsize=look.legend_font, **key)
+        deg = _deg(p.unit)
+        tick_unit = deg if deg == "°" else ""
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10],
+                                               integer=bool(p.bars and not p.lines and p.bars.unit == "days")))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _, u=tick_unit: f"{v:g}{u}"))
+        if not look.in_headline:
+            title = f"{p.label} ({p.unit})" if p.unit and not tick_unit else p.label
+            ax.set_title(title, loc="left", fontsize=8.5, fontweight=TITLE_WEIGHT, color=TEXT, pad=4, y=1.0)   # y: placed, not searched for
+        if i < n - 1:
+            ax.xaxis.set_visible(False)   # the time is read off the bottom panel (these ticks have no length and no grid)
+    margin = (x1 - x0) * 0.015  # room for the end dots
+    axes[0].set_xlim(x0 - margin, x1 + margin)
+    _time_axis(axes[-1], x1 - x0, tz, panels[-1].bars if not panels[-1].lines else None)
+    if chart.compass:  # beside the wind line
+        pos = axes[0].get_position()
+        axes[0].set_position([pos.x0, pos.y0, 0.57, pos.height])
+        _render_rose(fig, chart.compass)
+    return fig
 
 
 def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list[int], np.ndarray]:
@@ -629,37 +624,38 @@ def _palette(rgb: np.ndarray, counts: np.ndarray, size: int = 256) -> tuple[list
     return taken, nearest
 
 
-def _png(fig, times: dict | None = None, started: float = 0.0) -> bytes:
-    """The figure as a PNG of at most 256 colours (see _palette): well under half the size of a full-colour one, and quicker to
-    write. A chart has a few thousand colours, nearly all of them the in-between shades on the edges of lines and letters.
-    times: the seconds since `started` (the clock when the figure was begun) are added to its "draw", and the PNG's to its "png"."""
-    try:
-        fig.canvas.draw()
-        drawn = time.perf_counter()
-        width, height = fig.canvas.get_width_height(physical=True)
-        pixels = np.frombuffer(fig.canvas.buffer_rgba(), "<u4") & 0xFFFFFF   # each pixel as one number: red + green·256 + blue·65536 (it is opaque)
-        colours, counts = np.unique(pixels, return_counts=True)
-        rgb = np.stack([colours & 255, colours >> 8 & 255, colours >> 16], axis=1)
-        taken, nearest = _palette(rgb, counts)
-        lookup = np.empty(1 << 24, np.uint8)                                 # each colour's place in the palette
-        lookup[colours] = nearest
-        image = Image.frombuffer("P", (width, height), lookup[pixels], "raw", "P", 0, 1)
-        image.putpalette(rgb[taken].astype(np.uint8).tobytes())
-        buf = io.BytesIO()
-        image.save(buf, format="png", dpi=(DPI, DPI))
-        if times is not None:
-            times["draw"] = times.get("draw", 0.0) + drawn - started
-            times["png"] = times.get("png", 0.0) + time.perf_counter() - drawn
-        return buf.getvalue()
-    finally:
-        plt.close(fig)
+def _png(pixels: np.ndarray, width: int, height: int) -> bytes:
+    """The picture (each pixel as one number: red + green·256 + blue·65536) as a PNG of at most 256 colours (see _palette): well
+    under half the size of a full-colour one, and quicker to write. A chart has a few thousand colours, nearly all of them the
+    in-between shades on the edges of lines and letters."""
+    colours, counts = np.unique(pixels, return_counts=True)
+    rgb = np.stack([colours & 255, colours >> 8 & 255, colours >> 16], axis=1)
+    taken, nearest = _palette(rgb, counts)
+    lookup = np.empty(1 << 24, np.uint8)   # each colour's place in the palette: quicker than np.unique's return_inverse (a sort of every pixel)
+    lookup[colours] = nearest
+    image = Image.frombuffer("P", (width, height), lookup[pixels], "raw", "P", 0, 1)
+    image.putpalette(rgb[taken].astype(np.uint8).tobytes())
+    buf = io.BytesIO()
+    image.save(buf, format="png", dpi=(DPI, DPI))
+    return buf.getvalue()
 
 
-_DRAWING = threading.Lock()   # pyplot keeps global state (current figure, rcParams): one chart is drawn at a time
+# matplotlib's fonts and text layout are shared between threads: one chart at a time. Its PNG is written under the lock too: with
+# Python's one-thread-at-a-time interpreter, writing it beside the next chart's drawing only slows both.
+_DRAWING = threading.Lock()
 
 
 def render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
     """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads.
     times (a Turn's): the seconds spent drawing the figure and writing the PNG are added to its "draw" and "png"."""
+    started = time.perf_counter()
     with _DRAWING:
-        return _render(chart, tz, times)
+        fig = _build(chart, tz)
+        fig.canvas.draw()
+        drawn = time.perf_counter()
+        width, height = fig.canvas.get_width_height(physical=True)
+        png = _png(np.frombuffer(fig.canvas.buffer_rgba(), "<u4") & 0xFFFFFF, width, height)   # opaque: the alpha byte is dropped
+    if times is not None:
+        times["draw"] = times.get("draw", 0.0) + drawn - started
+        times["png"] = times.get("png", 0.0) + time.perf_counter() - drawn
+    return png

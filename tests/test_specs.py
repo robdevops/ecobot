@@ -70,9 +70,9 @@ def test_a_period_shows_the_year_on_both_dates_when_it_spans_years():
 
 
 def test_a_reading_that_cannot_be_negative_is_not_drawn_below_zero_and_temperature_may_be():
-    import matplotlib
+    from matplotlib.figure import Figure
     from lib import charts
-    ax = matplotlib.pyplot.figure().add_axes([0, 0, 1, 1])
+    ax = Figure().add_axes([0, 0, 1, 1])
     charts._pad_limits(ax, 0.0, 8.0, floor=0)
     assert ax.get_ylim()[0] == 0
     charts._pad_limits(ax, 0.0, 8.0)
