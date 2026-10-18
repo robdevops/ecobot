@@ -454,7 +454,7 @@ async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_t
     assert [(chat, photo) for chat, photo, _ in bot.photos] == [(1, b"png"), (2, "large"), (3, "large")]
 
 
-async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_chat_is_still_forgotten(tmp_path):
+async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_chat_is_still_marked_gone(tmp_path):
     from telegram.error import BadRequest
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos(refuse=BadRequest("Wrong file identifier"))
     state.add_chat(1, "one")
@@ -462,4 +462,4 @@ async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_c
     assert bot.photos == [] and [(c, t) for c, t, _ in bot.sent] == [(1, "It's warmer outside")]
     gone = SentWithPhotos(refuse=BadRequest("Chat not found"))
     await Notifier(gone, state)("again", kind="temps", photo=b"png")
-    assert gone.sent == [] and 1 not in state.chats
+    assert gone.sent == [] and state.chats[1]["gone"] and state.alert_chats() == []

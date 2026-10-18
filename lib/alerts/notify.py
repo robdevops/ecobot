@@ -1,7 +1,8 @@
 """Who gets alerts, and sending them.
 
 Alerts go to every chat the bot knows about (Telegram can't list a bot's chats, so they are
-remembered as messages arrive) unless it unsubscribed (per alert type, with the buttons under each alert or /alerts). Chats and
+remembered as messages arrive) unless it unsubscribed (per alert type, with the buttons under each alert or /alerts). A chat that
+blocked or removed the bot is marked gone: it gets nothing, and has its settings back when it next writes. Chats and
 monitor state live in a small JSON file, so restarts neither forget chats nor repeat alerts. Alerts are sent silently, with the
 settings buttons and, when there is one, a small italic footer with a link label.
 """
@@ -67,19 +68,30 @@ class AlertState:
         os.replace(tmp, self.path)
 
     def add_chat(self, chat_id: int, title: str):
+        """A message from this chat (or the bot added to it): known from now on, and back if it was gone."""
         entry = self.chats.get(chat_id)
         if entry is None:
             self.chats[chat_id] = {"title": title}
             log.info("Alerts: now sending to %s (id %s)", title, chat_id)
             self.save()
-        elif entry.get("title") != title:
+        elif entry.get("title") != title or entry.get("gone"):
+            if entry.pop("gone", None):
+                log.info("Alerts: sending to %s (id %s) again", title, chat_id)
             entry["title"] = title
             self.save()
 
-    def remove_chat(self, chat_id: int, reason: str):
-        if self.chats.pop(chat_id, None) is not None:
+    def mark_gone(self, chat_id: int, reason: str):
+        """The bot can't post to this chat any more (it was blocked or removed): nothing is sent to it, and its settings are kept
+        for when it writes again."""
+        entry = self.chats.get(chat_id)
+        if entry is not None and not entry.get("gone"):
+            entry["gone"] = True
             log.info("Alerts: no longer sending to chat %s (%s)", chat_id, reason)
             self.save()
+
+    def present(self) -> list[int]:
+        """The chats the bot is in: known, and not gone."""
+        return [c for c, entry in self.chats.items() if not entry.get("gone")]
 
     def set_alerts(self, chat_id: int, title: str, on: bool):
         """/alerts on and /alerts off: every type."""
@@ -87,10 +99,13 @@ class AlertState:
         self.set_kind(chat_id, ALL, on)
 
     def migrate_chat(self, old: int, new: int):
-        """A group became a supergroup: its settings move to the new chat id."""
+        """A group became a supergroup: its settings, and the forecast it was sent, move to the new chat id."""
         entry = self.chats.pop(old, None)
         if entry is not None:
             self.chats.setdefault(new, entry)
+            sent = self.monitor.get("forecast_sent", {})
+            if str(old) in sent:
+                sent.setdefault(str(new), sent.pop(str(old)))
             log.info("Alerts: chat %s became %s", old, new)
             self.save()
 
@@ -178,7 +193,7 @@ class AlertState:
 
     def subscribed(self, chat_id: int, kind: str | None = None) -> bool:
         """Does this chat get this alert type (or, with no kind, any at all)?"""
-        if chat_id not in self.chats:
+        if chat_id not in self.chats or self.chats[chat_id].get("gone"):
             return False
         muted = self.muted(chat_id)
         return kind not in muted if kind else bool(set(LABELS) - muted)
@@ -217,8 +232,8 @@ class Notifier:
         self.bot, self.state = bot, state
 
     async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None, photo: bytes | str | None = None):
-        """Send an alert (silently) to every chat subscribed to its type; forget chats the bot can no
-        longer post to. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons.
+        """Send an alert (silently) to every chat subscribed to its type; chats the bot can no longer post to are marked
+        gone. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons.
         photo: a picture the text is the caption of (the text alone if Telegram refuses the picture): a PNG, or the file id of one
         Telegram holds. It is uploaded once: the chats after the first are sent Telegram's copy."""
         text, entities = with_footer(text, link)
@@ -248,14 +263,14 @@ class Notifier:
             try:
                 return await self.bot.send_photo(chat_id, photo, caption=text, caption_entities=entities, **common)
             except BadRequest as e:
-                if "not found" in str(e).lower():
+                if "chat not found" in str(e).lower():
                     raise
                 log.warning("Alert picture to %s failed (%s); sending the text alone", chat_id, e)
         return await self.bot.send_message(chat_id, text, entities=entities, disable_web_page_preview=True, **common)
 
     async def _send(self, chat_id: int, text: str, entities, kind: str | None = None, photo: bytes | str | None = None,
                     again: bool = True) -> tuple[bool, object]:
-        """Send an alert (see _post) to one chat; forget a chat the bot can no longer post to. Telegram's flood limit (when it asks
+        """Send an alert (see _post) to one chat; a chat the bot can no longer post to is marked gone. Telegram's flood limit (when it asks
         for a short wait) and a dropped connection get one more try; a timeout doesn't, as the message may have arrived. Whatever
         fails for one chat is logged, so the others still get the alert. (whether it was sent, the message sent)"""
         try:
@@ -265,11 +280,11 @@ class Notifier:
                 self.state.migrate_chat(chat_id, e.new_chat_id)
                 return await self._send(e.new_chat_id, text, entities, kind, photo) if e.new_chat_id != chat_id else (False, None)
             except Forbidden as e:  # kicked from the group, or blocked in a private chat
-                self.state.remove_chat(chat_id, f"can't post: {e}")
+                self.state.mark_gone(chat_id, f"can't post: {e}")
             except BadRequest as e:
-                if "not found" not in str(e).lower():
+                if "chat not found" not in str(e).lower():   # not "message thread not found", say: that chat is still there
                     raise
-                self.state.remove_chat(chat_id, f"chat gone: {e}")
+                self.state.mark_gone(chat_id, f"chat gone: {e}")
             except (RetryAfter, NetworkError) as e:   # BadRequest, a NetworkError too, is caught above
                 wait = _flood_wait(e) if isinstance(e, RetryAfter) else RETRY_SECONDS
                 if not again or isinstance(e, TimedOut) or wait > FLOOD_WAIT_MAX:

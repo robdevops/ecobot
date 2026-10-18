@@ -366,7 +366,7 @@ class Bot:
         if status in ("member", "administrator"):
             self.remember_chat(update)
         elif status in ("left", "kicked"):
-            self.state.remove_chat(change.chat.id, f"bot {status}")
+            self.state.mark_gone(change.chat.id, f"bot {status}")
 
     def _alert_kinds(self) -> list[str]:
         return menu.available_kinds(self.by_name, bool(self.irrigation))
@@ -662,13 +662,13 @@ class Bot:
         if not self.state:
             return 0
         sent = 0
-        for chat_id in [c for c in self.state.chats if c > 0 and self.state.keyboard(c) not in (self.keyboard_version, templates.HIDDEN)]:
+        for chat_id in [c for c in self.state.present() if c > 0 and self.state.keyboard(c) not in (self.keyboard_version, templates.HIDDEN)]:
             try:
                 await tg_bot.send_message(chat_id, "Buttons updated.", reply_markup=templates.keyboard(self.irrigation is not None), disable_notification=True)
                 self.state.set_keyboard(chat_id, self.keyboard_version)
                 sent += 1
             except Forbidden as e:  # blocked the bot
-                self.state.remove_chat(chat_id, f"can't post: {e}")
+                self.state.mark_gone(chat_id, f"can't post: {e}")
             except TelegramError as e:
                 log.warning("Buttons update to %s failed: %s", chat_id, e)
         if sent:

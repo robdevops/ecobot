@@ -295,7 +295,7 @@ def test_footer_marks_up_link_and_mute_hint():
     assert link.length == len("live chart") and link.url == "https://x"
 
 
-async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
+async def test_alerts_are_silent_and_a_chat_that_blocked_the_bot_is_marked_gone(tmp_path):
     from telegram.error import Forbidden
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "ok")
@@ -308,7 +308,40 @@ async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
             if chat_id == 2:
                 raise Forbidden("bot was blocked")
     await Notifier(Bot(), state)("hi")
-    assert all(kw["disable_notification"] for _, kw in calls) and 2 not in state.chats and 1 in state.chats
+    assert all(kw["disable_notification"] for _, kw in calls) and state.chats[2]["gone"] and state.alert_chats() == [1]
+
+
+async def test_a_gone_chat_keeps_its_settings_gets_nothing_and_is_back_when_it_writes(tmp_path):
+    from telegram.error import BadRequest, Forbidden
+    state = AlertState(tmp_path / "s.json")
+    for chat in (1, 2, 3):
+        state.add_chat(chat, str(chat))
+    state.set_kind(2, "rain", False)
+    calls, refusals = [], {2: Forbidden("bot was blocked by the user"), 3: BadRequest("Message thread not found")}
+
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            calls.append(chat_id)
+            if chat_id in refusals:
+                raise refusals[chat_id]
+    await Notifier(Bot(), state)("hi", kind="uv")
+    assert state.chats[2]["gone"] and state.muted(2) == {"rain"} and state.present() == [1, 3]
+    assert not state.chats[3].get("gone")                         # only "chat not found" means gone: the chat is still there
+    calls.clear()
+    await Notifier(Bot(), state)("again", kind="uv")
+    assert calls == [1, 3]                                        # nothing is sent to a gone chat
+    state.add_chat(2, "2")                                        # it writes again
+    assert state.subscribed(2, "uv") and not state.subscribed(2, "rain") and AlertState(state.path).present() == [1, 2, 3]
+
+
+def test_a_migrated_groups_forecast_moves_with_it(tmp_path):
+    from datetime import date
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(-5, "group")
+    today = date(2026, 10, 3)
+    state.record_forecast(-5, [{"date": today, "max_c": 20.0, "rain_chance_pct": 90}], today)
+    state.migrate_chat(-5, -1005)
+    assert state.forecast_sent(-1005)[today]["rain_chance_pct"] == 90 and state.forecast_sent(-5) == {} and state.forecast_chats() == [-1005]
 
 
 def test_a_damaged_state_file_is_kept_aside_not_overwritten(tmp_path, caplog):

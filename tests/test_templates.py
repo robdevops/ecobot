@@ -193,18 +193,20 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     state.set_keyboard(10, "old1234")
     state.set_keyboard(11, templates.version())
     state.set_keyboard(12, templates.HIDDEN)                  # 13 and the group have no record
-    sent = []
+    sent, tried = [], []
 
     class TG:
         async def send_message(self, chat_id, text, **kw):
+            tried.append(chat_id)
             if chat_id == 13:
                 raise Forbidden("bot was blocked by the user")
             sent.append((chat_id, text, kw["reply_markup"].is_persistent))
     bot = Bot(NS(tz=TZ), None, [], state)
     assert await bot.refresh_keyboards(TG()) == 1
     assert sent == [(10, "Buttons updated.", True)]
-    assert state.keyboard(10) == templates.version() and 13 not in state.chats and state.keyboard(-20) is None
-    assert await bot.refresh_keyboards(TG()) == 0             # nothing more on the next start
+    assert state.keyboard(10) == templates.version() and state.chats[13]["gone"] and state.keyboard(-20) is None
+    tried.clear()
+    assert await bot.refresh_keyboards(TG()) == 0 and tried == []   # nothing more on the next start: 13 blocked the bot
     assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
 
 

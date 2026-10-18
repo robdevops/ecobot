@@ -190,7 +190,7 @@ async def test_to_chat_goes_to_one_chat_and_forgets_a_blocked_one(tmp_path):
             sent.append((chat_id, text))
     notifier = Notifier(Bot(), state)
     assert await notifier.to_chat(1, "hello") is True and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
-    assert await notifier.to_chat(2, "hello") is False and 2 not in state.chats
+    assert await notifier.to_chat(2, "hello") is False and state.chats[2]["gone"]
 
 
 def test_a_revision_compares_the_one_millimetre_chance_when_both_days_have_it_and_the_older_figure_otherwise():

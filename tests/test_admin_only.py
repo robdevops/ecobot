@@ -157,6 +157,17 @@ async def test_a_failed_lookup_keeps_the_old_list_and_is_retried_soon_without_ra
     assert not await fresh.allowed(tg, [ADMIN])                                              # nothing known: nobody
 
 
+async def test_the_admins_of_a_group_that_removed_the_bot_no_longer_count(tmp_path):
+    state, tg = AlertState(tmp_path / "s.json"), TG({GROUP: [ADMIN]})
+    state.add_chat(GROUP, "Home")
+    admins = Admins(state)
+    assert await admins.allowed(tg, [ADMIN])                                                 # its list is kept for ten minutes now
+    state.mark_gone(GROUP, "bot kicked")
+    assert admins.groups() == [] and not await admins.allowed(tg, [ADMIN])                   # gone: its admins don't count
+    state.add_chat(GROUP, "Home")                                                            # the bot is added back
+    assert await admins.allowed(tg, [ADMIN])
+
+
 async def test_listed_ids_are_added_to_the_known_admins_never_replacing_them(tmp_path):
     state, tg = AlertState(tmp_path / "s.json"), TG({GROUP: [ADMIN], OTHER_GROUP: [3]})
     admins = Admins(state, extra_ids=[STRANGER, OTHER_GROUP])
