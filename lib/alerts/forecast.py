@@ -54,4 +54,4 @@ class ForecastMonitor:
                 continue
             lines = [f"• {day_label(day, today)}: was {describe_day(old)}\n  now {describe_day(new)}" for day, old, new in changes]
             if await self.notify.to_chat(chat_id, "\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines), kind="forecast"):
-                self.state.record_forecast(chat_id, [new for _, _, new in changes])
+                self.state.record_forecast(chat_id, [new for _, _, new in changes], today)

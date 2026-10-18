@@ -1037,7 +1037,7 @@ class Bot:
             if kept and read.fast and read.chart_in_code:   # a chart with period buttons, made in code: its other periods are uploaded ahead
                 self.preload_soon(context.bot, text)
             if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
-                self.state.record_forecast(msg.chat_id, turn.forecast_shown)
+                self.state.record_forecast(msg.chat_id, turn.forecast_shown, now_local(self.cfg.tz).date())
             if carried_keyboard:
                 log.info("Buttons: sent keyboard %s to chat %s (it had %s)", self.keyboard_version, msg.chat_id, self.state.keyboard(msg.chat_id))
                 self.state.set_keyboard(msg.chat_id, self.keyboard_version)

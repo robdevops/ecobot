@@ -136,14 +136,13 @@ class AlertState:
             self.chats[chat_id]["keyboard"] = version
             self.save()
 
-    def record_forecast(self, chat_id: int, days: list[dict]):
-        """Remember the forecast days this chat was just sent (a newer send replaces the baseline for the same day); days
-        already past are dropped. days is not empty."""
+    def record_forecast(self, chat_id: int, days: list[dict], today: date):
+        """Remember the forecast days this chat was just sent (a newer send replaces the baseline for the same day, the other
+        days keep theirs); days before today are dropped."""
         sent = self.monitor.setdefault("forecast_sent", {}).setdefault(str(chat_id), {})
         for d in days:
             sent[d["date"].isoformat()] = {**d, "date": d["date"].isoformat()}
-        first = min(d["date"] for d in days).isoformat()   # what was sent starts today: older days are past
-        for day in [k for k in sent if k < first]:
+        for day in [k for k in sent if k < today.isoformat()]:
             del sent[day]
         self.save()
 

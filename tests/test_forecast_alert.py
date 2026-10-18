@@ -52,7 +52,7 @@ def test_substantial_means_rain_flips_or_a_max_temperature_over_2_degrees_differ
 
 async def test_a_day_sent_as_rainy_that_turns_dry_is_told_once_to_that_chat(tmp_path):
     mon, forecast, state, bot = setup(tmp_path, [day(0, pct=95, summary="Thunderstorm."), day(1)])
-    state.record_forecast(1, [day(0, pct=95, summary="Thunderstorm."), day(1)])
+    state.record_forecast(1, [day(0, pct=95, summary="Thunderstorm."), day(1)], TODAY)
     await mon.check()
     assert bot.sent == []                                            # unchanged
     forecast.days = [day(0, pct=10, summary="Sunny."), day(1)]
@@ -66,7 +66,7 @@ async def test_a_day_sent_as_rainy_that_turns_dry_is_told_once_to_that_chat(tmp_
 
 async def test_dry_to_rain_and_max_temperature_changes_alert_and_a_further_change_alerts_again(tmp_path):
     mon, forecast, state, bot = setup(tmp_path, [day(0), day(1, max_c=20.0)])
-    state.record_forecast(1, [day(0), day(1, max_c=20.0)])
+    state.record_forecast(1, [day(0), day(1, max_c=20.0)], TODAY)
     forecast.days = [day(0, pct=80, summary="Showers."), day(1, max_c=22.1)]
     await mon.check()
     assert len(bot.sent) == 1                                        # two changed days: one message
@@ -78,24 +78,45 @@ async def test_dry_to_rain_and_max_temperature_changes_alert_and_a_further_chang
 
 async def test_small_changes_past_days_muted_chats_and_chats_never_sent_a_forecast_are_left_alone(tmp_path):
     mon, forecast, state, bot = setup(tmp_path, [day(0), day(1)])
-    state.record_forecast(1, [day(0), day(1)])
+    state.record_forecast(1, [day(0), day(1)], TODAY)
     forecast.days = [day(0, max_c=21.9, pct=40), day(1, max_c=18.5)]
     await mon.check()
     assert bot.sent == []                                            # inside the thresholds
-    state.record_forecast(1, [day(-1, pct=90), day(0), day(1)])
+    state.record_forecast(1, [day(-1, pct=90), day(0), day(1)], TODAY)
     forecast.days = [day(0, pct=70), day(1)]                         # yesterday is not in the forecast any more; today flips
     await mon.check()
     assert len(bot.sent) == 1 and "Yesterday" not in bot.sent[0][1] and bot.sent[0][1].count("• ") == 1
-    state.record_forecast(2, [day(0, pct=90)])
+    state.record_forecast(2, [day(0, pct=90)], TODAY)
     state.set_alerts(2, "chat 2", False)
     forecast.days = [day(0, pct=5), day(1)]
     await mon.check()
     assert [chat for chat, _ in bot.sent] == [1, 1] and state.forecast_sent(2)[TODAY]["rain_chance_pct"] == 90   # muted: not told, not reset
 
 
+async def test_a_revised_day_leaves_the_other_days_sent_with_it_to_be_told(tmp_path):
+    week = [day(i) for i in range(7)]
+    mon, forecast, state, bot = setup(tmp_path, week)
+    state.record_forecast(1, week, TODAY)
+    forecast.days = [*week[:2], day(2, pct=80), *week[3:]]          # Monday turns rainy
+    await mon.check()
+    forecast.days = [week[0], day(1, pct=80), day(2, pct=80), *week[3:]]   # then Sunday does
+    await mon.check()
+    assert len(bot.sent) == 2 and "• Monday: was" in bot.sent[0][1] and "• Sunday: was" in bot.sent[1][1]
+    assert sorted(state.forecast_sent(1)) == [d["date"] for d in week]
+
+
+async def test_an_answer_about_later_days_leaves_today_to_be_told(tmp_path):
+    mon, forecast, state, bot = setup(tmp_path, [day(0, pct=90), day(1)])
+    state.record_forecast(1, [day(0, pct=90), day(1)], TODAY)       # the morning report
+    state.record_forecast(1, [day(1)], TODAY)                        # "what about tomorrow?"
+    forecast.days = [day(0, pct=5), day(1)]
+    await mon.check()
+    assert len(bot.sent) == 1 and "• Today: was" in bot.sent[0][1]
+
+
 async def test_what_was_sent_survives_a_restart_and_is_not_repeated(tmp_path):
     mon, forecast, state, bot = setup(tmp_path, [day(0, pct=90)])
-    state.record_forecast(1, [day(0, pct=90)])
+    state.record_forecast(1, [day(0, pct=90)], TODAY)
     again = AlertState(tmp_path / "s.json")
     assert again.forecast_sent(1)[TODAY]["rain_chance_pct"] == 90
     forecast.days = [day(0, pct=5)]

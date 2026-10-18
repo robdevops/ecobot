@@ -243,7 +243,7 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
 async def test_every_monitors_alert_names_its_type(tmp_path):
     from lib.alerts import ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, WeatherMonitor
     from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, gusts, rain, uv
-    from tests.test_forecast_alert import FakeForecast, day
+    from tests.test_forecast_alert import TODAY, FakeForecast, day
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "chat")
     kinds = []
@@ -279,7 +279,7 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
         seen.append(kind)
         return await real(chat_id, text, link, kind)
     notifier.to_chat = spy
-    state.record_forecast(1, [day(0, pct=90)])
+    state.record_forecast(1, [day(0, pct=90)], TODAY)
     await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, notifier).check()
     assert seen == ["forecast"]
 
