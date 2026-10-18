@@ -16,7 +16,7 @@ from telegram import MessageEntity
 from telegram.error import BadRequest, ChatMigrated, Forbidden, TelegramError
 
 from ..logs import QUOTES
-from .menu import ALL, LABELS, keyboard
+from .menu import ALL, LABELS, alert_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -192,9 +192,8 @@ def with_footer(text: str, link: tuple[str, str] | None = None, extra: str | Non
 
 
 class Notifier:
-    def __init__(self, bot, state: AlertState, kinds: list[str] | None = None):
-        """kinds: the alert types this bot sends (the settings buttons under each alert list them)."""
-        self.bot, self.state, self.kinds = bot, state, kinds or list(LABELS)
+    def __init__(self, bot, state: AlertState):
+        self.bot, self.state = bot, state
 
     async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None, photo: bytes | str | None = None):
         """Send an alert (silently) to every chat subscribed to its type; forget chats the bot can no
@@ -221,10 +220,9 @@ class Notifier:
         return sent
 
     async def _post(self, chat_id: int, text: str, entities, kind: str | None, photo: bytes | str | None):
-        """The message itself (returned): silent unless the chat turned sound on for this type, with the settings buttons (which highlight this
-        alert's own type). With a photo it is the picture with the text as its caption; a picture Telegram refuses falls back to the text alone."""
+        """The message itself (returned): silent unless the chat turned sound on for this type, with the alert type's settings button (the bell). With a photo it is the picture with the text as its caption; a picture Telegram refuses falls back to the text alone."""
         common = dict(disable_notification=kind not in self.state.loud(chat_id),
-                      reply_markup=keyboard(self.state.muted(chat_id), self.kinds, parent=kind, loud=self.state.loud(chat_id) if chat_id > 0 else None))
+                      reply_markup=alert_keyboard(kind, self.state.muted(chat_id), self.state.loud(chat_id) if chat_id > 0 else None) if kind else None)
         if photo:
             try:
                 return await self.bot.send_photo(chat_id, photo, caption=text, caption_entities=entities, **common)

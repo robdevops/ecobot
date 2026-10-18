@@ -4,7 +4,9 @@ for that period (Bot.on_period_button); the question behind each chart is rememb
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardMarkup
+
+from .buttons import button
 
 PERIODS = (1, 7, 30, 90, 365)
 NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # what the buttons say
@@ -14,8 +16,7 @@ REMEMBERED = 300   # charts whose question is kept, newest first to stay
 
 def keyboard(current: int | None = None) -> InlineKeyboardMarkup:
     """The one row of period buttons; the one for the chart's own period (`current`, in days) is marked with ●."""
-    return InlineKeyboardMarkup([[InlineKeyboardButton(f"\u25cf {NAMES[days]}" if days == current else NAMES[days],
-                                                       callback_data=f"{PREFIX}{days}") for days in PERIODS]])
+    return InlineKeyboardMarkup([[button(f"\u25cf {NAMES[days]}" if days == current else NAMES[days], f"{PREFIX}{days}") for days in PERIODS]])
 
 
 def days_in(data: str | None) -> int | None:

@@ -1,32 +1,32 @@
-"""The alert settings as buttons: Subscribe | Unsubscribe, each opening its options below: Subscribe lists the types that are off,
-Unsubscribe the types that are on, so each list says by itself whether its alerts are on. Pure: it only builds the keyboard and
-the title from what a chat has muted (the same menu goes under every alert and under /alerts).
+"""The alert settings as buttons. Pure: it only builds the keyboards and the title from what a chat has muted.
 
-Callback data (self-contained and short, so an old message's buttons still work after a restart):
-  al:open:sub | al:open:unsub | al:open:other | al:open:set | al:open:snd_on | al:open:snd_off | al:close | al:noop (the heading rows of messages sent by an earlier version)
-  al:snd:<kind|all>:<on|off>[:parent]      (notification sound for one type; Settings is in private chats only)
-  al:on:<kind|all>:<section> | al:off:<kind|all>:<section>      (section: sub or unsub, the part left open)
-An alert's buttons end with the alert's own type (parent): under an alert each list is its own type (marked ●) and "Other", which holds the rest and "all": al:open:unsub:rain, al:close:rain,
-al:off:uv:unsub:rain (the sound menus' Other is al:open:snd_on_o:rain, al:open:snd_off_o:rain). A chat's /alerts message has no parent and no such field.
+/alerts has two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a list of alert types as toggles (Sound lists only the types
+that are on), the button that opened it kept above the list (▾; pressing it closes the list) and the other hidden meanwhile.
+Under an alert there is one 🔔 that opens that type's two toggles, Alert and (while it is on, private chats) Sound.
+
+Callback data is self-contained and short, so an old message's buttons still work after a restart. It is built and read here only (Press):
+  al:open:<alerts|sound>        al:close                       the /alerts message
+  al:on|off:<kind>:alerts       al:snd:<kind>:on|off           a type's alerts, or its sound, on or off
+  al:open:bell:<kind>           al:close:<kind>                the bell under an alert of that type
+  al:on|off:<kind>:bell:<kind>  al:snd:<kind>:on|off:<kind>    its two toggles
 """
 
+from dataclasses import dataclass
 from itertools import batched
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardMarkup
 
-from ..buttons import menu_text
+from ..buttons import opener, toggle_button
 
 # kind -> the name on the button, in the order listed
 LABELS = {"rain": "rain", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
           "particulates": "particulates", "pollen_and_asthma": "pollen & asthma", "forecast": "forecast changes",
           "irrigation_battery": "irrigation battery", "irrigation_pause": "irrigation pause"}
-# the emoji on each type's button: the one its own alerts start with (every type has one: a test holds the two lists together)
-EMOJI = {"rain": "\U0001f327️", "gusts": "\U0001f4a8", "uv": "\U0001f9f4", "temps": "\U0001f321️",
-         "particulates": "\U0001f637", "pollen_and_asthma": "\U0001f33c", "forecast": "\U0001f504", "irrigation_battery": "\U0001faab", "irrigation_pause": "☔"}
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
 PER_ROW = 2
-SETTINGS = ("set", "snd_on", "snd_off", "snd_on_o", "snd_off_o")   # (_o: the "Other" list inside a sound menu)
+ALERTS, SOUND, BELL = "alerts", "sound", "bell"   # the menus that can be open
+MENUS = {ALERTS: "🔔 Alerts", SOUND: "🔊 Sound"}   # the /alerts buttons
 
 
 def available_kinds(sources: set[str]) -> list[str]:
@@ -42,78 +42,77 @@ def kinds_for(source_names, irrigation: bool) -> list[str]:
     return available_kinds(set(source_names) | ({"Irrigation"} if irrigation else set()))
 
 
-def label(kind: str) -> str:
-    """The name of an alert type on its button: its emoji, then its name."""
-    return f"{EMOJI[kind]} {LABELS[kind]}"
+@dataclass(frozen=True)
+class Press:
+    """What a button of these menus does, and its callback data both ways (data() builds it, parse() reads it back)."""
+    action: str                  # open or close a menu, flip a type's alert (alert) or its sound (sound)
+    kind: str | None = None      # the alert type a toggle flips
+    section: str | None = None   # the menu to show: ALERTS, SOUND or BELL
+    parent: str | None = None    # the alert type the buttons sit under (their menu is the bell), if any
+    on: bool = False             # what a toggle sets
+
+    def data(self) -> str:
+        tail = f":{self.parent}" if self.parent else ""
+        verb = "on" if self.on else "off"
+        match self.action:
+            case "open":
+                return f"al:open:{self.section}{tail}"
+            case "close":
+                return f"al:close{tail}"
+            case "alert":
+                return f"al:{verb}:{self.kind}:{self.section}{tail}"
+            case _:
+                return f"al:snd:{self.kind}:{verb}{tail}"
 
 
-def _button(text: str, data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text, callback_data=data)
+def parse(data: str | None) -> Press | None:
+    """The press that callback `data` is, or None when it is not the data of any button these menus draw."""
+    parts = (data or "").split(":")
+    if parts[0] != "al" or len(parts) < 2:
+        return None
+    action, rest = parts[1], parts[2:]
+    if action == "close" and len(rest) <= 1:
+        return Press("close", parent=rest[0] if rest else None)
+    if action == "open" and len(rest) in (1, 2):
+        return Press("open", section=rest[0], parent=rest[1] if len(rest) == 2 else None)
+    if action in ("on", "off") and len(rest) in (2, 3):
+        return Press("alert", rest[0], rest[1], rest[2] if len(rest) == 3 else None, action == "on")
+    if action == "snd" and len(rest) in (2, 3) and rest[1] in ("on", "off"):
+        parent = rest[2] if len(rest) == 3 else None
+        return Press("sound", rest[0], BELL if parent else SOUND, parent, rest[1] == "on")
+    return None
 
 
-def _type_rows(items: list[str], parent: str | None, more: bool, button, other_data: tuple[str, str], every: InlineKeyboardButton) -> list[list]:
-    """A list of alert types as button rows, the same under Unsubscribe, Subscribe and both sound menus. Under an alert that is in the
-    list (with others), the alert's own type comes first, then an "Other" menu (`other_data` = the data that opens it, the data that
-    closes it; `more`: it is open) that holds the rest and `every` ("all"). Otherwise a flat list, with `every` when it has more than
-    one type. `button(kind)` draws one type."""
-    rows: list[list] = []
-    if parent in items and len(items) > 1:
-        rows += [[button(parent)], [_button(menu_text("Other", more), other_data[1] if more else other_data[0])]]
-        items = [k for k in items if k != parent] if more else []
-    elif more:
-        more = False   # nothing to put under Other
-    rows += map(list, batched(map(button, items), PER_ROW))
-    if len(items) > 1 or (more and items):
-        rows.append([every])
-    return rows
-
-
-def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
-             loud: set[str] | None = None) -> InlineKeyboardMarkup:
-    """The menu: Subscribe, Unsubscribe and (private chats) Settings, one section open at a time (`open`: sub, unsub, other, set,
-    snd_on, snd_off, or snd_on_o / snd_off_o, the Other list of a sound menu) with its options under it. A ▸ after the text marks a button that opens
-    a menu, ▾ (in the same place) the open one; the rest do something. `parent` is the type of the alert the buttons sit under (carried in every button):
-    its lists put that type first (●) and the rest under "Other". `loud`: the types whose alerts make a notification sound; None (a
-    group) leaves out Settings, which holds two menus, Enable and Disable notification sounds, over the subscribed types."""
-    tail = f":{parent}" if parent else ""
-    subscribed = options(muted, available, "unsub")
-    if open == "other" and not (parent in subscribed and len(subscribed) > 1):
-        open = "unsub"
-    unsub_open = open in ("unsub", "other")
-    def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:
-        return _button(menu_text(text, is_open), f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
-    rows = [[head(open == "sub", "➕ Sub", "sub"), head(unsub_open, "➖ Unsub", "unsub")]]
-    if loud is not None:
-        rows[0].append(head(open in SETTINGS, "⚙️ Settings", "set"))
-    mark = lambda k: f"● {label(k)}" if k == parent else label(k)   # the alert these buttons are under
-    if open in SETTINGS and loud is not None:
-        for section, heading, items in (("snd_on", "🔔 Enable notification sounds", [k for k in subscribed if k not in loud]),
-                                        ("snd_off", "🔕 Disable notification sounds", [k for k in subscribed if k in loud])):
-            here = open in (section, f"{section}_o")
-            if not items:
-                continue
-            rows.append([_button(menu_text(heading, here), f"al:open:set{tail}" if here else f"al:open:{section}{tail}")])
-            if here:
-                verb = "on" if section == "snd_on" else "off"
-                rows += _type_rows(items, parent, open == f"{section}_o", lambda k: _button(mark(k), f"al:snd:{k}:{verb}{tail}"),
-                                   (f"al:open:{section}_o{tail}", f"al:open:{section}{tail}"),
-                                   _button("🔔 Enable all" if verb == "on" else "🔕 Disable all", f"al:snd:{ALL}:{verb}{tail}"))
-    if open in ("sub", "unsub", "other"):
-        verb = "on" if open == "sub" else "off"
-        rows += _type_rows(options(muted, available, "sub" if open == "sub" else "unsub"), parent if open != "sub" else None, open == "other",
-                           lambda k: _button(mark(k), f"al:{verb}:{k}:{open}{tail}"), (f"al:open:other{tail}", f"al:open:unsub{tail}"),
-                           _button("🔔 Subscribe to all" if verb == "on" else "🔕 Unsubscribe from all", f"al:{verb}:{ALL}:{open}{tail}"))
+def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None) -> InlineKeyboardMarkup:
+    """The buttons under an alert of type `kind`: one bell (🔔 ▸, ▾ once `open` is BELL) that opens up to two toggles, Alert (this type's
+    alerts in this chat) and, only while that is on and in a private chat (`loud` is not None), Sound (whether they make a notification
+    sound)."""
+    is_open = open == BELL
+    rows = [[opener("🔔", is_open, Press("open", section=BELL, parent=kind).data(), Press("close", parent=kind).data())]]
+    if is_open:
+        on = kind not in muted
+        rows.append([toggle_button("Alert", on, lambda turn_on: Press("alert", kind, BELL, kind, turn_on).data())])
+        if on and loud is not None:
+            rows.append([toggle_button("Sound", kind in loud, lambda turn_on: Press("sound", kind, BELL, kind, turn_on).data())])
     return InlineKeyboardMarkup(rows)
 
 
-def has_options(muted: set[str], available: list[str], section: str, parent: str | None = None) -> bool:
-    """Would this section show any button under its heading?"""
-    return len(keyboard(muted, available, section, parent).inline_keyboard) > 1
+def _toggles(kinds: list[str], is_on, section: str, action: str) -> list[list]:
+    """A toggle for each of these alert types, PER_ROW to a row. is_on(kind): its state."""
+    return list(map(list, batched((toggle_button(LABELS[k], is_on(k), lambda turn_on, k=k: Press(action, k, section, on=turn_on).data())
+                                   for k in kinds), PER_ROW)))
 
 
-def options(muted: set[str], available: list[str], section: str) -> list[str]:
-    """What a section lists: Subscribe the types that are off, Unsubscribe the types that are on."""
-    return [k for k in available if (k in muted) == (section == "sub")]
+def keyboard(muted: set[str], available: list[str], open: str | None = None, loud: set[str] | None = None) -> InlineKeyboardMarkup:
+    """The /alerts menu: 🔔 Alerts and, when some type is on in a private chat, 🔊 Sound. `open` (ALERTS or SOUND): that menu's list, with
+    its own button above it and the other one hidden. `loud`: the types whose alerts make a notification sound; None (a group) has no Sound."""
+    sound_types = [k for k in available if k not in muted] if loud is not None else []   # (a type that is off has no sound to set)
+    head = lambda section: opener(MENUS[section], open == section, Press("open", section=section).data(), Press("close").data())
+    if open == ALERTS:
+        return InlineKeyboardMarkup([[head(ALERTS)], *_toggles(available, lambda k: k not in muted, ALERTS, "alert")])
+    if open == SOUND and sound_types:
+        return InlineKeyboardMarkup([[head(SOUND)], *_toggles(sound_types, lambda k: k in loud, SOUND, "sound")])
+    return InlineKeyboardMarkup([[head(ALERTS), *([head(SOUND)] if sound_types else [])]])
 
 
 def title(muted: set[str], available: list[str]) -> str:

@@ -252,13 +252,6 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     assert len(app.handlers) == 10 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
 
 
-def test_a_long_alerts_line_continues_indented_at_90_characters():
-    from lib.alerts.menu import LABELS
-    lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats").splitlines()
-    assert len(lines) > 1 and all(len(line) <= 90 for line in lines)
-    assert all(line.startswith(" " * 13) and not line.startswith(" " * 14) for line in lines[1:])
-
-
 def test_log_lines_do_not_name_their_module():
     fmt = ecobot.LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
@@ -280,9 +273,9 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
     timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
     assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
-    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is shown whole
+    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is cut too
         record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
-        assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
+        assert fmt.format(record) == f"{name} " + timings[:40 - len(name) - 2] + "…" and record.levelname == logging.getLevelName(level)
     fmt.width = 0
     assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
     assert line(timings, quotes=False) == "INFO " + timings
@@ -317,9 +310,3 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
                                ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
     assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
-
-
-def test_the_alerts_list_wraps_at_the_log_width():
-    from lib.alerts.menu import LABELS
-    lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats", 40).splitlines()
-    assert len(lines) > 1 and all(len(line) <= 40 for line in lines)

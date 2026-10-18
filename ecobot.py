@@ -95,27 +95,10 @@ def commit_in(git_dir) -> str:
         return "unknown"
 
 
-INDENT = 13   # the continuation lines of a wrapped log line
-
-
-def wrapped(head: str, items: list[str], tail: str = "", width: int = 90) -> str:
-    """head + the items joined by ", " + tail, over several lines when it is longer than `width`: a line breaks only between items,
-    and the next one is indented."""
-    lines, line = [], head
-    for i, item in enumerate(items):
-        piece = item + (", " if i < len(items) - 1 else tail)
-        if line.strip() != head.strip() and len(line + piece.rstrip()) > width:
-            lines.append(line.rstrip())
-            line = " " * INDENT
-        line += piece
-    return "\n".join([*lines, line])
-
-
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
     _handler.formatter.width = cfg.log_width   # every log line is cut to it from here on
-    WRAP = max(cfg.log_width - len("INFO "), 30) if cfg.log_width else 90   # where the lists in the log wrap
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd
@@ -161,7 +144,7 @@ async def main():
                 log.info("@%s + %s", app.bot.username, cfg.xai_model)
                 log.info("Sources: %s", ", ".join(s.name for s in sources))
                 kinds = kinds_for((s.name for s in sources), irrigation is not None)
-                notify = Notifier(app.bot, state, kinds)
+                notify = Notifier(app.bot, state)
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
                 # Alerts
@@ -186,7 +169,7 @@ async def main():
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("%s", wrapped("Keeping warm: ", [f"{s.name} {s.warmer.interval:.0f}s" for s in sources], "", WRAP))
+                log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""
@@ -226,7 +209,7 @@ async def main():
                              time.monotonic() - started)
                     tasks.append(asyncio.create_task(every(PREDRAW_SECONDS, bot.predraw)))   # the button charts, ready before they are pressed
                     on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
-                    log.info("%s", wrapped("Alerts: ", [LABELS[k] for k in on] or ["none"], f": {len(state.alert_chats())} chats", WRAP))
+                    log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(state.alert_chats()))
                     if missing := [LABELS[k] for k in kinds if k not in running]:
                         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
