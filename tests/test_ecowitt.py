@@ -470,10 +470,12 @@ async def test_http_errors_are_refused_only_when_ecowitt_answers_with_a_reason(t
         aio.sleep = orig
 
 
-async def test_the_api_keys_never_reach_an_error_message():
+async def test_the_api_keys_never_reach_an_error_message(monkeypatch):
     """Ecowitt takes its keys in the URL: a gateway page or a network error must not carry them into the error, which the
     model is shown and the log keeps."""
     import httpx
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ecowitt_api.asyncio, "sleep", lambda s: real_sleep(0))   # a 502 is asked again: without the waits
 
     def gateway(request):
         return httpx.Response(502, text="<html>Bad gateway</html>")
@@ -488,8 +490,10 @@ async def test_the_api_keys_never_reach_an_error_message():
         assert said in str(err.value) and "SECRET" not in str(err.value), str(err.value)
 
 
-async def test_a_failed_history_request_tells_the_model_and_the_log_no_key(tmp_path, caplog):
+async def test_a_failed_history_request_tells_the_model_and_the_log_no_key(tmp_path, caplog, monkeypatch):
     import httpx
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ecowitt_api.asyncio, "sleep", lambda s: real_sleep(0))
     fake = FakeEcowitt()
     transport = httpx.MockTransport(lambda r: httpx.Response(502, text="<html>Bad gateway</html>")
                                     if r.url.path.endswith("/history") else fake(r))
@@ -499,6 +503,62 @@ async def test_a_failed_history_request_tells_the_model_and_the_log_no_key(tmp_p
     out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, Turn())
     await eco.close()
     assert "HTTP 502" in out and "SECRET" not in out and "SECRET" not in caplog.text
+
+
+async def test_a_server_error_is_asked_again_and_the_turn_is_free_while_it_waits(monkeypatch):
+    """A 503 is asked again after a pause, like "System is busy."; meanwhile the turn is free, so another request (a question's)
+    goes ahead instead of waiting behind the pause."""
+    import httpx
+    order, first = [], {"list": True}
+
+    def handler(request):
+        path = request.url.path.rsplit("/", 1)[-1]
+        order.append(path)
+        if path == "list" and first.pop("list", False):
+            return httpx.Response(503, text="<html>Service unavailable</html>")
+        return httpx.Response(200, json={"code": 0, "data": {"list": [{"mac": "x"}]} if path == "list" else {}})
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ecowitt_api.asyncio, "sleep", lambda s: real_sleep(0.05 if s >= 3 else 0))
+    api = ecowitt_api.EcowittAPI("a", "b", httpx.MockTransport(handler))
+
+    async def later():
+        await real_sleep(0.01)   # once the first request has had its 503
+        return await api.realtime("x", "outdoor", urgent=True)
+    devices, _ = await asyncio.gather(api.devices(), later())
+    await api.close()
+    assert len(devices) == 1 and order == ["list", "real_time", "list"]
+
+
+async def test_during_an_outage_the_archive_asks_once_a_range_and_stops_after_three(tmp_path, monkeypatch):
+    """A timeout says nothing about a group: no range is asked again group by group (8 requests where there was one), and three
+    failures in a row end the run; the rest wait for the next one."""
+    import httpx
+    from lib.ecowitt import Archive, archive as archive_mod
+    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+    monkeypatch.setattr(ecowitt_api, "MIN_GAP_SECONDS", 0)
+    real, asked = ecowitt_transport()[1], []
+
+    def handler(request):
+        if request.url.path.endswith("/history"):
+            asked.append(request.url.params["call_back"])
+            raise httpx.ConnectTimeout("timed out")
+        return real(request)
+    eco = Ecowitt(config(tmp_path), transport=httpx.MockTransport(handler))
+    await eco.start()
+    fetched, failed = await Archive(eco).run_once()
+    await eco.close()
+    assert (fetched, failed) == (0, 3) and len(asked) == 3 and all("," in groups for groups in asked)
+
+
+def test_an_old_range_fetched_does_not_push_out_the_fresh_copy_of_the_last_hours():
+    import time as _time
+    from lib.ecowitt.store import HotStore
+    hot, now = HotStore(), int(_time.time())
+    hot.put("M", "5min", "outdoor", now - 3 * 3600, now, {"temperature": "recent"})
+    hot.put("M", "5min", "outdoor", now - 90 * 86400, now - 89 * 86400, {"temperature": "old"})   # the archive, going back
+    assert hot.get("M", "5min", "outdoor", now - 3600, now) == {"temperature": "recent"}
+    hot.put("M", "5min", "outdoor", now - 3600, now + 1, {"temperature": "newer"})                   # a refresh replaces it
+    assert hot.get("M", "5min", "outdoor", now - 1800, now) == {"temperature": "newer"}
 
 
 # ---------- wind direction is circular ----------

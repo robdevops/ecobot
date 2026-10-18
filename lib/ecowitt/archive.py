@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 RUN_AT = time(1, 30)
 PACE_SECONDS = 2.0  # gap between requests, so questions aren't starved
 COARSE_CYCLES = ("1day", "4hour", "30min")  # 5-minute data goes day by day, first
+OUTAGE_STOP = 3     # requests failing in a row (no answer, or a busy Ecowitt) that end a run: the rest wait for the next
 
 
 class Archive:
@@ -78,21 +79,26 @@ class Archive:
             if seconds >= 60:   # a short run only gets the line when it finishes
                 log.info("Ecowitt: %d req to fetch (about %s)", len(todo),
                          f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
-        fetched = failed = 0
+        fetched = failed = in_a_row = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
             fetcher = self.station.fetcher(self.groups)
             await fetcher.get(cycle, start, end, load=False)  # only to cache it
-            if fetcher.errors and not await self._drop_unsupported_groups(cycle, start, end):
-                failed += 1
+            if not fetcher.errors or fetcher.rejected and await self._drop_unsupported_groups(cycle, start, end):
+                fetched, in_a_row = fetched + 1, 0
             else:
-                fetched += 1
+                failed += 1
+                in_a_row = 0 if fetcher.rejected else in_a_row + 1   # a refusal is about this range; a timeout, about Ecowitt
+                if in_a_row == OUTAGE_STOP:
+                    log.warning("Ecowitt: %d requests in a row failed (%s); the other %d wait for the next run", in_a_row,
+                                fetcher.errors[-1], len(todo) - i)
+                    break
             if i % 20 == 0 and i < len(todo):
                 log.info("Ecowitt: %d of %d req done", i, len(todo))
             await asyncio.sleep(self.pace)
         return fetched, failed
 
     async def _drop_unsupported_groups(self, cycle: str, start: datetime, end: datetime) -> bool:
-        """After a failed request, try each group alone. Groups that fail on their own are dropped
+        """After a request Ecowitt refused, try each group alone. Groups that fail on their own are dropped
         (the station probably doesn't have them). True if the range was then cached for the rest."""
         if len(self.groups) < 2:
             return False

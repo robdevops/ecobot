@@ -265,5 +265,10 @@ class HotStore:
         return entry["fields"] if end <= entry["end"] or reaches_present else None
 
     def put(self, mac: str, cycle: str, group: str, start: int, end: int, fields: dict):
+        """Keep a response, unless a fresh one that reaches later is held: an old range (the archive's) is cached on disk, and must
+        not push out the copy of the last hours that questions are answered from."""
+        held = self._entries.get((mac, cycle, group))
+        if held and time.time() - held["fetched_at"] <= HOT_TTL_SECONDS and held["end"] > end:
+            return
         self._entries[(mac, cycle, group)] = {"start": start, "end": end, "fields": fields,
                                               "fetched_at": time.time()}

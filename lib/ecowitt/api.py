@@ -135,37 +135,41 @@ class EcowittAPI:
         await self.client.aclose()
 
     async def _get(self, path: str, urgent: bool = False, **params) -> dict | list:
-        """The response's "data". Retries when Ecowitt says it is busy or we were too quick;
-        raises EcowittError. urgent: someone is waiting for it, so it goes before queued background requests."""
+        """The response's "data"; raises EcowittError. Asked again, up to BUSY_RETRIES times and waiting longer each time, when
+        Ecowitt is busy, rate limited or erring (429, 5xx), not when it refuses the request or there is no answer at all.
+        urgent: someone is waiting for it, so it goes before queued background requests (and the turn is free while a request
+        waits to be asked again)."""
         loop = asyncio.get_running_loop()
-        await self._turn.acquire(urgent)
-        try:
-            for attempt in range(BUSY_RETRIES + 1):
+        for attempt in range(BUSY_RETRIES + 1):
+            await self._turn.acquire(urgent)
+            try:
                 if (pause := self._last + MIN_GAP_SECONDS - loop.time()) > 0:
                     await asyncio.sleep(pause)
                 self._last = loop.time()
                 self.requests += 1
                 try:
                     res = await self.client.get(f"{BASE}/{path}", params={**self.keys, **params})
+                except httpx.HTTPError as e:   # no answer: the network, a timeout
+                    msg, passing, again = str(e) or type(e).__name__, True, False
+                else:
                     body = _body(res)
-                    if body is None:  # no Ecowitt answer: the network, or a gateway error page
-                        raise ValueError(f"HTTP {res.status_code}" if not res.is_success else "unreadable response")
-                    if str(body.get("code")) == "0" and res.is_success:
+                    if body is not None and str(body.get("code")) == "0" and res.is_success:
                         return body.get("data") or {}
-                    msg = str(body.get("msg") or f"HTTP {res.status_code}")
-                    # Ecowitt answered and said no (any HTTP status): passing only if busy or rate limited
-                    passing = res.status_code in (408, 429) or res.status_code >= 500 or any(k in msg.lower() for k in RETRY_ON)
-                except (httpx.HTTPError, ValueError) as e:
-                    msg, passing = str(e) or type(e).__name__, True
-                msg = KEYS_IN_URL.sub(r"\1=…", msg)   # an error can quote the URL; its text is shown to the model and logged
-                if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
-                    wait = 3 * 2 ** attempt
-                    log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
-                    await asyncio.sleep(wait)
-                    continue
-                raise EcowittError(msg, transient=passing)
-        finally:
-            self._turn.release()
+                    if body is None:   # a gateway's error page, or something unreadable
+                        msg = f"HTTP {res.status_code}" if not res.is_success else "unreadable response"
+                    else:              # Ecowitt said no: passing only if it is busy, rate limiting or failing itself
+                        msg = str(body.get("msg") or f"HTTP {res.status_code}")
+                    again = res.status_code == 429 or res.status_code >= 500 or any(k in msg.lower() for k in RETRY_ON)
+                    passing = again or body is None or res.status_code == 408
+            finally:
+                self._turn.release()
+            msg = KEYS_IN_URL.sub(r"\1=…", msg)   # an error can quote the URL; its text is shown to the model and logged
+            if again and attempt < BUSY_RETRIES:
+                wait = 3 * 2 ** attempt
+                log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
+                await asyncio.sleep(wait)
+                continue
+            raise EcowittError(msg, transient=passing)
 
     async def devices(self) -> list[dict]:
         data = await self._get("list", limit=50)
