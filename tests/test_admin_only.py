@@ -282,8 +282,8 @@ async def test_usage_is_the_help_and_alerts_button(tmp_path, kind):
 
 
 # ---------- every button comes in through one place ----------
-def alert_keyboard(opened="alerts", parent=None):
-    return menu.keyboard(set(), menu.available_kinds({"Ecowitt"}), opened, parent, set())
+def alert_keyboard(opened="alerts"):
+    return menu.keyboard(set(), menu.available_kinds({"Ecowitt"}), opened, set())
 
 
 async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_let_through(tmp_path):
@@ -321,10 +321,12 @@ def every_keyboard(bot):
     kinds = menu.available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(menu.LABELS)]
     for muted in muted_sets:
-        for opened in (None, "alerts", "sound", "gear", "sub", "unsub", "set", "snd_on", "snd_off"):
-            for parent in (None, *kinds):
-                for loud in (None, set(), set(kinds)):
-                    yield menu.keyboard(muted, kinds, opened, parent, loud)
+        for loud in (None, set(), set(kinds)):
+            for opened in (None, menu.ALERTS, menu.SOUND):
+                yield menu.keyboard(muted, kinds, opened, loud)
+            for kind in kinds:
+                for opened in (None, menu.BELL):
+                    yield menu.alert_keyboard(kind, muted, loud, opened)
     for battery in (True, False):
         for pause in (True, False):
             for opened in (None, *irrigation_menu.SECTIONS, "bogus"):

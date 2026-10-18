@@ -4,7 +4,7 @@ import pytest
 from telegram.error import BadRequest
 
 from lib.alerts import AlertState, Notifier
-from lib.alerts.menu import ALL, LABELS, TITLE, available_kinds, keyboard, title
+from lib.alerts.menu import ALL, LABELS, TITLE, Press, alert_keyboard, available_kinds, keyboard, parse, title
 from lib.bot import Bot
 from lib.buttons import struck as strike
 from tests.fakes import TZ
@@ -24,8 +24,27 @@ def test_alerts_has_two_buttons_alerts_and_sound_and_a_group_has_only_the_first(
 
 def test_the_bell_toggles_are_green_when_on_and_struck_through_when_off():
     styles = lambda m: {b.text: b.style for row in m.inline_keyboard for b in row}
-    assert styles(keyboard(set(), KINDS, "gear", parent="uv", loud=set())) == {"🔔 ▾": None, "Alert": "success", strike("Sound"): None}
-    assert styles(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"})) == {"🔔 ▾": None, strike("Alert"): None}
+    assert styles(alert_keyboard("uv", set(), set(), "bell")) == {"🔔 ▾": None, "Alert": "success", strike("Sound"): None}
+    assert styles(alert_keyboard("uv", {"uv"}, {"uv"}, "bell")) == {"🔔 ▾": None, strike("Alert"): None}
+
+
+def test_every_button_of_every_keyboard_parses_and_builds_back_to_the_same_data():
+    muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(LABELS)]
+    seen = set()
+    for muted in muted_sets:
+        for loud in (None, set(), set(LABELS), {"rain", "uv"}):
+            boards = [keyboard(muted, list(LABELS), open, loud) for open in (None, "alerts", "sound")]
+            boards += [alert_keyboard(kind, muted, loud, open) for kind in LABELS for open in (None, "bell")]
+            for board in boards:
+                for row in board.inline_keyboard:
+                    for b in row:
+                        press = parse(b.callback_data)
+                        assert press is not None and press.data() == b.callback_data, b.callback_data
+                        seen.add(press.action)
+    assert seen == {"open", "close", "alert", "sound"}
+    assert parse("al:snd:uv:on:uv") == Press("sound", "uv", "bell", "uv", True) and parse("al:snd:uv:off") == Press("sound", "uv", "sound", None, False)
+    for junk in (None, "", "al", "al:", "al:noop", "al:open", "al:on:rain", "al:snd:rain:maybe", "al:off:a:b:c:d", "ir:water:5", "garbage"):
+        assert parse(junk) is None, junk
 
 
 def test_a_type_that_is_on_is_a_green_button_and_one_that_is_off_is_struck_through_and_plain():
@@ -48,8 +67,6 @@ def test_each_menu_lists_its_types_struck_through_when_off_and_keeps_only_its_ow
     assert [t for row in got[2:] for t, _ in row] == [strike(w) for w in ("temperature crossing", "particulates", "pollen & asthma", "forecast changes")]
     assert "gusts" not in str(got)
     assert rows(keyboard(set(KINDS), KINDS, "sound", loud=set())) == [[("🔔 Alerts ▸", "al:open:alerts")]]   # nothing is on: no Sound button either
-    for old, new in (("sub", "alerts"), ("unsub", "alerts"), ("other", "alerts"), ("set", "sound"), ("snd_on", "sound"), ("snd_off_o", "sound")):
-        assert rows(keyboard({"gusts"}, KINDS, old, loud=set())) == rows(keyboard({"gusts"}, KINDS, new, loud=set())), old    # an earlier version's sections
 
 
 def test_only_the_types_the_bot_has_are_listed_and_every_callback_is_short():
@@ -99,12 +116,12 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
         state.add_chat(chat, str(chat))
     state.set_kind(2, "rain", False)
     state.set_kind(3, ALL, False)
-    notifier = Notifier(bot, state, KINDS)
+    notifier = Notifier(bot, state)
     await notifier("It's raining", kind="rain")
     await notifier("Gusts", kind="gusts")
     assert [(c, t.split("\n")[0]) for c, t, _ in bot.sent] == [(1, "It's raining"), (1, "Gusts"), (2, "Gusts")]
     markup = bot.sent[0][2]["reply_markup"]
-    assert rows(markup) == [[("🔔 ▸", "al:open:gear:rain")]]   # the alert's own type rides along
+    assert rows(markup) == [[("🔔 ▸", "al:open:bell:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
     assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
 
@@ -266,37 +283,36 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
 
 
 def test_under_an_alert_one_bell_opens_the_alert_toggle_and_then_the_sound_toggle():
-    shut = rows(keyboard(set(), KINDS, None, parent="uv", loud=set()))
-    assert shut == [[("🔔 ▸", "al:open:gear:uv")]]
-    on = rows(keyboard(set(), KINDS, "gear", parent="uv", loud=set()))                           # both on... the sound is off
-    assert on == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:gear:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
-    both = rows(keyboard(set(), KINDS, "gear", parent="uv", loud={"uv"}))
+    shut = rows(alert_keyboard("uv", set(), set()))
+    assert shut == [[("🔔 ▸", "al:open:bell:uv")]]
+    on = rows(alert_keyboard("uv", set(), set(), "bell"))                           # both on... the sound is off
+    assert on == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
+    both = rows(alert_keyboard("uv", set(), {"uv"}, "bell"))
     assert both[2] == [("Sound", "al:snd:uv:off:uv")]
-    off = rows(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"}))                        # alert off: struck through, and no sound toggle
-    assert off == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:gear:uv")]]
-    group = rows(keyboard(set(), KINDS, "gear", parent="uv", loud=None))                         # a group has no sound
-    assert group == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:gear:uv")]]
-    assert rows(keyboard(set(), KINDS, "unsub", parent="uv", loud=set())) == shut                # (an earlier version's list: just the bell)
+    off = rows(alert_keyboard("uv", {"uv"}, {"uv"}, "bell"))                        # alert off: struck through, and no sound toggle
+    assert off == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:bell:uv")]]
+    group = rows(alert_keyboard("uv", set(), None, "bell"))                         # a group has no sound
+    assert group == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")]]
 
 
 async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays_open(tmp_path):
     bot, state = make_bot(tmp_path)
-    q = Query("al:open:gear:uv", text="☀️ UV 10")
+    q = Query("al:open:bell:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:gear:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
+    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
     await press(bot, q)
     assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]
-    q = Query("al:off:uv:gear:uv", text="☀️ UV 10")                            # alert off: the sound toggle goes, the struck alert stays to turn it back on
+    q = Query("al:off:uv:bell:uv", text="☀️ UV 10")                            # alert off: the sound toggle goes, the struck alert stays to turn it back on
     await press(bot, q)
     assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
-    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:gear:uv")]]
-    q = Query("al:on:uv:gear:uv", text="☀️ UV 10")
+    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:bell:uv")]]
+    q = Query("al:on:uv:bell:uv", text="☀️ UV 10")
     await press(bot, q)
     assert "uv" not in state.muted(1) and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
     q = Query("al:close:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 ▸", "al:open:gear:uv")]]
+    assert rows(q.edits[0][1]) == [[("🔔 ▸", "al:open:bell:uv")]]
 
 
 async def test_an_unknown_parent_in_a_button_is_ignored(tmp_path):
@@ -348,7 +364,7 @@ async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_
     state.add_chat(1, "1")
     state.add_chat(-5, "G")
     state.set_sound(1, "rain", True)
-    notifier = Notifier(bot, state, KINDS)
+    notifier = Notifier(bot, state)
     await notifier("It's raining", kind="rain")
     await notifier("UV", kind="uv")
     flags = {(c, t.split("\n")[0]): kw["disable_notification"] for c, t, kw in bot.sent}
@@ -369,7 +385,7 @@ async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path)
     state, bot = AlertState(tmp_path / "s3.json"), Moved()
     state.add_chat(-5, "G")
     state.set_kind(-5, "uv", False)
-    await Notifier(bot, state, KINDS)("It's raining", kind="rain")
+    await Notifier(bot, state)("It's raining", kind="rain")
     assert list(state.chats) == [-1005] and state.muted(-1005) == {"uv"} and [c for c, *_ in bot.sent] == [-1005]
     state.add_chat(-7, "H")                                                    # a press under an old alert of a moved group
     bot2, _ = make_bot(tmp_path)
@@ -410,11 +426,11 @@ class SentWithPhotos(Sent):
 async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_caption_and_the_buttons(tmp_path):
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos()
     state.add_chat(1, "one")
-    await Notifier(bot, state, KINDS)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
     assert bot.sent == [] and len(bot.photos) == 1
     chat, photo, kw = bot.photos[0]
     assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
-    assert rows(kw["reply_markup"])[0][0] == ("🔔 ▸", "al:open:gear:temps")                   # the alert's own buttons ride along
+    assert rows(kw["reply_markup"])[0][0] == ("🔔 ▸", "al:open:bell:temps")                   # the alert's own buttons ride along
 
 
 async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_telegrams_copy(tmp_path):
@@ -425,7 +441,7 @@ async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_t
     state, bot = AlertState(tmp_path / "s.json"), Keeps()
     for chat in (1, 2, 3):
         state.add_chat(chat, str(chat))
-    await Notifier(bot, state, KINDS)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
     assert [(chat, photo) for chat, photo, _ in bot.photos] == [(1, b"png"), (2, "large"), (3, "large")]
 
 
@@ -433,8 +449,8 @@ async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_c
     from telegram.error import BadRequest
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos(refuse=BadRequest("Wrong file identifier"))
     state.add_chat(1, "one")
-    await Notifier(bot, state, KINDS)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
     assert bot.photos == [] and [(c, t) for c, t, _ in bot.sent] == [(1, "It's warmer outside")]
     gone = SentWithPhotos(refuse=BadRequest("Chat not found"))
-    await Notifier(gone, state, KINDS)("again", kind="temps", photo=b"png")
+    await Notifier(gone, state)("again", kind="temps", photo=b"png")
     assert gone.sent == [] and 1 not in state.chats

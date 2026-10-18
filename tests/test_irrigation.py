@@ -704,17 +704,18 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     class Telegram:
         async def send_message(self, chat_id, text, **kw):
             delivered.append((chat_id, text, kw))
-    notifier = Notifier(Telegram(), state, available_kinds({"Ecowitt", "Irrigation"}))
+    notifier = Notifier(Telegram(), state)
     m = IrrigationMonitor(Device(), state, notifier, TZ, 18, None, Forecast(90, 90))
     await m.check(NOW)
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
     markup = delivered[0][2]["reply_markup"]
-    assert rows(markup) == [[("🔔 ▸", "al:open:gear:irrigation_pause")]]
-    from lib.alerts.menu import keyboard
+    assert rows(markup) == [[("🔔 ▸", "al:open:bell:irrigation_pause")]]
+    from lib.alerts.menu import alert_keyboard, keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
-    for section in (None, "alerts", "sound", "gear"):                   # every button's data fits Telegram's 64 bytes, for the new type too
-        for parent in (None, "irrigation_pause", "irrigation_battery"):
-            assert all(len(data.encode()) <= 64 for row in rows(keyboard(set(), kinds, section, parent, set())) for _, data in row)
+    boards = [keyboard(set(), kinds, section, set()) for section in (None, "alerts", "sound")]
+    boards += [alert_keyboard(kind, set(), set(), section) for kind in ("irrigation_pause", "irrigation_battery") for section in (None, "bell")]
+    for board in boards:                                                # every button's data fits Telegram's 64 bytes, for the new type too
+        assert all(len(data.encode()) <= 64 for row in rows(board) for _, data in row)
 
 
 async def test_refresh_reads_the_controller_again_and_redraws_without_sending_anything_or_waiting(tmp_path, monkeypatch):

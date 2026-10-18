@@ -14,9 +14,9 @@ Callback data
 import math
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
+from telegram import InlineKeyboardMarkup, MessageEntity
 
-from ..buttons import menu_text, toggle_button
+from ..buttons import button, opener, toggle_button
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)
@@ -59,10 +59,6 @@ def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageE
     return head + error, [MessageEntity(MessageEntity.BOLD, units(head), units(error))]
 
 
-def _button(text: str, data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text, callback_data=data)
-
-
 def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | None = None) -> str:
     """The controller's state, every line always there, in this order:
       mode: auto
@@ -91,18 +87,17 @@ def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool =
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
     is a toggle (green when on, struck through and uncoloured when off). `paused`: the timer is paused, so its
     button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
-    def head(name: str, text: str) -> InlineKeyboardButton:
-        return _button(menu_text(text, open == name), "ir:close" if open == name else f"ir:open:{name}")
-    delay = _button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
+    head = lambda name, text: opener(text, open == name, f"ir:open:{name}", "ir:close")
+    delay = button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
     rows = [[delay] if paused else [head("water", "💧 Water"), delay],
-            [head("alerts", "🔔 Alerts"), _button("🔄 Refresh", "ir:refresh")]]
+            [head("alerts", "🔔 Alerts"), button("🔄 Refresh", "ir:refresh")]]
     if running:   # the valve is open: off is one press away, whatever else is open
-        rows.append([_button("Water off ❌", "ir:sw:off")])
+        rows.append([button("Water off ❌", "ir:sw:off")])
     if open == "water" and not paused:
-        rows.append([_button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
+        rows.append([button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
     elif open == "delay" and not paused:
-        rows.append([_button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
+        rows.append([button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
     elif open == "alerts":
         for on, kind, name in ((battery, "batt", "battery"), (pause, "pause", "pause")):
-            rows.append([toggle_button(f"{name} alerts", on, f"ir:{kind}:{'off' if on else 'on'}")])
+            rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, kind=kind: f"ir:{kind}:{'on' if turn_on else 'off'}")])
     return InlineKeyboardMarkup(rows)
