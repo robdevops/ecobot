@@ -25,15 +25,18 @@ def test_alerts_has_two_buttons_alerts_and_sound_and_a_group_has_only_the_first(
     assert rows(keyboard(set(), KINDS, "sound")) == rows(keyboard(set(), KINDS))                     # a group cannot open Sound
 
 
-def test_each_menu_lists_every_type_struck_through_when_off_with_back_and_the_other_menu_is_hidden():
+def test_each_menu_lists_its_types_with_a_tick_or_a_cross_and_keeps_only_its_own_button():
     got = rows(keyboard({"gusts"}, KINDS, "alerts", loud={"rain"}))
-    assert [t for row in got[:-1] for t, _ in row] == ["rain", strike("gusts"), "UV", "temperature crossing", "particulates",
-                                                       "pollen & asthma", "forecast changes"]               # no emojis
-    assert got[0] == [("rain", "al:off:rain:alerts"), (strike("gusts"), "al:on:gusts:alerts")] and got[-1] == [("⬅️ Back", "al:close")]
-    assert "Sound" not in str(got) and "Alerts" not in str(got)                                           # the other menu, and its button, are hidden
+    assert got[0] == [("🔔 Alerts ▾", "al:close")]                                                         # the button that opened it stays, open
+    assert [t for row in got[1:-1] for t, _ in row] == ["✅ rain", "❌ gusts", "✅ UV", "✅ temperature crossing", "✅ particulates",
+                                                       "✅ pollen & asthma", "✅ forecast changes"]
+    assert got[1] == [("✅ rain", "al:off:rain:alerts"), ("❌ gusts", "al:on:gusts:alerts")] and got[-1] == [("⬅️ Back", "al:close")]
+    assert "Sound" not in str(got)                                                                        # the other menu's button is hidden
     got = rows(keyboard({"gusts"}, KINDS, "sound", loud={"rain"}))
-    assert got[0] == [("rain", "al:snd:rain:off"), (strike("UV"), "al:snd:uv:on")]                         # gusts is off, so it is not listed
-    assert [t for row in got[1:-1] for t, _ in row] == [strike(w) for w in ("temperature crossing", "particulates", "pollen & asthma", "forecast changes")]
+    assert got[0] == [("🔊 Sound ▾", "al:close")] and "Alerts" not in str(got)
+    assert got[1] == [("✅ rain", "al:snd:rain:off"), ("❌ UV", "al:snd:uv:on")]                          # gusts is off, so it is not listed at all
+    assert [t for row in got[2:-1] for t, _ in row] == ["❌ " + w for w in ("temperature crossing", "particulates", "pollen & asthma", "forecast changes")]
+    assert got[-1] == [("⬅️ Back", "al:close")] and "gusts" not in str(got)
     assert rows(keyboard(set(KINDS), KINDS, "sound", loud=set())) == [[("🔔 Alerts ▸", "al:open:alerts")]]   # nothing is on: no Sound button either
     assert got[-1] == [("⬅️ Back", "al:close")] and "Alerts" not in str(got)
     for old, new in (("sub", "alerts"), ("unsub", "alerts"), ("other", "alerts"), ("set", "sound"), ("snd_on", "sound"), ("snd_off_o", "sound")):
@@ -139,14 +142,14 @@ async def test_the_alerts_menu_toggles_a_type_in_place_and_back_returns_to_the_t
     q = Query("al:open:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     drawn = rows(q.edits[0][2])
-    assert q.toast is None and drawn[0][0] == ("rain", "al:off:rain:alerts") and drawn[-1] == [("⬅️ Back", "al:close")]
+    assert q.toast is None and drawn[0] == [("🔔 Alerts ▾", "al:close")] and drawn[1][0] == ("✅ rain", "al:off:rain:alerts") and drawn[-1] == [("⬅️ Back", "al:close")]
     q = Query("al:off:rain:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     assert state.muted(1) == {"rain"} and q.toast == "Rain alerts off in this chat" and "🔕 Off: rain" in q.edits[0][1]
-    assert rows(q.edits[0][2])[0][0] == (strike("rain"), "al:on:rain:alerts")                           # stays open, now struck through
+    assert rows(q.edits[0][2])[1][0] == ("❌ rain", "al:on:rain:alerts")                                # stays open, now with a cross
     q = Query("al:on:rain:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
-    assert state.muted(1) == set() and q.toast == "Rain alerts on in this chat" and rows(q.edits[0][2])[0][0] == ("rain", "al:off:rain:alerts")
+    assert state.muted(1) == set() and q.toast == "Rain alerts on in this chat" and rows(q.edits[0][2])[1][0] == ("✅ rain", "al:off:rain:alerts")
     q = Query("al:close", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     assert rows(q.edits[0][2]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
@@ -292,7 +295,7 @@ async def test_an_unknown_parent_in_a_button_is_ignored(tmp_path):
     q = Query("al:open:alerts:bogus", text="☀️ UV 10")
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0][0] == ("rain", "al:off:rain:alerts") and drawn[-1] == [("⬅️ Back", "al:close")]          # the /alerts menu, not carried on
+    assert drawn[1][0] == ("✅ rain", "al:off:rain:alerts") and drawn[-1] == [("⬅️ Back", "al:close")]       # the /alerts menu, not carried on
 
 
 def test_the_title_stays_plain_words():
@@ -305,12 +308,12 @@ async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_
     q = Query("al:open:sound")
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0] == [(strike("rain"), "al:snd:rain:on"), (strike("UV"), "al:snd:uv:on")] and drawn[-1] == [("⬅️ Back", "al:close")]
+    assert drawn[0] == [("🔊 Sound ▾", "al:close")] and drawn[1] == [("❌ rain", "al:snd:rain:on"), ("❌ UV", "al:snd:uv:on")] and drawn[-1] == [("⬅️ Back", "al:close")]
     assert "gusts" not in str(drawn)                                            # an alert that is off has no sound to set
     assert "Alerts" not in str(drawn)                                           # the Alerts menu is hidden while Sound is open
     q = Query("al:snd:rain:on")
     await press(bot, q)
-    assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][1])[0][0] == ("rain", "al:snd:rain:off")
+    assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][1])[1][0] == ("✅ rain", "al:snd:rain:off")
     await press(bot, Query("al:snd:uv:on"))
     assert state.loud(1) == {"rain", "uv"}
     q = Query("al:snd:rain:off")

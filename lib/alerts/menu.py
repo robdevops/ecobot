@@ -53,6 +53,11 @@ def _toggle(word: str, on: bool, data: str) -> InlineKeyboardButton:
     return _button(word if on else struck(word), data)
 
 
+def _mark(word: str, on: bool, data: str) -> InlineKeyboardButton:
+    """A button that flips a setting in a list: its word after a green tick while the setting is on, a red cross while it is off."""
+    return _button(f"{'✅' if on else '❌'} {word}", data)
+
+
 def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None) -> InlineKeyboardMarkup:
     """The buttons under an alert of type `kind`: one gear (⚙️ ▸, ▾ once open) that opens up to two toggles, Alert (this type's alerts
     in this chat) and, only while that is on and in a private chat (`loud` is not None), Sound (whether they make a notification sound).
@@ -70,16 +75,16 @@ def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str 
 
 
 def _list(kinds: list[str], is_on, data) -> list[list]:
-    """A toggle for each of the alert types, PER_ROW to a row, a type struck through while it is off. is_on(kind): its state;
+    """A toggle for each of the alert types, PER_ROW to a row, a green tick before a type that is on, a red cross before one that is off. is_on(kind): its state;
     data(kind): the callback data that flips it."""
-    return list(map(list, batched((_toggle(LABELS[k], is_on(k), data(k)) for k in kinds), PER_ROW)))
+    return list(map(list, batched((_mark(LABELS[k], is_on(k), data(k)) for k in kinds), PER_ROW)))
 
 
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
              loud: set[str] | None = None) -> InlineKeyboardMarkup:
-    """The /alerts menu: two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a menu with the full list of alert types, each a
-    toggle struck through while it is off (alerts on or off in this chat; notification sound on or off, for the types that are on), and ⬅️ Back. While one is open
-    the other is hidden, its button included, until Back. `open`: alerts, sound (or one of an earlier version's sections). `loud`: the
+    """The /alerts menu: two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a menu with a list of alert types, each a toggle
+    with a ✅ before it while on and a ❌ while off (alerts on or off in this chat; notification sound on or off, for the types that are
+    on), and ⬅️ Back. While one is open its own button stays (▾) above the list and the other is hidden until Back. `open`: alerts, sound (or one of an earlier version's sections). `loud`: the
     types whose alerts make a notification sound; None (a group) has no Sound. `parent`: the type of the alert these buttons sit under,
     which has a menu of its own (alert_keyboard)."""
     if parent:
@@ -87,9 +92,11 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     open = {"sub": "alerts", "unsub": "alerts", "other": "alerts", **dict.fromkeys(SETTINGS, "sound")}.get(open, open)
     sound_types = [k for k in available if k not in muted] if loud is not None else []   # (a type that is off has no sound to set)
     if open == "alerts":
-        rows = _list(available, lambda k: k not in muted, lambda k: f"al:{'off' if k not in muted else 'on'}:{k}:alerts")
+        rows = [[_button(menu_text("🔔 Alerts", True), "al:close")],
+                *_list(available, lambda k: k not in muted, lambda k: f"al:{'off' if k not in muted else 'on'}:{k}:alerts")]
     elif open == "sound" and sound_types:
-        rows = _list(sound_types, lambda k: k in loud, lambda k: f"al:snd:{k}:{'off' if k in loud else 'on'}")
+        rows = [[_button(menu_text("🔊 Sound", True), "al:close")],
+                *_list(sound_types, lambda k: k in loud, lambda k: f"al:snd:{k}:{'off' if k in loud else 'on'}")]
     else:
         return InlineKeyboardMarkup([[_button(menu_text("🔔 Alerts", False), "al:open:alerts"),
                                       *([_button(menu_text("🔊 Sound", False), "al:open:sound")] if sound_types else [])]])
