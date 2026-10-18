@@ -22,17 +22,17 @@ def test_alerts_has_two_buttons_alerts_and_sound_and_a_group_has_only_the_first(
     assert rows(keyboard(set(), KINDS, "sound")) == rows(keyboard(set(), KINDS))                     # a group cannot open Sound
 
 
-def test_the_bell_toggles_are_plain_when_on_and_red_when_off():
+def test_the_bell_toggles_are_green_when_on_and_struck_through_when_off():
     styles = lambda m: {b.text: b.style for row in m.inline_keyboard for b in row}
-    assert styles(keyboard(set(), KINDS, "gear", parent="uv", loud=set())) == {"🔔 ▾": None, "Alert": None, strike("Sound"): "danger"}
-    assert styles(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"})) == {"🔔 ▾": None, strike("Alert"): "danger"}
+    assert styles(keyboard(set(), KINDS, "gear", parent="uv", loud=set())) == {"🔔 ▾": None, "Alert": "success", strike("Sound"): None}
+    assert styles(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"})) == {"🔔 ▾": None, strike("Alert"): None}
 
 
-def test_a_type_that_is_on_is_a_plain_button_and_one_that_is_off_a_red_one():
+def test_a_type_that_is_on_is_a_green_button_and_one_that_is_off_is_struck_through_and_plain():
     markup = keyboard({"gusts"}, KINDS, "alerts", loud=set())
     styles = {b.text: b.api_kwargs.get("style") or b.style for row in markup.inline_keyboard for b in row}
-    assert styles["rain"] is None and styles[strike("gusts")] == "danger" and not styles["🔔 Alerts ▾"]
-    assert markup.inline_keyboard[1][1].to_dict()["style"] == "danger" and "style" not in markup.inline_keyboard[1][0].to_dict()   # and it is sent to Telegram
+    assert styles["rain"] == "success" and styles[strike("gusts")] is None and not styles["🔔 Alerts ▾"]
+    assert markup.inline_keyboard[1][0].to_dict()["style"] == "success" and "style" not in markup.inline_keyboard[1][1].to_dict()   # and it is sent to Telegram
 
 
 def test_each_menu_lists_its_types_struck_through_when_off_and_keeps_only_its_own_button():

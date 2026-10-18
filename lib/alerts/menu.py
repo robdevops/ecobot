@@ -1,5 +1,5 @@
 """The alert settings as buttons. /alerts has two: 🔔 Alerts and (private chats) 🔊 Sound, each opening the full list of alert types as
-toggles (plain while on, red and struck through while off) with the button that opened it kept (▾, pressing it closes the list), the other hidden meanwhile. Under an alert there is one bell that opens that type's
+toggles (green while on, struck through (not coloured) while off) with the button that opened it kept (▾, pressing it closes the list), the other hidden meanwhile. Under an alert there is one bell that opens that type's
 two toggles, Alert and Sound. Pure: it only builds the keyboard and the title from what a chat has muted.
 
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
@@ -46,7 +46,7 @@ def _button(text: str, data: str) -> InlineKeyboardButton:
 def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None) -> InlineKeyboardMarkup:
     """The buttons under an alert of type `kind`: one bell (🔔 ▸, ▾ once open) that opens up to two toggles, Alert (this type's alerts
     in this chat) and, only while that is on and in a private chat (`loud` is not None), Sound (whether they make a notification sound).
-    A toggle is plain while on, red and struck through while off. Every button carries the type: al:open:gear:<kind>, al:close:<kind>,
+    A toggle is green while on, struck through (not coloured) while off. Every button carries the type: al:open:gear:<kind>, al:close:<kind>,
     al:on|off:<kind>:gear:<kind>, al:snd:<kind>:on|off:<kind>."""
     is_open = open == "gear"
     rows = [[_button(menu_text("🔔", is_open), f"al:close:{kind}" if is_open else f"al:open:gear:{kind}")]]
@@ -60,7 +60,7 @@ def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str 
 
 
 def _list(kinds: list[str], is_on, data) -> list[list]:
-    """A toggle for each of the alert types, PER_ROW to a row, plain for a type that is on, red and struck through for one that is off. is_on(kind): its state;
+    """A toggle for each of the alert types, PER_ROW to a row, green for a type that is on, struck through and uncoloured for one that is off. is_on(kind): its state;
     data(kind): the callback data that flips it."""
     return list(map(list, batched((toggle_button(LABELS[k], is_on(k), data(k)) for k in kinds), PER_ROW)))
 
@@ -68,7 +68,7 @@ def _list(kinds: list[str], is_on, data) -> list[list]:
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
              loud: set[str] | None = None) -> InlineKeyboardMarkup:
     """The /alerts menu: two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a menu with a list of alert types, each a toggle
-    plain while on, red and struck through while off (alerts on or off in this chat; notification sound on or off, for the types that are
+    green while on, struck through (not coloured) while off (alerts on or off in this chat; notification sound on or off, for the types that are
     on). While one is open its own button stays (▾) above the list, pressing it closes the list, and the other is hidden until then. `open`: alerts, sound (or one of an earlier version's sections). `loud`: the
     types whose alerts make a notification sound; None (a group) has no Sound. `parent`: the type of the alert these buttons sit under,
     which has a menu of its own (alert_keyboard)."""
