@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace as NS
 
 import httpx
@@ -278,6 +278,7 @@ class Forecast:
     def __init__(self, *chances):
         self.days = [{"date": datetime(2026, 10, 8 + i).date(), "rain_1mm_pct": c} for i, c in enumerate(chances)] + [
             {"date": datetime(2026, 10, 10).date(), "rain_1mm_pct": 90}]               # the day after tomorrow never counts
+        self.fetched_at = datetime(2026, 10, 8, 17, 45, tzinfo=TZ).timestamp()
 
     def now(self):
         return datetime(2026, 10, 8, 18, 0)
@@ -326,6 +327,30 @@ async def test_a_delay_already_set_is_never_shortened_or_repeated(tmp_path):
     m, _, sent = daily(tmp_path, device, Station(0, 5), Forecast(90, 90))
     await m.check(NOW)
     assert device.commands == [] and sent == []                                          # nothing changed: nothing to tell
+
+
+async def test_the_bots_own_pause_from_yesterday_is_started_again_and_one_someone_set_is_not(tmp_path):
+    device = Device()
+    m, state, sent = daily(tmp_path, device, Station(0, 3))
+    await m.check(NOW)                                                                   # paused at 6pm
+    await m.check(NOW + timedelta(days=1))                                               # 6pm the next day: still on, for seconds
+    assert device.commands == [("delay", "24h"), ("delay", "cancel"), ("delay", "24h")]
+    assert sent[1][0] == "☔ Irrigation paused for another 24 hours: 3 mm of rain in the last 24 hours."
+    m.station = Station(0, 0)
+    await m.check(NOW + timedelta(days=2))                                               # dry: it lapses
+    m.station = Station(0, 3)
+    await m.check(NOW + timedelta(days=4))                                               # a 24h someone set (the bot's is days old)
+    assert len(device.commands) == 3 and len(sent) == 2
+
+
+async def test_a_forecast_more_than_a_day_old_does_not_decide(tmp_path, caplog):
+    stale = Forecast(90, 90)
+    stale.fetched_at -= 25 * 3600
+    device = Device()
+    m, state, sent = daily(tmp_path, device, Station(0, 0), stale)
+    with caplog.at_level("INFO"):
+        await m.check(NOW)
+    assert device.commands == [] and sent == [] and "over a day old: only the measured rain decides" in caplog.text
 
 
 async def test_a_battery_under_5_percent_is_told_once_a_day_to_the_irrigation_alert_type(tmp_path):
