@@ -154,6 +154,54 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     assert "Startup warm-up failed" not in log                            # not lost to the catch-all
 
 
+async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_start(tmp_path, monkeypatch, caplog):
+    eco_t, _ = ecowitt_transport(history_days=45)
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, orig=ecobot.Ecowitt.__init__: orig(self, c, eco_t))
+
+    def broken(self, cfg, transport=None):
+        raise OSError("the cache folder is read-only")
+    monkeypatch.setattr(ecobot.AirGradient, "__init__", broken)
+    sources, _ = await ecobot.start_sources(config(tmp_path))
+    for s in sources:
+        await s.close()
+    assert [s.name for s in sources] == ["Ecowitt"] and "AirGradient couldn't start - continuing without it" in caplog.text
+
+
+async def test_a_failure_part_way_through_starting_closes_everything_already_open(tmp_path, monkeypatch, caplog):
+    """Telegram fails once the sources, the model's client and the connection are up: each is closed, the last opened first,
+    and a close that fails doesn't stop the rest. The bot stops with the error that stopped it."""
+    cfg = config(tmp_path)
+    eco_t, _ = ecowitt_transport(history_days=45)
+    air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    app, closed = FakeApp(), []
+    app.stop = lambda: closed.append("telegram") or app._noop()
+    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
+    for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
+
+    async def stuck_disk(self):
+        closed.append("Ecowitt")
+        raise OSError("disk I/O error")
+    monkeypatch.setattr(ecobot.Ecowitt, "close", stuck_disk)
+    monkeypatch.setattr(ecobot.AirGradient, "close", lambda self, orig=ecobot.AirGradient.close: closed.append("AirGradient") or orig(self))
+
+    class Client:
+        def __init__(self, **settings):
+            pass
+
+        async def close(self):
+            closed.append("model")
+    monkeypatch.setattr(ecobot, "AsyncOpenAI", Client)
+
+    async def down(self, bot):
+        raise RuntimeError("Telegram is down")
+    monkeypatch.setattr(ecobot.Bot, "refresh_keyboards", down)
+    with pytest.raises(RuntimeError, match="Telegram is down"):
+        await ecobot.main()
+    assert closed == ["telegram", "model", "AirGradient", "Ecowitt"] and "disk I/O error" in caplog.text
+
+
 async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_uses_the_stations_location(tmp_path, monkeypatch):
     from tests.test_forecast import transport as forecast_transport
     from tests.test_pollen import page, transport as pollen_transport

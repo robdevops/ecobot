@@ -29,6 +29,16 @@ async def test_a_warmer_runs_one_refresh_at_a_time():
     assert all(a[0] != b[0] for a, b in zip(seen, seen[1:]))   # every refresh ends before the next starts
 
 
+async def test_stopping_a_warmer_cancels_the_refresh_a_question_started():
+    async def refresh(fresh):
+        await asyncio.Event().wait()                     # never ends by itself
+    warmer = Warmer(refresh)
+    warmer.poke()
+    await asyncio.sleep(0)
+    await warmer.stop()
+    assert warmer._task.cancelled()
+
+
 async def test_a_background_failure_has_its_traceback_logged_only_when_it_points_at_code(caplog):
     async def broken():
         raise TypeError("bad")

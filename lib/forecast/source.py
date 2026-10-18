@@ -89,9 +89,10 @@ class Forecast(Source):
     def __init__(self, cfg: Config, location: tuple[float, float] | None = None, transport=None):
         """location: (lat, lon), used when the config has none (the weather station's own)."""
         self.tz, self.place = cfg.tz, cfg.place
-        lat = cfg.forecast_lat if cfg.forecast_lat is not None else (location[0] if location else None)
-        lon = cfg.forecast_lon if cfg.forecast_lon is not None else (location[1] if location else None)
-        self.location = (lat, lon) if lat is not None and lon is not None else None
+        configured = (cfg.forecast_lat, cfg.forecast_lon)
+        if configured != (None, None) and None in configured:
+            log.warning("FORECAST_LAT and FORECAST_LON go together: with only one set, the weather station's location is used")
+        self.location = configured if None not in configured else location if location and None not in location else None
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
         self.source = ""

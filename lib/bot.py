@@ -275,6 +275,12 @@ class Bot:
         self.background: set[asyncio.Task] = set()   # tasks running on their own, kept so they aren't dropped
         self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
 
+    async def close(self):
+        """Cancel the tasks still running on their own (the uploads of a chart's other periods)."""
+        for task in self.background:
+            task.cancel()
+        await asyncio.gather(*self.background, return_exceptions=True)
+
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
         app.add_handler(CommandHandler("reset", self.on_reset))

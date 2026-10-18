@@ -68,6 +68,15 @@ def make_bot(alert_state, monkeypatch):
     return Bot(NS(tz=TZ), Agent(), sources, alert_state)
 
 
+async def test_closing_the_bot_cancels_its_uploads_still_running(alert_state, monkeypatch):
+    import asyncio
+    bot = make_bot(alert_state, monkeypatch)
+    upload = asyncio.create_task(asyncio.Event().wait())
+    bot.background.add(upload)
+    await bot.close()
+    assert upload.cancelled()
+
+
 def chat_message(sent, edits=None):
     async def reply_photo(photo, caption=None, **kw):
         sent.append((caption, kw.get("reply_markup")))

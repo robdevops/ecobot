@@ -53,6 +53,12 @@ class Warmer:
         async with self._lock:
             await safely(self.refresh, fresh)
 
+    async def stop(self):
+        """Cancel a refresh a question started, if one is still running (the timed ones end with their task)."""
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+
     def poke(self):
         """A question arrived: refresh in the background, unless a refresh (a question's or a timed one) is running."""
         if not self._lock.locked() and (self._task is None or self._task.done()):

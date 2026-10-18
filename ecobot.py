@@ -10,6 +10,7 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Coroutine
 
 from lib.config import ROOT, Config, data_dir
 
@@ -31,7 +32,7 @@ from lib.bot import PREDRAW_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
-from lib.irrigation.watchdog import CHECK_SECONDS as WATCHDOG_SECONDS
+from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
 from lib.logs import LogFormat
 from lib.pollen import Pollen
@@ -56,15 +57,19 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     location unless one is configured."""
     sources: list[Source] = []
 
-    async def start(source: Source):
+    async def start(kind: type[Source], *args):
+        """A source made and started; one that fails either way is logged and left out."""
+        source = None
         try:
+            source = kind(*args)
             await source.start()
             sources.append(source)
         except Exception:
-            log.exception("%s couldn't start - continuing without it", source.name)
-            await source.close()
+            log.exception("%s couldn't start - continuing without it", kind.name)
+            if source is not None:
+                await safely(source.close)
     if cfg.ecowitt:
-        await start(Ecowitt(cfg))
+        await start(Ecowitt, cfg)
     eco = sources[0] if sources else None
     if eco and str(eco.tz) != str(cfg.tz):
         if os.getenv("TZ"):
@@ -74,12 +79,99 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
         log.warning("The time zone has no name, only an offset (%s), so daylight saving will put the times out: set TZ, "
                     "e.g. TZ=Australia/Melbourne", cfg.tz)
     if cfg.airgradient:
-        await start(AirGradient(cfg))
+        await start(AirGradient, cfg)
     if cfg.pollen:
-        await start(Pollen(cfg))
+        await start(Pollen, cfg)
     if cfg.forecast:
-        await start(Forecast(cfg, (eco.latitude, eco.longitude) if eco and eco.latitude is not None else None))
+        await start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and eco.latitude is not None else None)
     return sources, cfg
+
+
+class Tasks:
+    """The tasks the bot runs in the background: one that stops with an error is logged as it does, and close() cancels them."""
+
+    def __init__(self):
+        self.running: set[asyncio.Task] = set()
+
+    def start(self, work: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(work, name=getattr(work, "__qualname__", None))
+        self.running.add(task)
+        task.add_done_callback(self._ended)
+        return task
+
+    def _ended(self, task: asyncio.Task):
+        self.running.discard(task)
+        if not task.cancelled() and (error := task.exception()):
+            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error)
+
+    async def close(self):
+        for task in self.running:
+            task.cancel()
+        await asyncio.gather(*self.running, return_exceptions=True)
+
+
+def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks) -> tuple[list[str], WeatherMonitor | None]:
+    """Hook up the alert monitor of every source that started and of the irrigation controller. The weather alerts start in
+    warm_up, once the station has been read. Returns the alert types now running, and the weather monitor."""
+    eco, air, pollen, forecast = (bot.by_name.get(name) for name in ("Ecowitt", "AirGradient", "Pollen", "Forecast"))
+    running: list[str] = []
+    weather = WeatherMonitor(eco, bot.state, notify, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours) if eco else None
+    if air:
+        tasks.start(every(PARTICULATES_CHECK_SECONDS, ParticulatesMonitor(air, bot.state, notify).check))
+        running += ParticulatesMonitor.KINDS
+    if forecast:
+        forecast.warmer.after.append(ForecastMonitor(forecast, bot.state, notify).check)   # after each refresh (in the day)
+        running += ForecastMonitor.KINDS
+    if pollen:
+        pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, bot.state, notify).check)  # after each refresh (in the day)
+        running += PollenAndAsthmaMonitor.KINDS
+    if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
+        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, eco, forecast).run())
+        tasks.start(every(VALVE_CHECK_SECONDS, bot.watchdog.check))
+        running += IrrigationMonitor.KINDS
+    return running, weather
+
+
+async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], tasks: Tasks):
+    """Fetch everything once, together, and log one summary line; then start what waited for it: the weather alerts, the
+    archives (copying each source's history into its cache) and the button charts drawn ahead."""
+    eco, air = bot.by_name.get("Ecowitt"), bot.by_name.get("AirGradient")
+    started, parts = time.monotonic(), []
+
+    async def ecowitt_part():
+        # One request at a time (Ecowitt rate-limits): warm first, so the alerts' own look at the last 3 hours is answered
+        # from what was just fetched. A failed first refresh must not stop the alerts or the archive: safely() logs it
+        parts.append(await safely(eco.warm, True) or "Ecowitt failed")
+        try:
+            await weather.init()
+            eco.warmer.after.append(weather.check)  # checked on every fresh refresh
+            running[:0] = WeatherMonitor.KINDS
+            await weather.check()
+        except Exception:
+            log.exception("Weather alerts couldn't start")
+        # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
+        # need Ecowitt inline
+        tasks.start(Archive(eco).loop())
+
+    async def air_part():
+        parts.append(await safely(air.warm, True) or "AirGradient failed")
+        tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
+
+    async def air_backfill():
+        started = time.monotonic()
+        fetched, failed, total = await air.backfill()
+        log.info("AirGradient archive: %d days cached, %d failed, %d held, %.0fs", fetched, failed, total, time.monotonic() - started)
+
+    try:
+        await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
+    except Exception:
+        log.exception("Startup warm-up failed (the regular refreshes will catch up)")
+    log.info("Startup warm-up: %s, %.1fs", ", ".join(parts) or "nothing to fetch", time.monotonic() - started)
+    tasks.start(every(PREDRAW_SECONDS, bot.predraw))   # the button charts, ready before they are pressed
+    on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
+    log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(bot.state.alert_chats()))
+    if missing := [LABELS[k] for k in available_kinds(bot.by_name, bot.irrigation is not None) if k not in running]:
+        log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
 
 def version() -> str:
@@ -113,131 +205,60 @@ async def main():
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd
-    sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
-    if not sources:
-        raise SystemExit("No data source is working - nothing to talk about")
-    eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
-    air = next((s for s in sources if isinstance(s, AirGradient)), None)
-    pollen = next((s for s in sources if isinstance(s, Pollen)), None)
-    forecast = next((s for s in sources if isinstance(s, Forecast)), None)
-
-    composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
-    tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
-    agent = Agent(AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url), cfg.xai_model, tools)
-    state = AlertState(cfg.state_path)
-    if cfg.admin_only:
-        log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
-        if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
-            log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
-                        "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
-    irrigation = Tuya(cfg) if cfg.irrigation else None
-    bot = Bot(cfg, agent, sources, state, irrigation)
-
-    app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
-           .defaults(Defaults(disable_notification=True))  # silent messages
-           .connect_timeout(10).read_timeout(15).write_timeout(15)  # default 5s is tight
-           .build())
-    bot.register(app)
-
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
-
-    tasks: list[asyncio.Task] = []
-    archive = Archive(eco) if eco else None
-    try:
-        async with app:  # one task runs everything, so connections open and close cleanly
-            await app.start()
-            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
-                                            error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
-            try:  # any startup failure below still runs the shutdown steps (and shows the real error)
-                log.info("@%s + %s", app.bot.username, cfg.xai_model)
-                log.info("Sources: %s", ", ".join(s.name for s in sources))
-                kinds = available_kinds((s.name for s in sources), irrigation is not None)
-                notify = Notifier(app.bot, state)
-                await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
-
-                # Alerts
-                running: list[str] = []   # the alert types whose monitors are hooked up (the weather ones once they have started)
-                if eco:
-                    monitor = WeatherMonitor(eco, state, notify, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours)
-                if air:
-                    particulates_monitor = ParticulatesMonitor(air, state, notify)
-                    tasks.append(asyncio.create_task(every(PARTICULATES_CHECK_SECONDS, particulates_monitor.check)))
-                    running += ParticulatesMonitor.KINDS
-                if forecast:
-                    forecast.warmer.after.append(ForecastMonitor(forecast, state, notify).check)   # after each refresh (in the day)
-                    running += ForecastMonitor.KINDS
-                if pollen:
-                    pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, state, notify).check)  # after each refresh (in the day)
-                    running += PollenAndAsthmaMonitor.KINDS
-                if irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-                    tasks.append(asyncio.create_task(IrrigationMonitor(irrigation, state, notify, cfg.tz, cfg.irrigation_check_hour,
-                                                                            eco, forecast).run()))
-                    tasks.append(asyncio.create_task(every(WATCHDOG_SECONDS, bot.watchdog.check)))
-                    running += IrrigationMonitor.KINDS
-
-                # Keeping warm: everything questions need, refreshed before they arrive
-                tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
-
-                async def startup_warmup():
-                    """Fetch everything once, together, and log one summary line."""
-                    started, parts = time.monotonic(), []
-
-                    async def ecowitt_part():
-                        # One request at a time (Ecowitt rate-limits): warm first, so the alerts'
-                        # own look at the last 3 hours is answered from what was just fetched
-                        # A failed first refresh must not stop the alerts or the archive: safely() logs it
-                        parts.append(await safely(eco.warm, True) or "Ecowitt failed")
-                        try:
-                            await monitor.init()
-                            eco.warmer.after.append(monitor.check)  # checked on every fresh refresh
-                            running[:0] = WeatherMonitor.KINDS
-                            await monitor.check()
-                        except Exception:
-                            log.exception("Weather alerts couldn't start")
-                        # The full history is copied into the cache in the background (a few minutes
-                        # the first time), so questions rarely need Ecowitt inline
-                        tasks.append(asyncio.create_task(archive.loop()))
-
-                    async def air_part():
-                        parts.append(await safely(air.warm, True) or "AirGradient failed")
-                        tasks.append(asyncio.create_task(safely(air_backfill)))  # even if the sensor was unreachable just now
-
-                    async def air_backfill():
-                        started = time.monotonic()
-                        fetched, failed, total = await air.backfill()
-                        log.info("AirGradient archive: %d days cached, %d failed, %d held, %.0fs",
-                                 fetched, failed, total, time.monotonic() - started)
-
-                    try:
-                        await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
-                    except Exception:
-                        log.exception("Startup warm-up failed (the regular refreshes will catch up)")
-                    log.info("Startup warm-up: %s, %.1fs", ", ".join(parts) or "nothing to fetch",
-                             time.monotonic() - started)
-                    tasks.append(asyncio.create_task(every(PREDRAW_SECONDS, bot.predraw)))   # the button charts, ready before they are pressed
-                    on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
-                    log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(state.alert_chats()))
-                    if missing := [LABELS[k] for k in kinds if k not in running]:
-                        log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
-
-                tasks.append(asyncio.create_task(startup_warmup()))
-                await stop.wait()
-            finally:
-                for task in tasks:
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-                await app.updater.stop()
-                await app.stop()
-    finally:
+    # Whatever starts is closed on the way out, the last started first, however the bot stops (a failure part-way included)
+    async with contextlib.AsyncExitStack() as stack:
+        sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
         for source in sources:
-            await source.close()
+            stack.push_async_callback(safely, source.close)
+        if not sources:
+            raise SystemExit("No data source is working - nothing to talk about")
+        by_name = {s.name: s for s in sources}
+        eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
+        composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
+        tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
+        client = AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url)
+        stack.push_async_callback(safely, client.close)
+        state = AlertState(cfg.state_path)
+        if cfg.admin_only:
+            log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
+            if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
+                log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
+                            "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
+        irrigation = Tuya(cfg) if cfg.irrigation else None
         if irrigation:
-            await irrigation.close()
+            stack.push_async_callback(safely, irrigation.close)
+        bot = Bot(cfg, Agent(client, cfg.xai_model, tools), sources, state, irrigation)
+        stack.push_async_callback(bot.close)
+
+        app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
+               .defaults(Defaults(disable_notification=True))  # silent messages
+               .connect_timeout(10).read_timeout(15).write_timeout(15)  # default 5s is tight
+               .build())
+        bot.register(app)
+        stop = asyncio.Event()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().add_signal_handler(sig, stop.set)
+        await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
+        await app.start()
+        stack.push_async_callback(app.stop)
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
+                                        error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
+        stack.push_async_callback(app.updater.stop)
+        tasks = Tasks()
+        stack.push_async_callback(tasks.close)
+        for source in sources:
+            stack.push_async_callback(source.warmer.stop)
+
+        log.info("@%s + %s", app.bot.username, cfg.xai_model)
+        log.info("Sources: %s", ", ".join(s.name for s in sources))
+        notify = Notifier(app.bot, state)
+        await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
+        running, weather = start_alerts(cfg, bot, notify, tasks)
+        for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
+            tasks.start(source.warmer.run())
+        log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
+        tasks.start(warm_up(bot, weather, running, tasks))
+        await stop.wait()
 
 
 if __name__ == "__main__":
