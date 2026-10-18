@@ -766,7 +766,7 @@ class Bot:
         results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
         by_tool = {name: result for (name, _), result in zip(calls, results)}
         if read.report:
-            return report.report(by_tool)
+            return report.report(by_tool, now_local(self.cfg.tz).date())
         return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
 
     async def _warn(self, msg: Message, tokens: int):
@@ -795,7 +795,7 @@ class Bot:
                                                "Pollen" in self.by_name, "Forecast" in self.by_name)
         name, args = read.fast[:2]
         result = await self.agent.tools.call(name, json.dumps(args), turn)
-        return report.lookup(read.lookup, result, read.lookup_arg, read.sides)
+        return report.lookup(read.lookup, result, read.lookup_arg, read.sides, now_local(self.cfg.tz).date())
 
     async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, on_heavy=None, conv_id=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >

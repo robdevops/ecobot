@@ -14,10 +14,10 @@ import httpx
 from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import now_local, when
+from ..timeutil import local_date, now_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer, in_sync_hours
-from .parse import LEVEL_EMOJI, parse_melbourne_pollen
+from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
 
 log = logging.getLogger(__name__)
 
@@ -33,11 +33,20 @@ DESCRIPTION = ("Melbourne's grass pollen level today and the thunderstorm asthma
 PARAMETERS = {"type": "object", "properties": {}}
 
 
+def _district(name: str) -> str:
+    """The site's name for this district, whatever its case. One the site doesn't have is warned about: no level can be found for it."""
+    known = {d.lower(): d for d in DISTRICTS}
+    if name.lower() not in known:
+        log.warning("POLLEN_DISTRICT %r is not one of the site's districts (%s): no district level will be found", name,
+                    ", ".join(sorted(DISTRICTS)))
+    return known.get(name.lower(), name)
+
+
 class Pollen:
     name = "Pollen"
 
     def __init__(self, cfg: Config, transport=None):
-        self.tz, self.district, self.place = cfg.tz, cfg.pollen_district, cfg.place
+        self.tz, self.district, self.place = cfg.tz, _district(cfg.pollen_district), cfg.place
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.data: dict | None = None        # the parsed page
         self.fetched_at = 0.0                # when (epoch)
@@ -93,13 +102,22 @@ class Pollen:
     def in_season(self) -> bool:
         return self.now().month in SEASON_MONTHS
 
+    @property
+    def page(self) -> dict | None:
+        """The parsed page, if it is this season's: its grass forecast's date says (else when it was fetched). Last season's page,
+        kept over the summer or still on the site on 1 October, is never shown."""
+        if self.data is None or not self.in_season():
+            return None
+        day = self.data.get("melbourne_date") or local_date(int(self.fetched_at), self.tz)
+        return self.data if day >= date(self.now().year, SEASON_MONTHS[0], 1) else None
+
     async def warm(self, fresh: bool = True) -> str:
-        """Fetch the page when it is due: never out of season, never outside the sync hours (unless nothing is cached), and not
-        more often than the poll interval."""
+        """Fetch the page when it is due: never out of season, never outside the sync hours (unless this season's page isn't
+        cached), and not more often than the poll interval."""
         if not self.in_season():
             return "Pollen out of season"
-        age = time.time() - self.fetched_at
-        if self.data is not None and (not in_sync_hours(self.now()) or age < POLLEN_REFRESH_SECONDS - 5 and not fresh):
+        young = self.data is not None and time.time() - self.fetched_at < POLLEN_REFRESH_SECONDS - 5 and not fresh
+        if young or self.page is not None and not in_sync_hours(self.now()):
             return "Pollen cached"
         self.requests += 1
         res = await self.client.get(URL, headers=self._validators)
@@ -114,13 +132,14 @@ class Pollen:
         self._save()
         if not self.data["melbourne_grass"] and not self.data["district_grass"]:
             log.warning("Pollen: no grass pollen level found on the page (has its layout changed?)")
+        if self.district not in self.data["thunderstorm_asthma"]:
+            log.warning("Pollen: no thunderstorm asthma level for %s on the page (has its layout changed?)", self.district)
         return "Pollen 1 req"
 
     # ---------- reading ----------
     def current(self) -> dict:
         """{"grass": {level, emoji, date} | None, "asthma": {level, emoji, updated} | None, "fetched_at": epoch}"""
-        d = self.data if self.in_season() else {}   # last season's page is never shown
-        d = d or {}
+        d = self.page or {}
         grass = d.get("melbourne_grass") or (d.get("district_grass") or {}).get(self.district)
         asthma = (d.get("thunderstorm_asthma") or {}).get(self.district)
         return {"grass": {"level": grass, "emoji": LEVEL_EMOJI[grass], "date": d.get("melbourne_date")} if grass else None,
@@ -150,7 +169,7 @@ class Pollen:
     async def handle(self, args: dict, turn: Turn | None = None) -> str:
         if not self.in_season():
             return json.dumps({"error": OFF_SEASON})
-        if self.data is None and not args.get("cached"):   # the report ("cached") never fetches
+        if self.page is None and not args.get("cached"):   # the report ("cached") never fetches
             try:
                 await self.warm(True)
             except Exception as e:
@@ -165,6 +184,6 @@ class Pollen:
             out["time"] = when(int(cur["fetched_at"]), self.tz)   # when the page was last fetched
         if cur["asthma"] and cur["asthma"]["updated"]:
             out["asthma_updated"] = cur["asthma"]["updated"]
-        if not cur["asthma"]:
-            out["asthma_note"] = "No thunderstorm asthma forecast now (it runs 1 Oct - 31 Dec)."
+        if not cur["asthma"]:   # in season the page always has one: it may have changed
+            out["asthma_note"] = "The page had no thunderstorm asthma level for this district when it was last read."
         return json.dumps(out, ensure_ascii=False)

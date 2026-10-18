@@ -3,7 +3,7 @@ decided here, so it is instant and always the same. Each tool result is JSON; on
 
 import json
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from telegram import MessageEntity
 
@@ -58,21 +58,22 @@ def heading_entities(text: str) -> list[MessageEntity]:
     return [MessageEntity(MessageEntity.BOLD, units(text[:m.start()]), units(m.group(1))) for m in HEADING_LINE.finditer(text)]
 
 
-def _stamp(result: dict) -> str | None:
-    """The time of day of the data, "11:45pm", from the result's "time" ("Sun 11 Oct 2026 23:50" from the station, "Sun 11 Oct 2026 11:45pm"
-    from the rest); None when it is missing or unreadable."""
+def _stamp(result: dict, today: date) -> str | None:
+    """The time of the data, "11:45pm", with its day when that isn't today ("Sat 10 Oct 11:45pm"), from the result's "time" ("Sun 11 Oct
+    2026 23:50" from the station, "Sun 11 Oct 2026 11:45pm" from the rest); None when it is missing or unreadable."""
     for form in ("%a %d %b %Y %I:%M%p", "%a %d %b %Y %H:%M"):
         try:
             at = datetime.strptime(result.get("time") or "", form)
         except ValueError:
             continue
-        return f"{at.hour % 12 or 12}:{at:%M}{'am' if at.hour < 12 else 'pm'}"
+        clock = f"{at.hour % 12 or 12}:{at:%M}{'am' if at.hour < 12 else 'pm'}"
+        return clock if at.date() == today else f"{at:%a} {at.day} {at:%b} {clock}"
     return None
 
 
-def _heading(name: str, result: dict) -> str:
+def _heading(name: str, result: dict, today: date) -> str:
     """"Forecast (Melbourne, 6:00pm)": the place the result names and the time of its data, whichever it has."""
-    note = ", ".join(x for x in (result.get("place"), _stamp(result)) if x)
+    note = ", ".join(x for x in (result.get("place"), _stamp(result, today)) if x)
     return f"{name} ({note})" if note else name
 
 
@@ -158,9 +159,9 @@ def reading_lines(now: dict, names: list[str], sides: list[str]) -> list[str]:
     return [line for line in lines if line]
 
 
-def lookup(kind: str, result: str | None, names: list[str], sides: list[str]) -> str | None:
-    """A plain lookup written from its one tool result: "reading", "air", "pollen" or "forecast". None when the result can't be
-    used (the model then takes the question)."""
+def lookup(kind: str, result: str | None, names: list[str], sides: list[str], today: date) -> str | None:
+    """A plain lookup written from its one tool result: "reading", "air", "pollen" or "forecast", on `today` (local). None when the
+    result can't be used (the model then takes the question)."""
     data = _load(result)
     if not data:
         return None
@@ -190,7 +191,7 @@ def lookup(kind: str, result: str | None, names: list[str], sides: list[str]) ->
         return "\n".join([_period(data), *lines]) if lines else None
     elif kind in ("pollen", "forecast"):
         lines = [f"• {line}" for line in data.get("lines", [])]
-        return "\n".join([_heading("Pollen & asthma" if kind == "pollen" else "Forecast", data), *lines]) if lines else None
+        return "\n".join([_heading("Pollen & asthma" if kind == "pollen" else "Forecast", data, today), *lines]) if lines else None
     else:
         return None
     return "\n".join(lines) or None
@@ -202,19 +203,19 @@ def weather_now(result: str | None) -> str | None:
     return "\n".join(weather_lines(now)) if now else None
 
 
-def report(results: dict[str, str]) -> str:
-    """The full report from the tool results by tool name (weather_now, air_quality, pollen_asthma, weather_forecast)."""
+def report(results: dict[str, str], today: date) -> str:
+    """The full report from the tool results by tool name (weather_now, air_quality, pollen_asthma, weather_forecast), on `today` (local)."""
     sections = []
     if "weather_now" in results:
         now = _load(results["weather_now"])
-        sections.append([_heading("Weather station", now or {}), *(weather_lines(now) if now else ["• not available right now"])])
+        sections.append([_heading("Weather station", now or {}, today), *(weather_lines(now) if now else ["• not available right now"])])
     if "air_quality" in results:
         air = _load(results["air_quality"])
-        sections.append([_heading("Air quality", air or {}), *(air_lines(air) if air else ["• not available right now"])])
+        sections.append([_heading("Air quality", air or {}, today), *(air_lines(air) if air else ["• not available right now"])])
     if pollen := _load(results.get("pollen_asthma")):
-        sections.append([_heading("Pollen & asthma", pollen), *(f"• {line}" for line in pollen.get("lines", []))])
+        sections.append([_heading("Pollen & asthma", pollen, today), *(f"• {line}" for line in pollen.get("lines", []))])
     if forecast := _load(results.get("weather_forecast")):
-        sections.append([_heading("Forecast", forecast), *(f"• {line}" for line in forecast.get("lines", []))])
+        sections.append([_heading("Forecast", forecast, today), *(f"• {line}" for line in forecast.get("lines", []))])
     return "\n\n".join("\n".join(section) for section in sections) or "No readings are available right now."
 
 
