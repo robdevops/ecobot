@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Collection
 from datetime import date, timedelta
 
 from telegram import MessageEntity
@@ -53,10 +54,6 @@ class AlertState:
         self.path = path
         data = _load(path)
         self.chats: dict[int, dict] = {int(k): v for k, v in data.get("chats", {}).items()}
-        for entry in self.chats.values():   # the old on/off flag, and a chat with every type muted, are "unsubscribed from all"
-            if entry.pop("alerts", True) is False or set(entry.get("muted", [])) >= set(LABELS):
-                entry.pop("muted", None)
-                entry.update(optin=True, on=[])
         self.monitor: dict = data.get("monitor", {})
         self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
 
@@ -105,9 +102,10 @@ class AlertState:
             return set(LABELS) - set(entry.get("on", []))
         return set(entry.get("muted", []))
 
-    def set_kind(self, chat_id: int, kind: str, on: bool):
+    def set_kind(self, chat_id: int, kind: str, on: bool, offered: Collection[str] = LABELS):
         """Subscribe (on) or unsubscribe one alert type, or all of them (kind = "all"). Unsubscribing from all also keeps
-        future types off for the chat; subscribing to all turns them on again."""
+        future types off for the chat, and so does unsubscribing one by one from every type `offered` (the types the bot
+        sends); subscribing to all turns them on again."""
         if chat_id not in self.chats:
             return
         entry = self.chats[chat_id]
@@ -126,10 +124,13 @@ class AlertState:
             return
         muted = self.muted(chat_id)
         muted = muted - kinds if on else muted | kinds
-        if muted:
-            self.chats[chat_id]["muted"] = [k for k in LABELS if k in muted]
+        if not on and muted >= set(offered):   # the last type muted: the same as unsubscribing from all
+            entry.pop("muted", None)
+            entry.update(optin=True, on=[])
+        elif muted:
+            entry["muted"] = [k for k in LABELS if k in muted]
         else:
-            self.chats[chat_id].pop("muted", None)
+            entry.pop("muted", None)
         self.save()
 
     def loud(self, chat_id: int) -> set[str]:

@@ -82,7 +82,7 @@ def test_the_title_lists_what_is_on_and_off():
     assert title(set(), ["particulates"]).endswith("🔕 Off: nothing") and title({"particulates"}, ["particulates"]).endswith("On: nothing\n🔕 Off: particulates")
 
 
-def test_state_mutes_one_type_or_all_and_old_files_load(tmp_path):
+def test_state_mutes_one_type_or_all(tmp_path):
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "a")
     state.add_chat(2, "b")
@@ -95,9 +95,6 @@ def test_state_mutes_one_type_or_all_and_old_files_load(tmp_path):
     assert state.muted(1) == set() and "muted" not in state.chats[1]
     state.set_kind(2, "gusts", False)
     assert AlertState(tmp_path / "s.json").muted(2) == {"gusts"}                       # saved
-    (tmp_path / "old.json").write_text('{"chats": {"7": {"title": "x", "alerts": false}, "8": {"title": "y", "alerts": true}}, "monitor": {}}')
-    old = AlertState(tmp_path / "old.json")
-    assert old.muted(7) == set(LABELS) and old.muted(8) == set() and old.alert_chats() == [8]
     state.set_alerts(1, "a", False)                                                      # the /alerts off shortcut
     assert not state.alerts_on(1)
 
@@ -181,6 +178,15 @@ async def test_the_alerts_menu_toggles_a_type_in_place_and_back_returns_to_the_t
     q = Query("al:close", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     assert rows(q.edits[0][2]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
+
+
+async def test_turning_off_every_type_the_bot_sends_unsubscribes_the_chat_from_all(tmp_path, monkeypatch):
+    from lib.alerts import menu
+    bot, state = make_bot(tmp_path, sources=("Ecowitt",))
+    for kind in ("rain", "gusts", "uv", "temps"):                      # the weather station's types, one by one
+        await press(bot, Query(f"al:off:{kind}:alerts"))
+    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
+    assert state.chats[1].get("optin") and not state.subscribed(1, "newthing") and not state.subscribed(1, "particulates")
 
 
 async def test_the_alerts_message_keeps_its_summary_current_but_an_alert_keeps_its_text(tmp_path):

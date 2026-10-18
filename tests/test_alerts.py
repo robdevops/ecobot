@@ -623,25 +623,17 @@ def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tm
     assert not state.subscribed(1)                        # nothing on at all
     state.set_kind(1, "all", True)                        # subscribe to all: new types come on again
     assert state.subscribed(1, "newer") and state.subscribed(1, "rain")
-    for kind in list(menu.LABELS):                        # turning every type off one by one is not "unsubscribe from all"
-        state.set_kind(3, kind, False)
+    offered = ["rain", "gusts", "uv", "temps"]            # a bot with the weather station alone
+    for kind in offered[:-1]:
+        state.set_kind(3, kind, False, offered)
     monkeypatch.setitem(menu.LABELS, "newest", "newest")
-    assert state.subscribed(3, "newest")
-
-
-def test_chats_that_already_unsubscribed_from_all_load_as_opt_in(tmp_path, monkeypatch):
-    import json
-    from lib.alerts import menu, notify
-    path = tmp_path / "s.json"
-    path.write_text(json.dumps({"chats": {"1": {"title": "a", "muted": list(menu.LABELS)}, "2": {"title": "b", "alerts": False},
-                                          "3": {"title": "c", "muted": ["rain"]}}}))
-    state = notify.AlertState(path)
-    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
-    assert not state.subscribed(1, "newthing") and not state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
-    state.set_kind(1, "uv", True)
-    state.save()
-    again = notify.AlertState(path)                       # and it survives a restart
-    assert again.subscribed(1, "uv") and not again.subscribed(1, "rain") and not again.subscribed(1, "newthing")
+    assert state.subscribed(3, "newest") and state.subscribed(3, "temps")   # some still on: the normal mode
+    state.set_kind(3, "temps", False, offered)            # every type the bot sends, off one by one: "unsubscribe from all"
+    monkeypatch.setitem(menu.LABELS, "newer still", "newer still")
+    assert not state.subscribed(3) and not state.subscribed(3, "newer still")
+    state.set_kind(3, "rain", True, offered)
+    again = notify.AlertState(state.path)                 # and it survives a restart
+    assert again.subscribed(3, "rain") and not again.subscribed(3, "uv") and not again.subscribed(3, "newer still")
 
 
 def asking(mon, photo=b"png"):

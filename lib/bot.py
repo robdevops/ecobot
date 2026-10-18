@@ -435,7 +435,7 @@ class Bot:
             self.state.set_sound(chat.id, press.kind, press.on)
             toast = f"{self._alerts_named(press.kind)} {'now make' if press.on else 'no longer make'} a sound"
         elif press.action == "alert" and press.kind in kinds and chat.id in self.state.chats:
-            self.state.set_kind(chat.id, press.kind, press.on)
+            self.state.set_kind(chat.id, press.kind, press.on, kinds)
             toast = f"{self._alerts_named(press.kind)} {'on' if press.on else 'off'} in this chat"
         elif press.action not in ("open", "close"):
             await query.answer()
@@ -488,7 +488,7 @@ class Bot:
                 self.watchdog.disarm()
             return "Switched off"
         if action in ("batt", "pause") and arg in ("on", "off") and self.state and chat_id in self.state.chats:
-            self.state.set_kind(chat_id, "irrigation_battery" if action == "batt" else "irrigation_pause", arg == "on")
+            self.state.set_kind(chat_id, "irrigation_battery" if action == "batt" else "irrigation_pause", arg == "on", self._alert_kinds())
             return f"Irrigation {'battery' if action == 'batt' else 'pause'} alerts {arg} in this chat"
         return None
 
