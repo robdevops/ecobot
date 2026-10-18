@@ -305,6 +305,26 @@ async def test_alerts_are_silent_and_a_chat_that_blocked_the_bot_is_marked_gone(
     assert all(kw["disable_notification"] for _, kw in calls) and state.chats[2]["gone"] and state.alert_chats() == [1]
 
 
+async def test_an_alerts_chart_is_drawn_once_and_only_when_some_chat_gets_the_alert(tmp_path):
+    state = AlertState(tmp_path / "s.json")
+    for chat in (1, 2):
+        state.add_chat(chat, str(chat))
+    state.set_kind(2, "uv", False)
+    drawn, sent = [], []
+
+    async def chart():
+        drawn.append(1)
+        return b"png"
+
+    class Bot:
+        async def send_photo(self, chat_id, photo, **kw):
+            sent.append((chat_id, photo))
+    notifier = Notifier(Bot(), state)
+    assert await notifier("Gusts", kind="gusts", chart=chart) == 2 and drawn == [1] and [p for _, p in sent] == [b"png"] * 2
+    assert await notifier("UV", kind="uv", chart=chart, chats=[2]) == 0 and drawn == [1]       # chat 2 has UV alerts off: not drawn
+    assert await notifier("UV", kind="uv", chart=chart, chats=[1, 2]) == 1 and drawn == [1, 1] and sent[-1] == (1, b"png")
+
+
 async def test_a_gone_chat_keeps_its_settings_gets_nothing_and_is_back_when_it_writes(tmp_path):
     from telegram.error import BadRequest, Forbidden
     state = AlertState(tmp_path / "s.json")
@@ -406,7 +426,7 @@ async def test_a_short_flood_wait_or_a_dropped_connection_is_tried_once_more_and
     for errors, sent, tries, waited in cases:
         waits.clear()
         bot = Bot(*errors)
-        assert (await Notifier(bot, state).to_chat(1, "hi"), bot.tries, waits) == (sent, tries, waited), errors
+        assert (bool(await Notifier(bot, state)("hi", chats=[1])), bot.tries, waits) == (sent, tries, waited), errors
 
 
 def uv(*values, start=T0):
@@ -663,6 +683,11 @@ def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tm
     assert again.subscribed(3, "rain") and not again.subscribed(3, "uv") and not again.subscribed(3, "newer still")
 
 
+async def picture_of(kw):
+    """The picture an alert sent with these arguments would carry: what its chart draws (None: the text alone)."""
+    return await kw["chart"]() if kw.get("chart") else None
+
+
 def asking(mon, photo=b"png"):
     """Replace a monitor's chart maker with one that records what was asked and answers `photo`; returns the list of requests."""
     asked = []
@@ -680,7 +705,7 @@ async def test_the_crossing_alert_carries_the_temperature_chart_when_there_is_on
 
     async def notify(text, link=None, **kw):
         sent.append(text)
-        photos.append(kw.get("photo"))
+        photos.append(await picture_of(kw))
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # learns: outdoor cooler
@@ -699,7 +724,7 @@ async def test_the_gusts_alert_carries_the_wind_chart(tmp_path):
     seen = []
 
     async def notify(text, link=None, **kw):
-        seen.append((text, kw.get("photo")))
+        seen.append((text, await picture_of(kw)))
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # the first look sets the mark
@@ -711,20 +736,20 @@ async def test_the_gusts_alert_carries_the_wind_chart(tmp_path):
     plain = []
 
     async def notify2(text, link=None, **kw):
-        plain.append(kw)
+        plain.append((kw["kind"], await picture_of(kw)))
     m2.notify = notify2
     asking(m2, photo=None)
     await m2.check()
     m2.station.data = [(T0, {"wind.wind_gust": 10}), (T0 + 300, {"wind.wind_gust": 12}), (T0 + 600, {"wind.wind_gust": 70})]
     await m2.check()
-    assert plain == [{"kind": "gusts"}]                # no chart: text only
+    assert plain == [("gusts", None)]                  # no chart: text only
 
 
 async def test_both_particulates_alerts_carry_the_particulates_chart(tmp_path):
     state, seen = AlertState(tmp_path / "s.json"), []
 
     async def notify(text, link=None, **kw):
-        seen.append((text, kw.get("photo")))
+        seen.append((text, await picture_of(kw)))
     mon = ParticulatesMonitor(FakeAir(), state, notify)
     asked = asking(mon)
     for pm in (90, 90, 30, 30):
@@ -748,7 +773,7 @@ async def test_other_alerts_send_no_picture(tmp_path):
     for data in (rain(0, 0, 0), rain(0, 0, 1)):
         m.station.data = data
         await m.check()
-    assert seen and all("photo" not in kw for kw in seen)
+    assert seen and all("chart" not in kw for kw in seen)
 
 
 async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sources_history(tmp_path, archived_cache):
@@ -793,7 +818,7 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     seen = []
 
     async def notify(text, link=None, **kw):
-        seen.append((text, kw.get("photo")))
+        seen.append((text, await picture_of(kw)))
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # the first look sets the mark
@@ -808,13 +833,27 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     got = []
 
     async def notify2(text, link=None, **kw):
-        got.append(kw)
+        got.append((kw["kind"], await picture_of(kw)))
     plain.notify = notify2
     asking(plain, photo=None)
     await plain.check()
     plain.station.data = uv(3, 5, 11, 12)
     await plain.check()
-    assert got == [{"kind": "uv"}]                     # no chart: text only
+    assert got == [("uv", None)]                       # no chart: text only
+
+
+def test_an_alert_rearms_only_once_its_condition_has_stopped_for_the_whole_wait():
+    from lib.alerts import confirm
+    m = {"active": True, "calm_since": None}             # it has fired
+    for now in (T0, T0 + 60):
+        confirm.rearm(m, False, now, 100)
+    assert m["active"] and m["calm_since"] == T0
+    confirm.rearm(m, True, T0 + 90, 100)                 # the condition again: the calm starts over
+    for now in (T0 + 120, T0 + 200):
+        confirm.rearm(m, False, now, 100)
+    assert m["active"]                                   # only 80 s of calm since T0 + 120
+    confirm.rearm(m, False, T0 + 220, 100)
+    assert not m["active"] and m["calm_since"] is None   # it can fire again
 
 
 def test_the_confirmation_rule_counts_distinct_readings_in_a_row():

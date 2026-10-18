@@ -36,7 +36,7 @@ class ForecastMonitor:
     KINDS = ("forecast",)
 
     def __init__(self, forecast, state, notify):
-        """notify: the Notifier (its to_chat sends to one chat)."""
+        """notify: the Notifier (chats=[chat] sends to that one)."""
         self.forecast, self.state, self.notify = forecast, state, notify
 
     async def check(self):
@@ -53,5 +53,5 @@ class ForecastMonitor:
             if not changes:
                 continue
             lines = [f"• {day_label(day, today)}: was {describe_day(old)}\n  now {describe_day(new)}" for day, old, new in changes]
-            if await self.notify.to_chat(chat_id, "\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines), kind="forecast"):
+            if await self.notify("\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines), kind="forecast", chats=[chat_id]):
                 self.state.record_forecast(chat_id, [new for _, _, new in changes], today)

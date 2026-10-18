@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from datetime import date, timedelta
 
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
@@ -210,28 +210,23 @@ class Notifier:
     def __init__(self, bot, state: AlertState):
         self.bot, self.state = bot, state
 
-    async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None, photo: bytes | str | None = None):
-        """Send an alert (silently) to every chat subscribed to its type; chats the bot can no longer post to are marked
-        gone. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons.
-        photo: a picture the text is the caption of (the text alone if Telegram refuses the picture): a PNG, or the file id of one
-        Telegram holds. It is uploaded once: the chats after the first are sent Telegram's copy."""
+    async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None,
+                       chart: Callable[[], Awaitable[bytes | None]] | None = None, chats: list[int] | None = None) -> int:
+        """Send an alert (silently) to the chats subscribed to its type: of `chats` (say, the one sent something that has since
+        changed), else of every chat. Chats the bot can no longer post to are marked gone. Returns how many it was sent to.
+        link = (label, url) adds a clickable label to the footer; each carries the settings buttons. chart draws the alert's
+        picture (None: the text alone), and is called only when some chat gets the alert. The text is the picture's caption
+        (the text alone if Telegram refuses it); it is uploaded once and the chats after the first are sent Telegram's copy."""
+        targets = self.state.alert_chats(kind) if chats is None else [c for c in chats if self.state.subscribed(c, kind)]
         text, entities = with_link(text, link)
+        photo = await chart() if chart and targets else None
         started, sent = time.monotonic(), 0
-        for chat_id in self.state.alert_chats(kind):
+        for chat_id in targets:
             ok, message = await self._send(chat_id, text, entities, kind, photo)
             sent += ok
             if photo and (sizes := getattr(message, "photo", None)):
                 photo = sizes[-1].file_id   # the largest size: the picture as sent
         log.info("Alert sent to %d chat(s) in %.1fs: %s", sent, time.monotonic() - started, text, extra=QUOTES)
-
-    async def to_chat(self, chat_id: int, text: str, link: tuple[str, str] | None = None, kind: str | None = None) -> bool:
-        """An alert for one chat (the one that was sent something that has since changed), if it is subscribed to the type.
-        True if it was sent."""
-        if not self.state.subscribed(chat_id, kind):
-            return False
-        text, entities = with_link(text, link)
-        sent, _ = await self._send(chat_id, text, entities, kind)
-        log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text, extra=QUOTES)
         return sent
 
     async def _post(self, chat_id: int, text: str, entities, kind: str | None, photo: bytes | str | None):

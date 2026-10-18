@@ -48,14 +48,12 @@ class ParticulatesMonitor:
         confirm.run(m, "below", good)
         if not m["unsafe"] and m["above"] >= confirm.CONFIRM_READINGS:
             m["unsafe"] = True
-            photo = await self._picture()
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
-                              link=self.air.link, kind="particulates", **({"photo": photo} if photo else {}))
+                              link=self.air.link, kind="particulates", chart=self._picture)
         elif m["unsafe"] and m["below"] >= confirm.CONFIRM_READINGS:
             m["unsafe"] = False
-            photo = await self._picture()
             await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates",
-                              **({"photo": photo} if photo else {}))
+                              chart=self._picture)
         self.state.save()
 
     async def _picture(self) -> bytes | None:

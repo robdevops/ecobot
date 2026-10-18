@@ -176,7 +176,7 @@ async def test_a_delivered_answer_records_the_forecast_for_its_chat_and_an_undel
     await forecast.close()
 
 
-async def test_to_chat_goes_to_one_chat_and_forgets_a_blocked_one(tmp_path):
+async def test_an_alert_for_one_chat_goes_to_it_alone_and_a_blocked_one_is_marked_gone(tmp_path):
     from telegram.error import Forbidden
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "a")
@@ -189,8 +189,8 @@ async def test_to_chat_goes_to_one_chat_and_forgets_a_blocked_one(tmp_path):
                 raise Forbidden("bot was blocked by the user")
             sent.append((chat_id, text))
     notifier = Notifier(Bot(), state)
-    assert await notifier.to_chat(1, "hello") is True and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
-    assert await notifier.to_chat(2, "hello") is False and state.chats[2]["gone"]
+    assert await notifier("hello", chats=[1]) == 1 and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
+    assert await notifier("hello", chats=[2]) == 0 and state.chats[2]["gone"]
 
 
 def test_a_revision_compares_the_one_millimetre_chance_when_both_days_have_it_and_the_older_figure_otherwise():

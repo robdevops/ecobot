@@ -120,7 +120,12 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     markup = bot.sent[0][2]["reply_markup"]
     assert rows(markup) == [[("🔔 ▸", "al:open:bell:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
-    assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
+    assert await notifier("x", kind="rain", chats=[2]) == 0 and await notifier("x", kind="uv", chats=[2]) == 1
+
+
+async def png():
+    """An alert's chart, drawn."""
+    return b"png"
 
 
 class Query:
@@ -254,7 +259,7 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     state.add_chat(1, "chat")
     kinds = []
 
-    async def notify(text, link=None, kind=None):
+    async def notify(text, link=None, kind=None, **more):
         kinds.append(kind)
 
     async def weather(first, then):
@@ -279,14 +284,12 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     assert kinds == ["pollen_and_asthma"]
     seen = []
     notifier = Notifier(Sent(), state)
-    real = notifier.to_chat
 
-    async def spy(chat_id, text, link=None, kind=None):
-        seen.append(kind)
-        return await real(chat_id, text, link, kind)
-    notifier.to_chat = spy
+    async def spy(text, **kw):
+        seen.append(kw["kind"])
+        return await notifier(text, **kw)
     state.record_forecast(1, [day(0, pct=90)], TODAY)
-    await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, notifier).check()
+    await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, spy).check()
     assert seen == ["forecast"]
 
 
@@ -435,7 +438,7 @@ class SentWithPhotos(Sent):
 async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_caption_and_the_buttons(tmp_path):
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos()
     state.add_chat(1, "one")
-    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", chart=png)
     assert bot.sent == [] and len(bot.photos) == 1
     chat, photo, kw = bot.photos[0]
     assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
@@ -450,7 +453,7 @@ async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_t
     state, bot = AlertState(tmp_path / "s.json"), Keeps()
     for chat in (1, 2, 3):
         state.add_chat(chat, str(chat))
-    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", chart=png)
     assert [(chat, photo) for chat, photo, _ in bot.photos] == [(1, b"png"), (2, "large"), (3, "large")]
 
 
@@ -458,8 +461,8 @@ async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_c
     from telegram.error import BadRequest
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos(refuse=BadRequest("Wrong file identifier"))
     state.add_chat(1, "one")
-    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", chart=png)
     assert bot.photos == [] and [(c, t) for c, t, _ in bot.sent] == [(1, "It's warmer outside")]
     gone = SentWithPhotos(refuse=BadRequest("Chat not found"))
-    await Notifier(gone, state)("again", kind="temps", photo=b"png")
+    await Notifier(gone, state)("again", kind="temps", chart=png)
     assert gone.sent == [] and state.chats[1]["gone"] and state.alert_chats() == []
