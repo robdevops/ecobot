@@ -275,18 +275,31 @@ async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(mon
 
 
 def preloading_bot(monkeypatch, refuse=None, clock=None):
-    """A bot with TELEGRAM_PRELOAD_CHAT set, and the (chat, photo, silent) of every upload to it."""
-    bot, uploads = make_bot(monkeypatch), []
+    """A bot with TELEGRAM_PRELOAD_CHAT set, and the (chat, photo, silent) of every upload to it. The periods are uploaded side by side,
+    in no fixed order, so each period's picture is its question's words and its file id "file " and those words; context.refused.error
+    is what the uploads raise (none: they go through)."""
+    bot, uploads, refused = make_bot(monkeypatch), [], NS(error=refuse)
     bot.cfg = NS(tz=TZ, telegram_preload_chat=-1001)
     if clock:
         bot.images = periods.ImageCache(lambda: clock[0])
+    draw = bot._draw_ahead
+
+    async def draw_ahead(text, now):
+        key, _, title, caption = await draw(text, now)
+        return key, text.encode(), title, caption
+    bot._draw_ahead = draw_ahead
 
     async def send_photo(chat, photo, caption=None, disable_notification=False):
-        if refuse:
-            raise refuse
+        if refused.error:
+            raise refused.error
         uploads.append((chat, photo, disable_notification))
-        return NS(photo=(NS(file_id="small"), NS(file_id=f"file {len(uploads)}")))
-    return bot, uploads, NS(bot=NS(send_chat_action=send_chat_action, send_photo=send_photo, id=99))
+        return NS(photo=(NS(file_id="small"), NS(file_id=f"file {photo.decode()}")))
+    return bot, uploads, NS(bot=NS(send_chat_action=send_chat_action, send_photo=send_photo, id=99), refused=refused)
+
+
+def uploads_of(*days):
+    """What the uploads to the preload chat are, in any order, when they are the Temperature charts of these periods."""
+    return sorted((-1001, f"Temperature chart {d}d".encode(), True) for d in days)
 
 
 async def settle(bot):
@@ -306,14 +319,14 @@ async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits
     await bot.respond(NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")),
                       context, "Temperature chart 7d")
     await settle(bot)
-    assert [(c, p, silent) for c, p, silent in uploads] == [(-1001, b"png", True)] * 4        # 1D, 1M, 3M, 1Y: not the 7D just sent
+    assert sorted(uploads) == uploads_of(1, 30, 90, 365)                                      # 1D, 1M, 3M, 1Y: not the 7D just sent
     calls = len(bot.agent.tools.calls)
 
     async def answer(text=None):
         pass
     await bot.on_period_button(NS(callback_query=NS(data="pd:90", message=msg, answer=answer), effective_message=msg,
                                   effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")), context)
-    assert len(bot.agent.tools.calls) == calls and edits[0].startswith("file ")               # Telegram's copy, no new question or upload
+    assert len(bot.agent.tools.calls) == calls and edits[0] == "file Temperature chart 90d"   # Telegram's copy of the 3M, no new question or upload
 
 
 async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_upload_stops_it_with_one_warning(monkeypatch, caplog):
@@ -330,7 +343,76 @@ async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_uploa
         await settle(bot)
         await bot.respond(pressed(bot, []), context, "Temperature chart 30d")
         await settle(bot)
-    assert [r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()].__len__() == 1 and uploads == []
+    assert [r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()].__len__() == 1 and uploads == [] and bot.preload_off
+
+
+async def test_a_flood_limit_or_a_timeout_skips_those_uploads_and_the_next_chart_uploads_again(monkeypatch, caplog):
+    import warnings
+    from telegram.error import RetryAfter, TimedOut
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")   # python-telegram-bot 22 warns whenever it builds a RetryAfter
+        flood = RetryAfter(30)
+    bot, uploads, context = preloading_bot(monkeypatch)
+    for error, asked in ((flood, "Temperature chart 7d"), (TimedOut(), "Temperature chart 30d")):
+        context.refused.error = error
+        with caplog.at_level("WARNING"):
+            await bot.respond(pressed(bot, []), context, asked)
+            await settle(bot)
+        assert uploads == [] and not bot.preload_off
+    assert len([r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()]) == 2        # one a chart, though several uploads were skipped
+    context.refused.error = None
+    await bot.respond(pressed(bot, []), context, "Temperature chart 90d")
+    await settle(bot)
+    assert sorted(uploads) == uploads_of(1, 365)                        # the 7D and the 1M were sent as the questions' own charts
+
+
+async def test_a_period_that_cannot_be_drawn_is_left_out_and_the_others_are_uploaded(monkeypatch):
+    bot, uploads, context = preloading_bot(monkeypatch)
+    draw = bot._draw_ahead
+
+    async def draw_ahead(text, now):
+        if text.endswith("90d"):
+            raise ValueError("no readings")
+        return await draw(text, now)
+    bot._draw_ahead = draw_ahead
+    await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
+    await settle(bot)
+    assert sorted(uploads) == uploads_of(1, 30, 365)
+    assert bot.images.has_copy(bot.images.key("Temperature chart 30d", 30, NOW)) and not bot.images.has_copy(bot.images.key("Temperature chart 90d", 90, NOW))
+
+
+async def test_charts_are_uploaded_ahead_at_once_even_while_a_question_is_being_answered(monkeypatch):
+    import asyncio
+    bot, uploads, context = preloading_bot(monkeypatch)
+    bot.answering = 1
+    bot.idle.clear()
+    bot.preload_soon(context.bot, "Temperature chart 7d")
+    await asyncio.wait_for(settle(bot), 5)                  # it would wait for ever if it waited for the question
+    assert sorted(uploads) == uploads_of(1, 30, 90, 365)
+
+
+async def test_each_period_is_uploaded_as_soon_as_it_is_drawn_not_when_the_slowest_is(monkeypatch):
+    import asyncio
+    bot, uploads, context = preloading_bot(monkeypatch)
+    slow, three, draw, send = asyncio.Event(), asyncio.Event(), bot._draw_ahead, context.bot.send_photo
+
+    async def draw_ahead(text, now):
+        if text.endswith("chart 1d"):
+            await slow.wait()
+        return await draw(text, now)
+
+    async def send_photo(chat, photo, **kw):
+        message = await send(chat, photo, **kw)
+        if len(uploads) == 3:
+            three.set()
+        return message
+    bot._draw_ahead, context.bot.send_photo = draw_ahead, send_photo
+    bot.preload_soon(context.bot, "Temperature chart 7d")
+    await asyncio.wait_for(three.wait(), 5)
+    assert sorted(uploads) == uploads_of(30, 90, 365)                    # the 1D, first in line, is still being drawn
+    slow.set()
+    await asyncio.wait_for(settle(bot), 5)
+    assert sorted(uploads) == uploads_of(1, 30, 90, 365)
 
 
 async def test_a_chart_uploaded_ahead_is_used_for_30_minutes_and_then_drawn_afresh(monkeypatch):
