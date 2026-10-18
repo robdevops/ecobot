@@ -35,6 +35,12 @@ class Turn:
     times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
     ahead: bool = False                          # a chart drawn ahead, nobody waiting: its requests wait their turn and its routine log lines are quiet
 
+    @classmethod
+    def of(cls, read, text: str, **more) -> "Turn":
+        """The Turn for a question as intent.read read it (`read`): what its words ask of a chart and of the figures."""
+        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                   average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, **more)
+
 
 @dataclass
 class Tool:
@@ -83,3 +89,7 @@ class Tools:
         if turn:
             turn.result_chars += len(out)
         return out
+
+    async def call_all(self, calls: list[tuple[str, dict]], turn: Turn | None = None) -> list[str]:
+        """The bot's own calls (name, arguments), made together; their results in the same order."""
+        return await asyncio.gather(*(self.call(name, json.dumps(args), turn) for name, args in calls))

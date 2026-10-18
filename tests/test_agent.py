@@ -63,6 +63,11 @@ async def test_chat_needs_no_tools_and_identical_calls_are_made_once():
     client = FakeLLM([[("weather_now", {}), ("weather_now", {})], "done"])
     await llm.Agent(client, "m", t).run([{"role": "user", "content": "x"}], "s", "none")
     assert len(seen) == 1
+    t, seen = tools()                                    # the same arguments in another order are the same call
+    client = FakeLLM([[("weather_now", {"groups": "outdoor", "chart": True}), ("weather_now", {"chart": True, "groups": "outdoor"})], "done"])
+    msgs = [{"role": "user", "content": "x"}]
+    await llm.Agent(client, "m", t).run(msgs, "s", "none")
+    assert len(seen) == 1 and "You already made this exact call" in msgs[-2]["content"]
 
 
 def test_history_keeps_questions_and_answers_only():

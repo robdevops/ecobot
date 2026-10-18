@@ -7,7 +7,7 @@ from types import SimpleNamespace as NS
 from lib import intent
 from lib.bot import Bot
 from lib.tools import Turn
-from tests.fakes import TZ
+from tests.fakes import TZ, StandInTools
 
 
 class RaisingAgent:
@@ -191,7 +191,7 @@ async def test_a_chart_carries_only_its_title_and_any_answer_text_is_a_message_o
 async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_model_is_not_asked(alert_state):
     import json
 
-    class Tools:
+    class Tools(StandInTools):
         def __init__(self):
             self.called = []
 
@@ -271,7 +271,7 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
     from lib import bot as botmod
     from lib.specs import Chart, Line, Panel
 
-    class Tools:
+    class Tools(StandInTools):
         calls = []
 
         async def call(self, name, raw, turn=None):
@@ -311,7 +311,7 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
     from lib.specs import Chart, Line, Panel
     pokes = []
 
-    class Tools:
+    class Tools(StandInTools):
         async def call(self, name, raw, turn=None):
             turn.charts.append(Chart("t", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]))
             return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
@@ -381,7 +381,7 @@ async def _ask_with(alert_state, tool_result, text, monkeypatch=None):
     """Ask `text` of a bot whose one tool returns `tool_result`; returns (replies, whether the model was asked)."""
     asked = []
 
-    class Tools:
+    class Tools(StandInTools):
         async def call(self, name, raw, turn=None):
             return tool_result
 
@@ -556,7 +556,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
     from lib import bot as botmod
     from lib.specs import Chart, Line, Panel
 
-    class Tools:
+    class Tools(StandInTools):
         async def call(self, name, raw, turn=None):
             turn.charts.append(Chart("t", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]))
             return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
@@ -589,7 +589,7 @@ async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(aler
     import json
     from lib import report_menu
 
-    class Tools:
+    class Tools(StandInTools):
         reading = "12.3 ℃"
 
         async def call(self, name, raw, turn=None):

@@ -8,12 +8,18 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from lib.config import Config
+from lib.tools import Tools
 
 TZ = ZoneInfo("Australia/Melbourne")
 MAC = "AA:BB:CC:DD:EE:FF"
 EVERY_SOURCE = ("Ecowitt", "AirGradient", "Pollen", "Forecast")   # every source, by name
 HISTORY_DAYS = 548  # the fake station is 18 months old: enough for every test, and far quicker to archive than years
 STEP = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
+
+
+class StandInTools:
+    """A test's stand-in for lib.tools.Tools: it answers call(name, raw, turn) itself, and call_all is the real one over it."""
+    call_all = Tools.call_all
 
 
 def config(tmp_path, **over) -> Config:

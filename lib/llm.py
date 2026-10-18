@@ -82,12 +82,13 @@ class Agent:
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:
-            if (name, args) not in cache:
-                cache[(name, args)] = asyncio.ensure_future(self.tools.call(name, args, turn))
-                return await cache[(name, args)]
+            key = (name, _same(args))
+            if key not in cache:
+                cache[key] = asyncio.ensure_future(self.tools.call(name, args, turn))
+                return await cache[key]
             log.info("Tool call %s served from cache (repeat)", name)
             return ("[You already made this exact call - same result as before. Don't repeat it; "
-                    "change the request or answer now.]\n" + await cache[(name, args)])
+                    "change the request or answer now.]\n" + await cache[key])
 
         schemas = self.tools.schemas_for(tool_names)   # only the tools the question can use: each definition is sent on every call
         warned = False
@@ -102,18 +103,23 @@ class Agent:
                 await on_heavy(tokens)
 
         llm_time = tool_time = 0.0
+
+        async def run_calls(calls: list[dict]):
+            """The calls ({"id", "name", "arguments"}), made together; their results join the messages."""
+            nonlocal tool_time
+            t0 = time.monotonic()
+            results = await asyncio.gather(*(call(c["name"], c["arguments"]) for c in calls))
+            tool_time += time.monotonic() - t0
+            messages.extend({"role": "tool", "tool_call_id": c["id"], "content": r} for c, r in zip(calls, results))
+            await heavy_check()
+
         first_step = 0
         try:
             if first_call:
-                fast = [(n, json.dumps(a)) for n, a in (first_call if isinstance(first_call, list) else [first_call])]
-                messages.append({"role": "assistant", "content": "", "tool_calls": [
-                    {"id": f"fast_{i}", "type": "function", "function": {"name": n, "arguments": a}}
-                    for i, (n, a) in enumerate(fast, 1)]})
-                t0 = time.monotonic()
-                results = await asyncio.gather(*(call(n, a) for n, a in fast))
-                tool_time += time.monotonic() - t0
-                messages.extend({"role": "tool", "tool_call_id": f"fast_{i}", "content": r} for i, r in enumerate(results, 1))
-                await heavy_check()
+                fast = [{"id": f"fast_{i}", "name": n, "arguments": json.dumps(a)}
+                        for i, (n, a) in enumerate(first_call if isinstance(first_call, list) else [first_call], 1)]
+                messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call(c) for c in fast]})
+                await run_calls(fast)
                 first_step = 1  # data is in; the model just answers (and may still call tools)
             for step in range(first_step, MAX_STEPS + 1):
                 final = step == MAX_STEPS  # out of steps: force an answer from what we have
@@ -134,21 +140,26 @@ class Agent:
                 llm_time += secs
                 entry = {"role": "assistant", "content": content}
                 if tool_calls and not final:
-                    entry["tool_calls"] = [{"id": tc["id"], "type": "function",
-                                            "function": {"name": tc["name"], "arguments": tc["arguments"]}}
-                                           for tc in tool_calls]
+                    entry["tool_calls"] = [_tool_call(tc) for tc in tool_calls]
                 messages.append(entry)
                 if not tool_calls or final:
                     return content.strip() or "Sorry, I couldn't get an answer together - try a narrower question."
-
-                t0 = time.monotonic()
-                results = await asyncio.gather(*(call(tc["name"], tc["arguments"]) for tc in tool_calls))
-                tool_time += time.monotonic() - t0
-                for tc, result in zip(tool_calls, results):
-                    messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-                await heavy_check()
+                await run_calls(tool_calls)
         finally:
             log.info("Timing: LLM %.1fs, tools %.1fs", llm_time, tool_time)
+
+
+def _tool_call(c: dict) -> dict:
+    """A call ({"id", "name", "arguments"}) as an assistant message carries it."""
+    return {"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"]}}
+
+
+def _same(args: str) -> str:
+    """A call's arguments in one form whatever their order and spacing, so a repeat is known; text that isn't JSON as it is."""
+    try:
+        return json.dumps(json.loads(args), sort_keys=True)
+    except ValueError:
+        return args
 
 
 def strip_tool_turns(messages: list[dict]) -> list[dict]:

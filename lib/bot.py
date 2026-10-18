@@ -754,7 +754,7 @@ class Bot:
     async def _written_in_code(self, read, turn: Turn) -> str:
         """The report ("weather now") from the fast path's tool calls, made together; lib/report.py lays it out."""
         calls = [read.fast[:2], *read.more]
-        results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
+        results = await self.agent.tools.call_all(calls, turn)
         by_tool = {name: result for (name, _), result in zip(calls, results)}
         if read.report:
             return report.report(by_tool, now_local(self.cfg.tz).date())
@@ -771,7 +771,7 @@ class Bot:
         """A chart asked for plainly: the tool draws it and the caption is written here. None (the model then takes the
         question) when there is nothing to caption."""
         calls = [read.fast[:2], *read.more]
-        results = await asyncio.gather(*(self.agent.tools.call(name, json.dumps(args), turn) for name, args in calls))
+        results = await self.agent.tools.call_all(calls, turn)
         caption = report.chart_caption(read.fast[0], read.fast[1], results[0], turn, self.cfg.tz)
         if caption is None:
             turn.charts.clear()
@@ -813,8 +813,7 @@ class Bot:
         key = self.images.canonical(text, now)
         if not (read.fast and read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
             return None
-        turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
-                    average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, ahead=True)
+        turn = Turn.of(read, text, ahead=True)
         caption = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
         if caption is None or len(turn.charts) != 1:
             raise ValueError("no chart came of it")
@@ -942,8 +941,7 @@ class Bot:
             new_from = len(working)
             ok, photos, titles, silent = True, [], [], False
             made = None   # how long the tool took when the chart is made in code, for the timing line
-            turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
-                        average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text)
+            turn = Turn.of(read, text)
             ready = self.images.ready(text, now) if read.fast and read.chart_in_code and redraw is None else None
             try:
                 reply = None

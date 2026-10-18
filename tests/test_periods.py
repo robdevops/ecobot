@@ -6,7 +6,7 @@ from lib import bot as botmod
 from lib import intent, periods
 from lib.bot import Bot
 from lib.specs import Chart, Line, Panel
-from tests.fakes import TZ
+from tests.fakes import TZ, StandInTools
 
 NOW = datetime(2026, 10, 2, 12, 0)
 
@@ -47,7 +47,7 @@ def test_the_questions_behind_charts_survive_a_restart(tmp_path):
     assert again.charted.get(1, 101) == "Temperature chart 7d"
 
 
-class Tools:
+class Tools(StandInTools):
     def __init__(self):
         self.calls = []
 
