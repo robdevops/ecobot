@@ -118,3 +118,25 @@ def test_a_temperature_low_just_above_zero_is_labelled():
     chart = Chart("T", "s", [Panel("Temperature", "°C", [one_line("temperature", ys).panels[0].lines[0]], reading="temperature")])
     assert "0.4°" in labels_of(chart)
     assert "0" not in labels_of(one_line("wind", [3.0, 0.0, 5.0, 9.0]))   # a calm low on the floor still says nothing
+
+
+def test_a_day_of_25_hours_is_drawn_25_hours_long_with_its_ticks_on_local_hours():
+    """5 Apr 2026 in Melbourne: 2am to 3am happens twice. The axis is real time, so a line through it never runs backwards (on
+    local clock times it drew that hour twice), and the hour ticks still fall on local 0, 3, 6 ... o'clock."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    import numpy as np
+    tz = ZoneInfo("Australia/Melbourne")
+    start = int(datetime(2026, 4, 5, tzinfo=tz).timestamp())
+    xs = charts._nums(range(start, start + 25 * 3600, 1800))
+    assert np.all(np.diff(xs) > 0) and round((xs[-1] - xs[0]) * 24, 3) == 24.5
+    fig, ax = plt.subplots()
+    try:
+        ax.set_xlim(xs[0], xs[-1])
+        charts._time_axis(ax, xs[-1] - xs[0], tz)
+        ticks = [mdates.num2date(t, tz) for t in ax.xaxis.get_major_locator()()]
+    finally:
+        plt.close(fig)
+    assert ticks and {t.hour for t in ticks} <= {0, 3, 6, 9, 12, 15, 18, 21} and ticks[0].day == 5
