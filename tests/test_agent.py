@@ -102,13 +102,13 @@ def test_charts_render_for_both_datasets():
         assert charts.render(spec, ZoneInfo("Australia/Melbourne"))[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-async def test_reset_forgets_only_that_chat():
+async def test_reset_forgets_only_that_chat(alert_state):
     from lib.bot import Bot
     sent = []
 
     async def reply_text(text, **kw):
         sent.append(text)
-    bot = Bot(None, None, [], None)
+    bot = Bot(None, None, [], alert_state)
     bot.chats[(1, None)].history.append({"role": "user", "content": "hi"})
     bot.chats[(2, None)].history.append({"role": "user", "content": "other chat"})
     bot.chats[(1, 7)].history.append({"role": "user", "content": "topic 7"})

@@ -8,6 +8,13 @@ os.environ.setdefault("TZ", "Australia/Melbourne")
 import pytest
 
 
+@pytest.fixture
+def alert_state(tmp_path):
+    """The bot's chats and settings (an AlertState) in a file of the test's own: what a Bot is given, as in the running bot."""
+    from lib.alerts import AlertState
+    return AlertState(tmp_path / "state.json")
+
+
 @pytest.fixture(scope="session")
 def archived_cache(tmp_path_factory):
     """A cache file holding the fake station's whole archive, built once. Tests copy it (archived_station)."""
