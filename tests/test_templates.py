@@ -21,7 +21,8 @@ def test_every_button_asks_something_the_bot_understands():
         return intent.read(templates.sentence(label), NOW)
     assert read("\U0001f4cb Status").report
     weather = read("\U0001f326️ Weather")
-    assert weather.chart_all and weather.chart_in_code and weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
+    assert intent.wants_chart_all(templates.sentence("\U0001f326️ Weather")) and weather.chart_in_code
+    assert weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
     for label, groups in (("\U0001f327️ Rain", "rainfall"), ("\U0001f4c8 Temperature", "outdoor,indoor"),
                           ("\U0001f4a7 Humidity", "outdoor,indoor"), ("\U0001f4a8 Wind", "wind")):
         name, args, _ = read(label).fast

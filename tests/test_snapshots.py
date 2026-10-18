@@ -14,17 +14,22 @@ from tests.test_forecast import transport as forecast_transport
 from tests.test_pollen import SEASON_DAY, make as make_pollen, page, transport as pollen_transport
 
 
+def rows(store, kind: str) -> int:
+    """How many rows the store holds for this kind."""
+    return store.db.execute("SELECT COUNT(*) FROM snapshots WHERE kind=?", (kind,)).fetchone()[0]
+
+
 def test_a_repeat_only_moves_last_seen_and_a_change_adds_a_row(tmp_path):
     store = Snapshots(tmp_path / "s.sqlite")
     assert store.save("pollen", {"level": "Low"}, now=100) is True
     assert store.save("pollen", {"level": "Low"}, now=200) is False
-    assert store.latest("pollen") == (200, {"level": "Low"}) and store.count("pollen") == 1
+    assert store.latest("pollen") == (200, {"level": "Low"}) and rows(store, "pollen") == 1
     assert store.save("pollen", {"level": "High"}, now=300) is True
-    assert store.count("pollen") == 2 and store.latest("pollen") == (300, {"level": "High"}) and store.latest("forecast") is None
+    assert rows(store, "pollen") == 2 and store.latest("pollen") == (300, {"level": "High"}) and store.latest("forecast") is None
     store.put("k", "v")
     assert store.get("k") == "v" and store.get("missing") is None
     store.save("pollen", {"level": "Low"}, now=300 + KEEP_SECONDS + 1)     # rows not seen for over a year are dropped
-    assert store.count("pollen") == 1
+    assert rows(store, "pollen") == 1
     store.close()
 
 
@@ -60,11 +65,11 @@ async def test_the_pollen_history_keeps_one_row_per_change(tmp_path):
     pollen, _ = make_pollen(tmp_path, lambda: page(grass=level["now"]).replace('<span id="pdate">', f'<span data-v="{level["now"]}" id="pdate">'))
     await pollen.start()
     await pollen.warm(True)
-    assert pollen.store.count("pollen") == 1
+    assert rows(pollen.store, "pollen") == 1
     level["now"] = "High"
     pollen._validators = {}                                  # the site has a new page
     await pollen.warm(True)
-    assert pollen.store.count("pollen") == 2
+    assert rows(pollen.store, "pollen") == 2
     await pollen.close()
 
 
@@ -79,7 +84,7 @@ async def test_the_forecast_survives_a_restart_and_a_night_start_needs_no_reques
     again = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(22, 0))
     await again.start()
-    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and again.store.count("forecast") == 1
+    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and rows(again.store, "forecast") == 1
     await again.close()
 
 

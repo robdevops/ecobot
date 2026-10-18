@@ -198,9 +198,6 @@ class AlertState:
         muted = self.muted(chat_id)
         return kind not in muted if kind else bool(set(LABELS) - muted)
 
-    def alerts_on(self, chat_id: int) -> bool:
-        return self.subscribed(chat_id)
-
     def alert_chats(self, kind: str | None = None) -> list[int]:
         """The chats that get alerts of this type (any type, if none is given)."""
         return [c for c in self.chats if self.subscribed(c, kind)]

@@ -44,15 +44,6 @@ class Charted:
     def get(self, chat_id: int, message_id: int) -> str | None:
         return self.store.get(self._key(chat_id, message_id))
 
-    def __getitem__(self, ids: tuple[int, int]) -> str:
-        return self.store[self._key(*ids)]
-
-    def __contains__(self, ids: tuple[int, int]) -> bool:
-        return self._key(*ids) in self.store
-
-    def __len__(self) -> int:
-        return len(self.store)
-
     def remember(self, chat_id: int, message_id: int, question: str):
         key = self._key(chat_id, message_id)
         self.store.pop(key, None)   # re-added at the end: the newest

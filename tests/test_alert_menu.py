@@ -88,15 +88,15 @@ def test_state_mutes_one_type_or_all(tmp_path):
     state.add_chat(2, "b")
     state.set_kind(1, "rain", False)
     state.set_kind(1, "bogus", False)
-    assert state.muted(1) == {"rain"} and state.alert_chats("rain") == [2] and state.alert_chats("uv") == [1, 2] and state.alerts_on(1)
+    assert state.muted(1) == {"rain"} and state.alert_chats("rain") == [2] and state.alert_chats("uv") == [1, 2] and state.subscribed(1)
     state.set_kind(1, ALL, False)
-    assert state.muted(1) == set(LABELS) and not state.alerts_on(1) and state.alert_chats() == [2]
+    assert state.muted(1) == set(LABELS) and not state.subscribed(1) and state.alert_chats() == [2]
     state.set_kind(1, ALL, True)
     assert state.muted(1) == set() and "muted" not in state.chats[1]
     state.set_kind(2, "gusts", False)
     assert AlertState(tmp_path / "s.json").muted(2) == {"gusts"}                       # saved
     state.set_alerts(1, "a", False)                                                      # the /alerts off shortcut
-    assert not state.alerts_on(1)
+    assert not state.subscribed(1)
 
 
 class Sent:
@@ -246,9 +246,9 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     assert replies[0][0].startswith(TITLE) and "On: rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
     assert rows(replies[0][1]["reply_markup"])[0] == [("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]
     await bot.on_alerts(update, NS(args=["off"]))
-    assert not state.alerts_on(1) and "On: nothing" in replies[1][0]
+    assert not state.subscribed(1) and "On: nothing" in replies[1][0]
     await bot.on_alerts(update, NS(args=["on"]))
-    assert state.alerts_on(1) and "🔕 Off: nothing" in replies[2][0]
+    assert state.subscribed(1) and "🔕 Off: nothing" in replies[2][0]
 
 
 async def test_every_monitors_alert_names_its_type(tmp_path):

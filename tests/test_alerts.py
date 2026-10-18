@@ -278,7 +278,7 @@ def test_alert_state_survives_restarts_and_opt_out(tmp_path):
     state.monitor["rain"] = {"alerted_state": "raining", "alerted_time": 5, "since": 5}
     state.save()
     again = AlertState(path)
-    assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.alerts_on(2)
+    assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.subscribed(2)
 
 
 def test_the_footer_is_the_links_label_in_italic_placed_in_utf16_units():

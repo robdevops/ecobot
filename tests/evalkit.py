@@ -172,7 +172,7 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     system = prompt.build(NOW, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor",
                                 "Pollen": "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
                                 "Forecast": "Weather forecast for the owner's location (Open-Meteo)"},
-                          r.hints, r.about_the_bot, r.rain_caption, found := intent.topics(content(case), [m["content"] for m in case.history if m["role"] == "user"][-2:]))
+                          r.hints, r.about_the_bot, r.rain_caption, intent.topics(content(case), [m["content"] for m in case.history if m["role"] == "user"][-2:]))
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(

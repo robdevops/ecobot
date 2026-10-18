@@ -64,7 +64,7 @@ class Pollen(Source):
             return
         try:
             await self.warm(True)
-            log.info("Pollen: %s", self.summary())
+            log.info("Pollen: %s", "; ".join(self.lines()) or "no levels on the page")
         except Exception as e:  # the site may just be briefly unreachable
             log.warning("Pollen not readable yet: %s", e)
 
@@ -136,16 +136,6 @@ class Pollen(Source):
         return {"grass": {"level": grass, "emoji": LEVEL_EMOJI[grass], "date": d.get("melbourne_date")} if grass else None,
                 "asthma": {"level": asthma, "emoji": LEVEL_EMOJI[asthma], "updated": d.get("asthma_updated")} if asthma else None,
                 "fetched_at": self.fetched_at}
-
-    def summary(self) -> str:
-        """The levels in a few words for the log: "grass 🔴 High (Sat 17 Oct), asthma 🟢 Low"."""
-        cur, parts = self.current(), []
-        if g := cur["grass"]:
-            when = f" ({day_text(g['date'], year=False)})" if g["date"] and g["date"] != self.now().date() else ""
-            parts.append(f"grass {g['emoji']} {g['level']}{when}")
-        if a := cur["asthma"]:
-            parts.append(f"asthma {a['emoji']} {a['level']}")
-        return ", ".join(parts) or "no levels on the page"
 
     def lines(self) -> list[str]:
         """The ready-made report lines; the asthma line is left out when there is no risk forecast (outside the season)."""

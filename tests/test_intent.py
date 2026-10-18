@@ -414,9 +414,9 @@ def test_plain_lookups_are_answered_in_code_and_everything_else_is_left_to_the_m
     ("hottest day that also rained", [], {"days"}, {"air", "link"}),
     ("did it rain on Sat 5 Sep", [], {"days"}, {"air"}),
     ("is there a correlation between pressure and rainfall", [], {"link"}, {"air"}),
-    ("is the air ok for a run", [], {"air"}, {"days", "link", "compose"}),
-    ("plot air quality against rainfall", [], {"air", "compose"}, set()),
-    ("will it rain later", [], {"outlook", "forecast"}, {"air"}),
+    ("is the air ok for a run", [], {"air"}, {"days", "link"}),
+    ("plot air quality against rainfall", [], {"air"}, set()),
+    ("will it rain later", [], {"outlook"}, {"air"}),
     ("most common wind direction", [], {"wind"}, {"air"}),
     ("describe what it was like on Monday", [], {"describe"}, set()),
     ("add an alert when winds reach 100", [], {"bot"}, set()),
@@ -521,16 +521,15 @@ def test_anything_beyond_one_reading_by_month_or_year_is_left_to_the_model(text)
     assert read.lookup == "" and (read.fast is None or read.fast[0] not in ("weather_days", "air_days"))
 
 
-def test_weather_all_week_is_flagged_as_a_chart_with_no_caption_and_a_named_chart_is_not():
-    now = datetime(2026, 10, 3, 12)
-    assert intent.read("weather all week", now).chart_all and intent.read("ecowitt all week", now).chart_all
-    assert not intent.read("plot temperature and rain", now).chart_all and not intent.read("temperature chart 7d", now).chart_all
+def test_weather_all_week_is_every_reading_and_a_named_chart_is_not():
+    assert intent.wants_chart_all("weather all week") and intent.wants_chart_all("ecowitt all week")
+    assert not intent.wants_chart_all("plot temperature and rain") and not intent.wants_chart_all("temperature chart 7d")
 
 
 @_pytest.mark.parametrize("ask", ["weather chart 90d", "chart all 90d", "chart 90d", "chart"])
 def test_a_chart_that_names_no_reading_is_every_reading_not_temperature(ask):
     read = intent.read(ask, NOW)
-    assert read.chart_all and read.chart_fields[:3] == ["temperature", "humidity", "solar"] and read.chart_fields[-1] == "wind"
+    assert intent.wants_chart_all(ask) and read.chart_fields[:3] == ["temperature", "humidity", "solar"] and read.chart_fields[-1] == "wind"
 
 
 def test_a_named_reading_or_an_air_chart_is_not_every_reading_and_indoors_has_only_what_the_indoor_sensor_measures():

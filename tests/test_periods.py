@@ -36,7 +36,7 @@ def test_only_the_newest_questions_are_remembered():
     charted = periods.Charted()
     for i in range(periods.REMEMBERED + 5):
         charted.remember(1, i, f"q{i}")
-    assert len(charted) == periods.REMEMBERED and (1, 0) not in charted and (1, periods.REMEMBERED + 4) in charted
+    assert len(charted.store) == periods.REMEMBERED and charted.get(1, 0) is None and charted.get(1, periods.REMEMBERED + 4)
 
 
 def test_the_questions_behind_charts_survive_a_restart(tmp_path):
@@ -102,7 +102,7 @@ async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
     assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("\u25cf 1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
-    assert bot.charted[(1, 101)] == "Temperature chart 30d"
+    assert bot.charted.get(1, 101) == "Temperature chart 30d"
 
 
 async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_left_out(alert_state, monkeypatch):
@@ -120,7 +120,7 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 3M..."]
     caption, markup = edits[0]
     assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "\u25cf 3M", "1Y"]
-    assert bot.charted[(1, 50)] == "Temperature chart 90d"
+    assert bot.charted.get(1, 50) == "Temperature chart 90d"
 
 
 async def test_a_button_on_a_chart_from_before_a_restart_says_so(alert_state, monkeypatch):

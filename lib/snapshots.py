@@ -54,10 +54,6 @@ class Snapshots:
             row = self.db.execute("SELECT last_seen, payload FROM snapshots WHERE kind=? ORDER BY id DESC LIMIT 1", (kind,)).fetchone()
         return (row[0], json.loads(row[1])) if row else None
 
-    def count(self, kind: str) -> int:
-        with self._lock:
-            return self.db.execute("SELECT COUNT(*) FROM snapshots WHERE kind=?", (kind,)).fetchone()[0]
-
     def get(self, key: str) -> str | None:
         with self._lock:
             row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()

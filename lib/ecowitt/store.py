@@ -122,10 +122,6 @@ class HistoryCache:
         return self._query("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series "
                            "WHERE s.mac=? AND s.cycle=? AND s.grp=? AND p.ts BETWEEN ? AND ?", mac, cycle, grp, start, end)[0][0]
 
-    def newest(self, mac: str, cycle: str) -> int | None:
-        """The time of the newest reading held at this resolution (None if none)."""
-        return self._query("SELECT MAX(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=? AND s.cycle=?", mac, cycle)[0][0]
-
     def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
         """Every time range held for this group at this resolution (merged, oldest first)."""
         return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
@@ -142,9 +138,6 @@ class HistoryCache:
                 held[cycle, grp].append((start, end))
         held = {key: merge(spans) for key, spans in held.items()}
         return [{g: subtract((start, end), held[cycle, g]) for g in groups} for cycle, start, end in windows]
-
-    def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
-        return subtract((start, end), self.coverage(mac, cycle, grp))
 
     def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str] | None, start: int, end: int) -> dict:
         """A group's fields (all of them if `fields` is None) in Ecowitt's response shape: {field: {unit, list}}."""

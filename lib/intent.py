@@ -752,11 +752,8 @@ def topics(text: str, before: list[str] = ()) -> set[str]:
             ("air", mentions_air(said)), ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
             ("link", bool(LINK.search(said)) or bool(COMPARE.search(said)) and bool(OUTLOOK_WORDS.search(said))),
             ("outlook", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
-            ("forecast", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
             ("wind", bool(WIND_WORDS.search(said))), ("describe", bool(DESCRIBE.search(said))),
-            ("pollen", mentions_pollen(said)),
             ("bot", bool(BOT_WORDS.search(said)) or about_the_bot(said) or bool(COMMAND.search(said))),
-            ("compose", mentions_air(said) and bool(COMPARE.search(said) or GRAPH.search(said) or LINK.search(said) or ANALYSIS.search(said))),
         ) if hit}
     return found
 
@@ -805,7 +802,6 @@ class Intent:
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is just the least and most rain
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
-    chart_all: bool = False               # "weather all week": every reading charted, sent with no caption
     readings: list[str] = field(default_factory=list)     # the readings the words name
     per_day: bool = False                 # figures day by day were asked for
     extra: list[tuple[str, dict]] = field(default_factory=list)   # fetched with the model's first step (the forecast, for "will it rain?")
@@ -867,5 +863,5 @@ def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGr
                   hints=period_hints(text, now), fast=fast, chart_asked=bool(GRAPH.search(text)), chart_field=chart_field(text),
                   chart_fields=chart_fields(text), average_asked=bool(AVERAGE.search(text)), more=calls[1:],
                   weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
-                  chart_all=in_code and wants_chart_all(text), readings=list(_named(text)), per_day=bool(PER_DAY.search(text)),
+                  readings=list(_named(text)), per_day=bool(PER_DAY.search(text)),
                   extra=model_prefetch(text, now, sources) if not fast else [], lookup=lookup, lookup_arg=named, sides=_sides(text))

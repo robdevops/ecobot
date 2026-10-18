@@ -3,6 +3,11 @@ import time
 from lib.ecowitt import store
 
 
+
+def missing(cache, mac: str, cycle: str, grp: str, start: int, end: int):
+    """One group's gaps in one window (HistoryCache.uncovered, for a single one)."""
+    return cache.uncovered(mac, [grp], [(cycle, start, end)])[0][grp]
+
 def test_subtract_and_merge():
     assert store.subtract((0, 100), [(10, 20), (30, 40)]) == [(0, 9), (21, 29), (41, 100)]
     assert store.subtract((0, 10), [(0, 10)]) == []
@@ -23,8 +28,8 @@ def test_only_settled_readings_are_kept(tmp_path):
     cache.store("M", "5min", ["outdoor"], data(old, old + 300, fresh), old - 300, now)
     loaded = cache.load("M", "5min", ["outdoor"], 0, now)
     assert sorted(loaded["outdoor"]["temperature"]["list"]) == [str(old), str(old + 300)]
-    assert cache.missing("M", "5min", "outdoor", old, old + 300) == []
-    assert cache.missing("M", "5min", "outdoor", fresh, now)  # the unsettled tail is still to fetch
+    assert missing(cache, "M", "5min", "outdoor", old, old + 300) == []
+    assert missing(cache, "M", "5min", "outdoor", fresh, now)  # the unsettled tail is still to fetch
 
 
 def test_what_is_not_held_is_read_for_many_windows_resolutions_and_groups_at_once(tmp_path):
@@ -36,7 +41,7 @@ def test_what_is_not_held_is_read_for_many_windows_resolutions_and_groups_at_onc
     cache.store("M", "5min", ["wind"], both, old, old + 3600)
     groups, windows = ["outdoor", "wind", "rainfall"], [("30min", old, old + 4 * 86400), ("5min", old, old + 3600)]
     thirty, five = cache.uncovered("M", groups, windows)
-    assert thirty == {g: cache.missing("M", "30min", g, old, old + 4 * 86400) for g in groups}       # as each group's own read
+    assert thirty == {g: missing(cache, "M", "30min", g, old, old + 4 * 86400) for g in groups}       # as each group's own read
     assert thirty["outdoor"] == [(old + 86401, old + 3 * 86400 - 1)] and thirty["rainfall"] == [(old, old + 4 * 86400)]
     assert five["wind"] == [] and five["outdoor"] == [(old, old + 3600)]                          # each window its own resolution
 
@@ -45,7 +50,7 @@ def test_empty_old_ranges_are_remembered(tmp_path):
     cache, now = make(tmp_path), int(time.time())
     start, end = now - 30 * 86400, now - 29 * 86400
     cache.store("M", "30min", ["outdoor"], {}, start, end)
-    assert cache.missing("M", "30min", "outdoor", start, end) == []
+    assert missing(cache, "M", "30min", "outdoor", start, end) == []
 
 
 def test_changed_units_clear_the_cache(tmp_path):
@@ -68,12 +73,12 @@ def test_a_metric_ecowitt_adds_later_makes_the_days_held_be_fetched_again(tmp_pa
     cache, now = make(tmp_path), int(time.time())
     old = now - 10 * 86400
     cache.store("M", "30min", ["outdoor"], data(old), old, old + 3600)
-    assert cache.missing("M", "30min", "outdoor", old, old + 3600) == []                 # held
+    assert missing(cache, "M", "30min", "outdoor", old, old + 3600) == []                 # held
     cache.store("M", "30min", ["outdoor"], data(old + 7200, field="temperature") | {"outdoor": {
         **data(old + 7200)["outdoor"], "vpd": {"unit": "kPa", "list": {str(old + 7200): "0.8"}}}}, old + 7200, old + 7300)
-    assert cache.missing("M", "30min", "outdoor", old, old + 3600)                       # the new metric: the earlier days are asked for again
+    assert missing(cache, "M", "30min", "outdoor", old, old + 3600)                       # the new metric: the earlier days are asked for again
     cache.store("M", "30min", ["outdoor"], data(old), old, old + 3600)
-    assert cache.missing("M", "30min", "outdoor", old, old + 3600) == []                 # and once the vpd-less response repeats, no loop
+    assert missing(cache, "M", "30min", "outdoor", old, old + 3600) == []                 # and once the vpd-less response repeats, no loop
 
 
 def test_vpd_reported_in_inhg_is_stored_and_read_in_kpa_and_old_rows_are_converted(tmp_path):
@@ -113,7 +118,6 @@ def test_the_cache_says_where_it_is_and_how_much_it_holds(tmp_path):
     assert cache.path == tmp_path / "c.sqlite"
     assert cache.count("M", "5min", "outdoor", old, old + 300) == 2 and cache.count("M", "5min", "outdoor", old + 1000, now) == 0
     assert cache.count("M", "30min", "outdoor", 0, now) == 0
-    assert cache.newest("M", "5min") == old + 600 and cache.newest("M", "30min") is None
 
 
 def test_a_write_that_fails_part_way_leaves_nothing_behind(tmp_path, monkeypatch):
