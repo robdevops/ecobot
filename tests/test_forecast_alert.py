@@ -87,7 +87,7 @@ async def test_small_changes_past_days_muted_chats_and_chats_never_sent_a_foreca
     await mon.check()
     assert len(bot.sent) == 1 and "Yesterday" not in bot.sent[0][1] and bot.sent[0][1].count("• ") == 1
     state.record_forecast(2, [day(0, pct=90)], TODAY)
-    state.set_alerts(2, "chat 2", False)
+    state.set_alerts(2, False)
     forecast.days = [day(0, pct=5), day(1)]
     await mon.check()
     assert [chat for chat, _ in bot.sent] == [1, 1] and state.forecast_sent(2)[TODAY]["rain_chance_pct"] == 90   # muted: not told, not reset

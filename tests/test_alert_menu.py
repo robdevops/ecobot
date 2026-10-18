@@ -95,7 +95,7 @@ def test_state_mutes_one_type_or_all(tmp_path):
     assert state.muted(1) == set() and "muted" not in state.chats[1]
     state.set_kind(2, "gusts", False)
     assert AlertState(tmp_path / "s.json").muted(2) == {"gusts"}                       # saved
-    state.set_alerts(1, "a", False)                                                      # the /alerts off shortcut
+    state.set_alerts(1, False)                                                      # the /alerts off shortcut
     assert not state.subscribed(1)
 
 

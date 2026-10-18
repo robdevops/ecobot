@@ -83,7 +83,7 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     if cfg.pollen:
         await start(Pollen, cfg)
     if cfg.forecast:
-        await start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and eco.latitude is not None else None)
+        await start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and None not in (eco.latitude, eco.longitude) else None)
     return sources, cfg
 
 

@@ -831,8 +831,8 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
         return "forecast", []
     if _judgement(text):
         return "", []
-    if tool == "weather_history" and not args.get("chart") and not _judgement(text):
-        return "extremes", [n for n in _named(text)]
+    if tool == "weather_history" and not args.get("chart"):
+        return "extremes", list(_named(text))
     if tool == "weather_now" and (names := reading_now(text)):
         return "reading", names
     if tool == "air_quality" and not args and len(text.split()) <= 6:

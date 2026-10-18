@@ -11,7 +11,6 @@ from .logs import QUOTES
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_CHARS = 60000
-TOOL_TIMEOUT = 90
 
 
 def json_result(out) -> str:
@@ -70,10 +69,8 @@ class Tools:
             return f"Error: tool arguments were not valid JSON ({e})"
         level = logging.DEBUG if turn and turn.ahead else logging.INFO
         log.log(level, "Tool call %s %s", name, raw_args, extra=QUOTES)
-        try:
-            out = await asyncio.wait_for(tool.handler(args, turn or Turn()), TOOL_TIMEOUT)
-        except TimeoutError:
-            return f"Error: tool timed out after {TOOL_TIMEOUT}s"
+        try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
+            out = await tool.handler(args, turn or Turn())
         except Exception as e:
             log.exception("Tool %s failed", name)
             return f"Error calling tool: {e}"

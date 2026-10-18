@@ -93,9 +93,8 @@ class AlertState:
         """The chats the bot is in: known, and not gone."""
         return [c for c, entry in self.chats.items() if not entry.get("gone")]
 
-    def set_alerts(self, chat_id: int, title: str, on: bool):
+    def set_alerts(self, chat_id: int, on: bool):
         """/alerts on and /alerts off: every type."""
-        self.chats.setdefault(chat_id, {"title": title})
         self.set_kind(chat_id, ALL, on)
 
     def migrate_chat(self, old: int, new: int):

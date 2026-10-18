@@ -153,14 +153,11 @@ def connection_problem(err) -> bool:
 
 def polling_error(error: TelegramError):
     """Errors while polling for new messages. The library retries by itself, so a dropped
-    connection is a one-line warning, not a traceback. Must not raise."""
-    try:
-        if connection_problem(error):
-            log.warning("Telegram connection problem while polling (%s: %s) - retrying", type(error).__name__, error)
-        else:
-            log.error("Telegram polling error (%s: %s)", type(error).__name__, error)
-    except Exception:
-        pass
+    connection is a one-line warning, not a traceback."""
+    if connection_problem(error):
+        log.warning("Telegram connection problem while polling (%s: %s) - retrying", type(error).__name__, error)
+    else:
+        log.error("Telegram polling error (%s: %s)", type(error).__name__, error)
 
 
 TYPING_MAX_SECONDS = 600   # a safety net: the indicator never outlives a stuck question
@@ -408,7 +405,7 @@ class Bot:
             if in_group and not (update.effective_user and await self._is_group_admin(context.bot, chat.id, update.effective_user.id)):
                 await msg.reply_text("Only group admins can change alerts")   # the menu below is still shown
             else:
-                self.state.set_alerts(chat.id, self._title(update), arg == "on")
+                self.state.set_alerts(chat.id, arg == "on")
                 log.info("/alerts %s in %s", arg, describe_source(update))
         muted, kinds = self.state.muted(chat.id), self._alert_kinds()
         loud = self.state.loud(chat.id) if chat.type == ChatType.PRIVATE else None   # sound settings: private chats only

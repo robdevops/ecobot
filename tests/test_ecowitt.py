@@ -26,6 +26,24 @@ async def test_finds_the_station(station):
     assert "Fairleigh" in eco.describe() and "created" in eco.describe()
 
 
+async def test_a_station_that_gives_no_longitude_has_none_not_melbournes(tmp_path):
+    import httpx
+
+    class NoLongitude(FakeEcowitt):
+        def __call__(self, request):
+            response = super().__call__(request)
+            if request.url.path.endswith("/list"):
+                data = response.json()
+                del data["data"]["list"][0]["longitude"]
+                return httpx.Response(200, json=data)
+            return response
+    transport, _ = ecowitt_transport(NoLongitude())
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await eco.close()
+    assert eco.latitude == -37.8 and eco.longitude is None                         # so the forecast is offered no half location
+
+
 @pytest.mark.parametrize("zone, used", [("Australia/Perth", "Australia/Perth"), (None, "Australia/Melbourne"),
                                          ("Mars/Olympus", "Australia/Melbourne")])
 async def test_the_station_names_its_own_time_zone(tmp_path, caplog, zone, used):

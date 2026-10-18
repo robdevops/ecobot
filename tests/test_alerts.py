@@ -274,7 +274,7 @@ def test_alert_state_survives_restarts_and_opt_out(tmp_path):
     state = AlertState(path)
     state.add_chat(1, "Home")
     state.add_chat(2, "Work")
-    state.set_alerts(2, "Work", False)
+    state.set_alerts(2, False)
     state.monitor["rain"] = {"alerted_state": "raining", "alerted_time": 5, "since": 5}
     state.save()
     again = AlertState(path)
