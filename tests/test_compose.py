@@ -124,6 +124,13 @@ def test_air_that_clears_after_every_rain_is_a_yes_and_air_that_ignores_rain_is_
     assert analyse_air(air, rain, limits, TZ, "PM2.5")["verdict"].startswith("Yes, the other way")
 
 
+def test_air_that_reads_zero_when_dry_and_events_that_change_nothing_are_counted_as_such():
+    air, rain = synthetic(60, lambda washed: 0.0)                     # a clean sensor: zero before and after every rain
+    out = analyse_air(air, rain, (9.0, 55.4), TZ, "PM2.5")
+    assert out["events"]["cleaner_after"] == out["events"]["worse_after"] == 0 and out["events"]["count"] >= 15
+    assert out["findings"][0].endswith("when dry (good)") and f"{out['events']['count']} about the same" in out["findings"][1]
+
+
 def test_too_few_rain_events_or_no_overlap_says_so():
     air, rain = synthetic(7, lambda washed: 10.0 if washed else 30.0)              # two events in a week
     assert analyse_air(air, rain, (9.0, 55.4), TZ, "PM2.5")["verdict"].startswith("Not enough")

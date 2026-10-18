@@ -8,7 +8,7 @@ used for the weather station (nothing is fetched); AirGradient fills any missing
 import asyncio
 import json
 import logging
-from datetime import date, datetime, time, tzinfo
+from datetime import date, datetime, time, timedelta, tzinfo
 from statistics import fmean
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
@@ -53,6 +53,7 @@ PLOT_PARAMETERS = {
 
 
 SCAN_DAYS = 90
+SCAN_MAX_DAYS = 400   # a longer scan is cut to its latest days: the shuffles grow with the period
 SCAN_AIR = ("pm2_5", "pm10", "co2", "voc_index", "nox_index")
 # What the scan compares the air with: name -> (group, field, label, unit)
 SCAN_WEATHER = {**{n: (WEATHER[n].group, WEATHER[n].field, WEATHER[n].label.lower(), WEATHER[n].unit)
@@ -220,7 +221,11 @@ class Composer:
         if isinstance(period := self.period(args, SCAN_DAYS), str):
             return _error(period)
         first, last = period
+        trimmed = (last - first).days >= SCAN_MAX_DAYS
+        first = max(first, last - timedelta(days=SCAN_MAX_DAYS - 1))
         air, notes = await self.air_series(list(SCAN_AIR) if metric == "all" else [metric], first, last)
+        if trimmed:
+            notes["period"] = f"Only the last {SCAN_MAX_DAYS} days can be scanned per question; this covers {first} to {last}"
         weather = {}
         for name, (group, field, _, _) in SCAN_WEATHER.items():
             if values := self.weather(group, field, first, last):
@@ -236,7 +241,7 @@ class Composer:
         weather_names = {**{k: (v[2], v[3]) for k, v in SCAN_WEATHER.items()}, "pressure_change": ("3-hour pressure change", "hPa"),
                          "rain": ("rain", "mm")}
         origin, days = day_bounds(first, self.tz)[0], (last - first).days + 1
-        result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days)
+        result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days, self.tz)
         summary = scan.summarise(result, air_names, weather_names)
         strongest = summary.pop("strongest")
         out = {"period": f"{first} to {last}", "resolution": "30-minute slots; each pair compared within the day and day to day",

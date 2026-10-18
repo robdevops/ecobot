@@ -962,6 +962,17 @@ def test_rain_that_comes_with_a_pressure_fall_is_found_and_rain_that_does_not_is
     assert out["correlation_change_vs_rain_next_3h"] > fell_correlation and analyse({}, {}, 1.0, TZ) == {}
 
 
+def test_rain_and_time_shares_are_of_the_same_slots():
+    from lib.analysis.pairs import analyse
+    from tests.fakes import TZ
+    base = 1_790_000_000 // 1800 * 1800
+    rain = {base + k * 1800: 1.0 for k in range(40)}                  # rain in every slot, half of them with no reading 3 h before
+    driver = {t: 0.0 for t in list(rain)[:6]} | {t: 5.0 for t in list(rain)[20:]}
+    table = analyse(driver, rain, 1.0, TZ)["by_change_before"]
+    assert sum(int(g["share_of_rain"].rstrip("%")) for g in table.values()) == 100
+    assert all(g["rain_vs_fair_share"] == "1.0x" for g in table.values() if g["slots"])   # it rained in every slot: fair shares
+
+
 async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_reading(tmp_path, archived_cache):
     from lib.charts import render
     eco, fake = await archived_station(tmp_path, archived_cache)

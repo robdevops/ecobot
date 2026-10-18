@@ -94,11 +94,13 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
         c = change_before(driver, t)
         if c is not None:
             groups["falling" if c <= -threshold else "rising" if c >= threshold else "steady"].append(t)
+    counted = [t for ts in groups.values() for t in ts]   # the slots with a change before them: the shares are of these
+    counted_mm = sum(rain[t] for t in counted)
     table = {}
     for name, ts in groups.items():
         mm = sum(rain[t] for t in ts)
-        time_share = len(ts) / max(sum(map(len, groups.values())), 1)
-        rain_share = mm / total if total else 0.0
+        time_share = len(ts) / max(len(counted), 1)
+        rain_share = mm / counted_mm if counted_mm else 0.0
         table[name] = {"slots": len(ts), "share_of_time": f"{100 * time_share:.0f}%",
                        "rain_mm": round(mm, 1), "share_of_rain": f"{100 * rain_share:.0f}%",
                        "rain_vs_fair_share": f"{rain_share / time_share:.1f}x" if time_share else None,
@@ -162,8 +164,8 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
         if len(before) >= MIN_WASH_SLOTS and len(after) >= MIN_WASH_SLOTS:
             events.append({"start": s[0], "mm": round(sum(rain[t] for t in s), 1), "before": float(np.mean(before)),
                            "after": float(np.mean(after))})
-    cleaned = sum(1 for e in events if e["after"] <= CLEANED * e["before"])
-    worse = sum(1 for e in events if e["after"] * CLEANED >= e["before"])
+    cleaned = sum(1 for e in events if e["after"] < e["before"] and e["after"] <= CLEANED * e["before"])   # unchanged (as zero to
+    worse = sum(1 for e in events if e["after"] > e["before"] and e["after"] * CLEANED >= e["before"])     # zero) is neither
     ratio = wet_level / dry_level if wet_level is not None and dry_level else None
     days: dict = {}
     for t in slots:
@@ -181,7 +183,7 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
     findings = []
     if wet_level is not None and dry_level is not None:
         findings.append(f"Average {label} {wet_level:.1f} in wet half-hours ({word(wet_level)}) against {dry_level:.1f} when dry "
-                        f"({word(dry_level)}): {ratio:.2f}x")
+                        f"({word(dry_level)})" + (f": {ratio:.2f}x" if ratio is not None else ""))
     if events:
         findings.append(f"Over {len(events)} rain events (1 mm or more) with readings around them: {cleaned} left the air cleaner "
                         f"in the 6 hours after than the 6 before, {worse} worse and {len(events) - cleaned - worse} about the same")

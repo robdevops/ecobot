@@ -1,9 +1,12 @@
 import json
 import time
+from datetime import UTC, date, datetime, time as dtime, timedelta
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
 from lib.analysis import scan as correlate
+from lib.timeutil import day_bounds
 from lib.tools import Turn
 from tests.test_compose import composer
 
@@ -33,7 +36,7 @@ def test_a_planted_relationship_is_found_with_its_direction_and_nothing_else():
     rng, n, _, cycle, wind = world()
     air = {"pm2_5": series(20 - 0.5 * wind + 3 * cycle + rng.normal(0, 2, n)), "co2": series(450 + 30 * cycle + rng.normal(0, 10, n))}
     weather = {"wind": series(wind), "temperature": series(15 + 8 * cycle + rng.normal(0, 1, n)), "noise": series(rng.normal(0, 1, n))}
-    result = correlate.scan(air, weather, None, None, ORIGIN, DAYS)
+    result = correlate.scan(air, weather, None, None, ORIGIN, DAYS, UTC)
     kept = [(t["air"], t["weather"]) for t in result["tests"] if t["survives"]]
     assert kept == [("pm2_5", "wind")]                                   # the shared daily cycle and the noise are not links
     found = next(t for t in result["tests"] if t["weather"] == "wind" and t["air"] == "pm2_5")
@@ -47,7 +50,7 @@ def test_pure_noise_finds_nothing_even_across_many_pairs():
     rng, n, _, _, _ = world(1)
     air = {f"a{i}": series(rng.normal(0, 1, n)) for i in range(3)}
     weather = {f"w{i}": series(rng.normal(0, 1, n)) for i in range(6)}
-    result = correlate.scan(air, weather, None, None, ORIGIN, DAYS, shuffles=100)
+    result = correlate.scan(air, weather, None, None, ORIGIN, DAYS, UTC, shuffles=100)
     assert not any(t["survives"] for t in result["tests"]) and len(result["tests"]) == 18
     out = correlate.summarise(result, *names(air, weather))
     assert out["verdict"].startswith("Nothing stands out") and out["findings"][0].startswith("Closest, probably chance")
@@ -57,7 +60,7 @@ def test_a_lagged_relationship_is_found_at_its_lag():
     rng, n, _, cycle, wind = world(2)
     lagged = np.roll(wind, 6)                                           # the air answers the wind three hours later
     air = {"pm2_5": series(20 - 0.5 * lagged + rng.normal(0, 1, n))}
-    result = correlate.scan(air, {"wind": series(wind)}, None, None, ORIGIN, DAYS)
+    result = correlate.scan(air, {"wind": series(wind)}, None, None, ORIGIN, DAYS, UTC)
     test = result["tests"][0]
     assert test["survives"] and test["lag_hours"] == 3.0 and test["r"] < -0.3
 
@@ -67,7 +70,7 @@ def test_the_air_by_wind_direction_finds_the_sector_it_is_worst_from():
     days = np.arange(n) // 48
     direction = np.where(days % 3 == 0, 45.0, np.where(days % 3 == 1, 225.0, 135.0))    # north-east, south-west or south-east days
     air = {"pm2_5": series(10 + 8 * (direction == 45.0) + rng.normal(0, 1, n))}
-    result = correlate.scan(air, {"wind": series(wind)}, series(direction), series(np.full(n, 20.0)), ORIGIN, DAYS)
+    result = correlate.scan(air, {"wind": series(wind)}, series(direction), series(np.full(n, 20.0)), ORIGIN, DAYS, UTC)
     d = result["directions"][0]
     assert d["survives"] and d["highest"] == "NE" and d["lowest"] in ("SW", "SE") and d["highest_by"] > 3
     out = correlate.summarise(result, *names(air, {"wind": 1}))
@@ -77,7 +80,7 @@ def test_the_air_by_wind_direction_finds_the_sector_it_is_worst_from():
 def test_too_few_days_says_so():
     rng, n, _, _, wind = world(4)
     short = {t: v for t, v in series(rng.normal(0, 1, n)).items() if t < ORIGIN + 10 * 86400}
-    result = correlate.scan({"pm2_5": short}, {"wind": series(wind)}, None, None, ORIGIN, DAYS)
+    result = correlate.scan({"pm2_5": short}, {"wind": series(wind)}, None, None, ORIGIN, DAYS, UTC)
     assert result["tests"] == [] and "at least 21" in result["note"]
     assert correlate.summarise(result, {"pm2_5": ("PM2.5", "")}, {})["verdict"] == "Not enough data to say"
 
@@ -94,7 +97,7 @@ def test_a_full_size_scan_of_every_pair_completes():
     air = {m: series(rng.normal(0, 1, n) + cycle) for m in ("pm2_5", "pm10", "co2", "voc_index", "nox_index")}
     weather = {w: series(rng.normal(0, 1, n) + cycle) for w in ("temperature", "humidity", "dew_point", "pressure", "wind_speed", "wind_gust", "pressure_change", "rain")}
     started = time.time()
-    result = correlate.scan(air, weather, series(rng.uniform(0, 360, n)), series(np.full(n, 20.0)), ORIGIN, DAYS, shuffles=60)
+    result = correlate.scan(air, weather, series(rng.uniform(0, 360, n)), series(np.full(n, 20.0)), ORIGIN, DAYS, UTC, shuffles=60)
     assert len(result["tests"]) == 40 and len(result["directions"]) == 5 and time.time() - started < 30
 
 
@@ -106,4 +109,28 @@ async def test_air_scan_answers_with_a_verdict_and_can_chart_the_strongest_pair(
     assert out["verdict"] and out["findings"] and out["pairs_tested"] >= 6 and "how_to_read" in out
     assert all(len(s.panels) == 2 or s.panels[0].bars for s in specs)    # two readings (rain behind the other): only when a relationship stood out
     assert "error" in json.loads(await comp.air_scan({"metric": "pm1"}))
+    await eco.close()
+
+
+def test_a_time_of_day_keeps_its_slot_across_a_daylight_saving_change():
+    tz = ZoneInfo("Australia/Melbourne")
+    for first in (date(2026, 4, 3), date(2026, 10, 2)):                 # 5 April gains an hour, 4 October loses one
+        origin = day_bounds(first, tz)[0]
+        nine = {int(datetime.combine(first + timedelta(days=d), dtime(9), tz).timestamp()): 1.0 for d in range(4)}
+        grid = correlate.to_grid(nine, origin, 4, correlate.clock_slots(origin, 4, tz))
+        assert list(np.flatnonzero(~np.isnan(grid))) == [18 + 48 * d for d in range(4)]     # 9 am every day, not 8 or 10
+
+
+def test_no_weather_readings_say_there_was_nothing_to_compare_not_that_nothing_stands_out():
+    rng, n, _, _, _ = world(6)
+    result = correlate.scan({"pm2_5": series(rng.normal(0, 1, n))}, {}, None, None, ORIGIN, DAYS, UTC)
+    assert result["tests"] == [] and "No weather readings" in result["note"]
+    assert correlate.summarise(result, {"pm2_5": ("PM2.5", "")}, {})["verdict"] == "Not enough data to say"
+
+
+async def test_a_scan_of_years_covers_its_latest_400_days_and_says_so(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    out = json.loads(await comp.air_scan({"start_date": "2020-01-01"}))
+    first, last = (date.fromisoformat(d) for d in out["period"].split(" to "))
+    assert (last - first).days == 399 and "Only the last 400 days" in out["notes"]["period"]
     await eco.close()
