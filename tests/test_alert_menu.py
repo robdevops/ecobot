@@ -32,8 +32,9 @@ def test_each_menu_lists_every_type_struck_through_when_off_with_back_and_the_ot
     assert got[0] == [("rain", "al:off:rain:alerts"), (strike("gusts"), "al:on:gusts:alerts")] and got[-1] == [("⬅️ Back", "al:close")]
     assert "Sound" not in str(got) and "Alerts" not in str(got)                                           # the other menu, and its button, are hidden
     got = rows(keyboard({"gusts"}, KINDS, "sound", loud={"rain"}))
-    assert got[0] == [("rain", "al:snd:rain:off"), (strike("gusts"), "al:snd:gusts:on")]                   # (a type that is off can still have a sound set)
-    assert [t for row in got[1:-1] for t, _ in row] == [strike(w) for w in ("UV", "temperature crossing", "particulates", "pollen & asthma", "forecast changes")]
+    assert got[0] == [("rain", "al:snd:rain:off"), (strike("UV"), "al:snd:uv:on")]                         # gusts is off, so it is not listed
+    assert [t for row in got[1:-1] for t, _ in row] == [strike(w) for w in ("temperature crossing", "particulates", "pollen & asthma", "forecast changes")]
+    assert rows(keyboard(set(KINDS), KINDS, "sound", loud=set())) == [[("🔔 Alerts ▸", "al:open:alerts")]]   # nothing is on: no Sound button either
     assert got[-1] == [("⬅️ Back", "al:close")] and "Alerts" not in str(got)
     for old, new in (("sub", "alerts"), ("unsub", "alerts"), ("other", "alerts"), ("set", "sound"), ("snd_on", "sound"), ("snd_off_o", "sound")):
         assert rows(keyboard({"gusts"}, KINDS, old, loud=set())) == rows(keyboard({"gusts"}, KINDS, new, loud=set())), old    # an earlier version's sections
@@ -304,19 +305,20 @@ async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_
     q = Query("al:open:sound")
     await press(bot, q)
     drawn = rows(q.edits[0][1])
-    assert drawn[0] == [(strike("rain"), "al:snd:rain:on"), (strike("gusts"), "al:snd:gusts:on")] and drawn[-1] == [("⬅️ Back", "al:close")]
+    assert drawn[0] == [(strike("rain"), "al:snd:rain:on"), (strike("UV"), "al:snd:uv:on")] and drawn[-1] == [("⬅️ Back", "al:close")]
+    assert "gusts" not in str(drawn)                                            # an alert that is off has no sound to set
     assert "Alerts" not in str(drawn)                                           # the Alerts menu is hidden while Sound is open
     q = Query("al:snd:rain:on")
     await press(bot, q)
     assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][1])[0][0] == ("rain", "al:snd:rain:off")
-    await press(bot, Query("al:snd:gusts:on"))                                  # a type that is off can still have its sound set
-    assert state.loud(1) == {"rain", "gusts"}
+    await press(bot, Query("al:snd:uv:on"))
+    assert state.loud(1) == {"rain", "uv"}
     q = Query("al:snd:rain:off")
     await press(bot, q)
-    assert state.loud(1) == {"gusts"} and q.toast == "Rain alerts no longer make a sound"
+    assert state.loud(1) == {"uv"} and q.toast == "Rain alerts no longer make a sound"
     for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain", "al:snd:all:on"):         # nothing from the data reaches the state
         await press(bot, Query(data))
-    assert state.loud(1) == {"gusts"}
+    assert state.loud(1) == {"uv"}
     q = Query("al:close")
     await press(bot, q)
     assert rows(q.edits[0][1]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]

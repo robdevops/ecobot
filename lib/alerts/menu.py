@@ -78,20 +78,21 @@ def _list(kinds: list[str], is_on, data) -> list[list]:
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
              loud: set[str] | None = None) -> InlineKeyboardMarkup:
     """The /alerts menu: two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a menu with the full list of alert types, each a
-    toggle struck through while it is off (alerts on or off in this chat; notification sound on or off), and ⬅️ Back. While one is open
+    toggle struck through while it is off (alerts on or off in this chat; notification sound on or off, for the types that are on), and ⬅️ Back. While one is open
     the other is hidden, its button included, until Back. `open`: alerts, sound (or one of an earlier version's sections). `loud`: the
     types whose alerts make a notification sound; None (a group) has no Sound. `parent`: the type of the alert these buttons sit under,
     which has a menu of its own (alert_keyboard)."""
     if parent:
         return alert_keyboard(parent, muted, loud, open)
     open = {"sub": "alerts", "unsub": "alerts", "other": "alerts", **dict.fromkeys(SETTINGS, "sound")}.get(open, open)
+    sound_types = [k for k in available if k not in muted] if loud is not None else []   # (a type that is off has no sound to set)
     if open == "alerts":
         rows = _list(available, lambda k: k not in muted, lambda k: f"al:{'off' if k not in muted else 'on'}:{k}:alerts")
-    elif open == "sound" and loud is not None:
-        rows = _list(available, lambda k: k in loud, lambda k: f"al:snd:{k}:{'off' if k in loud else 'on'}")
+    elif open == "sound" and sound_types:
+        rows = _list(sound_types, lambda k: k in loud, lambda k: f"al:snd:{k}:{'off' if k in loud else 'on'}")
     else:
         return InlineKeyboardMarkup([[_button(menu_text("🔔 Alerts", False), "al:open:alerts"),
-                                      *([_button(menu_text("🔊 Sound", False), "al:open:sound")] if loud is not None else [])]])
+                                      *([_button(menu_text("🔊 Sound", False), "al:open:sound")] if sound_types else [])]])
     return InlineKeyboardMarkup([*rows, [_button("⬅️ Back", "al:close")]])
 
 
