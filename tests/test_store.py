@@ -112,3 +112,18 @@ def test_the_cache_says_where_it_is_and_how_much_it_holds(tmp_path):
     assert cache.count("M", "5min", "outdoor", old, old + 300) == 2 and cache.count("M", "5min", "outdoor", old + 1000, now) == 0
     assert cache.count("M", "30min", "outdoor", 0, now) == 0
     assert cache.newest("M", "5min") == old + 600 and cache.newest("M", "30min") is None
+
+
+def test_a_write_that_fails_part_way_leaves_nothing_behind(tmp_path, monkeypatch):
+    """A response is saved in one transaction: if the coverage update fails after the readings went in, they are rolled back,
+    not committed half-written by the next save."""
+    import pytest
+    cache = make(tmp_path)
+    old = int(time.time()) - 10 * 86400
+    real_merge = store.merge
+    monkeypatch.setattr(store, "merge", lambda spans: (_ for _ in ()).throw(RuntimeError("disk trouble")))
+    with pytest.raises(RuntimeError):
+        cache.store("M", "5min", ["outdoor"], data(old, old + 300), old, old + 300)
+    monkeypatch.setattr(store, "merge", real_merge)
+    cache.store("M", "5min", ["outdoor"], data(old + 3600), old + 3600, old + 3600)   # a later save commits only its own
+    assert cache.count("M", "5min", "outdoor", old, old + 300) == 0 and cache.count("M", "5min", "outdoor", old + 3600, old + 3600) == 1

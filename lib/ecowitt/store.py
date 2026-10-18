@@ -213,7 +213,7 @@ class HistoryCache:
                 covered.append((grp, limit))
             elif reached is not None:
                 covered.append((grp, min(limit, reached + BUCKET_SECONDS[cycle] - 1)))
-        with self._lock:
+        with self._lock, self.db:   # one transaction: an error part-way rolls it back (no half-written response is kept)
             grown = set()   # groups that now carry a reading the cache has never had (Ecowitt added a metric)
             for _, _, grp, field, _ in units:
                 known = {r[0] for r in self.db.execute("SELECT field FROM series WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))}
@@ -233,7 +233,6 @@ class HistoryCache:
                 self.db.execute("DELETE FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))
                 self.db.executemany("INSERT INTO coverage VALUES (?,?,?,?,?)",
                                     [(mac, cycle, grp, s, e) for s, e in merge(existing + [(start, cov_end)])])
-            self.db.commit()
 
     def load(self, mac: str, cycle: str, groups: list[str], start: int, end: int) -> dict:
         """Cached readings in Ecowitt's response shape: {grp: {field: {unit, list}}}."""

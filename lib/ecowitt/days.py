@@ -21,7 +21,6 @@ from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
 from .api import daily_run
 from .calendar import PublicHolidays
-from .extremes import collect
 from .store import HistoryCache, subtract
 
 log = logging.getLogger(__name__)
@@ -65,34 +64,29 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "days and the top ones. For a record's value and the time it happened (hottest, coldest, fastest gust), use weather_history instead. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
-def load_cached(cache: HistoryCache, mac: str, cycle: str, names: list[str], start: int, end: int) -> dict:
-    """The cached readings of the wanted fields, folded by collect() into {"group.field": {"pts": ...}}."""
-    data: dict = {}
+def day_figures(cache: HistoryCache, mac: str, cycle: str, names: list[str], days: set[date], tz: tzinfo, start: int,
+                end: int) -> dict[str, dict[date, float]]:
+    """{reading: {day: its figure}} for each of `days`, from the cached readings between start and end (epochs): the day's highest
+    high, lowest low or mean. Each field is read once, however many readings use it (temp_max, temp_min and temp_avg are one),
+    and folded into days as it is read, one at a time, so a long period of 5-minute readings is not held whole."""
+    readers: dict[tuple[str, str], list[str]] = {}
     for name in names:
-        group, field, _, _ = FIELDS[name]
-        found = cache.load_fields(mac, cycle, group, [field, f"{field}_high", f"{field}_low"], start, end)
-        data.setdefault(group, {}).update(found)
-    store: dict = {}
-    collect(store, data, cycle)
-    return store
-
-
-def per_day(store: dict, name: str, days: set[date], tz: tzinfo) -> dict[date, float]:
-    """One extreme per day (the highest high, or the lowest low) of the readings that fall in `days`."""
-    group, field, kind, _ = FIELDS[name]
-    out: dict[date, float] = {}
-    if kind == "mean":   # the day's mean of its readings
-        sums: dict[date, list[float]] = {}
-        for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
-            if (day := local_date(ts, tz)) in days and rec.get("value") is not None:
-                sums.setdefault(day, []).append(rec["value"][0])
-        return {d: fmean(v) for d, v in sums.items()}
-    for ts, rec in store.get(f"{group}.{field}", {}).get("pts", {}).items():
-        day = local_date(ts, tz)
-        found = rec.get(kind) or rec.get("value")
-        if day in days and found is not None:
-            if day not in out or (found[0] > out[day] if kind == "high" else found[0] < out[day]):
-                out[day] = found[0]
+        readers.setdefault(FIELDS[name][:2], []).append(name)
+    out: dict[str, dict[date, float]] = {}
+    for (group, field), wanted in readers.items():
+        value, high, low = cache.slots(mac, cycle, group, [field, f"{field}_high", f"{field}_low"], start, end)
+        for name in wanted:
+            kind = FIELDS[name][2]
+            points = value if kind == "mean" else {**value, **(high if kind == "high" else low)}   # a slot's own high or low, if it has one
+            figures: dict[date, list[float]] = {}
+            for ts, v in points.items():
+                if (day := local_date(ts, tz)) in days:
+                    got = figures.setdefault(day, [])
+                    if kind == "mean" or not got:
+                        got.append(v)
+                    elif v > got[0] if kind == "high" else v < got[0]:
+                        got[0] = v
+            out[name] = {d: fmean(v) if kind == "mean" else v[0] for d, v in figures.items()}
     return out
 
 
@@ -136,13 +130,13 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     for cycle in SUB_DAILY:
         mine = {d for d, c in source.items() if c == cycle}
         if mine:
-            store = load_cached(cache, mac, cycle, shown, day_bounds(min(mine), tz, True)[0], day_bounds(max(mine), tz, True)[1])
-            for n in shown:
-                values[n].update(per_day(store, n, mine, tz))
+            for n, figures in day_figures(cache, mac, cycle, shown, mine, tz, day_bounds(min(mine), tz, True)[0],
+                                          day_bounds(max(mine), tz, True)[1]).items():
+                values[n].update(figures)
     if rest:  # daily buckets: labelled with the local date their 10am start falls on
-        store = load_cached(cache, mac, "1day", shown, day_bounds(min(rest), tz, True)[0] - 86400, day_bounds(max(rest), tz, True)[1] + 86400)
-        for n in shown:
-            values[n].update(per_day(store, n, rest, tz))
+        for n, figures in day_figures(cache, mac, "1day", shown, rest, tz, day_bounds(min(rest), tz, True)[0] - 86400,
+                                      day_bounds(max(rest), tz, True)[1] + 86400).items():
+            values[n].update(figures)
         for d in rest:
             if any(d in values[n] for n in shown):
                 source[d] = "daily"

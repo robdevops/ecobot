@@ -47,8 +47,7 @@ def totals(cache: HistoryCache, mac: str, tz, cycle: str, days: list) -> dict:
     lo, hi = day_bounds(min(days), tz, True)[0], day_bounds(max(days), tz, True)[1]
     if cycle == "1day":
         lo, hi = lo - 86400, hi + 86400
-    store = day_tool.load_cached(cache, mac, cycle, ["rain"], lo, hi)
-    return day_tool.per_day(store, "rain", set(days), tz)
+    return day_tool.day_figures(cache, mac, cycle, ["rain"], set(days), tz, lo, hi)["rain"]
 
 
 def compare_rain(cache: HistoryCache, mac: str, tz, today, days_back: int = 88) -> dict:
