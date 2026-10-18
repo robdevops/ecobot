@@ -10,8 +10,13 @@ def menu_text(text: str, is_open: bool) -> str:
     return f"{text} {'▾' if is_open else '▸'}"
 
 
+def struck(text: str) -> str:
+    """The text with a line through it (a button cannot be styled, so each letter gets the combining long stroke)."""
+    return "".join(f"{c}\u0336" for c in text)
+
+
 def toggle_button(word: str, on: bool, data: str) -> InlineKeyboardButton:
-    """A button that flips a setting: its word after a ✅ on a green button while the setting is on, after a ❌ on a red one while it is
-    off (the tick and cross stay for a client that does not draw button colours)."""
-    return InlineKeyboardButton(f"{'✅' if on else '❌'} {word}", callback_data=data,
+    """A button that flips a setting: its word on a green button while the setting is on, the word struck through on a red one while it
+    is off."""
+    return InlineKeyboardButton(word if on else struck(word), callback_data=data,
                                 style=KeyboardButtonStyle.SUCCESS if on else KeyboardButtonStyle.DANGER)

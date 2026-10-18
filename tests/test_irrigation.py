@@ -17,6 +17,7 @@ from lib.alerts import AlertState, IrrigationMonitor
 from lib.alerts import irrigation as monitor_module
 from lib.alerts.menu import available_kinds
 from lib.bot import Bot
+from lib.buttons import struck as strike
 from lib.config import Config
 from lib.irrigation import IrrigationError, Tuya, Watchdog, menu
 from lib.irrigation.tuya import sign
@@ -177,10 +178,10 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     assert rows(menu.keyboard(True, True, "water", paused=True)) == paused                     # and no minutes or Off either
     assert menu.SECTIONS == ("water", "delay", "alerts") and len(rows(menu.keyboard(True, True, "switch"))) == 2   # no Switch menu any more
     for battery, pause, battery_button, pause_button in (
-            (False, False, ("❌ battery alerts", "ir:batt:on"), ("❌ pause alerts", "ir:pause:on")),
-            (True, False, ("✅ battery alerts", "ir:batt:off"), ("❌ pause alerts", "ir:pause:on")),
-            (False, True, ("❌ battery alerts", "ir:batt:on"), ("✅ pause alerts", "ir:pause:off")),
-            (True, True, ("✅ battery alerts", "ir:batt:off"), ("✅ pause alerts", "ir:pause:off"))):
+            (False, False, (strike("battery alerts"), "ir:batt:on"), (strike("pause alerts"), "ir:pause:on")),
+            (True, False, ("battery alerts", "ir:batt:off"), (strike("pause alerts"), "ir:pause:on")),
+            (False, True, (strike("battery alerts"), "ir:batt:on"), ("pause alerts", "ir:pause:off")),
+            (True, True, ("battery alerts", "ir:batt:off"), ("pause alerts", "ir:pause:off"))):
         alerts = rows(menu.keyboard(battery, pause, "alerts"))
         assert alerts[:2] == collapsed[:1] + [[("🔔 Alerts ▾", "ir:close"), ("🔄 Refresh", "ir:refresh")]]
         assert alerts[2:] == [[battery_button], [pause_button]]                                    # each names the action it takes
@@ -205,7 +206,7 @@ def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller(
     from lib.alerts.menu import LABELS, keyboard
     assert LABELS["irrigation_battery"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
     listed = rows(keyboard(set(), ["rain", "irrigation_battery"], "alerts"))
-    assert ("✅ irrigation battery", "al:off:irrigation_battery:alerts") in [b for row in listed for b in row]
+    assert ("irrigation battery", "al:off:irrigation_battery:alerts") in [b for row in listed for b in row]
 
 
 # ---------- the daily check ----------
@@ -490,14 +491,14 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
 async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_stays_open(tmp_path):
     bot, state, _ = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:alerts")
-    assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[2:]] == ["✅ battery alerts", "✅ pause alerts"]
+    assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[2:]] == ["battery alerts", "pause alerts"]
     q = await press(bot, "ir:batt:off")
     assert state.muted(1) == {"irrigation_battery"} and q.toast == "Irrigation battery alerts off in this chat"
-    assert rows(q.edits[0][2])[2:] == [[("❌ battery alerts", "ir:batt:on")], [("✅ pause alerts", "ir:pause:off")]]   # still open
+    assert rows(q.edits[0][2])[2:] == [[(strike("battery alerts"), "ir:batt:on")], [("pause alerts", "ir:pause:off")]]   # still open
     assert q.edits[0][1].endswith("pause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: off)")        # the status text follows
     q = await press(bot, "ir:pause:off")
     assert state.muted(1) == {"irrigation_battery", "irrigation_pause"} and q.toast == "Irrigation pause alerts off in this chat"
-    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [("❌ pause alerts", "ir:pause:on")]
+    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [(strike("pause alerts"), "ir:pause:on")]
     q = await press(bot, "ir:batt:on")
     assert state.muted(1) == {"irrigation_pause"} and q.toast == "Irrigation battery alerts on in this chat"           # the other type is untouched
     q = await press(bot, "ir:pause:on")
@@ -507,7 +508,7 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
             alerts = rows(menu.keyboard(state.subscribed(1, "irrigation_battery"), state.subscribed(1, "irrigation_pause"), "alerts"))
             text, data = next(b for row in alerts[2:] for b in row if b[1].startswith(f"ir:{prefix}:"))
             await press(bot, data)
-            assert state.subscribed(1, kind) is text.startswith("❌"), (text, data)
+            assert state.subscribed(1, kind) is (text != text.replace("\u0336", "")), (text, data)
     other = await press(bot, "ir:water:5")
     assert len(rows(other.edits[0][2])) == 3                                                    # any other action redraws collapsed (3 rows: the valve is on)
     other = await press(bot, "ir:refresh")
