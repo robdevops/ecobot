@@ -86,7 +86,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     everything = not options(muted, available, "sub")   # subscribed to every type: nothing for Sub to list, so no Sub button
     if everything and open == "sub":
         open = None
-    rows = [[*([] if everything else [head(open == "sub", "🔔 Sub", "sub")]), head(unsub_open, "🔕 Unsub", "unsub")]]
+    rows = [[*([] if everything else [head(open == "sub", "🔔", "sub")]), head(unsub_open, "🔕", "unsub")]]
     if loud is not None:
         rows[0].append(head(open in SETTINGS, "⚙️", "set"))
     mark = lambda k: f"● {label(k)}" if k == parent else label(k)   # the alert these buttons are under
