@@ -8,7 +8,7 @@ from datetime import datetime
 from telegram import MessageEntity
 
 from .ecowitt.glance import solar_band
-from .series import WEATHER, find
+from .series import INDOOR_READINGS, WEATHER, find
 
 AIR_ROWS = (("pm2_5", "PM2.5"), ("pm10", "PM10"), ("pm1", "PM1"), ("co2", "CO₂"), ("voc_index", "VOC index"), ("nox_index", "NOx index"))
 
@@ -151,9 +151,10 @@ def reading_lines(now: dict, names: list[str], sides: list[str]) -> list[str]:
             lines += [line for line in weather_lines(now) if line.startswith("• Rain today")] or [
                 f"• Rain today: {get('rainfall', 'daily') or 'none'}"]
         else:
-            text = tag(reading.group, reading.field)
+            group = sides[0] if name in INDOOR_READINGS and len(sides) == 1 else reading.group   # "indoor dew point": that sensor's
+            text = tag(group, reading.field)
             if text:
-                lines.append(f"• {reading.label}: {text}")
+                lines.append(f"• {reading.label}{' (indoor)' if group == 'indoor' else ''}: {text}")
     return [line for line in lines if line]
 
 

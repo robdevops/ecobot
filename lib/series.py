@@ -34,6 +34,7 @@ WEATHER = {
     "uv": Reading("solar_and_uvi", "uvi", "UV index", "", r"uvi?|ultraviolet"),
 }
 SPECIFIC = ("dew_point", "feels_like", "vpd")   # kinds of temperature and humidity, named on their own: they outrank "temperature" in a question
+INDOOR_READINGS = ("temperature", "humidity", "dew_point", "feels_like")   # what the indoor sensor measures as well
 
 
 def find_name(name: str) -> str | None:

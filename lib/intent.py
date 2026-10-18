@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from .series import PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
+from .series import INDOOR_READINGS, PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,11 @@ _PRESSURE = PRESSURE_WORDS
 # The two devices by name: "ecowitt" is the weather, "ag" / "airgradient" / "air gradient" the air quality
 _ECOWITT = r"ecowitt"
 _AG = r"air ?gradient|ag"
+AIR_METRICS = [  # word -> metric; checked in order, so PM10 wins over PM1
+    (r"pm ?2\.?5|pm25", "pm2_5"), (r"pm ?10", "pm10"), (r"pm ?1(?![0-9])", "pm1"), (r"co2|co₂", "co2"),
+    (r"voc\w*", "voc_index"), (r"nox", "nox_index"),
+]
+_AIR_METRIC = "|".join(words for words, _ in AIR_METRICS)   # the words that name an air reading, for every pattern below
 _OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather|{_ECOWITT}"  # a question that is not (only) about the air
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
@@ -48,7 +53,7 @@ WEATHER = re.compile(
     rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"
     r"indoors?|outdoors?|inside|outside|conditions|feels?|today|tonight|tomorrow|yesterday|"
-    r"week|month|year|air|aqi|pm ?2\.?5|pm ?10|co2|voc\w*|nox|smok\w*|pollut\w*|stuffy)\b|°|"
+    rf"week|month|year|air|aqi|{_AIR_METRIC}|smok\w*|pollut\w*|stuffy)\b|°|"
     r"\b\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|"
     r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}\b|\b\d{1,2}/\d{1,2}\b", I)
 
@@ -311,8 +316,8 @@ EXTREMES = re.compile(r"\b(hottest|coldest|warmest|coolest|highest|lowest|highs?
                       r"extremes?|temperatures?|temps?)\b", I)
 GRAPH = re.compile(r"\b(graph\w*|chart\w*|plot\w*|trend\w*|visuali[sz]\w*)\b", I)
 # Anything that needs other data, a judgement, or a comparison goes the normal way
-_NOT_SIMPLE = (r"rain\w*|pressure|humid\w*|uv|solar|lightning|pm ?2\.?5|pm2|pm ?10|pm ?1|"
-               rf"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|{_AG}|"
+_NOT_SIMPLE = (rf"rain\w*|pressure|humid\w*|uv|solar|lightning|{_AIR_METRIC}|pm2|"
+               rf"air|air quality|aqi?|smok\w*|pollut\w*|{_AG}|"
                r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
                r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now")
 NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
@@ -347,7 +352,8 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
 
 
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
-ALL = re.compile(r"\b(all|every\w*|each)\b", I)
+# "all metrics", "everything", "aq all week" (every reading, a week), but not the period "all time" nor "every day" or "each month"
+ALL = re.compile(r"\b(all(?![\s-]+time\b)|everything|(?:every|each)(?!\s+(?:days?|nights?|weeks?|months?|years?|hours?|times?)\b))\b", I)
 PER_DAY = re.compile(r"\b(each|every|per|by)\s+day|daily|day[- ]by[- ]day|which days|list|breakdown|one by one", I)
 
 
@@ -362,7 +368,6 @@ def _named(text: str) -> dict[str, int]:
 FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
 VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
 ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")   # the panels of "weather all week", top to bottom
-INDOOR_READINGS = ("temperature", "humidity", "dew_point", "feels_like")   # what the indoor sensor measures
 LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
@@ -410,6 +415,15 @@ def _sides(text: str) -> list[str]:
     return ["indoor"] if indoor and not outdoor else ["outdoor"] if outdoor and not indoor else ["outdoor", "indoor"]
 
 
+def _groups(text: str, names: list[str]) -> list[str]:
+    """The Ecowitt groups for these readings. Temperature and humidity come from both sensors unless one side is named; the
+    rest of what the indoor sensor measures (dew point, feels like) from the indoor one only when it is named."""
+    groups = list(dict.fromkeys(WEATHER_READINGS[n].group for n in names))
+    if "outdoor" in groups and ({"temperature", "humidity"} & set(names) or INDOOR.search(text) and set(INDOOR_READINGS) & set(names)):
+        groups = [g for g in groups if g != "outdoor"] + _sides(text)
+    return list(dict.fromkeys(groups))
+
+
 def bare_chart_ask(text: str, now: datetime) -> bool:
     """Nothing but readings (or "weather") and a period: "humidity 7d", "weather 30d". Anything with a time range is a chart."""
     if not _has_days(text, 2, now) or not (_named(text) or WEATHER_WORD.search(text)):
@@ -432,10 +446,7 @@ def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, li
         spans = [default_span(now)]   # a chart with no period is the last day
     if len(spans) != 1:
         return None
-    groups = list(dict.fromkeys(WEATHER_READINGS[f].group for f in fields))
-    if "outdoor" in groups and {"temperature", "humidity"} & set(fields):   # these two have an indoor sensor as well
-        groups = [g for g in groups if g != "outdoor"] + _sides(text)
-    return (*spans[0], list(dict.fromkeys(groups)))
+    return (*spans[0], _groups(text, fields))
 
 
 AVERAGE_READINGS = ("temperature", "humidity", "pressure", "wind", "dew_point", "feels_like", "vpd", "solar", "uv")   # a rain total has no average
@@ -453,10 +464,7 @@ def weather_average(text: str, now: datetime) -> tuple[str, datetime, datetime, 
     spans = spans_in(text, now)
     if len(spans) != 1:
         return None
-    groups = list(dict.fromkeys(WEATHER_READINGS[n].group for n in names))
-    if "outdoor" in groups and {"temperature", "humidity"} & set(names):
-        groups = [g for g in groups if g != "outdoor"] + _sides(text)
-    return (*spans[0], list(dict.fromkeys(groups)))
+    return (*spans[0], _groups(text, names))
 
 
 def weather_groups(text: str) -> str:
@@ -470,7 +478,7 @@ def weather_groups(text: str) -> str:
 # ---------- air-quality fast path ----------
 # "how's the air?", "what's the AQI", "report my airgradient aq". History, comparisons and mixed
 # weather questions go the normal way.
-AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|particulates?|particles?|{_AG})\b", I)
+AIR = re.compile(rf"\b(air|aqi|aq|{_AIR_METRIC}|smok\w*|pollut\w*|particulates?|particles?|{_AG})\b", I)
 AIR_QUALITY = re.compile(r"\bair quality\b", I)
 AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"
@@ -478,10 +486,6 @@ AIR_NOT_NOW = re.compile(
     r"average|highest|lowest|peak|max\w*|min\w*|record\w*|"
     rf"{_OTHER_THAN_AIR})\b", I)
 AIR_CHART_NOT = re.compile(rf"\b(compare\w*|vs|versus|than|why|forecast\w*|tomorrow|will|{_OTHER_THAN_AIR})\b", I)
-AIR_METRICS = [  # word -> metric; checked in order, so PM10 wins over PM1
-    (r"pm ?2\.?5|pm25", "pm2_5"), (r"pm ?10", "pm10"), (r"pm ?1(?![0-9])", "pm1"), (r"co2|co₂", "co2"),
-    (r"voc\w*", "voc_index"), (r"nox", "nox_index"),
-]
 
 
 def mentions_air(text: str) -> bool:
@@ -816,9 +820,13 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
     return "", []
 
 
+APOSTROPHES = str.maketrans("’‘", "''")   # a phone's typographic apostrophes ("what’s"), read as the plain one every pattern uses
+
+
 def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
          forecast: bool = False) -> Reading:
     """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
+    text = text.translate(APOSTROPHES)
     report = wants_report(text)
     calls = report_calls(ecowitt, air, pollen, forecast) if report else []
     try:

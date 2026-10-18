@@ -182,6 +182,8 @@ def test_a_reading_lookup_prints_only_what_was_asked():
     assert report.reading_lines(now, ["humidity"], ["outdoor"]) == ["• Outdoor: 💦 94 %"]
     assert report.reading_lines(now, ["wind"], []) == ["• Wind: calm"]
     assert report.reading_lines(now, ["pressure"], []) == ["• Pressure: 🗜️ 1025.0 hPa"]
+    assert report.reading_lines(now, ["dew_point"], ["indoor"]) == ["• Dew point (indoor): 11.1 °C"]   # "indoor dew point"
+    assert report.reading_lines(now, ["feels_like"], ["outdoor", "indoor"])[0].startswith("• Feels like: ")   # unasked: outdoor
     assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining (1.8 mm/h)" in report.reading_lines(now, ["rain"], [])[0]
 
 

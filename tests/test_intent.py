@@ -529,3 +529,31 @@ def test_a_named_reading_or_an_air_chart_is_not_every_reading_and_indoors_has_on
     for ask in ("temperature chart 90d", "rain chart 7d", "chart air 90d", "plot pm2.5 90d"):
         assert not intent.wants_chart_all(ask) and intent.chart_fields(ask) == []
     assert intent.chart_fields("chart all 90d indoors") == ["temperature", "humidity", "dew_point"]
+
+
+# ---------- what a phone types, and words that only look like other things ----------
+def test_a_phone_s_curly_apostrophe_reads_as_the_plain_one():
+    for plain in ("what's the weather", "what's the temperature", "show what you've got", "what's the forecast"):
+        curly = plain.replace("'", "’")
+        assert intent.read(curly, NOW, pollen=True, forecast=True).fast == intent.read(plain, NOW, pollen=True, forecast=True).fast, curly
+        assert intent.read(curly, NOW, pollen=True, forecast=True).fast is not None, curly
+
+
+def test_all_time_and_every_day_are_periods_not_every_air_reading():
+    for text in ("pm2.5 chart all time", "pm2.5 every day this week", "highest pm2.5 of all-time"):
+        assert intent.air_named(text) == ["pm2_5"], text
+    for text in ("aq all week", "air quality all metrics 1d", "chart everything in the air 7d"):   # every reading still means every one
+        assert intent.air_named(text) == ["pm2_5", "pm10", "pm1", "co2", "voc_index", "nox_index"], text
+    assert call("count days over PM2.5 of 90 per year all time")[0] == "air_days"
+
+
+def test_co2_with_a_subscript_two_is_the_air_reading():
+    assert call("co₂ chart 7d")[1]["metrics"] == ["co2"] and call("chart CO₂ 1d")[0] == "air_quality"
+    assert intent.needs_data("co₂") and intent.needs_data("pm1") and intent.mentions_air("co₂")
+
+
+def test_indoor_dew_point_and_feels_like_come_from_the_indoor_sensor():
+    for text in ("indoor dew point chart", "indoor feels like chart 7d", "indoor dew point 90d"):
+        assert call(text)[1]["groups"] == "indoor", text
+    assert call("dew point chart")[1]["groups"] == "outdoor"      # unasked, they stay the outdoor sensor's
+    assert call("indoor and outdoor dew point chart 7d")[1]["groups"] == "outdoor,indoor"
