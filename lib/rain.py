@@ -1,10 +1,11 @@
 """Rain from the station's running daily total, at 30-minute slots: how much fell in each, which slots make up a
 spell, and the bars a chart draws. Shared by the analyses and the charts."""
 
-from datetime import date, timedelta, tzinfo
+from bisect import bisect_right
+from datetime import date, datetime, time, timedelta, tzinfo
 
 from .specs import Bars
-from .timeutil import SLOT, day_bounds, to_local
+from .timeutil import SLOT, day_bounds, local_epoch, to_local
 
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
 SPELL_MM = 1.0                 # a spell needs this much rain to count as an event
@@ -38,12 +39,20 @@ def rain_spells(rain: dict[int, float], wet: list[int]) -> list[list[int]]:
     return [s for s in spells if sum(rain[t] for t in s) >= SPELL_MM]
 
 
-def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[int, int, str]:
-    """(origin epoch, seconds per bar, what a bar covers) for a bar chart of this period: hourly up to 4 days, 6-hourly
-    up to a month, daily beyond. Bars start at local midnight of the first day."""
+def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[list[int], int, str]:
+    """(each bar's start, seconds per bar, what a bar covers) for a bar chart of this period: hourly up to 4 days, 6-hourly up
+    to a month, daily beyond. The bars start at the same local clock times every day (midnight, 6am ...) from midnight of the
+    first day, so a daylight-saving change doesn't move them (a day of 23 or 25 hours has one bar the shorter or longer)."""
     width = next(w for limit, w in CHART_BARS if (last - first).days + 1 <= limit)
-    return (day_bounds(first, tz)[0], width,
-            {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width])
+    starts = {local_epoch(datetime.combine(first + timedelta(days=n), time(hour)), tz)
+              for n in range((last - first).days + 1) for hour in range(0, 24, width // 3600)}
+    return sorted(starts), width, {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width]
+
+
+def bar_of(starts: list[int], t: int) -> int | None:
+    """The start of the bar that holds epoch `t` (None before the first)."""
+    i = bisect_right(starts, t) - 1
+    return starts[i] if i >= 0 else None
 
 
 def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until: int | None = None, by: str | None = None,
@@ -53,17 +62,14 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until
     own start) at the bar that holds it: a rolling last 24 hours has no bars left of its data."""
     if by in ("month", "year"):   # a figure per month or year was asked for: one bar for each, whatever the length
         return _calendar_bars(rain, tz, first, last, by)
-    origin, width, per = bar_layout(tz, first, last)
+    starts, width, per = bar_layout(tz, first, last)
     end = min(day_bounds(last, tz)[1], until) if until else day_bounds(last, tz)[1]
-    begin = origin + (since - origin) // width * width if since is not None and since > origin else origin
-    bars: dict[int, float] = dict.fromkeys(range(begin, end, width), 0.0)
+    begin = bar_of(starts, since) if since is not None and since > starts[0] else starts[0]
+    bars: dict[int, float] = dict.fromkeys((s for s in starts if begin <= s < end), 0.0)
     for t, mm in rain.items():
-        if mm > 0:
-            k = origin + (t - origin) // width * width
-            if k >= begin:   # rain before the period's start is not part of it
-                bars[k] = bars.get(k, 0.0) + mm
-    xs = sorted(bars)
-    return Bars("Rain", "mm", xs, [round(bars[k], 2) for k in xs], width, per)
+        if mm > 0 and begin <= t < end:   # rain before the period's start is not part of it
+            bars[bar_of(starts, t)] += mm
+    return Bars("Rain", "mm", list(bars), [round(v, 2) for v in bars.values()], width, per)
 
 
 def _calendar_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, by: str) -> Bars:

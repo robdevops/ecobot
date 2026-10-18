@@ -19,7 +19,7 @@ from .ecowitt.link import driver_series
 from .series import WEATHER, derives_range
 from .panels import panel_for
 from .specs import Panel, Shares, stack
-from .rain import bar_layout, rain_bars, rain_slots
+from .rain import bar_layout, bar_of, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
 from .tools import Tool, Turn
 
@@ -97,11 +97,11 @@ def _error(text: str) -> str:
 
 def rating_shares(values: dict[int, float], limits: tuple[float, float], tz: tzinfo, first: date, last: date, label: str) -> Shares:
     """Per bar (see bar_layout): the percentage of its 30-minute readings that were good, poor and very poor."""
-    origin, width, per = bar_layout(tz, first, last)
+    starts, width, per = bar_layout(tz, first, last)
     counts: dict[int, list[int]] = {}
     for t, v in values.items():
-        k = origin + (t - origin) // width * width
-        counts.setdefault(k, [0, 0, 0])[zone(v, limits)] += 1
+        if (k := bar_of(starts, t)) is not None:
+            counts.setdefault(k, [0, 0, 0])[zone(v, limits)] += 1
     xs = sorted(counts)
     total = {k: sum(counts[k]) for k in xs}
     good, poor, very_poor = ([round(100 * counts[k][i] / total[k], 1) for k in xs] for i in range(3))
