@@ -49,8 +49,9 @@ async def test_weather_questions_must_fetch_first_and_reasoning_is_passed_throug
     t, seen = tools()
     client = FakeLLM([[("weather_now", {})], "Rain unlikely."])
     agent = llm.Agent(client, "m", t)
-    reply = await agent.run([{"role": "user", "content": "will it rain?"}], "sys", "medium", require_tool=True)
-    assert reply == "Rain unlikely." and client.requests[0]["tool_choice"] == "required"
+    reply = await agent.run([{"role": "user", "content": "will it rain?"}], "sys", "medium", tool_choice="required")
+    assert reply == "Rain unlikely." and [r["tool_choice"] for r in client.requests] == ["required", "auto"]
+    assert all(r["tools"] == t.schemas for r in client.requests)          # every tool on every call: the cached prompt holds
     assert client.requests[0]["extra_body"]["reasoning_effort"] == "medium" and len(seen) == 1
 
 
@@ -58,7 +59,7 @@ async def test_chat_needs_no_tools_and_identical_calls_are_made_once():
     t, seen = tools()
     client = FakeLLM(["You're welcome!"])
     assert await llm.Agent(client, "m", t).run([{"role": "user", "content": "thanks"}], "s", "none",
-                                               require_tool=False) == "You're welcome!"
+                                               tool_choice="auto") == "You're welcome!"
     assert client.requests[0]["tool_choice"] == "auto"
     client = FakeLLM([[("weather_now", {}), ("weather_now", {})], "done"])
     await llm.Agent(client, "m", t).run([{"role": "user", "content": "x"}], "s", "none")
@@ -189,7 +190,7 @@ async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
     t, seen = tools()
     client = FakeLLM(["I track temperature, humidity..."])
     reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "list our metrics"}], "sys", "none",
-                                                require_tool=False, no_tools=True)
+                                                tool_choice="none")
     assert reply.startswith("I track") and client.requests[0]["tool_choice"] == "none" and seen == []
     now = datetime(2026, 9, 29, 14, 5)
     assert "ABOUT THE BOT ITSELF" in prompt.build(now, {"Ecowitt": "Ecowitt"}, [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, {"Ecowitt": "Ecowitt"})
@@ -345,7 +346,7 @@ async def test_every_call_of_a_chat_carries_the_same_conversation_id_for_the_pro
     await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", conv_id="ecobot-42")
     assert [r["extra_headers"] for r in client.requests] == [{"x-grok-conv-id": "ecobot-42"}] * 2
     plain = FakeLLM(["Hi."])
-    await llm.Agent(plain, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", require_tool=False)
+    await llm.Agent(plain, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", tool_choice="auto")
     assert "extra_headers" not in plain.requests[0]
 
 

@@ -16,7 +16,7 @@ class RaisingAgent:
 
 
 class AnsweringAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, **k):
+    async def run(self, messages, system, effort, *, first_call=None, turn=None, **k):
         self.first_call = first_call
         return "It is 12 degrees."
 
@@ -108,7 +108,7 @@ class DraftBot:
 
 
 class StreamingAgent:
-    async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None, conv_id=None):
+    async def run(self, messages, system, effort, *, on_text=None, **k):
         await asyncio.sleep(0.05)       # "thinking"
         on_text("It is")
         await asyncio.sleep(0.05)
@@ -233,7 +233,7 @@ async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower
     efforts = []
 
     class SlowThenQuick:
-        async def run(self, messages, system, effort, first_call=None, require_tool=True, no_tools=False, turn=None, on_text=None, tool_names=None, on_heavy=None, conv_id=None):
+        async def run(self, messages, system, effort, **k):
             efforts.append(effort)
             messages.append({"role": "assistant", "content": "(unfinished)"})
             if effort == "medium":
@@ -528,14 +528,14 @@ async def test_rain_by_month_is_worked_out_in_code_with_no_model(alert_state):
     assert not asked and replies == ["Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."]
 
 
-async def test_every_model_call_sends_the_full_tool_list_not_a_per_question_one(alert_state):
+async def test_the_model_is_asked_with_the_tool_choice_the_message_calls_for(alert_state):
     seen = []
 
     class Agent:
         async def run(self, messages, system, effort, **k):
-            seen.append(k.get("tool_names", "all"))
+            seen.append(k["tool_choice"])
             return "ok"
-    for text in ("is it too cold to run", "which air quality day was worst when it also rained"):
+    for text in ("will it rain tomorrow?", "thanks!"):
         replies = []
 
         async def reply_text(body, **kw):
@@ -548,7 +548,7 @@ async def test_every_model_call_sends_the_full_tool_list_not_a_per_question_one(
         async def send_chat_action(*a, **k):
             pass
         await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
-    assert seen == ["all", "all"]
+    assert seen == ["required", "auto"]
 
 
 async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title(alert_state, monkeypatch):

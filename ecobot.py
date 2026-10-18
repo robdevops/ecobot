@@ -18,7 +18,7 @@ from lib.config import ROOT, Config, data_dir
 # Set before anything imports Matplotlib; an MPLCONFIGDIR in the environment wins.
 os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, Timeout
 from telegram import Update
 from telegram.ext import Application, Defaults
 
@@ -28,7 +28,7 @@ from lib.airgradient import metrics as air_metrics
 from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
 from lib.alerts.menu import LABELS, available_kinds
-from lib.bot import PREDRAW_SECONDS, Bot, polling_error
+from lib.bot import PREDRAW_SECONDS, TURN_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
@@ -216,7 +216,10 @@ async def main():
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
         composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
         tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
-        client = AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url)
+        # A model request may run as long as the bot gives a whole question (it then asks again, a reasoning step lower); a
+        # dropped connection, a 429 or a 5xx is tried again twice, at once, inside that time
+        client = AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0),
+                             max_retries=2)
         stack.push_async_callback(safely, client.close)
         state = AlertState(cfg.state_path)
         if cfg.admin_only:

@@ -72,17 +72,19 @@ class Agent:
                 on_text(content)
         return content, [calls[i] for i in sorted(calls)], usage
 
-    async def run(self, messages: list[dict], system_prompt: str, effort: str,
-                  first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, require_tool: bool = True, no_tools: bool = False,
-                  turn: Turn | None = None, on_text=None, tool_names: list[str] | None = None, on_heavy=None, conv_id: str | None = None) -> str:
+    async def run(self, messages: list[dict], system_prompt: str, effort: str, *,
+                  first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, tool_choice: str = "required",
+                  turn: Turn | None = None, on_text=None, on_heavy=None, conv_id: str | None = None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
         first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
-        straight away, together, and the model is only invoked once the data is in. require_tool forces a
-        fresh fetch on the first model call (weather questions); off for chat, so it can just reply.
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft). conv_id names the conversation for the provider's prompt cache (see above); on_heavy(tokens) is called once, before the model is
-        sent a lot of data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
+        straight away, together, and the model is only invoked once the data is in. tool_choice is what the model's first
+        step may do with the tools: "required" makes it fetch fresh data first (weather questions), "auto" lets it just
+        reply (chat), "none" gives it no tools at all (a question about the bot itself). Every later step is "auto".
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft). conv_id names the
+        conversation for the provider's prompt cache; on_heavy(tokens) is called once, before the model is sent a lot of
+        data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
         first. The work carries on; nothing waits for a reply."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
@@ -95,7 +97,6 @@ class Agent:
             return ("[You already made this exact call - same result as before. Don't repeat it; "
                     "change the request or answer now.]\n" + await cache[key])
 
-        schemas = self.tools.schemas_for(tool_names)   # only the tools the question can use: each definition is sent on every call
         warned = False
 
         async def heavy_check():
@@ -133,10 +134,9 @@ class Agent:
                           "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
                 if conv_id:   # the same id for every call of a chat sends them to the server holding its cached prompt
                     kwargs["extra_headers"] = {"x-grok-conv-id": conv_id}
-                if schemas:
-                    kwargs["tools"] = schemas
-                    kwargs["tool_choice"] = ("none" if final or no_tools else
-                                             "required" if step == 0 and require_tool else "auto")
+                if self.tools.schemas:   # every tool, every time: the same list keeps the provider's cached prompt valid
+                    kwargs["tools"] = self.tools.schemas
+                    kwargs["tool_choice"] = "none" if final or tool_choice == "none" else tool_choice if step == 0 else "auto"
                 if final:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)
                     kwargs["messages"].append({"role": "user", "content": LIMIT_NOTICE})

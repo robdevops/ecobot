@@ -813,6 +813,12 @@ class Intent:
     lookup_arg: list[str] = field(default_factory=list)   # the readings named ("reading", "air"; none: all)
     sides: list[str] = field(default_factory=list)        # "indoor", "outdoor" or both, for a reading
 
+    @property
+    def tool_choice(self) -> str:
+        """What the model's first step may do with the tools (see Agent.run): none about the bot itself, a fetch it must make
+        when the answer needs data, else its own choice."""
+        return "none" if self.about_the_bot else "required" if self.needs_data else "auto"
+
 
 def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
     """(kind, readings named) for a question answered in code from one tool result, else ("", [])."""

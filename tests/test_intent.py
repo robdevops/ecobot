@@ -582,3 +582,7 @@ def test_the_air_table_is_the_one_in_series_and_panels_imports_on_its_own():
     assert list(LABELS) == list(AIR) == [m for _, m in intent.AIR_METRICS] and MARK_LOW == ("co2",) and RATINGS["pm2_5"] == (9.0, 55.4)
     run = subprocess.run([sys.executable, "-c", "import lib.panels"], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr                                                      # no circular import through airgradient
+
+
+def test_the_models_first_step_must_fetch_for_data_may_just_reply_to_chat_and_gets_no_tools_about_the_bot():
+    assert [intent.read(t, NOW).tool_choice for t in ("will it rain tomorrow?", "thanks!", "what can you do")] == ["required", "auto", "none"]

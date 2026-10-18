@@ -59,10 +59,6 @@ class Tools:
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
 
-    def schemas_for(self, names=None) -> list[dict]:
-        """The tool definitions to send: those named (that exist), or all when no names are given."""
-        return self.schemas if names is None else [self.by_name[n].schema() for n in names if n in self.by_name]
-
     async def call(self, name: str, raw_args: str, turn: Turn | None = None) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""
         tool = self.by_name.get(name)
