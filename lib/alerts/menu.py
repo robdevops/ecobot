@@ -78,15 +78,15 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     when every type is on."""
     tail = f":{parent}" if parent else ""
     subscribed = options(muted, available, "unsub")
-    if open == "other" and not (parent in subscribed and len(subscribed) > 1):
+    if open == "other" and (parent or not (parent in subscribed and len(subscribed) > 1)):   # under an alert there is no Other
         open = "unsub"
     unsub_open = open in ("unsub", "other")
     def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:
         return _button(menu_text(text, is_open), f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
-    everything = not options(muted, available, "sub")   # subscribed to every type: nothing for Sub to list, so no Sub button
-    if everything and open == "sub":
+    no_sub = bool(parent) or not options(muted, available, "sub")   # under an alert, or subscribed to every type: no Sub button
+    if no_sub and open == "sub":
         open = None
-    rows = [[*([] if everything else [head(open == "sub", "🔔", "sub")]), head(unsub_open, "🔕", "unsub")]]
+    rows = [[*([] if no_sub else [head(open == "sub", "🔔", "sub")]), head(unsub_open, "🔕", "unsub")]]
     if loud is not None:
         rows[0].append(head(open in SETTINGS, "⚙️", "set"))
     mark = lambda k: f"● {label(k)}" if k == parent else label(k)   # the alert these buttons are under
@@ -102,7 +102,11 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
                 rows += _type_rows(items, parent, open == f"{section}_o", lambda k: _button(mark(k), f"al:snd:{k}:{verb}{tail}"),
                                    (f"al:open:{section}_o{tail}", f"al:open:{section}{tail}"),
                                    _button("🔔 Enable all" if verb == "on" else "🔕 Disable all", f"al:snd:{ALL}:{verb}{tail}"))
-    if open in ("sub", "unsub", "other"):
+    if open == "unsub" and parent in subscribed:   # under an alert: its own type and all, nothing else
+        rows.append([_button(mark(parent), f"al:off:{parent}:unsub{tail}")])
+        if len(subscribed) > 1:
+            rows.append([_button("🔕 Unsubscribe from all", f"al:off:{ALL}:unsub{tail}")])
+    elif open in ("sub", "unsub", "other"):
         verb = "on" if open == "sub" else "off"
         rows += _type_rows(options(muted, available, "sub" if open == "sub" else "unsub"), parent if open != "sub" else None, open == "other",
                            lambda k: _button(mark(k), f"al:{verb}:{k}:{open}{tail}"), (f"al:open:other{tail}", f"al:open:unsub{tail}"),
