@@ -14,6 +14,7 @@ from datetime import datetime, time, timedelta
 from time import monotonic
 
 from ..timeutil import naive_local, now_local, seconds_until
+from ..warm import every
 from .api import CYCLES, MIN_GAP_SECONDS, kept_from
 from .fetch import spans
 from .store import horizon
@@ -68,6 +69,7 @@ class Archive:
     async def run_once(self) -> tuple[int, int]:
         """Cache whatever is missing. Returns (ranges fetched, ranges failed). Each range is saved as
         soon as it arrives, so an interrupted run just carries on from there next time."""
+        started = monotonic()
         work, epoch = list(self._work()), self.station.fetcher(self.groups).epoch
         missing = await asyncio.to_thread(self.station.cache.uncovered, self.station.mac, self.groups,   # one read of what is held
                                           [(cycle, epoch(start), epoch(end)) for cycle, start, end in work])
@@ -94,6 +96,7 @@ class Archive:
             if i % 20 == 0 and i < len(todo):
                 log.info("Ecowitt: %d of %d req done", i, len(todo))
             await asyncio.sleep(self.pace)
+        log.info("Ecowitt: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "", self.held(), monotonic() - started)
         return fetched, failed
 
     async def _drop_unsupported_groups(self, cycle: str, start: datetime, end: datetime) -> bool:
@@ -125,15 +128,5 @@ class Archive:
         return seconds_until(RUN_AT.hour, RUN_AT.minute, self.station.tz)
 
     async def loop(self):
-        """Backfill now, then again every night at RUN_AT, until cancelled."""
-        while True:
-            try:
-                started = monotonic()
-                fetched, failed = await self.run_once()
-                log.info("Ecowitt: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
-                         self.held(), monotonic() - started)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("Ecowitt archive run failed")
-            await asyncio.sleep(self._seconds_until_next_run())
+        """Backfill now, then again every night at RUN_AT, until cancelled. A run that fails is logged; the next night's tries again."""
+        await every(self._seconds_until_next_run, self.run_once)

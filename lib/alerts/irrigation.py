@@ -52,8 +52,6 @@ class IrrigationMonitor:
             if self.due(now):
                 try:
                     await self.check(now)
-                except asyncio.CancelledError:
-                    raise
                 except Exception as e:
                     log.warning("Irrigation check failed (%s: %s); trying again in %d minutes", type(e).__name__, e, RETRY_SECONDS // 60)
                     await asyncio.sleep(min(RETRY_SECONDS, self.seconds_until_next(now)))

@@ -23,21 +23,23 @@ def in_sync_hours(now: datetime) -> bool:
     return SYNC_HOURS[0] <= now.hour < SYNC_HOURS[1]
 
 
+# Errors that point at the code, logged with their traceback; any other failure (an outage, a refusal) is one line
+BUGS = (AssertionError, AttributeError, IndexError, KeyError, NameError, TypeError, ValueError, ZeroDivisionError)
+
+
 async def safely(fn: Callable[..., Awaitable], *args):
     """Await fn(*args); log a failure instead of raising (background work must not die)."""
     try:
         return await fn(*args)
-    except asyncio.CancelledError:
-        raise
     except Exception as e:
-        log.warning("%s failed: %s: %s", getattr(fn, "__qualname__", fn), type(e).__name__, e)
+        log.warning("%s failed: %s: %s", getattr(fn, "__qualname__", fn), type(e).__name__, e, exc_info=isinstance(e, BUGS))
 
 
-async def every(seconds: float, fn: Callable[[], Awaitable]):
-    """Call fn now, then every `seconds`, until cancelled."""
+async def every(delay: float | Callable[[], float], fn: Callable[[], Awaitable]):
+    """Call fn now, then again after `delay` seconds (or as many as delay() says each time), until cancelled."""
     while True:
         await safely(fn)
-        await asyncio.sleep(seconds)
+        await asyncio.sleep(delay() if callable(delay) else delay)
 
 
 class Warmer:
@@ -45,16 +47,21 @@ class Warmer:
         self.refresh, self.interval = refresh, interval
         self.after: list[Callable[[], Awaitable]] = []  # run after each timed refresh (alert checks)
         self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()   # one refresh at a time: a timed one waits for a question's
+
+    async def _refresh(self, fresh: bool):
+        async with self._lock:
+            await safely(self.refresh, fresh)
 
     def poke(self):
-        """A question arrived: refresh in the background unless one is already running."""
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(safely(self.refresh, False))
+        """A question arrived: refresh in the background, unless a refresh (a question's or a timed one) is running."""
+        if not self._lock.locked() and (self._task is None or self._task.done()):
+            self._task = asyncio.create_task(self._refresh(False))
 
     async def run(self):
         """Refresh every `interval` seconds until cancelled (startup already fetched once)."""
         while True:
             await asyncio.sleep(self.interval)
-            await safely(self.refresh, True)
+            await self._refresh(True)
             for check in self.after:
                 await safely(check)
