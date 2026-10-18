@@ -17,6 +17,7 @@ import re
 from telegram import InlineKeyboardMarkup, MessageEntity
 
 from ..buttons import button, opener, toggle_button
+from ..entities import footer
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)
@@ -51,11 +52,8 @@ def running_in(text: str | None) -> bool:
 
 
 def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageEntity]]:
-    """The status with an error under it as a bold footer. Plain text plus entities (no markup to escape); Telegram counts
-    positions in UTF-16 code units, where an emoji is two."""
-    units = lambda s: len(s.encode("utf-16-le")) // 2
-    head = f"{text}\n\n"
-    return head + error, [MessageEntity(MessageEntity.BOLD, units(head), units(error))]
+    """The status with an error under it, after a blank line, in bold."""
+    return footer(f"{text}\n", error, MessageEntity.BOLD)
 
 
 def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | None = None) -> str:

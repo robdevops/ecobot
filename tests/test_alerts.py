@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from lib.airgradient import Latest
-from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor, with_footer
+from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor
+from lib.entities import with_link
 from tests.fakes import TZ
 
 T0 = int(datetime(2026, 9, 29, 13, 0, tzinfo=TZ).timestamp())  # 1pm Melbourne, a settled day
@@ -280,12 +281,12 @@ def test_alert_state_survives_restarts_and_opt_out(tmp_path):
     assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.alerts_on(2)
 
 
-def test_footer_marks_up_link_and_mute_hint():
-    text, entities = with_footer("\U0001f327️ Rain", ("live chart", "https://x"), "/alerts off to mute")
-    assert text.endswith("live chart · /alerts off to mute")
+def test_the_footer_is_the_links_label_in_italic_placed_in_utf16_units():
+    text, entities = with_link("\U0001f327️ Rain \n", ("live chart", "https://x"))
+    assert text == "\U0001f327️ Rain\nlive chart" and with_link("Rain \n", None) == ("Rain", [])
     italic, link = entities
-    assert italic.offset == link.offset == len("\U0001f327️ Rain".encode("utf-16-le")) // 2 + 1
-    assert link.length == len("live chart") and link.url == "https://x"
+    assert italic.type == "italic" and italic.offset == link.offset == len("\U0001f327️ Rain".encode("utf-16-le")) // 2 + 1
+    assert italic.length == link.length == len("live chart") and link.url == "https://x"
 
 
 async def test_alerts_are_silent_and_a_chat_that_blocked_the_bot_is_marked_gone(tmp_path):

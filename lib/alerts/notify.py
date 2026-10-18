@@ -15,9 +15,9 @@ import time
 from collections.abc import Collection
 from datetime import date, timedelta
 
-from telegram import MessageEntity
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 
+from ..entities import with_link
 from ..logs import QUOTES
 from .menu import ALL, LABELS, alert_keyboard
 
@@ -206,27 +206,6 @@ class AlertState:
         return [c for c in self.chats if self.subscribed(c, kind)]
 
 
-def _utf16_len(text: str) -> int:
-    """Telegram measures entity positions in UTF-16 code units (emoji count as 2)."""
-    return len(text.encode("utf-16-le")) // 2
-
-
-def with_footer(text: str, link: tuple[str, str] | None = None, extra: str | None = None) -> tuple[str, list]:
-    """Add a small italic footer line directly under the text: the link's label (clickable),
-    then any extra text, joined by " · ". Plain text stays plain (no HTML to escape);
-    only the footer is formatted. link = (label, url)."""
-    text = text.rstrip()
-    parts = ([link[0]] if link else []) + ([extra] if extra else [])
-    if not parts:
-        return text, []
-    start = _utf16_len(text) + 1
-    footer = " · ".join(parts)
-    entities = [MessageEntity(MessageEntity.ITALIC, start, _utf16_len(footer))]
-    if link:
-        entities.append(MessageEntity(MessageEntity.TEXT_LINK, start, _utf16_len(link[0]), url=link[1]))
-    return f"{text}\n{footer}", entities
-
-
 class Notifier:
     def __init__(self, bot, state: AlertState):
         self.bot, self.state = bot, state
@@ -236,7 +215,7 @@ class Notifier:
         gone. link = (label, url) adds a clickable label to the footer. Each carries the settings buttons.
         photo: a picture the text is the caption of (the text alone if Telegram refuses the picture): a PNG, or the file id of one
         Telegram holds. It is uploaded once: the chats after the first are sent Telegram's copy."""
-        text, entities = with_footer(text, link)
+        text, entities = with_link(text, link)
         started, sent = time.monotonic(), 0
         for chat_id in self.state.alert_chats(kind):
             ok, message = await self._send(chat_id, text, entities, kind, photo)
@@ -250,7 +229,7 @@ class Notifier:
         True if it was sent."""
         if not self.state.subscribed(chat_id, kind):
             return False
-        text, entities = with_footer(text, link)
+        text, entities = with_link(text, link)
         sent, _ = await self._send(chat_id, text, entities, kind)
         log.info("Alert %s chat %s: %s", "sent to" if sent else "NOT sent to", chat_id, text, extra=QUOTES)
         return sent

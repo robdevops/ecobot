@@ -23,12 +23,13 @@ from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler
 from . import intent, periods, prompt, report, report_menu, templates
 from .admins import Admins
 from .alerts import menu
-from .alerts import AlertState, with_footer
+from .alerts import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
 from .charts import render as render_chart
 from .tools import Turn
 from .config import Config
+from .entities import with_link
 from .sources import Source
 from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
@@ -214,7 +215,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
         chunks = split_message(text)
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
-            body, ents = with_footer(chunk, link) if last else (chunk, [])
+            body, ents = with_link(chunk, link) if last else (chunk, [])
             ents = [*(report.heading_entities(chunk) if bold_headings else []), *ents]
             await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True,
                                  **({"reply_markup": markup} if markup and last and not photos else {}))

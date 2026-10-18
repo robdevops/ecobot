@@ -8,6 +8,7 @@ from datetime import date, datetime
 from telegram import MessageEntity
 
 from .ecowitt.glance import solar_band
+from .entities import utf16_len
 from .series import AIR, INDOOR_READINGS, WEATHER, find
 from .timeutil import clock_text, day_text, to_local
 
@@ -52,10 +53,8 @@ HEADING_LINE = re.compile(rf"^({'|'.join(map(re.escape, HEADINGS))})(?= \(|$)", 
 
 
 def heading_entities(text: str) -> list[MessageEntity]:
-    """Bold entities over the name of each heading line in `text` (not over its brackets). Telegram counts positions in UTF-16 code
-    units, where an emoji is two."""
-    units = lambda s: len(s.encode("utf-16-le")) // 2
-    return [MessageEntity(MessageEntity.BOLD, units(text[:m.start()]), units(m.group(1))) for m in HEADING_LINE.finditer(text)]
+    """Bold entities over the name of each heading line in `text` (not over its brackets)."""
+    return [MessageEntity(MessageEntity.BOLD, utf16_len(text[:m.start()]), utf16_len(m.group(1))) for m in HEADING_LINE.finditer(text)]
 
 
 def _stamp(result: dict, today: date) -> str | None:
