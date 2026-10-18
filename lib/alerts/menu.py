@@ -74,7 +74,8 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     snd_on, snd_off, or snd_on_o / snd_off_o, the Other list of a sound menu) with its options under it. A ▸ after the text marks a button that opens
     a menu, ▾ (in the same place) the open one; the rest do something. `parent` is the type of the alert the buttons sit under (carried in every button):
     its lists put that type first (●) and the rest under "Other". `loud`: the types whose alerts make a notification sound; None (a
-    group) leaves out Settings, which holds two menus, Enable and Disable notification sounds, over the subscribed types."""
+    group) leaves out Settings, which holds two menus, Enable and Disable notification sounds, over the subscribed types. Sub is left out
+    when every type is on."""
     tail = f":{parent}" if parent else ""
     subscribed = options(muted, available, "unsub")
     if open == "other" and not (parent in subscribed and len(subscribed) > 1):
@@ -82,9 +83,12 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     unsub_open = open in ("unsub", "other")
     def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:
         return _button(menu_text(text, is_open), f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
-    rows = [[head(open == "sub", "➕ Sub", "sub"), head(unsub_open, "➖ Unsub", "unsub")]]
+    everything = not options(muted, available, "sub")   # subscribed to every type: nothing for Sub to list, so no Sub button
+    if everything and open == "sub":
+        open = None
+    rows = [[*([] if everything else [head(open == "sub", "➕", "sub")]), head(unsub_open, "➖", "unsub")]]
     if loud is not None:
-        rows[0].append(head(open in SETTINGS, "⚙️ Settings", "set"))
+        rows[0].append(head(open in SETTINGS, "⚙️", "set"))
     mark = lambda k: f"● {label(k)}" if k == parent else label(k)   # the alert these buttons are under
     if open in SETTINGS and loud is not None:
         for section, heading, items in (("snd_on", "🔔 Enable notification sounds", [k for k in subscribed if k not in loud]),
