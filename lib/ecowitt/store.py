@@ -130,13 +130,18 @@ class HistoryCache:
         """Every time range held for this group at this resolution (merged, oldest first)."""
         return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
 
-    def coverage_of(self, mac: str, cycle: str, groups: list[str]) -> dict[str, list[Interval]]:
-        """coverage() of each of these groups, in one query."""
-        held: dict[str, list[Interval]] = {g: [] for g in groups}
-        for grp, start, end in self._query(f"SELECT grp, start, end FROM coverage WHERE mac=? AND cycle=? AND grp IN ({','.join('?' * len(held))})",
-                                           mac, cycle, *held):
-            held[grp].append((start, end))
-        return {g: merge(spans) for g, spans in held.items()}
+    def uncovered(self, mac: str, groups: list[str], windows: list[tuple[str, int, int]]) -> list[dict[str, list[Interval]]]:
+        """For each (cycle, start, end) window, the parts of it each group's readings are not held for: one read of the coverage,
+        however many windows, resolutions and groups."""
+        cycles = sorted({cycle for cycle, _, _ in windows})
+        held: dict[tuple[str, str], list[Interval]] = {(c, g): [] for c in cycles for g in groups}
+        if held:
+            for cycle, grp, start, end in self._query(
+                    f"SELECT cycle, grp, start, end FROM coverage WHERE mac=? AND cycle IN ({','.join('?' * len(cycles))}) "
+                    f"AND grp IN ({','.join('?' * len(groups))})", mac, *cycles, *groups):
+                held[cycle, grp].append((start, end))
+        held = {key: merge(spans) for key, spans in held.items()}
+        return [{g: subtract((start, end), held[cycle, g]) for g in groups} for cycle, start, end in windows]
 
     def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
         return subtract((start, end), self.coverage(mac, cycle, grp))

@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, tzinfo
 
 from ..timeutil import local_epoch, naive_local
 from .api import CYCLES, EcowittError, kept_from
-from .store import HistoryCache, HotStore, merge as merge_intervals, subtract
+from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +77,8 @@ class Fetcher:
 
     @timed
     async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
-        """Readings for [start, end] (local time). refresh=True ignores the in-memory copy (used by
+        """Readings for [start, end] (local time), however long: what Ecowitt is asked for is split to its per-request limit.
+        refresh=True ignores the in-memory copy (used by
         the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
         skips building the result nobody will read (the refresh and the archive).
         When the cache and memory hold it all (the usual case) it is read at once, even while a refresh is fetching; otherwise
@@ -106,14 +107,16 @@ class Fetcher:
                 continue
             if not fetch:
                 return None
-            data = await self._fetch(cycle, self.local(gap_start), self.local(gap_end), need)
-            if data is None:
-                continue  # failed: not recorded as fetched, so it's retried next time
-            await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, gap_start, gap_end)
-            for g in need:
-                self.hot.put(self.mac, cycle, g, gap_start, gap_end, data.get(g) or {})
-            if load:
-                merge_data(fresh, data)
+            for a, b in spans(cycle, self.local(gap_start), self.local(gap_end)):   # one request each, within Ecowitt's limit
+                data = await self._fetch(cycle, a, b, need)
+                if data is None:
+                    continue  # failed: not recorded as fetched, so it's retried next time
+                piece = (self.epoch(a), self.epoch(b))
+                await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, *piece)
+                for g in need:
+                    self.hot.put(self.mac, cycle, g, *piece, data.get(g) or {})
+                if load:
+                    merge_data(fresh, data)
         self.from_cache += not gaps
         self.from_memory += from_memory
         if not load:
@@ -144,8 +147,7 @@ class Fetcher:
     async def _missing(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
         """For each window (epoch seconds), the parts of it the cache lacks, by group: one read of the coverage in one thread hop
         (the hop costs more than the query, and far more while a chart is being drawn)."""
-        held = await asyncio.to_thread(self.cache.coverage_of, self.mac, cycle, self.groups) if self.groups else {}
-        return [{g: subtract(w, held[g]) for g in self.groups} for w in windows]
+        return await asyncio.to_thread(self.cache.uncovered, self.mac, self.groups, [(cycle, s, e) for s, e in windows])
 
     async def covered(self, cycle: str, start: int, end: int) -> bool:
         """True if the cache holds every group for [start, end] (epoch seconds)."""

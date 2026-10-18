@@ -21,7 +21,7 @@ from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, day_text, local_date, now_local
 from .api import FINE_CYCLES, daily_run
 from .calendar import PublicHolidays
-from .store import HistoryCache, subtract
+from .store import HistoryCache
 
 log = logging.getLogger(__name__)
 
@@ -116,13 +116,11 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
 
     # which cycle each day is answered from: exact sub-daily data where every needed group has it
     days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
+    windows = [(cycle, d) for cycle in FINE_CYCLES for d in days]
     source: dict[date, str] = {}
-    for cycle in FINE_CYCLES:
-        cover = {g: cache.coverage(mac, cycle, g) for g in groups}
-        for d in days:
-            lo, hi = day_bounds(d, tz, True)
-            if d not in source and all(not subtract((lo, hi), cover[g]) for g in groups):
-                source[d] = cycle
+    for (cycle, d), gaps in zip(windows, cache.uncovered(mac, groups, [(cycle, *day_bounds(d, tz, True)) for cycle, d in windows])):
+        if d not in source and not any(gaps.values()):
+            source[d] = cycle
     rest = {d for d in days if d not in source}
 
     values: dict[str, dict[date, float]] = {n: {} for n in shown}

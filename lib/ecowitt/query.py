@@ -160,11 +160,10 @@ class HistoryQuery:
         f = self.f
         if (self.span.days + 1) * 48 * len(f.groups) * FIELDS_PER_GROUP > MAX_ROWS:
             return False
-        return all(await f.covered_each("30min", [(f.epoch(t), f.epoch(e)) for t, e in spans("30min", self.start, self.end - timedelta(days=1))]))
+        return await f.covered("30min", f.epoch(self.start), f.epoch(self.end - timedelta(days=1)))
 
-    async def _chunks(self, cycle: str, t: datetime, until: datetime):
-        for a, b in spans(cycle, t, until):
-            collect(self.store, await self.f.get(cycle, a, b), cycle)
+    async def _read(self, cycle: str, t: datetime, until: datetime):
+        collect(self.store, await self.f.get(cycle, t, until), cycle)
 
     async def _fetch_period(self):
         """Coarse pass: the best data for the whole period at the fewest requests."""
@@ -181,14 +180,14 @@ class HistoryQuery:
                 five = self.span <= timedelta(days=INTRADAY_DAYS) and await f.covered("5min", f.epoch(a), f.epoch(b))
                 collect(self.store, await f.get("5min" if five else "30min", a, b), "5min" if five else "30min")
             if start < thirty_floor:
-                await self._chunks("1day", start, min(end, thirty_floor - timedelta(seconds=1)))
+                await self._read("1day", start, min(end, thirty_floor - timedelta(seconds=1)))
         elif self.held:
-            await self._chunks("30min", start, end)  # held in the cache: exact local days, true lows and highs, no requests
+            await self._read("30min", start, end)  # held in the cache: exact local days, true lows and highs, no requests
         else:
             # Longer: Ecowitt's daily records (each has its own low and high, and it is a request or two, cached),
             # plus the newest days at 30 minutes so the line reaches today. Exact times come from refining the extremes.
-            await self._chunks("30min", max(start, recent), end)
-            await self._chunks("1day", start, min(end, recent - timedelta(seconds=1)))
+            await self._read("30min", max(start, recent), end)
+            await self._read("1day", start, min(end, recent - timedelta(seconds=1)))
 
     async def _summarise_direction(self):
         """Wind direction leaves the low/high pipeline: it is counted by compass point instead. Recent
@@ -288,8 +287,7 @@ class HistoryQuery:
             refined += len(windows)
             for (cycle, w_start, w_end), targets in windows.items():
                 fine: dict = {}
-                for a, b in spans(cycle, f.local(w_start), min(f.local(w_end), self.now)):   # a UTC day is 25 local hours across a DST change
-                    collect(fine, await f.get(cycle, a, b), cycle)
+                collect(fine, await f.get(cycle, f.local(w_start), min(f.local(w_end), self.now)), cycle)
                 for sid in targets:
                     key, want = sid[1], sid[-1]
                     found = series_extremes(fine[key], w_start, w_end).get(want) if key in fine else None

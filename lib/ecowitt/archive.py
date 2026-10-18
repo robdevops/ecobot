@@ -16,7 +16,7 @@ from time import monotonic
 from ..timeutil import naive_local, now_local, seconds_until
 from .api import CYCLES, MIN_GAP_SECONDS, kept_from
 from .fetch import spans
-from .store import horizon, subtract
+from .store import horizon
 
 log = logging.getLogger(__name__)
 
@@ -68,12 +68,10 @@ class Archive:
     async def run_once(self) -> tuple[int, int]:
         """Cache whatever is missing. Returns (ranges fetched, ranges failed). Each range is saved as
         soon as it arrives, so an interrupted run just carries on from there next time."""
-        # What is cached, read once (a query per resolution and group) rather than once per range
-        cover = await asyncio.to_thread(lambda: {(c, g): self.station.cache.coverage(self.station.mac, c, g)
-                                                  for c in ("5min", *COARSE_CYCLES) for g in self.groups})
-        epoch = self.station.fetcher(self.groups).epoch
-        todo = [(cycle, start, end) for cycle, start, end in self._work()
-                if any(subtract((epoch(start), epoch(end)), cover[cycle, g]) for g in self.groups)]
+        work, epoch = list(self._work()), self.station.fetcher(self.groups).epoch
+        missing = await asyncio.to_thread(self.station.cache.uncovered, self.station.mac, self.groups,   # one read of what is held
+                                          [(cycle, epoch(start), epoch(end)) for cycle, start, end in work])
+        todo = [w for w, gaps in zip(work, missing) if any(gaps.values())]
         if todo:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)

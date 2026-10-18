@@ -20,7 +20,7 @@ from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
-from .fetch import Fetcher, spans
+from .fetch import Fetcher
 from ..series import WEATHER, find
 from .query import HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
@@ -255,10 +255,8 @@ class Ecowitt:
                    "4hour": today - timedelta(days=3), "1day": today - timedelta(days=3)}
         fetchers = {cycle: self.fetcher(self.groups) for cycle in windows}
 
-        async def one(cycle: str):
-            for start, end in spans(cycle, windows[cycle], now):   # each piece fits Ecowitt's per-request limit
-                await fetchers[cycle].get(cycle, start, end, refresh=fresh and cycle in FINE_CYCLES, load=False)
-        await asyncio.gather(*(one(cycle) for cycle in windows))
+        await asyncio.gather(*(fetchers[cycle].get(cycle, start, now, refresh=fresh and cycle in FINE_CYCLES, load=False)
+                               for cycle, start in windows.items()))
         return f"Ecowitt {sum(f.calls for f in fetchers.values())} req"
 
     def wants(self, text: str) -> bool:
