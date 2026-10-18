@@ -112,7 +112,8 @@ def test_admin_only_is_on_unless_switched_off_and_the_listed_ids_are_read_safely
         monkeypatch.setenv("ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
     assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (on)" in caplog.text
-    assert _ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and _ids("") == frozenset()
+    ids = lambda text: _ids(text, frozenset(), "ADMIN_CHAT_IDS")
+    assert ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and ids("") == frozenset()
     assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
     monkeypatch.setenv("ADMIN_CHAT_IDS", "5 -9")
     assert Config.from_env().admin_chat_ids == frozenset({5, -9})

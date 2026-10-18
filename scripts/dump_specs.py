@@ -125,7 +125,8 @@ async def main():
             db.close()
         cfg = Config(telegram_token="", xai_api_key="", xai_base_url="", xai_model="", tz=tz, ecowitt_api_key="offline",
                      ecowitt_app_key="offline", airgradient_token="offline", airgradient_location=str(loc or "offline"),
-                     airgradient_dashboard="", state_path=Path(tmp) / "state.json", cache_path=eco_path, air_cache_path=air_path)
+                     airgradient_dashboard="", state_path=Path(tmp) / "state.json", cache_path=eco_path, air_cache_path=air_path,
+                     conditions_cache_path=Path(tmp) / "conditions.sqlite")
         eco = air = None
         if have_eco:
             eco = Ecowitt(cfg, transport=Offline())

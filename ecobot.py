@@ -45,10 +45,6 @@ _handler.setFormatter(LogFormat("%(levelname)s %(message)s"))
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
-_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()   # LOG_LEVEL: DEBUG shows the bot's own debug lines (chart timings...), not the libraries'
-if _level in ("DEBUG", "WARNING", "ERROR"):
-    for _name in ("ecobot", "lib"):
-        logging.getLogger(_name).setLevel(_level)
 log = logging.getLogger("ecobot")
 
 
@@ -111,6 +107,8 @@ async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
     _handler.formatter.width = cfg.log_width   # every log line is cut to it from here on
+    for name in ("ecobot", "lib"):   # the bot's own lines: the libraries keep theirs
+        logging.getLogger(name).setLevel(cfg.log_level)
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd

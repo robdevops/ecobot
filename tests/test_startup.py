@@ -218,9 +218,21 @@ def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatc
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("ALERT_COOLDOWN_MINUTES", raising=False)
     assert Config.from_env().alert_cooldown_minutes == 30
-    for value, want in (("45", 45), ("1", 5), ("999", 150), ("junk", 30)):
+    for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 30)):   # 0 is under 5 like 1 is
         monkeypatch.setenv("ALERT_COOLDOWN_MINUTES", value)
-        assert Config.from_env().alert_cooldown_minutes == want
+        assert Config.from_env().alert_cooldown_minutes == want, value
+
+
+def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeypatch, caplog):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    assert Config.from_env().log_level == "INFO"
+    for value, want in (("debug", "DEBUG"), ("WARNING", "WARNING"), ("verbose", "INFO")):
+        monkeypatch.setenv("LOG_LEVEL", value)
+        assert Config.from_env().log_level == want, value
+    assert "LOG_LEVEL: 'verbose' is not DEBUG, INFO, WARNING or ERROR; keeping INFO" in caplog.text
 
 
 
@@ -242,8 +254,9 @@ def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypa
 
 def test_the_rain_quiet_hours_are_configurable():
     from lib.config import _hours
-    assert _hours("", (0, 6)) == (0, 6) and _hours("22-6", (0, 6)) == (22, 6) and _hours("off", (0, 6)) is None
-    assert _hours("junk", (0, 6)) == (0, 6) and _hours("6-6", (0, 6)) == (0, 6) and _hours("0-25", (0, 6)) == (0, 6)
+    hours = lambda text: _hours(text, (0, 6), "RAIN_QUIET_HOURS")
+    assert hours("") == (0, 6) and hours("22-6") == (22, 6) and hours("off") is None
+    assert hours("junk") == (0, 6) and hours("6-6") == (0, 6) and hours("0-25") == (0, 6)
 
 
 def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
