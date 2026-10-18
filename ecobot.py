@@ -45,8 +45,9 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 _level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()   # LOG_LEVEL: DEBUG shows the bot's own debug lines (chart timings...), not the libraries'
-for _name in ("ecobot", "lib"):
-    logging.getLogger(_name).setLevel(_level if _level in ("DEBUG", "INFO", "WARNING", "ERROR") else "INFO")
+if _level in ("DEBUG", "WARNING", "ERROR"):
+    for _name in ("ecobot", "lib"):
+        logging.getLogger(_name).setLevel(_level)
 log = logging.getLogger("ecobot")
 
 
