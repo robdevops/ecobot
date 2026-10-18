@@ -1,9 +1,9 @@
 """The alert settings as buttons. /alerts has two: 🔔 Alerts and (private chats) 🔊 Sound, each opening the full list of alert types as
-toggles (green while on, red and struck through while off) with a Back button, the other hidden meanwhile. Under an alert there is one gear that opens that type's
+toggles (green while on, red and struck through while off) with the button that opened it kept (▾, pressing it closes the list), the other hidden meanwhile. Under an alert there is one gear that opens that type's
 two toggles, Alert and Sound. Pure: it only builds the keyboard and the title from what a chat has muted.
 
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
-  al:open:alerts | al:open:sound | al:close (Back) | al:noop (the heading rows of messages sent by an earlier version)
+  al:open:alerts | al:open:sound | al:close (the open button) | al:noop (the heading rows of messages sent by an earlier version)
   al:on:<kind>:alerts | al:off:<kind>:alerts      (alerts of one type on or off in the chat)
   al:snd:<kind>:<on|off>      (notification sound for one type; private chats only)
 An alert's buttons end with the alert's own type: al:open:gear:rain, al:close:rain, al:off:rain:gear:rain, al:snd:rain:on:rain. A chat's
@@ -69,7 +69,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
              loud: set[str] | None = None) -> InlineKeyboardMarkup:
     """The /alerts menu: two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a menu with a list of alert types, each a toggle
     green while on, red and struck through while off (alerts on or off in this chat; notification sound on or off, for the types that are
-    on), and ⬅️ Back. While one is open its own button stays (▾) above the list and the other is hidden until Back. `open`: alerts, sound (or one of an earlier version's sections). `loud`: the
+    on). While one is open its own button stays (▾) above the list, pressing it closes the list, and the other is hidden until then. `open`: alerts, sound (or one of an earlier version's sections). `loud`: the
     types whose alerts make a notification sound; None (a group) has no Sound. `parent`: the type of the alert these buttons sit under,
     which has a menu of its own (alert_keyboard)."""
     if parent:
@@ -85,7 +85,7 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     else:
         return InlineKeyboardMarkup([[_button(menu_text("🔔 Alerts", False), "al:open:alerts"),
                                       *([_button(menu_text("🔊 Sound", False), "al:open:sound")] if sound_types else [])]])
-    return InlineKeyboardMarkup([*rows, [_button("⬅️ Back", "al:close")]])
+    return InlineKeyboardMarkup(rows)
 
 
 def title(muted: set[str], available: list[str]) -> str:
