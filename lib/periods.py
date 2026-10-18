@@ -1,15 +1,17 @@
 """The period buttons under a chart: 1D, 7D, 1M, 3M and 1Y (1, 7, 30, 90 and 365 days), always all five, the chart's own marked with ●. Pressing one redraws the chart
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
 from telegram import InlineKeyboardMarkup
 
+from . import intent
 from .buttons import button
 
-PERIODS = (1, 7, 30, 90, 365)
-NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # what the buttons say
+NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # each period, in days, and what its button says
+PERIODS = tuple(NAMES)
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose question is kept, newest first to stay
 
@@ -88,28 +90,29 @@ class ImageCache:
     FRESH = 330   # a little over the time between two rounds of drawing ahead, so a press always finds one
 
     def __init__(self, clock=None):
-        import time
         self.clock = clock or time.monotonic
         self.items: OrderedDict = OrderedDict()
 
     @staticmethod
     def key(question: str, days: int, now) -> str:
         """The question with its period made explicit, so "Temperature chart 30d" and a button's "…30d" are the one chart."""
-        from . import intent
         return intent.with_period(question, days, now).lower()
 
     @classmethod
     def canonical(cls, question: str, now) -> str | None:
         """The key of a question that is its own key, word for word ("Temperature chart 7d", a button's): its chart is the same
         whoever asks it. None for any other ("temperature chart today" is kept under the 1d key, but it is another chart)."""
-        from . import intent
         key = cls.key(question, intent.period_days(question, now), now)
         return key if key == " ".join(question.split()).lower() else None
+
+    def _kept(self, entry: Drawn | None) -> bool:
+        """Is there a chart, and is it still within its time to live?"""
+        return entry is not None and self.age(entry) <= entry.ttl
 
     def get(self, key: str) -> tuple[bytes | str, str] | None:
         """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
         entry = self.items.get(key)
-        if entry is None or self.clock() - entry.at > entry.ttl:
+        if not self._kept(entry):
             self.items.pop(key, None)
             return None
         self.items.move_to_end(key)
@@ -118,14 +121,14 @@ class ImageCache:
     def has_copy(self, key: str) -> bool:
         """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
         entry = self.items.get(key)
-        return entry is not None and entry.file_id is not None and self.clock() - entry.at <= entry.ttl
+        return self._kept(entry) and entry.file_id is not None
 
     def ready(self, question: str, now) -> Drawn | None:
         """The chart made in code for exactly these words in the last FRESH seconds (drawn ahead, or for someone's question),
         with the text that went with it; None if there is none."""
         key = self.canonical(question, now)
         entry = self.items.get(key) if key else None
-        if entry is None or entry.caption is None or self.clock() - entry.at > self.FRESH:
+        if entry is None or entry.caption is None or self.age(entry) > self.FRESH:
             return None
         self.items.move_to_end(key)
         return entry
