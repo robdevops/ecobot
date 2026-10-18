@@ -4,7 +4,7 @@ spell, and the bars a chart draws. Shared by the analyses and the charts."""
 from bisect import bisect_right
 from datetime import date, datetime, time, timedelta, tzinfo
 
-from .specs import Bars
+from .specs import Bars, calendar_bars
 from .timeutil import SLOT, day_bounds, local_epoch, to_local
 
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
@@ -73,16 +73,11 @@ def rain_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, until
 
 
 def _calendar_bars(rain: dict[int, float], tz: tzinfo, first: date, last: date, by: str) -> Bars:
-    """Rain summed per calendar month or year over the period (each with its figure above the bar)."""
-    key = (lambda d: (d.year, d.month)) if by == "month" else (lambda d: (d.year,))
-    totals: dict[tuple, float] = {}
-    day = first
-    while day <= last:   # every month or year of the period gets a bar, a dry one as 0
-        totals.setdefault(key(day), 0.0)
-        day += timedelta(days=1)
+    """Rain summed per calendar month or year over the period, each with its total above its bar (every month or year of the
+    period has one, a dry one 0)."""
+    start = (lambda d: d.replace(day=1)) if by == "month" else (lambda d: d.replace(month=1, day=1))
+    totals = dict.fromkeys((start(first + timedelta(days=n)) for n in range((last - first).days + 1)), 0.0)
     for t, mm in rain.items():
         if mm > 0 and first <= (d := to_local(t, tz).date()) <= last:
-            totals[key(d)] += mm
-    starts = [date(k[0], k[1] if by == "month" else 1, 1) for k in totals]
-    return Bars("Rain", "mm", [day_bounds(d, tz)[0] for d in starts], [round(v, 1) for v in totals.values()],
-                28 * 86400 if by == "month" else 365 * 86400, by, values=True)
+            totals[start(d)] += mm
+    return calendar_bars("Rain", "mm", {d: round(v, 1) for d, v in totals.items()}, by, tz)

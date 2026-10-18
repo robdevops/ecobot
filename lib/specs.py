@@ -9,10 +9,10 @@ optionally the true records (lowest and highest reading, with when). Anything ma
 built, not when it is drawn."""
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, tzinfo
 
 from .series import RAIN_WITH, WEATHER
-from .timeutil import day_text
+from .timeutil import day_bounds, day_text
 
 
 NO_LOW = tuple(name for name, r in WEATHER.items() if not r.low)   # readings whose low is nothing every night or calm hour: only the high is tagged
@@ -58,6 +58,13 @@ class Bars:
     def __post_init__(self):
         if len(self.x) != len(self.y):
             raise ValueError(f"bars {self.label!r}: x and y differ in length")
+
+
+def calendar_bars(label: str, unit: str, figures: dict[date, float], by: str, tz: tzinfo) -> Bars:
+    """A bar per calendar month or year (`by`) from {its first day: figure}, the figure written above it. A bar is as wide as
+    the shortest month or year."""
+    return Bars(label, unit, [day_bounds(d, tz)[0] for d in figures], [float(v) for v in figures.values()],
+                28 * 86400 if by == "month" else 365 * 86400, by, values=True)
 
 
 @dataclass

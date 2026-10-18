@@ -13,10 +13,10 @@ import asyncio
 import logging
 import operator
 import re
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import date, datetime, tzinfo
 from statistics import fmean
 
-from ..daytable import analyse, grouped_as_asked, parameters, validate
+from ..daytable import analyse, grouped_as_asked, lists_days, parameters, prepare
 from ..series import WEATHER
 from ..timeutil import day_bounds, day_text, local_date, now_local
 from ..tools import json_result
@@ -47,7 +47,8 @@ for _name, _group, _field, _unit, _low in _OTHERS:
         FIELDS[f"{_name}_min"] = (_group, _field, "low", _unit)
 FIELDS["temp_avg"] = ("outdoor", "temperature", "mean", "°C")
 AVERAGED = {n for n in FIELDS if n.endswith(("_max", "_min")) and n not in ("temp_max", "temp_min")}   # no range of their own at 30 minutes or daily
-ALWAYS_SHOWN = ("temp_max", "temp_min", "rain")
+FIELD_UNITS = {n: f[3] for n, f in FIELDS.items()}
+ALWAYS_SHOWN = ("temp_max", "temp_min", "rain")   # every listed day shows them; days rank by the first when nothing else is named
 
 PARAMETERS = parameters(list(FIELDS), "rain >= 1 and temp_max > 30", {
     "only": {"type": "string", "enum": ["public_holiday", "weekend"],
@@ -93,19 +94,9 @@ def day_figures(cache: HistoryCache, mac: str, cycle: str, names: list[str], day
 
 
 def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
-    today = now.date()
-    try:
-        first = date.fromisoformat(str(args["start_date"])[:10])
-        last = min(date.fromisoformat(str(args["end_date"])[:10]), today - timedelta(days=1))
-    except (KeyError, ValueError) as e:
-        return {"error": f"bad date ({e}); use 'YYYY-MM-DD'"}
-    if first > last:
-        return {"error": "start_date must be before end_date (today isn't final, so the latest day is yesterday)"}
-    where = args.get("where") or []
-    if problem := validate(args, {n: f[3] for n, f in FIELDS.items()}):
-        return {"error": problem}
-    sort_by = args.get("sort_by") or (where[0]["field"] if where else args.get("of") or "temp_max")
-    args = {**args, "sort_by": sort_by}
+    asked = prepare(args, FIELD_UNITS, ALWAYS_SHOWN, now.date())
+    if isinstance(asked, str):
+        return {"error": asked}
     only = args.get("only")
     if only not in (None, "public_holiday", "weekend"):
         return {"error": "only must be public_holiday or weekend"}
@@ -114,11 +105,11 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
         return {"error": calendar.problem()}
     kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
             "public_holiday": lambda d: calendar.name(d) is not None}[only]
-    shown = list(dict.fromkeys([*ALWAYS_SHOWN, sort_by, *(c["field"] for c in where), *([args["of"]] if args.get("of") else [])]))
+    first, last, shown, where, sort_by = asked.first, asked.last, asked.shown, asked.where, asked.sort_by
     groups = sorted({FIELDS[n][0] for n in shown})
 
     # which cycle each day is answered from: exact sub-daily data where every needed group has it
-    days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
+    days = asked.days
     windows = [(cycle, d) for cycle in FINE_CYCLES for d in days]
     source: dict[date, str] = {}
     for (cycle, d), gaps in zip(windows, cache.uncovered(mac, groups, [(cycle, *day_bounds(d, tz, True)) for cycle, d in windows])):
@@ -142,9 +133,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
                 source[d] = "daily"
 
     checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
-    units = {n: FIELDS[n][3] for n in shown}
-    label = day_text
-    got = analyse(values, shown, units, args, checked, first, last, tz, turn,
+    got = analyse(values, asked, checked, tz, turn,
                   lambda d: {**({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
                              "source": "daily" if source.get(d) == "daily" else "exact"},
                   {"public_holiday": "public holidays only", "weekend": "weekends only"}.get(only, ""))
@@ -166,14 +155,14 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
                 break
 
     exact_days = sorted(d for d in checked if source.get(d) != "daily")
-    if args.get("count_only") or (args.get("stat") not in (None, "count") and args.get("group_by")):
+    if not lists_days(args):
         trace = []   # just the figures
     if trace:
         out["trace_rain_days"] = [row(d) for d in trace]
         out["note_trace"] = (f"These days rank higher but had less than {rain_cond['value']:g} mm of rain (a trace), so they "
                              "are not in \"days\". Mention the first as a short footnote.")
     if any(source.get(d) == "daily" for d in checked):
-        out["exact_from"] = label(exact_days[0]) if exact_days else None
+        out["exact_from"] = day_text(exact_days[0]) if exact_days else None
         out["note_daily"] = (f"Days marked \"daily\" come from daily readings that run {daily_run(tz, first, last)}, so their rain and dates "
                              "are approximate (a morning shower can be counted on the day before). Say so briefly if any "
                              "listed day is marked daily, or if the period reaches back before exact_from.")
