@@ -17,16 +17,34 @@ import logging
 import re
 from collections import deque
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from typing import NamedTuple
 
 import httpx
 
 log = logging.getLogger(__name__)
 
 BASE = "https://api.ecowitt.net/api/v3/device"
-RETENTION = {"5min": 90, "30min": 365, "4hour": 730, "1day": 1460}  # days kept
-MAX_SPAN = {"5min": timedelta(days=1), "30min": timedelta(days=7),
-            "4hour": timedelta(days=28), "1day": timedelta(days=365)}
-CYCLE_SECONDS = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
+
+
+class Cycle(NamedTuple):
+    """One of Ecowitt's resolutions."""
+    seconds: int       # the time one reading covers
+    span: timedelta    # the most one request may ask for
+    kept: int          # days Ecowitt keeps its readings
+    settle: int        # seconds after a reading's time is over before its value is final
+
+
+CYCLES = {"5min": Cycle(300, timedelta(days=1), 90, 3600), "30min": Cycle(1800, timedelta(days=7), 365, 7200),
+          "4hour": Cycle(14400, timedelta(days=28), 730, 8 * 3600), "1day": Cycle(86400, timedelta(days=365), 1460, 86400)}
+# Readings every half hour or finer: they fit a local day exactly (Ecowitt's 4-hour and daily ones are cut on UTC hours),
+# and they change at every refresh.
+FINE_CYCLES = tuple(name for name, c in CYCLES.items() if c.seconds <= 1800)
+
+
+def kept_from(cycle: str, today: date) -> date:
+    """The first day whose readings at this cycle Ecowitt is sure still to have: two days clear of its retention edge, so a
+    request can't race the deletion."""
+    return today - timedelta(days=CYCLES[cycle].kept - 2)
 # What the bot keeps cached and warm (the extras feed the rain alerts and predictions). One list, so the
 # warm-up and the archive fetch the same thing and can reuse each other's data.
 GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo", "solar_and_uvi"]

@@ -19,7 +19,7 @@ from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, day_text, local_date, now_local
-from .api import daily_run
+from .api import FINE_CYCLES, daily_run
 from .calendar import PublicHolidays
 from .store import HistoryCache, subtract
 
@@ -45,7 +45,6 @@ for _name, _group, _field, _unit in (
 FIELDS["temp_avg"] = ("outdoor", "temperature", "mean", "°C")
 AVERAGED = {n for n in FIELDS if n.endswith(("_max", "_min")) and n not in ("temp_max", "temp_min")}   # no range of their own at 30 minutes or daily
 ALWAYS_SHOWN = ("temp_max", "temp_min", "rain")
-SUB_DAILY = ("5min", "30min")
 
 PARAMETERS = parameters(list(FIELDS), "rain >= 1 and temp_max > 30", {
     "only": {"type": "string", "enum": ["public_holiday", "weekend"],
@@ -118,7 +117,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     # which cycle each day is answered from: exact sub-daily data where every needed group has it
     days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
     source: dict[date, str] = {}
-    for cycle in SUB_DAILY:
+    for cycle in FINE_CYCLES:
         cover = {g: cache.coverage(mac, cycle, g) for g in groups}
         for d in days:
             lo, hi = day_bounds(d, tz, True)
@@ -127,7 +126,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     rest = {d for d in days if d not in source}
 
     values: dict[str, dict[date, float]] = {n: {} for n in shown}
-    for cycle in SUB_DAILY:
+    for cycle in FINE_CYCLES:
         mine = {d for d, c in source.items() if c == cycle}
         if mine:
             for n, figures in day_figures(cache, mac, cycle, shown, mine, tz, day_bounds(min(mine), tz, True)[0],

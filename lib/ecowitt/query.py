@@ -13,7 +13,7 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 import asyncio
 import json
 import logging
-from datetime import date, datetime, time, timedelta, UTC
+from datetime import date, datetime, time, timedelta
 from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
@@ -24,7 +24,7 @@ from ..timeutil import daily_summary, day_bounds, day_text, local_date, now_loca
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
-from .api import CYCLE_SECONDS, RETENTION, daily_run
+from .api import CYCLES, daily_run, kept_from
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
 from .fetch import Fetcher, spans
@@ -77,7 +77,6 @@ class HistoryQuery:
     def __init__(self, fetcher: Fetcher, args: dict, turn):
         self.f, self.tz, self.args, self.turn = fetcher, fetcher.tz, args, turn
         self.now = now_local(self.tz)
-        self.now_utc = datetime.now(UTC)
         self.store: dict = {}       # "group.field" -> {"unit", "pts"}, filled by _fetch_period
         self.start = self.end = self.span = None          # the period, set by run()
         self.held = False                                  # the whole period is in the cache at 30 minutes, and fits the row budget
@@ -103,10 +102,10 @@ class HistoryQuery:
             end = parse_local(self.args.get("end_date") or self.now, self.tz)
         except ValueError as e:
             return f"Error: bad date ({e}). Use 'YYYY-MM-DD HH:MM:SS'."
-        self.start = max(start, datetime.combine(today - timedelta(days=RETENTION["1day"] - 2), time()))
+        self.start = max(start, datetime.combine(kept_from("1day", today), time()))
         self.end = min(end, self.now)
         if self.start >= self.end:
-            return "Error: start_date must be before end_date and within the last 4 years."
+            return f"Error: start_date must be before end_date and within the last {CYCLES['1day'].kept // 365} years."
         self.span = self.end - self.start
         self.held = await self._held_locally()
         self.detailed = self.held or self.span <= timedelta(days=DETAILED_DAYS)
@@ -170,10 +169,9 @@ class HistoryQuery:
     async def _fetch_period(self):
         """Coarse pass: the best data for the whole period at the fewest requests."""
         f, start, end, today = self.f, self.start, self.end, self.now.date()
-        age_days = (today - start.date()).days
-        thirty_floor = datetime.combine(today - timedelta(days=RETENTION["30min"] - 2), time())
+        thirty_floor = datetime.combine(kept_from("30min", today), time())
         recent = datetime.combine(today - timedelta(days=6), time())
-        if self.span <= timedelta(days=1) and (age_days < RETENTION["5min"] - 1 or await f.covered(
+        if self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or await f.covered(
                 "5min", f.epoch(start), f.epoch(end))):
             collect(self.store, await f.get("5min", start, end), "5min")
         elif self.span <= timedelta(days=FINE_DAYS) and end > thirty_floor:
@@ -272,9 +270,9 @@ class HistoryQuery:
             used = {"all": 0, "month": 0}
             finer_of: dict = {}  # slots on the same bucket share an answer; a new pass looks again (data was fetched)
             for sid, ext in slots.items():
-                w_end = ext.ts + CYCLE_SECONDS[ext.cycle] - 1
+                w_end = ext.ts + CYCLES[ext.cycle].seconds - 1
                 if (ext.ts, ext.cycle) not in finer_of:
-                    finer_of[ext.ts, ext.cycle] = await f.finer_cycle(ext.ts, ext.cycle, w_end, self.now_utc)
+                    finer_of[ext.ts, ext.cycle] = await f.finer_cycle(ext.ts, ext.cycle, w_end, self.now.date())
                 finer = finer_of[ext.ts, ext.cycle]
                 if not finer:
                     continue
@@ -487,7 +485,7 @@ class HistoryQuery:
                 low, high = (r["low"][0] if "low" in r else None), (r["high"][0] if "high" in r else None)
                 if band:
                     low, high = low_of(r), max(high_of(gust[t]) if t in gust and "value" in gust[t] else high_of(r), v)
-                out.append((t, v, low, high, CYCLE_SECONDS[r["cycle"]]))
+                out.append((t, v, low, high, CYCLES[r["cycle"]].seconds))
         return out
 
     def _series_entry(self, k: str, label: str | None = None) -> tuple[Line, str] | None:

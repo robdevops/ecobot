@@ -15,7 +15,7 @@ from pathlib import Path
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 from lib.config import data_dir  # noqa: E402
 
-from lib.ecowitt.api import GROUPS, RETENTION  # noqa: E402
+from lib.ecowitt.api import CYCLES, GROUPS, kept_from  # noqa: E402
 from lib.ecowitt.store import horizon, subtract  # noqa: E402
 
 
@@ -30,8 +30,8 @@ def ecowitt(path: Path):
         rows = db.execute("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=?", (mac,)).fetchone()[0]
         print(f"Ecowitt {mac}: {rows:,} readings, station data from {day(first) if first else 'n/a'}")
         now = time.time()
-        for cycle in ("5min", "30min", "4hour", "1day"):
-            start = max(now - (RETENTION[cycle] - 2) * 86400, (first or now) - 86400)
+        for cycle in CYCLES:
+            start = max(datetime.combine(kept_from(cycle, date.today()), datetime.min.time()).timestamp(), (first or now) - 86400)
             end = horizon(cycle)
             for group in GROUPS:
                 cov = db.execute("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?",

@@ -15,7 +15,7 @@ from ..intent import NOW_GROUPS
 from ..timeutil import local_epoch, naive_local, now_local, when
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
-from .api import EcowittAPI, GROUPS, UNITS
+from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
@@ -28,7 +28,6 @@ from .store import HistoryCache, HotStore
 log = logging.getLogger(__name__)
 
 DEFAULT_GROUPS = "outdoor,indoor"
-FAST_CYCLES = ("5min", "30min")   # kept warm by refetching every cycle; the 4-hour and daily tails only when their memory copy is stale
 
 
 def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
@@ -258,7 +257,7 @@ class Ecowitt:
 
         async def one(cycle: str):
             for start, end in spans(cycle, windows[cycle], now):   # each piece fits Ecowitt's per-request limit
-                await fetchers[cycle].get(cycle, start, end, refresh=fresh and cycle in FAST_CYCLES, load=False)
+                await fetchers[cycle].get(cycle, start, end, refresh=fresh and cycle in FINE_CYCLES, load=False)
         await asyncio.gather(*(one(cycle) for cycle in windows))
         return f"Ecowitt {sum(f.calls for f in fetchers.values())} req"
 

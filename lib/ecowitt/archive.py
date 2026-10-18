@@ -14,15 +14,15 @@ from datetime import datetime, time, timedelta
 from time import monotonic
 
 from ..timeutil import naive_local, now_local, seconds_until
-from .api import MIN_GAP_SECONDS, RETENTION
+from .api import CYCLES, MIN_GAP_SECONDS, kept_from
 from .fetch import spans
-from .store import BUCKET_SECONDS, horizon, subtract
+from .store import horizon, subtract
 
 log = logging.getLogger(__name__)
 
 RUN_AT = time(1, 30)
 PACE_SECONDS = 2.0  # gap between requests, so questions aren't starved
-COARSE_CYCLES = ("1day", "4hour", "30min")  # 5-minute data goes day by day, first
+COARSE_CYCLES = tuple(c for c in reversed(CYCLES) if c != "5min")   # coarsest first; 5-minute data goes day by day, before them
 OUTAGE_STOP = 3     # requests failing in a row (no answer, or a busy Ecowitt) that end a run: the rest wait for the next
 
 
@@ -45,14 +45,14 @@ class Archive:
         earliest = (created.date() - timedelta(days=1)) if created else None
 
         def first_day(cycle: str):
-            oldest = today - timedelta(days=RETENTION[cycle] - 2)  # stay clear of the retention edge
+            oldest = kept_from(cycle, today)
             return max(oldest, earliest) if earliest else oldest
 
         def settled(cycle: str) -> datetime:
             """The end of the last whole bucket that is final at this resolution. Whole buckets only,
             so the edge holds still between runs instead of creeping forward with the clock (which
             would leave a few seconds uncovered, and refetched, every time)."""
-            size = BUCKET_SECONDS[cycle]
+            size = CYCLES[cycle].seconds
             ts = horizon(cycle) - size
             return naive_local(ts - ts % size - 1, tz)
 

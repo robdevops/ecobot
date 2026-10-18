@@ -127,3 +127,13 @@ def test_a_write_that_fails_part_way_leaves_nothing_behind(tmp_path, monkeypatch
     monkeypatch.setattr(store, "merge", real_merge)
     cache.store("M", "5min", ["outdoor"], data(old + 3600), old + 3600, old + 3600)   # a later save commits only its own
     assert cache.count("M", "5min", "outdoor", old, old + 300) == 0 and cache.count("M", "5min", "outdoor", old + 3600, old + 3600) == 1
+
+
+def test_each_ecowitt_resolution_is_kept_asked_for_and_settled_as_its_row_says():
+    from datetime import date, timedelta
+    from lib.ecowitt.api import CYCLES, kept_from
+    today, now = date(2026, 10, 3), 1_790_000_000
+    # Ecowitt keeps 5-minute readings 90 days, 30-minute 365, 4-hour 730, daily 1460; the bot asks two days clear of each edge
+    assert [(today - kept_from(c, today)).days for c in CYCLES] == [88, 363, 728, 1458]
+    assert [now - store.horizon(c, now) for c in CYCLES] == [300 + 3600, 1800 + 7200, 14400 + 8 * 3600, 86400 + 86400]   # final after
+    assert [c.span for c in CYCLES.values()] == [timedelta(days=d) for d in (1, 7, 28, 365)]                       # per request

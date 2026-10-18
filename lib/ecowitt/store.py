@@ -19,14 +19,11 @@ import time
 from bisect import bisect_left
 
 from ..timeutil import SLOT
-from .api import UNIT_FIXES
+from .api import CYCLES, UNIT_FIXES
 
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1"
-BUCKET_SECONDS = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
-# How long after a bucket ends before its data is treated as final
-SETTLE_SECONDS = {"5min": 3600, "30min": 7200, "4hour": 8 * 3600, "1day": 86400}
 # Missing readings older than this are accepted as genuinely missing (station offline,
 # before it existed). Newer gaps may just be Ecowitt running late, so they're re-asked.
 GAP_FINAL_SECONDS = 2 * 86400
@@ -40,7 +37,7 @@ type Interval = tuple[int, int]
 def horizon(cycle: str, now: float | None = None) -> int:
     """Latest bucket start whose data is final."""
     now = time.time() if now is None else now
-    return int(now - SETTLE_SECONDS[cycle] - BUCKET_SECONDS[cycle])
+    return int(now - CYCLES[cycle].settle - CYCLES[cycle].seconds)
 
 
 def subtract(span: Interval, covered: list[Interval]) -> list[Interval]:
@@ -212,7 +209,7 @@ class HistoryCache:
             if old_enough:
                 covered.append((grp, limit))
             elif reached is not None:
-                covered.append((grp, min(limit, reached + BUCKET_SECONDS[cycle] - 1)))
+                covered.append((grp, min(limit, reached + CYCLES[cycle].seconds - 1)))
         with self._lock, self.db:   # one transaction: an error part-way rolls it back (no half-written response is kept)
             grown = set()   # groups that now carry a reading the cache has never had (Ecowitt added a metric)
             for _, _, grp, field, _ in units:

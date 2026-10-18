@@ -5,10 +5,10 @@ import asyncio
 import functools
 import logging
 import time
-from datetime import datetime, timedelta, tzinfo, UTC
+from datetime import date, datetime, timedelta, tzinfo
 
 from ..timeutil import local_epoch, naive_local
-from .api import EcowittError, MAX_SPAN, RETENTION
+from .api import CYCLES, EcowittError, kept_from
 from .store import HistoryCache, HotStore, merge as merge_intervals, subtract
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def series_in(data: dict):
 def spans(cycle: str, t: datetime, until: datetime):
     """(start, end) pieces of [t, until) that each fit Ecowitt's per-request limit for this cycle."""
     while t < until:
-        e = min(t + MAX_SPAN[cycle] - timedelta(seconds=1), until)
+        e = min(t + CYCLES[cycle].span - timedelta(seconds=1), until)
         yield t, e
         t = e + timedelta(seconds=1)
 
@@ -156,13 +156,13 @@ class Fetcher:
         """covered() for each of these windows, from one read of the coverage."""
         return [bool(self.groups) and not any(missing.values()) for missing in await self._missing(cycle, windows)]
 
-    async def finer_cycle(self, ts: int, current: str, window_end: int, now_utc: datetime) -> str | None:
+    async def finer_cycle(self, ts: int, current: str, window_end: int, today: date) -> str | None:
         """Finest cycle finer than `current` available for this window: still kept by Ecowitt,
         or already in the cache (e.g. archived 5-minute data). None if neither."""
-        age = (now_utc - datetime.fromtimestamp(ts, UTC)).days
+        day = self.local(ts).date()
         for cycle in ("5min", "30min", "4hour"):
             if cycle == current:
                 return None
-            if age < RETENTION[cycle] - 1 or await self.covered(cycle, ts, window_end):
+            if day >= kept_from(cycle, today) or await self.covered(cycle, ts, window_end):
                 return cycle
         return None
