@@ -3,7 +3,6 @@ start() finds the station, tools are what the model can call, warm()/poke() keep
 readings ready, readings() feeds the alert monitors."""
 
 import asyncio
-import json
 import logging
 import os
 import time
@@ -12,14 +11,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
 from ..timeutil import local_epoch, naive_local, now_local, when
-from ..tools import Tool, Turn
+from ..tools import Tool, Turn, json_result
 from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
-from .fetch import Fetcher
+from .fetch import Fetcher, series_in
 from ..series import READING_GROUPS, WEATHER, find
 from .query import HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
@@ -42,16 +41,12 @@ def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
 def readings(data: dict) -> list[tuple[int, dict]]:
     """Ecowitt 'data' -> [(epoch, {"group.field": value})] sorted by time."""
     rows: dict[int, dict] = {}
-    for grp, fields in data.items():
-        if not isinstance(fields, dict):
-            continue
-        for field, obj in fields.items():
-            if isinstance(obj, dict) and isinstance(obj.get("list"), dict):
-                for ts, v in obj["list"].items():
-                    try:
-                        rows.setdefault(int(ts), {})[f"{grp}.{field}"] = float(v)
-                    except (TypeError, ValueError):
-                        pass
+    for group, field, obj in series_in(data):
+        for ts, v in obj["list"].items():
+            try:
+                rows.setdefault(int(ts), {})[f"{group}.{field}"] = float(v)
+            except (TypeError, ValueError):
+                pass
     return sorted(rows.items())
 
 
@@ -209,8 +204,7 @@ class Ecowitt:
                         newest = max(newest, int(obj.get("time") or 0))
                     except (TypeError, ValueError):
                         pass
-        return json.dumps({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})},
-                          ensure_ascii=False, separators=(",", ":"))
+        return json_result({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})})
 
     async def _live_data(self, groups: list[str]) -> dict:
         """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and asked for them,

@@ -8,7 +8,6 @@ falling, steady or rising; the reading's average level in wet and dry slots; a c
 before and the rain after; and the biggest rain spells with the change that preceded each."""
 
 import asyncio
-import json
 import logging
 from datetime import date, datetime, time, tzinfo
 
@@ -20,6 +19,7 @@ from ..panels import panel_for
 from ..series import WEATHER
 from ..specs import Chart, Line, stack
 from ..timeutil import day_bounds, day_text, local_date, now_local, parse_period
+from ..tools import json_result
 from .store import HistoryCache
 
 log = logging.getLogger(__name__)
@@ -103,4 +103,4 @@ async def link_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn)
     if spec and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
         turn.charts.append(spec)
         out["chart"] = LINK_CHART_HINT
-    return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+    return json_result(out)

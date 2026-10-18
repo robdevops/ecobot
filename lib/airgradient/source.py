@@ -13,7 +13,6 @@ where available, plus a US EPA AQI and band for PM2.5.
 
 import asyncio
 import statistics
-import json
 import logging
 import time
 from datetime import date, datetime, timedelta, UTC
@@ -29,7 +28,7 @@ from ..lines import Plotted, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
 from ..timeutil import day_text, local_date, now_local, parse_local, to_local, when
-from ..tools import Tool, Turn
+from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
@@ -263,10 +262,9 @@ class AirGradient:
         try:
             chart = wants_chart(args, turn)
             if args.get("start_date") or args.get("end_date") or chart:
-                return json.dumps(await self.history(args.get("start_date"), args.get("end_date"),
-                                                     chart=chart, metrics=args.get("metrics"), turn=turn),
-                                  ensure_ascii=False)
-            return json.dumps(await self.current(), ensure_ascii=False)
+                return json_result(await self.history(args.get("start_date"), args.get("end_date"),
+                                                      chart=chart, metrics=args.get("metrics"), turn=turn))
+            return json_result(await self.current())
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
             return f"Error: couldn't read the air-quality sensor ({e})"

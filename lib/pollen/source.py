@@ -15,7 +15,7 @@ from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
 from ..timeutil import day_text, local_date, now_local, when
-from ..tools import Tool, Turn
+from ..tools import Tool, Turn, json_result
 from ..warm import Warmer, in_sync_hours
 from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
 
@@ -168,7 +168,7 @@ class Pollen:
 
     async def handle(self, args: dict, turn: Turn | None = None) -> str:
         if not self.in_season():
-            return json.dumps({"error": OFF_SEASON})
+            return json_result({"error": OFF_SEASON})
         if self.page is None and not args.get("cached"):   # the report ("cached") never fetches
             try:
                 await self.warm(True)
@@ -176,7 +176,7 @@ class Pollen:
                 log.warning("Pollen not readable: %s", e)
         lines = self.lines()
         if not lines:
-            return json.dumps({"error": "No pollen levels are available right now."})
+            return json_result({"error": "No pollen levels are available right now."})
         cur = self.current()
         out = {"lines": lines, "place": self.place, "source": "melbournepollen.com.au (grass pollen from pollen-trap data; asthma risk from the "
                                          "Victorian Department of Health and BOM, 1 Oct - 31 Dec)"}
@@ -186,4 +186,4 @@ class Pollen:
             out["asthma_updated"] = cur["asthma"]["updated"]
         if not cur["asthma"]:   # in season the page always has one: it may have changed
             out["asthma_note"] = "The page had no thunderstorm asthma level for this district when it was last read."
-        return json.dumps(out, ensure_ascii=False)
+        return json_result(out)

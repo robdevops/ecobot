@@ -10,7 +10,6 @@ The exact range grows by itself as the archive keeps more sub-daily data.
 """
 
 import asyncio
-import json
 import logging
 import operator
 import re
@@ -20,6 +19,7 @@ from statistics import fmean
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..series import WEATHER
 from ..timeutil import day_bounds, day_text, local_date, now_local
+from ..tools import json_result
 from .api import FINE_CYCLES, daily_run
 from .calendar import PublicHolidays
 from .store import HistoryCache
@@ -199,4 +199,4 @@ async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=
     args = grouped_as_asked(args, turn)
     now = now_local(tz)
     result = await asyncio.to_thread(find_days, cache, mac, tz, args, now, turn)
-    return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+    return json_result(result)

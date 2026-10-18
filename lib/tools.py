@@ -14,6 +14,11 @@ MAX_OUTPUT_CHARS = 60000
 TOOL_TIMEOUT = 90
 
 
+def json_result(out) -> str:
+    """A tool's result as the model is sent it: compact JSON, with °, ² and emoji written as they are, not escaped."""
+    return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+
 @dataclass
 class Turn:
     """What one question carries between the bot and the tools it calls (nothing is shared between questions)."""

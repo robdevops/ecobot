@@ -6,7 +6,6 @@ drawing code, so a chart the bot has never drawn before is still made from check
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
 import asyncio
-import json
 import logging
 from datetime import date, datetime, time, timedelta, tzinfo
 from statistics import fmean
@@ -21,7 +20,7 @@ from .panels import panel_for
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period
-from .tools import Tool, Turn
+from .tools import Tool, Turn, json_result
 
 log = logging.getLogger(__name__)
 
@@ -93,7 +92,7 @@ LINK_PARAMETERS = {
 
 
 def _error(text: str) -> str:
-    return json.dumps({"error": text}, ensure_ascii=False)
+    return json_result({"error": text})
 
 
 def rating_shares(values: dict[int, float], limits: tuple[float, float], tz: tzinfo, first: date, last: date, label: str) -> Shares:
@@ -181,7 +180,7 @@ class Composer:
             summary.append(facts)
         out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
         self._add_chart(out, built, first, last, turn)
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
     def _add_chart(self, out: dict, panels: list[Panel], first: date, last: date, turn: Turn):
         """Send the panels as one chart (rain behind the first line) and tell the model what its reply is for."""
@@ -211,7 +210,7 @@ class Composer:
         bars = rain_bars(rain, self.tz, first, last)
         if result and air_panel and bars.x and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             self._add_chart(out, [air_panel, panel_for("rain", bars=bars)], first, last, turn)
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
     async def air_scan(self, args: dict, turn: Turn | None = None) -> str:
         turn = turn or Turn()
@@ -254,7 +253,7 @@ class Composer:
                 panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, {}, data=air.get(n)))[0] for n in drawn]
                 if all(panels):
                     self._add_chart(out, panels, first, last, turn)
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
     async def _panel(self, name: str, style: str, first: date, last: date, notes: dict,
                      data: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:

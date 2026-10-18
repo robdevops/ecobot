@@ -1,7 +1,6 @@
 """The forecast source: the daily forecast from Open-Meteo (open-meteo.com), kept warm and cached; fetched only from 6 am to 6 pm
 local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once at the start (or the first question) when nothing is cached."""
 
-import json
 import logging
 import math
 import re
@@ -14,7 +13,7 @@ from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
 from ..timeutil import now_local, when
-from ..tools import Tool, Turn
+from ..tools import Tool, Turn, json_result
 from ..warm import Warmer, in_sync_hours
 
 log = logging.getLogger(__name__)
@@ -224,8 +223,8 @@ class Forecast:
             count = 7
         lines = self.lines(count)
         if not lines:
-            return json.dumps({"error": "No forecast is available right now."})
+            return json_result({"error": "No forecast is available right now."})
         if turn:
             turn.forecast_shown.extend(self.upcoming(count))   # remembered for the chat once the answer is sent
         stamped = {"time": when(int(self.fetched_at), self.tz)} if self.fetched_at else {}   # when it was last fetched
-        return json.dumps({"lines": lines, "place": self.place, "source": self.source, **stamped}, ensure_ascii=False)
+        return json_result({"lines": lines, "place": self.place, "source": self.source, **stamped})

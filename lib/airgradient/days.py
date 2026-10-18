@@ -3,13 +3,13 @@ AirGradient). The same fields as a day's highest (_max), lowest (_min) or mean (
 days particles passed 25 µg/m³. The counting, ranking, grouping and bar charts are shared with weather_days (lib/daytable.py)."""
 
 import asyncio
-import json
 import logging
 from datetime import date, datetime, timedelta, tzinfo
 from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
+from ..tools import json_result
 from .metrics import ALL_METRICS, CHART_UNITS, without_spikes
 
 log = logging.getLogger(__name__)
@@ -80,4 +80,4 @@ def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> di
 
 async def air_days_tool(store, tz: tzinfo, args: dict, turn=None) -> str:
     result = await asyncio.to_thread(find_air_days, store, tz, grouped_as_asked(args, turn), now_local(tz), turn)
-    return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+    return json_result(result)

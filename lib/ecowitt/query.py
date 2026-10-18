@@ -11,7 +11,6 @@ cheaply. But 1day buckets cover UTC days (10am-10am in Melbourne), not local day
 """
 
 import asyncio
-import json
 import logging
 from datetime import date, datetime, time, timedelta
 from statistics import fmean
@@ -21,6 +20,7 @@ from ..lines import build_line
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, day_bounds, day_text, local_date, now_local, parse_local, SLOT
+from ..tools import json_result
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
@@ -329,7 +329,7 @@ class HistoryQuery:
         if errors := f.errors + (self.wind.errors if self.wind else []):
             out["missing"] = errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
     def _in_focus(self, key: str) -> bool:
         """Is this series wanted by the question? Outdoor and indoor come with both temperature and humidity: when the words name
