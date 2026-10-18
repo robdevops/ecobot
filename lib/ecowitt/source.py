@@ -20,7 +20,7 @@ from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS
 from .glance import glance
 from .fetch import Fetcher, series_in
 from ..series import READING_GROUPS, WEATHER, find
-from .query import HistoryQuery, stack_names
+from .query import HistoryQuery, chart_field, stack_names
 from .store import HistoryCache, HotStore
 
 log = logging.getLogger(__name__)
@@ -176,8 +176,7 @@ class Ecowitt:
         turn = turn or Turn()
         groups = parse_groups(args.get("groups"))
         groups += [g for n in stack_names(args, turn) if (g := WEATHER[n].group) not in groups]  # what "plot temperature and rain" needs
-        named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
-        if (r := find(named)) and r.group not in groups:
+        if (r := find(chart_field(args, turn) or "")) and r.group not in groups:      # ... and what a chart of one reading needs
             groups.append(r.group)
         return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
 

@@ -299,6 +299,8 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     spec = turn.charts[0]
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
+    assert all(float(m["low"]) < float(m["high"]) for m in after.values())                 # each month's records refined in place
+    assert all(f"{datetime.strptime(month, '%b %Y'):%b %Y}" == month for month in after)  # a row per month: "Oct 2026"
     assert "monthly_note" not in json.loads(out) and fake.calls == []
     assert "daily averages, range shaded" in spec.subtitle      # 200 days: a point a day from the cached 30-minute data
     line = spec.panels[0].lines[0]
@@ -1271,16 +1273,17 @@ async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_fi
     cache.close()
 
 
-async def test_a_chart_field_may_be_a_readings_name_or_its_field(tmp_path):
+async def test_a_chart_field_may_be_a_readings_name_or_its_field_however_it_is_written(tmp_path):
     transport, _ = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     today = datetime.now(eco.tz).date()
-    for said in ("pressure", "relative", "dew_point"):
-        turn = Turn()
-        await eco.tools[1].handler({"groups": "outdoor,pressure", "chart": True, "chart_field": said,
+    for said, title in (("pressure", "Pressure"), ("relative", "Pressure"), ("dew_point", "Dew point"), ("Dew Point", "Dew point"),
+                        ("wind gust", "Wind")):
+        turn = Turn()                                                           # the reading's group is added for it
+        await eco.tools[1].handler({"groups": "outdoor", "chart": True, "chart_field": said,
                                     "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
-        assert turn.charts and turn.charts[0].title == ("Dew point" if said == "dew_point" else "Pressure"), said
+        assert turn.charts and turn.charts[0].title == title, said
     await eco.close()
 
 

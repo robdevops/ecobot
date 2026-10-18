@@ -14,6 +14,7 @@ import asyncio
 import logging
 from datetime import date, datetime, time, timedelta
 from statistics import fmean
+from typing import NamedTuple
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import build_line
@@ -32,7 +33,7 @@ from .fetch import Fetcher, spans
 log = logging.getLogger(__name__)
 
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
-FINE_DAYS = 31                  # up to this many: 30-minute readings; longer periods use daily records
+FINE_DAYS = 31                  # up to this many: 30-minute readings and a breakdown by day; longer periods use daily records, by month
 DAILY_ALL_DAYS = 7              # longer periods send every day's figures only when day by day was asked for
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
 MAX_REFINE_WINDOWS = 4          # overall records
@@ -62,11 +63,26 @@ def consecutive(days: list[date]) -> list[list[date]]:
     return runs
 
 
+def chart_field(args: dict, turn) -> str | None:
+    """The one reading a chart is asked for (the person's words, else the model's chart_field) as the field it plots, however it
+    is written ("UV" and "uvi" -> "uvi", "wind gust" -> "wind_speed": wind is its speed shaded up to the gusts); None if none."""
+    named = str(turn.chart_field or args.get("chart_field") or "").strip().lower().replace(" ", "_")
+    return field_of(named) if named else None
+
+
 def stack_names(args: dict, turn) -> list[str]:
     """The readings to put side by side (from the person's words, else the model's chart_fields), two or more."""
     raw = turn.chart_fields or args.get("chart_fields") or []
     names = [n for n in dict.fromkeys(str(x).strip().lower() for x in raw) if n in WEATHER]
     return names if len(names) >= 2 else []
+
+
+class Target(NamedTuple):
+    """An extreme that _refine looks for at a finer time: the period's record ("all") or a month's."""
+    scope: str            # "all" or "month"
+    key: str              # "group.field"
+    want: str             # "low" or "high"
+    month: str = ""       # a month's record: its row in the breakdown
 
 
 # ---------- one history question ----------
@@ -88,6 +104,11 @@ class HistoryQuery:
         self.rain_from_daily = False                       # some of its days come from daily records (older than the 30-minute readings)
         self.compass: Compass | None = None                # the wind rose (counts per compass point by speed), drawn beside the wind chart
         self.wind: Fetcher | None = None                   # the wind rose's own (5-minute readings), made when wind direction is counted
+
+    @property
+    def by_day(self) -> bool:
+        """The answer breaks the period down by day (up to FINE_DAYS), else by month."""
+        return self.span <= timedelta(days=FINE_DAYS)
 
     async def run(self) -> str:
         try:
@@ -120,7 +141,7 @@ class HistoryQuery:
             return "Error: no history data returned." + (
                 " Details: " + "; ".join(self.f.errors[:5]) if self.f.errors else "")
         self.overall = {k: ex for k, s in self.store.items() if len(ex := series_extremes(s)) == 2}
-        self.monthly = self._monthly_extremes() if self.span > timedelta(days=31) else {}
+        self.monthly = {} if self.by_day else self._monthly_extremes()
         refined = await self._refine()
         return self._answer(refined)
 
@@ -223,7 +244,7 @@ class HistoryQuery:
             counted = [(t, d, exact) for t, (d, exact) in sorted(readings.items()) if first <= f.local(t)]
             calm = [x for x in counted if speeds.get(x[0], 1) <= 0]
             counted = [x for x in counted if speeds.get(x[0], 1) > 0]
-            result = summarise_direction(counted, self.tz, self.span <= timedelta(days=31), len(calm))
+            result = summarise_direction(counted, self.tz, self.by_day, len(calm))
             if not result:
                 continue
             self.compass = Compass(direction_rose([(t, d, x, speeds.get(t)) for t, d, x in counted]),
@@ -241,7 +262,7 @@ class HistoryQuery:
             for ts, rec in sorted(series["pts"].items()):
                 if until is None or ts >= until:
                     day = local_date(ts, self.tz)
-                    month, until = day.strftime("%b %Y"), day_bounds(day, self.tz)[1]
+                    month, until = self._label(day), day_bounds(day, self.tz)[1]
                 fold(months.setdefault(month, {}), ts, rec)
             out[key] = months
         return out
@@ -252,23 +273,23 @@ class HistoryQuery:
         for periods of up to a few months, each month's temperature records. A second pass narrows
         a 30-minute slot to archived 5-minute data. Returns the number of windows fetched."""
         f = self.f
-        slots: dict = {}  # ("all", key, want) or ("month", key, month, want) -> Ext
+        slots: dict[Target, Ext] = {}
         for key in sorted(self.overall, key=lambda k: "temperature" not in k):
             for want in ("low", "high"):
-                slots[("all", key, want)] = self.overall[key][want]
+                slots[Target("all", key, want)] = self.overall[key][want]
         if self.monthly and self.detailed:
             for key, months in self.monthly.items():
                 if key.endswith(".temperature"):
                     for month, d in reversed(list(months.items())):  # newest first: where 5-minute data is
                         for want, ext in d.items():
-                            slots[("month", key, month, want)] = ext
+                            slots[Target("month", key, want, month)] = ext
         caps = {"all": MAX_REFINE_WINDOWS, "month": MAX_MONTH_REFINE_WINDOWS}
         refined = 0
         for _ in range(2):
-            windows: dict = {}  # (cycle, start_ts, end_ts) -> [slot id]
+            windows: dict = {}  # (cycle, start_ts, end_ts) -> [Target]
             used = {"all": 0, "month": 0}
             finer_of: dict = {}  # slots on the same bucket share an answer; a new pass looks again (data was fetched)
-            for sid, ext in slots.items():
+            for target, ext in slots.items():
                 w_end = ext.ts + CYCLES[ext.cycle].seconds - 1
                 if (ext.ts, ext.cycle) not in finer_of:
                     finer_of[ext.ts, ext.cycle] = await f.finer_cycle(ext.ts, ext.cycle, w_end, self.now.date())
@@ -277,38 +298,36 @@ class HistoryQuery:
                     continue
                 w = (finer, ext.ts, w_end)
                 if w not in windows:
-                    if used[sid[0]] >= caps[sid[0]]:
+                    if used[target.scope] >= caps[target.scope]:
                         continue
-                    used[sid[0]] += 1
+                    used[target.scope] += 1
                     windows[w] = []
-                windows[w].append(sid)
+                windows[w].append(target)
             if not windows:
                 break
             refined += len(windows)
             for (cycle, w_start, w_end), targets in windows.items():
                 fine: dict = {}
                 collect(fine, await f.get(cycle, f.local(w_start), min(f.local(w_end), self.now)), cycle)
-                for sid in targets:
-                    key, want = sid[1], sid[-1]
-                    found = series_extremes(fine[key], w_start, w_end).get(want) if key in fine else None
+                for target in targets:
+                    found = series_extremes(fine[target.key], w_start, w_end).get(target.want) if target.key in fine else None
                     if not found:
                         continue
-                    cur = slots[sid]
-                    keep = cur if better(want, cur.value, found.value) else found  # the more extreme value...
-                    slots[sid] = Ext(keep.value, keep.raw, found.ts, found.cycle, keep.exact)  # ...at the finer time
-        for sid, ext in slots.items():
-            if sid[0] == "all":
-                self.overall[sid[1]][sid[2]] = ext
+                    cur = slots[target]
+                    keep = cur if better(target.want, cur.value, found.value) else found  # the more extreme value...
+                    slots[target] = Ext(keep.value, keep.raw, found.ts, found.cycle, keep.exact)  # ...at the finer time
+        for target, ext in slots.items():
+            if target.scope == "all":
+                self.overall[target.key][target.want] = ext
             else:
-                self.monthly[sid[1]][sid[2]][sid[3]] = ext
+                self.monthly[target.key][target.month][target.want] = ext
         return refined
 
     def _answer(self, refined: int) -> str:
         f = self.f
         wanted = self.args.get("include_derived") or []
         wanted = {wanted} if isinstance(wanted, str) else set(wanted)
-        asked = [self.turn.chart_field or self.args.get("chart_field"), *(WEATHER[n].field for n in stack_names(self.args, self.turn))]
-        asked = [a and field_of(a) for a in asked]
+        asked = [chart_field(self.args, self.turn), *(WEATHER[n].field for n in stack_names(self.args, self.turn))]
         wanted |= {f for f in asked if f in DERIVED}   # charting one of them brings it into the result
         if "app_temp" in wanted:
             wanted.add("app_tempin")  # indoor's name for apparent temperature
@@ -348,15 +367,15 @@ class HistoryQuery:
             entry[f"{want}_time"], entry[f"{want}_when"], entry[f"{want}_date"] = describe_time(e.ts, e.cycle, tz)
             if not e.exact:
                 entry[f"{want}_note"] = "from averaged data; the real value may be more extreme"
-        if self.span <= timedelta(days=31):
+        if self.by_day:
             days: dict = {}
             for ts, rec in self.store[key]["pts"].items():
                 if rec["cycle"] != "1day":  # sub-daily points give correct local days
                     fold(days.setdefault(local_date(ts, tz), {}), ts, rec)
             keep = None if len(days) <= DAILY_ALL_DAYS or self.turn.per_day else {   # a long period: the days of its records, not all of them
-                day_text(local_date(ext[w].ts, tz), year=False) for w in ("low", "high")}
-            entry["daily"] = {day_text(d, year=False): {w: e.raw for w, e in days[d].items()} for d in sorted(days)
-                              if keep is None or day_text(d, year=False) in keep}
+                self._label(local_date(ext[w].ts, tz)) for w in ("low", "high")}
+            entry["daily"] = {self._label(d): {w: e.raw for w, e in days[d].items()} for d in sorted(days)
+                              if keep is None or self._label(d) in keep}
         else:
             entry["monthly"] = {}
             for month, d in self.monthly.get(key, {}).items():
@@ -395,6 +414,11 @@ class HistoryQuery:
                 out["chart"] = (CHART_HINT + " For wind direction, give the most common direction, not a high and low."
                                 if spec and wind is not spec else DIRECTION_CHART_HINT)
 
+    def _label(self, day: date) -> str:
+        """The row a day belongs to in the breakdown, in the one form every table of it uses: the day ("Sat 3 Oct"), or its month
+        ("Oct 2026") when the period is broken down by month."""
+        return day_text(day, year=False) if self.by_day else f"{day:%b %Y}"
+
     def _daily_means(self, pts: dict) -> dict:
         """{local date: mean of that day's readings}: from 5- or 30-minute readings where held, else the daily bucket."""
         means = {local_date(ts, self.tz): rec["value"][0] for ts, rec in pts.items() if rec.get("cycle") == "1day" and "value" in rec}
@@ -402,15 +426,14 @@ class HistoryQuery:
         return means
 
     def _add_averages(self, entry: dict, means: dict):
-        """The mean over the period, and per day (up to 31 days) or per month: the answer to "what was the average"."""
+        """The mean over the period, and per row of the breakdown (each day, or each month): the answer to "what was the average"."""
         if not means:
             return
         fmt = lambda v: f"{v:.1f}"
         entry["average"] = fmt(fmean(means.values()))
+        table = entry.get("daily" if self.by_day else "monthly")
         for d, v in means.items():
-            table = entry.get("daily") if self.span <= timedelta(days=31) else entry.get("monthly")
-            label = day_text(d, year=False) if self.span <= timedelta(days=31) else d.strftime("%b %Y")
-            if table is not None and label in table:
+            if table is not None and (label := self._label(d)) in table:
                 table[label].setdefault("_sum", []).append(v)
         for table in (entry.get("daily"), entry.get("monthly")):
             for row in (table or {}).values():
@@ -422,9 +445,8 @@ class HistoryQuery:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
         else the first field), at the finest resolution fetched for the whole period (5- or 30-minute readings,
         or daily averages for long periods), plus the true record high and low with their times."""
-        asked = field or self.turn.chart_field or self.args.get("chart_field")
-        wanted = str(asked or "temperature").strip().lower().replace(" ", "_")
-        wanted = field_of(wanted)   # a reading's name ("uv", "pressure") or its field ("uvi")
+        asked = field_of(field) if field else chart_field(self.args, self.turn)
+        wanted = asked or "temperature"
         keys = [k for k in series_out if k.endswith("." + wanted)]
         if not keys and (wanted in DERIVED or asked and find_name(wanted)):  # asked for on its own and not there: no chart, rather than a temperature one
             return None
@@ -514,7 +536,7 @@ class HistoryQuery:
             if day not in held and self.start.date() <= day <= self.end.date():
                 rain[day_bounds(day, self.tz)[0] + 12 * 3600] = mm
                 self.rain_from_daily = True
-        by = grouping_in(self.turn.text) if self.span > timedelta(days=31) else None
+        by = None if self.by_day else grouping_in(self.turn.text)
         return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, by=by, since=lo)
 
     def _stack_spec(self, names: list[str]) -> Chart | None:
