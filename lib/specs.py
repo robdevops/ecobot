@@ -86,7 +86,7 @@ class Panel:
     peaks: str = "pills"                               # how peaks are labelled: "pills" on the lines, "aside" in empty space, "none"
 
     def __post_init__(self):
-        if not (self.lines or self.bars or self.shares):
+        if not (self.lines or self.bars and self.bars.x or self.shares and self.shares.x):
             raise ValueError(f"panel {self.label!r}: nothing to draw")
         if self.shares and (self.lines or self.bars):
             raise ValueError(f"panel {self.label!r}: shares draw alone")

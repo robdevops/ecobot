@@ -240,8 +240,8 @@ def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: fl
     brighter cap, so each reads as a little column. `kw` goes to both (for rain behind a line, the transform)."""
     ys = np.asarray(ys, dtype=float)
     _columns(ax, bx, ys, width, facecolors=_mix(RAIN, 1 - alpha), zorder=zorder, **kw)
-    cap = axis_top * 0.014
-    _columns(ax, bx, np.minimum(cap, ys), width, np.maximum(ys - cap, 0), facecolors=RAIN, alpha=0.95, zorder=zorder, **kw)
+    cap = np.sign(ys) * np.minimum(axis_top * 0.014, np.abs(ys))   # at the bar's far end, below zero as above it
+    _columns(ax, bx, cap, width, ys - cap, facecolors=RAIN, alpha=0.95, zorder=zorder, **kw)
 
 
 def _bars_behind(ax, bars, tz: tzinfo) -> float:

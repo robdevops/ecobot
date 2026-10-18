@@ -184,7 +184,7 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
             buckets[key(d)] += 1
     if by and buckets:
         out[f"by_{by}"] = buckets
-        if turn is not None:   # a count or figure per month or year is a bar chart, not a list
+        if turn is not None and any(v is not None for v in buckets.values()):   # a bar chart, not a list (unless no bucket has a figure)
             on = f" on days with {conditions_text(where, units)}" if where and stat != "count" else ""
             if stat == "count":
                 title, name, unit = (f"Days with {conditions_text(where, units)}" if where else "Days checked"), "Days", "days"

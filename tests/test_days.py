@@ -365,3 +365,15 @@ def test_the_field_list_is_in_the_tool_schema_once_and_a_wrong_sort_or_of_field_
     from lib.daytable import validate
     units = {n: f[3] for n, f in days.FIELDS.items()}
     assert "sort_by must be one of" in validate({"sort_by": "nonsense"}, units) and "needs `of`" in validate({"stat": "sum", "of": "nonsense"}, units)
+
+
+async def test_a_figure_per_month_with_no_matching_day_promises_no_chart(station):
+    """Highest temperature per month on days over 99°: every month is None, so there is no bar to draw and the model must not be
+    told a chart is attached."""
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 70, 1)
+    turn = Turn()
+    out = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), count_only=True, group_by="month",
+                                                     stat="max", of="temp_max", where=[{"field": "temp_max", "op": ">", "value": 99}]), turn))
+    assert out["by_month"] and all(v is None for v in out["by_month"].values()) and "chart" not in out and turn.charts == []

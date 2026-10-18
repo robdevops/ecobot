@@ -223,3 +223,19 @@ def test_a_single_panel_charts_caption_is_one_line_and_a_stacks_is_two():
     assert rain_behind.caption(today) == "Humidity, Rain, since Mon 28 Sep 2026"                # rain behind a line is still one panel
     stacked = stack([Panel("Humidity", "%", [line("H")]), Panel("Pressure", "hPa", [line("P")])], date(2026, 9, 28), today)
     assert stacked.caption(today) == "Humidity, Pressure\nMon 28 Sep – Sun 4 Oct 2026"           # several panels keep two lines
+
+
+def test_a_panel_of_bars_with_no_bar_is_refused_when_built():
+    import pytest
+    from lib.specs import Bars, Panel
+    with pytest.raises(ValueError, match="nothing to draw"):
+        Panel("Rain", "mm", bars=Bars("Rain", "mm", [], [], 86400))
+
+
+def test_a_bar_below_zero_has_its_bright_end_at_the_bottom(monkeypatch):
+    from lib import charts
+    drawn = []
+    monkeypatch.setattr(charts, "_columns", lambda ax, x, heights, width, bottom=0.0, **style: drawn.append((list(heights), bottom)))
+    charts._draw_bars(None, [0.0, 1.0], [-3.0, 2.0], 0.85, 10.0, 3)
+    heights, bottom = drawn[1]   # the caps (the bodies are drawn first)
+    assert heights == [-0.14, 0.14] and [round(b, 2) for b in bottom] == [-2.86, 1.86]   # each cap ends where its bar does
