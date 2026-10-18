@@ -204,8 +204,8 @@ def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller(
     assert "irrigation_battery" not in available_kinds({"Ecowitt"}) and "irrigation_pause" not in available_kinds({"Ecowitt"})
     from lib.alerts.menu import LABELS, keyboard
     assert LABELS["irrigation_battery"] == "irrigation battery" and LABELS["irrigation_pause"] == "irrigation pause"
-    unsub = rows(keyboard(set(), ["rain", "irrigation_battery"], "unsub"))
-    assert ("🪫 irrigation battery", "al:off:irrigation_battery:unsub") in [b for row in unsub for b in row]
+    listed = rows(keyboard(set(), ["rain", "irrigation_battery"], "alerts"))
+    assert ("irrigation battery", "al:off:irrigation_battery:alerts") in [b for row in listed for b in row]
 
 
 # ---------- the daily check ----------
@@ -711,9 +711,9 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     assert rows(markup) == [[("⚙️ ▸", "al:open:gear:irrigation_pause")]]
     from lib.alerts.menu import keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
-    for section in (None, "sub", "unsub"):                              # every button's data fits Telegram's 64 bytes, for the new type too
+    for section in (None, "alerts", "sound", "gear"):                   # every button's data fits Telegram's 64 bytes, for the new type too
         for parent in (None, "irrigation_pause", "irrigation_battery"):
-            assert all(len(data.encode()) <= 64 for row in rows(keyboard(set(), kinds, section, parent)) for _, data in row)
+            assert all(len(data.encode()) <= 64 for row in rows(keyboard(set(), kinds, section, parent, set())) for _, data in row)
 
 
 async def test_refresh_reads_the_controller_again_and_redraws_without_sending_anything_or_waiting(tmp_path, monkeypatch):

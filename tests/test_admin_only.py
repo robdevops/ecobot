@@ -282,14 +282,14 @@ async def test_usage_is_the_help_and_alerts_button(tmp_path, kind):
 
 
 # ---------- every button comes in through one place ----------
-def alert_keyboard(opened="unsub", parent=None):
-    return menu.keyboard(set(), menu.available_kinds({"Ecowitt"}), opened, parent)
+def alert_keyboard(opened="alerts", parent=None):
+    return menu.keyboard(set(), menu.available_kinds({"Ecowitt"}), opened, parent, set())
 
 
 async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_let_through(tmp_path):
     bot, state, tg = make(tmp_path, irrigation=Remote())
     state.add_chat(ADMIN, "Rob")
-    cases = [("al:off:rain:unsub", alert_keyboard()), (f"{periods.PREFIX}7", periods.keyboard(1)),
+    cases = [("al:off:rain:alerts", alert_keyboard()), (f"{periods.PREFIX}7", periods.keyboard(1)),
              ("ir:open:water", irrigation_menu.keyboard(True, True))]
     for data, markup in cases:
         press = Press(data, markup, user=STRANGER)
@@ -307,10 +307,10 @@ async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_
 
 async def test_alert_buttons_in_a_group_stay_admin_only_even_when_admin_only_is_off(tmp_path):
     bot, state, tg = make(tmp_path, admin_only=False)
-    press = Press("al:off:rain:unsub", alert_keyboard(), user=STRANGER, kind="supergroup")
+    press = Press("al:off:rain:alerts", alert_keyboard(), user=STRANGER, kind="supergroup")
     await bot.on_button(press.update(), ctx(tg))
     assert press.toast == "Only group admins can change alerts" and state.muted(GROUP) == set()
-    press = Press("al:off:rain:unsub", alert_keyboard(), user=ADMIN, kind="supergroup")
+    press = Press("al:off:rain:alerts", alert_keyboard(), user=ADMIN, kind="supergroup")
     await bot.on_button(press.update(), ctx(tg))
     assert state.muted(GROUP) == {"rain"}
 
@@ -321,7 +321,7 @@ def every_keyboard(bot):
     kinds = menu.available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(menu.LABELS)]
     for muted in muted_sets:
-        for opened in (None, "sub", "unsub", "gear", "set", "snd_on", "snd_off"):
+        for opened in (None, "alerts", "sound", "gear", "sub", "unsub", "set", "snd_on", "snd_off"):
             for parent in (None, *kinds):
                 for loud in (None, set(), set(kinds)):
                     yield menu.keyboard(muted, kinds, opened, parent, loud)
@@ -421,7 +421,7 @@ async def test_a_prefix_nobody_handles_is_refused_even_when_the_message_really_h
 async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path):
     bot, state, tg = make(tmp_path, irrigation=Remote())
     state.add_chat(ADMIN, "Rob")
-    for data, markup in (("ir:refresh", irrigation_menu.keyboard(True, True)), ("al:off:rain:unsub", alert_keyboard()),
+    for data, markup in (("ir:refresh", irrigation_menu.keyboard(True, True)), ("al:off:rain:alerts", alert_keyboard()),
                          ("ir:water:10", irrigation_menu.keyboard(True, True, "water"))):
         press = await press_through(bot, tg, data, markup)
         assert press.toast not in (STALE_BUTTON, NOT_ADMIN_TOAST) and press.edits, data
