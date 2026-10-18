@@ -387,7 +387,7 @@ async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path)
     from lib.timeutil import local_date
     from tests.fakes import TZ
     air, _ = await make(tmp_path)
-    start = air._now().replace(microsecond=0) - timedelta(hours=1)
+    start = air.now().replace(microsecond=0) - timedelta(hours=1)
     t0 = int(start.replace(tzinfo=TZ).timestamp()) + 600
     levels = [(1, 2, 3), (1, 2, 4), (15.3, 14.2, 28.7), (3, 8, 10), (2, 4, 5), (2, 3, 4)]
     rows = [{"ts": t0 + 300 * i, "pm1": a, "pm2_5": b, "pm10": c} for i, (a, b, c) in enumerate(levels)]
@@ -491,7 +491,7 @@ async def test_a_date_with_an_offset_is_read_and_a_bad_one_is_not_called_a_senso
 
 async def test_an_air_chart_up_to_now_is_captioned_since_its_first_day_as_a_weather_chart_is(tmp_path):
     air, _ = await make(tmp_path)
-    now = air._now().replace(microsecond=0)
+    now = air.now().replace(microsecond=0)
     first = (now - timedelta(days=3)).date()
     turn = Turn()
     await air.history(f"{now - timedelta(days=3):%Y-%m-%d %H:%M:%S}", None, chart=True, turn=turn)

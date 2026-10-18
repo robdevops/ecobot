@@ -29,6 +29,7 @@ from .irrigation import menu as irrigation_menu
 from .charts import render as render_chart
 from .tools import Turn
 from .config import Config
+from .sources import Source
 from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import QUOTES
@@ -236,7 +237,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
 
 
 class Bot:
-    def __init__(self, cfg: Config, agent: Agent, sources: list, state: AlertState, irrigation=None):
+    def __init__(self, cfg: Config, agent: Agent, sources: list[Source], state: AlertState, irrigation=None):
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind)."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation

@@ -36,6 +36,7 @@ from lib.llm import Agent
 from lib.logs import LogFormat
 from lib.pollen import Pollen
 from lib.compose import Composer
+from lib.sources import Source
 from lib.tools import Tools
 from lib.warm import every, safely
 
@@ -48,14 +49,14 @@ logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Appl
 log = logging.getLogger("ecobot")
 
 
-async def start_sources(cfg: Config) -> tuple[list, Config]:
+async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     """Every configured data source that starts, and the settings in the time zone they run in. The weather station starts
     first: it names its own time zone, which wins over TZ, so the air sensor and the optional website sources (pollen,
     forecast, off unless switched on), and everything built after, use the station's. The forecast uses the station's
     location unless one is configured."""
-    sources = []
+    sources: list[Source] = []
 
-    async def start(source):
+    async def start(source: Source):
         try:
             await source.start()
             sources.append(source)

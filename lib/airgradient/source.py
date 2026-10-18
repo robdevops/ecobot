@@ -24,10 +24,11 @@ import httpx
 from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
+from ..sources import Source
 from ..lines import Plotted, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import day_text, local_date, now_local, parse_local, to_local, when
+from ..timeutil import day_text, local_date, parse_local, to_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
@@ -77,7 +78,7 @@ class Latest(NamedTuple):
     sustained: dict[str, float]    # each metric's lowest over the last REQUIRE_CONSECUTIVE readings: what the air has been that long
 
 
-class AirGradient:
+class AirGradient(Source):
     """AirGradient client with its data kept warm and cached:
       - the current reading and today's history are refreshed every few minutes (warm);
       - finished days are fetched once and stored on disk, so they never need fetching again."""
@@ -111,13 +112,6 @@ class AirGradient:
         """Should a question start refreshing this source? Only air-quality questions."""
         return intent.mentions_air(text)
 
-    def poke(self):
-        self.warmer.poke()
-
-    async def close(self):
-        await self.client.aclose()
-        self.store.close()
-
     async def _get(self, kind: str, **params) -> dict | list:
         """The reply: an object for "current", a list of readings for "past". A period with no readings is an empty list (AirGradient
         says so with a 404); a reply of any other shape raises, so it is never stored as days without readings."""
@@ -137,9 +131,6 @@ class AirGradient:
     def _lock(self, key) -> asyncio.Lock:
         return self._locks.setdefault(key, asyncio.Lock())
 
-    def _now(self) -> datetime:
-        return now_local(self.tz)
-
     # ---------- cached data ----------
     async def _current_row(self, refresh: bool = False) -> dict:
         async with self._lock("current"):
@@ -149,7 +140,7 @@ class AirGradient:
 
     def _final(self, day: date) -> bool:
         """Over for more than an hour, so its data won't change."""
-        return self._now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
+        return self.now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
 
     async def _held(self, days: list[date]) -> dict[date, int | None]:
         """Readings stored per finished day, in one query (None: not fetched yet, or not finished)."""
@@ -174,7 +165,7 @@ class AirGradient:
             start = datetime.combine(window[0], datetime.min.time())
             end = datetime.combine(window[-1], datetime.min.time()) + timedelta(days=1)
             by_day: dict = {d: [] for d in window}
-            for r in await self._past(start, min(end, self._now())):
+            for r in await self._past(start, min(end, self.now())):
                 by_day.get(local_date(r["ts"], self.tz), []).append(r)
             for d, day_rows in by_day.items():
                 await asyncio.to_thread(self.store.save_day, d, day_rows)
@@ -194,13 +185,13 @@ class AirGradient:
             if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
                 return cached[0]
             start = datetime.combine(day, datetime.min.time())
-            rows = await self._past(start, min(start + timedelta(days=1), self._now()))
+            rows = await self._past(start, min(start + timedelta(days=1), self.now()))
             self._recent[day] = (rows, time.time())
             return rows
 
     async def warm(self, fresh: bool = True) -> str:
         """Current reading, today, and the last week of finished days."""
-        before, today = self.requests, self._now().date()
+        before, today = self.requests, self.now().date()
         await self._current_row(fresh)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
@@ -219,7 +210,7 @@ class AirGradient:
         pace = BACKFILL_PACE if pace is None else pace
         empty_stop = BACKFILL_EMPTY_STOP if empty_stop is None else empty_stop
         empty_before_data = BACKFILL_EMPTY_BEFORE_DATA if empty_before_data is None else empty_before_data
-        today = self._now().date()
+        today = self.now().date()
         fetched = failed = failed_run = empty_run = total = 0
         seen_data = False
         n = 1
@@ -339,7 +330,7 @@ class AirGradient:
     async def history(self, start: str | None, end: str | None, chart: bool = False,
                       metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
         turn = turn or Turn()
-        now = self._now()
+        now = self.now()
         try:   # a date the model sends, with or without an offset; a bad one is its mistake, not the sensor's
             t0 = parse_local(start, self.tz) if start else now - timedelta(days=1)
             t1 = min(parse_local(end, self.tz), now) if end else now

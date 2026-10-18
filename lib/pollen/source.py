@@ -7,14 +7,15 @@ One fetch is made at the start (or the first question) when nothing is cached, e
 import json
 import logging
 import time
-from datetime import date, datetime
+from datetime import date
 
 import httpx
 
 from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import day_text, local_date, now_local, when
+from ..sources import Source
+from ..timeutil import day_text, local_date, when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer, in_sync_hours
 from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
@@ -42,7 +43,7 @@ def _district(name: str) -> str:
     return known.get(name.lower(), name)
 
 
-class Pollen:
+class Pollen(Source):
     name = "Pollen"
 
     def __init__(self, cfg: Config, transport=None):
@@ -74,13 +75,6 @@ class Pollen:
         """Only pollen questions start a refresh; the report always uses what is cached."""
         return intent.mentions_pollen(text)
 
-    def poke(self):
-        self.warmer.poke()
-
-    async def close(self):
-        await self.client.aclose()
-        self.store.close()
-
     # ---------- kept on disk ----------
     def _load(self):
         """Start from the last page seen (before the restart), so a night-time start needs no fetch."""
@@ -96,9 +90,6 @@ class Pollen:
         self.store.put("pollen_validators", json.dumps(self._validators))
 
     # ---------- fetching ----------
-    def now(self) -> datetime:
-        return now_local(self.tz)
-
     def in_season(self) -> bool:
         return self.now().month in SEASON_MONTHS
 

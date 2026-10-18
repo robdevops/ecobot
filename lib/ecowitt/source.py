@@ -10,7 +10,8 @@ from datetime import datetime, timedelta, UTC
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
-from ..timeutil import local_epoch, naive_local, now_local, when
+from ..sources import Source
+from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS
@@ -104,7 +105,7 @@ def live_summary(data: dict) -> str:
     return ", ".join(p for p in parts if p) or "no readings"
 
 
-class Ecowitt:
+class Ecowitt(Source):
     name = "Ecowitt"
 
     def __init__(self, cfg: Config, transport=None):
@@ -167,9 +168,6 @@ class Ecowitt:
     def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
         """urgent: for a question (its requests go before the background ones)."""
         return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent)
-
-    def now(self) -> datetime:
-        return now_local(self.tz)
 
     # ---------- tools ----------
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
@@ -254,9 +252,6 @@ class Ecowitt:
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Weather data is used by nearly all."""
         return True
-
-    def poke(self):
-        self.warmer.poke()
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
                        groups: list[str] | None = None) -> list[tuple[int, dict]]:

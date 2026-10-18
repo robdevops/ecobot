@@ -5,14 +5,14 @@ import logging
 import math
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import httpx
 
-from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import now_local, when
+from ..sources import Source
+from ..timeutil import when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer, in_sync_hours
 
@@ -83,7 +83,7 @@ def day_label(day: date, today: date) -> str:
     return "Today" if day == today else f"{day:%A}"
 
 
-class Forecast:
+class Forecast(Source):
     name = "Forecast"
 
     def __init__(self, cfg: Config, location: tuple[float, float] | None = None, transport=None):
@@ -118,13 +118,6 @@ class Forecast:
         """Only forecast questions start a refresh; the report always uses what is cached."""
         return bool(re.search(r"\bforecast\w*|\btomorrow\b|\bthis week\b", text, re.I))
 
-    def poke(self):
-        self.warmer.poke()
-
-    async def close(self):
-        await self.client.aclose()
-        self.store.close()
-
     # ---------- kept on disk ----------
     def _load(self):
         """Start from the last forecast fetched (before the restart), so a night-time start needs no fetch."""
@@ -137,9 +130,6 @@ class Forecast:
         self.store.save("forecast", {"source": self.source,
                                      "days": [{**d, "date": d["date"].isoformat()} for d in self.days]},
                         now=self.fetched_at)
-
-    def now(self) -> datetime:
-        return now_local(self.tz)
 
     # ---------- fetching ----------
     async def _json(self, url: str, **params) -> dict:
