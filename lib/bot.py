@@ -434,7 +434,7 @@ class Bot:
         elif action == "snd" and chat.type == ChatType.PRIVATE and arg in kinds and section in ("on", "off") and chat.id in self.state.chats:
             self.state.set_sound(chat.id, arg, section == "on")
             parent = tail if tail in kinds else None
-            opened = "gear" if parent else "sound"   # stay in the list (under an alert: its gear stays open)
+            opened = "gear" if parent else "sound"   # stay in the list (under an alert: its bell stays open)
             toast = f"{self._alerts_named(arg)} {'now make' if section == 'on' else 'no longer make'} a sound"
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")

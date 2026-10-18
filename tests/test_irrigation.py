@@ -709,7 +709,7 @@ async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu
     await m.check(NOW)
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
     markup = delivered[0][2]["reply_markup"]
-    assert rows(markup) == [[("⚙️ ▸", "al:open:gear:irrigation_pause")]]
+    assert rows(markup) == [[("🔔 ▸", "al:open:gear:irrigation_pause")]]
     from lib.alerts.menu import keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     for section in (None, "alerts", "sound", "gear"):                   # every button's data fits Telegram's 64 bytes, for the new type too

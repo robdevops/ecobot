@@ -16,7 +16,5 @@ def struck(text: str) -> str:
 
 
 def toggle_button(word: str, on: bool, data: str) -> InlineKeyboardButton:
-    """A button that flips a setting: its word on a green button while the setting is on, the word struck through on a red one while it
-    is off."""
-    return InlineKeyboardButton(word if on else struck(word), callback_data=data,
-                                style=KeyboardButtonStyle.SUCCESS if on else KeyboardButtonStyle.DANGER)
+    """A button that flips a setting: its plain word while the setting is on, the word struck through on a red button while it is off."""
+    return InlineKeyboardButton(word if on else struck(word), callback_data=data, style=None if on else KeyboardButtonStyle.DANGER)
