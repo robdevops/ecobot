@@ -42,8 +42,8 @@ def test_the_keyboard_is_persistent_and_has_every_button():
 
 
 class Recorder(Bot):
-    def __init__(self):
-        super().__init__(NS(tz=TZ), None, [], None)
+    def __init__(self, state):
+        super().__init__(NS(tz=TZ), None, [], state)
         self.asked, self.alerts = [], 0
 
     async def respond(self, update, context, text):
@@ -63,15 +63,15 @@ def message(text, chat_type="private"):
     return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob")), sent
 
 
-async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both():
-    bot = Recorder()
+async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both(alert_state):
+    bot = Recorder(alert_state)
     for text in ("\U0001f4cb Status", "weather now", templates.CAPABILITIES):
         await bot.on_message(message(text)[0], NS(bot=NS(username="b", id=99)))
     assert bot.asked == ["Report", "weather now"] and bot.alerts == 1       # capabilities are not sent to the model
 
 
-async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it():
-    bot = Recorder()
+async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it(alert_state):
+    bot = Recorder(alert_state)
     update, sent = message("/start")
     await bot.on_start(update, NS(args=[]))
     assert sent[0][1]["reply_markup"].is_persistent
@@ -143,7 +143,6 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
     state.set_keyboard(1, templates.HIDDEN)
     assert not bot._keyboard_stale(msg)                                # they hid it: leave it hidden
     assert not bot._keyboard_stale(Replies("supergroup"))
-    assert not Bot(NS(tz=TZ), None, [], None)._keyboard_stale(msg)
 
 
 async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tmp_path):
@@ -207,7 +206,6 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     assert state.keyboard(10) == templates.version() and state.chats[13]["gone"] and state.keyboard(-20) is None
     tried.clear()
     assert await bot.refresh_keyboards(TG()) == 0 and tried == []   # nothing more on the next start: 13 blocked the bot
-    assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
 
 
 def test_the_capabilities_list_is_the_users_bullets():

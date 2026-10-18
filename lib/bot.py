@@ -236,10 +236,11 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
 
 
 class Bot:
-    def __init__(self, cfg: Config, agent: Agent, sources: list, state: AlertState | None, irrigation=None):
-        """irrigation: the Tuya client of the irrigation controller, when one is configured (its button replaces Wind)."""
+    def __init__(self, cfg: Config, agent: Agent, sources: list, state: AlertState, irrigation=None):
+        """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
+        configured (its button replaces Wind)."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
-        self.watchdog = Watchdog(irrigation, state) if irrigation and state else None   # closes the valve after a run, however it ends
+        self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
         self.admin_only = bool(getattr(cfg, "admin_only", False))   # ADMIN_ONLY: only the admins of the groups the bot is in may use it
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
@@ -341,8 +342,7 @@ class Bot:
         try:
             await handler(update, context)
         except ChatMigrated as e:   # a press on an alert from before its group became a supergroup (the chat has a new id)
-            if self.state:
-                self.state.migrate_chat(query.message.chat.id, e.new_chat_id)
+            self.state.migrate_chat(query.message.chat.id, e.new_chat_id)
             with contextlib.suppress(TelegramError):
                 await query.answer("This group was upgraded to a supergroup: please use the buttons on new alerts")
 
@@ -354,13 +354,13 @@ class Bot:
 
     def remember_chat(self, update: Update):
         """Record the chat so alerts can be sent to it (Telegram can't list a bot's chats)."""
-        if self.state and update.effective_chat:
+        if update.effective_chat:
             self.state.add_chat(update.effective_chat.id, self._title(update))
 
     async def on_membership(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """The bot was added to or removed from a chat."""
         change = update.my_chat_member
-        if not self.state or not change:
+        if not change:
             return
         status = change.new_chat_member.status
         if status in ("member", "administrator"):
@@ -377,9 +377,6 @@ class Bot:
         msg, chat = update.effective_message, update.effective_chat
         in_group = chat.type != ChatType.PRIVATE
         if not in_group and not await self._allowed(update, context):   # anyone in a group may look; a private chat is gated like the rest
-            return
-        if not self.state:
-            await msg.reply_text("Alerts aren't available: no sensor is connected.")
             return
         arg = context.args[0].lower() if context.args else ""
         self.remember_chat(update)
@@ -416,7 +413,7 @@ class Bot:
         its sound on or off. In a group only admins may change them."""
         query = update.callback_query
         press = menu.parse(query.data)
-        if press is None or not self.state:
+        if press is None:
             await query.answer()
             return
         message = query.message
@@ -451,7 +448,7 @@ class Bot:
     # ---------- irrigation ----------
     def _irrigation_alerts(self, chat_id: int) -> tuple[bool, bool]:
         """Does this chat get the irrigation battery alerts, and the pause alerts?"""
-        return tuple(bool(self.state and self.state.subscribed(chat_id, kind)) for kind in ("irrigation_battery", "irrigation_pause"))
+        return tuple(self.state.subscribed(chat_id, kind) for kind in ("irrigation_battery", "irrigation_pause"))
 
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None, paused: bool = False, running: bool = False):
         return irrigation_menu.keyboard(*self._irrigation_alerts(chat_id), opened, paused, running)
@@ -487,7 +484,7 @@ class Bot:
             if self.watchdog:
                 self.watchdog.disarm()
             return "Switched off"
-        if action in ("batt", "pause") and arg in ("on", "off") and self.state and chat_id in self.state.chats:
+        if action in ("batt", "pause") and arg in ("on", "off") and chat_id in self.state.chats:
             self.state.set_kind(chat_id, "irrigation_battery" if action == "batt" else "irrigation_pause", arg == "on", self._alert_kinds())
             return f"Irrigation {'battery' if action == 'batt' else 'pause'} alerts {arg} in this chat"
         return None
@@ -653,14 +650,12 @@ class Bot:
         await update.effective_message.reply_text(
             HELP.format(user=update.effective_user.id, chat=update.effective_chat.id),
             reply_markup=templates.keyboard(self.irrigation is not None) if private else None)
-        if private and self.state:
+        if private:
             self.state.set_keyboard(update.effective_chat.id, self.keyboard_version)
 
     async def refresh_keyboards(self, tg_bot) -> int:
         """At startup: tell each private chat whose buttons are out of date that they changed, with the new keyboard (silently).
         A chat that hid them is left alone. Returns how many were sent."""
-        if not self.state:
-            return 0
         sent = 0
         for chat_id in [c for c in self.state.present() if c > 0 and self.state.keyboard(c) not in (self.keyboard_version, templates.HIDDEN)]:
             try:
@@ -678,8 +673,7 @@ class Bot:
     def _keyboard_stale(self, msg: Message) -> bool:
         """Does this private chat need the current buttons (it has never had them, or they have changed since)? Not when it
         hid them."""
-        return bool(self.state and msg.chat.type == ChatType.PRIVATE
-                    and self.state.keyboard(msg.chat_id) not in (self.keyboard_version, templates.HIDDEN))
+        return msg.chat.type == ChatType.PRIVATE and self.state.keyboard(msg.chat_id) not in (self.keyboard_version, templates.HIDDEN)
 
     async def on_keyboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/keyboard shows the buttons again, /keyboard off hides them (private chats only)."""
@@ -690,12 +684,10 @@ class Bot:
             await msg.reply_text("The buttons are only in private chats.")
         elif context.args and context.args[0].lower() == "off":
             await msg.reply_text("Buttons hidden. /keyboard shows them again.", reply_markup=ReplyKeyboardRemove())
-            if self.state:
-                self.state.set_keyboard(msg.chat_id, templates.HIDDEN)
+            self.state.set_keyboard(msg.chat_id, templates.HIDDEN)
         else:
             await msg.reply_text("Here are the buttons.", reply_markup=templates.keyboard(self.irrigation is not None))
-            if self.state:
-                self.state.set_keyboard(msg.chat_id, self.keyboard_version)
+            self.state.set_keyboard(msg.chat_id, self.keyboard_version)
 
     async def on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Errors raised inside handlers: network blips get one line, anything else a traceback."""
@@ -1036,7 +1028,7 @@ class Bot:
                 self.images.sent(kept, sent_photo[0])
             if kept and read.fast and read.chart_in_code:   # a chart with period buttons, made in code: its other periods are uploaded ahead
                 self.preload_soon(context.bot, text)
-            if self.state and ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
+            if ok and turn.forecast_shown:   # it was sent: a later revision of these days is worth telling this chat
                 self.state.record_forecast(msg.chat_id, turn.forecast_shown, now_local(self.cfg.tz).date())
             if carried_keyboard:
                 log.info("Buttons: sent keyboard %s to chat %s (it had %s)", self.keyboard_version, msg.chat_id, self.state.keyboard(msg.chat_id))

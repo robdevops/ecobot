@@ -24,7 +24,7 @@ class Admins:
 
     def groups(self) -> list[int]:
         """The groups whose admins count: the ones the bot is in (not one that removed it), and the ones ADMIN_CHAT_IDS names."""
-        known = {c for c in (self.state.present() if self.state else []) if c < 0}
+        known = {c for c in self.state.present() if c < 0}
         return sorted(known | {i for i in self.extra if i < 0})
 
     async def _admins_of(self, bot, chat_id: int) -> frozenset[int]:
