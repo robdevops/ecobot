@@ -14,6 +14,7 @@ busy.") is an error. Ecowitt keeps and allows per request:
 
 import asyncio
 import logging
+import re
 from collections import deque
 from datetime import datetime, timedelta
 
@@ -39,6 +40,7 @@ BUSY_RETRIES = 3
 MIN_GAP_SECONDS = 1.0  # Ecowitt rejects requests that come too fast ("Operation too frequent")
 RETRY_ON = ("busy", "too frequent")
 FMT = "%Y-%m-%d %H:%M:%S"
+KEYS_IN_URL = re.compile(r"\b(application_key|api_key)=[^&\s'\"]*")   # the keys go in the query string
 
 
 # Fields Ecowitt reports in a unit we do not use: (field prefix, its unit) -> (the unit kept, the factor). The vapour pressure
@@ -147,8 +149,7 @@ class EcowittAPI:
                     res = await self.client.get(f"{BASE}/{path}", params={**self.keys, **params})
                     body = _body(res)
                     if body is None:  # no Ecowitt answer: the network, or a gateway error page
-                        res.raise_for_status()
-                        raise ValueError("unreadable response")
+                        raise ValueError(f"HTTP {res.status_code}" if not res.is_success else "unreadable response")
                     if str(body.get("code")) == "0" and res.is_success:
                         return body.get("data") or {}
                     msg = str(body.get("msg") or f"HTTP {res.status_code}")
@@ -156,6 +157,7 @@ class EcowittAPI:
                     passing = res.status_code in (408, 429) or res.status_code >= 500 or any(k in msg.lower() for k in RETRY_ON)
                 except (httpx.HTTPError, ValueError) as e:
                     msg, passing = str(e) or type(e).__name__, True
+                msg = KEYS_IN_URL.sub(r"\1=…", msg)   # an error can quote the URL; its text is shown to the model and logged
                 if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
                     wait = 3 * 2 ** attempt
                     log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)

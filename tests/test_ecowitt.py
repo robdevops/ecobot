@@ -456,6 +456,37 @@ async def test_http_errors_are_refused_only_when_ecowitt_answers_with_a_reason(t
         aio.sleep = orig
 
 
+async def test_the_api_keys_never_reach_an_error_message():
+    """Ecowitt takes its keys in the URL: a gateway page or a network error must not carry them into the error, which the
+    model is shown and the log keeps."""
+    import httpx
+
+    def gateway(request):
+        return httpx.Response(502, text="<html>Bad gateway</html>")
+
+    def unreachable(request):
+        raise httpx.ConnectError(f"can't reach {request.url}", request=request)
+    for handler, said in ((gateway, "HTTP 502"), (unreachable, "can't reach")):
+        api = ecowitt_api.EcowittAPI("SECRET-API", "SECRET-APP", httpx.MockTransport(handler))
+        with pytest.raises(ecowitt_api.EcowittError) as err:
+            await api.devices()
+        await api.close()
+        assert said in str(err.value) and "SECRET" not in str(err.value), str(err.value)
+
+
+async def test_a_failed_history_request_tells_the_model_and_the_log_no_key(tmp_path, caplog):
+    import httpx
+    fake = FakeEcowitt()
+    transport = httpx.MockTransport(lambda r: httpx.Response(502, text="<html>Bad gateway</html>")
+                                    if r.url.path.endswith("/history") else fake(r))
+    eco = Ecowitt(config(tmp_path, ecowitt_api_key="SECRET-API", ecowitt_app_key="SECRET-APP"), transport=transport)
+    await eco.start()
+    day = datetime.now(eco.tz).date() - timedelta(days=3)
+    out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, Turn())
+    await eco.close()
+    assert "HTTP 502" in out and "SECRET" not in out and "SECRET" not in caplog.text
+
+
 # ---------- wind direction is circular ----------
 def test_direction_summary_crosses_north_without_a_wide_swing():
     from lib.ecowitt.direction import point, summarise, vector_mean
