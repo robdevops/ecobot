@@ -100,8 +100,6 @@ class WeatherMonitor:
 
     async def _rain(self, rows: Rows):
         m = self.state.monitor.setdefault("rain", {})
-        if "raining" in m:   # saved by an earlier version
-            m["alerted_state"] = "raining" if m.pop("raining") else "dry"
         m.setdefault("alerted_state", "dry")
         wet = wet_flags(rows)
         latest_ts = wet[-1][0]
@@ -184,7 +182,7 @@ class WeatherMonitor:
         one counted are looked at, so a restart doesn't re-announce an old spell."""
         m = self.state.monitor.setdefault("uv", {"active": False, "calm_since": None})
         latest_ts = rows[-1][0]
-        m.setdefault("stamp", m.pop("checked", latest_ts))   # the first look only sets the mark
+        m.setdefault("stamp", latest_ts)   # the first look only sets the mark
         high = False
         for ts, r in rows:
             if not confirm.new_reading(m, ts):
@@ -218,8 +216,6 @@ class WeatherMonitor:
         if c is None:
             self.state.monitor["cross"] = {"alerted_state": current, "alerted_time": ts}
             return
-        if "side" in c:   # saved by an earlier version
-            c["alerted_state"], c["alerted_time"] = c.pop("side"), c.pop("since")
         if due(c, current, ts, self.cooldown):
             o, i = r["outdoor.temperature"], r["indoor.temperature"]
             held = ts - c["alerted_time"]   # how long the side we last told about has stood

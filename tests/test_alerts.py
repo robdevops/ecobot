@@ -205,13 +205,6 @@ async def test_a_crossing_soon_after_the_state_was_learned_waits_out_the_cooldow
     assert len(sent) == 1 and "cooler for 30 min" in sent[0]
 
 
-async def test_crossing_state_saved_by_an_earlier_version_still_works(tmp_path):
-    m, state, sent = monitor(tmp_path, temps(25, 20, T0 + 2 * 3600))
-    state.monitor["cross"] = {"side": "cooler", "since": T0}
-    await m.check()
-    assert len(sent) == 1 and "cooler for 2h" in sent[0] and state.monitor["cross"]["alerted_state"] == "warmer"
-
-
 async def test_small_temperature_differences_are_noise(tmp_path):
     m, state, sent = monitor(tmp_path, temps(20.1, 20.0))
     await m.check()
