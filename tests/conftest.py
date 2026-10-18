@@ -47,6 +47,7 @@ async def _inline(func, /, *args, **kwargs):
 def no_request_spacing(monkeypatch):
     """Also closes every SQLite connection a test opened, so none is left for the garbage collector (a ResourceWarning)."""
     import asyncio
+    import contextlib
     import sqlite3
     monkeypatch.setattr(asyncio, "to_thread", _inline)
     real_connect = sqlite3.connect
@@ -55,7 +56,8 @@ def no_request_spacing(monkeypatch):
     def fast_connect(*args, **kwargs):  # tests don't need the caches to survive a power cut
         db = real_connect(*args, **kwargs)
         db.execute("PRAGMA synchronous=OFF")
-        db.execute("PRAGMA journal_mode=MEMORY")
+        with contextlib.suppress(sqlite3.OperationalError):   # a file another connection holds in WAL mode stays in it
+            db.execute("PRAGMA journal_mode=MEMORY")
         opened.append(db)
         return db
     monkeypatch.setattr(sqlite3, "connect", fast_connect)

@@ -53,7 +53,7 @@ class Pollen(Source):
         self.fetched_at = 0.0                # when (epoch)
         self._validators: dict = {}          # ETag / Last-Modified for the conditional request
         self.requests = 0
-        self.store = Snapshots.open(cfg.conditions_cache_path)
+        self.store = Snapshots(cfg.conditions_cache_path)
         self._load()
         self.warmer = Warmer(self.warm, POLLEN_REFRESH_SECONDS)
         self.tools = [Tool("pollen_asthma", DESCRIPTION, PARAMETERS, self.handle)]

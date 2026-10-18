@@ -15,7 +15,7 @@ from tests.test_pollen import SEASON_DAY, make as make_pollen, page, transport a
 
 
 def test_a_repeat_only_moves_last_seen_and_a_change_adds_a_row(tmp_path):
-    store = Snapshots.open(tmp_path / "s.sqlite")
+    store = Snapshots(tmp_path / "s.sqlite")
     assert store.save("pollen", {"level": "Low"}, now=100) is True
     assert store.save("pollen", {"level": "Low"}, now=200) is False
     assert store.latest("pollen") == (200, {"level": "Low"}) and store.count("pollen") == 1
@@ -28,13 +28,15 @@ def test_a_repeat_only_moves_last_seen_and_a_change_adds_a_row(tmp_path):
     store.close()
 
 
-def test_the_connection_is_shared_and_closed_by_the_last_user(tmp_path):
-    a, b = Snapshots.open(tmp_path / "s.sqlite"), Snapshots.open(tmp_path / "s.sqlite")
-    assert a is b
+def test_each_source_has_its_own_connection_to_the_one_file(tmp_path):
+    a, b = Snapshots(tmp_path / "s.sqlite"), Snapshots(tmp_path / "s.sqlite")
+    a.save("pollen", {"level": "Low"}, now=100)
+    b.save("forecast", {"days": []}, now=100)
+    assert b.latest("pollen") == (100, {"level": "Low"}) and a.latest("forecast") == (100, {"days": []})   # one file
     a.close()
-    b.put("k", "v")                                          # still open for the other user
+    b.put("k", "v")                                          # the other's is still open
+    assert b.get("k") == "v"
     b.close()
-    assert Snapshots.open(tmp_path / "s.sqlite") is not a
 
 
 async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_without_fetching(tmp_path):
@@ -113,7 +115,7 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
 
 async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
     from lib.snapshots import Snapshots
-    store = Snapshots.open(tmp_path / "conditions.sqlite")
+    store = Snapshots(tmp_path / "conditions.sqlite")
     today = datetime.now(TZ).date()
     store.save("forecast", {"source": "Bureau of Meteorology, Testville", "tag": "BOM",
                             "days": [{"date": str(today), "min_c": 11, "max_c": 17, "summary": "Rain.", "rain_chance_pct": 90}]})

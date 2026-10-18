@@ -13,23 +13,10 @@ KEEP_SECONDS = 400 * 86400
 
 
 class Snapshots:
-    """Use Snapshots.open(path): the pollen and forecast sources share one connection to the file (closed by the last user)."""
-
-    _shared: dict = {}
-    _guard = threading.Lock()
-
-    @classmethod
-    def open(cls, path) -> "Snapshots":
-        with cls._guard:
-            store = cls._shared.get(str(path))
-            if store is None:
-                store = cls._shared[str(path)] = cls(path)
-            else:
-                store._users += 1
-            return store
+    """One source's connection to the file: the pollen and forecast sources each open their own (the file is in WAL mode,
+    so two connections take turns to write) and close it when they stop."""
 
     def __init__(self, path):
-        self.path, self._users = str(path), 1
         self._lock = threading.Lock()
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -42,11 +29,6 @@ class Snapshots:
         self.db.commit()
 
     def close(self):
-        with self._guard:
-            self._users -= 1
-            if self._users > 0:
-                return
-            self._shared.pop(self.path, None)
         with self._lock:
             self.db.close()
 
