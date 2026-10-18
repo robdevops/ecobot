@@ -15,14 +15,14 @@
 """
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
 from . import confirm, pictures
 from .menu import kinds_of
 from .backoff import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
-from ..timeutil import clock_text, local_epoch, to_local
+from ..timeutil import at_hour, clock_text, to_local
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class WeatherMonitor:
         """When the quiet hours that `ts` falls in began (epoch): the evening before, for hours that run across midnight."""
         local = to_local(ts, self.tz)
         day = local.date() - timedelta(days=1 if local.hour < self.quiet[0] else 0)
-        return local_epoch(datetime.combine(day, time(self.quiet[0])), self.tz)
+        return at_hour(day, self.quiet[0], self.tz)
 
     @property
     def tz(self):

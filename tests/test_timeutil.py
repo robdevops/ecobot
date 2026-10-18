@@ -1,6 +1,6 @@
 """Local time across daylight saving: Melbourne skips 2am to 3am on 4 Oct 2026 and has 2am to 3am twice on 5 Apr 2026."""
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 from lib.timeutil import local_epoch, naive_local, parse_local, seconds_until
@@ -54,3 +54,9 @@ def test_a_day_and_a_time_of_day_are_written_one_way():
     assert day_text(date(2026, 10, 3)) == "Sat 3 Oct 2026" and day_text(datetime(2026, 10, 3, 9), year=False) == "Sat 3 Oct"   # never "03"
     assert [clock_text(datetime(2026, 10, 3, h, m)) for h, m in ((0, 5), (9, 0), (12, 30), (23, 45))] == ["12:05am", "9:00am", "12:30pm", "11:45pm"]
     assert clock_text(datetime(2026, 10, 3, 10), whole_hours=True) == "10am" and clock_text(datetime(2026, 10, 3, 10, 5), whole_hours=True) == "10:05am"
+
+
+def test_at_hour_is_that_local_clock_time_on_either_side_of_a_daylight_saving_change():
+    from lib.timeutil import at_hour
+    assert at_hour(date(2026, 4, 5), 12, TZ) == int(datetime(2026, 4, 5, 2, tzinfo=UTC).timestamp())     # standard time, UTC+10
+    assert at_hour(date(2026, 4, 4), 12, TZ) == int(datetime(2026, 4, 4, 1, tzinfo=UTC).timestamp())     # daylight time, UTC+11

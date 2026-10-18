@@ -7,13 +7,18 @@ import time
 
 from openai import AsyncOpenAI
 
-from .timeutil import CHARS_PER_TOKEN, WARN_TOKENS
+from .lines import POINT_BUDGET
 from .tools import Tools, Turn
 
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 10
 MAX_HISTORY = 16  # messages kept per chat (a follow-up needs the last few, every call resends them)
+TOKENS_PER_POINT = 10   # a dated low/high row is about 10 tokens as the model reads it
+CHARS_PER_TOKEN = 4
+# Tool results past twice a full query's data (10,000 tokens) get the chat a heads-up: about $0.0125 of input at Grok 4.3's
+# $1.25 per million, and it rides on every later step
+WARN_TOKENS = 2 * POINT_BUDGET * TOKENS_PER_POINT
 
 LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data already fetched, "
                 "and briefly say if anything is missing.)")

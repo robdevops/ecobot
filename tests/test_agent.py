@@ -307,7 +307,7 @@ def test_the_prompt_leaves_the_heads_up_to_the_bot_and_points_at_the_count_tool(
 
 
 async def test_the_chat_is_warned_once_before_the_model_is_sent_more_than_twice_a_500_point_querys_data():
-    from lib.timeutil import CHARS_PER_TOKEN, WARN_TOKENS
+    from lib.llm import CHARS_PER_TOKEN, WARN_TOKENS
     from lib.tools import Turn
     warned, asked_after = [], []
 

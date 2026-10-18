@@ -17,10 +17,10 @@ from statistics import fmean
 from typing import NamedTuple
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
-from ..lines import Sample, build_line
+from ..lines import Sample, build_line, daily_summary
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
-from ..timeutil import daily_summary, day_bounds, day_text, local_date, now_local, parse_local, SLOT
+from ..timeutil import day_bounds, day_text, local_date, now_local, parse_local, SLOT
 from ..tools import json_result
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for

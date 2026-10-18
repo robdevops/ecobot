@@ -2,10 +2,10 @@
 spell, and the bars a chart draws. Shared by the analyses and the charts."""
 
 from bisect import bisect_right
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import date, timedelta, tzinfo
 
 from .specs import Bars, calendar_bars
-from .timeutil import SLOT, day_bounds, local_epoch, to_local
+from .timeutil import SLOT, at_hour, day_bounds, to_local
 
 SPELL_GAP = 6                  # slots: 3 dry hours end a rain spell
 SPELL_MM = 1.0                 # a spell needs this much rain to count as an event
@@ -44,8 +44,7 @@ def bar_layout(tz: tzinfo, first: date, last: date) -> tuple[list[int], int, str
     to a month, daily beyond. The bars start at the same local clock times every day (midnight, 6am ...) from midnight of the
     first day, so a daylight-saving change doesn't move them (a day of 23 or 25 hours has one bar the shorter or longer)."""
     width = next(w for limit, w in CHART_BARS if (last - first).days + 1 <= limit)
-    starts = {local_epoch(datetime.combine(first + timedelta(days=n), time(hour)), tz)
-              for n in range((last - first).days + 1) for hour in range(0, 24, width // 3600)}
+    starts = {at_hour(first + timedelta(days=n), hour, tz) for n in range((last - first).days + 1) for hour in range(0, 24, width // 3600)}
     return sorted(starts), width, {3600: "hour", 6 * 3600: "6 hours", 86400: "day"}[width]
 
 

@@ -758,7 +758,7 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
 
 
 def test_the_rolling_mean_smooths_a_staircase_without_moving_timestamps_or_crossing_gaps():
-    from lib.timeutil import rolling_mean
+    from lib.lines import rolling_mean
     assert rolling_mean({0: 5.0, 300: 5.0, 600: 5.0}, 450) == {0: 5.0, 300: 5.0, 600: 5.0}
     assert rolling_mean({0: 1.0, 300: float('nan'), 600: 3.0}, 450) == {0: 1.0, 600: 3.0}   # a bad reading is left out, it does not poison the rest
     stairs = {i * 300: 10 + 0.1 * (i // 3) + (0.1 if i % 2 else 0.0) for i in range(30)}                 # 0.1-degree steps with jitter
@@ -1045,7 +1045,7 @@ def test_a_days_mean_counts_a_stretch_held_at_5_minutes_no_more_than_the_same_st
 
 
 def test_the_bucket_widens_as_the_period_grows_and_never_goes_below_the_readings():
-    from lib.timeutil import bucket_width
+    from lib.lines import bucket_width
     day = 86400
     assert [bucket_width(d * day, 300) for d in (1, 1.7, 2)] == [300, 300, 1800]      # 5-minute readings, until they exceed the budget
     assert [bucket_width(d * day, 1800) for d in (2, 10, 11, 20, 21, 41, 42, 83, 84, 1460)] == [
@@ -1054,18 +1054,18 @@ def test_the_bucket_widens_as_the_period_grows_and_never_goes_below_the_readings
 
 
 def test_bucket_summary_is_the_mean_and_true_extremes_per_epoch_aligned_bucket():
-    from lib.timeutil import bucket_summary, bucketed
+    from lib.lines import bucket_summary, bucketed
     from tests.fakes import TZ
     t0 = int(datetime(2026, 5, 1, tzinfo=TZ).timestamp()) // 7200 * 7200
     points = [(t0 + i * 1800, float(i), i - 0.5, i + 0.5, False) for i in range(8)]    # two 2-hour buckets of four 30-minute readings
     out = bucket_summary(points, 7200)
     assert out == {t0: (1.5, -0.5, 3.5), t0 + 7200: (5.5, 3.5, 7.5)}
-    xs, mean, low, high = bucketed(points, TZ, 7200)
+    xs, mean, low, high = bucketed(points, 7200)
     assert xs == [t0 + 3600, t0 + 10800] and mean == [1.5, 5.5] and low == [-0.5, 3.5] and high == [3.5, 7.5]
 
 
 def test_daily_summary_is_one_mean_and_true_extremes_per_local_day():
-    from lib.timeutil import daily_summary
+    from lib.lines import daily_summary
     from tests.fakes import TZ
     t0 = int(datetime(2026, 5, 1, tzinfo=TZ).timestamp())
     day1 = [(t0 + i * 1800, 10.0, 8.0, 12.0, False) for i in range(48)]
