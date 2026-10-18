@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from ..series import AIR
+
 # name -> (fields to try, in order: corrected first), unit
 METRICS = {
     "pm2_5": (("pm02_corrected", "pm02"), "µg/m³"),
@@ -12,26 +14,12 @@ METRICS = {
     "nox_index": (("noxIndex", "nox_index"), "relative index (1 = baseline)"),
 }
 
-# Traffic-light ratings: value <= first -> good, <= second -> poor, above -> very poor.
-# Particles follow the US AQI (very poor = AQI 151+, the same level as the mask alerts);
-# PM1 has no standard, so it uses PM2.5's; CO2, VOC and NOx follow AirGradient's colour scales.
-RATINGS = {
-    "pm2_5": (9.0, 55.4),
-    "pm10": (54.0, 254.0),
-    "pm1": (9.0, 55.4),
-    "co2": (799.0, 1499.0),
-    "voc_index": (150.0, 250.0),
-    "nox_index": (20.0, 150.0),
-}
-
-LABELS = {"pm2_5": "PM2.5", "pm10": "PM10", "pm1": "PM1", "co2": "CO₂",
-          "voc_index": "VOC index", "nox_index": "NOx index"}
-CHART_UNITS = {"pm2_5": "µg/m³", "pm10": "µg/m³", "pm1": "µg/m³", "co2": "ppm",
-               "voc_index": "", "nox_index": ""}
-ALL_METRICS = list(LABELS)
-# Only these have a lowest reading worth marking on a chart: CO2 never falls to zero (it has an outdoor floor near 400 ppm),
-# the others are often 0 or at their baseline, so their lowest says nothing.
-MARK_LOW = ("co2",)
+# Traffic-light ratings (series.AIR): value <= first -> good, <= second -> poor, above -> very poor.
+RATINGS = {name: m.limits for name, m in AIR.items()}
+LABELS = {name: m.label for name, m in AIR.items()}
+CHART_UNITS = {name: m.unit for name, m in AIR.items()}
+ALL_METRICS = list(AIR)
+MARK_LOW = tuple(name for name, m in AIR.items() if m.low)   # the metrics whose lowest is marked on a chart
 # Metrics charted together, one panel each on a shared time axis, top to bottom: the particles on one axis, then CO2, VOC and
 # NOx each on its own (their scales differ too much to share an axis honestly). A panel with none of the requested metrics
 # is left out.

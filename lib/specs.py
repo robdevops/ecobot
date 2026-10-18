@@ -11,10 +11,10 @@ built, not when it is drawn."""
 from dataclasses import dataclass, field
 from datetime import date
 
-from .series import RAIN_WITH
+from .series import RAIN_WITH, WEATHER
 
 
-NO_LOW = ("solar", "uv", "wind", "rain")   # readings whose low is always nothing (night, calm, dry): only the high is tagged
+NO_LOW = tuple(name for name, r in WEATHER.items() if not r.low)   # readings whose low is nothing every night or calm hour: only the high is tagged
 
 
 @dataclass

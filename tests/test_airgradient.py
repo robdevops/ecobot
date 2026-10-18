@@ -18,6 +18,13 @@ async def make(tmp_path):
     return air, calls
 
 
+def test_every_metric_is_rated_on_its_own_scale():
+    for name, good, poor in (("pm2_5", 9.0, 55.4), ("pm10", 54.0, 254.0), ("pm1", 9.0, 55.4), ("co2", 799.0, 1499.0),
+                             ("voc_index", 150.0, 250.0), ("nox_index", 20.0, 150.0)):
+        zones = [rating(name, v).split(" ", 1)[1] for v in (good, good + 0.1, poor, poor + 0.1)]   # after the emoji
+        assert zones == ["good", "poor", "poor", "very poor"], name
+
+
 def test_aqi_and_ratings_follow_the_us_scale():
     assert pm25_aqi(9.0) == (50, "good")
     assert pm25_aqi(55.5)[0] == 151 and pm25_aqi(55.5)[1] == "unhealthy"

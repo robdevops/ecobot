@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from .series import INDOOR_READINGS, PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
+from .series import AIR as AIR_TABLE, INDOOR_READINGS, PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
 
 log = logging.getLogger(__name__)
 
@@ -39,10 +39,7 @@ _PRESSURE = PRESSURE_WORDS
 # The two devices by name: "ecowitt" is the weather, "ag" / "airgradient" / "air gradient" the air quality
 _ECOWITT = r"ecowitt"
 _AG = r"air ?gradient|ag"
-AIR_METRICS = [  # word -> metric; checked in order, so PM10 wins over PM1
-    (r"pm ?2\.?5|pm25", "pm2_5"), (r"pm ?10", "pm10"), (r"pm ?1(?![0-9])", "pm1"), (r"co2|co₂", "co2"),
-    (r"voc\w*", "voc_index"), (r"nox", "nox_index"),
-]
+AIR_METRICS = [(m.words, name) for name, m in AIR_TABLE.items()]   # words -> metric; checked in order, so PM10 wins over PM1
 _AIR_METRIC = "|".join(words for words, _ in AIR_METRICS)   # the words that name an air reading, for every pattern below
 _OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather|{_ECOWITT}"  # a question that is not (only) about the air
 
@@ -562,8 +559,21 @@ OR_LESS = re.compile(r"\bor (?:less|lower|below|under)\b", I)
 AT_LEAST = re.compile(r"\b(?:at least|reach\w*|hit|hits)\b", I)
 ABOVE = re.compile(r"\b(?:over|above|more than|greater than|higher than|exceed\w*)\b", I)
 BELOW = re.compile(r"\b(?:under|below|less than|lower than|fewer than|at most)\b", I)
-DAY_COUNT = {"temperature": "temp", "humidity": "humidity", "pressure": "pressure", "dew_point": "dew_point", "feels_like": "feels_like",
-             "vpd": "vpd", "solar": "solar", "uv": "uv"}   # reading -> the stem of its daily field (temp_max, uv_max ...)
+def _figures(name: str, stem: str) -> tuple[dict[str, str], str]:
+    """A reading's daily fields by stat (temp_max, temp_min, temp_avg); none for its lowest when it has no low worth telling."""
+    return {"max": f"{stem}_max", **({"min": f"{stem}_min"} if WEATHER_READINGS[name].low else {}), "avg": f"{stem}_avg"}, "avg"
+
+
+# A reading's weather_days field for each stat a question asks of it ("max" its highest, "min" its lowest, "avg" its average,
+# "sum" its total), and the stat when it names none. Without a "min" it has no lowest to ask for.
+DAILY = {
+    **{name: _figures(name, stem) for name, stem in (("temperature", "temp"), ("humidity", "humidity"), ("pressure", "pressure"),
+                                                    ("dew_point", "dew_point"), ("feels_like", "feels_like"), ("vpd", "vpd"),
+                                                    ("solar", "solar"))},
+    "uv": ({"max": "uv_max", "min": "uv_max", "avg": "uv_max"}, "max"),   # a UV index is its day's high, whatever is asked of it
+    "wind": ({"max": "wind_gust", "avg": "wind_speed_avg"}, "avg"),       # its highest is a gust
+    "rain": ({"max": "rain", "min": "rain", "sum": "rain"}, "sum"),       # a day's rain is its total
+}
 HOLIDAYISH = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", I)
 
 
@@ -593,15 +603,10 @@ def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple
         if not ecowitt or len(names) != 1:
             return None
         name = names[0]
-        if name == "rain":
-            field = "rain"
-        elif name == "wind":
-            field = "wind_gust"
-        elif name in DAY_COUNT:
-            field = f"{DAY_COUNT[name]}_{'min' if below and name not in ('uv', 'solar') else 'max'}"
-        else:
+        if name not in DAILY:
             return None
-        tool = "weather_days"
+        fields = DAILY[name][0]
+        field, tool = fields.get("min", fields["max"]) if below else fields["max"], "weather_days"   # under a limit: its lowest, if it has one
         if name == "uv" and op == ">":   # a UV index is quoted in whole numbers: "over 10" means the days that read 10
             op = ">="
     spans = spans_in(rest, now)
@@ -648,22 +653,13 @@ def period_figures_call(text: str, now: datetime, ecowitt: bool, air: bool) -> t
         if not ecowitt or len(names) != 1:
             return None
         name, tool = names[0], "weather_days"
-        if name == "rain":
-            stat, field = ("max", "rain") if high else ("min", "rain") if low else ("sum", "rain")
-        elif name == "uv":
-            stat, field = ("max", "uv_max")
-        elif name == "wind":
-            if low:
-                return None
-            stat, field = ("max", "wind_gust") if high else ("avg", "wind_speed_avg")
-        elif name in DAY_COUNT:
-            stem = DAY_COUNT[name]
-            stat = "max" if high else "min" if low else "avg"
-            field = f"{stem}_{'max' if high else 'min' if low else 'avg'}"
-            if stem in ("solar",) and low:
-                return None
-        else:
+        if name not in DAILY:
             return None
+        fields, plain = DAILY[name]
+        stat = "max" if high else "min" if low else plain
+        if stat not in fields:   # a lowest of a reading that has none (wind, solar)
+            return None
+        field = fields[stat]
     spans = spans_in(rest, now)
     years = set(re.findall(r"\b((?:19|20)\d\d)\b", rest))
     if len(spans) + len(years) > 1:

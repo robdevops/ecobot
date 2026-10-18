@@ -557,3 +557,20 @@ def test_indoor_dew_point_and_feels_like_come_from_the_indoor_sensor():
         assert call(text)[1]["groups"] == "indoor", text
     assert call("dew point chart")[1]["groups"] == "outdoor"      # unasked, they stay the outdoor sensor's
     assert call("indoor and outdoor dew point chart 7d")[1]["groups"] == "outdoor,indoor"
+
+
+def test_the_lowest_uv_per_month_is_the_lowest_daily_high_not_the_highest():
+    tool, args, _ = intent.period_figures_call("lowest uv by month", NOW, True, False)
+    assert (tool, args["stat"], args["of"], args["group_by"]) == ("weather_days", "min", "uv_max", "month")
+    assert intent.period_figures_call("uv by month", NOW, True, False)[1]["stat"] == "max"     # a UV index is its day's high
+    assert intent.period_figures_call("lowest wind by month", NOW, True, False) is None        # wind has no lowest to ask for
+
+
+def test_the_air_table_is_the_one_in_series_and_panels_imports_on_its_own():
+    import subprocess
+    import sys
+    from lib.airgradient.metrics import LABELS, MARK_LOW, RATINGS
+    from lib.series import AIR
+    assert list(LABELS) == list(AIR) == [m for _, m in intent.AIR_METRICS] and MARK_LOW == ("co2",) and RATINGS["pm2_5"] == (9.0, 55.4)
+    run = subprocess.run([sys.executable, "-c", "import lib.panels"], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr                                                      # no circular import through airgradient

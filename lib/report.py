@@ -8,9 +8,8 @@ from datetime import date, datetime
 from telegram import MessageEntity
 
 from .ecowitt.glance import solar_band
-from .series import INDOOR_READINGS, WEATHER, find
+from .series import AIR, INDOOR_READINGS, WEATHER, find
 
-AIR_ROWS = (("pm2_5", "PM2.5"), ("pm10", "PM10"), ("pm1", "PM1"), ("co2", "CO₂"), ("voc_index", "VOC index"), ("nox_index", "NOx index"))
 
 
 def _load(result: str | None) -> dict | None:
@@ -118,7 +117,7 @@ def weather_lines(now: dict) -> list[str]:
 
 def air_lines(air: dict, only: list[str] | None = None) -> list[str]:
     out = []
-    for key, label in AIR_ROWS:
+    for key, label in ((name, m.label) for name, m in AIR.items()):
         entry = air.get(key) if only is None or key in only else None
         if not isinstance(entry, dict) or entry.get("value") is None:
             continue
@@ -284,7 +283,7 @@ def _weather_caption(result: dict, args: dict, turn, tz) -> list[str]:
 
 def _air_caption(result: dict, args: dict, turn) -> list[str]:
     lines = []
-    for key, label in AIR_ROWS:
+    for key, label in ((name, m.label) for name, m in AIR.items()):
         entry = result.get(key)
         if key not in (args.get("metrics") or ["pm2_5"]) or not isinstance(entry, dict):
             continue
