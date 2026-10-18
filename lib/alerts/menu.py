@@ -29,17 +29,14 @@ ALERTS, SOUND, BELL = "alerts", "sound", "bell"   # the menus that can be open
 MENUS = {ALERTS: "🔔 Alerts", SOUND: "🔊 Sound"}   # the /alerts buttons
 
 
-def available_kinds(sources: set[str]) -> list[str]:
-    """The alert types the bot can send, from the names of its sources."""
-    wanted = (["rain", "gusts", "uv", "temps"] if "Ecowitt" in sources else []) + (
-        ["particulates"] if "AirGradient" in sources else []) + (["pollen_and_asthma"] if "Pollen" in sources else []) + (
-        ["forecast"] if "Forecast" in sources else []) + (["irrigation_battery", "irrigation_pause"] if "Irrigation" in sources else [])
-    return wanted
+KINDS_OF = {"Ecowitt": ["rain", "gusts", "uv", "temps"], "AirGradient": ["particulates"], "Pollen": ["pollen_and_asthma"],
+            "Forecast": ["forecast"], "Irrigation": ["irrigation_battery", "irrigation_pause"]}   # source -> the alert types it sends
 
 
-def kinds_for(source_names, irrigation: bool) -> list[str]:
-    """The alert types the bot sends, from the names of its sources and whether an irrigation controller is configured."""
-    return available_kinds(set(source_names) | ({"Irrigation"} if irrigation else set()))
+def available_kinds(sources, irrigation: bool = False) -> list[str]:
+    """The alert types the bot sends: those of its sources (by name), and the irrigation ones with a controller configured."""
+    names = {*sources, *(["Irrigation"] if irrigation else [])}
+    return [kind for source, kinds in KINDS_OF.items() if source in names for kind in kinds]
 
 
 @dataclass(frozen=True)

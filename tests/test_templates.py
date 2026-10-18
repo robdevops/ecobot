@@ -13,7 +13,7 @@ def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left
     assert templates.sentence("\U0001f4c8 Temperature") == "Temperature chart 1d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
-    assert len(templates.LABELS) == 9
+    assert len(templates.SENTENCES) == 9
 
 
 def test_every_button_asks_something_the_bot_understands():
@@ -37,7 +37,7 @@ def test_every_button_asks_something_the_bot_understands():
 def test_the_keyboard_is_persistent_and_has_every_button():
     kb = templates.keyboard()
     assert kb.is_persistent and kb.resize_keyboard
-    assert {b.text for row in kb.keyboard for b in row} == templates.LABELS
+    assert {b.text for row in kb.keyboard for b in row} == set(templates.SENTENCES)
     assert [len(row) for row in kb.keyboard] == [3, 3, 3]
 
 
@@ -138,7 +138,7 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
     assert bot._keyboard_stale(msg)                                    # never had it
     state.set_keyboard(1, "old1234")
     assert bot._keyboard_stale(msg)                                    # the buttons changed since
-    state.set_keyboard(1, templates.VERSION)
+    state.set_keyboard(1, templates.version())
     assert not bot._keyboard_stale(msg)                                # up to date: nothing is added
     state.set_keyboard(1, templates.HIDDEN)
     assert not bot._keyboard_stale(msg)                                # they hid it: leave it hidden
@@ -156,11 +156,11 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
     assert state.keyboard(1) == templates.HIDDEN
     update, _ = message("/keyboard")
     await bot.on_keyboard(update, NS(args=[]))
-    assert state.keyboard(1) == templates.VERSION
+    assert state.keyboard(1) == templates.version()
     state.set_keyboard(1, "old1234")
     update, _ = message("/start")
     await bot.on_start(update, NS(args=[]))
-    assert state.keyboard(1) == templates.VERSION
+    assert state.keyboard(1) == templates.version()
 
 
 async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
@@ -181,7 +181,7 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
         return sent
     first, second = await ask(), await ask()
     assert first[0][1].get("reply_markup") is not None and second[0][1].get("reply_markup") is None
-    assert state.keyboard(1) == templates.VERSION
+    assert state.keyboard(1) == templates.version()
 
 
 async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_others_left_alone(tmp_path):
@@ -191,7 +191,7 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     for chat_id in (10, 11, 12, 13, -20):                     # -20 is a group
         state.add_chat(chat_id, str(chat_id))
     state.set_keyboard(10, "old1234")
-    state.set_keyboard(11, templates.VERSION)
+    state.set_keyboard(11, templates.version())
     state.set_keyboard(12, templates.HIDDEN)                  # 13 and the group have no record
     sent = []
 
@@ -203,7 +203,7 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     bot = Bot(NS(tz=TZ), None, [], state)
     assert await bot.refresh_keyboards(TG()) == 1
     assert sent == [(10, "Buttons updated.", True)]
-    assert state.keyboard(10) == templates.VERSION and 13 not in state.chats and state.keyboard(-20) is None
+    assert state.keyboard(10) == templates.version() and 13 not in state.chats and state.keyboard(-20) is None
     assert await bot.refresh_keyboards(TG()) == 0             # nothing more on the next start
     assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
 

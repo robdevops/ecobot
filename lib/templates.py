@@ -15,7 +15,6 @@ ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f4cb Status", "Report"), ("
         [("\U0001f3ed Air Quality", "Air quality all metrics 1d"), ("\U0001f52c Particulates", "Particulates chart 1d"),
          ("\U0001f4a8 Wind", "Wind chart 1d")]]
 SENTENCES = dict(button for row in ROWS for button in row)
-LABELS = set(SENTENCES)
 # Telegram keeps the keyboard in each app until a message brings a new one; this changes whenever the buttons do, so a chat
 # whose stored value differs gets the current keyboard with its next reply. HIDDEN is what a chat that hid the buttons stores.
 HIDDEN = "hidden"
@@ -28,9 +27,6 @@ def rows(irrigation: bool = False) -> list[list[tuple[str, str]]]:
 
 def version(irrigation: bool = False) -> str:
     return hashlib.md5("|".join(label for row in rows(irrigation) for label, _ in row).encode()).hexdigest()[:8]
-
-
-VERSION = version()
 
 
 def keyboard(irrigation: bool = False) -> ReplyKeyboardMarkup:

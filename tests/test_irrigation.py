@@ -196,7 +196,7 @@ def test_the_irrigation_button_takes_wind_s_place_only_when_configured_and_chang
     assert [b.text for row in plain for b in row][-1] == "\U0001f4a8 Wind" and templates.IRRIGATION not in [b.text for row in plain for b in row]
     labels = [b.text for row in with_irrigation for b in row]
     assert labels[-1] == templates.IRRIGATION and "\U0001f4a8 Wind" not in labels and len(labels) == 9 and with_irrigation[:2] == plain[:2]
-    assert templates.version() == templates.VERSION != templates.version(True)
+    assert templates.version() != templates.version(True)
     assert templates.sentence(templates.IRRIGATION) is None                              # not a question for the model
 
 
@@ -543,7 +543,7 @@ async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_
     assert len(added) == len(added_plain)                                                    # one entry point for every button, with or without a controller
     assert "ir:" in bot.buttons() and "ir:" not in plain.buttons() and {"al:", "pd:"} <= set(plain.buttons())
     assert "irrigation_battery" in bot._alert_kinds() and "irrigation_battery" not in plain._alert_kinds()
-    assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.VERSION
+    assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.version()
 
 
 @pytest.mark.parametrize("text, yes", [
@@ -810,7 +810,7 @@ def test_a_status_message_says_whether_it_is_paused():
     assert menu.paused_in(menu.status_text({"weather_delay": "72h"}, True, True)) is True
     assert menu.paused_in(menu.status_text({"weather_delay": "cancel"}, True, True)) is False
     assert menu.paused_in(menu.status_text({}, True, True)) is False and menu.paused_in("") is False and menu.paused_in(None) is False
-    assert menu.paused_in("mode: idle\npause time: 24h (alerts: on)") is True and menu.paused_in("pause time: inactive (alerts: on)") is False   # an older message
+    assert menu.paused_in("mode: idle\npause: 24h (alerts: on)") is True
 
 
 async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(tmp_path):

@@ -369,10 +369,10 @@ class Bot:
             self.state.remove_chat(change.chat.id, f"bot {status}")
 
     def _alert_kinds(self) -> list[str]:
-        return menu.kinds_for(self.by_name, bool(self.irrigation))
+        return menu.available_kinds(self.by_name, bool(self.irrigation))
 
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/alerts: the alert settings, as buttons (Subscribe | Unsubscribe). /alerts on and /alerts off still subscribe or
+        """/alerts: the alert settings, as buttons (🔔 Alerts and 🔊 Sound). /alerts on and /alerts off still subscribe or
         unsubscribe every type."""
         msg, chat = update.effective_message, update.effective_chat
         in_group = chat.type != ChatType.PRIVATE
@@ -425,7 +425,10 @@ class Bot:
             await query.answer("Only group admins can change alerts")
             return
         kinds = self._alert_kinds()
-        parent = press.parent if press.parent in kinds else None
+        parent = press.parent   # set: the buttons under an alert of that type; None: the /alerts message
+        if parent and parent not in kinds:   # an alert of a type the bot no longer sends
+            await query.answer(STALE_BUTTON)
+            return
         private = chat.type == ChatType.PRIVATE
         toast, opened = None, press.section if press.action != "close" else None
         if press.action == "sound" and private and press.kind in kinds and chat.id in self.state.chats:
@@ -439,27 +442,24 @@ class Bot:
             return
         muted = self.state.muted(chat.id)
         loud = self.state.loud(chat.id) if private else None
-        markup = menu.alert_keyboard(parent, muted, loud, opened) if parent else menu.keyboard(muted, kinds, opened, loud)
         await query.answer(toast)
-        try:
-            if (message.text or "").startswith(menu.TITLE):   # the /alerts message: keep its on/off summary current
-                await query.edit_message_text(menu.title(muted, kinds), reply_markup=markup)
-            else:                                             # an alert: only its buttons change
-                await query.edit_message_reply_markup(reply_markup=markup)
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                raise
+        if parent:   # an alert: only its buttons change
+            await self._edit(query, None, menu.alert_keyboard(parent, muted, loud, opened))
+        else:        # the /alerts message: its on/off summary is kept current too
+            await self._edit(query, menu.title(muted, kinds), menu.keyboard(muted, kinds, opened, loud))
 
     # ---------- irrigation ----------
-    def _irrigation_alerts(self, chat_id: int, kind: str = "irrigation_battery") -> bool:
-        """Does this chat get the irrigation battery alerts (kind "irrigation_battery") or the pause alerts ("irrigation_pause")?"""
-        return bool(self.state and self.state.subscribed(chat_id, kind))
+    def _irrigation_alerts(self, chat_id: int) -> tuple[bool, bool]:
+        """Does this chat get the irrigation battery alerts, and the pause alerts?"""
+        return tuple(bool(self.state and self.state.subscribed(chat_id, kind)) for kind in ("irrigation_battery", "irrigation_pause"))
 
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None, paused: bool = False, running: bool = False):
-        return irrigation_menu.keyboard(self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"), opened, paused, running)
+        return irrigation_menu.keyboard(*self._irrigation_alerts(chat_id), opened, paused, running)
 
-    def _irrigation_text(self, status: dict, chat_id: int) -> str:
-        return irrigation_menu.status_text(status, self._irrigation_alerts(chat_id), self._irrigation_alerts(chat_id, "irrigation_pause"))
+    def _irrigation_view(self, status: dict, chat_id: int, opened: str | None = None):
+        """(the status message, its buttons) for the controller's `status`."""
+        return (irrigation_menu.status_text(status, *self._irrigation_alerts(chat_id)),
+                self._irrigation_keyboard(chat_id, opened, irrigation_menu.is_paused(status), bool(status.get("switch"))))
 
     async def send_irrigation(self, msg: Message):
         """The Irrigation button: the controller's status, with its buttons."""
@@ -469,7 +469,8 @@ class Bot:
             log.warning("Irrigation status failed: %s", e)
             await msg.reply_text("Sorry, I couldn't reach the irrigation controller.")
             return
-        await msg.reply_text(self._irrigation_text(status, msg.chat_id), reply_markup=self._irrigation_keyboard(msg.chat_id, None, irrigation_menu.is_paused(status), bool(status.get("switch"))))
+        text, markup = self._irrigation_view(status, msg.chat_id)
+        await msg.reply_text(text, reply_markup=markup)
 
     async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str | None:
         """Do what a button asks. Returns the toast to show, or None for a button that means nothing. Raises IrrigationError."""
@@ -504,8 +505,8 @@ class Bot:
             opened = arg if action == "open" and arg in irrigation_menu.SECTIONS else None
             await query.answer()
             # the message says it: no need to ask the controller to open a list
-            await self._edit_irrigation(query, None, self._irrigation_keyboard(message.chat_id, opened, irrigation_menu.paused_in(message.text),
-                                                                               irrigation_menu.running_in(message.text)))
+            await self._edit(query, None, self._irrigation_keyboard(message.chat_id, opened, irrigation_menu.paused_in(message.text),
+                                                                    irrigation_menu.running_in(message.text)))
             return
         if action == "refresh":   # read the controller again and redraw: nothing is sent to it, so no wait
             try:
@@ -515,8 +516,7 @@ class Bot:
                 await query.answer("Couldn't reach the irrigation controller", show_alert=True)
                 return
             await query.answer("Refreshed")
-            await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id),
-                                        self._irrigation_keyboard(message.chat_id, None, irrigation_menu.is_paused(status), bool(status.get("switch"))))
+            await self._edit(query, *self._irrigation_view(status, message.chat_id))
             return
         if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:   # not while the timer is paused
             try:
@@ -528,8 +528,9 @@ class Bot:
             if irrigation_menu.is_paused(status):
                 log.info("Irrigation: water %s refused, paused for %s (chat %s)", arg, status["weather_delay"], message.chat_id)
                 await query.answer(irrigation_menu.PAUSED_ERROR)
-                text, entities = irrigation_menu.with_error(self._irrigation_text(status, message.chat_id))
-                await self._edit_irrigation(query, text, self._irrigation_keyboard(message.chat_id, None, True, bool(status.get("switch"))), entities)   # nothing was sent: no wait
+                text, markup = self._irrigation_view(status, message.chat_id)
+                text, entities = irrigation_menu.with_error(text)
+                await self._edit(query, text, markup, entities)   # nothing was sent: no wait
                 return
         try:
             toast = await self._irrigation_act(action, arg, message.chat_id)
@@ -549,10 +550,12 @@ class Bot:
             log.warning("Irrigation status after %s %s failed: %s", action, arg, e)   # the toast said what was done; the message stays as it was
             return
         stay = "alerts" if action in ("batt", "pause") else None   # the Alerts menu stays open after a toggle, to show the new label
-        await self._edit_irrigation(query, self._irrigation_text(status, message.chat_id), self._irrigation_keyboard(message.chat_id, stay, irrigation_menu.is_paused(status), bool(status.get("switch"))))
+        await self._edit(query, *self._irrigation_view(status, message.chat_id, stay))
 
     @staticmethod
-    async def _edit_irrigation(query, text: str | None, markup, entities=None):
+    async def _edit(query, text: str | None, markup, entities=None):
+        """Put new text (None: the text stays) and buttons into the message a button was pressed under. Telegram refusing an edit
+        that changes nothing is fine."""
         try:
             if text is None:
                 await query.edit_message_reply_markup(reply_markup=markup)
@@ -566,9 +569,6 @@ class Bot:
         """A press on Refresh under the report: read everything again and redraw the report in the same message. The chat's
         conversation is not touched (this is not a new question)."""
         query = update.callback_query
-        if query.data != report_menu.REFRESH:
-            await query.answer(STALE_BUTTON)
-            return
         read = intent.read("Report", now_local(self.cfg.tz), "Ecowitt" in self.by_name, "AirGradient" in self.by_name,
                            "Pollen" in self.by_name, "Forecast" in self.by_name)
         try:
@@ -578,7 +578,7 @@ class Bot:
             await query.answer("Couldn't refresh, please try again", show_alert=True)
             return
         await query.answer()   # no toast: the times in the headings show what changed
-        await self._edit_irrigation(query, text, report_menu.keyboard(), report.heading_entities(text))
+        await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart

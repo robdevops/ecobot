@@ -142,6 +142,8 @@ class Query:
         self.edits.append(("markup", reply_markup))
 
     async def edit_message_text(self, text, reply_markup=None):
+        if self.fail:
+            raise self.fail
         self.edits.append(("text", text, reply_markup))
 
 
@@ -186,7 +188,7 @@ async def test_the_alerts_message_keeps_its_summary_current_but_an_alert_keeps_i
     q = Query("al:off:uv:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     assert q.edits[0][0] == "text" and "🔕 Off: UV" in q.edits[0][1]
-    q = Query("al:off:gusts:alerts", text="💨 Strong gusts: 55 km/h")
+    q = Query("al:off:gusts:bell:gusts", text="💨 Strong gusts: 55 km/h")
     await press(bot, q)
     assert q.edits[0][0] == "markup"
 
@@ -299,28 +301,29 @@ async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays
     bot, state = make_bot(tmp_path)
     q = Query("al:open:bell:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]
+    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][-1])[2] == [("Sound", "al:snd:uv:off:uv")]
     q = Query("al:off:uv:bell:uv", text="☀️ UV 10")                            # alert off: the sound toggle goes, the struck alert stays to turn it back on
     await press(bot, q)
     assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
-    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:bell:uv")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:bell:uv")]]
     q = Query("al:on:uv:bell:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert "uv" not in state.muted(1) and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
+    assert "uv" not in state.muted(1) and rows(q.edits[0][-1])[2] == [("Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
     q = Query("al:close:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 ▸", "al:open:bell:uv")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 ▸", "al:open:bell:uv")]]
 
 
-async def test_an_unknown_parent_in_a_button_is_ignored(tmp_path):
-    bot, state = make_bot(tmp_path)
-    q = Query("al:open:alerts:bogus", text="☀️ UV 10")
-    await press(bot, q)
-    drawn = rows(q.edits[0][1])
-    assert drawn[1][0] == ("rain", "al:off:rain:alerts")       # the /alerts menu, not carried on
+async def test_the_bell_of_an_alert_type_the_bot_no_longer_sends_is_out_of_date(tmp_path):
+    from lib.bot import STALE_BUTTON
+    bot, state = make_bot(tmp_path, sources=("Ecowitt",))                       # no pollen source any more
+    for data in ("al:open:bell:pollen_and_asthma", "al:off:pollen_and_asthma:bell:pollen_and_asthma"):
+        q = Query(data, text="🌼 Grass pollen is High")
+        await press(bot, q)
+        assert q.toast == STALE_BUTTON and q.edits == [] and state.muted(1) == set(), data
 
 
 def test_the_title_stays_plain_words():
@@ -332,13 +335,13 @@ async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_
     state.set_kind(1, "gusts", False)
     q = Query("al:open:sound")
     await press(bot, q)
-    drawn = rows(q.edits[0][1])
+    drawn = rows(q.edits[0][-1])
     assert drawn[0] == [("🔊 Sound ▾", "al:close")] and drawn[1] == [(strike("rain"), "al:snd:rain:on"), (strike("UV"), "al:snd:uv:on")]
     assert "gusts" not in str(drawn)                                            # an alert that is off has no sound to set
     assert "Alerts" not in str(drawn)                                           # the Alerts menu is hidden while Sound is open
     q = Query("al:snd:rain:on")
     await press(bot, q)
-    assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][1])[1][0] == ("rain", "al:snd:rain:off")
+    assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][-1])[1][0] == ("rain", "al:snd:rain:off")
     await press(bot, Query("al:snd:uv:on"))
     assert state.loud(1) == {"rain", "uv"}
     q = Query("al:snd:rain:off")
@@ -349,14 +352,14 @@ async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_
     assert state.loud(1) == {"uv"}
     q = Query("al:close")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
     q = Query("al:snd:rain:on", chat_type="supergroup", chat_id=-5)              # groups have no sound settings
     state.add_chat(-5, "G")
     await press(bot, q)
     assert state.loud(-5) == set() and q.edits == []
     q = Query("al:open:sound", chat_type="supergroup", chat_id=-5)
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 Alerts ▸", "al:open:alerts")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 Alerts ▸", "al:open:alerts")]]
 
 
 async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_get_no_settings_button(tmp_path):

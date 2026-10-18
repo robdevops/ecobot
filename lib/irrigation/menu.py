@@ -39,11 +39,10 @@ def is_paused(status: dict) -> bool:
 
 
 def paused_in(text: str | None) -> bool:
-    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller.
-    Messages sent before the line was reworded ("pause time: inactive") still read right."""
-    line = next((l for l in (text or "").splitlines() if l.startswith(("pause:", "pause time:"))), "")
-    value = line.partition(":")[2].strip()
-    return bool(value) and not value.startswith(("not paused", "inactive"))
+    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller."""
+    line = next((l for l in (text or "").splitlines() if l.startswith("pause:")), "")
+    value = line.removeprefix("pause:").strip()
+    return bool(value) and not value.startswith("not paused")
 
 
 def running_in(text: str | None) -> bool:

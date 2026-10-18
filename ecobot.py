@@ -25,7 +25,7 @@ from lib.airgradient import AirGradient
 from lib.airgradient import metrics as air_metrics
 from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
-from lib.alerts.menu import LABELS, kinds_for
+from lib.alerts.menu import LABELS, available_kinds
 from lib.bot import PREDRAW_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.forecast import Forecast
@@ -143,7 +143,7 @@ async def main():
             try:  # any startup failure below still runs the shutdown steps (and shows the real error)
                 log.info("@%s + %s", app.bot.username, cfg.xai_model)
                 log.info("Sources: %s", ", ".join(s.name for s in sources))
-                kinds = kinds_for((s.name for s in sources), irrigation is not None)
+                kinds = available_kinds((s.name for s in sources), irrigation is not None)
                 notify = Notifier(app.bot, state)
                 await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
 
