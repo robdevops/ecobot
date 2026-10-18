@@ -26,6 +26,20 @@ async def test_finds_the_station(station):
     assert "Fairleigh" in eco.describe() and "created" in eco.describe()
 
 
+@pytest.mark.parametrize("zone, used", [("Australia/Perth", "Australia/Perth"), (None, "Australia/Melbourne"),
+                                         ("Mars/Olympus", "Australia/Melbourne")])
+async def test_the_station_names_its_own_time_zone(tmp_path, caplog, zone, used):
+    """The device list's date_zone_id is the station's zone, whatever the configured one (Melbourne here); one Python doesn't
+    know, or none, leaves the configured zone."""
+    caplog.set_level("INFO")
+    transport, _ = ecowitt_transport(FakeEcowitt(zone=zone))
+    eco = Ecowitt(config(tmp_path), transport=transport)
+    await eco.start()
+    await eco.close()
+    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and f"(AA:BB:CC:DD:EE:FF), {used}" in caplog.text
+    assert ("Ecowitt names a time zone Python doesn't know, 'Mars/Olympus'" in caplog.text) == (zone == "Mars/Olympus")
+
+
 @pytest.mark.parametrize("msg", ["System is busy.", "Operation too frequent"])
 async def test_busy_and_too_frequent_are_retried(monkeypatch, msg):
     import httpx

@@ -5,6 +5,7 @@ answered by xAI Grok, with proactive alerts. Settings come from environment vari
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import os
 import signal
@@ -51,9 +52,11 @@ if _level in ("DEBUG", "WARNING", "ERROR"):
 log = logging.getLogger("ecobot")
 
 
-async def start_sources(cfg: Config) -> list:
-    """Every configured data source that starts: the weather station and the air sensor, then the optional website sources
-    (pollen, forecast), which are off unless switched on. The forecast uses the station's location unless one is configured."""
+async def start_sources(cfg: Config) -> tuple[list, Config]:
+    """Every configured data source that starts, and the settings in the time zone they run in. The weather station starts
+    first: it names its own time zone, which wins over TZ, so the air sensor and the optional website sources (pollen,
+    forecast, off unless switched on), and everything built after, use the station's. The forecast uses the station's
+    location unless one is configured."""
     sources = []
 
     async def start(source):
@@ -63,14 +66,23 @@ async def start_sources(cfg: Config) -> list:
         except Exception:
             log.exception("%s couldn't start - continuing without it", source.name)
             await source.close()
-    for source in ([Ecowitt(cfg)] if cfg.ecowitt else []) + ([AirGradient(cfg)] if cfg.airgradient else []):
-        await start(source)
+    if cfg.ecowitt:
+        await start(Ecowitt(cfg))
+    eco = sources[0] if sources else None
+    if eco and str(eco.tz) != str(cfg.tz):
+        if os.getenv("TZ"):
+            log.warning("TZ=%s is not the weather station's time zone; using the station's, %s", os.getenv("TZ"), eco.tz)
+        cfg = dataclasses.replace(cfg, tz=eco.tz)
+    if not getattr(cfg.tz, "key", None):
+        log.warning("The time zone has no name, only an offset (%s), so daylight saving will put the times out: set TZ, "
+                    "e.g. TZ=Australia/Melbourne", cfg.tz)
+    if cfg.airgradient:
+        await start(AirGradient(cfg))
     if cfg.pollen:
         await start(Pollen(cfg))
     if cfg.forecast:
-        eco = next((s for s in sources if isinstance(s, Ecowitt)), None)
         await start(Forecast(cfg, (eco.latitude, eco.longitude) if eco and eco.latitude is not None else None))
-    return sources
+    return sources, cfg
 
 
 def version() -> str:
@@ -102,7 +114,7 @@ async def main():
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
     intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
     intent.VPD_IN_ALL = cfg.chart_all_vpd
-    sources = await start_sources(cfg)
+    sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
     if not sources:
         raise SystemExit("No data source is working - nothing to talk about")
     eco = next((s for s in sources if isinstance(s, Ecowitt)), None)

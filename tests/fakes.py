@@ -76,10 +76,12 @@ def uv_index(ts: int) -> float:
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
-    def __init__(self, busy_first: bool = False, history_days: int = HISTORY_DAYS):
+    def __init__(self, busy_first: bool = False, history_days: int = HISTORY_DAYS, zone: str | None = "Australia/Melbourne"):
+        """zone: the time zone the device list names (date_zone_id), None for none."""
         self.calls: list[dict] = []
         self.busy = busy_first
         self.history_days = history_days
+        self.zone = zone
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         p = dict(request.url.params)
@@ -90,7 +92,8 @@ class FakeEcowitt:
         path = request.url.path.rsplit("/", 1)[-1]
         if path == "list":
             return self._ok({"list": [{"mac": MAC.lower(), "name": "Fairleigh", "longitude": 145.0, "latitude": -37.8,
-                                       "createtime": int((datetime.now(timezone.utc) - timedelta(days=self.history_days)).timestamp())}]})
+                                       "createtime": int((datetime.now(timezone.utc) - timedelta(days=self.history_days)).timestamp()),
+                                       **({"date_zone_id": self.zone} if self.zone else {})}]})
         if path == "real_time":
             now = int(datetime.now(timezone.utc).timestamp())
             return self._ok({"outdoor": {"temperature": {"time": str(now), "unit": "℃", "value": "12.3"}}})

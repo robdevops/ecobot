@@ -23,7 +23,7 @@ from lib.tools import Tools  # noqa: E402
 async def main():
     parser(__doc__).parse_args()
     cfg = Config.from_env()
-    sources = await start_sources(cfg)
+    sources, cfg = await start_sources(cfg)
     try:
         tools = Tools([t for s in sources for t in s.tools])
         names = {s.name for s in sources}

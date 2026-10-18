@@ -12,16 +12,14 @@ is printed in full.
 
 import asyncio
 import json
-import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace as NS
-from zoneinfo import ZoneInfo
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
-from lib.config import data_dir  # noqa: E402
+from lib.config import data_dir, local_tz  # noqa: E402
 
 from lib import intent, prompt  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
@@ -66,7 +64,7 @@ async def main():
     ap.add_argument("--call", help="JSON tool call the stand-in model makes first")
     args = ap.parse_args()
 
-    tz = ZoneInfo(os.getenv("TZ") or "Australia/Melbourne")
+    tz = local_tz()
     now = datetime.now(tz)
     macs = [m for (m,) in sqlite3.connect(f"file:{args.cache}?mode=ro", uri=True).execute("SELECT DISTINCT mac FROM coverage")]
     if not macs:

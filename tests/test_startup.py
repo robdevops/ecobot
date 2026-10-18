@@ -164,15 +164,50 @@ async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_
     monkeypatch.setattr(ecobot.Pollen, "__init__", lambda self, c: pollen_init(self, c, pollen_transport(page, calls)))
     monkeypatch.setattr(ecobot.Forecast, "__init__", lambda self, c, place=None: forecast_init(self, c, place, forecast_transport(calls)))
     monkeypatch.setattr(ecobot.Pollen, "now", lambda self: datetime(2026, 11, 10, 12, 0))     # in the pollen season, whatever day the test runs
-    off = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location=""))
+    off, _ = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location=""))
     assert [s.name for s in off] == ["Ecowitt"]
     for s in off:
         await s.close()
-    on = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location="", pollen=True, forecast=True))
+    on, _ = await ecobot.start_sources(config(tmp_path, airgradient_token="", airgradient_location="", pollen=True, forecast=True))
     assert [s.name for s in on] == ["Ecowitt", "Pollen", "Forecast"]
     assert on[2].location == (-37.8, 145.0) and on[2].lines() and on[1].lines()
     for s in on:
         await s.close()
+
+
+async def test_the_other_sources_run_in_the_weather_station_s_time_zone(tmp_path, monkeypatch, caplog):
+    from zoneinfo import ZoneInfo
+    eco_t, _ = ecowitt_transport(history_days=45)
+    air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
+    for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setenv("TZ", "UTC")
+    sources, cfg = await ecobot.start_sources(config(tmp_path, tz=ZoneInfo("UTC")))   # TZ says UTC; the station is in Melbourne
+    for s in sources:
+        await s.close()
+    assert [s.name for s in sources] == ["Ecowitt", "AirGradient"] and str(cfg.tz) == "Australia/Melbourne"
+    assert all(str(s.tz) == "Australia/Melbourne" for s in sources)
+    assert "TZ=UTC is not the weather station's time zone; using the station's, Australia/Melbourne" in caplog.text
+    assert "has no name" not in caplog.text
+    sources, cfg = await ecobot.start_sources(config(tmp_path, ecowitt_api_key="", tz=timezone(timedelta(hours=10))))
+    for s in sources:
+        await s.close()
+    assert [s.name for s in sources] == ["AirGradient"] and cfg.tz == timezone(timedelta(hours=10))   # no station: the configured zone
+    assert "The time zone has no name, only an offset (UTC+10:00)" in caplog.text
+
+
+def test_the_time_zone_without_a_station_is_tz_else_the_one_etc_localtime_links_to(monkeypatch, caplog):
+    from lib import config as config_module
+    from lib.config import local_tz
+    monkeypatch.setenv("TZ", "Australia/Perth")
+    assert str(local_tz()) == "Australia/Perth"
+    monkeypatch.setattr(config_module.os.path, "realpath", lambda p: "/usr/share/zoneinfo/Australia/Melbourne")
+    monkeypatch.setenv("TZ", "Mars/Olympus")
+    assert str(local_tz()) == "Australia/Melbourne" and "TZ: 'Mars/Olympus' is not a time zone name" in caplog.text
+    monkeypatch.delenv("TZ")
+    assert str(local_tz()) == "Australia/Melbourne"
+    monkeypatch.setattr(config_module.os.path, "realpath", lambda p: "/etc/localtime")   # a copied file, not a link: no name
+    assert not hasattr(local_tz(), "key")
 
 
 def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatch):

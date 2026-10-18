@@ -29,7 +29,7 @@ The state and caches go in `/data` (its `DATA_DIR`), here a named volume. A host
 |---|---|
 | `TELEGRAM_BOT_TOKEN`, `XAI_API_KEY` | required |
 | `XAI_MODEL` (`grok-4.3`), `XAI_BASE_URL` (`https://api.x.ai/v1`) | model |
-| `TZ` | e.g. `Australia/Melbourne` |
+| `TZ` | only without an Ecowitt station: the station names its own time zone, which is used (a `TZ` that disagrees is logged). Without either, the system's zone (what `/etc/localtime` links to); e.g. `Australia/Melbourne` |
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient |
 | `DATA_DIR` | optional: the folder that holds the bot's state (`bot_state.json`) and its SQLite caches (`ecowitt_cache.sqlite`, `airgradient_cache.sqlite`, `conditions_cache.sqlite`), kept apart from the code so a container can mount it (e.g. `/data`). A relative path is also accepted and is taken from the working directory; the folder is created if missing. Unset, a systemd service with `StateDirectory=` uses that folder (`STATE_DIRECTORY`, e.g. `/var/lib/ecobot`), else the app's own folder. Matplotlib's font cache goes in a `matplotlib` sub-folder (unless `MPLCONFIGDIR` is set). Default: the app's own folder, where the files have always been |

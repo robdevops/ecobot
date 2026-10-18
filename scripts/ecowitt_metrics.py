@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 
-from lib.config import _tz  # noqa: E402
+from lib.config import local_tz  # noqa: E402
 from lib.ecowitt.api import GROUPS, EcowittAPI, EcowittError  # noqa: E402
 
 # Data groups the API's documentation (real_time and history "call_back") lists. Channels are numbered.
@@ -50,7 +50,7 @@ async def probe(api: EcowittAPI, mac: str, group: str, history: bool) -> tuple[s
         return "no data", [], []
     fields: list[str] = []
     if history:
-        now = datetime.now(_tz())
+        now = datetime.now(local_tz())
         try:
             hist = await api.history(mac, "30min", (now - timedelta(hours=6)).replace(tzinfo=None), now.replace(tzinfo=None), group)
             fields = sorted(name for name, _, _ in leaves(hist.get(group) or {}))

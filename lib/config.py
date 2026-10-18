@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger(__name__)
@@ -21,9 +21,20 @@ def data_dir() -> Path:
     return Path(os.path.abspath(Path(value).expanduser())) if value else ROOT
 
 
-def _tz() -> tzinfo:
+def local_tz() -> tzinfo:
+    """The time zone when no weather station names its own (Ecowitt does, and it wins): TZ, else the system's, the zone
+    /etc/localtime links to. Only a zone that has no name is a fixed offset, which daylight saving would put out."""
     name = os.getenv("TZ", "").lstrip(":")
-    return ZoneInfo(name) if name else datetime.now().astimezone().tzinfo
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ValueError, ZoneInfoNotFoundError):
+            log.warning("TZ: %r is not a time zone name; using the system's", name)
+    linked = os.path.realpath("/etc/localtime")
+    try:
+        return ZoneInfo(linked.split("/zoneinfo/", 1)[1])
+    except (IndexError, ValueError, ZoneInfoNotFoundError):
+        return datetime.now().astimezone().tzinfo
 
 
 ON, OFF = ("on", "yes", "true", "1"), ("off", "no", "false", "0")
@@ -175,7 +186,7 @@ class Config:
             xai_api_key=_required("XAI_API_KEY"),
             xai_base_url=env("XAI_BASE_URL", "https://api.x.ai/v1"),
             xai_model=env("XAI_MODEL", "grok-4.3"),
-            tz=_tz(),
+            tz=local_tz(),
             ecowitt_api_key=env("ECOWITT_API_KEY"),
             ecowitt_app_key=env("ECOWITT_APP_KEY"),
             airgradient_token=env("AIRGRADIENT_API_TOKEN"),

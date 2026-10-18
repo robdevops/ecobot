@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, UTC
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
 from ..intent import NOW_GROUPS
@@ -139,6 +140,11 @@ class Ecowitt:
         device = devices[0]
         self.mac = str(device["mac"]).upper()
         self.station_name = device.get("name") or "station"
+        if zone := device.get("date_zone_id"):   # the station's own time zone ("Australia/Melbourne"): its days are local to it
+            try:
+                self.tz = ZoneInfo(zone)
+            except (ValueError, ZoneInfoNotFoundError):
+                log.warning("Ecowitt names a time zone Python doesn't know, %r; using %s", zone, self.tz)
         try:
             self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
         except (KeyError, TypeError, ValueError):
@@ -153,7 +159,7 @@ class Ecowitt:
             pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        log.info("Weather station: Ecowitt '%s' (%s)%s", self.station_name, self.mac,
+        log.info("Weather station: Ecowitt '%s' (%s), %s%s", self.station_name, self.mac, self.tz,
                  f", devices found: {len(devices)}" if len(devices) > 1 else "")
         try:
             size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
