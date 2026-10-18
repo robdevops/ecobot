@@ -1,6 +1,8 @@
 import time
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor, with_footer
 from tests.fakes import TZ
 
@@ -28,7 +30,8 @@ class FakeStation:
         return self.live
 
     async def recent(self, hours):
-        return self.data
+        """The readings of the last `hours` (up to the newest one, which stands for now)."""
+        return [(ts, r) for ts, r in self.data if ts >= self.data[-1][0] - hours * 3600] if self.data else []
 
     def now(self):
         return datetime.now(TZ).replace(tzinfo=None)
@@ -61,6 +64,17 @@ async def test_rain_starts_once_then_stops_after_30_dry_minutes(tmp_path):
     m.station.data = rain(0, 0, 1, 1, *[0] * 6)  # 30 dry minutes since the last wet reading
     await m.check()
     assert len(sent) == 2 and "stopped" in sent[1] and "mm fell" in sent[1]
+
+
+@pytest.mark.parametrize("wet, told", [(60, "12.0 mm fell over 5h"),
+                                       (31, "6.2 mm fell over 2h 35m")])   # its first tip is the oldest of the 3 hours looked at
+async def test_the_rain_stopped_alert_counts_a_spell_longer_than_the_readings_it_looks_at(tmp_path, wet, told):
+    m, state, sent = monitor(tmp_path, None)
+    spell = rain(0, 0, *[1] * wet, *[0] * 6)                # 0.2 mm a wet reading, then 30 dry minutes
+    for n in (3, len(spell)):
+        m.station.data = spell[:n]
+        await m.check()
+    assert len(sent) == 2 and sent[1] == f"\U0001f324️ The rain has stopped. {told}."
 
 
 async def test_a_dry_gap_shorter_than_the_stop_time_does_not_flap(tmp_path):
@@ -467,12 +481,12 @@ async def test_no_rain_alerts_in_quiet_hours_and_one_summary_after_them(tmp_path
     m, state, sent = monitor(tmp_path, None)
     m.quiet = (0, 6)
     one_am = int(datetime(2026, 9, 30, 1, 0, tzinfo=TZ).timestamp())
-    for data in (night_rain(one_am, 0, 0, 0), night_rain(one_am, 0, 0, 1), night_rain(one_am, 0, 0, 1, 1, 1),
-                 night_rain(one_am, 0, 0, 1, 1, 1, *[0] * 13)):   # it starts, rains, stops after 60 dry minutes
-        m.station.data = data
+    night = night_rain(one_am, 0, 0, 1, 1, 1, *[0] * 57)           # 1am to 6:05am
+    for n in (3, 4, 6, 18, 60):                                    # it starts, rains, stops after 60 dry minutes; 5:55
+        m.station.data = night[:n]
         await m.check()
     assert sent == []                                              # all in quiet hours
-    m.station.data = night_rain(int(datetime(2026, 9, 30, 5, 55, tzinfo=TZ).timestamp()), 0, 0, 0)   # 5:55 to 6:05
+    m.station.data = night                                         # 6:05
     await m.check()
     assert len(sent) == 1 and sent[0].startswith("\U0001f327️ Overnight rain: 1.2 mm, from about 1:10am to 1:25am.")
     await m.check()
@@ -480,6 +494,31 @@ async def test_no_rain_alerts_in_quiet_hours_and_one_summary_after_them(tmp_path
     m.station.data = night_rain(int(datetime(2026, 9, 30, 13, 0, tzinfo=TZ).timestamp()), 0, 1)
     await m.check()
     assert len(sent) == 2 and "started raining" in sent[1]         # by day, rain alerts are back
+
+
+async def test_quiet_hours_across_midnight_keep_the_evening_rain_for_the_summary(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.quiet = (22, 6)
+    evening = night_rain(int(datetime(2026, 9, 29, 22, 0, tzinfo=TZ).timestamp()), *[0] * 12, *[1] * 6, *[0] * 6)   # 11pm, 2.4 mm
+    morning = night_rain(int(datetime(2026, 9, 30, 0, 0, tzinfo=TZ).timestamp()), *[0] * 12, *[1] * 3, *[0] * 59)  # the gauge
+    night = evening + morning                                      # reset at midnight; 1am, 1.2 mm; dry to 6:05am
+    for n in range(1, len(night) + 1):                             # a check every 5 minutes
+        m.station.data = night[:n]
+        await m.check()
+    assert sent == ["\U0001f327️ Overnight rain: 3.6 mm, from about 11:00pm to 1:15am."]
+
+
+async def test_a_note_left_from_a_night_the_bot_missed_gives_way_to_the_next_nights(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.quiet = (22, 6)
+    m.station.data = night_rain(int(datetime(2026, 9, 29, 23, 0, tzinfo=TZ).timestamp()), 0, 1)
+    await m.check()                                                # rain noted at 11:05pm, then the bot is down until the next night
+    night = night_rain(int(datetime(2026, 9, 30, 22, 30, tzinfo=TZ).timestamp()), 0, 1, *[0] * 89)   # to 6am
+    m.station.data = night[:2]
+    await m.check()
+    m.station.data = night
+    await m.check()
+    assert sent == ["\U0001f327️ Overnight rain: 0.4 mm, from about 10:35pm to 10:40pm."]
 
 
 async def test_a_dry_night_has_no_summary_and_quiet_hours_can_be_off(tmp_path):

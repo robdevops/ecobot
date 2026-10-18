@@ -1,9 +1,9 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
-  - Rain: "started" (one tip of the gauge is enough) and "stopped" (dry for ALERT_COOLDOWN_MINUTES), with how much fell.
-    Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am): those are kept quiet and one summary of the overnight
-    rain is sent after they end.
+  - Rain: "started" (one tip of the gauge is enough) and "stopped" (dry for ALERT_COOLDOWN_MINUTES), with how much fell over
+    the whole spell. Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am, and they may run across midnight):
+    those are kept quiet and one summary of the rain that fell in them is sent after they end.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
   - Strong sun: one alert when the UV index is 10 or more in two readings in a row (confirm.py), and no more until it has stayed
@@ -15,13 +15,13 @@
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from ..ecowitt.glance import UVI_ALERT
 from . import confirm, pictures
 from .backoff import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
-from ..timeutil import to_local
+from ..timeutil import local_epoch, to_local
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +54,12 @@ class WeatherMonitor:
         start, end = self.quiet
         hour = to_local(ts, self.tz).hour
         return start <= hour < end if start < end else hour >= start or hour < end
+
+    def _quiet_began(self, ts: int) -> int:
+        """When the quiet hours that `ts` falls in began (epoch): the evening before, for hours that run across midnight."""
+        local = to_local(ts, self.tz)
+        day = local.date() - timedelta(days=1 if local.hour < self.quiet[0] else 0)
+        return local_epoch(datetime.combine(day, time(self.quiet[0])), self.tz)
 
     @property
     def tz(self):
@@ -101,7 +107,7 @@ class WeatherMonitor:
         latest_ts = wet[-1][0]
         quiet = self._quiet(latest_ts)
         if quiet:
-            self._note_night(rows, wet)
+            self._note_night(wet)
         wet_times = [ts for ts, w, _ in wet if w]
         last_wet = wet_times[-1] if wet_times else None
         raining = last_wet is not None and latest_ts - last_wet < self.cooldown   # dry means no rain for the whole cooldown
@@ -121,27 +127,23 @@ class WeatherMonitor:
                 log.info("Alerts: rain stopped in quiet hours; the morning summary covers it")
             else:
                 since = m.get("since") or wet_times[0]
-                fell = rain_amount(rows, since, last_wet)
+                fell = await self._fell(rows, since, last_wet)
                 amount = f"{fell:.1f} mm fell" if fell else "Only a trace fell"
                 took = duration(last_wet + 300 - since)
                 await self.notify(f"\U0001f324️ The rain has stopped. {amount} over {took}.", kind="rain")
             m["since"] = None
         remember(m, state, latest_ts, alerted=not quiet)
 
-    def _note_night(self, rows: Rows, wet: list):
-        """In quiet hours: when it first and last rained since midnight, and the day's total so far (the gauge's running total)."""
-        latest = rows[-1][0]
-        today = to_local(latest, self.tz).date()
+    def _note_night(self, wet: list):
+        """In quiet hours: when it first and last rained since they began. The note lives until the summary after them takes it."""
+        began = self._quiet_began(wet[-1][0])
         night = self.state.monitor.get("night")
-        if not night or night["date"] != today.isoformat():
-            night = self.state.monitor["night"] = {"date": today.isoformat(), "first": None, "last": None, "mm": 0.0}
+        if not night or night.get("began") != began:   # a new night (a note left from an earlier one is replaced)
+            night = self.state.monitor["night"] = {"began": began, "first": None, "last": None}
         for ts, w, _ in wet:
-            if w and to_local(ts, self.tz).date() == today and self._quiet(ts):
+            if w and ts >= began:
                 night["first"] = night["first"] or ts
                 night["last"] = ts
-        daily = rows[-1][1].get("rainfall.daily")
-        if daily is not None:
-            night["mm"] = max(night["mm"], daily)
 
     async def _night_summary(self, rows: Rows):
         """After quiet hours end: one message about the rain that fell in them (only if any did)."""
@@ -150,10 +152,11 @@ class WeatherMonitor:
         if not night or self._quiet(latest):
             return
         self.state.monitor.pop("night")
-        if night["date"] != to_local(latest, self.tz).date().isoformat() or not night["first"]:
-            return   # an old note (the bot was down) or a dry night
+        if not night.get("first") or latest - night.get("began", 0) >= 86400:
+            return   # a dry night, or an old note (the bot was down)
         clock = lambda ts: f"{to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-        amount = f"{night['mm']:.1f} mm" if night["mm"] >= 0.1 else "a trace"
+        fell = await self._fell(rows, night["first"], night["last"])
+        amount = f"{fell:.1f} mm" if fell else "a trace"
         still = " It's still raining." if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" else ""
         await self.notify(f"\U0001f327️ Overnight rain: {amount}, from about {clock(night['first'])} to {clock(night['last'] + 300)}.{still}", kind="rain")
 
@@ -226,6 +229,13 @@ class WeatherMonitor:
             await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
                               f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps", **({"photo": photo} if photo else {}))
             remember(c, current, ts)
+
+    async def _fell(self, rows: Rows, since: int, until: int) -> float | None:
+        """The rain that fell from `since` to `until`. A spell that began before `rows` (the last 3 hours) is read back to its start:
+        its first tip shows only against the reading before it."""
+        if since <= rows[0][0]:
+            rows = await self.station.recent((rows[-1][0] - since) / 3600 + 0.25)
+        return rain_amount(rows, since, until)
 
     async def _picture(self, text: str) -> bytes | None:
         """The chart a typed `text` ("Wind chart 1d") would give, for an alert; None when it cannot be made."""
