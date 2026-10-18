@@ -1,9 +1,10 @@
 """How the bot's log lines look. Every line of an INFO or DEBUG entry is cut to the log width (LOG_WIDTH), an ellipsis (…) marking the
-cut; a WARN or an ERROR is never cut. A line that quotes a request or a chat message (the quote last on the line) also has the quote
+cut; a WARN or an ERROR is never cut, nor a line marked WHOLE. A line that quotes a request or a chat message (the quote last on the line) also has the quote
 put on one line first."""
 
 import logging
 
+WHOLE = {"whole": True}   # extra= for a line that is never cut (a list of what started)
 QUOTES = {"quotes": True}   # extra= for a line whose last argument is a request or a chat message
 
 
@@ -33,6 +34,6 @@ class LogFormat(logging.Formatter):
         quote = str(record.args[-1]) if getattr(record, "quotes", False) and isinstance(record.args, tuple) and record.args else None
         if quote and line.endswith(quote):   # (not when a traceback follows it)
             line = line[:len(line) - len(quote)] + " ".join(quote.split())   # the quote on one line
-        if not self.width or record.levelno >= logging.WARNING:
+        if not self.width or record.levelno >= logging.WARNING or getattr(record, "whole", False):
             return line
         return "\n".join(fit(part, self.width) for part in line.split("\n"))

@@ -252,13 +252,6 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     assert len(app.handlers) == 10 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
 
 
-def test_a_long_alerts_line_continues_indented_at_90_characters():
-    from lib.alerts.menu import LABELS
-    lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats").splitlines()
-    assert len(lines) > 1 and all(len(line) <= 90 for line in lines)
-    assert all(line.startswith(" " * 13) and not line.startswith(" " * 14) for line in lines[1:])
-
-
 def test_log_lines_do_not_name_their_module():
     fmt = ecobot.LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
@@ -319,7 +312,11 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
 
 
-def test_the_alerts_list_wraps_at_the_log_width():
-    from lib.alerts.menu import LABELS
-    lines = ecobot.wrapped("Alerts: ", list(LABELS.values()), ": 3 chats", 40).splitlines()
-    assert len(lines) > 1 and all(len(line) <= 40 for line in lines)
+def test_a_line_marked_whole_is_never_cut_to_the_log_width():
+    import logging
+    from lib.logs import WHOLE, LogFormat
+    record = logging.LogRecord("x", logging.INFO, "", 0, "Alerts: %s", ("rain, gusts, UV, temperature crossing, particulates",), None)
+    assert LogFormat("%(levelname)s %(message)s", 30).format(record).endswith("…")
+    for key in WHOLE:
+        setattr(record, key, True)
+    assert LogFormat("%(levelname)s %(message)s", 30).format(record) == "INFO Alerts: rain, gusts, UV, temperature crossing, particulates"
