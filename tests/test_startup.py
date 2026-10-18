@@ -334,6 +334,21 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
     assert line(timings, quotes=False) == "INFO " + timings
 
 
+def test_a_traceback_is_logged_whole_after_its_cut_message():
+    import sys
+    from lib.logs import LogFormat
+    fmt = LogFormat("%(levelname)s %(message)s", width=40)
+    try:
+        {}["a key whose name is far longer than the forty characters of the log width"]
+    except KeyError:
+        record = logging.LogRecord("lib.bot", logging.ERROR, __file__, 1, "Failed to deliver reply to chat 12345678 in the group", None,
+                                   sys.exc_info())
+    lines = fmt.format(record).split("\n")
+    assert lines[0] == "ERROR Failed to deliver reply to chat 1…" and lines[1] == "Traceback (most recent call last):"
+    assert lines[-1] == "KeyError: 'a key whose name is far longer than the forty characters of the log width'"
+    assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
+
+
 def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):
     from lib.config import Config
     for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
