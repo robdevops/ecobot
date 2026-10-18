@@ -1,5 +1,6 @@
 """ADMIN_ONLY (who may use the bot), /alerts in groups, /usage, and the checks every button press goes through."""
 
+import asyncio
 import random
 from types import SimpleNamespace as NS
 
@@ -156,6 +157,30 @@ async def test_a_failed_lookup_keeps_the_old_list_and_is_retried_soon_without_ra
     fresh = Admins(state)
     tg.admins[GROUP] = RuntimeError("down")
     assert not await fresh.allowed(tg, [ADMIN])                                              # nothing known: nobody
+
+
+class SlowTG(TG):
+    """A Telegram client whose admin lists take a moment to come back; `most` is the most it was asked for at once."""
+    def __init__(self, admins):
+        super().__init__(admins)
+        self.at_once = self.most = 0
+
+    async def get_chat_administrators(self, chat_id):
+        self.at_once += 1
+        self.most = max(self.most, self.at_once)
+        await asyncio.sleep(0.01)
+        self.at_once -= 1
+        return await super().get_chat_administrators(chat_id)
+
+
+async def test_the_groups_are_looked_up_together_and_messages_arriving_together_share_the_lookup(tmp_path):
+    state, tg = AlertState(tmp_path / "s.json"), SlowTG({GROUP: [ADMIN], OTHER_GROUP: [3]})
+    state.add_chat(GROUP, "Home")
+    state.add_chat(OTHER_GROUP, "Away")
+    admins = Admins(state)
+    got = await asyncio.gather(*(admins.allowed(tg, [user]) for user in (ADMIN, 3, STRANGER, ADMIN)))
+    assert got == [True, True, False, True]
+    assert sorted(tg.fetches) == sorted([GROUP, OTHER_GROUP]) and tg.most == 2         # each list once, both at the same time
 
 
 async def test_the_admins_of_a_group_that_removed_the_bot_no_longer_count(tmp_path):
