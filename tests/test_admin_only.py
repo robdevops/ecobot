@@ -107,9 +107,11 @@ def test_admin_only_is_on_unless_switched_off_and_the_listed_ids_are_read_safely
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("ADMIN_ONLY", raising=False)
     assert Config.from_env().admin_only is True and Config.from_env().admin_chat_ids == frozenset()
-    for value, on in (("", True), ("on", True), ("ON", True), ("1", True), ("off", False), ("Off", False), ("0", False), ("no", False), ("false", False)):
+    for value, on in (("", True), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
+                      ("no", False), ("false", False), ("ture", True), ("of", True)):   # a typo keeps the default: never open by mistake
         monkeypatch.setenv("ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
+    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (on)" in caplog.text
     assert _ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and _ids("") == frozenset()
     assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
     monkeypatch.setenv("ADMIN_CHAT_IDS", "5 -9")

@@ -6,6 +6,8 @@ import os
 import signal
 from types import SimpleNamespace as NS
 
+import pytest
+
 import ecobot
 from lib.ecowitt import archive
 from datetime import datetime, timedelta, timezone
@@ -185,6 +187,22 @@ def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatc
         monkeypatch.setenv("ALERT_COOLDOWN_MINUTES", value)
         assert Config.from_env().alert_cooldown_minutes == want
 
+
+
+def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypatch, caplog):
+    from lib.config import Config
+    for k, v in (("TELEGRAM_BOT_TOKEN", " t "), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+        monkeypatch.setenv(k, v)
+    for k in ("XAI_MODEL", "XAI_BASE_URL", "PLACE", "POLLEN_DISTRICT", "TUYA_BASE_URL"):
+        monkeypatch.setenv(k, "  ")
+    monkeypatch.setenv("POLLEN", "enabled")
+    cfg = Config.from_env()
+    assert (cfg.telegram_token, cfg.xai_model, cfg.xai_base_url, cfg.place, cfg.pollen_district, cfg.tuya_base_url) == (
+        "t", "grok-4.3", "https://api.x.ai/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
+    assert cfg.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
+    monkeypatch.setenv("XAI_API_KEY", " ")
+    with pytest.raises(SystemExit, match="XAI_API_KEY is not set"):
+        Config.from_env()
 
 
 def test_the_rain_quiet_hours_are_configurable():

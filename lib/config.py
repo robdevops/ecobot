@@ -26,8 +26,26 @@ def _tz() -> tzinfo:
     return ZoneInfo(name) if name else datetime.now().astimezone().tzinfo
 
 
-def _on(value: str) -> bool:
-    return value.lower() in ("on", "1", "true", "yes")
+ON, OFF = ("on", "yes", "true", "1"), ("off", "no", "false", "0")
+
+
+def _flag(value: str, default: bool, name: str) -> bool:
+    """An on/off setting: on, yes, true or 1; off, no, false or 0; unset or empty is the default. Any other value keeps the
+    default too, with a warning, so a typo can't switch a safeguard such as ADMIN_ONLY off."""
+    if value.lower() in ON:
+        return True
+    if value.lower() in OFF:
+        return False
+    if value:
+        log.warning("%s: %r is not on or off; keeping the default (%s)", name, value, "on" if default else "off")
+    return default
+
+
+def _required(name: str) -> str:
+    """A setting the bot can't run without; it stops with a message naming it when it is unset or blank."""
+    if value := os.getenv(name, "").strip():
+        return value
+    raise SystemExit(f"{name} is not set: the bot can't start without it (see the README)")
 
 
 def _hours(value: str, default: tuple[int, int] | None) -> tuple[int, int] | None:
@@ -45,11 +63,6 @@ def _hour(value: str, default: int) -> int:
     """"18" -> 18; anything unreadable or outside 0 to 23 -> the default."""
     number = _number(value)
     return int(number) if number is not None and 0 <= number <= 23 else default
-
-
-def _flag(value: str, default: bool) -> bool:
-    """A setting that is on or off, with a default when it is unset or empty."""
-    return _on(value) if value else default
 
 
 def _ids(value: str) -> frozenset[int]:
@@ -146,7 +159,8 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        env = lambda k, default="": os.getenv(k, default).strip()
+        env = lambda k, default="": os.getenv(k, "").strip() or default   # set but blank is the default too
+        flag = lambda k, default=False: _flag(env(k), default, k)
         data = data_dir()
         try:
             data.mkdir(parents=True, exist_ok=True)
@@ -157,8 +171,8 @@ class Config:
             raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
         cfg = cls(
-            telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
-            xai_api_key=os.environ["XAI_API_KEY"],
+            telegram_token=_required("TELEGRAM_BOT_TOKEN"),
+            xai_api_key=_required("XAI_API_KEY"),
             xai_base_url=env("XAI_BASE_URL", "https://api.x.ai/v1"),
             xai_model=env("XAI_MODEL", "grok-4.3"),
             tz=_tz(),
@@ -168,20 +182,20 @@ class Config:
             airgradient_location=env("AIRGRADIENT_LOCATION_ID"),
             airgradient_dashboard=env("AIRGRADIENT_DASHBOARD_URL"),
             place=env("PLACE", "Melbourne"),
-            pollen=_on(env("POLLEN")),
+            pollen=flag("POLLEN"),
             pollen_district=env("POLLEN_DISTRICT", "Central"),
-            forecast=_on(env("FORECAST")),
+            forecast=flag("FORECAST"),
             forecast_lat=_number(env("FORECAST_LAT")),
             forecast_lon=_number(env("FORECAST_LON")),
             rain_quiet_hours=_hours(env("RAIN_QUIET_HOURS"), (0, 6)),
-            chart_all_feels_like=_on(env("CHART_ALL_FEELS_LIKE")),
-            chart_all_vpd=_on(env("CHART_ALL_VPD")),
+            chart_all_feels_like=flag("CHART_ALL_FEELS_LIKE"),
+            chart_all_vpd=flag("CHART_ALL_VPD"),
             tuya_device_id=env("TUYA_DEVICE_ID"),
             tuya_client_id=env("TUYA_CLIENT_ID"),
             tuya_client_secret=env("TUYA_CLIENT_SECRET"),
             tuya_base_url=env("TUYA_BASE_URL", "https://openapi.tuyaeu.com").rstrip("/"),
             irrigation_check_hour=_hour(env("IRRIGATION_CHECK_HOUR"), 18),
-            admin_only=_flag(env("ADMIN_ONLY"), True),
+            admin_only=flag("ADMIN_ONLY", True),
             admin_chat_ids=_ids(env("ADMIN_CHAT_IDS")),
             alert_cooldown_minutes=int(min(150, max(5, _number(env("ALERT_COOLDOWN_MINUTES")) or 30))),
             log_width=_whole(env("LOG_WIDTH"), 71),

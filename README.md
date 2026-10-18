@@ -49,6 +49,8 @@ The state and caches go in `/data` (its `DATA_DIR`), here a named volume. A host
 | `LOG_WIDTH` | optional: the most characters of a log line, cut with an ellipsis (…); `0` cuts none. Default 71. Every log line obeys it, whatever its level (a warning is printed as `WARN`); a request, chat message, reply or alert is also put on one line |
 | `LOG_LEVEL` | optional: `DEBUG`, `INFO` (default), `WARNING` or `ERROR`. `DEBUG` adds the bot's own debug lines (the chart timings, charts it couldn't draw ahead); the libraries stay at their usual level. |
 
+An on/off setting takes `on`, `yes`, `true` or `1`, and `off`, `no`, `false` or `0`; any other value keeps its default (and the log says so), so a typo can't switch `ADMIN_ONLY` off. A setting left blank is its default.
+
 ## Layout
 
 ```
