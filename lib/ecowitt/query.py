@@ -20,7 +20,7 @@ from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTI
 from ..lines import build_line
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
-from ..timeutil import day_bounds, daily_summary, local_date, now_local
+from ..timeutil import SLOT, day_bounds, daily_summary, local_date, now_local
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
@@ -210,7 +210,8 @@ class HistoryQuery:
             if a < b:
                 bounds[day] = a, b
         held = await wind.covered_each("5min", [(wind.epoch(a), wind.epoch(b)) for a, b in bounds.values()])
-        fine_days = {day for day, whole in zip(bounds, held) if whole or day == self.end.date()}   # today's comes from memory or one request
+        fine_days = {day for day, whole in zip(bounds, held)   # today's (or a settling yesterday's) comes from memory or one request
+                     if whole or day == self.end.date() and (self.now.date() - day).days <= 1}
         fine: dict = {}
         for run in consecutive(sorted(fine_days)):   # a run of days is one read
             collect(fine, await wind.get("5min", bounds[run[0]][0], bounds[run[-1]][1]), "5min")
@@ -328,8 +329,8 @@ class HistoryQuery:
                                    "have no dates, and a low early on the 1st may be counted in the previous month.")
         if wants_chart(self.args, self.turn, self.start, self.end):
             self._add_charts(out, {k: v for k, v in series_out.items() if k in self.store})
-        if f.errors:
-            out["missing"] = f.errors[:10]
+        if errors := f.errors + (self.wind.errors if self.wind else []):
+            out["missing"] = errors[:10]
             out["warning"] = "Some data could not be fetched; the answer may be incomplete. Say so."
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
@@ -498,11 +499,15 @@ class HistoryQuery:
         return line.spec(label or group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:
-        """Rain for the chart, summed into bars. From the cached 30-minute readings; days older than those (about a year) come from
+        """Rain for the chart, summed into bars. From the cached 30-minute readings and, after the last of them, the query's own
+        (the newest hours are not in the cache yet: they are still settling); days older than those (about a year) come from
         the daily records, the day's total, which are approximate (10am to 10am). A figure per month or year asked for in the
         person's words (`by`) gets one bar for each, whatever the length of the period."""
         lo, hi = self.f.epoch(self.start), self.f.epoch(self.end)
         (daily,) = await self.f.read(self.f.cache.slots, self.f.mac, "30min", "rainfall", ["daily"], lo, hi)
+        after = max(daily) + SLOT if daily else lo   # the cache stops at the settle horizon: what is newer, this query read itself
+        daily.update({t: r["value"][0] for t, r in self.store.get("rainfall.daily", {}).get("pts", {}).items()
+                      if t >= after and r["cycle"] in ("5min", "30min") and "value" in r})
         rain = rain_slots(daily)
         held = {local_date(t, self.tz) for t in rain}
         (old,) = await self.f.read(self.f.cache.slots, self.f.mac, "1day", "rainfall", ["daily"], lo - 86400, hi + 86400)

@@ -1327,7 +1327,7 @@ async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_re
     q.f, q.tz, q.turn = f, TZ, Turn()
     q.start, q.end = datetime.combine(days[0], datetime.min.time()), datetime.combine(days[-1], datetime.max.time())
     q.span = q.end - q.start
-    q.rain_from_daily = False
+    q.rain_from_daily, q.store = False, {}
     daily = await q._rain_bars()
     assert q.rain_from_daily and len(daily.x) >= 59 and round(sum(daily.y), 1) == 120.0 and daily.per == "day"
     q.turn = Turn(text="rain by month for 2 months")
@@ -1383,3 +1383,65 @@ async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group
     assert sorted(await lines("Temperature chart 1d")) == ["Indoor", "Outdoor"]    # these two tell the lines apart, so they keep their names
     assert await lines("Wind chart 1d") == ["Wind"]
     await eco.close()
+
+
+async def test_the_newest_rain_is_in_the_bars_though_the_cache_has_not_got_it_yet(tmp_path):
+    """The cache holds 30-minute readings only up to the settle horizon (now less 2.5 hours); the newer ones are the query's own
+    (from memory or Ecowitt) and their rain must be in the bars and the total, not left out."""
+    from lib.ecowitt.fetch import Fetcher
+    from lib.ecowitt.query import HistoryQuery
+    from lib.ecowitt.store import HistoryCache
+    from tests.fakes import TZ
+    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    day = datetime.now(TZ).date() - timedelta(days=3)
+    t0 = int(datetime.combine(day, time()).replace(tzinfo=TZ).timestamp())
+    cache.store("M", "30min", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(t0 + i * 1800): "0.0" for i in range(4)}}}},
+                t0, t0 + 4 * 1800 - 1)   # midnight to 2am, dry
+    f = Fetcher(None, cache, None, "M", [], TZ)
+    q = HistoryQuery.__new__(HistoryQuery)
+    q.f, q.tz, q.turn, q.rain_from_daily = f, TZ, Turn(), False
+    q.start, q.end = datetime.combine(day, time()), datetime.combine(day, time(3))
+    q.span = q.end - q.start
+    q.store = {"rainfall.daily": {"unit": "mm", "pts": {t0 + 7200 + i * 300: {"cycle": "5min", "value": (0.5 * i, f"{0.5 * i}")}
+                                                         for i in range(11)}}}   # 2am to 2:50am, 5 mm
+    bars = await q._rain_bars()
+    assert round(sum(bars.y), 1) == 5.0 and bars.y[2] == 5.0   # all of it in the 2am bar
+
+
+async def test_wind_direction_over_a_past_week_keeps_its_last_day(tmp_path, archived_cache):
+    """A week 200 days back is cached at 30 minutes only, and Ecowitt keeps 5-minute readings for 90 days: the week's last day comes
+    from the 30-minute readings like the others, not asked for at 5 minutes (as today's is) and dropped."""
+    import shutil
+    import httpx
+    from tests.fakes import TZ
+
+    class Retaining(FakeEcowitt):   # as Ecowitt: no 5-minute readings older than 90 days
+        def _history(self, p):
+            start = datetime.strptime(p["start_date"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+            return {} if p["cycle_type"] == "5min" and (datetime.now(TZ) - start).days > 89 else FakeEcowitt._history(p)
+    cfg = config(tmp_path)
+    shutil.copy(archived_cache, cfg.cache_path)
+    eco = Ecowitt(cfg, transport=httpx.MockTransport(Retaining()))
+    await eco.start()
+    last = datetime.now(eco.tz).date() - timedelta(days=200)
+    out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{last - timedelta(days=6)} 00:00:00",
+                                                 "end_date": f"{last} 23:59:59"}))
+    await eco.close()
+    assert len(out["series"]["wind.wind_direction"]["daily"]) == 7
+
+
+async def test_the_wind_rose_s_failed_requests_are_reported_with_the_rest(tmp_path, archived_cache, monkeypatch):
+    from types import SimpleNamespace
+    from lib.ecowitt import query
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    counted = query.HistoryQuery._summarise_direction
+
+    async def with_a_failure(self):
+        await counted(self)
+        self.wind = SimpleNamespace(errors=["5min 16 Oct 2026 - 16 Oct 2026: HTTP 502"], seconds=0.0)
+    monkeypatch.setattr(query.HistoryQuery, "_summarise_direction", with_a_failure)
+    today = datetime.now(eco.tz).date()
+    out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{today - timedelta(days=3)} 00:00:00",
+                                                 "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
+    await eco.close()
+    assert "HTTP 502" in " ".join(out.get("missing", [])) and "warning" in out
