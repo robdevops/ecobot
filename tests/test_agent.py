@@ -294,6 +294,14 @@ def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecas
     assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt", "Forecast"])
 
 
+def test_the_capabilities_list_only_the_alerts_the_sources_send_with_their_own_thresholds():
+    from lib import prompt
+    from lib.alerts.weather import GUST_ALERT_KMH
+    station, air = prompt.capabilities(["Ecowitt"]), prompt.capabilities(["AirGradient"])
+    assert f"wind gusts over {GUST_ALERT_KMH} km/h" in station and "mask alerts" not in station
+    assert "mask alerts" in air and "rain starting" not in air and "Alerts, sent" not in prompt.capabilities([])
+
+
 def test_the_capabilities_say_pollen_only_runs_october_to_december():
     from lib import prompt
     assert "only run from October to December" in prompt.capabilities(["Ecowitt", "Pollen"])

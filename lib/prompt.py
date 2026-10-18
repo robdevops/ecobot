@@ -5,11 +5,22 @@ from collections.abc import Collection
 from datetime import datetime
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS
+from .alerts.forecast import TEMP_CHANGE_C
+from .alerts.menu import TYPES
+from .alerts.weather import GUST_ALERT_KMH
+from .ecowitt.glance import UVI_ALERT
 from .intent import period_ranges
 from .series import WEATHER
 from .timeutil import day_text
 
 WEATHER_NAMES = list(WEATHER)
+NEVER_AVAILABLE = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
+WITHOUT = {"Pollen": "pollen and thunderstorm asthma", "Forecast": "forecasts (only a short read of the pressure trend)"}   # what a source that is off leaves out
+# Each alert type as the prompt describes it, with its own threshold; told only when the source that sends it is on (alerts.menu.TYPES)
+ALERT_WORDS = {"rain": "rain starting or stopping", "gusts": f"wind gusts over {GUST_ALERT_KMH} km/h",
+               "uv": f"UV index of {UVI_ALERT} or more", "temps": "indoor/outdoor temperature crossing",
+               "particulates": "air-quality mask alerts", "pollen_and_asthma": "pollen or thunderstorm asthma risk reaching High",
+               "forecast": f"a forecast it sent being revised (rain, or max temperature over {TEMP_CHANGE_C:g} degrees)"}
 
 PROMPT = """\
 You are a friendly weather bot on Telegram.
@@ -159,11 +170,9 @@ def date_ranges(now: datetime) -> str:
 def capabilities(have: Collection[str], brief: bool = False) -> str:
     """What the bot can and can't do with the sources it has (by name), for questions about the bot itself ("what metrics do you
     have?") and so the model knows what is possible before it says something can't be done. Built from the code's own lists."""
+    missing = ", ".join([*NEVER_AVAILABLE, *(what for name, what in WITHOUT.items() if name not in have)])
     if brief:   # most questions: only the limits, so it never promises what it can't do
-        missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
-        missing += (["pollen and thunderstorm asthma"] if "Pollen" not in have else []) + (
-            ["forecasts (only a short read of the pressure trend)"] if "Forecast" not in have else [])
-        return ("\nLIMITS: not available: " + ", ".join(missing) + ". Custom alerts (\"tell me when winds reach 100\") can't be added: say so. "
+        return (f"\nLIMITS: not available: {missing}. Custom alerts (\"tell me when winds reach 100\") can't be added: say so. "
                 "A chart series or style the tools don't offer can't be drawn: say so.\n")
     lines = ["\nWHAT THIS BOT CAN AND CAN'T DO (answer questions about the bot from this, with no tool call)"]
     if "Ecowitt" in have:
@@ -191,16 +200,10 @@ def capabilities(have: Collection[str], brief: bool = False) -> str:
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
-    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, wind gusts over 40 km/h, UV index of 10 or more, "
-                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High" if "Pollen" in have else "") + (
-                     ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Forecast" in have else "") + ". Each alert has buttons to subscribe or unsubscribe by type, and /alerts opens the same settings. Custom alerts "
-                 "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
-    missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
-    if "Pollen" not in have:
-        missing.append("pollen and thunderstorm asthma")
-    if "Forecast" not in have:
-        missing.append("forecasts (only a short read of the pressure trend)")
-    lines.append("- Not available: " + ", ".join(missing) + ".")
+    if alerts := ", ".join(words for kind, words in ALERT_WORDS.items() if TYPES[kind][1] in have):
+        lines.append(f"- Alerts, sent to chats automatically: {alerts}. Each alert has buttons to subscribe or unsubscribe by type, and "
+                     "/alerts opens the same settings. Custom alerts (\"tell me when winds reach 100\", another limit) can't be added: say so.")
+    lines.append(f"- Not available: {missing}.")
     return "\n".join(lines) + "\n"
 
 
