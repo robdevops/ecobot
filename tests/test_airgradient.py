@@ -177,7 +177,7 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
 def await_days(air, days_ago):
     """Readings stored for the local day this many days ago (0 if none or not fetched)."""
     day = datetime.now(TZ).date() - timedelta(days=days_ago)
-    return air.store.day_count(day) or 0
+    return air.store.counts([day])[day] or 0
 
 
 # ---------- what the API's docs promise ----------

@@ -33,14 +33,8 @@ class AirStore:
         with self._lock:
             self.db.close()
 
-    def day_count(self, day: date) -> int | None:
-        """Readings stored for this finished day, or None if it hasn't been fetched."""
-        with self._lock:
-            row = self.db.execute("SELECT n FROM days WHERE loc=? AND day=?", (self.loc, day.isoformat())).fetchone()
-        return row[0] if row else None
-
     def counts(self, days: list[date]) -> dict[date, int | None]:
-        """day_count for many days in one query."""
+        """Readings stored for each of these finished days, in one query: None for a day that hasn't been fetched."""
         if not days:
             return {}
         with self._lock:
@@ -48,7 +42,8 @@ class AirStore:
                                          (self.loc, min(days).isoformat(), max(days).isoformat())).fetchall())
         return {d: found.get(d.isoformat()) for d in days}
 
-    def save_day(self, day: date, rows: list[dict]):
+    def save_day(self, day: date, rows: list[dict]) -> int:
+        """Store one day's readings, in place of any it had; returns how many it now holds."""
         lo, hi = day_bounds(day, self.tz)
         rows = [r for r in rows if lo <= r["ts"] < hi]
         with self._lock:
@@ -58,6 +53,7 @@ class AirStore:
                 [(self.loc, r["ts"], *(r.get(c) for c in COLUMNS)) for r in rows])
             self.db.execute("INSERT OR REPLACE INTO days VALUES (?, ?, ?)", (self.loc, day.isoformat(), len(rows)))
             self.db.commit()
+        return len(rows)
 
     def load(self, start_ts: int, end_ts: int) -> list[dict]:
         """Readings with start_ts <= ts < end_ts, oldest first."""

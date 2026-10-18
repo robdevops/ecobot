@@ -28,7 +28,7 @@ from ..sources import Source
 from ..lines import Plotted, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import day_text, local_date, parse_local, to_local, when
+from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
@@ -147,29 +147,30 @@ class AirGradient(Source):
         stored = await asyncio.to_thread(self.store.counts, days)
         return {d: stored[d] if self._final(d) else None for d in days}
 
-    def _utc(self, local: datetime) -> str:
-        return local.replace(tzinfo=self.tz).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def _unstored(self, held: dict[date, int | None]) -> list[date]:
+        """The finished days in `held` (see _held) that aren't stored yet."""
+        return [d for d, n in held.items() if n is None and self._final(d)]
 
-    async def _past(self, start: datetime, end: datetime) -> list[dict]:
-        """Readings between two local times, normalised and oldest first."""
-        raw = await self._get("past", **{"from": self._utc(start), "to": self._utc(end)})
+    async def _past(self, start: int, end: int) -> list[dict]:
+        """Readings between two epochs (never past now), normalised and oldest first."""
+        utc = lambda ts: datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        raw = await self._get("past", **{"from": utc(start), "to": utc(min(end, time.time()))})
         return sorted((normalise(r) for r in raw if isinstance(r, dict) and r.get("timestamp")), key=lambda r: r["ts"])
 
-    async def _fetch_days(self, days: list[date]):
-        """Fetch finished days and store them, in as few requests as the API allows (it takes up to
-        10 days at a time; we use 9)."""
-        days = sorted(days)
+    async def _fetch_days(self, days: list[date]) -> dict[date, int]:
+        """Fetch finished days and store them, in as few requests as the API allows (it takes up to 10 days at a time; we use 9).
+        Returns how many readings each day has stored."""
+        days, stored = sorted(days), {}
         while days:
             window = [d for d in days if (d - days[0]).days < MAX_REQUEST_DAYS]
             days = days[len(window):]
-            start = datetime.combine(window[0], datetime.min.time())
-            end = datetime.combine(window[-1], datetime.min.time()) + timedelta(days=1)
             by_day: dict = {d: [] for d in window}
-            for r in await self._past(start, min(end, self.now())):
+            for r in await self._past(day_bounds(window[0], self.tz)[0], day_bounds(window[-1], self.tz)[1]):
                 by_day.get(local_date(r["ts"], self.tz), []).append(r)
             for d, day_rows in by_day.items():
-                await asyncio.to_thread(self.store.save_day, d, day_rows)
+                stored[d] = await asyncio.to_thread(self.store.save_day, d, day_rows)
                 self._recent.pop(d, None)
+        return stored
 
     async def _day_rows(self, day: date, refresh: bool = False) -> list[dict]:
         """All of one local day's readings, normalised. Finished days come from the disk cache (and
@@ -178,14 +179,13 @@ class AirGradient(Source):
         final = self._final(day)
         async with self._lock(day):
             if final:
-                if await asyncio.to_thread(self.store.day_count, day) is None:
+                if self._unstored(await self._held([day])):
                     await self._fetch_days([day])
                 return await asyncio.to_thread(self.store.load_day, day)
             cached = self._recent.get(day)
             if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
                 return cached[0]
-            start = datetime.combine(day, datetime.min.time())
-            rows = await self._past(start, min(start + timedelta(days=1), self.now()))
+            rows = await self._past(*day_bounds(day, self.tz))
             self._recent[day] = (rows, time.time())
             return rows
 
@@ -195,8 +195,7 @@ class AirGradient(Source):
         await self._current_row(fresh)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
-        held = await self._held(week)
-        await self._fetch_days([d for d in week if self._final(d) and held[d] is None])  # one request for all of them
+        await self._fetch_days(self._unstored(await self._held(week)))  # one request for all of them
         for day in week:
             if not self._final(day):  # a day that just ended is still refetched for a while; finished ones are stored
                 await self._day_rows(day)
@@ -218,12 +217,10 @@ class AirGradient(Source):
             days = [today - timedelta(days=k) for k in range(n, min(n + MAX_REQUEST_DAYS, max_days + 1))]
             n += MAX_REQUEST_DAYS
             counts = await self._held(days)
-            missing = [d for d in days if self._final(d) and counts[d] is None]
-            if missing:
+            if missing := self._unstored(counts):
                 try:
-                    await self._fetch_days(missing)
+                    counts.update(await self._fetch_days(missing))
                     fetched, failed_run = fetched + len(missing), 0
-                    counts.update(await asyncio.to_thread(self.store.counts, missing))
                     if fetched // 30 != (fetched - len(missing)) // 30:
                         log.info("AirGradient archive: %d day(s) fetched so far, now at %s", fetched, days[-1])
                 except Exception as e:
@@ -315,17 +312,17 @@ class AirGradient(Source):
         of the particles is a glitch of the sensor: it is taken out here, once, so no figure or chart has it."""
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
         held = await self._held(days)
-        missing = [d for d in days if self._final(d) and held[d] is None]
+        missing = self._unstored(held)
         skipped = missing[:-MAX_INLINE_DAYS] if len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
-        await self._fetch_days([d for d in missing if d not in skipped])
-        rows = []
-        for d in days:
-            if d not in skipped:  # finished days are all stored by now; today and a just-ended day come via _day_rows
-                rows += await (asyncio.to_thread(self.store.load_day, d) if self._final(d) else self._day_rows(d))
-        counts = await self._held([d for d in days if d not in skipped])
-        hourly = sum(1 for c in counts.values() if c and c <= HOURLY_MAX_READINGS)
-        lo_ts, hi_ts = t0.replace(tzinfo=self.tz).timestamp(), t1.replace(tzinfo=self.tz).timestamp()
-        return [r for r in without_spikes(rows) if lo_ts <= r["ts"] <= hi_ts], hourly, skipped
+        held.update(await self._fetch_days([d for d in missing if d not in skipped]))
+        finished = [d for d in days if self._final(d)]   # all stored by now but the skipped: read in one query
+        rows = (await asyncio.to_thread(self.store.load, day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1])
+                if finished else [])
+        for d in days[len(finished):]:   # today, and a day that has just ended: fetched, not stored
+            rows += await self._day_rows(d)
+        hourly = sum(1 for n in held.values() if n and n <= HOURLY_MAX_READINGS)
+        lo, hi = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
+        return [r for r in without_spikes(rows) if lo <= r["ts"] <= hi], hourly, skipped
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,
                       metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
