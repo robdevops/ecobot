@@ -116,17 +116,17 @@ async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tm
     from lib.bot import deliver
     markup = templates.keyboard()
     msg = Replies()
-    assert await deliver(msg, "hello", [], markup=markup) is True and msg.sent[-1][1]["reply_markup"] is markup
+    assert (await deliver(msg, "hello", [], markup=markup)).carried is True and msg.sent[-1][1]["reply_markup"] is markup
     msg = Replies()
-    assert await deliver(msg, "", [b"p"], markup=markup, titles=["T"]) is True and msg.sent == [("photo", msg.sent[0][1])]
+    assert (await deliver(msg, "", [b"p"], markup=markup, titles=["T"])).carried is True and msg.sent == [("photo", msg.sent[0][1])]
     assert msg.sent[0][1]["reply_markup"] is markup and msg.sent[0][1]["caption"] == "T"
     msg = Replies()
-    assert await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"]) is True       # text first, the photo carries it
+    assert (await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"])).carried is True       # text first, the photo carries it
     assert [k for k, _ in msg.sent] == ["text", "photo"] and msg.sent[1][1]["reply_markup"] is markup and "reply_markup" not in msg.sent[0][1]
     msg = Replies()
-    assert await deliver(msg, "", [b"p", b"q"], markup=markup, titles=["T", "U"]) is False       # a group of photos can't carry it
+    assert (await deliver(msg, "", [b"p", b"q"], markup=markup, titles=["T", "U"])).carried is False       # a group of photos can't carry it
     msg = Replies()
-    assert await deliver(msg, "hello", []) is False and "reply_markup" not in msg.sent[0][1]
+    assert (await deliver(msg, "hello", [])).carried is False and "reply_markup" not in msg.sent[0][1]
 
 
 async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_next_reply_once(tmp_path):

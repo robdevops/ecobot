@@ -133,9 +133,8 @@ async def test_a_reply_with_period_buttons_leaves_the_persistent_keyboard_for_th
         async def reply_photo(self, photo, **kw):
             sent.append(kw["reply_markup"])
             return NS(message_id=7)
-    shown = []
-    carried = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard(), sent_photo=shown)
-    assert carried is False and labels(sent[0])[0][0][0] == "1D" and shown[0].message_id == 7
+    got = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard())
+    assert got.carried is False and labels(sent[0])[0][0][0] == "1D" and got.photo.message_id == 7
 
 
 def test_a_chart_drawn_lately_comes_back_from_the_cache_until_it_is_too_old_or_pushed_out():
