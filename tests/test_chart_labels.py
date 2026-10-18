@@ -140,3 +140,10 @@ def test_a_day_of_25_hours_is_drawn_25_hours_long_with_its_ticks_on_local_hours(
     finally:
         plt.close(fig)
     assert ticks and {t.hour for t in ticks} <= {0, 3, 6, 9, 12, 15, 18, 21} and ticks[0].day == 5
+
+
+def test_every_weather_reading_and_air_metric_has_a_colour_of_its_own():
+    from lib import charts
+    from lib.series import AIR, WEATHER
+    lines = [name for name in WEATHER if name != "rain"]          # rain is drawn as bars, in its own blue
+    assert not [name for name in (*lines, *AIR) if name not in charts.READING_COLOURS]

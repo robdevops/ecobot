@@ -95,6 +95,11 @@ class Panel:
             raise ValueError(f"panel {self.label!r}: peaks are 'pills', 'aside' or 'none'")
 
     @property
+    def bars_only(self) -> bool:
+        """Bars and no lines: rain on its own, or a count or figure per month or year."""
+        return bool(self.bars) and not self.lines
+
+    @property
     def xs(self) -> list[int]:
         """Every x the panel draws, bars to the end of the last one."""
         out = [t for line in self.lines for t in line.x]
@@ -120,10 +125,15 @@ class Chart:
     compass: Compass | None = None
     period: tuple[date, date] | None = None            # the first and last day it covers, for its caption
 
+    @property
+    def single(self) -> bool:
+        """One panel of lines: drawn big, with the room for a compass beside it."""
+        return len(self.panels) == 1 and bool(self.panels[0].lines)
+
     def __post_init__(self):
         if not self.panels:
             raise ValueError("a chart needs a panel")
-        if self.compass and not (len(self.panels) == 1 and self.panels[0].lines):
+        if self.compass and not self.single:
             raise ValueError("a compass goes beside a single line panel")
         for panel in self.panels:  # every line is labelled with its high and low, so each carries its records
             for line in panel.lines:
@@ -159,7 +169,7 @@ def rain_behind(panels: list[Panel]) -> list[Panel]:
     stays a panel of its own."""
     lines = [p for p in panels if p.lines and not p.bars]
     line_panel = next((p for name in RAIN_WITH for p in lines if p.reading == name), lines[0] if lines else None)
-    bars_panel = next((p for p in panels if p.bars and not p.lines), None)
+    bars_panel = next((p for p in panels if p.bars_only), None)
     if not (line_panel and bars_panel):
         return panels
     line_panel.bars = bars_panel.bars
