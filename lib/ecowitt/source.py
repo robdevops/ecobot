@@ -14,7 +14,7 @@ from ..sources import Source
 from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import FAST_REFRESH_SECONDS, Warmer
-from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS
+from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
@@ -95,7 +95,7 @@ def live_summary(data: dict) -> str:
         obj = (data.get(group) or {}).get(field)
         if not isinstance(obj, dict) or "value" not in obj:
             return None
-        unit = obj.get("unit", "").replace("℃", "°C").replace("mm/hr", "mm/h")
+        unit = unit_text(obj.get("unit")) or ""
         return f"{obj['value']}{'' if unit in ('°C', '%') else ' '}{unit}".strip()
     wind = get("wind", "wind_speed")
     parts = [f"rain {rate}" if (rate := get("rainfall", "rain_rate")) else None,

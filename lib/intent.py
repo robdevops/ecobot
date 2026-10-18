@@ -809,7 +809,7 @@ class Intent:
     readings: list[str] = field(default_factory=list)     # the readings the words name
     per_day: bool = False                 # figures day by day were asked for
     extra: list[tuple[str, dict]] = field(default_factory=list)   # fetched with the model's first step (the forecast, for "will it rain?")
-    lookup: str = ""                      # "reading", "air", "pollen", "forecast" or "about": answered in code, no model
+    lookup: str = ""                      # "reading", "air", "days", "extremes", "pollen", "forecast" or "about": answered in code, no model
     lookup_arg: list[str] = field(default_factory=list)   # the readings named ("reading", "air"; none: all)
     sides: list[str] = field(default_factory=list)        # "indoor", "outdoor" or both, for a reading
 

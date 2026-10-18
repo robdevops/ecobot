@@ -65,6 +65,7 @@ def test_a_dry_calm_day_has_no_rain_line_noise():
     assert lines == ["• Outdoor: 21.0 °C, 50 %", "• Rain today: 0.0 mm (month total 12.0 mm)", "• Wind: 12.0 km/h from 270°, gust 20.0 km/h"]
     drizzle = dry.replace('"0.0 mm/hr"', '"0.6 mm/hr"').replace('"emoji":{}', '"emoji":{"rainfall.rain_rate":"🌧️"}')
     assert "; 🌧️ raining (0.6 mm/h)" in report.weather_now(drizzle)
+    assert "raining" not in report.weather_now(dry.replace('"0.0 mm/hr"', '"0.00 mm/hr"'))   # however the zero is written
 
 
 def test_a_failed_or_missing_source_is_left_out_or_said_so_and_the_forecast_without_a_tag_has_a_plain_heading():
@@ -188,6 +189,9 @@ def test_a_reading_lookup_prints_only_what_was_asked():
     assert report.reading_lines(now, ["dew_point"], ["indoor"]) == ["• Dew point (indoor): 11.1 °C"]   # "indoor dew point"
     assert report.reading_lines(now, ["feels_like"], ["outdoor", "indoor"])[0].startswith("• Feels like: ")   # unasked: outdoor
     assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining (1.8 mm/h)" in report.reading_lines(now, ["rain"], [])[0]
+    windy = json.loads(NOW.replace('"wind_speed":"0.0 km/h"', '"wind_speed":"14.0 km/h"'))
+    assert [line for line in report.weather_lines(windy) if line.startswith(("• Wind", "• Rain"))] == \
+        report.reading_lines(windy, ["rain", "wind"], [])   # the same words as the report's
 
 
 def test_air_pollen_and_forecast_lookups_print_the_tools_own_lines():

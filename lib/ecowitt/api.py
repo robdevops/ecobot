@@ -45,6 +45,8 @@ def kept_from(cycle: str, today: date) -> date:
     """The first day whose readings at this cycle Ecowitt is sure still to have: two days clear of its retention edge, so a
     request can't race the deletion."""
     return today - timedelta(days=CYCLES[cycle].kept - 2)
+
+
 # What the bot keeps cached and warm (the extras feed the rain alerts and predictions). One list, so the
 # warm-up and the archive fetch the same thing and can reuse each other's data.
 GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo", "solar_and_uvi"]
@@ -53,6 +55,12 @@ GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo",
 # UNIT_IDS are Ecowitt's numeric ids for them.
 UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh", "rainfall_unitid": "mm"}
 UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rainfall_unitid": 12}
+
+
+def unit_text(text: str | None) -> str | None:
+    """A reading or a unit as Ecowitt writes it, written the bot's way: "12.3 ℃" -> "12.3 °C", "131 º" -> "131°", "1.8 mm/hr" ->
+    "1.8 mm/h". None for nothing."""
+    return text.replace("℃", "°C").replace(" º", "°").replace("º", "°").replace("mm/hr", "mm/h").strip() if text else None
 
 BUSY_RETRIES = 3
 MIN_GAP_SECONDS = 1.0  # Ecowitt rejects requests that come too fast ("Operation too frequent")
