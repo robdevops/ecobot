@@ -15,14 +15,16 @@ def rows(markup):
     return [[(b.text, b.callback_data) for b in row] for row in markup.inline_keyboard]
 
 
-def strike(word):
-    return "".join(c + "\u0336" for c in word)
-
-
 def test_alerts_has_two_buttons_alerts_and_sound_and_a_group_has_only_the_first():
     assert rows(keyboard({"rain"}, KINDS, loud=set())) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
     assert rows(keyboard(set(), KINDS)) == [[("🔔 Alerts ▸", "al:open:alerts")]]
     assert rows(keyboard(set(), KINDS, "sound")) == rows(keyboard(set(), KINDS))                     # a group cannot open Sound
+
+
+def test_the_gear_toggles_are_green_when_on_and_red_when_off():
+    styles = lambda m: {b.text: b.style for row in m.inline_keyboard for b in row}
+    assert styles(keyboard(set(), KINDS, "gear", parent="uv", loud=set())) == {"⚙️ ▾": None, "✅ Alert": "success", "❌ Sound": "danger"}
+    assert styles(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"})) == {"⚙️ ▾": None, "❌ Alert": "danger"}
 
 
 def test_a_type_that_is_on_is_a_green_button_and_one_that_is_off_a_red_one():
@@ -263,17 +265,17 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     assert seen == ["forecast"]
 
 
-def test_under_an_alert_one_gear_opens_the_alert_toggle_and_then_the_sound_toggle_struck_through_when_off():
+def test_under_an_alert_one_gear_opens_the_alert_toggle_and_then_the_sound_toggle_each_a_tick_or_a_cross():
     shut = rows(keyboard(set(), KINDS, None, parent="uv", loud=set()))
     assert shut == [[("⚙️ ▸", "al:open:gear:uv")]]
     on = rows(keyboard(set(), KINDS, "gear", parent="uv", loud=set()))                           # both on... the sound is off
-    assert on == [[("⚙️ ▾", "al:close:uv")], [("Alert", "al:off:uv:gear:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
+    assert on == [[("⚙️ ▾", "al:close:uv")], [("✅ Alert", "al:off:uv:gear:uv")], [("❌ Sound", "al:snd:uv:on:uv")]]
     both = rows(keyboard(set(), KINDS, "gear", parent="uv", loud={"uv"}))
-    assert both[2] == [("Sound", "al:snd:uv:off:uv")]
+    assert both[2] == [("✅ Sound", "al:snd:uv:off:uv")]
     off = rows(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"}))                        # alert off: struck through, and no sound toggle
-    assert off == [[("⚙️ ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:gear:uv")]]
+    assert off == [[("⚙️ ▾", "al:close:uv")], [("❌ Alert", "al:on:uv:gear:uv")]]
     group = rows(keyboard(set(), KINDS, "gear", parent="uv", loud=None))                         # a group has no sound
-    assert group == [[("⚙️ ▾", "al:close:uv")], [("Alert", "al:off:uv:gear:uv")]]
+    assert group == [[("⚙️ ▾", "al:close:uv")], [("✅ Alert", "al:off:uv:gear:uv")]]
     assert rows(keyboard(set(), KINDS, "unsub", parent="uv", loud=set())) == shut                # (an earlier version's list: just the gear)
 
 
@@ -281,17 +283,17 @@ async def test_the_gear_under_an_alert_toggles_the_alert_and_its_sound_and_stays
     bot, state = make_bot(tmp_path)
     q = Query("al:open:gear:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("⚙️ ▾", "al:close:uv")], [("Alert", "al:off:uv:gear:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
+    assert rows(q.edits[0][1]) == [[("⚙️ ▾", "al:close:uv")], [("✅ Alert", "al:off:uv:gear:uv")], [("❌ Sound", "al:snd:uv:on:uv")]]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]
+    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][1])[2] == [("✅ Sound", "al:snd:uv:off:uv")]
     q = Query("al:off:uv:gear:uv", text="☀️ UV 10")                            # alert off: the sound toggle goes, the struck alert stays to turn it back on
     await press(bot, q)
     assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
-    assert rows(q.edits[0][1]) == [[("⚙️ ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:gear:uv")]]
+    assert rows(q.edits[0][1]) == [[("⚙️ ▾", "al:close:uv")], [("❌ Alert", "al:on:uv:gear:uv")]]
     q = Query("al:on:uv:gear:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert "uv" not in state.muted(1) and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
+    assert "uv" not in state.muted(1) and rows(q.edits[0][1])[2] == [("✅ Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
     q = Query("al:close:uv", text="☀️ UV 10")
     await press(bot, q)
     assert rows(q.edits[0][1]) == [[("⚙️ ▸", "al:open:gear:uv")]]

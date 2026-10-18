@@ -1,5 +1,5 @@
 """The alert settings as buttons. /alerts has two: 🔔 Alerts and (private chats) 🔊 Sound, each opening the full list of alert types as
-toggles (struck through while off) with a Back button, the other hidden meanwhile. Under an alert there is one gear that opens that type's
+toggles (a green ✅ while on, a red ❌ while off) with a Back button, the other hidden meanwhile. Under an alert there is one gear that opens that type's
 two toggles, Alert and Sound. Pure: it only builds the keyboard and the title from what a chat has muted.
 
 Callback data (self-contained and short, so an old message's buttons still work after a restart):
@@ -13,9 +13,8 @@ An alert's buttons end with the alert's own type: al:open:gear:rain, al:close:ra
 from itertools import batched
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import KeyboardButtonStyle
 
-from ..buttons import menu_text
+from ..buttons import menu_text, toggle_button
 
 # kind -> the name on the button, in the order listed
 LABELS = {"rain": "rain", "gusts": "gusts", "uv": "UV", "temps": "temperature crossing",
@@ -40,46 +39,30 @@ def kinds_for(source_names, irrigation: bool) -> list[str]:
     return available_kinds(set(source_names) | ({"Irrigation"} if irrigation else set()))
 
 
-def _button(text: str, data: str, style: str | None = None) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text, callback_data=data, style=style)
-
-
-def struck(text: str) -> str:
-    """The text with a line through it (a button cannot be styled, so each letter gets the combining long stroke)."""
-    return "".join(f"{c}\u0336" for c in text)
-
-
-def _toggle(word: str, on: bool, data: str) -> InlineKeyboardButton:
-    """A button that flips a setting: just its word, struck through while the setting is off."""
-    return _button(word if on else struck(word), data)
-
-
-def _mark(word: str, on: bool, data: str) -> InlineKeyboardButton:
-    """A button that flips a setting in a list: its word after a green tick on a green button while the setting is on, a red cross on a
-    red one while it is off (the tick and cross stay for a client that does not draw button colours)."""
-    return _button(f"{'✅' if on else '❌'} {word}", data, KeyboardButtonStyle.SUCCESS if on else KeyboardButtonStyle.DANGER)
+def _button(text: str, data: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text, callback_data=data)
 
 
 def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None) -> InlineKeyboardMarkup:
     """The buttons under an alert of type `kind`: one gear (⚙️ ▸, ▾ once open) that opens up to two toggles, Alert (this type's alerts
     in this chat) and, only while that is on and in a private chat (`loud` is not None), Sound (whether they make a notification sound).
-    A toggle is struck through while it is off. Every button carries the type: al:open:gear:<kind>, al:close:<kind>,
+    A toggle is a ✅ green button while on, a ❌ red one while off. Every button carries the type: al:open:gear:<kind>, al:close:<kind>,
     al:on|off:<kind>:gear:<kind>, al:snd:<kind>:on|off:<kind>."""
     is_open = open == "gear"
     rows = [[_button(menu_text("⚙️", is_open), f"al:close:{kind}" if is_open else f"al:open:gear:{kind}")]]
     if is_open:
         on = kind not in muted
-        rows.append([_toggle("Alert", on, f"al:{'off' if on else 'on'}:{kind}:gear:{kind}")])
+        rows.append([toggle_button("Alert", on, f"al:{'off' if on else 'on'}:{kind}:gear:{kind}")])
         if on and loud is not None:
             sound = kind in loud
-            rows.append([_toggle("Sound", sound, f"al:snd:{kind}:{'off' if sound else 'on'}:{kind}")])
+            rows.append([toggle_button("Sound", sound, f"al:snd:{kind}:{'off' if sound else 'on'}:{kind}")])
     return InlineKeyboardMarkup(rows)
 
 
 def _list(kinds: list[str], is_on, data) -> list[list]:
     """A toggle for each of the alert types, PER_ROW to a row, a green tick before a type that is on, a red cross before one that is off. is_on(kind): its state;
     data(kind): the callback data that flips it."""
-    return list(map(list, batched((_mark(LABELS[k], is_on(k), data(k)) for k in kinds), PER_ROW)))
+    return list(map(list, batched((toggle_button(LABELS[k], is_on(k), data(k)) for k in kinds), PER_ROW)))
 
 
 def keyboard(muted: set[str], available: list[str], open: str | None = None, parent: str | None = None,
