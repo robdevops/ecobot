@@ -32,6 +32,13 @@ def test_chat_needs_no_data():
     assert intent.needs_data("how hot is it")
 
 
+def test_every_reading_named_needs_its_data_but_chat_words_like_cool_or_feeling_do_not():
+    for asked in ("vpd now", "what's the uvi", "dewpoint 90d", "solar radiation today", "ultraviolet", "precipitation this week"):
+        assert intent.needs_data(asked), asked
+    for chat in ("cool, thanks", "feeling better now", "that's apparent"):
+        assert not intent.needs_data(chat), chat
+
+
 def test_highs_and_lows_go_fast():
     name, args, _ = call("what was this week's high and low?")
     assert name == "weather_history"
