@@ -25,7 +25,7 @@ from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
-from ..lines import Plotted, build_line
+from ..lines import Plotted, Sample, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
@@ -385,7 +385,7 @@ class AirGradient(Source):
         if len(pts) < 2:
             return None
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
-        plotted = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+        plotted = build_line([Sample(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])

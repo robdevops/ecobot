@@ -17,7 +17,7 @@ from statistics import fmean
 from typing import NamedTuple
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
-from ..lines import build_line
+from ..lines import Sample, build_line
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
 from ..timeutil import daily_summary, day_bounds, day_text, local_date, now_local, parse_local, SLOT
@@ -494,7 +494,7 @@ class HistoryQuery:
         key = f"{group}.{reading.band_field}" if reading and reading.band_field and field == reading.field else None
         return key if key in self.store else None
 
-    def _series_readings(self, k: str) -> list:
+    def _series_readings(self, k: str) -> list[Sample]:
         """One series as readings for lines.build_line. A reading with a band series (wind) is its mean shaded up to that series."""
         band = self._band_key(k)
         gust = self.store[band]["pts"] if band else {}
@@ -505,7 +505,7 @@ class HistoryQuery:
                 low, high = (r["low"][0] if "low" in r else None), (r["high"][0] if "high" in r else None)
                 if band:
                     low, high = low_of(r), max(high_of(gust[t]) if t in gust and "value" in gust[t] else high_of(r), v)
-                out.append((t, v, low, high, CYCLES[r["cycle"]].seconds))
+                out.append(Sample(t, v, low, high, CYCLES[r["cycle"]].seconds))
         return out
 
     def _series_entry(self, k: str, label: str | None = None) -> tuple[Line, str] | None:
@@ -515,7 +515,7 @@ class HistoryQuery:
         if line is None:
             return None
         group = k.split(".", 1)[0]
-        line.unbanded(self.span.days + 1, keep=self._band_key(k) is not None)   # a short period: a clean line, except wind's gusts
+        line = line.unbanded(self.span.days + 1, keep=self._band_key(k) is not None)   # a short period: a clean line, except wind's gusts
         return line.spec(label or group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:

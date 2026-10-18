@@ -14,6 +14,8 @@ def test_a_short_period_line_loses_its_range_unless_it_is_wind_or_the_period_is_
     assert banded().unbanded(7).low is None and banded().unbanded(SHORT_DAYS).high is None
     assert banded().unbanded(7, keep=True).low is not None                # wind: the mean shaded up to the gusts
     assert banded().unbanded(SHORT_DAYS + 1).low is not None              # a quarter keeps its daily range
+    line = banded()
+    assert line.unbanded(7).low is None and line.low is not None             # a new line: the one it came from keeps its range
 
 
 def labels_of(chart):
