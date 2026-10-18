@@ -87,7 +87,7 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     await notifier("Gusts", kind="gusts")
     assert [(c, t.split("\n")[0]) for c, t, _ in bot.sent] == [(1, "It's raining"), (1, "Gusts"), (2, "Gusts")]
     markup = bot.sent[0][2]["reply_markup"]
-    assert rows(markup) == [[("🔕 ▸", "al:open:unsub:rain"), ("⚙️ ▸", "al:open:set:rain")]]   # the alert's own type rides along
+    assert rows(markup) == [[("🔕 ▸", "al:open:unsub:rain"), ("🔊", "al:snd:rain:on:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
     assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
 
@@ -293,8 +293,7 @@ async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_th
     assert "Other" not in str(rows(q.edits[0][1])) and rows(q.edits[0][1])[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]
     q = Query("al:off:all:unsub:uv", text="☀️ UV 10")                          # and "all" turns the rest off, closing the empty section
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv"),
-                                   ("⚙️ ▸", "al:open:set:uv")]]
+    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv")]]
     q = Query("al:open:unsub:uv", text="☀️ UV 10")                             # nothing is on now: a toast, no menu
     await press(bot, q)
     assert q.toast == "No alerts are on" and not q.edits
@@ -346,24 +345,16 @@ async def test_settings_hold_enable_and_disable_sub_menus_of_notification_sounds
     assert [b for r in rows(q.edits[0][1]) for b in r if b[1].startswith("al:snd")] == [("🌧️ rain", "al:snd:rain:off")]
     await press(bot, Query("al:snd:rain:off"))
     assert state.loud(1) == set()
-    q = Query("al:open:snd_on:uv", text="☀️ UV 10")                             # under an alert: its own type, then Other
+    q = Query("al:open:snd_on:uv", text="☀️ UV 10")                             # under an alert there is no Settings: the sound is one toggle
     await press(bot, q)
-    drawn = rows(q.edits[0][1])
-    assert drawn[2:] == [[("● 🧴 UV", "al:snd:uv:on:uv")], [("Other ▸", "al:open:snd_on_o:uv")]]
-    q = Query("al:open:snd_on_o:uv", text="☀️ UV 10")                           # Other holds the rest
+    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv"), ("🔊", "al:snd:uv:on:uv")]]
+    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")                               # 🔊 turns this type's sound on, and the button becomes 🔇
     await press(bot, q)
-    drawn = rows(q.edits[0][1])
-    assert drawn[3] == [("Other ▾", "al:open:snd_on:uv")] and ("🌧️ rain", "al:snd:rain:on:uv") in [b for r in drawn for b in r]
-    assert "al:snd:uv:on:uv" not in [d for r in drawn[4:] for _, d in r]
-    q = Query("al:snd:rain:on:uv", text="☀️ UV 10")                             # a press in Other stays in Other
+    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound"
+    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv"), ("🔇", "al:snd:uv:off:uv")]]
+    q = Query("al:snd:uv:off:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert state.loud(1) == {"rain"} and ("Other ▾", "al:open:snd_on:uv") in [b for r in rows(q.edits[0][1]) for b in r]
-    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")                               # a press on its own type stays on its level
-    await press(bot, q)
-    assert state.loud(1) == {"rain", "uv"} and ("🔕 Disable notification sounds ▸", "al:open:snd_off:uv") in [b for r in rows(q.edits[0][1]) for b in r]
-    await press(bot, Query("al:snd:rain:off:uv", text="☀️ UV 10"))
-    await press(bot, Query("al:snd:uv:off:uv", text="☀️ UV 10"))
-    assert state.loud(1) == set()
+    assert state.loud(1) == set() and q.toast == "UV alerts no longer make a sound" and rows(q.edits[0][1])[0][1][0] == "🔊"
     for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain"):         # nothing from the data reaches the state
         await press(bot, Query(data))
     assert state.loud(1) == set()
@@ -445,11 +436,6 @@ async def test_the_sound_lists_have_an_all_button(tmp_path):
     assert rows(q.edits[0][1])[-1] == [("🔕 Disable all", "al:snd:all:off")]
     await press(bot, Query("al:snd:all:off"))
     assert state.loud(1) == set()
-    q = Query("al:open:snd_on_o:uv", text="☀️ UV 10")                           # under an alert, "all" sits in Other
-    await press(bot, q)
-    assert rows(q.edits[0][1])[-1] == [("🔔 Enable all", "al:snd:all:on:uv")]
-    await press(bot, Query("al:snd:all:on:uv", text="☀️ UV 10"))
-    assert "uv" in state.loud(1) and "rain" in state.loud(1) and "gusts" not in state.loud(1)
 
 
 def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_sends():

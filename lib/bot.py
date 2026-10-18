@@ -444,6 +444,8 @@ class Bot:
             opened = "snd_on" if section == "on" else "snd_off"   # stay in the list (under an alert: in "Other" for another type)
             if parent and arg != parent:
                 opened += "_o"
+            elif parent:
+                opened = None   # the sound toggle under an alert: nothing opens
             toast = f"{self._alerts_named(arg)} {'now make' if section == 'on' else 'no longer make'} a sound"
         elif action in ("on", "off") and (arg == menu.ALL or arg in kinds) and chat.id in self.state.chats:
             self.state.set_kind(chat.id, arg, action == "on")

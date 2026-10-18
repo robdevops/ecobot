@@ -80,6 +80,8 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     subscribed = options(muted, available, "unsub")
     if open == "other" and (parent or not (parent in subscribed and len(subscribed) > 1)):   # under an alert there is no Other
         open = "unsub"
+    if parent and open in SETTINGS:   # under an alert there is no Settings: the sound is one toggle
+        open = None
     unsub_open = open in ("unsub", "other")
     def head(is_open: bool, text: str, section: str) -> InlineKeyboardButton:
         return _button(menu_text(text, is_open), f"al:close{tail}" if is_open else f"al:open:{section}{tail}")
@@ -87,8 +89,10 @@ def keyboard(muted: set[str], available: list[str], open: str | None = None, par
     if no_sub and open == "sub":
         open = None
     rows = [[*([] if no_sub else [head(open == "sub", "🔔", "sub")]), head(unsub_open, "🔕", "unsub")]]
-    if loud is not None:
+    if loud is not None and not parent:
         rows[0].append(head(open in SETTINGS, "⚙️", "set"))
+    elif loud is not None and parent in subscribed:   # the alert's sound: 🔊 turns it on, 🔇 off
+        rows[0].append(_button("🔇" if parent in loud else "🔊", f"al:snd:{parent}:{'off' if parent in loud else 'on'}{tail}"))
     mark = lambda k: f"● {label(k)}" if k == parent else label(k)   # the alert these buttons are under
     if open in SETTINGS and loud is not None:
         for section, heading, items in (("snd_on", "🔔 Enable notification sounds", [k for k in subscribed if k not in loud]),
