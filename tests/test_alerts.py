@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from lib.airgradient import Latest
 from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor, with_footer
 from tests.fakes import TZ
 
@@ -219,8 +220,8 @@ async def test_small_temperature_differences_are_noise(tmp_path):
 
 # ---------- air ----------
 def air_reading(pm25, pm10=10.0, age=timedelta(minutes=5)):
-    return {"pm2_5": {"value": pm25, "aqi_us": 160}, "pm10": {"value": pm10},
-            "_time_utc": datetime.now(timezone.utc) - age}
+    """What air.latest() gives: the reading, when it was taken, and (none here: the reading's own) the lowest of the last readings."""
+    return Latest({"pm2_5": {"value": pm25, "aqi_us": 160}, "pm10": {"value": pm10}}, datetime.now(timezone.utc) - age, {})
 
 
 class FakeAir:
@@ -874,11 +875,8 @@ async def test_a_single_spike_never_makes_the_air_unhealthy_but_two_readings_in_
     mon = ParticulatesMonitor(FakeAir(), state, notify)
     stamp = datetime.now(timezone.utc)
 
-    def reading(minutes, latest, before):
-        r = air_reading(latest)
-        r["_time_utc"] = stamp + timedelta(minutes=minutes)
-        r["_sustained"] = {"pm2_5": min(latest, before)}            # what air.current() gives: the lowest of the last readings
-        return r
+    def reading(minutes, latest, before):                           # the lowest of the last readings, as air.latest() gives it
+        return Latest(air_reading(latest).reading, stamp + timedelta(minutes=minutes), {"pm2_5": min(latest, before)})
     await mon.check(reading(0, 90, 5))                              # a spike: the reading before it was clean
     await mon.check(reading(30, 90, 5))                             # and again at the next check, still alone
     assert not sent and state.monitor["particulates"]["above"] == 0

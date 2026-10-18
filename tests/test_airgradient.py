@@ -1,7 +1,12 @@
 import json
 from datetime import datetime, timedelta
 
+import httpx
+import pytest
+
 from lib.airgradient import AirGradient, pm25_aqi, rating
+from lib.airgradient.metrics import METRICS
+from lib.timeutil import local_date
 from lib.tools import Turn
 from tests.fakes import TZ, air_transport, config
 
@@ -22,21 +27,21 @@ def test_aqi_and_ratings_follow_the_us_scale():
 async def test_current_reading_with_ratings(tmp_path):
     air, _ = await make(tmp_path)
 
-    async def no_previous(ts):
-        return None      # the fake history's PM2.5 depends on the hour, so the previous reading would too
-    air._previous_row = no_previous
+    async def no_previous(ts, count):
+        return []        # the fake history's PM2.5 depends on the hour, so the previous reading would too
+    air._previous_rows = no_previous
     reading = json.loads(await air.handle({}))
     assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == "moderate"
-    assert "_time_utc" not in reading and reading["pm2_5"]["rating"].endswith("poor")
+    assert set(reading) == {"sensor", "sensor_type", "time", *METRICS} and reading["pm2_5"]["rating"].endswith("poor")
     await air.close()
 
 
 async def test_a_rating_is_the_level_the_last_two_readings_both_reached(tmp_path):
     air, _ = await make(tmp_path)
     for before, band, noted in ((5.0, "good", True), (20.0, "moderate", False)):
-        async def previous(ts, before=before):
-            return {"pm2_5": before}
-        air._previous_row = previous
+        async def previous(ts, count, before=before):
+            return [{"pm2_5": before}]
+        air._previous_rows = previous
         reading = json.loads(await air.handle({}))
         assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == band
         assert ("rating_note" in reading["pm2_5"]) is noted
@@ -375,14 +380,14 @@ async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path)
     from lib.timeutil import local_date
     from tests.fakes import TZ
     air, _ = await make(tmp_path)
-    start = air._now().replace(hour=0, minute=0, second=0) - timedelta(hours=6)
-    t0 = int(start.replace(tzinfo=TZ).timestamp())
+    start = air._now().replace(microsecond=0) - timedelta(hours=1)
+    t0 = int(start.replace(tzinfo=TZ).timestamp()) + 600
     levels = [(1, 2, 3), (1, 2, 4), (15.3, 14.2, 28.7), (3, 8, 10), (2, 4, 5), (2, 3, 4)]
     rows = [{"ts": t0 + 300 * i, "pm1": a, "pm2_5": b, "pm10": c} for i, (a, b, c) in enumerate(levels)]
 
-    async def held(t0_, t1_):
-        return rows, 0, []
-    air.rows = held
+    async def day_rows(day, refresh=False):
+        return [r for r in rows if local_date(r["ts"], TZ) == day]
+    air._day_rows = day_rows
     out = await air.history(start.strftime("%Y-%m-%d %H:%M:%S"), None)
     assert out["pm10"]["high"] == 10 and out["pm2_5"]["high"] == 8 and out["pm1"]["high"] == 3      # not 28.7, 14.2 and 15.3
     assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
@@ -408,12 +413,50 @@ def test_the_readings_a_rise_needs_are_set_by_the_antispike_setting():
         metrics.REQUIRE_CONSECUTIVE = 2
 
 
-async def test_current_gives_the_lowest_of_the_last_readings_for_the_alerts_and_not_to_the_model(tmp_path):
-    from lib.airgradient import metrics
+async def test_the_latest_reading_comes_with_the_lowest_of_the_last_readings_for_the_alerts(tmp_path):
     air, _ = await make(tmp_path)
-    out = await air.current()
-    assert set(out["_sustained"]) >= {"pm2_5"} and out["_sustained"]["pm2_5"] <= out["pm2_5"]["value"]
-    assert "_sustained" not in json.loads(await air.handle({}, None))
+    reading, at, sustained = await air.latest()
+    assert set(sustained) >= {"pm2_5"} and sustained["pm2_5"] <= reading["pm2_5"]["value"] and at.tzinfo is not None
+    assert json.loads(await air.handle({}, None)) == json.loads(json.dumps(reading))      # the tool gives the reading alone
+    await air.close()
+
+
+async def test_the_reading_is_rated_alone_when_only_the_history_fails(tmp_path, caplog):
+    air, _ = await make(tmp_path)
+
+    async def down(day, refresh=False):
+        raise RuntimeError("AirGradient past failed: HTTP 500")
+    air._day_rows = down
+    reading = json.loads(await air.handle({}))
+    assert reading["pm2_5"]["value"] == 12.0 and "rating_note" not in reading["pm2_5"] and "rating the latest alone" in caplog.text
+    assert (await air.latest()).sustained["pm2_5"] == 12.0
+    await air.close()
+
+
+@pytest.mark.parametrize("status, body", [(200, {"message": "Too many requests"}), (404, {"message": "Location not found"}),
+                                          (200, "OK")])
+async def test_a_reply_that_is_not_readings_is_an_error_and_never_stored_as_a_day_without_any(tmp_path, status, body):
+    air = AirGradient(config(tmp_path), transport=httpx.MockTransport(lambda request: httpx.Response(status, json=body)))
+    day = datetime.now(TZ).date() - timedelta(days=3)
+    with pytest.raises(RuntimeError):
+        await air._fetch_days([day])
+    assert air.store.counts([day])[day] is None                                             # not stored: asked again next time
+    await air.close()
+
+
+async def test_a_chart_and_its_figures_take_out_the_same_spikes(tmp_path):
+    air, _ = await make(tmp_path)
+    now = datetime.now(TZ).replace(tzinfo=None, microsecond=0)
+    first = int((now - timedelta(minutes=40)).replace(tzinfo=TZ).timestamp())
+    spiky = [{"ts": first + i * 300, "pm2_5": v} for i, v in enumerate((10.0, 10.0, 100.0, 30.0, 10.0, 10.0))]
+
+    async def day_rows(day, refresh=False):
+        return [r for r in spiky if local_date(r["ts"], TZ) == day]
+    air._day_rows = day_rows
+    turn = Turn()
+    out = await air.history(f"{now - timedelta(hours=1):%Y-%m-%d %H:%M:%S}", f"{now:%Y-%m-%d %H:%M:%S}", chart=True, turn=turn)
+    line = turn.charts[0].panels[0].lines[0]
+    assert out["pm2_5"]["high"] == line.records["high"][1] == 30.0 and 100.0 not in line.y   # one pass: the spike, not what was next to it
     await air.close()
 
 
