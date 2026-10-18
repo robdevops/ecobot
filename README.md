@@ -17,6 +17,14 @@ Developing, the tests and the GitHub checks: see `DEVELOPMENT.md`.
 
 Under systemd see `ecobot.service` (it loads the environment file; the clone's location is its one `WorkingDirectory` line, the rest is relative).
 
+In Docker, the `Dockerfile` builds a python:3.13-slim image (278 MB unpacked, 98 MB compressed):
+
+```
+docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .   # COMMIT: the commit the start-up log names
+docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v ecobot-data:/data ecobot
+```
+The state and caches go in `/data` (its `DATA_DIR`), here a named volume. A host folder instead (`-v /srv/ecobot:/data`) must be writable by the image's user, uid 10001 (`sudo chown 10001:10001 /srv/ecobot`). Docker reads the environment file's `KEY=value` lines as they are: a value in quotes keeps its quotes, where systemd would drop them.
+
 | Variable | Purpose |
 |---|---|
 | `TELEGRAM_BOT_TOKEN`, `XAI_API_KEY` | required |

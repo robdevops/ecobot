@@ -1,0 +1,6 @@
+# Only what the image is built from: no state, caches, secrets (*.env), tests or venv can reach it
+*
+!ecobot.py
+!lib/
+!requirements.txt
+**/__pycache__

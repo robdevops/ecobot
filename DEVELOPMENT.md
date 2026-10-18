@@ -10,16 +10,17 @@ python scripts/eval_prompts.py         # the saved questions: decisions made in 
 ```
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
-## GitHub Actions (`.github/workflows/ci.yml`)
+## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)
 | Job | When | What |
 |---|---|---|
 | `test` | every push to `main` and every pull request | the exact versions in `requirements.txt`: pytest (chart pictures included) and the offline evals. The gate. |
 | `newest` | Sundays 21:17 UTC, or the Run workflow button | the tests with the newest matplotlib, numpy and Pillow. Advisory. |
 | `live-evals` | Sundays 21:17 UTC, or the Run workflow button | asks the real model the six questions in `tests/evals/weekly.txt` (`python scripts/eval_prompts.py --live`) and checks which tool it calls; a failure is asked once more before it is reported. Advisory. The button's "all cases" box asks all 87. Skipped until the secrets below exist. |
+| `image` | pushes that change `Dockerfile`, `.dockerignore` or `requirements.txt` (any branch), or the Run workflow button | builds the Docker image, checks the bot starts in it and names the commit, draws the sample charts in it (they must be in Inter and match `tests/charts`); the image's size goes in the run's summary. |
 
 Repository secrets (Settings, Secrets and variables, Actions, New repository secret):
 - `XAI_API_KEY`: for `live-evals`. `XAI_MODEL` is optional (default `grok-4.3`): add it only if production runs another model.
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: optional; failures of any job, and of `test` on `main`, are then sent to Telegram.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: optional; failures of `newest` and `live-evals`, and of `test` on `main`, are then sent to Telegram.
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the Python packages and the actions. `matplotlib`, `numpy` and `Pillow` come as one pull request, because the chart pictures depend on them.
 
