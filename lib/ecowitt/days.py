@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta, tzinfo
 from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
+from ..series import WEATHER
 from ..timeutil import day_bounds, day_text, local_date, now_local
 from .api import FINE_CYCLES, daily_run
 from .calendar import PublicHolidays
@@ -32,15 +33,17 @@ FIELDS = {
     "rain": ("rainfall", "daily", "high", "mm"),        # the day's total: the rain counter's highest reading
     "wind_gust": ("wind", "wind_gust", "high", "km/h"),
 }
-# every other reading the station has, a day's highest (_max) and lowest (_min): a day's peak UV, its driest air, its lowest pressure ...
-for _name, _group, _field, _unit in (
-        ("humidity", "outdoor", "humidity", "%"), ("pressure", "pressure", "relative", "hPa"), ("wind_speed", "wind", "wind_speed", "km/h"),
-        ("dew_point", "outdoor", "dew_point", "°C"), ("feels_like", "outdoor", "feels_like", "°C"), ("vpd", "outdoor", "vpd", "kPa"),
-        ("solar", "solar_and_uvi", "solar", "W/m²"), ("uv", "solar_and_uvi", "uvi", ""), ("rain_rate", "rainfall", "rain_rate", "mm/h"),
-        ("indoor_temp", "indoor", "temperature", "°C"), ("indoor_humidity", "indoor", "humidity", "%")):
+# Every other reading (series), then three that aren't series readings: a day's highest (_max), its mean (_avg: "average humidity
+# per month") and, where its low says something (not 0 every night or calm hour), its lowest (_min): a day's peak UV, its driest
+# air, its lowest pressure ...
+_OTHERS = [("wind_speed" if name == "wind" else name, r.group, r.field, r.unit, r.low)
+           for name, r in WEATHER.items() if name not in ("temperature", "rain")]
+_OTHERS += [("rain_rate", "rainfall", "rain_rate", "mm/h", False),
+            ("indoor_temp", "indoor", "temperature", "°C", True), ("indoor_humidity", "indoor", "humidity", "%", True)]
+for _name, _group, _field, _unit, _low in _OTHERS:
     FIELDS[f"{_name}_max"] = (_group, _field, "high", _unit)
-    FIELDS[f"{_name}_avg"] = (_group, _field, "mean", _unit)   # a day's mean: "average humidity per month"
-    if _name not in ("solar", "uv", "rain_rate", "wind_speed"):   # these have no interesting low: it is 0 every night or calm hour
+    FIELDS[f"{_name}_avg"] = (_group, _field, "mean", _unit)
+    if _low:
         FIELDS[f"{_name}_min"] = (_group, _field, "low", _unit)
 FIELDS["temp_avg"] = ("outdoor", "temperature", "mean", "°C")
 AVERAGED = {n for n in FIELDS if n.endswith(("_max", "_min")) and n not in ("temp_max", "temp_min")}   # no range of their own at 30 minutes or daily
@@ -55,8 +58,8 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
                "35°C\", \"how many days was UV 9 or more\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
                "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest), and a day's "
-               "highest (_max) or lowest (_min) of every other reading: humidity, pressure, wind_speed, dew_point, feels_like, vpd, "
-               "indoor_temp, indoor_humidity (_max and _min); solar, uv, rain_rate (_max only), e.g. uv_max >= 9; and _avg, a day's mean (temp_avg, "
+               "highest (_max) or lowest (_min) of every other reading: humidity, pressure, dew_point, feels_like, vpd, "
+               "indoor_temp, indoor_humidity (_max and _min); wind_speed, solar, uv, rain_rate (_max only), e.g. uv_max >= 9; and _avg, a day's mean (temp_avg, "
                "humidity_avg, pressure_avg ...). For \"how many\" use count_only; group_by month or year breaks it down and draws a bar chart. "
                "For a total, average, highest or lowest per month or year use stat and of (\"rain per month\": stat sum, of rain; \"hottest day each "
                "year\": stat max, of temp_max; \"average humidity per month\": stat avg, of humidity_avg). Returns the total of matching "

@@ -1064,13 +1064,18 @@ def test_the_pair_chart_renders_for_a_day_a_month_and_a_year():
         assert spec.panels[0].bars.width in (3600, 6 * 3600, 86400) and render(spec, TZ)[:4] == b"\x89PNG"
 
 
-async def test_weather_link_says_which_series_is_missing(tmp_path):
+@pytest.mark.parametrize("driver, series, falling", [(None, "pressure (pressure.relative)", "down 1 hPa"),
+                                                    ("humidity", "humidity (outdoor.humidity)", "down 5 %"),
+                                                    ("wind", "wind (wind.wind_speed)", "down 5 km/h")])
+async def test_weather_link_says_which_series_is_missing(tmp_path, driver, series, falling):
     transport, fake = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)          # nothing cached at all
     await eco.start()
     today = datetime.now(eco.tz).date()
-    out = json.loads(await eco.tools[3].handler({"start_date": str(today - timedelta(days=9)), "end_date": str(today - timedelta(days=2))}))
-    assert "pressure (pressure.relative) or rainfall (rainfall.daily)" in out["note"] and "chart" not in out
+    out = json.loads(await eco.tools[3].handler({"start_date": str(today - timedelta(days=9)), "end_date": str(today - timedelta(days=2)),
+                                                 **({"driver": driver} if driver else {})}))
+    assert f"{series} or rainfall (rainfall.daily)" in out["note"] and "chart" not in out
+    assert f"falling = {falling} or more" in out["how_to_read"]                  # the change that counts, in the reading's unit
     await eco.close()
 
 

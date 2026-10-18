@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from .series import AIR as AIR_TABLE, INDOOR_READINGS, PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
+from .series import AIR as AIR_TABLE, INDOOR_READINGS, PRESSURE_WORDS, READING_GROUPS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
 
 log = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def pollen_ask(text: str) -> bool:
 
 
 # "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
-NOW_GROUPS = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+NOW_GROUPS = ",".join(READING_GROUPS)
 WEATHER_NOW = re.compile(_only(rf"(weather|{_ECOWITT}|conditions)(\s+(now|right now|currently|at the moment))?|(current|latest)\s+(weather|conditions)",
                                r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
 

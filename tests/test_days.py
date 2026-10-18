@@ -367,6 +367,16 @@ def test_the_field_list_is_in_the_tool_schema_once_and_a_wrong_sort_or_of_field_
     assert "sort_by must be one of" in validate({"sort_by": "nonsense"}, units) and "needs `of`" in validate({"stat": "sum", "of": "nonsense"}, units)
 
 
+def test_the_description_names_every_field_and_which_have_a_lowest():
+    """The model learns the fields from the description. A reading whose lowest says nothing (0 every night or calm hour) has no _min."""
+    import re
+    from lib.ecowitt import days
+    both, max_only = (re.search(rf"(\w+(?:, \w+)*) \(_max {kind}\)", days.DESCRIPTION)[1].split(", ") for kind in ("and _min", "only"))
+    assert all(f"{n}_max" in days.FIELDS and f"{n}_min" in days.FIELDS for n in both)
+    assert all(f"{n}_max" in days.FIELDS and f"{n}_min" not in days.FIELDS for n in max_only)
+    assert {n.removesuffix("_max").removesuffix("_min").removesuffix("_avg") for n in days.FIELDS} == {"temp", "rain", "wind_gust", *both, *max_only}
+
+
 async def test_a_figure_per_month_with_no_matching_day_promises_no_chart(station):
     """Highest temperature per month on days over 99°: every month is None, so there is no bar to draw and the model must not be
     told a chart is attached."""

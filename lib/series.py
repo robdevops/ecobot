@@ -36,6 +36,7 @@ WEATHER = {
 }
 SPECIFIC = ("dew_point", "feels_like", "vpd")   # kinds of temperature and humidity, named on their own: they outrank "temperature" in a question
 INDOOR_READINGS = ("temperature", "humidity", "dew_point", "feels_like")   # what the indoor sensor measures as well
+READING_GROUPS = tuple(dict.fromkeys(["outdoor", "indoor", *(r.group for r in WEATHER.values())]))   # the groups they are in, the indoor sensor's too
 
 
 

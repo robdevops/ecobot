@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, UTC
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
-from ..intent import NOW_GROUPS
 from ..timeutil import local_epoch, naive_local, now_local, when
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
@@ -21,7 +20,7 @@ from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
 from .fetch import Fetcher
-from ..series import WEATHER, find
+from ..series import READING_GROUPS, WEATHER, find
 from .query import HistoryQuery, stack_names
 from .store import HistoryCache, HotStore
 
@@ -89,7 +88,7 @@ REALTIME_PARAMS = {
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
 
-LIVE_GROUPS = NOW_GROUPS.split(",")   # what the once-a-minute live reading asks for: everything "weather now" and the report show
+LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
 

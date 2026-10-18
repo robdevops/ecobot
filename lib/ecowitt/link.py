@@ -25,10 +25,7 @@ from .store import HistoryCache
 log = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 90
-# driver -> (group, field, unit, the change over 3 hours that counts as falling or rising)
-DRIVERS = {"pressure": ("pressure", "relative", "hPa", 1.0),
-           "humidity": ("outdoor", "humidity", "%", 5.0),
-           "wind": ("wind", "wind_speed", "km/h", 5.0)}
+DRIVERS = {"pressure": 1.0, "humidity": 5.0, "wind": 5.0}   # a reading (series) -> the change over 3 hours that counts as falling or rising
 
 PARAMETERS = {
     "type": "object",
@@ -73,7 +70,8 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
     name = args.get("driver") or "pressure"
     if name not in DRIVERS:
         return {"error": f"driver must be one of {', '.join(DRIVERS)}"}, None, None, None
-    group, field, unit, threshold = DRIVERS[name]
+    reading, threshold = WEATHER[name], DRIVERS[name]
+    group, field, unit = reading.group, reading.field, reading.unit
     lo, hi = day_bounds(first, tz)[0], day_bounds(last, tz, last_second=True)[1]
     driver, lows, highs = cache.slots(mac, "30min", group, [field, field + "_low", field + "_high"], lo, hi)
     (daily,) = cache.slots(mac, "30min", "rainfall", ["daily"], lo, hi)
