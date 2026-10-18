@@ -850,7 +850,7 @@ class Bot:
         return key, png, turn.charts[0].caption(now.date()), caption
 
     def preload_soon(self, bot, question: str):
-        """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question, as one album, in the background."""
+        """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question in the background."""
         chat = getattr(self.cfg, "telegram_preload_chat", None)
         if chat is None or self.preload_off or question in self.preloading:
             return
@@ -860,46 +860,45 @@ class Bot:
         task.add_done_callback(self.background.discard)
 
     async def preload(self, bot, chat: int, question: str):
-        """Upload (silently, to `chat`) the chart for each other period of `question` as one album, so a press of a period button edits
-        the message by Telegram's copy and uploads nothing. Nothing holds it back: the periods are drawn side by side and the album
-        goes the moment the last is drawn, whatever else is being answered."""
-        started = time.monotonic()
+        """Upload (silently, to `chat`) the chart for each other period of `question`, so a press of a period button edits the message by
+        Telegram's copy and uploads nothing. Nothing holds it back: each period is drawn and uploaded on its own, the moment it can be,
+        whatever else is being answered."""
+        started, done, skipped = time.monotonic(), set(), []
         try:
             now = now_local(self.cfg.tz)
             own = intent.period_days(question, now)
             asked = {days: intent.with_period(question, days, now) for days in periods.PERIODS if days != own}
             asked = {days: text for days, text in asked.items() if not self.images.has_copy(self.images.key(text, days, now))}
 
-            async def draw(text):
+            async def upload(days, text):
                 try:
-                    return await self._draw_ahead(text, now)
+                    drawn = await self._draw_ahead(text, now)
                 except Exception as e:
                     log.debug("Couldn't draw %r to preload: %s: %s", text, type(e).__name__, e)
-
-            results = await asyncio.gather(*map(draw, asked.values()))
-            drawn = {days: d for days, d in zip(asked, results) if d}   # a period that couldn't be drawn is left out
-            if not drawn:
-                return
-            for key, png, title, caption in drawn.values():
+                    return
+                if drawn is None:
+                    return
+                key, png, title, caption = drawn
                 self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL)
-            try:
-                if len(drawn) > 1:
-                    sent = await bot.send_media_group(chat, [InputMediaPhoto(png, caption=title or None) for _, png, title, _ in drawn.values()],
-                                                      disable_notification=True)
-                else:   # an album is two to ten photos
-                    _, png, title, _ = next(iter(drawn.values()))
-                    sent = [await bot.send_photo(chat, png, caption=title or None, disable_notification=True)]
-            except (RetryAfter, TimedOut) as e:   # Telegram's flood limit or a slow upload: a press uploads these instead, and the next chart tries again
-                log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take the charts just now (%s: %s)", chat, type(e).__name__, e)
-                return
-            except TelegramError as e:
-                self.preload_off = True
-                log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
-                return
-            for (key, *_), message in zip(drawn.values(), sent):   # the album's messages come in the order of its photos
-                self.images.sent(key, message)
-            log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(periods.NAMES[days] for days in drawn), question, chat,
-                     time.monotonic() - started, extra=QUOTES)
+                if self.preload_off:   # an upload was refused meanwhile
+                    return
+                try:
+                    self.images.sent(key, await bot.send_photo(chat, png, caption=title or None, disable_notification=True))
+                except (RetryAfter, TimedOut) as e:   # Telegram's flood limit or a slow upload: a press uploads this one instead, and the next chart tries again
+                    skipped.append(e)
+                except TelegramError as e:
+                    if not self.preload_off:   # said once, though every period's upload is refused
+                        self.preload_off = True
+                        log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
+                else:
+                    done.add(days)
+
+            await asyncio.gather(*(upload(days, text) for days, text in asked.items()))
+            if skipped:
+                log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take %d of the charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
+            if done:
+                log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(periods.NAMES[days] for days in periods.PERIODS if days in done), question,
+                         chat, time.monotonic() - started, extra=QUOTES)
         finally:
             self.preloading.discard(question)
 
