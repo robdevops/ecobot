@@ -487,3 +487,13 @@ async def test_a_date_with_an_offset_is_read_and_a_bad_one_is_not_called_a_senso
     bad = json.loads(await air.handle({"start_date": "yesterday morning"}))
     await air.close()
     assert "error" not in out and out["readings"] > 0 and bad["error"].startswith("bad date")
+
+
+async def test_an_air_chart_up_to_now_is_captioned_since_its_first_day_as_a_weather_chart_is(tmp_path):
+    air, _ = await make(tmp_path)
+    now = air._now().replace(microsecond=0)
+    first = (now - timedelta(days=3)).date()
+    turn = Turn()
+    await air.history(f"{now - timedelta(days=3):%Y-%m-%d %H:%M:%S}", None, chart=True, turn=turn)
+    assert turn.charts[0].caption(now.date()) == f"PM2.5, since {first:%a} {first.day} {first:%b %Y}"   # not "... - ..." as one day
+    await air.close()

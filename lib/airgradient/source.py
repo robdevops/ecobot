@@ -28,7 +28,7 @@ from ..config import Config
 from ..lines import Plotted, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import local_date, now_local, parse_local, to_local, when
+from ..timeutil import day_text, local_date, now_local, parse_local, to_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
@@ -357,7 +357,7 @@ class AirGradient:
         turn.times["data"] = turn.times.get("data", 0.0) + time.perf_counter() - started   # for the reply's timing line
         log.log(logging.DEBUG if turn.ahead else logging.INFO, "AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}",
                 f"{t1:%m-%d %H:%M}", len(rows), self.requests - before)
-        out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",
+        out = {"sensor_type": "outdoor", "period": f"{day_text(t0)} - {day_text(t1)}",
                "readings": len(rows)}
         for name, (_, unit) in METRICS.items():
             pts = [(r["ts"], r[name]) for r in rows if name in r]
@@ -384,7 +384,8 @@ class AirGradient:
         if not rows:
             out["note"] = "No readings for this period."
         if chart and rows:
-            chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"])
+            chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"],
+                                     (t0.date(), t1.date()))
             if chart_spec:
                 turn.charts.append(chart_spec)
                 out["chart"] = CHART_HINT
@@ -404,9 +405,10 @@ class AirGradient:
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name), plotted
 
-    def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
+    def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
+        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone). `period` is the subtitle's
+        text for it, `days` its first and last day (for the caption)."""
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None
@@ -414,11 +416,11 @@ class AirGradient:
             (name, (line, plotted)), = drawn.items()
             subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
-            return Chart(LABELS[name], subtitle, [panel_for(name, [line])])
+            return Chart(LABELS[name], subtitle, [panel_for(name, [line])], period=days)
         panels = []
         for group in AIR_PANELS:
             members = [m for m in group if m in drawn]
             if members:
                 panels.append(panel_for(members, [drawn[m][0] for m in members]))
         return Chart("Air quality", f"{period}  ·  AirGradient readings"
-                     + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)
+                     + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels, period=days)

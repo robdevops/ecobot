@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
 from ..intent import NOW_GROUPS
-from ..timeutil import local_epoch, naive_local, now_local
+from ..timeutil import local_epoch, naive_local, now_local, when
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import EcowittAPI, GROUPS, UNITS
@@ -211,8 +211,7 @@ class Ecowitt:
                         newest = max(newest, int(obj.get("time") or 0))
                     except (TypeError, ValueError):
                         pass
-        when = datetime.fromtimestamp(newest, UTC).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
-        return json.dumps({"time": when, **out, **({"emoji": emoji} if emoji else {})},
+        return json.dumps({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})},
                           ensure_ascii=False, separators=(",", ":"))
 
     async def _live_data(self, groups: list[str]) -> dict:

@@ -17,10 +17,21 @@ def to_local(ts: int, tz: tzinfo) -> datetime:
     return datetime.fromtimestamp(ts, UTC).astimezone(tz)
 
 
+def day_text(day: date | datetime, year: bool = True) -> str:
+    """"Sat 3 Oct 2026", or "Sat 3 Oct" without the year: how the bot writes a day, everywhere."""
+    return f"{day:%a} {day.day} {day:%b}" + (f" {day:%Y}" if year else "")
+
+
+def clock_text(t: datetime, whole_hours: bool = False) -> str:
+    """"3:45pm", "12:05am": how the bot writes a time of day; whole_hours writes one on the hour as "10am"."""
+    hour, half = t.hour % 12 or 12, "am" if t.hour < 12 else "pm"
+    return f"{hour}{half}" if whole_hours and not t.minute else f"{hour}:{t:%M}{half}"
+
+
 def when(ts: int, tz: tzinfo) -> str:
     """An epoch as "Sun 11 Oct 2026 11:45pm" in tz (the form the tools put in their "time" field)."""
     dt = to_local(ts, tz)
-    return f"{dt:%a} {dt.day} {dt:%b %Y} {dt:%I:%M%p}".replace(" 0", " ").replace("AM", "am").replace("PM", "pm")
+    return f"{day_text(dt)} {clock_text(dt)}"
 
 
 def local_date(ts: int, tz: tzinfo) -> date:

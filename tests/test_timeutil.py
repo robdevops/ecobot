@@ -46,3 +46,11 @@ async def test_the_last_hours_are_real_hours_the_night_the_clocks_go_forward(tmp
     await eco.recent(3)
     await eco.close()
     assert asked == [(datetime(2026, 10, 4, 0, 0), datetime(2026, 10, 4, 4, 0))]   # three real hours: 2am to 3am never happened
+
+
+def test_a_day_and_a_time_of_day_are_written_one_way():
+    from datetime import date, datetime
+    from lib.timeutil import clock_text, day_text
+    assert day_text(date(2026, 10, 3)) == "Sat 3 Oct 2026" and day_text(datetime(2026, 10, 3, 9), year=False) == "Sat 3 Oct"   # never "03"
+    assert [clock_text(datetime(2026, 10, 3, h, m)) for h, m in ((0, 5), (9, 0), (12, 30), (23, 45))] == ["12:05am", "9:00am", "12:30pm", "11:45pm"]
+    assert clock_text(datetime(2026, 10, 3, 10), whole_hours=True) == "10am" and clock_text(datetime(2026, 10, 3, 10, 5), whole_hours=True) == "10:05am"

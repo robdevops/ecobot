@@ -20,7 +20,7 @@ from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTI
 from ..lines import build_line
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
-from ..timeutil import SLOT, day_bounds, daily_summary, local_date, now_local, parse_local
+from ..timeutil import daily_summary, day_bounds, day_text, local_date, now_local, parse_local, SLOT
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
@@ -323,7 +323,7 @@ class HistoryQuery:
         log.log(logging.DEBUG if self.turn.ahead else logging.INFO, "%s..%s: %d reads (%d cache, %d mem), %d req%s, %d refined",
                 f"{self.start:%m-%d}", f"{self.end:%m-%d}", f.ranges, f.from_cache, f.from_memory, f.calls,
                 f", {len(f.errors)} failed" if f.errors else "", refined)
-        out = {"period": f"{self.start:%a %d %b %Y} - {self.end:%a %d %b %Y}", "series": shown if shown else series_out}
+        out = {"period": f"{day_text(self.start)} - {day_text(self.end)}", "series": shown if shown else series_out}
         if self.monthly and not self.detailed:
             out["monthly_note"] = (f"Monthly figures for long periods come from daily data that runs "
                                    f"{daily_run(self.tz, self.start.date(), self.end.date())}, so they have no dates, and a low "
@@ -358,9 +358,9 @@ class HistoryQuery:
                 if rec["cycle"] != "1day":  # sub-daily points give correct local days
                     fold(days.setdefault(local_date(ts, tz), {}), ts, rec)
             keep = None if len(days) <= DAILY_ALL_DAYS or self.turn.per_day else {   # a long period: the days of its records, not all of them
-                local_date(ext[w].ts, tz).strftime("%a %d %b") for w in ("low", "high")}
-            entry["daily"] = {d.strftime("%a %d %b"): {w: e.raw for w, e in days[d].items()} for d in sorted(days)
-                              if keep is None or d.strftime("%a %d %b") in keep}
+                day_text(local_date(ext[w].ts, tz), year=False) for w in ("low", "high")}
+            entry["daily"] = {day_text(d, year=False): {w: e.raw for w, e in days[d].items()} for d in sorted(days)
+                              if keep is None or day_text(d, year=False) in keep}
         else:
             entry["monthly"] = {}
             for month, d in self.monthly.get(key, {}).items():
@@ -413,7 +413,7 @@ class HistoryQuery:
         entry["average"] = fmt(fmean(means.values()))
         for d, v in means.items():
             table = entry.get("daily") if self.span <= timedelta(days=31) else entry.get("monthly")
-            label = d.strftime("%a %d %b") if self.span <= timedelta(days=31) else d.strftime("%b %Y")
+            label = day_text(d, year=False) if self.span <= timedelta(days=31) else d.strftime("%b %Y")
             if table is not None and label in table:
                 table[label].setdefault("_sum", []).append(v)
         for table in (entry.get("daily"), entry.get("monthly")):
@@ -440,7 +440,7 @@ class HistoryQuery:
             return Chart("Rain", f"{period_text(self.start.date(), self.end.date())}  ·  rain per {self.rain_bars.per}"
                                  + (f"  ·  older days from daily records ({daily_run(self.tz, self.start.date(), self.end.date())})"
                                     if self.rain_from_daily else ""),
-                         [panel_for("rain", bars=self.rain_bars)])
+                         [panel_for("rain", bars=self.rain_bars)], period=(self.start.date(), self.end.date()))
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")
         lines, resolution, ranged = [], None, False
@@ -467,7 +467,7 @@ class HistoryQuery:
                     + (", shaded up to the gusts" if banded and ranged else ", range shaded" if ranged else "")
                     + ("  ·  records marked" if any(x.records for x in lines) and not banded else ""))
         panel = panel_for(name, lines) if (name := find_name(field)) else Panel(title, unit, lines)
-        return Chart(panel.label, subtitle, [panel])
+        return Chart(panel.label, subtitle, [panel], period=(self.start.date(), self.end.date()))
 
     def _band_key(self, k: str) -> str | None:
         """The series this one is shaded up to, if it is a reading with one (wind: the gusts) and that series was fetched."""

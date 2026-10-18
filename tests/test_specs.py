@@ -212,13 +212,13 @@ def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
 
 def test_a_single_panel_charts_caption_is_one_line_and_a_stacks_is_two():
     today = date(2026, 10, 4)
-    one = lambda sub: Chart("Temperature", sub, [Panel("Temperature", "°C", [line("T")])])
-    assert one("Tue 7 Jul – Sun 4 Oct 2026  ·  daily averages").caption(today) == "Temperature, since Tue 7 Jul 2026"
-    assert one("Wed 28 Sep – Sun 4 Oct 2026").caption(today) == "Temperature, since Wed 28 Sep 2026"
-    assert one("Tue 29 Sep 2025 – Sun 4 Oct 2026").caption(today) == "Temperature, since Tue 29 Sep 2025"
-    assert one("Wed 24 – Tue 30 Sep 2026  ·  30-minute readings").caption(today) == "Temperature, Wed 24 – Tue 30 Sep 2026"   # not up to today
-    assert one("Sun 4 Oct 2026").caption(today) == "Temperature, today" and one("Tue 29 Sep 2026").caption(today) == "Temperature, Tue 29 Sep 2026"
-    assert one("").caption(today) == "Temperature"
+    one = lambda *period: Chart("Temperature", "whatever the subtitle says", [Panel("Temperature", "°C", [line("T")])], period=period or None)
+    assert one(date(2026, 7, 7), today).caption(today) == "Temperature, since Tue 7 Jul 2026"
+    assert one(date(2026, 9, 28), today).caption(today) == "Temperature, since Mon 28 Sep 2026"
+    assert one(date(2025, 9, 29), today).caption(today) == "Temperature, since Mon 29 Sep 2025"
+    assert one(date(2026, 9, 24), date(2026, 9, 30)).caption(today) == "Temperature, Thu 24 – Wed 30 Sep 2026"   # not up to today
+    assert one(today, today).caption(today) == "Temperature, today" and one(date(2026, 9, 29), date(2026, 9, 29)).caption(today) == "Temperature, Tue 29 Sep 2026"
+    assert one().caption(today) == "Temperature"                                                  # no period: the title
     rain_behind = stack([Panel("Humidity", "%", [line("H")]), Panel("Rain", "mm", bars=bars())], date(2026, 9, 28), today)
     assert rain_behind.caption(today) == "Humidity, Rain, since Mon 28 Sep 2026"                # rain behind a line is still one panel
     stacked = stack([Panel("Humidity", "%", [line("H")]), Panel("Pressure", "hPa", [line("P")])], date(2026, 9, 28), today)

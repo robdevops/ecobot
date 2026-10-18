@@ -16,7 +16,7 @@ from statistics import fmean
 from .captions import COUNT_CHART_HINT
 from .series import AIR
 from .specs import Bars, Chart, Panel
-from .timeutil import day_bounds
+from .timeutil import day_bounds, day_text
 
 log = logging.getLogger(__name__)
 
@@ -129,13 +129,14 @@ def aggregate(stat: str, numbers: list[float]) -> float | None:
     return round({"max": max, "min": min, "sum": sum, "avg": fmean}[stat](numbers), 1)
 
 
-def bars_chart(figures: dict[str, float | None], by: str, title: str, subtitle: str, label: str, unit: str, tz: tzinfo) -> Chart:
-    """One bar per month or year (those with no figure left out), the number above each."""
+def bars_chart(figures: dict[str, float | None], by: str, title: str, subtitle: str, label: str, unit: str, tz: tzinfo,
+               period: tuple[date, date]) -> Chart:
+    """One bar per month or year (those with no figure left out), the number above each; `period` is the first and last day counted."""
     shown = {k: v for k, v in figures.items() if v is not None}
     starts = [datetime.strptime(k, "%Y-%m" if by == "month" else "%Y").date() for k in shown]
     bars = Bars(label, unit, [day_bounds(d, tz)[0] for d in starts], [float(v) for v in shown.values()],
                 28 * 86400 if by == "month" else 365 * 86400, by, values=True)
-    return Chart(title, subtitle, [Panel(label, "" if unit == "days" else unit, bars=bars)])
+    return Chart(title, subtitle, [Panel(label, "" if unit == "days" else unit, bars=bars)], period=period)
 
 
 @dataclass
@@ -156,7 +157,7 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
     where = args.get("where") or []
     sort_by = args.get("sort_by") or (where[0]["field"] if where else shown[0])
     limit = max(1, min(int(args.get("limit") or 5), MAX_LIMIT))
-    label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
+    label = day_text
     holds = lambda d, conds: all(d in values[c["field"]] and OPS[c["op"]](values[c["field"]][d], c["value"]) for c in conds)
     rank = lambda ds: sorted((d for d in ds if d in values[sort_by]), key=lambda d: values[sort_by][d],
                              reverse=args.get("order", "desc") != "asc")
@@ -194,7 +195,7 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
                 detail = f"{len(matches):,} days counted"
             detail += f"  ·  {scope}" if scope else ""
             turn.charts.append(bars_chart(buckets, by, title, f"{label(first)} – {label(last)}  ·  {detail}  ·  per {by}",
-                                          name, unit, tz))
+                                          name, unit, tz, (first, last)))
             out["chart"] = COUNT_CHART_HINT
     rows = [] if args.get("count_only") or stat != "count" and by else [row(d) for d in ranked[:limit]]
     if not args.get("count_only") and not (stat != "count" and by):

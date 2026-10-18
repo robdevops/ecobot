@@ -19,7 +19,7 @@ from ..rain import rain_bars, rain_slots
 from ..panels import panel_for
 from ..series import WEATHER
 from ..specs import Chart, Line, stack
-from ..timeutil import day_bounds, local_date, now_local, parse_period
+from ..timeutil import day_bounds, day_text, local_date, now_local, parse_period
 from .store import HistoryCache
 
 log = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
     driver, lows, highs = cache.slots(mac, "30min", group, [field, field + "_low", field + "_high"], lo, hi)
     (daily,) = cache.slots(mac, "30min", "rainfall", ["daily"], lo, hi)
     rain = rain_slots(daily)
-    out = {"period": f"{first:%a} {first.day} {first:%b %Y} - {last:%a} {last.day} {last:%b %Y}", "driver": f"{name} ({unit})",
+    out = {"period": f"{day_text(first)} - {day_text(last)}", "driver": f"{name} ({unit})",
            "resolution": "30-minute readings (not averaged to days)",
            "how_to_read": ("by_change_before groups each 30-minute slot by how the reading had changed over the previous 3 "
                            f"hours: falling = down {threshold:g} {unit} or more, rising = up {threshold:g} or more. share_of_rain "

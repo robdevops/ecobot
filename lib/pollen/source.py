@@ -14,7 +14,7 @@ import httpx
 from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import local_date, now_local, when
+from ..timeutil import day_text, local_date, now_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer, in_sync_hours
 from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
@@ -150,7 +150,7 @@ class Pollen:
         """The levels in a few words for the log: "grass 🔴 High (Sat 17 Oct), asthma 🟢 Low"."""
         cur, parts = self.current(), []
         if g := cur["grass"]:
-            when = f" ({g['date']:%a %d %b})" if g["date"] and g["date"] != self.now().date() else ""
+            when = f" ({day_text(g['date'], year=False)})" if g["date"] and g["date"] != self.now().date() else ""
             parts.append(f"grass {g['emoji']} {g['level']}{when}")
         if a := cur["asthma"]:
             parts.append(f"asthma {a['emoji']} {a['level']}")
@@ -160,7 +160,7 @@ class Pollen:
         """The ready-made report lines; the asthma line is left out when there is no risk forecast (outside the season)."""
         cur, out = self.current(), []
         if g := cur["grass"]:
-            when = f" (forecast for {g['date']:%a %d %b})" if g["date"] and g["date"] != self.now().date() else ""
+            when = f" (forecast for {day_text(g['date'], year=False)})" if g["date"] and g["date"] != self.now().date() else ""
             out.append(f"Grass pollen: {g['emoji']} {g['level']}{when}")
         if a := cur["asthma"]:
             out.append(f"Thunderstorm asthma risk: {a['emoji']} {a['level']}")

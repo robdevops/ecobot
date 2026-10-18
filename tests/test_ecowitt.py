@@ -98,6 +98,8 @@ async def test_history_gives_extremes_with_times_and_days(station):
     s = result["series"]["outdoor.temperature"]
     assert set(s) >= {"low", "high", "low_when", "high_when", "low_date", "high_date", "daily"}
     assert len(s["daily"]) == 3
+    assert list(s["daily"]) == [f"{d:%a} {d.day} {d:%b}" for d in (start, start + timedelta(days=1), end)]   # "Sat 3 Oct", never "Sat 03 Oct"
+    assert result["period"] == f"{start:%a} {start.day} {start:%b %Y} - {end:%a} {end.day} {end:%b %Y}"
     assert float(s["high"]) > float(s["low"])
     assert s["high_when"].startswith(("at ", "around "))  # refined to a 5-minute or 30-minute reading
 

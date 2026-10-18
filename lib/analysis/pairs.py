@@ -12,7 +12,7 @@ import numpy as np
 
 from ..airgradient.metrics import ZONES, zone
 from ..rain import SPELL_MM, rain_spells
-from ..timeutil import MIN_DAY_SLOTS, SLOT, local_date, to_local
+from ..timeutil import clock_text, day_text, local_date, MIN_DAY_SLOTS, SLOT, to_local
 from .scan import rank
 
 LOOKBACK = 6                   # slots: the change is measured over the previous 3 hours
@@ -119,7 +119,7 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                "lowest": min(driver[t] for t in s if t in driver)} for s in rain_spells(rain, wet)]
     fell = sum(1 for e in events if e["change"] is not None and e["change"] <= -threshold)
     rose = sum(1 for e in events if e["change"] is not None and e["change"] >= threshold)
-    clock = lambda ts: (lambda dt: f"{dt:%a} {dt.day} {dt:%b} {dt.strftime('%-I:%M%p').lower()}")(to_local(ts, tz))
+    clock = lambda ts: f"{day_text(to_local(ts, tz), year=False)} {clock_text(to_local(ts, tz))}"
     summary, call = _summary(table, level, events, threshold, unit, clock)
     top = sorted(events, key=lambda e: -e["mm"])[:5]
     return {"slots": len(slots), "rain_mm": round(total, 1), "wet_slots": len(wet), "verdict": call, "findings": summary, "by_change_before": table,

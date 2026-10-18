@@ -9,6 +9,7 @@ from telegram import MessageEntity
 
 from .ecowitt.glance import solar_band
 from .series import AIR, INDOOR_READINGS, WEATHER, find
+from .timeutil import clock_text, day_text, to_local
 
 
 
@@ -58,16 +59,13 @@ def heading_entities(text: str) -> list[MessageEntity]:
 
 
 def _stamp(result: dict, today: date) -> str | None:
-    """The time of the data, "11:45pm", with its day when that isn't today ("Sat 10 Oct 11:45pm"), from the result's "time" ("Sun 11 Oct
-    2026 23:50" from the station, "Sun 11 Oct 2026 11:45pm" from the rest); None when it is missing or unreadable."""
-    for form in ("%a %d %b %Y %I:%M%p", "%a %d %b %Y %H:%M"):
-        try:
-            at = datetime.strptime(result.get("time") or "", form)
-        except ValueError:
-            continue
-        clock = f"{at.hour % 12 or 12}:{at:%M}{'am' if at.hour < 12 else 'pm'}"
-        return clock if at.date() == today else f"{at:%a} {at.day} {at:%b} {clock}"
-    return None
+    """The time of the data, "11:45pm", with its day when that isn't today ("Sat 10 Oct 11:45pm"), from the result's "time" (as
+    timeutil.when writes it, "Sun 11 Oct 2026 11:45pm"); None when it is missing or unreadable."""
+    try:
+        at = datetime.strptime(result.get("time") or "", "%a %d %b %Y %I:%M%p")
+    except ValueError:
+        return None
+    return clock_text(at) if at.date() == today else f"{day_text(at, year=False)} {clock_text(at)}"
 
 
 def _heading(name: str, result: dict, today: date) -> str:
@@ -252,7 +250,8 @@ def _rain_line(turn, tz) -> list[str]:
     if not bars:
         return []
     def day(i: int) -> str:
-        return datetime.fromtimestamp(bars.x[i], tz).strftime("%a %-d %b" + (" %-I%p" if bars.width < 86400 else "")).replace("AM", "am").replace("PM", "pm")
+        start = to_local(bars.x[i], tz)
+        return day_text(start, year=False) + (f" {clock_text(start, whole_hours=True)}" if bars.width < 86400 else "")
     lo, hi = min(range(len(bars.y)), key=bars.y.__getitem__), max(range(len(bars.y)), key=bars.y.__getitem__)
     per = f" per {bars.per}" if bars.per else ""
     return [f"☔ Rain{per}: least {bars.y[lo]:g} mm ({day(lo)}) · most {bars.y[hi]:g} mm ({day(hi)}) · {sum(bars.y):.1f} mm in all"]

@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta, tzinfo
 from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
-from ..timeutil import day_bounds, local_date, now_local
+from ..timeutil import day_bounds, day_text, local_date, now_local
 from .api import daily_run
 from .calendar import PublicHolidays
 from .store import HistoryCache, subtract
@@ -143,7 +143,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
 
     checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
     units = {n: FIELDS[n][3] for n in shown}
-    label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
+    label = day_text
     got = analyse(values, shown, units, args, checked, first, last, tz, turn,
                   lambda d: {**({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
                              "source": "daily" if source.get(d) == "daily" else "exact"},

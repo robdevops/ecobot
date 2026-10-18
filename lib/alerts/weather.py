@@ -21,7 +21,7 @@ from ..ecowitt.glance import UVI_ALERT
 from . import confirm, pictures
 from .backoff import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
-from ..timeutil import local_epoch, to_local
+from ..timeutil import clock_text, local_epoch, to_local
 
 log = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ class WeatherMonitor:
         self.state.monitor.pop("night")
         if not night.get("first") or latest - night.get("began", 0) >= 86400:
             return   # a dry night, or an old note (the bot was down)
-        clock = lambda ts: f"{to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
+        clock = lambda ts: clock_text(to_local(ts, self.tz))
         fell = await self._fell(rows, night["first"], night["last"])
         amount = f"{fell:.1f} mm" if fell else "a trace"
         still = " It's still raining." if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" else ""
@@ -170,8 +170,8 @@ class WeatherMonitor:
                 m["active"] = True
                 gust, ts = max(over)
                 photo = await self._picture("Wind chart 1d")
-                await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-                                  + f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", **({"photo": photo} if photo else {}))
+                await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {clock_text(to_local(ts, self.tz))}"
+                                  f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", **({"photo": photo} if photo else {}))
         elif m["active"]:
             m["calm_since"] = m["calm_since"] or latest_ts
             if latest_ts - m["calm_since"] >= GUST_REARM_SECONDS:
@@ -203,8 +203,8 @@ class WeatherMonitor:
             m["active"] = True
             uv, ts = m["peak"]
             photo = await self._picture("UV chart 1d")
-            await self.notify(f"\U0001f9f4 UV index {uv:g} at {to_local(ts, self.tz):%-I:%M%p}".replace("AM", "am").replace("PM", "pm")
-                              + f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
+            await self.notify(f"\U0001f9f4 UV index {uv:g} at {clock_text(to_local(ts, self.tz))}"
+                              f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
                               **({"photo": photo} if photo else {}))
 
     async def _cross(self, rows: Rows):

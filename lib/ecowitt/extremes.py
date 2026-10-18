@@ -3,7 +3,7 @@
 from datetime import date, datetime, tzinfo, UTC
 from typing import NamedTuple
 
-from ..timeutil import local_date
+from ..timeutil import clock_text, day_text, local_date
 from .api import CYCLE_SECONDS
 from .fetch import series_in
 
@@ -74,14 +74,7 @@ def daily_readings(pts: dict, before: date | None = None, tz: tzinfo | None = No
             if r["cycle"] != "1day" and "value" in r and (before is None or local_date(t, tz) < before)]
 
 
-def _clock(dt: datetime) -> str:
-    """12-hour clock, e.g. '7:05am', '3:30pm', '10am'."""
-    text = dt.strftime("%I:%M%p").lstrip("0").lower()
-    return text.replace(":00", "") if dt.minute == 0 else text
-
-
-def _day(dt: datetime) -> str:
-    return f"{dt:%a} {dt.day} {dt:%b %Y}"
+_clock = lambda dt: clock_text(dt, whole_hours=True)   # "7:05am", "3:30pm", "10am"
 
 
 def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
@@ -90,12 +83,12 @@ def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
     the window it happened in, so the model can copy it as is. The date is separate (so an emoji
     can go before it) and empty when the window spans two days, since then the wording has both."""
     start = datetime.fromtimestamp(ts, UTC).astimezone(tz)
-    raw = start.strftime("%a %d %b %Y %H:%M")
+    raw = f"{day_text(start)} {clock_text(start)}"
     if cycle == "5min":
-        return raw, f"at {_clock(start)}", _day(start)
+        return raw, f"at {_clock(start)}", day_text(start)
     if cycle == "30min":
-        return raw, f"around {_clock(start)}", _day(start)
+        return raw, f"around {_clock(start)}", day_text(start)
     end = datetime.fromtimestamp(ts + CYCLE_SECONDS[cycle], UTC).astimezone(tz)
     if start.date() == end.date():
-        return raw, f"sometime between {_clock(start)} and {_clock(end)}", _day(start)
-    return raw, f"sometime between {_clock(start)} {_day(start)} and {_clock(end)} {_day(end)}", ""
+        return raw, f"sometime between {_clock(start)} and {_clock(end)}", day_text(start)
+    return raw, f"sometime between {_clock(start)} {day_text(start)} and {_clock(end)} {day_text(end)}", ""

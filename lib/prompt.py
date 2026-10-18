@@ -6,6 +6,7 @@ from datetime import datetime
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS
 from .intent import period_ranges
 from .series import WEATHER
+from .timeutil import day_text
 
 WEATHER_NAMES = list(WEATHER)
 
@@ -145,7 +146,7 @@ DATE_LABELS = [  # period name -> label in the prompt
 def date_ranges(now: datetime) -> str:
     """Pre-computed date ranges so the model never does calendar maths (same definitions as
     the fast path)."""
-    fmt = lambda d: d.strftime("%a %d %b %Y")
+    fmt = day_text
     periods = period_ranges(now.date())
     lines = [f"  Today: {fmt(now)} (00:00 to now)"]
     for name, label in DATE_LABELS:

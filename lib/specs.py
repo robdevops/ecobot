@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from .series import RAIN_WITH, WEATHER
+from .timeutil import day_text
 
 
 NO_LOW = tuple(name for name, r in WEATHER.items() if not r.low)   # readings whose low is nothing every night or calm hour: only the high is tagged
@@ -117,6 +118,7 @@ class Chart:
     subtitle: str
     panels: list[Panel]
     compass: Compass | None = None
+    period: tuple[date, date] | None = None            # the first and last day it covers, for its caption
 
     def __post_init__(self):
         if not self.panels:
@@ -129,37 +131,26 @@ class Chart:
                 if panel.reading in NO_LOW:
                     line.records.pop("low", None)
 
-
-def _caption(self, today: date) -> str:
-    """The chart's caption. One panel: one line, "Temperature, since Tue 7 Jul 2026" (a period that runs up to today), "Temperature,
-    Wed 24 – Tue 30 Sep 2026" otherwise. Several panels: the title, then the time range on a line of its own."""
-    period = self.subtitle.split("  ·  ")[0].strip()   # always starts with the time range
-    if not period:
-        return self.title
-    if len(self.panels) != 1:
-        return f"{self.title}\n{period}"
-    day = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
-    left, _, right = period.partition(" – ")
-    if not right:   # one day
-        return f"{self.title}, {'today' if period == day(today) else period}"
-    if right != day(today):
-        return f"{self.title}, {period}"
-    first, last = left.split(), right.split()   # "Wed 24" / "Thu 27 Aug" take their month and year from the end of the range
-    return f"{self.title}, since {' '.join([*first, *last[len(first):]])}"
-
-
-Chart.caption = _caption
+    def caption(self, today: date) -> str:
+        """The chart's caption. One panel: one line, "Temperature, since Tue 7 Jul 2026" (a period that runs up to today),
+        "Temperature, Wed 24 – Tue 30 Sep 2026" otherwise. Several panels: the title, then the period on a line of its own."""
+        if not self.period:
+            return self.title
+        first, last = self.period
+        if len(self.panels) != 1:
+            return f"{self.title}\n{period_text(first, last)}"
+        if first == last:
+            return f"{self.title}, {'today' if first == today else day_text(first)}"
+        return f"{self.title}, since {day_text(first)}" if last == today else f"{self.title}, {period_text(first, last)}"
 
 
 def period_text(a: date, b: date) -> str:
     """'Tue 30 Sep 2026', 'Wed 24 – Tue 30 Sep 2026', 'Thu 27 Aug – Tue 30 Sep 2026'; the year goes on both dates when it differs."""
     if a == b:
-        return f"{a:%a} {a.day} {a:%b %Y}"
+        return day_text(a)
     if (a.year, a.month) == (b.year, b.month):
-        return f"{a:%a} {a.day} – {b:%a} {b.day} {b:%b %Y}"
-    if a.year == b.year:
-        return f"{a:%a} {a.day} {a:%b} – {b:%a} {b.day} {b:%b %Y}"
-    return f"{a:%a} {a.day} {a:%b %Y} – {b:%a} {b.day} {b:%b %Y}"
+        return f"{a:%a} {a.day} – {day_text(b)}"
+    return f"{day_text(a, year=a.year != b.year)} – {day_text(b)}"
 
 
 def rain_behind(panels: list[Panel]) -> list[Panel]:
@@ -181,4 +172,5 @@ def stack(panels: list[Panel], first: date, last: date) -> Chart:
     per = next((f"{'rain' if b is p.bars else 'rating'} per {b.per}" for p in panels for b in (p.bars, p.shares) if b and b.per), "")
     shaded = any(s.low is not None for p in panels for s in p.lines)
     return Chart(", ".join(p.label for p in panels),
-                 "  ·  ".join(filter(None, [period_text(first, last), per, "range shaded" if shaded else ""])), rain_behind(panels))
+                 "  ·  ".join(filter(None, [period_text(first, last), per, "range shaded" if shaded else ""])), rain_behind(panels),
+                 period=(first, last))

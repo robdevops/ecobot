@@ -3,8 +3,8 @@ from datetime import date
 
 from lib import report
 
-# What `python scripts/report_inputs.py` printed on the real station (rain, night)
-NOW = ('{"time":"Fri 02 Oct 2026 02:21","outdoor":{"temperature":"12.3 ℃","feels_like":"12.3 ℃","app_temp":"12.7 ℃","dew_point":"11.3 ℃",'
+# What `python scripts/report_inputs.py` printed on the real station (rain, night), its time as the station now writes it
+NOW = ('{"time":"Fri 2 Oct 2026 2:21am","outdoor":{"temperature":"12.3 ℃","feels_like":"12.3 ℃","app_temp":"12.7 ℃","dew_point":"11.3 ℃",'
        '"vpd":"0.085 kPa","humidity":"94 %"},"indoor":{"temperature":"18.3 ℃","humidity":"63 %","dew_point":"11.1 ℃","feels_like":"18.3 ℃",'
        '"app_tempin":"18.7 ℃"},"solar_and_uvi":{"solar":"0.0 W/m²","uvi":"0"},"rainfall":{"rain_rate":"1.8 mm/hr","daily":"6.3 mm",'
        '"event":"49.8 mm","1_hour":"1.3 mm","weekly":"49.8 mm","monthly":"49.8 mm","yearly":"5105.7 mm"},"wind":{"wind_speed":"0.0 km/h",'
@@ -235,8 +235,8 @@ def test_a_figure_per_period_lookup_gives_the_figure_over_the_whole_period():
 
 def test_a_heading_carries_the_place_and_the_time_of_day_of_its_data():
     assert report._heading("Forecast", {"place": "Melbourne", "time": "Fri 2 Oct 2026 6:05pm"}, TODAY) == "Forecast (Melbourne, 6:05pm)"
-    assert report._heading("Weather station", {"time": "Fri 02 Oct 2026 00:07"}, TODAY) == "Weather station (12:07am)"     # the station's 24-hour form
-    assert report._heading("Weather station", {"time": "Fri 02 Oct 2026 13:30"}, TODAY) == "Weather station (1:30pm)"
+    assert report._heading("Weather station", {"time": "Fri 2 Oct 2026 12:07am"}, TODAY) == "Weather station (12:07am)"
+    assert report._heading("Weather station", {"time": "Fri 2 Oct 2026 1:30pm"}, TODAY) == "Weather station (1:30pm)"
     assert report._heading("Air quality", {"time": "Fri 2 Oct 2026 12:00pm"}, TODAY) == "Air quality (12:00pm)"
     assert report._heading("Forecast", {"place": "Melbourne"}, TODAY) == "Forecast (Melbourne)"                           # no time: as before
     assert report._heading("Air quality", {"time": "yesterday"}, TODAY) == "Air quality" and report._heading("Air quality", {"time": None}, TODAY) == "Air quality"

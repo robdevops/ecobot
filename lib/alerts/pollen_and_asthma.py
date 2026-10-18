@@ -10,6 +10,7 @@ import logging
 import time
 
 from ..pollen.parse import LEVEL_EMOJI, LEVELS
+from ..timeutil import day_text
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +47,6 @@ class PollenAndAsthmaMonitor:
             if last is None or last["rank"] < rank or last["day"] != day:
                 m[key] = {"rank": rank, "day": day}
                 for_day = reading.get("date")
-                when = f" (forecast for {for_day:%a %d %b})" if for_day and for_day != today else ""
+                when = f" (forecast for {day_text(for_day, year=False)})" if for_day and for_day != today else ""
                 await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen_and_asthma")
         self.state.save()
