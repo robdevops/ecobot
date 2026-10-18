@@ -19,6 +19,7 @@ from datetime import datetime, time, timedelta
 
 from ..ecowitt.glance import UVI_ALERT
 from . import confirm, pictures
+from .menu import kinds_of
 from .backoff import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
 from ..timeutil import clock_text, local_epoch, to_local
@@ -41,7 +42,7 @@ def side(r: dict) -> str | None:
 
 
 class WeatherMonitor:
-    KINDS = ("rain", "gusts", "uv", "temps")
+    KINDS = kinds_of("Ecowitt")
 
     def __init__(self, station, state, notify, cooldown_seconds: int = ALERT_COOLDOWN_SECONDS, quiet: tuple[int, int] | None = None):
         self.station, self.state, self.notify = station, state, notify

@@ -465,7 +465,7 @@ class Bot:
     # ---------- irrigation ----------
     def _irrigation_alerts(self, chat_id: int) -> tuple[bool, bool]:
         """Does this chat get the irrigation battery alerts, and the pause alerts?"""
-        return tuple(self.state.subscribed(chat_id, kind) for kind in ("irrigation_battery", "irrigation_pause"))
+        return tuple(self.state.subscribed(chat_id, kind) for kind, _ in irrigation_menu.ALERTS.values())
 
     def _irrigation_keyboard(self, chat_id: int, opened: str | None = None, paused: bool = False, running: bool = False):
         return irrigation_menu.keyboard(*self._irrigation_alerts(chat_id), opened, paused, running)
@@ -501,9 +501,10 @@ class Bot:
             if self.watchdog:
                 self.watchdog.disarm()
             return "Switched off"
-        if action in ("batt", "pause") and arg in ("on", "off") and chat_id in self.state.chats:
-            self.state.set_kind(chat_id, "irrigation_battery" if action == "batt" else "irrigation_pause", arg == "on", self._alert_kinds())
-            return f"Irrigation {'battery' if action == 'batt' else 'pause'} alerts {arg} in this chat"
+        if action in irrigation_menu.ALERTS and arg in ("on", "off") and chat_id in self.state.chats:
+            kind, name = irrigation_menu.ALERTS[action]
+            self.state.set_kind(chat_id, kind, arg == "on", self._alert_kinds())
+            return f"Irrigation {name} alerts {arg} in this chat"
         return None
 
     async def on_irrigation_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -563,7 +564,7 @@ class Bot:
         except IrrigationError as e:
             log.warning("Irrigation status after %s %s failed: %s", action, arg, e)   # the toast said what was done; the message stays as it was
             return
-        stay = "alerts" if action in ("batt", "pause") else None   # the Alerts menu stays open after a toggle, to show the new label
+        stay = "alerts" if action in irrigation_menu.ALERTS else None   # the Alerts menu stays open after a toggle, to show the new label
         await self._edit(query, *self._irrigation_view(status, message.chat_id, stay))
 
     @staticmethod

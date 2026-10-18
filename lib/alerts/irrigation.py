@@ -15,8 +15,10 @@ import logging
 from datetime import datetime, timedelta
 
 from ..ecowitt.rain import rain_amount
+from ..irrigation.tuya import is_paused
 from ..timeutil import local_epoch, now_local, seconds_until, when
 from .forecast import RAIN_FROM_PCT
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ FORECAST_TRUSTED_SECONDS = 24 * 3600   # an older forecast (Open-Meteo unreachab
 
 
 class IrrigationMonitor:
-    KINDS = ("irrigation_battery", "irrigation_pause")
+    KINDS = kinds_of("Irrigation")
 
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
         """station: the Ecowitt source (its recent() gives the measured rain); forecast: the Forecast source. Either may be None."""
@@ -75,7 +77,7 @@ class IrrigationMonitor:
         if reason:
             current = status.get("weather_delay")
             own = current == "24h" and memory.get("paused") == (now.date() - timedelta(days=1)).isoformat()
-            if current in (None, "cancel") or own:
+            if not is_paused(status) or own:
                 if own:   # the bot's pause from yesterday: ended first, so the new one runs a full day
                     await self.device.delay("cancel")
                 await self.device.delay("24h")

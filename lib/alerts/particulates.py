@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 
 from . import confirm, pictures
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ STALE_SECONDS = 2 * 3600               # ignore readings older than this (sensor
 
 
 class ParticulatesMonitor:
-    KINDS = ("particulates",)
+    KINDS = kinds_of("AirGradient")
 
     def __init__(self, air, state, notify):
         self.air, self.state, self.notify = air, state, notify

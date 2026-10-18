@@ -11,6 +11,7 @@ import time
 
 from ..pollen.parse import LEVEL_EMOJI, LEVELS
 from ..timeutil import day_text
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ LINK = ("melbournepollen.com.au", "https://www.melbournepollen.com.au/")
 
 
 class PollenAndAsthmaMonitor:
-    KINDS = ("pollen_and_asthma",)
+    KINDS = kinds_of("Pollen")
 
     def __init__(self, pollen, state, notify):
         self.pollen, self.state, self.notify = pollen, state, notify

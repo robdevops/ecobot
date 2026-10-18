@@ -18,11 +18,12 @@ from telegram import InlineKeyboardMarkup, MessageEntity
 
 from ..buttons import button, opener, toggle_button
 from ..entities import footer
+from .tuya import DELAYS, is_paused
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)
-DELAYS = ("24h", "48h", "72h", "cancel")
 SECTIONS = ("water", "delay", "alerts")
+ALERTS = {"batt": ("irrigation_battery", "battery"), "pause": ("irrigation_pause", "pause")}   # an Alerts toggle's word -> (its alert type, its name)
 LOW_BATTERY = 10          # below this the battery shows as 🪫
 PAUSED_ERROR = "error: can not turn on water while paused!"
 KEYWORDS = re.compile(r"\b(irrigation|irrigate|sprinklers?|taps?|water(?:ing)?)\b", re.IGNORECASE)
@@ -32,11 +33,6 @@ MAX_WORDS = 6             # a longer message that happens to say "water" is a qu
 def asked(text: str) -> bool:
     """Does this short message ask for the controller (irrigation, water, tap, sprinkler)? The same as pressing the Irrigation button."""
     return 0 < len(text.split()) <= MAX_WORDS and bool(KEYWORDS.search(text))
-
-
-def is_paused(status: dict) -> bool:
-    """Is the timer paused (the controller has a weather delay other than "cancel")?"""
-    return status.get("weather_delay") not in (None, "cancel")
 
 
 def paused_in(text: str | None) -> bool:
@@ -76,7 +72,7 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
     return "\n".join([TITLE,
                       f"mode: {status.get('work_state') or 'unknown'}",
                       f"state: {'on ✅' if on else 'off ❌'}{left}",
-                      f"pause: {'not paused' if delay in (None, 'cancel') else delay}{bracket(pause_alerts)}",
+                      f"pause: {delay if is_paused(status) else 'not paused'}{bracket(pause_alerts)}",
                       f"battery: {level}{bracket(alerts)}"])
 
 
@@ -95,6 +91,6 @@ def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool =
     elif open == "delay" and not paused:
         rows.append([button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
     elif open == "alerts":
-        for on, kind, name in ((battery, "batt", "battery"), (pause, "pause", "pause")):
-            rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, kind=kind: f"ir:{kind}:{'on' if turn_on else 'off'}")])
+        for on, (word, (_, name)) in zip((battery, pause), ALERTS.items()):
+            rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, word=word: f"ir:{word}:{'on' if turn_on else 'off'}")])
     return InlineKeyboardMarkup(rows)

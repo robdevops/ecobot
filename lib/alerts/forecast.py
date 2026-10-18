@@ -13,6 +13,7 @@ The forecast only refreshes from 6 am to 6 pm, so that is when this can fire.
 import logging
 
 from ..forecast.source import day_label, describe_day
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def revised(old: dict, new: dict) -> bool:
 
 
 class ForecastMonitor:
-    KINDS = ("forecast",)
+    KINDS = kinds_of("Forecast")
 
     def __init__(self, forecast, state, notify):
         """notify: the Notifier (chats=[chat] sends to that one)."""
