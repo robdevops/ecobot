@@ -109,3 +109,12 @@ def test_two_lows_that_end_together_at_the_right_edge_get_pills_on_opposite_side
                                                     Line("Other", xs, floor, reading="humidity")], reading="humidity")])
     sides = dict(annotations_of(chart))
     assert {sides["45.3 %"], sides["48.0 %"]} == {"top", "bottom"}, sides                       # never the same side
+
+
+def test_a_temperature_low_just_above_zero_is_labelled():
+    """Only a reading that can't go below zero (rain, wind, sun, air) has its axis floored at 0 and its low on the floor left
+    unlabelled; a cold night of 0.4° is a record worth its label."""
+    ys = [12.0, 8.0, 0.4, 6.0, 15.0, 20.0, 18.0]
+    chart = Chart("T", "s", [Panel("Temperature", "°C", [one_line("temperature", ys).panels[0].lines[0]], reading="temperature")])
+    assert "0.4°" in labels_of(chart)
+    assert "0" not in labels_of(one_line("wind", [3.0, 0.0, 5.0, 9.0]))   # a calm low on the floor still says nothing

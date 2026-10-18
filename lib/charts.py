@@ -525,7 +525,7 @@ def _draw_panel(ax, p: Panel, tz: tzinfo, first: int, x0: float, x1: float, look
     pilled = bool(marked) and p.peaks == "pills"
     _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()] if pilled else []),
                 top=look.pad if pilled else 0.18 if marked else 0.12, bottom=look.pad if pilled else 0.12,
-                floor=0)
+                floor=None if _deg(p.unit) == "°" else 0)   # a temperature can go below zero; nothing else drawn as a line can
     ybottom, ytop = ax.get_ylim()
     drawn = _draw_lines(ax, lines, tz, look, first, p.reading)
     if p.zones:  # a rated reading: its good / poor / very poor zones behind the line (and over any rain behind it, as always)
