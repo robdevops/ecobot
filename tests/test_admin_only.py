@@ -321,9 +321,10 @@ def every_keyboard(bot):
     kinds = menu.available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(menu.LABELS)]
     for muted in muted_sets:
-        for opened in (None, "sub", "unsub"):
+        for opened in (None, "sub", "unsub", "gear", "set", "snd_on", "snd_off"):
             for parent in (None, *kinds):
-                yield menu.keyboard(muted, kinds, opened, parent)
+                for loud in (None, set(), set(kinds)):
+                    yield menu.keyboard(muted, kinds, opened, parent, loud)
     for battery in (True, False):
         for pause in (True, False):
             for opened in (None, *irrigation_menu.SECTIONS, "bogus"):

@@ -87,7 +87,7 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     await notifier("Gusts", kind="gusts")
     assert [(c, t.split("\n")[0]) for c, t, _ in bot.sent] == [(1, "It's raining"), (1, "Gusts"), (2, "Gusts")]
     markup = bot.sent[0][2]["reply_markup"]
-    assert rows(markup) == [[("🔕 ▸", "al:open:unsub:rain"), ("🔊", "al:snd:rain:on:rain")]]   # the alert's own type rides along
+    assert rows(markup) == [[("⚙️ ▸", "al:open:gear:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
     assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
 
@@ -257,16 +257,19 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     assert seen == ["forecast"]
 
 
-def test_under_an_alert_the_unsubscribe_list_is_just_its_type_and_all_and_there_is_no_subscribe():
-    got = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "unsub", parent="uv"))
-    assert got == [[("🔕 ▾", "al:close:uv")], [("● 🧴 UV", "al:off:uv:unsub:uv")], [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
-    assert rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "other", parent="uv")) == got       # there is no Other
-    assert rows(keyboard({"pollen_and_asthma"}, KINDS, "sub", parent="uv")) == rows(keyboard({"pollen_and_asthma"}, KINDS, None, parent="uv"))
-    only = rows(keyboard(set(KINDS) - {"uv"}, KINDS, "unsub", parent="uv"))              # the alert's type is the only one on: no "all"
-    assert only[1:] == [[("● 🧴 UV", "al:off:uv:unsub:uv")]]
-    gone = rows(keyboard({"uv", "gusts"}, KINDS, "unsub", parent="uv"))                  # its type is already off: a plain list of the rest, with "all"
-    assert "Other" not in str(gone) and gone[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]
-    assert len(rows(keyboard(set(KINDS), KINDS, "unsub", parent="uv"))) == 1             # nothing is on at all: nothing listed
+def test_under_an_alert_one_gear_opens_the_alert_toggle_and_then_the_sound_toggle_struck_through_when_off():
+    strike = lambda word: "".join(c + "\u0336" for c in word)
+    shut = rows(keyboard(set(), KINDS, None, parent="uv", loud=set()))
+    assert shut == [[("⚙️ ▸", "al:open:gear:uv")]]
+    on = rows(keyboard(set(), KINDS, "gear", parent="uv", loud=set()))                           # both on... the sound is off
+    assert on == [[("⚙️ ▾", "al:close:uv")], [("🔔 Alert", "al:off:uv:gear:uv")], [("🔊 " + strike("Sound"), "al:snd:uv:on:uv")]]
+    both = rows(keyboard(set(), KINDS, "gear", parent="uv", loud={"uv"}))
+    assert both[2] == [("🔊 Sound", "al:snd:uv:off:uv")]
+    off = rows(keyboard({"uv"}, KINDS, "gear", parent="uv", loud={"uv"}))                        # alert off: struck through, and no sound toggle
+    assert off == [[("⚙️ ▾", "al:close:uv")], [("🔔 " + strike("Alert"), "al:on:uv:gear:uv")]]
+    group = rows(keyboard(set(), KINDS, "gear", parent="uv", loud=None))                         # a group has no sound
+    assert group == [[("⚙️ ▾", "al:close:uv")], [("🔔 Alert", "al:off:uv:gear:uv")]]
+    assert rows(keyboard(set(), KINDS, "unsub", parent="uv", loud=set())) == shut                # (an earlier version's list: just the gear)
     sub = rows(keyboard({"pollen_and_asthma", "forecast"}, KINDS, "sub"))                          # Subscribe (the /alerts message) is the types that are off
     assert [t for row in sub[1:-1] for t, _ in row] == ["🌼 pollen & asthma", "🔄 forecast changes"] and sub[-1][0][0] == "🔔 Subscribe to all"
     assert rows(keyboard(set(), KINDS, "unsub"))[1][0][0] == "🌧️ rain"                      # the /alerts message has no parent: every type that is on
@@ -280,23 +283,25 @@ def test_the_all_button_is_only_there_when_the_list_has_more_than_one_item():
     assert rows(keyboard(set(), KINDS, "unsub"))[-1][0][0] == "🔕 Unsubscribe from all"
 
 
-async def test_the_alerts_own_type_survives_opening_unsubscribing_and_closing_the_menu_under_it(tmp_path):
+async def test_the_gear_under_an_alert_toggles_the_alert_and_its_sound_and_stays_open(tmp_path):
     bot, state = make_bot(tmp_path)
-    q = Query("al:open:unsub:uv", text="☀️ UV 10")
+    strike = lambda word: "".join(c + "\u0336" for c in word)
+    q = Query("al:open:gear:uv", text="☀️ UV 10")
     await press(bot, q)
-    drawn = rows(q.edits[0][1])
-    assert drawn[0][0] == ("🔕 ▾", "al:close:uv") and drawn[1:] == [
-        [("● 🧴 UV", "al:off:uv:unsub:uv")], [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]]
-    q = Query("al:off:uv:unsub:uv", text="☀️ UV 10")                           # unsubscribing from this type leaves a plain list of the rest
+    assert rows(q.edits[0][1]) == [[("⚙️ ▾", "al:close:uv")], [("🔔 Alert", "al:off:uv:gear:uv")], [("🔊 " + strike("Sound"), "al:snd:uv:on:uv")]]
+    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
+    await press(bot, q)
+    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][1])[2] == [("🔊 Sound", "al:snd:uv:off:uv")]
+    q = Query("al:off:uv:gear:uv", text="☀️ UV 10")                            # alert off: the sound toggle goes, the struck alert stays to turn it back on
     await press(bot, q)
     assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
-    assert "Other" not in str(rows(q.edits[0][1])) and rows(q.edits[0][1])[-1] == [("🔕 Unsubscribe from all", "al:off:all:unsub:uv")]
-    q = Query("al:off:all:unsub:uv", text="☀️ UV 10")                          # and "all" turns the rest off, closing the empty section
+    assert rows(q.edits[0][1]) == [[("⚙️ ▾", "al:close:uv")], [("🔔 " + strike("Alert"), "al:on:uv:gear:uv")]]
+    q = Query("al:on:uv:gear:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv")]]
-    q = Query("al:open:unsub:uv", text="☀️ UV 10")                             # nothing is on now: a toast, no menu
+    assert "uv" not in state.muted(1) and rows(q.edits[0][1])[2] == [("🔊 Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
+    q = Query("al:close:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert q.toast == "No alerts are on" and not q.edits
+    assert rows(q.edits[0][1]) == [[("⚙️ ▸", "al:open:gear:uv")]]
 
 
 async def test_an_unknown_parent_in_a_button_is_ignored(tmp_path):
@@ -315,13 +320,9 @@ def test_every_alert_type_has_its_emoji_and_every_button_in_the_lists_starts_wit
     assert label("rain") == "🌧️ rain" and label("irrigation_battery") == "🪫 irrigation battery" and label("irrigation_pause") == "☔ irrigation pause"
     everything = list(LABELS)
     for section in ("sub", "unsub"):
-        for parent in (None, "uv"):
-            if parent and section == "sub":
-                continue                                                                  # no Subscribe under an alert
-            drawn = rows(keyboard(set(LABELS) if section == "sub" else set(), everything, section, parent))
-            texts = [t for row in drawn[1:] for t, _ in row]
-            texts = [t for t in texts if "Other" not in t]                                    # (the Other menu is a word, not an alert type)
-            assert texts and all(not t.removeprefix("● ")[0].isascii() for t in texts), texts      # every button under it starts with an emoji
+        drawn = rows(keyboard(set(LABELS) if section == "sub" else set(), everything, section))
+        texts = [t for row in drawn[1:] for t, _ in row]
+        assert texts and all(not t[0].isascii() for t in texts), texts                       # every button under it starts with an emoji
     assert title(set(), ["rain"]) == f"{TITLE}\n✅ On: rain\n🔕 Off: nothing"                # the on/off summary and the toasts stay plain words
 
 
@@ -345,16 +346,6 @@ async def test_settings_hold_enable_and_disable_sub_menus_of_notification_sounds
     assert [b for r in rows(q.edits[0][1]) for b in r if b[1].startswith("al:snd")] == [("🌧️ rain", "al:snd:rain:off")]
     await press(bot, Query("al:snd:rain:off"))
     assert state.loud(1) == set()
-    q = Query("al:open:snd_on:uv", text="☀️ UV 10")                             # under an alert there is no Settings: the sound is one toggle
-    await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv"), ("🔊", "al:snd:uv:on:uv")]]
-    q = Query("al:snd:uv:on:uv", text="☀️ UV 10")                               # 🔊 turns this type's sound on, and the button becomes 🔇
-    await press(bot, q)
-    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound"
-    assert rows(q.edits[0][1]) == [[("🔕 ▸", "al:open:unsub:uv"), ("🔇", "al:snd:uv:off:uv")]]
-    q = Query("al:snd:uv:off:uv", text="☀️ UV 10")
-    await press(bot, q)
-    assert state.loud(1) == set() and q.toast == "UV alerts no longer make a sound" and rows(q.edits[0][1])[0][1][0] == "🔊"
     for data in ("al:snd:bogus:on", "al:snd:rain:maybe", "al:snd:rain"):         # nothing from the data reaches the state
         await press(bot, Query(data))
     assert state.loud(1) == set()
@@ -375,7 +366,7 @@ async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_
     flags = {(c, t.split("\n")[0]): kw["disable_notification"] for c, t, kw in bot.sent}
     assert flags[(1, "It's raining")] is False and flags[(1, "UV")] is True and flags[(-5, "It's raining")] is True
     group = next(kw for c, _, kw in bot.sent if c == -5)
-    assert [b[0] for b in rows(group["reply_markup"])[0]] == ["🔕 ▸"]
+    assert [b[0] for b in rows(group["reply_markup"])[0]] == ["⚙️ ▸"]
 
 
 async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path):
@@ -467,7 +458,7 @@ async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_capti
     assert bot.sent == [] and len(bot.photos) == 1
     chat, photo, kw = bot.photos[0]
     assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
-    assert rows(kw["reply_markup"])[0][0] == ("🔕 ▸", "al:open:unsub:temps")                   # the alert's own buttons ride along
+    assert rows(kw["reply_markup"])[0][0] == ("⚙️ ▸", "al:open:gear:temps")                   # the alert's own buttons ride along
 
 
 async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_telegrams_copy(tmp_path):
