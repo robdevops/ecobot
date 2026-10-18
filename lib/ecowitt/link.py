@@ -18,7 +18,7 @@ from ..rain import rain_bars, rain_slots
 from ..panels import panel_for
 from ..series import WEATHER
 from ..specs import Chart, Line, stack
-from ..timeutil import day_bounds, day_text, local_date, now_local, parse_period
+from ..timeutil import day_bounds, day_text, local_date, now_local, parse_period, period_parameters
 from ..tools import json_result
 from .store import HistoryCache
 
@@ -30,8 +30,7 @@ DRIVERS = {"pressure": 1.0, "humidity": 5.0, "wind": 5.0}   # a reading (series)
 PARAMETERS = {
     "type": "object",
     "properties": {
-        "start_date": {"type": "string", "description": f"First day, 'YYYY-MM-DD'. Default: the last {DEFAULT_DAYS} days."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(DEFAULT_DAYS),
         "driver": {"type": "string", "enum": list(DRIVERS),
                    "description": "The reading to relate to rain. Default pressure (relative)."},
         "chart": {"type": "boolean", "description": "Set true for a chart: the reading as a line, rain as bars behind it."},

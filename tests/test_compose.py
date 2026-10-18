@@ -56,6 +56,21 @@ async def test_a_reading_with_its_zones_over_rain_is_one_stacked_chart(tmp_path,
     await eco.close()
 
 
+async def test_the_air_panels_share_one_load_and_a_weather_chart_asks_the_sensor_nothing(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    loads, rows = [], comp.air.rows
+
+    async def counted(t0, t1):
+        loads.append((t0, t1))
+        return await rows(t0, t1)
+    comp.air.rows = counted
+    out, _ = await plot(comp, panels=[{"series": "pm2_5"}, {"series": "pm10", "style": "rating"}, {"series": "rain"}])
+    assert "chart" in out and len(loads) == 1
+    out, _ = await plot(comp, panels=[{"series": "temperature"}])
+    assert "chart" in out and len(loads) == 1
+    await eco.close()
+
+
 async def test_the_traffic_light_rating_is_the_share_of_each_days_readings(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
     out, specs = await plot(comp, panels=[{"series": "pm2_5", "style": "rating"}, {"series": "rain", "style": "bars"}])

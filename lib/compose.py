@@ -19,7 +19,7 @@ from .series import WEATHER
 from .panels import panel_for
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
-from .timeutil import SLOT, day_bounds, now_local, parse_period
+from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
 from .tools import Tool, Turn, json_result
 
 log = logging.getLogger(__name__)
@@ -44,8 +44,7 @@ PLOT_PARAMETERS = {
                    "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
                                                               "style": {"type": "string", "enum": list(STYLES)}},
                              "required": ["series"]}},
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 30 days before the end."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(DEFAULT_DAYS),
     },
     "required": ["panels"],
 }
@@ -68,8 +67,7 @@ SCAN_PARAMETERS = {
     "type": "object",
     "properties": {
         "metric": {"type": "string", "enum": ["all", *SCAN_AIR], "description": "One air reading, or all (default)."},
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 90 days before the end."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(SCAN_DAYS),
         "chart": {"type": "boolean", "description": "Set true for a chart of the strongest relationship found."},
     },
 }
@@ -84,8 +82,7 @@ LINK_PARAMETERS = {
     "type": "object",
     "properties": {
         "metric": {"type": "string", "enum": list(LINK_METRICS), "description": "The air reading. Default pm2_5."},
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 60 days before the end."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(LINK_DAYS),
         "chart": {"type": "boolean", "description": "Set true for a chart: the reading (with its rating zones) over rain bars."},
     },
 }
@@ -130,7 +127,9 @@ class Composer:
 
     async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:
         """({metric: (values, lows, highs)}, notes): the sensor's readings averaged into 30-minute slots, with each slot's
-        range, from one load of the period."""
+        range, from one load of the period (none when no metric is asked for)."""
+        if not metrics:
+            return {}, {}
         rows, hourly, skipped = await self.air.rows(datetime.combine(first, time()), datetime.combine(last, time(23, 59, 59)))
         out = {}
         for metric in metrics:
@@ -147,11 +146,6 @@ class Composer:
             notes["resolution"] = f"{hourly} day(s) only exist as hourly averages"
         return out, notes
 
-    async def air_slots(self, metric: str, first: date, last: date) -> tuple[dict, dict, dict, dict]:
-        """(values, lows, highs, notes) for one air metric; see air_series."""
-        series, notes = await self.air_series([metric], first, last)
-        return (*series[metric], notes)
-
     async def plot_chart(self, args: dict, turn: Turn | None = None) -> str:
         turn = turn or Turn()
         panels = args.get("panels")
@@ -160,14 +154,16 @@ class Composer:
         if isinstance(period := self.period(args), str):
             return _error(period)
         first, last = period
-        built, summary, notes = [], [], {}
-        for p in panels:
-            name, style = p.get("series"), p.get("style") or ("bars" if p.get("series") == "rain" else "line")
+        asked = [(p.get("series"), p.get("style") or ("bars" if p.get("series") == "rain" else "line")) for p in panels]
+        for name, style in asked:
             if name not in SERIES or style not in STYLES:
                 return _error(f"series must be one of {', '.join(SERIES)} and style one of {', '.join(STYLES)}")
             if (style == "bars") != (name == "rain") or (style == "rating" and name not in ALL_METRICS):
                 return _error("'bars' is for rain only, and 'rating' for the air-quality series only; use 'line' otherwise")
-            panel, facts = await self._panel(name, style, first, last, notes)
+        air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS], first, last)
+        built, summary = [], []
+        for name, style in asked:
+            panel, facts = self._panel(name, style, first, last, air.get(name))
             if panel is None:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
@@ -190,10 +186,10 @@ class Composer:
         if isinstance(period := self.period(args, LINK_DAYS), str):
             return _error(period)
         first, last = period
-        values, lows, highs, notes = await self.air_slots(metric, first, last)
-        air_panel, _ = await self._panel(metric, "line", first, last, {}, data=(values, lows, highs))
+        series, notes = await self.air_series([metric], first, last)
+        air_panel, _ = self._panel(metric, "line", first, last, series[metric])
         rain = rain_slots(self.weather("rainfall", "daily", first, last))
-        result = analyse_air(values, rain, RATINGS[metric], self.tz, LABELS[metric])
+        result = analyse_air(series[metric][0], rain, RATINGS[metric], self.tz, LABELS[metric])
         out = {"period": f"{first} to {last}", "metric": f"{LABELS[metric]} ({CHART_UNITS[metric]})",
                "resolution": "30-minute slots (air readings averaged, rain from the weather station's cache)",
                "how_to_read": ("Open with `verdict`, then the evidence in `findings`. Rain and clean air share weather (wind, fronts), "
@@ -244,15 +240,15 @@ class Composer:
         if strongest and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             drawn = [n for n in (strongest["air"], {"wind_speed": "wind"}.get(strongest["weather"], strongest["weather"])) if n in SERIES]
             if len(drawn) == 2:
-                panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, {}, data=air.get(n)))[0] for n in drawn]
+                panels = [self._panel(n, "bars" if n == "rain" else "line", first, last, air.get(n))[0] for n in drawn]
                 if all(panels):
                     self._add_chart(out, panels, first, last, turn)
         return json_result(out)
 
-    async def _panel(self, name: str, style: str, first: date, last: date, notes: dict,
-                     data: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
-        """(the panel, its figures for the caption); the panel is None when there is nothing to draw. `data` is an air series
-        already loaded (values, lows, highs)."""
+    def _panel(self, name: str, style: str, first: date, last: date,
+               air: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
+        """(the panel, its figures for the caption); the panel is None when there is nothing to draw. A weather reading comes from
+        the station's cache, an air metric's readings in `air` (values, lows, highs: see air_series)."""
         if name in WEATHER:
             reading = WEATHER[name]
             if name == "rain":
@@ -263,10 +259,7 @@ class Composer:
             line = driver_series(values, self.tz, first, last, reading.label, lows, highs, banded_short=bool(reading.band_field))
             facts = {"series": name, **self._stats(values, reading.unit)}
             return (panel_for(name, [line]) if line else None), facts
-        if data is None:
-            *data, more = await self.air_slots(name, first, last)
-            notes.update(more)
-        values, lows, highs = data
+        values, lows, highs = air or ({}, {}, {})
         if len(values) < 2:
             return None, {}
         if style == "rating":

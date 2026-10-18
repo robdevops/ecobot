@@ -96,6 +96,12 @@ def parse_period(args: dict, today: date, default_days: int) -> tuple[date, date
     return (first, last) if first <= last else "start_date must be before end_date (today isn't final, so the latest day is yesterday)"
 
 
+def period_parameters(default_days: int) -> dict:
+    """The start_date and end_date in a tool's parameters, for a period parse_period reads."""
+    return {"start_date": {"type": "string", "description": f"First day, 'YYYY-MM-DD'. Default: {default_days} days before the end."},
+            "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."}}
+
+
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
 WARN_POINTS = 2 * POINT_BUDGET                      # a question that sends the model more than twice a 500-point query's data gets a heads-up
 TOKENS_PER_POINT = 10                               # a dated low/high row is about 10 tokens as the model reads it
