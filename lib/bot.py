@@ -34,7 +34,7 @@ from .entities import with_link
 from .sources import Source
 from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
-from .logs import QUOTES
+from .logs import QUOTES, fit
 
 log = logging.getLogger(__name__)
 
@@ -86,9 +86,9 @@ async def watchdog(label: str, seconds: float):
     log.warning("Still working after %ds on %s; tasks waiting:\n  %s", seconds, label, "\n  ".join(stacks) or "(none)")
 
 
-def _short(text: str, limit: int = 200) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[:limit] + "..."
+def _short(text: str, limit: int) -> str:
+    """The text on one line, cut to `limit` characters (logs.fit): a question or button's data as the log names it."""
+    return fit(" ".join(text.split()), limit)
 
 
 def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float) -> str:
