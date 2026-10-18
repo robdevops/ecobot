@@ -149,7 +149,7 @@ class Forecast(Source):
              "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
             for i in range(len(dd["time"]))]
 
-    async def _ensemble(self, first: date, days: int) -> dict[date, int]:
+    async def _ensemble(self, days: int) -> dict[date, int]:
         """{local day: % of ensemble members with at least RAIN_MM that day}, to the nearest 5; a day with no usable members is left out.
         Every `hourly` series named precipitation* is one member (the response names them by member and model)."""
         lat, lon = self.location
@@ -171,10 +171,10 @@ class Forecast(Source):
         return {date.fromisoformat(day): 5 * round(100 * sum(t >= RAIN_MM for t in totals) / len(totals) / 5)
                 for day, totals in sums.items()}
 
-    async def _with_chance(self, source: str, days: list[dict]) -> list[dict]:
+    async def _with_chance(self, days: list[dict]) -> list[dict]:
         """The days with the ensemble's chance of at least 1 mm added; Open-Meteo's own figure stays where the ensemble has none."""
         try:
-            chance = await self._ensemble(days[0]["date"], len(days)) if days else {}
+            chance = await self._ensemble(len(days)) if days else {}
         except Exception as e:   # the forecast still works without it
             log.warning("Ensemble rain chance unavailable (%s: %s); using Open-Meteo's own", type(e).__name__, e)
             return days
@@ -187,7 +187,7 @@ class Forecast(Source):
             return "Forecast cached"
         before = self.requests
         self.source, self.days = await self._open_meteo()   # a failure raises: the warmer logs it
-        self.days = await self._with_chance(self.source, self.days)
+        self.days = await self._with_chance(self.days)
         self.fetched_at = time.time()
         self._save()
         return f"Forecast {self.requests - before} req"

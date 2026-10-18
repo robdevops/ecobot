@@ -508,7 +508,7 @@ class HistoryQuery:
                 out.append(Sample(t, v, low, high, CYCLES[r["cycle"]].seconds))
         return out
 
-    def _series_entry(self, k: str, label: str | None = None) -> tuple[Line, str] | None:
+    def _series_entry(self, k: str) -> tuple[Line, str] | None:
         """One series as a chart line and how it was drawn; None if there is too little to draw."""
         line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES,
                           force_daily=self.turn.average_asked, until=now_local(self.tz).date())
@@ -516,7 +516,7 @@ class HistoryQuery:
             return None
         group = k.split(".", 1)[0]
         line = line.unbanded(self.span.days + 1, keep=self._band_key(k) is not None)   # a short period: a clean line, except wind's gusts
-        return line.spec(label or group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
+        return line.spec(group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:
         """Rain for the chart, summed into bars. From the cached 30-minute readings and, after the last of them, the query's own

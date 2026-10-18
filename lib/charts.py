@@ -189,16 +189,14 @@ def _end_of(bx, width: float, default: float) -> float:
     return float(bx.max() + width / 86400) if len(bx) else default
 
 
-def _style_axis(ax, size: float = 7.5, pad: float = 5, grid: float = 0.8, below: bool = True):
+def _style_axis(ax):
     """The plain look shared by every chart: no frame but the baseline, faint horizontal grid, small muted ticks."""
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(AXIS)
-    ax.tick_params(axis="both", length=0, labelsize=size, labelcolor=MUTED, pad=pad)
-    if grid:
-        ax.grid(axis="y", color=GRID, linewidth=grid)
-    if below:
-        ax.set_axisbelow(True)
+    ax.tick_params(axis="both", length=0, labelsize=7.5, labelcolor=MUTED, pad=5)
+    ax.grid(axis="y", color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
 
 
 def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float, zorder: float = 0):
@@ -209,7 +207,7 @@ def _shade_zones(ax, zones, ybottom: float, ytop: float, alpha: float, zorder: f
             ax.axhspan(max(lo, ybottom), min(hi, ytop), color=colour, alpha=alpha, linewidth=0, zorder=zorder)
 
 
-def _pad_limits(ax, lo: float, hi: float, top: float = 0.2, bottom: float = 0.16, floor: float | None = None):
+def _pad_limits(ax, lo: float, hi: float, top: float, bottom: float, floor: float | None):
     """Room above and below the data; `floor`: the axis does not go below it when the data does not (no negative wind)."""
     span = max(hi - lo, 1.0)
     y0 = lo - span * bottom

@@ -275,7 +275,7 @@ def _rain_line(turn, tz) -> list[str]:
     return [f"☔ Rain{per}: least {bars.y[lo]:g} mm ({day(lo)}) · most {bars.y[hi]:g} mm ({day(hi)}) · {sum(bars.y):.1f} mm in all"]
 
 
-def _weather_caption(result: dict, args: dict, turn, tz) -> list[str]:
+def _weather_caption(result: dict, turn, tz) -> list[str]:
     series = result.get("series") or {}
     names = [n for n in dict.fromkeys(turn.chart_fields or [turn.chart_field or "temperature"]) if find(n)]
     lines: list[str] = []
@@ -298,7 +298,7 @@ def _weather_caption(result: dict, args: dict, turn, tz) -> list[str]:
     return lines
 
 
-def _air_caption(result: dict, args: dict, turn) -> list[str]:
+def _air_caption(result: dict, args: dict) -> list[str]:
     lines = []
     for key, label in ((name, m.label) for name, m in AIR.items()):
         entry = result.get(key)
@@ -317,8 +317,7 @@ def chart_caption(tool: str, args: dict, result: str | None, turn, tz) -> str | 
     data = _load(result)
     if not data or not turn.charts:
         return None
-    lines = (_air_caption(data, args, turn) if tool == "air_quality" else
-             _weather_caption(data, args, turn, tz))
+    lines = _air_caption(data, args) if tool == "air_quality" else _weather_caption(data, turn, tz)
     if not lines:
         return None
     notes = (["(Older days are still downloading, so they are left out.)"] if data.get("note_missing") else

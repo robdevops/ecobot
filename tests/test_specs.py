@@ -73,11 +73,12 @@ def test_a_reading_that_cannot_be_negative_is_not_drawn_below_zero_and_temperatu
     from matplotlib.figure import Figure
     from lib import charts
     ax = Figure().add_axes([0, 0, 1, 1])
-    charts._pad_limits(ax, 0.0, 8.0, floor=0)
+    pad = lambda lo, hi, floor: charts._pad_limits(ax, lo, hi, top=0.12, bottom=0.12, floor=floor)
+    pad(0.0, 8.0, 0)
     assert ax.get_ylim()[0] == 0
-    charts._pad_limits(ax, 0.0, 8.0)
+    pad(0.0, 8.0, None)
     assert ax.get_ylim()[0] < 0
-    charts._pad_limits(ax, -4.0, 8.0, floor=0)                                    # real negatives keep their room
+    pad(-4.0, 8.0, 0)                                                             # real negatives keep their room
     assert ax.get_ylim()[0] < -4
 
 

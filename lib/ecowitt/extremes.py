@@ -1,9 +1,9 @@
 """Turning Ecowitt readings into per-series points and finding their lowest and highest, with when each happened."""
 
-from datetime import date, datetime, tzinfo, UTC
+from datetime import datetime, tzinfo, UTC
 from typing import NamedTuple
 
-from ..timeutil import clock_text, day_text, local_date
+from ..timeutil import clock_text, day_text
 from .api import CYCLES
 from .fetch import series_in
 
@@ -68,10 +68,9 @@ def high_of(rec: dict) -> float:
     return rec["high"][0] if "high" in rec else rec["value"][0]
 
 
-def daily_readings(pts: dict, before: date | None = None, tz: tzinfo | None = None) -> list[tuple]:
-    """(ts, value, low, high, fine) for the 5- and 30-minute readings (those before `before`), for daily_summary."""
-    return [(t, r["value"][0], low_of(r), high_of(r), r["cycle"] == "5min") for t, r in pts.items()
-            if r["cycle"] != "1day" and "value" in r and (before is None or local_date(t, tz) < before)]
+def daily_readings(pts: dict) -> list[tuple]:
+    """(ts, value, low, high, fine) for the 5- and 30-minute readings, for daily_summary."""
+    return [(t, r["value"][0], low_of(r), high_of(r), r["cycle"] == "5min") for t, r in pts.items() if r["cycle"] != "1day" and "value" in r]
 
 
 _clock = lambda dt: clock_text(dt, whole_hours=True)   # "7:05am", "3:30pm", "10am"
