@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 import pytest
 
@@ -167,8 +167,9 @@ async def test_a_question_the_cache_and_memory_can_answer_does_not_wait_for_a_re
     refresh = asyncio.create_task(eco.warm(True))
     await asyncio.sleep(0.05)                              # the refresh's requests are out, holding the 5-minute and 30-minute fetches
     now = eco.now()
+    since = max(now - timedelta(hours=3), datetime.combine(now.date(), time()))   # (memory holds today: not the evening before, in the first hours of the day)
     question = eco.fetcher(["outdoor"], urgent=True)
-    data = await asyncio.wait_for(question.get("5min", now - timedelta(hours=3), now), 2)
+    data = await asyncio.wait_for(question.get("5min", since, now), 2)
     assert data["outdoor"]["temperature"]["list"] and question.calls == 0 and question.from_memory == 1
     assert not refresh.done()
     answering.set()
@@ -512,7 +513,7 @@ async def test_the_wind_rose_reads_its_5_minute_readings_in_runs_of_days_not_a_d
     out = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind",
                                                  "start_date": f"{today - timedelta(days=30)} 00:00:00"}, turn))
     assert out["series"]["wind.wind_direction"] and turn.charts[0].compass
-    assert len(made) == 1 and made[0].ranges == 1           # the archived days and today in one read, not one for each of 31 days
+    assert len(made) == 1 and made[0].ranges <= 2           # the archived days and today in one read (two in the first hours of the local day, while yesterday's last readings are not yet settled), not one for each of 31 days
     await eco.close()
     day = lambda n: today + timedelta(days=n)
     assert consecutive([day(1), day(2), day(3), day(5), day(6), day(9)]) == [[day(1), day(2), day(3)], [day(5), day(6)], [day(9)]]
