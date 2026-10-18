@@ -17,7 +17,7 @@ from datetime import datetime, UTC
 
 from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
-from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, TelegramError
+from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, periods, prompt, report, report_menu, templates
@@ -246,13 +246,13 @@ class Bot:
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant (and the buttons' drawn ahead)
-        self.answering = 0                   # questions being answered right now: charts are drawn ahead only when there are none
+        self.answering = 0                   # questions being answered right now: the button charts are drawn ahead (predraw) only when there are none
         self.idle = asyncio.Event()
         self.idle.set()
         self.predrawn = False                # the first round of charts drawn ahead has been logged
         self.predraw_failing: set[str] = set()   # button charts that couldn't be drawn ahead (said once, until they can again)
         self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
-        self.preload_off = False                 # Telegram refused an upload to that chat: no more are tried until restart
+        self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
         self.background: set[asyncio.Task] = set()   # tasks running on their own, kept so they aren't dropped
         self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
 
@@ -850,7 +850,7 @@ class Bot:
         return key, png, turn.charts[0].caption(now.date()), caption
 
     def preload_soon(self, bot, question: str):
-        """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question in the background."""
+        """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question, as one album, in the background."""
         chat = getattr(self.cfg, "telegram_preload_chat", None)
         if chat is None or self.preload_off or question in self.preloading:
             return
@@ -860,39 +860,48 @@ class Bot:
         task.add_done_callback(self.background.discard)
 
     async def preload(self, bot, chat: int, question: str):
-        """Upload (silently, to `chat`) the chart for each other period of `question`, so a press of a period button edits the message by
-        Telegram's copy and uploads nothing. One at a time and never while a question is being answered."""
-        started, done = time.monotonic(), []
+        """Upload (silently, to `chat`) the chart for each other period of `question` as one album, so a press of a period button edits
+        the message by Telegram's copy and uploads nothing. Nothing holds it back: the periods are drawn side by side and the album
+        goes the moment the last is drawn, whatever else is being answered."""
+        started = time.monotonic()
         try:
-            for days in periods.PERIODS:
-                await self.idle.wait()
-                now = now_local(self.cfg.tz)
-                if days == intent.period_days(question, now):
-                    continue
-                asked = intent.with_period(question, days, now)
-                if self.images.has_copy(self.images.key(asked, days, now)):
-                    continue
+            now = now_local(self.cfg.tz)
+            own = intent.period_days(question, now)
+            asked = {days: intent.with_period(question, days, now) for days in periods.PERIODS if days != own}
+            asked = {days: text for days, text in asked.items() if not self.images.has_copy(self.images.key(text, days, now))}
+
+            async def draw(text):
                 try:
-                    drawn = await self._draw_ahead(asked, now)
+                    return await self._draw_ahead(text, now)
                 except Exception as e:
-                    log.debug("Couldn't draw %r to preload: %s: %s", asked, type(e).__name__, e)
-                    continue
-                if drawn is None:
-                    return
-                key, png, title, caption = drawn
+                    log.debug("Couldn't draw %r to preload: %s: %s", text, type(e).__name__, e)
+
+            results = await asyncio.gather(*map(draw, asked.values()))
+            drawn = {days: d for days, d in zip(asked, results) if d}   # a period that couldn't be drawn is left out
+            if not drawn:
+                return
+            for key, png, title, caption in drawn.values():
                 self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL)
-                try:
-                    self.images.sent(key, await bot.send_photo(chat, png, caption=title or None, disable_notification=True))
-                except TelegramError as e:
-                    self.preload_off = True
-                    log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
-                    return
-                done.append(periods.NAMES[days])
+            try:
+                if len(drawn) > 1:
+                    sent = await bot.send_media_group(chat, [InputMediaPhoto(png, caption=title or None) for _, png, title, _ in drawn.values()],
+                                                      disable_notification=True)
+                else:   # an album is two to ten photos
+                    _, png, title, _ = next(iter(drawn.values()))
+                    sent = [await bot.send_photo(chat, png, caption=title or None, disable_notification=True)]
+            except (RetryAfter, TimedOut) as e:   # Telegram's flood limit or a slow upload: a press uploads these instead, and the next chart tries again
+                log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take the charts just now (%s: %s)", chat, type(e).__name__, e)
+                return
+            except TelegramError as e:
+                self.preload_off = True
+                log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
+                return
+            for (key, *_), message in zip(drawn.values(), sent):   # the album's messages come in the order of its photos
+                self.images.sent(key, message)
+            log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(periods.NAMES[days] for days in drawn), question, chat,
+                     time.monotonic() - started, extra=QUOTES)
         finally:
             self.preloading.discard(question)
-        if done:
-            log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(done), question, chat, time.monotonic() - started,
-                     extra=QUOTES)
 
     async def predraw(self):
         """Draw the charts the buttons ask for ahead of the press: one pressed in the next ImageCache.FRESH seconds is sent at once.
@@ -921,7 +930,7 @@ class Bot:
             log.info("Button charts drawn ahead every %ds: %d in %.1fs", PREDRAW_SECONDS, len(done), time.monotonic() - started)
 
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
-        """Answer a question (_respond), counted while it runs: no chart is drawn ahead meanwhile."""
+        """Answer a question (_respond), counted while it runs: predraw waits for it."""
         self.answering += 1
         self.idle.clear()
         try:
