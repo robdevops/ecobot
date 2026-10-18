@@ -27,6 +27,29 @@ def local_date(ts: int, tz: tzinfo) -> date:
     return to_local(ts, tz).date()
 
 
+def naive_local(ts: float, tz: tzinfo) -> datetime:
+    """An epoch as a naive local datetime. It keeps `fold`, so local_epoch gives the epoch back exactly, even in the hour that
+    happens twice when the clocks go back."""
+    return to_local(ts, tz).replace(tzinfo=None)
+
+
+def parse_local(text, tz: tzinfo) -> datetime:
+    """A date or time as sent ("2026-10-01", "2026-10-01 14:00", "2026-10-01T03:00:00Z") as a naive local time: one with an offset
+    is moved into tz first. ValueError for anything else."""
+    dt = datetime.fromisoformat(str(text))
+    return dt.astimezone(tz).replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def seconds_until(hour: int, minute: int, tz: tzinfo, now: datetime | None = None) -> float:
+    """Real seconds from `now` (naive local; default the present) to the next `hour`:`minute` local time. Two clock times of one zone
+    are an hour more or less apart than they look across a daylight-saving change; this counts the real seconds."""
+    now = now or now_local(tz)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target.replace(tzinfo=tz).timestamp() - now.replace(tzinfo=tz).timestamp()
+
+
 def local_epoch(local: datetime, tz: tzinfo) -> int:
     """A naive local datetime as an epoch."""
     return int(local.replace(tzinfo=tz).timestamp())

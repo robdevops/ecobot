@@ -11,10 +11,10 @@ until it works or the day ends. The date of the last completed check is saved, s
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from ..ecowitt.rain import rain_amount
-from ..timeutil import now_local
+from ..timeutil import now_local, seconds_until
 from .forecast import RAIN_FROM_PCT
 
 log = logging.getLogger(__name__)
@@ -41,10 +41,7 @@ class IrrigationMonitor:
         return now.hour >= self.hour and self._memory().get("checked") != now.date().isoformat()
 
     def seconds_until_next(self, now: datetime) -> float:
-        target = now.replace(hour=self.hour, minute=0, second=0, microsecond=0)
-        if target <= now:
-            target += timedelta(days=1)
-        return max(1.0, (target - now).total_seconds())
+        return max(1.0, seconds_until(self.hour, 0, self.tz, now))
 
     async def run(self):
         """Forever: check when due, else sleep until the next check time."""

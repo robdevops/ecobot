@@ -20,11 +20,11 @@ from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTI
 from ..lines import build_line
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
-from ..timeutil import SLOT, day_bounds, daily_summary, local_date, now_local
+from ..timeutil import SLOT, day_bounds, daily_summary, local_date, now_local, parse_local
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
-from .api import CYCLE_SECONDS, RETENTION
+from .api import CYCLE_SECONDS, RETENTION, daily_run
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
 from .fetch import Fetcher, spans
@@ -99,12 +99,12 @@ class HistoryQuery:
     async def _run(self) -> str:
         today = self.now.date()
         try:
-            start = datetime.fromisoformat(str(self.args.get("start_date") or today).replace("T", " "))
-            end = datetime.fromisoformat(str(self.args.get("end_date") or self.now).replace("T", " "))
+            start = parse_local(self.args.get("start_date") or today, self.tz)
+            end = parse_local(self.args.get("end_date") or self.now, self.tz)
         except ValueError as e:
             return f"Error: bad date ({e}). Use 'YYYY-MM-DD HH:MM:SS'."
-        self.start = max(start.replace(tzinfo=None), datetime.combine(today - timedelta(days=RETENTION["1day"] - 2), time()))
-        self.end = min(end.replace(tzinfo=None), self.now)
+        self.start = max(start, datetime.combine(today - timedelta(days=RETENTION["1day"] - 2), time()))
+        self.end = min(end, self.now)
         if self.start >= self.end:
             return "Error: start_date must be before end_date and within the last 4 years."
         self.span = self.end - self.start
@@ -325,8 +325,9 @@ class HistoryQuery:
                 f", {len(f.errors)} failed" if f.errors else "", refined)
         out = {"period": f"{self.start:%a %d %b %Y} - {self.end:%a %d %b %Y}", "series": shown if shown else series_out}
         if self.monthly and not self.detailed:
-            out["monthly_note"] = ("Monthly figures for long periods come from daily data that runs 10am-10am, so they "
-                                   "have no dates, and a low early on the 1st may be counted in the previous month.")
+            out["monthly_note"] = (f"Monthly figures for long periods come from daily data that runs "
+                                   f"{daily_run(self.tz, self.start.date(), self.end.date())}, so they have no dates, and a low "
+                                   "early on the 1st may be counted in the previous month.")
         if wants_chart(self.args, self.turn, self.start, self.end):
             self._add_charts(out, {k: v for k, v in series_out.items() if k in self.store})
         if errors := f.errors + (self.wind.errors if self.wind else []):
@@ -437,7 +438,8 @@ class HistoryQuery:
             keys = [k for k in series_out if k.endswith("." + field)]
         if keys[0] == "rainfall.daily" and self.rain_bars.x:  # the day's counter is a running total: draw what fell, as columns
             return Chart("Rain", f"{period_text(self.start.date(), self.end.date())}  ·  rain per {self.rain_bars.per}"
-                                 + ("  ·  older days from daily records (10am to 10am)" if self.rain_from_daily else ""),
+                                 + (f"  ·  older days from daily records ({daily_run(self.tz, self.start.date(), self.end.date())})"
+                                    if self.rain_from_daily else ""),
                          [panel_for("rain", bars=self.rain_bars)])
         field = keys[0].split(".", 1)[-1]
         unit = series_out[keys[0]]["unit"].replace("º", "°")

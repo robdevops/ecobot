@@ -338,6 +338,7 @@ def test_a_check_is_due_once_a_day_after_the_hour_and_the_next_is_the_following_
     assert not m.due(datetime(2026, 10, 8, 23, 0)) and not m.due(datetime(2026, 10, 9, 3, 0)) and m.due(datetime(2026, 10, 9, 18, 0))
     assert m.seconds_until_next(datetime(2026, 10, 8, 17, 0)) == 3600 and m.seconds_until_next(datetime(2026, 10, 8, 18, 0)) == 86400
     assert m.seconds_until_next(datetime(2026, 10, 8, 23, 30)) == 18.5 * 3600
+    assert m.seconds_until_next(datetime(2026, 10, 3, 18, 0)) == 23 * 3600   # the clocks go forward that night: 23 real hours, not 24
 
 
 async def test_run_checks_when_due_retries_after_a_failure_and_then_waits_for_tomorrow(tmp_path, monkeypatch):

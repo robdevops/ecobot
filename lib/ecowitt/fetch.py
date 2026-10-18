@@ -7,7 +7,7 @@ import logging
 import time
 from datetime import datetime, timedelta, tzinfo, UTC
 
-from ..timeutil import local_epoch, to_local
+from ..timeutil import local_epoch, naive_local
 from .api import EcowittError, MAX_SPAN, RETENTION
 from .store import HistoryCache, HotStore, merge as merge_intervals, subtract
 
@@ -73,7 +73,7 @@ class Fetcher:
         return local_epoch(local, self.tz)
 
     def local(self, epoch: int) -> datetime:
-        return to_local(epoch, self.tz).replace(tzinfo=None)
+        return naive_local(epoch, self.tz)
 
     @timed
     async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:

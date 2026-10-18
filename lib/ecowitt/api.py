@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 import httpx
 
@@ -46,6 +46,15 @@ KEYS_IN_URL = re.compile(r"\b(application_key|api_key)=[^&\s'\"]*")   # the keys
 # Fields Ecowitt reports in a unit we do not use: (field prefix, its unit) -> (the unit kept, the factor). The vapour pressure
 # deficit comes back in inHg whatever the pressure unit asked for; it is stored and charted in kPa.
 UNIT_FIXES = {("vpd", "inHg"): ("kPa", 3.38639)}
+
+
+def daily_run(tz: tzinfo, first: date, last: date) -> str:
+    """When Ecowitt's daily records start and end, local time ("10am to 10am"): they are UTC days, so in Melbourne they run from
+    10am, or from 11am in daylight saving; a period that has both says both."""
+    days = [first + timedelta(days=n) for n in range(0, (last - first).days + 1, 30)] + [last]
+    hours = sorted({datetime.combine(d, time(), UTC).astimezone(tz).hour for d in days})
+    run = [f"{h % 12 or 12}{'am' if h < 12 else 'pm'} to {h % 12 or 12}{'am' if h < 12 else 'pm'}" for h in hours]
+    return run[0] if len(run) == 1 else f"{run[0]} ({run[1]} in daylight saving)"
 
 
 def fix_units(data) -> dict:

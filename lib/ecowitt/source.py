@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
 from ..intent import NOW_GROUPS
-from ..timeutil import now_local
+from ..timeutil import local_epoch, naive_local, now_local
 from ..tools import Tool, Turn
 from ..warm import FAST_REFRESH_SECONDS, Warmer
 from .api import EcowittAPI, GROUPS, UNITS
@@ -276,8 +276,9 @@ class Ecowitt:
         return readings(await self.fetcher(groups or self.groups).get(cycle, start, end))
 
     async def recent(self, hours: float) -> list[tuple[int, dict]]:
+        """The last `hours` of 5-minute readings: real hours, so the night the clocks change is no longer or shorter."""
         now = self.now()
-        return await self.readings("5min", now - timedelta(hours=hours), now)
+        return await self.readings("5min", naive_local(local_epoch(now, self.tz) - hours * 3600, self.tz), now)
 
     async def close(self):
         await self.api.close()

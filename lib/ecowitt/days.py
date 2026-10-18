@@ -19,6 +19,7 @@ from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, parameters, validate
 from ..timeutil import day_bounds, local_date, now_local
+from .api import daily_run
 from .calendar import PublicHolidays
 from .extremes import collect
 from .store import HistoryCache, subtract
@@ -179,7 +180,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
                              "are not in \"days\". Mention the first as a short footnote.")
     if any(source.get(d) == "daily" for d in checked):
         out["exact_from"] = label(exact_days[0]) if exact_days else None
-        out["note_daily"] = ("Days marked \"daily\" come from daily readings that run 10am to 10am, so their rain and dates "
+        out["note_daily"] = (f"Days marked \"daily\" come from daily readings that run {daily_run(tz, first, last)}, so their rain and dates "
                              "are approximate (a morning shower can be counted on the day before). Say so briefly if any "
                              "listed day is marked daily, or if the period reaches back before exact_from.")
     if AVERAGED & set(shown) and any(source.get(d) != "5min" for d in checked):

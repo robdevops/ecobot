@@ -426,3 +426,14 @@ def test_the_antispike_setting_is_a_number_of_readings_default_2_and_off_is_1(mo
     for value, want in (("3", 3), ("1", 1), ("0", 1), ("off", 1), ("junk", 2), ("", 2)):
         monkeypatch.setenv("ANTISPIKE_REQUIRE_CONSECUTIVE", value)
         assert Config.from_env().antispike_require_consecutive == want, value
+
+
+async def test_a_date_with_an_offset_is_read_and_a_bad_one_is_not_called_a_sensor_fault(tmp_path):
+    """The model sometimes sends "…Z": that is a time, not a failure to read the sensor. A date that can't be read says so."""
+    from datetime import timezone as tz_
+    air, _ = await make(tmp_path)
+    start = (datetime.now(TZ) - timedelta(days=2)).astimezone(tz_.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = json.loads(await air.handle({"start_date": start}))
+    bad = json.loads(await air.handle({"start_date": "yesterday morning"}))
+    await air.close()
+    assert "error" not in out and out["readings"] > 0 and bad["error"].startswith("bad date")

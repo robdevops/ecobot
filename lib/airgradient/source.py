@@ -27,7 +27,7 @@ from ..config import Config
 from ..lines import Plotted, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import local_date, now_local, to_local, when
+from ..timeutil import local_date, now_local, parse_local, to_local, when
 from ..tools import Tool, Turn
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
@@ -335,8 +335,11 @@ class AirGradient:
                       metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
         turn = turn or Turn()
         now = self._now()
-        parse = lambda s, d: datetime.fromisoformat(str(s).replace("T", " ")) if s else d
-        t0, t1 = parse(start, now - timedelta(days=1)), min(parse(end, now), now)
+        try:   # a date the model sends, with or without an offset; a bad one is its mistake, not the sensor's
+            t0 = parse_local(start, self.tz) if start else now - timedelta(days=1)
+            t1 = min(parse_local(end, self.tz), now) if end else now
+        except ValueError as e:
+            return {"error": f"bad date ({e}); use 'YYYY-MM-DD HH:MM:SS'"}
         trimmed = t0 < t1 - timedelta(days=MAX_DAYS)
         t0 = max(t0, t1 - timedelta(days=MAX_DAYS))
         if t0 >= t1:

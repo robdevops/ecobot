@@ -11,8 +11,9 @@ import asyncio
 import logging
 from collections.abc import Iterator
 from datetime import datetime, time, timedelta
+from time import monotonic
 
-from ..timeutil import now_local
+from ..timeutil import naive_local, now_local, seconds_until
 from .api import MIN_GAP_SECONDS, RETENTION
 from .fetch import spans
 from .store import BUCKET_SECONDS, horizon, subtract
@@ -53,7 +54,7 @@ class Archive:
             would leave a few seconds uncovered, and refetched, every time)."""
             size = BUCKET_SECONDS[cycle]
             ts = horizon(cycle) - size
-            return datetime.fromtimestamp(ts - ts % size - 1, tz).replace(tzinfo=None)
+            return naive_local(ts - ts % size - 1, tz)
 
         for n in range((today - first_day("5min")).days, 0, -1):  # finished days only
             day = today - timedelta(days=n)
@@ -123,20 +124,16 @@ class Archive:
         return f"{days} days (5m/30m/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:
-        now = datetime.now(self.station.tz)
-        nxt = now.replace(hour=RUN_AT.hour, minute=RUN_AT.minute, second=0, microsecond=0)
-        if nxt <= now:
-            nxt += timedelta(days=1)
-        return (nxt - now).total_seconds()
+        return seconds_until(RUN_AT.hour, RUN_AT.minute, self.station.tz)
 
     async def loop(self):
         """Backfill now, then again every night at RUN_AT, until cancelled."""
         while True:
             try:
-                started = datetime.now()
+                started = monotonic()
                 fetched, failed = await self.run_once()
                 log.info("Ecowitt: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "",
-                         self.held(), (datetime.now() - started).total_seconds())
+                         self.held(), monotonic() - started)
             except asyncio.CancelledError:
                 raise
             except Exception:
