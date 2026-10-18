@@ -622,7 +622,7 @@ class Bot:
                 self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=periods.keyboard(days)))
                 self.charted.remember(message.chat_id, message.message_id, asked)
                 self.preload_soon(context.bot, asked)
-                log.info("Period button: cached chart sent in %.0f ms%s", (time.monotonic() - began) * 1000,
+                log.debug("Period button: cached chart sent in %.0f ms%s", (time.monotonic() - began) * 1000,
                          " (Telegram's copy)" if isinstance(photo, str) else "")
                 return
             except TelegramError as e:
@@ -1044,10 +1044,10 @@ class Bot:
                                              titles=titles, period_row=row, sent_photo=sent_photo,
                                              bold_headings=ok and bool(read.report or read.lookup in ("pollen", "forecast"))) and bool(markup)   # the refresh button is not the chat's keyboard
             if ready:
-                log.info("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(ready), (time.monotonic() - began) * 1000,
+                log.debug("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(ready), (time.monotonic() - began) * 1000,
                          " (Telegram's copy)" if isinstance(drawn[0], str) else "")
             elif drawn:
-                log.info("Chart ms: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
+                log.debug("Chart ms: %s", chart_times(turn.times, made, drawn, time.monotonic() - began))
             if sent_photo:
                 self.charted.remember(msg.chat_id, sent_photo[0].message_id, text)
                 self.images.sent(kept, sent_photo[0])

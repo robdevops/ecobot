@@ -367,7 +367,7 @@ async def test_a_chart_reply_logs_how_long_each_step_took(tmp_path, monkeypatch,
 
     async def send_chat_action(*a, **k):
         pass
-    with caplog.at_level("INFO"):
+    with caplog.at_level("DEBUG"):
         await Bot(NS(tz=TZ), Agent(), sources, None).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)),
                                                              "Temperature chart 1d")
     await eco.close()
