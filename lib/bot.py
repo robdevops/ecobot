@@ -475,9 +475,9 @@ class Bot:
     async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str | None:
         """Do what a button asks. Returns the toast to show, or None for a button that means nothing. Raises IrrigationError."""
         if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:
-            await self.irrigation.water(int(arg))
-            if self.watchdog:
+            if self.watchdog:   # first: a command whose reply is lost may still have opened the valve
                 self.watchdog.arm(int(arg))
+            await self.irrigation.water(int(arg))
             return f"Watering for {arg} minutes"
         if action == "delay" and arg in irrigation_menu.DELAYS:
             await self.irrigation.delay(arg)

@@ -124,6 +124,29 @@ async def test_errors_name_the_problem_without_the_secrets(tmp_path):
     assert SECRET not in str(e.value) and "ConnectError" in str(e.value)
 
 
+TOKEN = {"success": True, "result": {"access_token": "tok", "expire_time": 7200}}
+
+
+@pytest.mark.parametrize("token, status", [({"success": True}, None),                         # a token reply with no token
+                                           ({"success": True, "result": ["tok"]}, None),
+                                           ([TOKEN], None),                                    # a reply that isn't an object
+                                           (TOKEN, {"success": True, "result": {"switch": True}}),   # a status that isn't a list
+                                           (TOKEN, "OK")])
+async def test_a_reply_of_an_unexpected_shape_is_an_irrigation_error(tmp_path, token, status):
+    def serve(request):
+        return httpx.Response(200, json=token if request.url.path.startswith("/v1.0/token") else status)
+    device = Tuya(cfg(tmp_path), transport=httpx.MockTransport(serve))
+    with pytest.raises(IrrigationError):
+        await device.status()
+    await device.close()
+
+
+async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
+    device, fake = tuya(tmp_path, status=[{"code": "switch"}, "battery", {"value": 3}, {"code": "countdown", "value": 60}])
+    assert await device.status() == {"switch": None, "countdown": 60}
+    await device.close()
+
+
 def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely(monkeypatch, tmp_path):
     assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
     env = {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}
@@ -457,6 +480,25 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
     device.down = True
     await bot.on_message(update, NS(bot=NS(username="b", id=99)))
     assert sent[1][0] == "Sorry, I couldn't reach the irrigation controller." and len(sent) == 2
+
+
+async def test_an_odd_reply_from_the_controller_is_a_toast_not_a_press_left_hanging(tmp_path):
+    def odd(request):
+        return httpx.Response(200, json=["not", "a", "reply"])
+    bot, state, device = irrigation_bot(tmp_path, Tuya(cfg(tmp_path), transport=httpx.MockTransport(odd)))
+    q = await press(bot, "ir:refresh")
+    assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []
+    await device.close()
+
+
+async def test_a_run_whose_reply_is_lost_is_still_watched(tmp_path):
+    class Lost(Remote):
+        async def water(self, minutes):
+            await super().water(minutes)                                 # the valve opened
+            raise IrrigationError("Tuya request failed (ReadTimeout)")   # but the reply never came
+    bot, state, device = irrigation_bot(tmp_path, Lost())
+    q = await press(bot, "ir:water:10")
+    assert q.toast == "Couldn't reach the irrigation controller" and bot.watchdog.off_at is not None
 
 
 async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):

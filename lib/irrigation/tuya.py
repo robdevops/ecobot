@@ -46,7 +46,7 @@ class Tuya:
     async def close(self):
         await self.http.aclose()
 
-    async def _send(self, method: str, path: str, payload: dict | None, token: str):
+    async def _send(self, method: str, path: str, payload: dict | None, token: str) -> dict:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode() if payload is not None else b""
         timestamp, nonce = str(int(time.time() * 1000)), uuid.uuid4().hex
         headers = {"client_id": self.client_id, "sign_method": "HMAC-SHA256", "t": timestamp, "nonce": nonce,
@@ -58,17 +58,23 @@ class Tuya:
         try:
             response = await self.http.request(method, path, content=body if payload is not None else None, headers=headers)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
         except (httpx.HTTPError, ValueError) as e:   # the URL and body stay out of the message
             raise IrrigationError(f"Tuya request failed ({type(e).__name__})") from e
+        if not isinstance(data, dict):
+            raise IrrigationError(f"Tuya sent a {type(data).__name__}, not a reply")
+        return data
 
     async def _authenticate(self):
         data = await self._send("GET", TOKEN_PATH, None, "")
         if not data.get("success"):
             raise IrrigationError(f"Tuya refused the credentials (code {data.get('code')}: {data.get('msg')})")
-        result = data["result"]
+        result = data.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("access_token"), str):
+            raise IrrigationError("Tuya's token reply has no access token")
+        lasts = result.get("expire_time")
         self.token = result["access_token"]
-        self.token_expires = time.time() + max(60, int(result.get("expire_time", 7200)) - 60)
+        self.token_expires = time.time() + max(60, (lasts if isinstance(lasts, int) else 7200) - 60)
 
     async def request(self, method: str, path: str, payload: dict | None = None, retry: bool = True):
         """The `result` of a signed request. An expired token is replaced and the request sent once more."""
@@ -85,7 +91,9 @@ class Tuya:
     async def status(self) -> dict:
         """{code: value} of the device's status points (switch, battery_percentage, weather_delay, countdown, work_state, ...)."""
         result = await self.request("GET", f"/v1.0/devices/{self.device}/status")
-        return {item["code"]: item["value"] for item in result or [] if "code" in item}
+        if not isinstance(result, list | None):
+            raise IrrigationError(f"Tuya's status is a {type(result).__name__}, not a list")
+        return {item["code"]: item.get("value") for item in result or [] if isinstance(item, dict) and "code" in item}
 
     async def command(self, *commands: tuple[str, object]):
         """Send one or more (code, value) commands together."""
