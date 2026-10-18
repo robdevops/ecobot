@@ -25,6 +25,13 @@ def test_alerts_has_two_buttons_alerts_and_sound_and_a_group_has_only_the_first(
     assert rows(keyboard(set(), KINDS, "sound")) == rows(keyboard(set(), KINDS))                     # a group cannot open Sound
 
 
+def test_a_type_that_is_on_is_a_green_button_and_one_that_is_off_a_red_one():
+    markup = keyboard({"gusts"}, KINDS, "alerts", loud=set())
+    styles = {b.text: b.api_kwargs.get("style") or b.style for row in markup.inline_keyboard for b in row}
+    assert styles["✅ rain"] == "success" and styles["❌ gusts"] == "danger" and not styles["🔔 Alerts ▾"] and not styles["⬅️ Back"]
+    assert markup.inline_keyboard[1][0].to_dict()["style"] == "success"                                    # and it is sent to Telegram
+
+
 def test_each_menu_lists_its_types_with_a_tick_or_a_cross_and_keeps_only_its_own_button():
     got = rows(keyboard({"gusts"}, KINDS, "alerts", loud={"rain"}))
     assert got[0] == [("🔔 Alerts ▾", "al:close")]                                                         # the button that opened it stays, open

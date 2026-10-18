@@ -13,6 +13,7 @@ An alert's buttons end with the alert's own type: al:open:gear:rain, al:close:ra
 from itertools import batched
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import KeyboardButtonStyle
 
 from ..buttons import menu_text
 
@@ -39,8 +40,8 @@ def kinds_for(source_names, irrigation: bool) -> list[str]:
     return available_kinds(set(source_names) | ({"Irrigation"} if irrigation else set()))
 
 
-def _button(text: str, data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text, callback_data=data)
+def _button(text: str, data: str, style: str | None = None) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text, callback_data=data, style=style)
 
 
 def struck(text: str) -> str:
@@ -54,8 +55,9 @@ def _toggle(word: str, on: bool, data: str) -> InlineKeyboardButton:
 
 
 def _mark(word: str, on: bool, data: str) -> InlineKeyboardButton:
-    """A button that flips a setting in a list: its word after a green tick while the setting is on, a red cross while it is off."""
-    return _button(f"{'✅' if on else '❌'} {word}", data)
+    """A button that flips a setting in a list: its word after a green tick on a green button while the setting is on, a red cross on a
+    red one while it is off (the tick and cross stay for a client that does not draw button colours)."""
+    return _button(f"{'✅' if on else '❌'} {word}", data, KeyboardButtonStyle.SUCCESS if on else KeyboardButtonStyle.DANGER)
 
 
 def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None) -> InlineKeyboardMarkup:
