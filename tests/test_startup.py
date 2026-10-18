@@ -273,9 +273,9 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
     timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
     assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
-    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is shown whole
+    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is cut too
         record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
-        assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
+        assert fmt.format(record) == f"{name} " + timings[:40 - len(name) - 2] + "…" and record.levelname == logging.getLevelName(level)
     fmt.width = 0
     assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
     assert line(timings, quotes=False) == "INFO " + timings
@@ -310,13 +310,3 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
                                ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
     assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
-
-
-def test_a_line_marked_whole_is_never_cut_to_the_log_width():
-    import logging
-    from lib.logs import WHOLE, LogFormat
-    record = logging.LogRecord("x", logging.INFO, "", 0, "Alerts: %s", ("rain, gusts, UV, temperature crossing, particulates",), None)
-    assert LogFormat("%(levelname)s %(message)s", 30).format(record).endswith("…")
-    for key in WHOLE:
-        setattr(record, key, True)
-    assert LogFormat("%(levelname)s %(message)s", 30).format(record) == "INFO Alerts: rain, gusts, UV, temperature crossing, particulates"

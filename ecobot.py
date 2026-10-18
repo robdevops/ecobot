@@ -32,7 +32,7 @@ from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as WATCHDOG_SECONDS
 from lib.llm import Agent
-from lib.logs import WHOLE, LogFormat
+from lib.logs import LogFormat
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.tools import Tools
@@ -169,7 +169,7 @@ async def main():
 
                 # Keeping warm: everything questions need, refreshed before they arrive
                 tasks.extend(asyncio.create_task(s.warmer.run()) for s in sources)
-                log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources), extra=WHOLE)
+                log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
 
                 async def startup_warmup():
                     """Fetch everything once, together, and log one summary line."""
@@ -209,7 +209,7 @@ async def main():
                              time.monotonic() - started)
                     tasks.append(asyncio.create_task(every(PREDRAW_SECONDS, bot.predraw)))   # the button charts, ready before they are pressed
                     on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
-                    log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(state.alert_chats()), extra=WHOLE)
+                    log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(state.alert_chats()))
                     if missing := [LABELS[k] for k in kinds if k not in running]:
                         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
