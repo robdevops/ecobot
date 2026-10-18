@@ -83,7 +83,7 @@ async def main():
                    Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable)])
     text = args.question
     r = intent.read(text, now.replace(tzinfo=None))
-    system = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], r.hints)
+    system = prompt.build(now, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor"}, r.hints)
     effort, fast = r.effort, r.fast
     call = json.loads(args.call) if args.call else default_call(now.date())
 

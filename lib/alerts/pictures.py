@@ -16,7 +16,7 @@ async def chart(source, text: str, tz) -> bytes | None:
     """The PNG for the request `text`, made from `source`'s tool the way the bot would answer it; None when it cannot be made (the alert then
     goes out as text). `source` is the station or the air sensor: the tool is found in its `tools` by the name the request resolves to."""
     try:
-        read = intent.read(text, now_local(tz), True, True)
+        read = intent.read(text, now_local(tz))
         tool, args = read.fast[0], read.fast[1]
         turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, text=text)
         handler = next(t for t in source.tools if t.name == tool).handler

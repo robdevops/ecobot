@@ -10,6 +10,7 @@
 
 import logging
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
@@ -107,11 +108,11 @@ def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
 
 
-def report_calls(ecowitt: bool, air: bool, pollen: bool = False, forecast: bool = False) -> list[tuple[str, dict]]:
-    """What the full report needs, fetched together before the model sees the question."""
-    return ([("weather_now", {"groups": NOW_GROUPS})] if ecowitt else []) + ([("air_quality", {})] if air else []) + (
-        [("pollen_asthma", {"cached": True})] if pollen else []) + (
-        [("weather_forecast", {"days": 3, "cached": True})] if forecast else [])
+def report_calls(sources: Collection[str]) -> list[tuple[str, dict]]:
+    """What the full report needs from these sources (by name), fetched together before the model sees the question."""
+    calls = {"Ecowitt": ("weather_now", {"groups": NOW_GROUPS}), "AirGradient": ("air_quality", {}),
+             "Pollen": ("pollen_asthma", {"cached": True}), "Forecast": ("weather_forecast", {"days": 3, "cached": True})}
+    return [call for name, call in calls.items() if name in sources]
 
 
 # Pollen and thunderstorm asthma (the Pollen source)
@@ -577,7 +578,7 @@ DAILY = {
 HOLIDAYISH = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", I)
 
 
-def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+def count_days_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
     """(tool, arguments, label) when the text asks how many days one reading was over or under one limit (optionally per year or month),
     else None and the model decides."""
     if (not re.search(r"\bdays?\b|\btimes\b", text, I) or any(p.search(text) for p in (FORECAST, LINK, THINK, DESCRIBE, HOLIDAYISH))
@@ -595,12 +596,12 @@ def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple
         return None
     if mentions_air(text):
         metrics = air_named(text)
-        if not air or len(metrics) != 1 or ALL.search(text):
+        if "AirGradient" not in sources or len(metrics) != 1 or ALL.search(text):
             return None
         tool, field = "air_days", f"{metrics[0]}_{'min' if below else 'max'}"
     else:
         names = list(_named(text))
-        if not ecowitt or len(names) != 1:
+        if "Ecowitt" not in sources or len(names) != 1:
             return None
         name = names[0]
         if name not in DAILY:
@@ -631,7 +632,7 @@ HIGHER = re.compile(r"\b(hottest|highest|max\w*|peak\w*|wettest|windiest|warmest
 LOWER = re.compile(r"\b(coldest|lowest|min\w*|driest|coolest|calmest|smallest)\b", I)
 
 
-def period_figures_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+def period_figures_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
     """(tool, arguments, label) when the text asks for one reading's figure by or per month or year, else None (the model decides)."""
     group = GROUPING.search(text)
     if (not group or any(p.search(text) for p in (FORECAST, LINK, THINK, DESCRIBE, HOLIDAYISH, ABOVE, BELOW, OR_MORE, OR_LESS, AT_LEAST))
@@ -645,12 +646,12 @@ def period_figures_call(text: str, now: datetime, ecowitt: bool, air: bool) -> t
         return None
     if mentions_air(text):
         metrics = air_named(text)
-        if not air or len(metrics) != 1 or ALL.search(text):
+        if "AirGradient" not in sources or len(metrics) != 1 or ALL.search(text):
             return None
         tool, stat, field = "air_days", ("max" if high else "min" if low else "avg"), f"{metrics[0]}_{'max' if high else 'min' if low else 'avg'}"
     else:
         names = list(_named(text))
-        if not ecowitt or len(names) != 1:
+        if "Ecowitt" not in sources or len(names) != 1:
             return None
         name, tool = names[0], "weather_days"
         if name not in DAILY:
@@ -673,11 +674,11 @@ def period_figures_call(text: str, now: datetime, ecowitt: bool, air: bool) -> t
                   "start_date": start.strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}, f"figures by {by}, {name_}"
 
 
-def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False,
-              forecast: bool = False) -> tuple[str, dict, str] | None:
-    """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
-    if (counted := count_days_call(text, now, ecowitt, air)) or (counted := period_figures_call(text, now, ecowitt, air)):
+def fast_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
+    """(tool name, arguments, what it is) for a question the bot can fetch for without the model, from these sources (by name)."""
+    if (counted := count_days_call(text, now, sources)) or (counted := period_figures_call(text, now, sources)):
         return counted
+    ecowitt, air, pollen, forecast = ("Ecowitt" in sources, "AirGradient" in sources, "Pollen" in sources, "Forecast" in sources)
     if SPECIFIC_MOMENT.search(text) or COUNTING.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
     if air and (period := air_period(text, now)):
@@ -746,16 +747,17 @@ RAIN_AHEAD = re.compile(r"\b(umbrella|chance of rain|(will|going to|gonna|likely
 WEEK_AHEAD = re.compile(r"\b(week|days|weekend|next \w+day)\b", I)
 
 
-def model_prefetch(text: str, now: datetime, ecowitt: bool, forecast: bool) -> list[tuple[str, dict]]:
+def model_prefetch(text: str, now: datetime, sources: Collection[str]) -> list[tuple[str, dict]]:
     """What the model would fetch first for these questions, fetched here instead (so it answers in one call, not two): for rain
     ahead, the current reading, the last 3 hours and the forecast (cached); for a described today or yesterday, that day's readings."""
     calls: list[tuple[str, dict]] = []
+    ecowitt = "Ecowitt" in sources
     if RAIN_AHEAD.search(text):
         if ecowitt:
             groups = "outdoor,pressure,rainfall,rainfall_piezo,wind"
             calls += [("weather_now", {"groups": groups}),
                       ("weather_history", {"groups": groups, "start_date": (now - timedelta(hours=3)).strftime(FMT), "end_date": now.strftime(FMT)})]
-        if forecast:
+        if "Forecast" in sources:
             calls.append(("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True}))
     elif ecowitt and DESCRIBE.search(text) and not SPECIFIC_MOMENT.search(text):
         spans = spans_in(text, now)
@@ -819,14 +821,15 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
 APOSTROPHES = str.maketrans("’‘", "''")   # a phone's typographic apostrophes ("what’s"), read as the plain one every pattern uses
 
 
-def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
-         forecast: bool = False) -> Reading:
-    """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
+def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGradient")) -> Reading:
+    """The decisions made in code for this message, given the sources the bot has (by name: "Ecowitt", "AirGradient", "Pollen",
+    "Forecast"). A shortcut that fails is dropped: the model handles the question."""
     text = text.translate(APOSTROPHES)
+    ecowitt = "Ecowitt" in sources
     report = wants_report(text)
-    calls = report_calls(ecowitt, air, pollen, forecast) if report else []
+    calls = report_calls(sources) if report else []
     try:
-        fast = (*calls[0], "report") if calls else fast_call(text, now, ecowitt, air, pollen, forecast)
+        fast = (*calls[0], "report") if calls else fast_call(text, now, sources)
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None
@@ -837,4 +840,4 @@ def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, polle
     return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
                    fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
                    more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code, chart_all=in_code and wants_chart_all(text),
-                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, ecowitt, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
+                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, sources) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))

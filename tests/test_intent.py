@@ -1,12 +1,13 @@
 from datetime import datetime, timedelta
 
 from lib import intent
+from tests.fakes import EVERY_SOURCE
 
 NOW = datetime(2026, 9, 29, 14, 5)  # a Tuesday
 
 
-def call(text, ecowitt=True, air=True):
-    return intent.fast_call(text, NOW, ecowitt, air)
+def call(text, sources=("Ecowitt", "AirGradient")):
+    return intent.fast_call(text, NOW, sources)
 
 
 def test_only_looking_ahead_and_descriptions_reason_a_little():
@@ -66,8 +67,8 @@ def test_air_now_and_air_chart():
 
 
 def test_sources_are_optional():
-    assert call("how's the air?", air=False) is None
-    assert call("this week's highs", ecowitt=False) is None
+    assert call("how's the air?", ["Ecowitt"]) is None
+    assert call("this week's highs", ["AirGradient"]) is None
 
 
 def test_weather_plus_a_period_is_a_summary_request():
@@ -89,7 +90,7 @@ def test_weather_now_fetches_every_reading_the_station_has_and_asks_for_the_repo
         assert (name, label) == ("weather_now", "weather now") and args == {"groups": intent.NOW_GROUPS}, text
         assert intent.read(text, NOW).weather_now
     assert not intent.read("weather last 7 days", NOW).weather_now and not intent.read("report", NOW).weather_now
-    assert not intent.read("weather now", NOW, ecowitt=False).weather_now
+    assert not intent.read("weather now", NOW, ["AirGradient"]).weather_now
 
 
 def test_24_hour_weather_charts_over_a_rolling_window():
@@ -345,14 +346,14 @@ def test_ecowitt_means_the_weather_and_ag_or_airgradient_means_the_air_quality()
 
 
 def test_the_report_fetches_everything_in_code_before_the_model_sees_it():
-    r = intent.read("report", NOW, True, True, True, True)
+    r = intent.read("report", NOW, EVERY_SOURCE)
     assert r.report and r.fast == ("weather_now", {"groups": intent.NOW_GROUPS}, "report")
     assert r.more == [("air_quality", {}), ("pollen_asthma", {"cached": True}), ("weather_forecast", {"days": 3, "cached": True})]
     plain = intent.read("sitrep", NOW)
     assert [plain.fast[0], *(t for t, _ in plain.more)] == ["weather_now", "air_quality"]
-    only_air = intent.read("status", NOW, ecowitt=False)
+    only_air = intent.read("status", NOW, ["AirGradient"])
     assert only_air.fast[0] == "air_quality" and only_air.more == []
-    assert intent.read("report", NOW, ecowitt=False, air=False).fast is None
+    assert intent.read("report", NOW, []).fast is None
     assert not intent.read("report for last week", NOW).report
 
 
@@ -398,7 +399,7 @@ import pytest as _pytest
     ("temperature today", "extremes", ["temperature"]), ("is it hotter than yesterday", "", []), ("why is it so humid", "", []),
 ])
 def test_plain_lookups_are_answered_in_code_and_everything_else_is_left_to_the_model(text, kind, named):
-    read = intent.read(text, datetime(2026, 10, 2, 12), True, True, True, True)
+    read = intent.read(text, datetime(2026, 10, 2, 12), EVERY_SOURCE)
     assert (read.lookup, read.lookup_arg) == (kind, named)
 
 
@@ -426,38 +427,38 @@ def test_topics_pick_the_guidance_and_tools_a_question_needs(text, before, has, 
                                          ("will it rain this week", 7), ("rain later?", 3)])
 def test_a_question_about_rain_ahead_has_the_reading_the_last_3_hours_and_the_forecast_fetched_for_the_model(text, days):
     now = datetime(2026, 10, 3, 12)
-    read = intent.read(text, now, True, True, False, True)
+    read = intent.read(text, now, ["Ecowitt", "AirGradient", "Forecast"])
     groups = "outdoor,pressure,rainfall,rainfall_piezo,wind"
     assert read.fast is None and read.extra == [
         ("weather_now", {"groups": groups}),
         ("weather_history", {"groups": groups, "start_date": "2026-10-03 09:00:00", "end_date": "2026-10-03 12:00:00"}),
         ("weather_forecast", {"days": days, "cached": True})]
-    no_forecast = intent.read(text, now, True, True, False, False).extra
+    no_forecast = intent.read(text, now).extra
     assert [c[0] for c in no_forecast] == ["weather_now", "weather_history"]          # forecast off: just the station
-    assert intent.read(text, now, False, True, False, True).extra == [("weather_forecast", {"days": days, "cached": True})]   # no station
+    assert intent.read(text, now, ["AirGradient", "Forecast"]).extra == [("weather_forecast", {"days": days, "cached": True})]   # no station
 
 
 @_pytest.mark.parametrize("text, name, day", [("what was yesterday like?", "yesterday", "2026-10-02"), ("describe today", "today", "2026-10-03")])
 def test_describing_today_or_yesterday_has_that_days_readings_fetched_for_the_model(text, name, day):
-    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    read = intent.read(text, datetime(2026, 10, 3, 12))
     (tool, args), = read.extra
     assert tool == "weather_history" and args["groups"] == "outdoor,indoor,rainfall,wind" and args["start_date"].startswith(day)
 
 
 @_pytest.mark.parametrize("text", ["what was it like on Mon 10 Aug", "what was it like at 3pm today", "how hot was yesterday", "describe last week"])
 def test_a_named_date_a_moment_a_longer_period_or_a_plain_question_has_nothing_fetched_ahead(text):
-    assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []
+    assert intent.read(text, datetime(2026, 10, 3, 12), ["Ecowitt", "AirGradient", "Forecast"]).extra == []
 
 
 @_pytest.mark.parametrize("text", ["how much rain fell today", "how much rain this week", "did it rain yesterday", "forecast", "rain chart 7d"])
 def test_questions_about_rain_so_far_do_not_fetch_the_forecast(text):
-    assert intent.read(text, datetime(2026, 10, 3, 12), True, True, False, True).extra == []
+    assert intent.read(text, datetime(2026, 10, 3, 12), ["Ecowitt", "AirGradient", "Forecast"]).extra == []
 
 
 @_pytest.mark.parametrize("text", ["how many times did it rain this year",
                                    "worst air quality day per month", "days over 35 and also rained", "days over UVI 10 on weekends"])
 def test_counting_and_totalling_questions_are_never_turned_into_a_plain_chart(text):
-    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, True, True)
+    read = intent.read(text, datetime(2026, 10, 3, 12), EVERY_SOURCE)
     assert read.fast is None and not read.chart_in_code and read.lookup == ""
 
 
@@ -473,7 +474,7 @@ def test_counting_and_totalling_questions_are_never_turned_into_a_plain_chart(te
     ("how many days was PM2.5 over 25 in 2024", "air_days", "pm2_5_max", ">", 25, None),
 ])
 def test_one_reading_against_one_limit_is_counted_in_code(text, tool, field, op, value, group):
-    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    read = intent.read(text, datetime(2026, 10, 3, 12))
     name, args, _ = read.fast
     assert read.lookup == "days" and name == tool and args["count_only"] is True and args.get("group_by") == group
     assert args["where"] == [{"field": field, "op": op, "value": float(value)}]
@@ -481,11 +482,11 @@ def test_one_reading_against_one_limit_is_counted_in_code(text, tool, field, op,
 
 def test_the_period_is_the_whole_record_unless_one_is_named():
     now = datetime(2026, 10, 3, 12)
-    whole = intent.read("days over UVI 10 by year", now, True, True).fast[1]
+    whole = intent.read("days over UVI 10 by year", now).fast[1]
     assert whole["start_date"] == "2022-10-05" and whole["end_date"] == "2026-10-03"
-    named = intent.read("days over UVI 10 by month this year", now, True, True).fast[1]
+    named = intent.read("days over UVI 10 by month this year", now).fast[1]
     assert named["start_date"] == "2026-01-01" and named["group_by"] == "month"
-    year = intent.read("how many days was PM2.5 over 25 in 2024", now, True, True).fast[1]
+    year = intent.read("how many days was PM2.5 over 25 in 2024", now).fast[1]
     assert year["start_date"] == "2024-01-01" and year["end_date"] == "2024-12-31"
 
 
@@ -501,7 +502,7 @@ def test_the_period_is_the_whole_record_unless_one_is_named():
     ("average co2 per year", "air_days", "avg", "co2_avg", "year"),
 ])
 def test_one_reading_by_month_or_year_is_a_figure_per_period_worked_out_in_code(text, tool, stat, of, group):
-    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    read = intent.read(text, datetime(2026, 10, 3, 12))
     name, args, _ = read.fast
     assert read.lookup == "days" and (name, args["stat"], args["of"], args["group_by"]) == (tool, stat, of, group) and args["count_only"] is True
 
@@ -509,14 +510,14 @@ def test_one_reading_by_month_or_year_is_a_figure_per_period_worked_out_in_code(
 @_pytest.mark.parametrize("text", ["pm2.5 and co2 by month", "rain by month on weekends", "air quality by month", "will it rain by month",
                                    "days over 30 degrees and rain per month", "rain days per month"])
 def test_anything_beyond_one_reading_by_month_or_year_is_left_to_the_model(text):
-    read = intent.read(text, datetime(2026, 10, 3, 12), True, True, False, False)
+    read = intent.read(text, datetime(2026, 10, 3, 12))
     assert read.lookup == "" and (read.fast is None or read.fast[0] not in ("weather_days", "air_days"))
 
 
 def test_weather_all_week_is_flagged_as_a_chart_with_no_caption_and_a_named_chart_is_not():
     now = datetime(2026, 10, 3, 12)
-    assert intent.read("weather all week", now, True, True).chart_all and intent.read("ecowitt all week", now, True, True).chart_all
-    assert not intent.read("plot temperature and rain", now, True, True).chart_all and not intent.read("temperature chart 7d", now, True, True).chart_all
+    assert intent.read("weather all week", now).chart_all and intent.read("ecowitt all week", now).chart_all
+    assert not intent.read("plot temperature and rain", now).chart_all and not intent.read("temperature chart 7d", now).chart_all
 
 
 @_pytest.mark.parametrize("ask", ["weather chart 90d", "chart all 90d", "chart 90d", "chart"])
@@ -535,8 +536,8 @@ def test_a_named_reading_or_an_air_chart_is_not_every_reading_and_indoors_has_on
 def test_a_phone_s_curly_apostrophe_reads_as_the_plain_one():
     for plain in ("what's the weather", "what's the temperature", "show what you've got", "what's the forecast"):
         curly = plain.replace("'", "’")
-        assert intent.read(curly, NOW, pollen=True, forecast=True).fast == intent.read(plain, NOW, pollen=True, forecast=True).fast, curly
-        assert intent.read(curly, NOW, pollen=True, forecast=True).fast is not None, curly
+        assert intent.read(curly, NOW, EVERY_SOURCE).fast == intent.read(plain, NOW, EVERY_SOURCE).fast, curly
+        assert intent.read(curly, NOW, EVERY_SOURCE).fast is not None, curly
 
 
 def test_all_time_and_every_day_are_periods_not_every_air_reading():
@@ -560,10 +561,10 @@ def test_indoor_dew_point_and_feels_like_come_from_the_indoor_sensor():
 
 
 def test_the_lowest_uv_per_month_is_the_lowest_daily_high_not_the_highest():
-    tool, args, _ = intent.period_figures_call("lowest uv by month", NOW, True, False)
+    tool, args, _ = intent.period_figures_call("lowest uv by month", NOW, ["Ecowitt"])
     assert (tool, args["stat"], args["of"], args["group_by"]) == ("weather_days", "min", "uv_max", "month")
-    assert intent.period_figures_call("uv by month", NOW, True, False)[1]["stat"] == "max"     # a UV index is its day's high
-    assert intent.period_figures_call("lowest wind by month", NOW, True, False) is None        # wind has no lowest to ask for
+    assert intent.period_figures_call("uv by month", NOW, ["Ecowitt"])[1]["stat"] == "max"     # a UV index is its day's high
+    assert intent.period_figures_call("lowest wind by month", NOW, ["Ecowitt"]) is None        # wind has no lowest to ask for
 
 
 def test_the_air_table_is_the_one_in_series_and_panels_imports_on_its_own():

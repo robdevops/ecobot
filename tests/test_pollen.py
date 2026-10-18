@@ -133,10 +133,10 @@ def test_pollen_words_need_data_and_a_bare_pollen_question_is_fetched_without_th
     from lib import intent
     now = datetime(2026, 10, 1, 12, 0)
     for text in ("pollen", "Hay fever", "thunderstorm asthma risk"):
-        assert intent.read(text, now, True, True, True).fast[0] == "pollen_asthma"
-    assert intent.read("pollen", now, True, True, False).fast is None
+        assert intent.read(text, now, ["Ecowitt", "AirGradient", "Pollen"]).fast[0] == "pollen_asthma"
+    assert intent.read("pollen", now).fast is None
     for text in ("is the pollen bad today?", "any asthma risk"):
-        assert intent.read(text, now, True, True, True).needs_data
+        assert intent.read(text, now, ["Ecowitt", "AirGradient", "Pollen"]).needs_data
 
 
 def make_on(tmp_path, day, hour=12, html=None):

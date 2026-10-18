@@ -393,8 +393,7 @@ class Bot:
 
     async def _help_and_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """What the bot can do, then the alert settings: the Help & Alerts button and /usage."""
-        await update.effective_message.reply_text(templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
-                                                                              "Pollen" in self.by_name, "Forecast" in self.by_name))
+        await update.effective_message.reply_text(templates.capabilities_text(self.by_name))
         await self.on_alerts(update, context)
 
     async def on_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -567,8 +566,7 @@ class Bot:
         """A press on Refresh under the report: read everything again and redraw the report in the same message. The chat's
         conversation is not touched (this is not a new question)."""
         query = update.callback_query
-        read = intent.read("Report", now_local(self.cfg.tz), "Ecowitt" in self.by_name, "AirGradient" in self.by_name,
-                           "Pollen" in self.by_name, "Forecast" in self.by_name)
+        read = intent.read("Report", now_local(self.cfg.tz), self.by_name)
         try:
             text = await asyncio.wait_for(self._written_in_code(read, Turn(text="Report")), TURN_SECONDS)
         except Exception as e:   # the message stays as it was
@@ -784,8 +782,7 @@ class Bot:
         """A plain lookup (a reading, the air, the pollen, the forecast, what the bot can do) answered from its one tool result; None
         (the model then takes the question) when it can't be."""
         if read.lookup == "about":
-            return templates.capabilities_text("Ecowitt" in self.by_name, "AirGradient" in self.by_name,
-                                               "Pollen" in self.by_name, "Forecast" in self.by_name)
+            return templates.capabilities_text(self.by_name)
         name, args = read.fast[:2]
         result = await self.agent.tools.call(name, json.dumps(args), turn)
         return report.lookup(read.lookup, result, read.lookup_arg, read.sides, now_local(self.cfg.tz).date())
@@ -812,8 +809,7 @@ class Bot:
     async def _draw_ahead(self, text: str, now) -> tuple[str, bytes, str, str] | None:
         """(image key, PNG, title, write-up) of the chart `text` asks for when it is one made in code with its own words as its key;
         None otherwise. Raises when it can't be drawn. Nobody is waiting: its requests are not urgent and its logs are quiet."""
-        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
-                           "Forecast" in self.by_name)
+        read = intent.read(text, now, self.by_name)
         key = self.images.canonical(text, now)
         if not (read.fast and read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
             return None
@@ -925,8 +921,7 @@ class Bot:
             keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
         await asyncio.sleep(0)
         now = now_local(self.cfg.tz)
-        read = intent.read(text, now, "Ecowitt" in self.by_name, "AirGradient" in self.by_name, "Pollen" in self.by_name,
-                           "Forecast" in self.by_name)
+        read = intent.read(text, now, self.by_name)
         log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
                  text, extra=QUOTES)
         for source in self.sources:  # fetch recent readings while the model thinks
@@ -970,7 +965,7 @@ class Bot:
                 else:
                     before = [str(m["content"]) for m in chat.history if m["role"] == "user"][-2:]
                     found = intent.topics(str(working[new_from - 1]["content"]), before)
-                    system = prompt.build(datetime.now(self.cfg.tz), [s.describe() for s in self.sources], read.hints,
+                    system = prompt.build(datetime.now(self.cfg.tz), {s.name: s.describe() for s in self.sources}, read.hints,
                                           read.about_the_bot, read.rain_caption, found)
                     reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens),
                                               f"ecobot-{msg.chat_id}")

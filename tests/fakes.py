@@ -11,6 +11,7 @@ from lib.config import Config
 
 TZ = ZoneInfo("Australia/Melbourne")
 MAC = "AA:BB:CC:DD:EE:FF"
+EVERY_SOURCE = ("Ecowitt", "AirGradient", "Pollen", "Forecast")   # every source, by name
 HISTORY_DAYS = 548  # the fake station is 18 months old: enough for every test, and far quicker to archive than years
 STEP = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
 

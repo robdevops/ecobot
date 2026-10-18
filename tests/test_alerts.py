@@ -778,7 +778,7 @@ async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path)
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.start()
-    read = intent.read("Particulates chart 1d", now_local(TZ), True, True)
+    read = intent.read("Particulates chart 1d", now_local(TZ))
     turn = Turn(chart_asked=read.chart_asked, text="Particulates chart 1d")
     await air.handle(read.fast[1], turn)
     (panel,) = turn.charts[0].panels

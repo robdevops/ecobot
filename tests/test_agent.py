@@ -128,7 +128,7 @@ def test_the_prompt_defines_a_rainy_day_and_how_to_phrase_the_count():
     from datetime import datetime
     from lib import prompt
     from lib.ecowitt import days
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt"})
     assert "rain >= 1" in text and "any rain" in text and "It rained on 507 of 1,454 days" in text
     assert "1 mm or more" in days.DESCRIPTION
 
@@ -136,7 +136,7 @@ def test_the_prompt_defines_a_rainy_day_and_how_to_phrase_the_count():
 def test_the_prompt_asks_for_a_footnote_about_hotter_trace_days():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt"})
     assert "trace_rain_days" in text and "footnote" in text
 
 
@@ -149,7 +149,7 @@ def test_the_day_tool_schema_agrees_with_the_prompt_about_a_rainy_day():
 def test_the_day_tool_rules_are_short_separate_bullets():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt"])
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt"})
     block = text[text.index("- For questions that rank, compare or count DAYS"):text.index("- To ask whether rain comes WITH")]
     bullets = [line for line in block.splitlines() if line.startswith("  - ")]
     assert len(bullets) == 9 and all(len(b) < 300 for b in bullets)
@@ -161,21 +161,21 @@ def test_the_system_prompt_carries_the_period_hints_only_when_there_are_some():
     from datetime import datetime
     from lib import intent, prompt
     now = datetime(2026, 9, 29, 14, 5)
-    with_hint = prompt.build(now, ["Ecowitt"], intent.period_hints("average temp 3m", now))
+    with_hint = prompt.build(now, {"Ecowitt": "Ecowitt"}, intent.period_hints("average temp 3m", now))
     assert "THE PERSON'S WORDS NAME THESE PERIODS" in with_hint and '"3m" = last 3 months: 2026-07-01' in with_hint
-    assert "THE PERSON'S WORDS NAME" not in prompt.build(now, ["Ecowitt"], intent.period_hints("hello", now))
+    assert "THE PERSON'S WORDS NAME" not in prompt.build(now, {"Ecowitt": "Ecowitt"}, intent.period_hints("hello", now))
 
 
 def test_the_prompt_says_what_the_bot_can_and_cannot_do_for_the_sources_it_has():
     from datetime import datetime
     from lib import prompt
     now = datetime(2026, 9, 29, 14, 5)
-    both = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor sensor"])
+    both = prompt.build(now, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor sensor"})
     assert "WHAT THIS BOT CAN AND CAN'T DO" in both and "PM2.5 (µg/m³)" in both and "weather_link" in both
     assert "Custom alerts" in both and "solar radiation and UV index" in both and "Not available: lightning" in both and "correct the call once" in both
-    weather_only = prompt.build(now, ["Ecowitt weather station"])
+    weather_only = prompt.build(now, {"Ecowitt": "Ecowitt weather station"})
     assert "Weather station:" in weather_only and "Air quality (outdoor AirGradient)" not in weather_only
-    assert "Weather station:" not in prompt.build(now, ["AirGradient outdoor sensor"])
+    assert "Weather station:" not in prompt.build(now, {"AirGradient": "AirGradient outdoor sensor"})
 
 
 async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
@@ -187,13 +187,13 @@ async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
                                                 require_tool=False, no_tools=True)
     assert reply.startswith("I track") and client.requests[0]["tool_choice"] == "none" and seen == []
     now = datetime(2026, 9, 29, 14, 5)
-    assert "ABOUT THE BOT ITSELF" in prompt.build(now, ["Ecowitt"], [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, ["Ecowitt"])
+    assert "ABOUT THE BOT ITSELF" in prompt.build(now, {"Ecowitt": "Ecowitt"}, [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, {"Ecowitt": "Ecowitt"})
 
 
 def test_the_prompt_never_shows_a_temperature_emoji_to_copy_and_says_no_entry_means_no_emoji():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"})
     assert '"outdoor.temperature": "' not in text and "a reading with no entry gets NO emoji" in text
 
 
@@ -242,27 +242,23 @@ def test_a_rain_chart_caption_is_only_the_least_and_most_rain():
     from datetime import datetime
     from lib import prompt
     now = datetime(2026, 9, 29, 14, 5)
-    text = prompt.build(now, ["Ecowitt weather station"], rain_caption=True)
+    text = prompt.build(now, {"Ecowitt": "Ecowitt weather station"}, rain_caption=True)
     assert "THIS IS A RAIN CHART" in text and "rain_outlook" not in text
-    assert "THIS IS A RAIN CHART" not in prompt.build(now, ["Ecowitt weather station"])
+    assert "THIS IS A RAIN CHART" not in prompt.build(now, {"Ecowitt": "Ecowitt weather station"})
 
 
 def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"], about_bot=True)
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"}, about_bot=True)
     assert "simple bullet points" in text and "no sub-bullets" in text and "7 at most" in text and "No dates" in text
-
-
-POLLEN_SOURCE = "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)"
-FORECAST_SOURCE = "Weather forecast for the owner's location (Open-Meteo)"
 
 
 def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
     from lib import prompt
-    base = prompt.capabilities(["Ecowitt weather station"])
+    base = prompt.capabilities(["Ecowitt"])
     assert "pollen and thunderstorm asthma" in base.split("Not available:")[1] and "forecasts (only a short read" in base
-    both = prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE, FORECAST_SOURCE])
+    both = prompt.capabilities(["Ecowitt", "Pollen", "Forecast"])
     assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High" in both
     assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]
 
@@ -288,19 +284,19 @@ async def test_several_fast_calls_run_together_before_the_model():
 
 def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecast_source():
     from lib import prompt
-    assert "revised" not in prompt.capabilities(["Ecowitt weather station"])
-    assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt weather station", FORECAST_SOURCE])
+    assert "revised" not in prompt.capabilities(["Ecowitt"])
+    assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt", "Forecast"])
 
 
 def test_the_capabilities_say_pollen_only_runs_october_to_december():
     from lib import prompt
-    assert "only run from October to December" in prompt.capabilities(["Ecowitt weather station", POLLEN_SOURCE])
+    assert "only run from October to December" in prompt.capabilities(["Ecowitt", "Pollen"])
 
 
 def test_the_prompt_leaves_the_heads_up_to_the_bot_and_points_at_the_count_tool():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"})
     assert "the bot warns the chat by itself" in text and "\u26a0" not in text and "decline" not in text.lower()
     assert "uv_max >= 9" in text and "count_only" in text
 
@@ -334,7 +330,7 @@ async def test_the_chat_is_warned_once_before_the_model_is_sent_more_than_twice_
 def test_the_prompt_says_to_use_the_whole_record_without_a_period_and_holidays_only_when_asked():
     from datetime import datetime
     from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), ["Ecowitt weather station"])
+    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"})
     assert "use the whole record" in text and "only when the person's words say holidays or weekends" in text
 
 

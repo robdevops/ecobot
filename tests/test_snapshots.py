@@ -103,7 +103,7 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
     pollen = Pollen(config(tmp_path, pollen=True), pollen_transport(lambda: page(), calls))
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     assert not pollen.wants("report") and not forecast.wants("sitrep") and pollen.wants("pollen today") and forecast.wants("forecast")
-    for tool, args in intent.report_calls(False, False, True, True):
+    for tool, args in intent.report_calls(["Pollen", "Forecast"]):
         out = json.loads(await {"pollen_asthma": pollen.handle, "weather_forecast": forecast.handle}[tool](args))
         assert "error" in out                                # nothing cached yet: the report goes without it, no request made
     assert calls == []

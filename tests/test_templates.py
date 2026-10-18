@@ -3,7 +3,7 @@ from types import SimpleNamespace as NS
 
 from lib import intent, templates
 from lib.bot import Bot
-from tests.fakes import TZ
+from tests.fakes import EVERY_SOURCE, TZ
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
@@ -18,7 +18,7 @@ def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left
 
 def test_every_button_asks_something_the_bot_understands():
     def read(label):
-        return intent.read(templates.sentence(label), NOW, True, True)
+        return intent.read(templates.sentence(label), NOW)
     assert read("\U0001f4cb Status").report
     weather = read("\U0001f326️ Weather")
     assert weather.chart_all and weather.chart_in_code and weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
@@ -212,8 +212,8 @@ def test_the_capabilities_list_is_the_users_bullets():
     assert templates.capabilities_text() == "\n".join([
         "\u2022 Temperature, humidity (indoor, outdoor)", "\u2022 Dew point, vapour pressure deficit, pressure, wind speed",
         "\u2022 Rain, solar radiation, UV index", "\u2022 PM1, PM2.5, PM10, CO₂, VOC, NOx", "\u2022 History charts"])
-    assert len(templates.capabilities_text(air=False).splitlines()) == 4 and len(templates.capabilities_text(weather=False).splitlines()) == 2
-    full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
+    assert len(templates.capabilities_text(["Ecowitt"]).splitlines()) == 4 and len(templates.capabilities_text(["AirGradient"]).splitlines()) == 2
+    full = templates.capabilities_text(EVERY_SOURCE).splitlines()
     assert len(full) == 7 and full[4:] == ["\u2022 Pollen and thunderstorm asthma risk (October to December)", "\u2022 Forecast", "\u2022 History charts"]
 
 
@@ -223,5 +223,5 @@ def test_the_capabilities_list_is_the_users_bullets():
 def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
     plain = templates.capabilities_text()
     assert "Pollen" not in plain and "Forecast" not in plain
-    full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
+    full = templates.capabilities_text(EVERY_SOURCE).splitlines()
     assert full[-3:] == ["• Pollen and thunderstorm asthma risk (October to December)", "• Forecast", "• History charts"]

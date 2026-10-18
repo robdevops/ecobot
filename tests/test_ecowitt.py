@@ -1479,7 +1479,7 @@ async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group
     eco, _ = await archived_station(tmp_path, archived_cache)
 
     async def lines(text):
-        read = intent.read(text, now_local(eco.tz), True, True)
+        read = intent.read(text, now_local(eco.tz))
         turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, text=text)
         await eco.tools[1].handler(read.fast[1], turn)
         (panel,) = turn.charts[0].panels

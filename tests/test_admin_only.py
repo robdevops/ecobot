@@ -289,7 +289,7 @@ async def test_usage_is_the_help_and_alerts_button(tmp_path, kind):
     shown = lambda sent: [(b, [[(x.text, x.callback_data) for x in row] for row in kw["reply_markup"].inline_keyboard] if kw.get("reply_markup") else None)
                           for b, kw in sent]
     assert len(from_command) == 2 and shown(from_command) == shown(from_button)
-    assert from_command[0][0] == templates.capabilities_text(True, False, False, False)
+    assert from_command[0][0] == templates.capabilities_text(["Ecowitt"])
     update, refused = message("/usage", user=STRANGER, kind=kind)
     await bot.on_usage(update, ctx(tg))
     assert [b for b, _ in refused] == [NOT_ADMIN]                                              # gated like the other commands
