@@ -14,8 +14,8 @@ from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONE
 from .analysis import scan
 from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
-from .ecowitt.link import driver_series
-from .series import WEATHER, derives_range
+from .ecowitt.link import driver_series, reading_slots
+from .series import WEATHER
 from .panels import panel_for
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
@@ -121,18 +121,12 @@ class Composer:
         """(first, last) day, or an error text. The last day is at most yesterday: today is still settling."""
         return parse_period(args, now_local(self.tz).date(), default_days)
 
+    def _span(self, first: date, last: date) -> tuple[int, int]:
+        return day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
+
     def weather(self, group: str, field: str, first: date, last: date) -> dict[int, float]:
         """One reading per 30-minute slot from the weather station's cache."""
-        return self.weather_band(group, field, first, last, bands=False)[0]
-
-    def weather_band(self, group: str, field: str, first: date, last: date, bands: bool = True) -> tuple[dict, dict, dict]:
-        """(values, lows, highs) per 30-minute slot; lows and highs are Ecowitt's own where it gives them, else the cached 5-minute readings'."""
-        lo, hi = day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
-        fields = [field, field + "_low", field + "_high"] if bands else [field]
-        values, lows, highs = [*self.eco.cache.slots(self.eco.mac, "30min", group, fields, lo, hi), {}, {}][:3]
-        if bands and derives_range(field) and not (lows or highs):   # no range of its own: from the cached 5-minute readings
-            lows, highs = self.eco.cache.slot_ranges(self.eco.mac, group, field, values, lo, hi)
-        return values, lows, highs
+        return self.eco.cache.slots(self.eco.mac, "30min", group, [field], *self._span(first, last))[0]
 
     async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:
         """({metric: (values, lows, highs)}, notes): the sensor's readings averaged into 30-minute slots, with each slot's
@@ -261,17 +255,13 @@ class Composer:
         already loaded (values, lows, highs)."""
         if name in WEATHER:
             reading = WEATHER[name]
-            group, field, label, unit = reading.group, reading.field, reading.label, reading.unit
-            values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
-                bars = rain_bars(rain_slots(values), self.tz, first, last)
+                bars = rain_bars(rain_slots(self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
-            if reading.band_field:  # a mean shaded up to another field (wind: the gusts)
-                gust, _, gust_high = self.weather_band(group, reading.band_field, first, last)
-                highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
-            line = driver_series(values, self.tz, first, last, label, lows, highs, banded_short=bool(reading.band_field))
-            facts = {"series": name, **self._stats(values, unit)}
+            values, lows, highs = reading_slots(self.eco.cache, self.eco.mac, name, *self._span(first, last))
+            line = driver_series(values, self.tz, first, last, reading.label, lows, highs, banded_short=bool(reading.band_field))
+            facts = {"series": name, **self._stats(values, reading.unit)}
             return (panel_for(name, [line]) if line else None), facts
         if data is None:
             *data, more = await self.air_slots(name, first, last)

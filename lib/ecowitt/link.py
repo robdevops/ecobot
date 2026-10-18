@@ -45,10 +45,25 @@ DESCRIPTION = ("Does rain come WITH a change in pressure (or humidity or wind)? 
                "whole record; never averaged to days.")
 
 
+def reading_slots(cache: HistoryCache, mac: str, name: str, start: int, end: int) -> tuple[dict, dict, dict]:
+    """(values, lows, highs) per 30-minute slot of a reading (series) from the cache, as every chart of it shades them: the
+    band is Ecowitt's own lows and highs where it gives them, else the cached 5-minute readings' (store.slot_ranges). A
+    reading shaded up to another field (wind) has its band reach that field's highest (the gusts)."""
+    reading = WEATHER[name]
+    group, field = reading.group, reading.field
+    values, lows, highs = cache.slots(mac, "30min", group, [field, field + "_low", field + "_high"], start, end)
+    if reading.band_field:
+        gust, gust_high = cache.slots(mac, "30min", group, [reading.band_field, reading.band_field + "_high"], start, end)
+        highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
+    elif not (lows or highs):
+        lows, highs = cache.slot_ranges(mac, group, field, values, start, end)
+    return values, lows, highs
+
+
 def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
                   lows: dict[int, float] | None = None, highs: dict[int, float] | None = None, banded_short: bool = True) -> Line | None:
-    """The reading as a line (see lines.build_line); a day's mean has its range shaded, from Ecowitt's own 30-minute
-    lows and highs where the cache holds them."""
+    """The reading as a line (see lines.build_line); a day's mean has its range shaded, from the slots' lows and highs
+    (reading_slots) where there are any."""
     line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400)
     return line.unbanded((last - first).days + 1, keep=banded_short).spec(label) if line else None
 
@@ -73,7 +88,7 @@ def link(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime) -
     reading, threshold = WEATHER[name], DRIVERS[name]
     group, field, unit = reading.group, reading.field, reading.unit
     lo, hi = day_bounds(first, tz)[0], day_bounds(last, tz, last_second=True)[1]
-    driver, lows, highs = cache.slots(mac, "30min", group, [field, field + "_low", field + "_high"], lo, hi)
+    driver, lows, highs = reading_slots(cache, mac, name, lo, hi)
     (daily,) = cache.slots(mac, "30min", "rainfall", ["daily"], lo, hi)
     rain = rain_slots(daily)
     out = {"period": f"{day_text(first)} - {day_text(last)}", "driver": f"{name} ({unit})",

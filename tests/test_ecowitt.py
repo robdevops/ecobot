@@ -988,7 +988,32 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
     assert len(specs) == 1 and specs[0].title == "Pressure, Rain" and specs[0].panels[0].bars.width == 6 * 3600
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
     assert "error" in json.loads(await eco.tools[3].handler({"driver": "nonsense"}))
+    wind = Turn()                                                 # shaded as plot_chart shades it: up to the gusts (48 km/h at most)
+    await eco.tools[3].handler({"driver": "wind", "start_date": f"{today - timedelta(days=20)}", "end_date": f"{today - timedelta(days=2)}"}, wind)
+    line = wind.charts[0].panels[0].lines[0]
+    assert line.records["high"][1] == max(line.high) == 48.0
     await eco.close()
+
+
+def test_a_reading_is_shaded_alike_on_every_chart_ecowitts_own_range_else_the_5_minute_readings(tmp_path):
+    """reading_slots, which plot_chart and weather_link both draw from: Ecowitt's own 30-minute lows and highs where it gives them,
+    else the range of the cached 5-minute readings in each slot; wind's band reaches its gusts."""
+    from lib.ecowitt.link import reading_slots
+    from lib.ecowitt.store import HistoryCache
+    cache = HistoryCache(tmp_path / "c.sqlite", {"u": "C"})
+    t = int(datetime.now().timestamp() - 10 * 86400) // 1800 * 1800
+
+    def put(cycle, group, **fields):
+        data = {group: {f: {"unit": "", "list": {str(ts): str(v) for ts, v in points.items()}} for f, points in fields.items()}}
+        cache.store("M", cycle, [group], data, t, t + 1799)
+    put("30min", "pressure", relative={t: 1015.0})
+    put("5min", "pressure", relative={t + 300 * i: 1014.0 + i for i in range(6)})
+    assert reading_slots(cache, "M", "pressure", t, t + 1799) == ({t: 1015.0}, {t: 1014.0}, {t: 1019.0})
+    put("30min", "outdoor", humidity={t: 60.0}, humidity_low={t: 52.0}, humidity_high={t: 71.0})
+    put("5min", "outdoor", humidity={t + 300 * i: 40.0 + i for i in range(6)})
+    assert reading_slots(cache, "M", "humidity", t, t + 1799) == ({t: 60.0}, {t: 52.0}, {t: 71.0})
+    put("30min", "wind", wind_speed={t: 8.0}, wind_speed_low={t: 2.0}, wind_speed_high={t: 12.0}, wind_gust={t: 20.0}, wind_gust_high={t: 31.0})
+    assert reading_slots(cache, "M", "wind", t, t + 1799) == ({t: 8.0}, {t: 2.0}, {t: 31.0})
 
 
 def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_them():
