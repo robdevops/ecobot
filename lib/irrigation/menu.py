@@ -79,18 +79,20 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
 def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False, running: bool = False) -> InlineKeyboardMarkup:
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
     is a toggle (blue when on, struck through and uncoloured when off). `paused`: the timer is paused, so its
-    button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
+    button unpauses and Water is hidden. `running`: the valve is on, so Water off is always shown. While a menu is open only its own button (the heading) and its list are shown."""
     head = lambda name, text: opener(text, open == name, f"ir:open:{name}", "ir:close")
     delay = button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
-    rows = [[delay] if paused else [head("water", "💧 Water"), delay],
-            [head("alerts", "🔔 Alerts"), button("🔄 Refresh", "ir:refresh")]]
-    if running:   # the valve is open: off is one press away, whatever else is open
-        rows.append([button("Water off ❌", "ir:sw:off")])
     if open == "water" and not paused:
-        rows.append([button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
+        rows = [[head("water", "💧 Water")], [button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES]]
     elif open == "delay" and not paused:
-        rows.append([button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
+        rows = [[delay], [button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"]]
     elif open == "alerts":
+        rows = [[head("alerts", "🔔 Alerts")]]
         for on, (word, (_, name)) in zip((battery, pause), ALERTS.items()):
             rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, word=word: f"ir:{word}:{'on' if turn_on else 'off'}")])
+    else:
+        rows = [[delay] if paused else [head("water", "💧 Water"), delay],
+                [head("alerts", "🔔 Alerts"), button("🔄 Refresh", "ir:refresh")]]
+    if running:   # the valve is open: off is one press away, whatever else is open
+        rows.insert(1 if rows[0][0].text.endswith(("▾",)) else len(rows), [button("Water off ❌", "ir:sw:off")])
     return InlineKeyboardMarkup(rows)

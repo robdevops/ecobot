@@ -194,6 +194,8 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     assert rows(menu.keyboard(True, True, running=True)) == collapsed + [[("Water off ❌", "ir:sw:off")]]   # only while the valve is on
     assert rows(menu.keyboard(True, True, paused=True, running=True))[-1] == [("Water off ❌", "ir:sw:off")]
     assert "ir:sw:on" not in [data for row in water for _, data in row]
+    assert [len(r) for r in water] == [1, 4] and rows(menu.keyboard(True, True, "delay"))[0] == [("⏸ Pause ▾", "ir:close")]   # an open menu hides the other buttons
+    assert rows(menu.keyboard(True, True, "water", running=True))[1] == [("Water off ❌", "ir:sw:off")]   # but Off stays
     assert rows(menu.keyboard(True, True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h")]
     paused = rows(menu.keyboard(True, True, paused=True))                                      # paused: the button unpauses, in one press
     assert paused[0] == [("▶️ Unpause", "ir:delay:cancel")] and paused[1] == collapsed[1]   # no Water button while paused
@@ -206,8 +208,7 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
             (False, True, (strike("battery alerts"), "ir:batt:on"), ("pause alerts", "ir:pause:off")),
             (True, True, ("battery alerts", "ir:batt:off"), ("pause alerts", "ir:pause:off"))):
         alerts = rows(menu.keyboard(battery, pause, "alerts"))
-        assert alerts[:2] == collapsed[:1] + [[("🔔 Alerts ▾", "ir:close"), ("🔄 Refresh", "ir:refresh")]]
-        assert alerts[2:] == [[battery_button], [pause_button]]                                    # each names the action it takes
+        assert alerts == [[("🔔 Alerts ▾", "ir:close")], [battery_button], [pause_button]]   # the open menu's own button is its heading; the rest are hidden                                    # each names the action it takes
     for section in (None, *menu.SECTIONS):
         for battery in (True, False):
             for pause in (True, False):
@@ -559,14 +560,14 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
 async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_stays_open(tmp_path):
     bot, state, _ = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:alerts")
-    assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[2:]] == ["battery alerts", "pause alerts"]
+    assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[1:]] == ["battery alerts", "pause alerts"]
     q = await press(bot, "ir:batt:off")
     assert state.muted(1) == {"irrigation_battery"} and q.toast == "Irrigation battery alerts off in this chat"
-    assert rows(q.edits[0][2])[2:] == [[(strike("battery alerts"), "ir:batt:on")], [("pause alerts", "ir:pause:off")]]   # still open
+    assert rows(q.edits[0][2])[1:] == [[(strike("battery alerts"), "ir:batt:on")], [("pause alerts", "ir:pause:off")]]   # still open
     assert q.edits[0][1].endswith("pause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: off)")        # the status text follows
     q = await press(bot, "ir:pause:off")
     assert state.muted(1) == {"irrigation_battery", "irrigation_pause"} and q.toast == "Irrigation pause alerts off in this chat"
-    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [(strike("pause alerts"), "ir:pause:on")]
+    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[2] == [(strike("pause alerts"), "ir:pause:on")]
     q = await press(bot, "ir:batt:on")
     assert state.muted(1) == {"irrigation_pause"} and q.toast == "Irrigation battery alerts on in this chat"           # the other type is untouched
     q = await press(bot, "ir:pause:on")
@@ -574,7 +575,7 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
     for kind, prefix in (("irrigation_battery", "batt"), ("irrigation_pause", "pause")):               # a button shows the state, pressing it flips it
         for _ in range(2):
             alerts = rows(menu.keyboard(state.subscribed(1, "irrigation_battery"), state.subscribed(1, "irrigation_pause"), "alerts"))
-            text, data = next(b for row in alerts[2:] for b in row if b[1].startswith(f"ir:{prefix}:"))
+            text, data = next(b for row in alerts[1:] for b in row if b[1].startswith(f"ir:{prefix}:"))
             await press(bot, data)
             assert state.subscribed(1, kind) is (text != text.replace("\u0336", "")), (text, data)
     other = await press(bot, "ir:water:5")
