@@ -3,7 +3,7 @@
 Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the valve is on, a [Water off ❌] row follows. While the timer is paused,
 Pause is [▶️ Unpause] (one press ends the pause) and Water is hidden. A press on Water, Pause or Alerts opens its options under the
 rows (▸ after the text marks a menu, ▾ the open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes (a run is always timed). Alerts has
-one toggle per alert type, green while this chat gets it, struck through and uncoloured while it does not; pressing it flips it.
+one toggle per alert type, blue while this chat gets it, struck through and uncoloured while it does not; pressing it flips it.
 Callback data
 (short, self-contained, so an old message's buttons still work after a restart):
   ir:open:<water|delay|alerts> | ir:close | ir:refresh (read the state again, change nothing)
@@ -78,7 +78,7 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
 
 def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False, running: bool = False) -> InlineKeyboardMarkup:
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
-    is a toggle (green when on, struck through and uncoloured when off). `paused`: the timer is paused, so its
+    is a toggle (blue when on, struck through and uncoloured when off). `paused`: the timer is paused, so its
     button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
     head = lambda name, text: opener(text, open == name, f"ir:open:{name}", "ir:close")
     delay = button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
