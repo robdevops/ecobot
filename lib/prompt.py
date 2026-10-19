@@ -1,13 +1,26 @@
 """The system prompt. Everything the model would otherwise have to work out (dates, devices,
 units, wording of times) is decided in code and handed over ready-made."""
 
+from collections.abc import Collection
 from datetime import datetime
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS
+from .alerts.forecast import TEMP_CHANGE_C
+from .alerts.menu import TYPES
+from .alerts.weather import GUST_ALERT_KMH
+from .ecowitt.glance import UVI_ALERT
 from .intent import period_ranges
 from .series import WEATHER
+from .timeutil import day_text
 
 WEATHER_NAMES = list(WEATHER)
+NEVER_AVAILABLE = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
+WITHOUT = {"Pollen": "pollen and thunderstorm asthma", "Forecast": "forecasts (only a short read of the pressure trend)"}   # what a source that is off leaves out
+# Each alert type as the prompt describes it, with its own threshold; told only when the source that sends it is on (alerts.menu.TYPES)
+ALERT_WORDS = {"rain": "rain starting or stopping", "gusts": f"wind gusts over {GUST_ALERT_KMH} km/h",
+               "uv": f"UV index of {UVI_ALERT} or more", "temps": "indoor/outdoor temperature crossing",
+               "particulates": "air-quality mask alerts", "pollen_and_asthma": "pollen or thunderstorm asthma risk reaching High",
+               "forecast": f"a forecast it sent being revised (rain, or max temperature over {TEMP_CHANGE_C:g} degrees)"}
 
 PROMPT = """\
 You are a friendly weather bot on Telegram.
@@ -145,7 +158,7 @@ DATE_LABELS = [  # period name -> label in the prompt
 def date_ranges(now: datetime) -> str:
     """Pre-computed date ranges so the model never does calendar maths (same definitions as
     the fast path)."""
-    fmt = lambda d: d.strftime("%a %d %b %Y")
+    fmt = day_text
     periods = period_ranges(now.date())
     lines = [f"  Today: {fmt(now)} (00:00 to now)"]
     for name, label in DATE_LABELS:
@@ -154,15 +167,12 @@ def date_ranges(now: datetime) -> str:
     return "\n".join(lines)
 
 
-def capabilities(sources: list[str], brief: bool = False) -> str:
-    """What the bot can and can't do, for questions about the bot itself ("what metrics do you have?") and so the model
-    knows what is possible before it says something can't be done. Built from the code's own lists."""
-    have = " ".join(sources)
+def capabilities(have: Collection[str], brief: bool = False) -> str:
+    """What the bot can and can't do with the sources it has (by name), for questions about the bot itself ("what metrics do you
+    have?") and so the model knows what is possible before it says something can't be done. Built from the code's own lists."""
+    missing = ", ".join([*NEVER_AVAILABLE, *(what for name, what in WITHOUT.items() if name not in have)])
     if brief:   # most questions: only the limits, so it never promises what it can't do
-        missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
-        missing += (["pollen and thunderstorm asthma"] if "melbournepollen" not in have else []) + (
-            ["forecasts (only a short read of the pressure trend)"] if "Open-Meteo" not in have else [])
-        return ("\nLIMITS: not available: " + ", ".join(missing) + ". Custom alerts (\"tell me when winds reach 100\") can't be added: say so. "
+        return (f"\nLIMITS: not available: {missing}. Custom alerts (\"tell me when winds reach 100\") can't be added: say so. "
                 "A chart series or style the tools don't offer can't be drawn: say so.\n")
     lines = ["\nWHAT THIS BOT CAN AND CAN'T DO (answer questions about the bot from this, with no tool call)"]
     if "Ecowitt" in have:
@@ -182,24 +192,18 @@ def capabilities(sources: list[str], brief: bool = False) -> str:
                      "cleaner air, and air_scan scans every air metric against every weather reading for what goes with what. "
                      "Use them for \"plot X against Y\", \"does rain affect air quality\" and \"is there a correlation between air "
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
-    if "melbournepollen" in have:
+    if "Pollen" in have:
         lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High), tool pollen_asthma. "
                      "Both forecasts only run from October to December: outside those months the tool says so.")
-    if "Open-Meteo" in have:
+    if "Forecast" in have:
         lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of at least 1 mm of rain), tool weather_forecast.")
     lines.append("- Charts: any one reading, or several readings together on one time axis, one panel each (" + ", ".join(WEATHER_NAMES)
                  + "; \"weather all week\" draws every reading); wind as average speed with gusts beside a compass rose of directions; "
                  "air quality with ratings.")
-    lines.append("- Alerts, sent to chats automatically: rain starting or stopping, wind gusts over 40 km/h, UV index of 10 or more, "
-                 "indoor/outdoor temperature crossing, air-quality mask alerts" + (", pollen or thunderstorm asthma risk reaching High" if "melbournepollen" in have else "") + (
-                     ", a forecast it sent being revised (rain, or max temperature over 2 degrees)" if "Open-Meteo" in have else "") + ". Each alert has buttons to subscribe or unsubscribe by type, and /alerts opens the same settings. Custom alerts "
-                 "(\"tell me when winds reach 100\", another limit) can't be added: say so.")
-    missing = ["lightning", "soil or extra sensor channels", "indoor air quality", "other stations or places"]
-    if "melbournepollen" not in have:
-        missing.append("pollen and thunderstorm asthma")
-    if "Open-Meteo" not in have:
-        missing.append("forecasts (only a short read of the pressure trend)")
-    lines.append("- Not available: " + ", ".join(missing) + ".")
+    if alerts := ", ".join(words for kind, words in ALERT_WORDS.items() if TYPES[kind][1] in have):
+        lines.append(f"- Alerts, sent to chats automatically: {alerts}. Each alert has buttons to subscribe or unsubscribe by type, and "
+                     "/alerts opens the same settings. Custom alerts (\"tell me when winds reach 100\", another limit) can't be added: say so.")
+    lines.append(f"- Not available: {missing}.")
     return "\n".join(lines) + "\n"
 
 
@@ -209,12 +213,13 @@ Nothing else: no averages, no other readings, no outlook.
 """
 
 
-def build(now: datetime, sources: list[str], hints: list[str] = (), about_bot: bool = False, rain_caption: bool = False,
+def build(now: datetime, sources: dict[str, str], hints: list[str] = (), about_bot: bool = False, rain_caption: bool = False,
           topics: set[str] | None = None) -> str:
-    """The system prompt. `topics` (see intent.topics) picks the guidance the question needs; None puts all of it in."""
+    """The system prompt for the bot's sources ({name: its line for the prompt, Source.describe()}). `topics` (see intent.topics)
+    picks the guidance the question needs; None puts all of it in."""
     # Most stable first: the model provider caches a prompt's start, so what changes (the topics, the date, then the time) goes last
     everything = topics is None
-    text = PROMPT.format(sources="\n".join(f"- {s}" for s in sources) or "(none)",
+    text = PROMPT.format(sources="\n".join(f"- {s}" for s in sources.values()) or "(none)",
                          capabilities=capabilities(sources, brief=not (everything or about_bot or "bot" in topics)))
     text += "".join(f"\n{block}" for name, block in BLOCKS.items() if everything or name in topics)
     text += f"\nRIGHT NOW (exact ranges, then the time)\n{date_ranges(now)}\nIt is now {now.strftime('%A %d %B %Y, %H:%M %Z')}.\n"

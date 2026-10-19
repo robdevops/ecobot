@@ -19,14 +19,11 @@ import time
 from bisect import bisect_left
 
 from ..timeutil import SLOT
-from .api import UNIT_FIXES
+from .api import CYCLES, UNIT_FIXES
 
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1"
-BUCKET_SECONDS = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
-# How long after a bucket ends before its data is treated as final
-SETTLE_SECONDS = {"5min": 3600, "30min": 7200, "4hour": 8 * 3600, "1day": 86400}
 # Missing readings older than this are accepted as genuinely missing (station offline,
 # before it existed). Newer gaps may just be Ecowitt running late, so they're re-asked.
 GAP_FINAL_SECONDS = 2 * 86400
@@ -40,7 +37,7 @@ type Interval = tuple[int, int]
 def horizon(cycle: str, now: float | None = None) -> int:
     """Latest bucket start whose data is final."""
     now = time.time() if now is None else now
-    return int(now - SETTLE_SECONDS[cycle] - BUCKET_SECONDS[cycle])
+    return int(now - CYCLES[cycle].settle - CYCLES[cycle].seconds)
 
 
 def subtract(span: Interval, covered: list[Interval]) -> list[Interval]:
@@ -125,24 +122,22 @@ class HistoryCache:
         return self._query("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series "
                            "WHERE s.mac=? AND s.cycle=? AND s.grp=? AND p.ts BETWEEN ? AND ?", mac, cycle, grp, start, end)[0][0]
 
-    def newest(self, mac: str, cycle: str) -> int | None:
-        """The time of the newest reading held at this resolution (None if none)."""
-        return self._query("SELECT MAX(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.mac=? AND s.cycle=?", mac, cycle)[0][0]
-
     def coverage(self, mac: str, cycle: str, grp: str) -> list[Interval]:
         """Every time range held for this group at this resolution (merged, oldest first)."""
         return merge(self._query("SELECT start, end FROM coverage WHERE mac=? AND cycle=? AND grp=?", mac, cycle, grp))
 
-    def coverage_of(self, mac: str, cycle: str, groups: list[str]) -> dict[str, list[Interval]]:
-        """coverage() of each of these groups, in one query."""
-        held: dict[str, list[Interval]] = {g: [] for g in groups}
-        for grp, start, end in self._query(f"SELECT grp, start, end FROM coverage WHERE mac=? AND cycle=? AND grp IN ({','.join('?' * len(held))})",
-                                           mac, cycle, *held):
-            held[grp].append((start, end))
-        return {g: merge(spans) for g, spans in held.items()}
-
-    def missing(self, mac: str, cycle: str, grp: str, start: int, end: int) -> list[Interval]:
-        return subtract((start, end), self.coverage(mac, cycle, grp))
+    def uncovered(self, mac: str, groups: list[str], windows: list[tuple[str, int, int]]) -> list[dict[str, list[Interval]]]:
+        """For each (cycle, start, end) window, the parts of it each group's readings are not held for: one read of the coverage,
+        however many windows, resolutions and groups."""
+        cycles = sorted({cycle for cycle, _, _ in windows})
+        held: dict[tuple[str, str], list[Interval]] = {(c, g): [] for c in cycles for g in groups}
+        if held:
+            for cycle, grp, start, end in self._query(
+                    f"SELECT cycle, grp, start, end FROM coverage WHERE mac=? AND cycle IN ({','.join('?' * len(cycles))}) "
+                    f"AND grp IN ({','.join('?' * len(groups))})", mac, *cycles, *groups):
+                held[cycle, grp].append((start, end))
+        held = {key: merge(spans) for key, spans in held.items()}
+        return [{g: subtract((start, end), held[cycle, g]) for g in groups} for cycle, start, end in windows]
 
     def load_fields(self, mac: str, cycle: str, grp: str, fields: list[str] | None, start: int, end: int) -> dict:
         """A group's fields (all of them if `fields` is None) in Ecowitt's response shape: {field: {unit, list}}."""
@@ -212,8 +207,8 @@ class HistoryCache:
             if old_enough:
                 covered.append((grp, limit))
             elif reached is not None:
-                covered.append((grp, min(limit, reached + BUCKET_SECONDS[cycle] - 1)))
-        with self._lock:
+                covered.append((grp, min(limit, reached + CYCLES[cycle].seconds - 1)))
+        with self._lock, self.db:   # one transaction: an error part-way rolls it back (no half-written response is kept)
             grown = set()   # groups that now carry a reading the cache has never had (Ecowitt added a metric)
             for _, _, grp, field, _ in units:
                 known = {r[0] for r in self.db.execute("SELECT field FROM series WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))}
@@ -233,7 +228,6 @@ class HistoryCache:
                 self.db.execute("DELETE FROM coverage WHERE mac=? AND cycle=? AND grp=?", (mac, cycle, grp))
                 self.db.executemany("INSERT INTO coverage VALUES (?,?,?,?,?)",
                                     [(mac, cycle, grp, s, e) for s, e in merge(existing + [(start, cov_end)])])
-            self.db.commit()
 
     def load(self, mac: str, cycle: str, groups: list[str], start: int, end: int) -> dict:
         """Cached readings in Ecowitt's response shape: {grp: {field: {unit, list}}}."""
@@ -265,5 +259,10 @@ class HotStore:
         return entry["fields"] if end <= entry["end"] or reaches_present else None
 
     def put(self, mac: str, cycle: str, group: str, start: int, end: int, fields: dict):
+        """Keep a response, unless a fresh one that reaches later is held: an old range (the archive's) is cached on disk, and must
+        not push out the copy of the last hours that questions are answered from."""
+        held = self._entries.get((mac, cycle, group))
+        if held and time.time() - held["fetched_at"] <= HOT_TTL_SECONDS and held["end"] > end:
+            return
         self._entries[(mac, cycle, group)] = {"start": start, "end": end, "fields": fields,
                                               "fetched_at": time.time()}

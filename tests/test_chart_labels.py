@@ -14,6 +14,8 @@ def test_a_short_period_line_loses_its_range_unless_it_is_wind_or_the_period_is_
     assert banded().unbanded(7).low is None and banded().unbanded(SHORT_DAYS).high is None
     assert banded().unbanded(7, keep=True).low is not None                # wind: the mean shaded up to the gusts
     assert banded().unbanded(SHORT_DAYS + 1).low is not None              # a quarter keeps its daily range
+    line = banded()
+    assert line.unbanded(7).low is None and line.low is not None             # a new line: the one it came from keeps its range
 
 
 def labels_of(chart):
@@ -109,3 +111,41 @@ def test_two_lows_that_end_together_at_the_right_edge_get_pills_on_opposite_side
                                                     Line("Other", xs, floor, reading="humidity")], reading="humidity")])
     sides = dict(annotations_of(chart))
     assert {sides["45.3 %"], sides["48.0 %"]} == {"top", "bottom"}, sides                       # never the same side
+
+
+def test_a_temperature_low_just_above_zero_is_labelled():
+    """Only a reading that can't go below zero (rain, wind, sun, air) has its axis floored at 0 and its low on the floor left
+    unlabelled; a cold night of 0.4° is a record worth its label."""
+    ys = [12.0, 8.0, 0.4, 6.0, 15.0, 20.0, 18.0]
+    chart = Chart("T", "s", [Panel("Temperature", "°C", [one_line("temperature", ys).panels[0].lines[0]], reading="temperature")])
+    assert "0.4°" in labels_of(chart)
+    assert "0" not in labels_of(one_line("wind", [3.0, 0.0, 5.0, 9.0]))   # a calm low on the floor still says nothing
+
+
+def test_a_day_of_25_hours_is_drawn_25_hours_long_with_its_ticks_on_local_hours():
+    """5 Apr 2026 in Melbourne: 2am to 3am happens twice. The axis is real time, so a line through it never runs backwards (on
+    local clock times it drew that hour twice), and the hour ticks still fall on local 0, 3, 6 ... o'clock."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    import numpy as np
+    tz = ZoneInfo("Australia/Melbourne")
+    start = int(datetime(2026, 4, 5, tzinfo=tz).timestamp())
+    xs = charts._nums(range(start, start + 25 * 3600, 1800))
+    assert np.all(np.diff(xs) > 0) and round((xs[-1] - xs[0]) * 24, 3) == 24.5
+    fig, ax = plt.subplots()
+    try:
+        ax.set_xlim(xs[0], xs[-1])
+        charts._time_axis(ax, xs[-1] - xs[0], tz)
+        ticks = [mdates.num2date(t, tz) for t in ax.xaxis.get_major_locator()()]
+    finally:
+        plt.close(fig)
+    assert ticks and {t.hour for t in ticks} <= {0, 3, 6, 9, 12, 15, 18, 21} and ticks[0].day == 5
+
+
+def test_every_weather_reading_and_air_metric_has_a_colour_of_its_own():
+    from lib import charts
+    from lib.series import AIR, WEATHER
+    lines = [name for name in WEATHER if name != "rain"]          # rain is drawn as bars, in its own blue
+    assert not [name for name in (*lines, *AIR) if name not in charts.READING_COLOURS]

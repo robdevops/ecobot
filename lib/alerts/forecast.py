@@ -13,6 +13,7 @@ The forecast only refreshes from 6 am to 6 pm, so that is when this can fire.
 import logging
 
 from ..forecast.source import day_label, describe_day
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -33,10 +34,10 @@ def revised(old: dict, new: dict) -> bool:
 
 
 class ForecastMonitor:
-    KINDS = ("forecast",)
+    KINDS = kinds_of("Forecast")
 
     def __init__(self, forecast, state, notify):
-        """notify: the Notifier (its to_chat sends to one chat)."""
+        """notify: the Notifier (chats=[chat] sends to that one)."""
         self.forecast, self.state, self.notify = forecast, state, notify
 
     async def check(self):
@@ -53,5 +54,5 @@ class ForecastMonitor:
             if not changes:
                 continue
             lines = [f"• {day_label(day, today)}: was {describe_day(old)}\n  now {describe_day(new)}" for day, old, new in changes]
-            if await self.notify.to_chat(chat_id, "\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines), kind="forecast"):
-                self.state.record_forecast(chat_id, [new for _, _, new in changes])
+            if await self.notify("\U0001f504 The forecast has changed since I sent it:\n" + "\n".join(lines), kind="forecast", chats=[chat_id]):
+                self.state.record_forecast(chat_id, [new for _, _, new in changes], today)

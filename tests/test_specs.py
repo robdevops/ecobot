@@ -70,14 +70,15 @@ def test_a_period_shows_the_year_on_both_dates_when_it_spans_years():
 
 
 def test_a_reading_that_cannot_be_negative_is_not_drawn_below_zero_and_temperature_may_be():
-    import matplotlib
+    from matplotlib.figure import Figure
     from lib import charts
-    ax = matplotlib.pyplot.figure().add_axes([0, 0, 1, 1])
-    charts._pad_limits(ax, 0.0, 8.0, floor=0)
+    ax = Figure().add_axes([0, 0, 1, 1])
+    pad = lambda lo, hi, floor: charts._pad_limits(ax, lo, hi, top=0.12, bottom=0.12, floor=floor)
+    pad(0.0, 8.0, 0)
     assert ax.get_ylim()[0] == 0
-    charts._pad_limits(ax, 0.0, 8.0)
+    pad(0.0, 8.0, None)
     assert ax.get_ylim()[0] < 0
-    charts._pad_limits(ax, -4.0, 8.0, floor=0)                                    # real negatives keep their room
+    pad(-4.0, 8.0, 0)                                                             # real negatives keep their room
     assert ax.get_ylim()[0] < -4
 
 
@@ -212,14 +213,30 @@ def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
 
 def test_a_single_panel_charts_caption_is_one_line_and_a_stacks_is_two():
     today = date(2026, 10, 4)
-    one = lambda sub: Chart("Temperature", sub, [Panel("Temperature", "°C", [line("T")])])
-    assert one("Tue 7 Jul – Sun 4 Oct 2026  ·  daily averages").caption(today) == "Temperature, since Tue 7 Jul 2026"
-    assert one("Wed 28 Sep – Sun 4 Oct 2026").caption(today) == "Temperature, since Wed 28 Sep 2026"
-    assert one("Tue 29 Sep 2025 – Sun 4 Oct 2026").caption(today) == "Temperature, since Tue 29 Sep 2025"
-    assert one("Wed 24 – Tue 30 Sep 2026  ·  30-minute readings").caption(today) == "Temperature, Wed 24 – Tue 30 Sep 2026"   # not up to today
-    assert one("Sun 4 Oct 2026").caption(today) == "Temperature, today" and one("Tue 29 Sep 2026").caption(today) == "Temperature, Tue 29 Sep 2026"
-    assert one("").caption(today) == "Temperature"
+    one = lambda *period: Chart("Temperature", "whatever the subtitle says", [Panel("Temperature", "°C", [line("T")])], period=period or None)
+    assert one(date(2026, 7, 7), today).caption(today) == "Temperature, since Tue 7 Jul 2026"
+    assert one(date(2026, 9, 28), today).caption(today) == "Temperature, since Mon 28 Sep 2026"
+    assert one(date(2025, 9, 29), today).caption(today) == "Temperature, since Mon 29 Sep 2025"
+    assert one(date(2026, 9, 24), date(2026, 9, 30)).caption(today) == "Temperature, Thu 24 – Wed 30 Sep 2026"   # not up to today
+    assert one(today, today).caption(today) == "Temperature, today" and one(date(2026, 9, 29), date(2026, 9, 29)).caption(today) == "Temperature, Tue 29 Sep 2026"
+    assert one().caption(today) == "Temperature"                                                  # no period: the title
     rain_behind = stack([Panel("Humidity", "%", [line("H")]), Panel("Rain", "mm", bars=bars())], date(2026, 9, 28), today)
     assert rain_behind.caption(today) == "Humidity, Rain, since Mon 28 Sep 2026"                # rain behind a line is still one panel
     stacked = stack([Panel("Humidity", "%", [line("H")]), Panel("Pressure", "hPa", [line("P")])], date(2026, 9, 28), today)
     assert stacked.caption(today) == "Humidity, Pressure\nMon 28 Sep – Sun 4 Oct 2026"           # several panels keep two lines
+
+
+def test_a_panel_of_bars_with_no_bar_is_refused_when_built():
+    import pytest
+    from lib.specs import Bars, Panel
+    with pytest.raises(ValueError, match="nothing to draw"):
+        Panel("Rain", "mm", bars=Bars("Rain", "mm", [], [], 86400))
+
+
+def test_a_bar_below_zero_has_its_bright_end_at_the_bottom(monkeypatch):
+    from lib import charts
+    drawn = []
+    monkeypatch.setattr(charts, "_columns", lambda ax, x, heights, width, bottom=0.0, **style: drawn.append((list(heights), bottom)))
+    charts._draw_bars(None, [0.0, 1.0], [-3.0, 2.0], 0.85, 10.0, 3)
+    heights, bottom = drawn[1]   # the caps (the bodies are drawn first)
+    assert heights == [-0.14, 0.14] and [round(b, 2) for b in bottom] == [-2.86, 1.86]   # each cap ends where its bar does

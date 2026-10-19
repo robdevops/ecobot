@@ -22,9 +22,9 @@ def test_alerts_has_two_buttons_alerts_and_sound_and_a_group_has_only_the_first(
     assert rows(keyboard(set(), KINDS, "sound")) == rows(keyboard(set(), KINDS))                     # a group cannot open Sound
 
 
-def test_the_bell_toggles_are_green_when_on_and_struck_through_when_off():
+def test_the_bell_toggles_are_blue_when_on_and_struck_through_when_off():
     styles = lambda m: {b.text: b.style for row in m.inline_keyboard for b in row}
-    assert styles(alert_keyboard("uv", set(), set(), "bell")) == {"🔔 ▾": None, "Alert": "success", strike("Sound"): None}
+    assert styles(alert_keyboard("uv", set(), set(), "bell")) == {"🔔 ▾": None, "Alert": "primary", strike("Sound"): None}
     assert styles(alert_keyboard("uv", {"uv"}, {"uv"}, "bell")) == {"🔔 ▾": None, strike("Alert"): None}
 
 
@@ -47,11 +47,11 @@ def test_every_button_of_every_keyboard_parses_and_builds_back_to_the_same_data(
         assert parse(junk) is None, junk
 
 
-def test_a_type_that_is_on_is_a_green_button_and_one_that_is_off_is_struck_through_and_plain():
+def test_a_type_that_is_on_is_a_blue_button_and_one_that_is_off_is_struck_through_and_plain():
     markup = keyboard({"gusts"}, KINDS, "alerts", loud=set())
     styles = {b.text: b.api_kwargs.get("style") or b.style for row in markup.inline_keyboard for b in row}
-    assert styles["rain"] == "success" and styles[strike("gusts")] is None and not styles["🔔 Alerts ▾"]
-    assert markup.inline_keyboard[1][0].to_dict()["style"] == "success" and "style" not in markup.inline_keyboard[1][1].to_dict()   # and it is sent to Telegram
+    assert styles["rain"] == "primary" and styles[strike("gusts")] is None and not styles["🔔 Alerts ▾"]
+    assert markup.inline_keyboard[1][0].to_dict()["style"] == "primary" and "style" not in markup.inline_keyboard[1][1].to_dict()   # and it is sent to Telegram
 
 
 def test_each_menu_lists_its_types_struck_through_when_off_and_keeps_only_its_own_button():
@@ -82,24 +82,21 @@ def test_the_title_lists_what_is_on_and_off():
     assert title(set(), ["particulates"]).endswith("🔕 Off: nothing") and title({"particulates"}, ["particulates"]).endswith("On: nothing\n🔕 Off: particulates")
 
 
-def test_state_mutes_one_type_or_all_and_old_files_load(tmp_path):
+def test_state_mutes_one_type_or_all(tmp_path):
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "a")
     state.add_chat(2, "b")
     state.set_kind(1, "rain", False)
     state.set_kind(1, "bogus", False)
-    assert state.muted(1) == {"rain"} and state.alert_chats("rain") == [2] and state.alert_chats("uv") == [1, 2] and state.alerts_on(1)
+    assert state.muted(1) == {"rain"} and state.alert_chats("rain") == [2] and state.alert_chats("uv") == [1, 2] and state.subscribed(1)
     state.set_kind(1, ALL, False)
-    assert state.muted(1) == set(LABELS) and not state.alerts_on(1) and state.alert_chats() == [2]
+    assert state.muted(1) == set(LABELS) and not state.subscribed(1) and state.alert_chats() == [2]
     state.set_kind(1, ALL, True)
     assert state.muted(1) == set() and "muted" not in state.chats[1]
     state.set_kind(2, "gusts", False)
     assert AlertState(tmp_path / "s.json").muted(2) == {"gusts"}                       # saved
-    (tmp_path / "old.json").write_text('{"chats": {"7": {"title": "x", "alerts": false}, "8": {"title": "y", "alerts": true}}, "monitor": {}}')
-    old = AlertState(tmp_path / "old.json")
-    assert old.muted(7) == set(LABELS) and old.muted(8) == set() and old.alert_chats() == [8]
-    state.set_alerts(1, "a", False)                                                      # the /alerts off shortcut
-    assert not state.alerts_on(1)
+    state.set_alerts(1, False)                                                      # the /alerts off shortcut
+    assert not state.subscribed(1)
 
 
 class Sent:
@@ -123,7 +120,12 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
     markup = bot.sent[0][2]["reply_markup"]
     assert rows(markup) == [[("🔔 ▸", "al:open:bell:rain")]]   # the alert's own type rides along
     assert bot.sent[0][1] == "It's raining"                                    # no footer: the buttons say how to change it
-    assert await notifier.to_chat(2, "x", kind="rain") is False and await notifier.to_chat(2, "x", kind="uv") is True
+    assert await notifier("x", kind="rain", chats=[2]) == 0 and await notifier("x", kind="uv", chats=[2]) == 1
+
+
+async def png():
+    """An alert's chart, drawn."""
+    return b"png"
 
 
 class Query:
@@ -142,6 +144,8 @@ class Query:
         self.edits.append(("markup", reply_markup))
 
     async def edit_message_text(self, text, reply_markup=None):
+        if self.fail:
+            raise self.fail
         self.edits.append(("text", text, reply_markup))
 
 
@@ -181,12 +185,21 @@ async def test_the_alerts_menu_toggles_a_type_in_place_and_back_returns_to_the_t
     assert rows(q.edits[0][2]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
 
 
+async def test_turning_off_every_type_the_bot_sends_unsubscribes_the_chat_from_all(tmp_path, monkeypatch):
+    from lib.alerts import menu
+    bot, state = make_bot(tmp_path, sources=("Ecowitt",))
+    for kind in ("rain", "gusts", "uv", "temps"):                      # the weather station's types, one by one
+        await press(bot, Query(f"al:off:{kind}:alerts"))
+    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
+    assert state.chats[1].get("optin") and not state.subscribed(1, "newthing") and not state.subscribed(1, "particulates")
+
+
 async def test_the_alerts_message_keeps_its_summary_current_but_an_alert_keeps_its_text(tmp_path):
     bot, state = make_bot(tmp_path)
     q = Query("al:off:uv:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     assert q.edits[0][0] == "text" and "🔕 Off: UV" in q.edits[0][1]
-    q = Query("al:off:gusts:alerts", text="💨 Strong gusts: 55 km/h")
+    q = Query("al:off:gusts:bell:gusts", text="💨 Strong gusts: 55 km/h")
     await press(bot, q)
     assert q.edits[0][0] == "markup"
 
@@ -233,20 +246,20 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     assert replies[0][0].startswith(TITLE) and "On: rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
     assert rows(replies[0][1]["reply_markup"])[0] == [("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]
     await bot.on_alerts(update, NS(args=["off"]))
-    assert not state.alerts_on(1) and "On: nothing" in replies[1][0]
+    assert not state.subscribed(1) and "On: nothing" in replies[1][0]
     await bot.on_alerts(update, NS(args=["on"]))
-    assert state.alerts_on(1) and "🔕 Off: nothing" in replies[2][0]
+    assert state.subscribed(1) and "🔕 Off: nothing" in replies[2][0]
 
 
 async def test_every_monitors_alert_names_its_type(tmp_path):
     from lib.alerts import ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, WeatherMonitor
     from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, gusts, rain, uv
-    from tests.test_forecast_alert import FakeForecast, day
+    from tests.test_forecast_alert import TODAY, FakeForecast, day
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "chat")
     kinds = []
 
-    async def notify(text, link=None, kind=None):
+    async def notify(text, link=None, kind=None, **more):
         kinds.append(kind)
 
     async def weather(first, then):
@@ -271,14 +284,12 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     assert kinds == ["pollen_and_asthma"]
     seen = []
     notifier = Notifier(Sent(), state)
-    real = notifier.to_chat
 
-    async def spy(chat_id, text, link=None, kind=None):
-        seen.append(kind)
-        return await real(chat_id, text, link, kind)
-    notifier.to_chat = spy
-    state.record_forecast(1, [day(0, pct=90)])
-    await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, notifier).check()
+    async def spy(text, **kw):
+        seen.append(kw["kind"])
+        return await notifier(text, **kw)
+    state.record_forecast(1, [day(0, pct=90)], TODAY)
+    await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, spy).check()
     assert seen == ["forecast"]
 
 
@@ -299,28 +310,29 @@ async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays
     bot, state = make_bot(tmp_path)
     q = Query("al:open:bell:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
     q = Query("al:snd:uv:on:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]
+    assert state.loud(1) == {"uv"} and q.toast == "UV alerts now make a sound" and rows(q.edits[0][-1])[2] == [("Sound", "al:snd:uv:off:uv")]
     q = Query("al:off:uv:bell:uv", text="☀️ UV 10")                            # alert off: the sound toggle goes, the struck alert stays to turn it back on
     await press(bot, q)
     assert "uv" in state.muted(1) and q.toast == "UV alerts off in this chat"
-    assert rows(q.edits[0][1]) == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:bell:uv")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 ▾", "al:close:uv")], [(strike("Alert"), "al:on:uv:bell:uv")]]
     q = Query("al:on:uv:bell:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert "uv" not in state.muted(1) and rows(q.edits[0][1])[2] == [("Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
+    assert "uv" not in state.muted(1) and rows(q.edits[0][-1])[2] == [("Sound", "al:snd:uv:off:uv")]    # the sound setting was kept
     q = Query("al:close:uv", text="☀️ UV 10")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 ▸", "al:open:bell:uv")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 ▸", "al:open:bell:uv")]]
 
 
-async def test_an_unknown_parent_in_a_button_is_ignored(tmp_path):
-    bot, state = make_bot(tmp_path)
-    q = Query("al:open:alerts:bogus", text="☀️ UV 10")
-    await press(bot, q)
-    drawn = rows(q.edits[0][1])
-    assert drawn[1][0] == ("rain", "al:off:rain:alerts")       # the /alerts menu, not carried on
+async def test_the_bell_of_an_alert_type_the_bot_no_longer_sends_is_out_of_date(tmp_path):
+    from lib.bot import STALE_BUTTON
+    bot, state = make_bot(tmp_path, sources=("Ecowitt",))                       # no pollen source any more
+    for data in ("al:open:bell:pollen_and_asthma", "al:off:pollen_and_asthma:bell:pollen_and_asthma"):
+        q = Query(data, text="🌼 Grass pollen is High")
+        await press(bot, q)
+        assert q.toast == STALE_BUTTON and q.edits == [] and state.muted(1) == set(), data
 
 
 def test_the_title_stays_plain_words():
@@ -332,13 +344,13 @@ async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_
     state.set_kind(1, "gusts", False)
     q = Query("al:open:sound")
     await press(bot, q)
-    drawn = rows(q.edits[0][1])
+    drawn = rows(q.edits[0][-1])
     assert drawn[0] == [("🔊 Sound ▾", "al:close")] and drawn[1] == [(strike("rain"), "al:snd:rain:on"), (strike("UV"), "al:snd:uv:on")]
     assert "gusts" not in str(drawn)                                            # an alert that is off has no sound to set
     assert "Alerts" not in str(drawn)                                           # the Alerts menu is hidden while Sound is open
     q = Query("al:snd:rain:on")
     await press(bot, q)
-    assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][1])[1][0] == ("rain", "al:snd:rain:off")
+    assert state.loud(1) == {"rain"} and q.toast == "Rain alerts now make a sound" and rows(q.edits[0][-1])[1][0] == ("rain", "al:snd:rain:off")
     await press(bot, Query("al:snd:uv:on"))
     assert state.loud(1) == {"rain", "uv"}
     q = Query("al:snd:rain:off")
@@ -349,14 +361,14 @@ async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_
     assert state.loud(1) == {"uv"}
     q = Query("al:close")
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
     q = Query("al:snd:rain:on", chat_type="supergroup", chat_id=-5)              # groups have no sound settings
     state.add_chat(-5, "G")
     await press(bot, q)
     assert state.loud(-5) == set() and q.edits == []
     q = Query("al:open:sound", chat_type="supergroup", chat_id=-5)
     await press(bot, q)
-    assert rows(q.edits[0][1]) == [[("🔔 Alerts ▸", "al:open:alerts")]]
+    assert rows(q.edits[0][-1]) == [[("🔔 Alerts ▸", "al:open:alerts")]]
 
 
 async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_get_no_settings_button(tmp_path):
@@ -426,7 +438,7 @@ class SentWithPhotos(Sent):
 async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_caption_and_the_buttons(tmp_path):
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos()
     state.add_chat(1, "one")
-    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", chart=png)
     assert bot.sent == [] and len(bot.photos) == 1
     chat, photo, kw = bot.photos[0]
     assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
@@ -441,16 +453,16 @@ async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_t
     state, bot = AlertState(tmp_path / "s.json"), Keeps()
     for chat in (1, 2, 3):
         state.add_chat(chat, str(chat))
-    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", chart=png)
     assert [(chat, photo) for chat, photo, _ in bot.photos] == [(1, b"png"), (2, "large"), (3, "large")]
 
 
-async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_chat_is_still_forgotten(tmp_path):
+async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_chat_is_still_marked_gone(tmp_path):
     from telegram.error import BadRequest
     state, bot = AlertState(tmp_path / "s.json"), SentWithPhotos(refuse=BadRequest("Wrong file identifier"))
     state.add_chat(1, "one")
-    await Notifier(bot, state)("It's warmer outside", kind="temps", photo=b"png")
+    await Notifier(bot, state)("It's warmer outside", kind="temps", chart=png)
     assert bot.photos == [] and [(c, t) for c, t, _ in bot.sent] == [(1, "It's warmer outside")]
     gone = SentWithPhotos(refuse=BadRequest("Chat not found"))
-    await Notifier(gone, state)("again", kind="temps", photo=b"png")
-    assert gone.sent == [] and 1 not in state.chats
+    await Notifier(gone, state)("again", kind="temps", chart=png)
+    assert gone.sent == [] and state.chats[1]["gone"] and state.alert_chats() == []

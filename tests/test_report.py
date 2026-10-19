@@ -1,9 +1,10 @@
 import json
+from datetime import date
 
 from lib import report
 
-# What `python scripts/report_inputs.py` printed on the real station (rain, night)
-NOW = ('{"time":"Fri 02 Oct 2026 02:21","outdoor":{"temperature":"12.3 ℃","feels_like":"12.3 ℃","app_temp":"12.7 ℃","dew_point":"11.3 ℃",'
+# What `python scripts/report_inputs.py` printed on the real station (rain, night), its time as the station now writes it
+NOW = ('{"time":"Fri 2 Oct 2026 2:21am","outdoor":{"temperature":"12.3 ℃","feels_like":"12.3 ℃","app_temp":"12.7 ℃","dew_point":"11.3 ℃",'
        '"vpd":"0.085 kPa","humidity":"94 %"},"indoor":{"temperature":"18.3 ℃","humidity":"63 %","dew_point":"11.1 ℃","feels_like":"18.3 ℃",'
        '"app_tempin":"18.7 ℃"},"solar_and_uvi":{"solar":"0.0 W/m²","uvi":"0"},"rainfall":{"rain_rate":"1.8 mm/hr","daily":"6.3 mm",'
        '"event":"49.8 mm","1_hour":"1.3 mm","weekly":"49.8 mm","monthly":"49.8 mm","yearly":"5105.7 mm"},"wind":{"wind_speed":"0.0 km/h",'
@@ -20,6 +21,8 @@ POLLEN = '{"lines": ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 L
 FORECAST = ('{"lines": ["Today: 🌦️ Showers. 11–16°C, 97% chance of rain", "Saturday: ⛈️ Thunderstorm. 12–20°C, 95% chance of rain"], '
             '"place": "Melbourne", "source": "Open-Meteo", "time": "Fri 2 Oct 2026 6:05pm"}')
 
+TODAY = date(2026, 10, 2)   # the day the results above are from
+
 WEATHER = """\
 • Outdoor: 🧥 12.3 °C, 💦 94 %, dew point 11.3 °C, VPD 0.085 kPa
 • Indoor: 🧥 18.3 °C, 63 %
@@ -28,7 +31,7 @@ WEATHER = """\
 
 
 def test_the_report_is_laid_out_in_code_with_emoji_before_the_readings_they_belong_to():
-    got = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST})
+    got = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST}, TODAY)
     assert got == f"""Weather station (2:21am)
 {WEATHER}
 
@@ -62,15 +65,16 @@ def test_a_dry_calm_day_has_no_rain_line_noise():
     assert lines == ["• Outdoor: 21.0 °C, 50 %", "• Rain today: 0.0 mm (month total 12.0 mm)", "• Wind: 12.0 km/h from 270°, gust 20.0 km/h"]
     drizzle = dry.replace('"0.0 mm/hr"', '"0.6 mm/hr"').replace('"emoji":{}', '"emoji":{"rainfall.rain_rate":"🌧️"}')
     assert "; 🌧️ raining (0.6 mm/h)" in report.weather_now(drizzle)
+    assert "raining" not in report.weather_now(dry.replace('"0.0 mm/hr"', '"0.00 mm/hr"'))   # however the zero is written
 
 
 def test_a_failed_or_missing_source_is_left_out_or_said_so_and_the_forecast_without_a_tag_has_a_plain_heading():
     got = report.report({"weather_now": "Error calling tool: boom", "air_quality": AIR,
                          "pollen_asthma": '{"error": "No pollen levels are available right now."}',
-                         "weather_forecast": '{"lines": ["Today: ☀️ Sunny. 20–25°C"]}'})
+                         "weather_forecast": '{"lines": ["Today: ☀️ Sunny. 20–25°C"]}'}, TODAY)
     assert got.startswith("Weather station\n• not available right now\n\nAir quality (2:22am)\n• PM2.5:")
     assert "Pollen" not in got and got.endswith("Forecast\n• Today: ☀️ Sunny. 20–25°C")
-    assert report.report({}) == "No readings are available right now."
+    assert report.report({}, TODAY) == "No readings are available right now."
 
 
 def test_sun_uv_and_wind_are_left_out_when_zero_and_shown_when_not():
@@ -182,15 +186,20 @@ def test_a_reading_lookup_prints_only_what_was_asked():
     assert report.reading_lines(now, ["humidity"], ["outdoor"]) == ["• Outdoor: 💦 94 %"]
     assert report.reading_lines(now, ["wind"], []) == ["• Wind: calm"]
     assert report.reading_lines(now, ["pressure"], []) == ["• Pressure: 🗜️ 1025.0 hPa"]
+    assert report.reading_lines(now, ["dew_point"], ["indoor"]) == ["• Dew point (indoor): 11.1 °C"]   # "indoor dew point"
+    assert report.reading_lines(now, ["feels_like"], ["outdoor", "indoor"])[0].startswith("• Feels like: ")   # unasked: outdoor
     assert report.reading_lines(now, ["rain"], [])[0].startswith("• Rain today: ☔ 6.3 mm") and "raining (1.8 mm/h)" in report.reading_lines(now, ["rain"], [])[0]
+    windy = json.loads(NOW.replace('"wind_speed":"0.0 km/h"', '"wind_speed":"14.0 km/h"'))
+    assert [line for line in report.weather_lines(windy) if line.startswith(("• Wind", "• Rain"))] == \
+        report.reading_lines(windy, ["rain", "wind"], [])   # the same words as the report's
 
 
 def test_air_pollen_and_forecast_lookups_print_the_tools_own_lines():
-    assert report.lookup("air", AIR, ["pm10"], []) == "• PM10: 3.0 µg/m³ 🟢 good"
-    assert report.lookup("air", AIR, [], []).splitlines()[0] == "• PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)"
-    assert report.lookup("pollen", POLLEN, [], []) == "Pollen & asthma (Melbourne, 6:00pm)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
-    assert report.lookup("forecast", FORECAST, [], []).startswith("Forecast (Melbourne, 6:05pm)\n• Today: ")
-    assert report.lookup("pollen", json.dumps({"error": "off season"}), [], []) is None
+    assert report.lookup("air", AIR, ["pm10"], [], TODAY) == "• PM10: 3.0 µg/m³ 🟢 good"
+    assert report.lookup("air", AIR, [], [], TODAY).splitlines()[0] == "• PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)"
+    assert report.lookup("pollen", POLLEN, [], [], TODAY) == "Pollen & asthma (Melbourne, 6:00pm)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
+    assert report.lookup("forecast", FORECAST, [], [], TODAY).startswith("Forecast (Melbourne, 6:05pm)\n• Today: ")
+    assert report.lookup("pollen", json.dumps({"error": "off season"}), [], [], TODAY) is None
 
 
 def test_a_short_period_highs_and_lows_lookup_gives_each_sides_extremes_with_their_times():
@@ -198,7 +207,7 @@ def test_a_short_period_highs_and_lows_lookup_gives_each_sides_extremes_with_the
         "outdoor.temperature": {"unit": "℃", "low": "9.0", "low_when": "at 5am", "low_date": "Fri 2 Oct 2026",
                                 "high": "16.2", "high_when": "at 2pm", "high_date": "Fri 2 Oct 2026"},
         "outdoor.humidity": {"unit": "%", "low": "40", "high": "95"}}})
-    assert report.lookup("extremes", result, [], []) == ("Fri 02 Oct – Fri 02 Oct 2026\n"
+    assert report.lookup("extremes", result, [], [], TODAY) == ("Fri 02 Oct – Fri 02 Oct 2026\n"
                                                          "• Temperature: low 9.0 °C, Fri 2 Oct at 5am · high 16.2 °C, Fri 2 Oct at 2pm")
 
 
@@ -207,34 +216,41 @@ def test_an_average_or_highs_lookup_covers_the_readings_named():
         "outdoor.temperature": {"unit": "℃", "low": "9.0", "high": "16.2", "average": "12.4"},
         "outdoor.humidity": {"unit": "%", "low": "40", "high": "95", "low_when": "at 3pm", "low_date": "Thu 1 Oct 2026", "high_when": "at 5am", "high_date": "Thu 1 Oct 2026"},
         "wind.wind_speed": {"unit": "km/h", "low": "0", "high": "14"}, "wind.wind_gust": {"unit": "km/h", "low": "0", "high": "31", "high_when": "at 2pm", "high_date": "Thu 1 Oct 2026"}}})
-    assert report.lookup("extremes", result, ["temperature"], []).splitlines()[1] == "• Temperature: average 12.4 °C (low 9.0, high 16.2)"
-    assert report.lookup("extremes", result, ["humidity"], []).splitlines()[1] == "• Humidity: low 40 %, Thu 1 Oct at 3pm · high 95 %, Thu 1 Oct at 5am"
-    assert [line.split(":")[0] for line in report.lookup("extremes", result, ["wind"], []).splitlines()[1:]] == ["• Wind", "• Wind gust"]
+    assert report.lookup("extremes", result, ["temperature"], [], TODAY).splitlines()[1] == "• Temperature: average 12.4 °C (low 9.0, high 16.2)"
+    assert report.lookup("extremes", result, ["humidity"], [], TODAY).splitlines()[1] == "• Humidity: low 40 %, Thu 1 Oct at 3pm · high 95 %, Thu 1 Oct at 5am"
+    assert [line.split(":")[0] for line in report.lookup("extremes", result, ["wind"], [], TODAY).splitlines()[1:]] == ["• Wind", "• Wind gust"]
 
 
 def test_a_days_count_lookup_gives_the_count_the_condition_and_the_period():
     result = json.dumps({"period": "Wed 5 Oct 2022 - Sat 3 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"})
-    assert report.lookup("days", result, [], []) == "137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."
+    assert report.lookup("days", result, [], [], TODAY) == "137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."
     averaged = json.dumps({"period": "a - b", "days_checked": 10, "matching_days": 2, "note_averaged": "x"})
-    assert "may fall slightly short" in report.lookup("days", averaged, [], [])
-    assert report.lookup("days", json.dumps({"error": "bad"}), [], []) is None
+    assert "may fall slightly short" in report.lookup("days", averaged, [], [], TODAY)
+    assert report.lookup("days", json.dumps({"error": "bad"}), [], [], TODAY) is None
 
 
 def test_a_figure_per_period_lookup_gives_the_figure_over_the_whole_period():
     result = json.dumps({"period": "Fri 4 Oct 2024 - Sat 3 Oct 2026", "days_checked": 731, "matching_days": 731,
                          "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 1234.5, "by_month": {"2024-10": 0.0}})
-    assert report.lookup("days", result, [], []) == "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."
+    assert report.lookup("days", result, [], [], TODAY) == "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."
     hot = json.dumps({"period": "a 2025 - b 2026", "days_checked": 3, "matching_days": 3, "stat": {"what": "Highest temperature", "of": "temp_max", "unit": "℃"}, "value": 41.2})
-    assert report.lookup("days", hot, [], []).startswith("Highest temperature: 41.2 °C over 3 days")
+    assert report.lookup("days", hot, [], [], TODAY).startswith("Highest temperature: 41.2 °C over 3 days")
 
 
 def test_a_heading_carries_the_place_and_the_time_of_day_of_its_data():
-    assert report._heading("Forecast", {"place": "Melbourne", "time": "Fri 2 Oct 2026 6:05pm"}) == "Forecast (Melbourne, 6:05pm)"
-    assert report._heading("Weather station", {"time": "Fri 02 Oct 2026 00:07"}) == "Weather station (12:07am)"     # the station's 24-hour form
-    assert report._heading("Weather station", {"time": "Fri 02 Oct 2026 13:30"}) == "Weather station (1:30pm)"
-    assert report._heading("Air quality", {"time": "Fri 2 Oct 2026 12:00pm"}) == "Air quality (12:00pm)"
-    assert report._heading("Forecast", {"place": "Melbourne"}) == "Forecast (Melbourne)"                           # no time: as before
-    assert report._heading("Air quality", {"time": "yesterday"}) == "Air quality" and report._heading("Air quality", {"time": None}) == "Air quality"
+    assert report._heading("Forecast", {"place": "Melbourne", "time": "Fri 2 Oct 2026 6:05pm"}, TODAY) == "Forecast (Melbourne, 6:05pm)"
+    assert report._heading("Weather station", {"time": "Fri 2 Oct 2026 12:07am"}, TODAY) == "Weather station (12:07am)"
+    assert report._heading("Weather station", {"time": "Fri 2 Oct 2026 1:30pm"}, TODAY) == "Weather station (1:30pm)"
+    assert report._heading("Air quality", {"time": "Fri 2 Oct 2026 12:00pm"}, TODAY) == "Air quality (12:00pm)"
+    assert report._heading("Forecast", {"place": "Melbourne"}, TODAY) == "Forecast (Melbourne)"                           # no time: as before
+    assert report._heading("Air quality", {"time": "yesterday"}, TODAY) == "Air quality" and report._heading("Air quality", {"time": None}, TODAY) == "Air quality"
+
+
+def test_a_heading_gives_the_day_of_data_that_is_not_todays():
+    stale = report.report({"weather_now": NOW, "pollen_asthma": POLLEN}, date(2026, 10, 4))   # the station has been silent since Friday
+    assert stale.startswith("Weather station (Fri 2 Oct 2:21am)\n") and "\nPollen & asthma (Melbourne, Fri 2 Oct 6:00pm)\n" in stale
+    assert report.lookup("forecast", FORECAST, [], [], date(2026, 10, 3)).startswith("Forecast (Melbourne, Fri 2 Oct 6:05pm)\n")
+    assert [e.length for e in report.heading_entities(stale)] == [len("Weather station"), len("Pollen & asthma")]   # still bold
 
 
 def test_when_gives_the_form_the_tools_use_in_their_time_field():
@@ -249,7 +265,7 @@ from zoneinfo import ZoneInfo  # noqa: E402
 
 
 def test_only_the_name_of_each_heading_is_bold_not_its_brackets_or_time():
-    text = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST})
+    text = report.report({"weather_now": NOW, "air_quality": AIR, "pollen_asthma": POLLEN, "weather_forecast": FORECAST}, TODAY)
     units = lambda s: len(s.encode("utf-16-le")) // 2
     names = [text.encode("utf-16-le")[2 * e.offset:2 * (e.offset + e.length)].decode("utf-16-le") for e in report.heading_entities(text)]
     assert names == ["Weather station", "Air quality", "Pollen & asthma", "Forecast"]

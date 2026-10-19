@@ -32,6 +32,13 @@ def test_a_bands_range_is_kept_at_every_width():
     assert hourly.width == 3600 and hourly.high is not None
 
 
+def test_a_slots_range_always_holds_its_value():
+    (r,) = slot_readings({T0: 5.0}, lows={T0: 6.0}, highs={T0: 4.0})   # a low above the value, a high below it
+    assert (r.low, r.high) == (5.0, 5.0)
+    (r,) = slot_readings({T0: 5.0}, lows={T0: 3.0}, highs={T0: 8.0})
+    assert (r.low, r.high) == (3.0, 8.0)
+
+
 def test_a_slow_five_minute_line_is_smoothed_but_ends_on_the_latest_reading():
     rs = [(T0 + i * 300, 10.0 + (i % 2), None, None, 300) for i in range(50)]
     plain, smooth = build_line(rs, TZ, 50 * 300), build_line(rs, TZ, 50 * 300, smooth=True)

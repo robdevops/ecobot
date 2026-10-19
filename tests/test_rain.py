@@ -63,3 +63,22 @@ def test_a_stacked_chart_over_a_rolling_day_with_no_rain_has_no_axis_left_of_its
     bars = rain_bars({}, tz, date(2026, 10, 7), date(2026, 10, 8), until=until, since=since)
     panel = Panel("Humidity", "%", [Line("Outdoor", xs, [60.0 + (i % 5) for i in range(len(xs))], reading="humidity")], bars=bars, reading="humidity")
     assert min(panel.xs) == bars.x[0] and since - min(panel.xs) < 3600                       # at most the hour the data starts in
+
+
+def test_rain_bars_stay_on_local_days_and_hours_across_a_daylight_saving_change():
+    """5 Apr 2026 is 25 hours long in Melbourne and 4 Oct 23: the bars keep starting at midnight (and 6am, noon, 6pm), so rain just
+    after midnight is the new day's, not the day before's."""
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    from lib.compose import rating_shares
+    from lib.rain import rain_bars
+    from lib.timeutil import day_bounds
+    tz = ZoneInfo("Australia/Melbourne")
+    after_midnight = day_bounds(date(2026, 4, 10), tz)[0] + 1800
+    days = rain_bars({after_midnight: 3.0}, tz, date(2026, 3, 1), date(2026, 4, 30))
+    assert len(days.x) == 61 and all(datetime.fromtimestamp(x, tz).hour == 0 for x in days.x)
+    assert datetime.fromtimestamp(days.x[days.y.index(3.0)], tz).date() == date(2026, 4, 10)
+    hours = rain_bars({}, tz, date(2026, 10, 1), date(2026, 10, 10))
+    assert {datetime.fromtimestamp(x, tz).hour for x in hours.x} == {0, 6, 12, 18} and len(hours.x) == 40
+    shares = rating_shares({after_midnight: 5.0}, (12.0, 35.0), tz, date(2026, 3, 1), date(2026, 4, 30), "PM2.5 rating")
+    assert datetime.fromtimestamp(shares.x[0], tz) == datetime(2026, 4, 10, tzinfo=tz)

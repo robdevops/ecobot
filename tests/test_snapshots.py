@@ -14,27 +14,34 @@ from tests.test_forecast import transport as forecast_transport
 from tests.test_pollen import SEASON_DAY, make as make_pollen, page, transport as pollen_transport
 
 
+def rows(store, kind: str) -> int:
+    """How many rows the store holds for this kind."""
+    return store.db.execute("SELECT COUNT(*) FROM snapshots WHERE kind=?", (kind,)).fetchone()[0]
+
+
 def test_a_repeat_only_moves_last_seen_and_a_change_adds_a_row(tmp_path):
-    store = Snapshots.open(tmp_path / "s.sqlite")
+    store = Snapshots(tmp_path / "s.sqlite")
     assert store.save("pollen", {"level": "Low"}, now=100) is True
     assert store.save("pollen", {"level": "Low"}, now=200) is False
-    assert store.latest("pollen") == (200, {"level": "Low"}) and store.count("pollen") == 1
+    assert store.latest("pollen") == (200, {"level": "Low"}) and rows(store, "pollen") == 1
     assert store.save("pollen", {"level": "High"}, now=300) is True
-    assert store.count("pollen") == 2 and store.latest("pollen") == (300, {"level": "High"}) and store.latest("forecast") is None
+    assert rows(store, "pollen") == 2 and store.latest("pollen") == (300, {"level": "High"}) and store.latest("forecast") is None
     store.put("k", "v")
     assert store.get("k") == "v" and store.get("missing") is None
     store.save("pollen", {"level": "Low"}, now=300 + KEEP_SECONDS + 1)     # rows not seen for over a year are dropped
-    assert store.count("pollen") == 1
+    assert rows(store, "pollen") == 1
     store.close()
 
 
-def test_the_connection_is_shared_and_closed_by_the_last_user(tmp_path):
-    a, b = Snapshots.open(tmp_path / "s.sqlite"), Snapshots.open(tmp_path / "s.sqlite")
-    assert a is b
+def test_each_source_has_its_own_connection_to_the_one_file(tmp_path):
+    a, b = Snapshots(tmp_path / "s.sqlite"), Snapshots(tmp_path / "s.sqlite")
+    a.save("pollen", {"level": "Low"}, now=100)
+    b.save("forecast", {"days": []}, now=100)
+    assert b.latest("pollen") == (100, {"level": "Low"}) and a.latest("forecast") == (100, {"days": []})   # one file
     a.close()
-    b.put("k", "v")                                          # still open for the other user
+    b.put("k", "v")                                          # the other's is still open
+    assert b.get("k") == "v"
     b.close()
-    assert Snapshots.open(tmp_path / "s.sqlite") is not a
 
 
 async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_without_fetching(tmp_path):
@@ -58,11 +65,11 @@ async def test_the_pollen_history_keeps_one_row_per_change(tmp_path):
     pollen, _ = make_pollen(tmp_path, lambda: page(grass=level["now"]).replace('<span id="pdate">', f'<span data-v="{level["now"]}" id="pdate">'))
     await pollen.start()
     await pollen.warm(True)
-    assert pollen.store.count("pollen") == 1
+    assert rows(pollen.store, "pollen") == 1
     level["now"] = "High"
     pollen._validators = {}                                  # the site has a new page
     await pollen.warm(True)
-    assert pollen.store.count("pollen") == 2
+    assert rows(pollen.store, "pollen") == 2
     await pollen.close()
 
 
@@ -77,7 +84,7 @@ async def test_the_forecast_survives_a_restart_and_a_night_start_needs_no_reques
     again = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(22, 0))
     await again.start()
-    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and again.store.count("forecast") == 1
+    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and rows(again.store, "forecast") == 1
     await again.close()
 
 
@@ -103,7 +110,7 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
     pollen = Pollen(config(tmp_path, pollen=True), pollen_transport(lambda: page(), calls))
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     assert not pollen.wants("report") and not forecast.wants("sitrep") and pollen.wants("pollen today") and forecast.wants("forecast")
-    for tool, args in intent.report_calls(False, False, True, True):
+    for tool, args in intent.report_calls(["Pollen", "Forecast"]):
         out = json.loads(await {"pollen_asthma": pollen.handle, "weather_forecast": forecast.handle}[tool](args))
         assert "error" in out                                # nothing cached yet: the report goes without it, no request made
     assert calls == []
@@ -113,7 +120,7 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
 
 async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
     from lib.snapshots import Snapshots
-    store = Snapshots.open(tmp_path / "conditions.sqlite")
+    store = Snapshots(tmp_path / "conditions.sqlite")
     today = datetime.now(TZ).date()
     store.save("forecast", {"source": "Bureau of Meteorology, Testville", "tag": "BOM",
                             "days": [{"date": str(today), "min_c": 11, "max_c": 17, "summary": "Rain.", "rain_chance_pct": 90}]})

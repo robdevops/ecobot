@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import tzinfo
 from statistics import fmean
 
-from ..timeutil import local_date
+from ..timeutil import day_text, local_date
 
 POINTS = ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
 TOP = 3  # compass points listed, most common first
@@ -63,7 +63,7 @@ def summarise(readings: list[tuple[int, float, bool]], tz: tzinfo, by_day: bool,
         days: dict = {}
         for ts, d, _ in readings:
             days.setdefault(local_date(ts, tz), []).append(d)
-        out["daily"] = {day.strftime("%a %d %b"): f"{Counter(point(d) for d in ds).most_common(1)[0][0]} "
+        out["daily"] = {day_text(day, year=False): f"{Counter(point(d) for d in ds).most_common(1)[0][0]} "
                                                     f"({_share(Counter(point(d) for d in ds).most_common(1)[0][1], len(ds))})"
                         for day, ds in sorted(days.items())}
     return out

@@ -10,6 +10,8 @@ import logging
 import time
 
 from ..pollen.parse import LEVEL_EMOJI, LEVELS
+from ..timeutil import day_text
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +23,7 @@ LINK = ("melbournepollen.com.au", "https://www.melbournepollen.com.au/")
 
 
 class PollenAndAsthmaMonitor:
-    KINDS = ("pollen_and_asthma",)
+    KINDS = kinds_of("Pollen")
 
     def __init__(self, pollen, state, notify):
         self.pollen, self.state, self.notify = pollen, state, notify
@@ -38,14 +40,12 @@ class PollenAndAsthmaMonitor:
             reading = cur[key]
             if reading is None:        # not on the page (the asthma forecast only runs 1 Oct - 31 Dec): keep what we know
                 continue
-            rank, day = LEVELS.index(reading["level"]), str(today)
-            if rank < WARN_FROM:
+            if LEVELS.index(reading["level"]) < WARN_FROM:
                 m.pop(key, None)
                 continue
-            last = m.get(key)
-            if last is None or last["rank"] < rank or last["day"] != day:
-                m[key] = {"rank": rank, "day": day}
+            if (m.get(key) or {}).get("day") != str(today):   # once a day while it stays High (the top of the scale)
+                m[key] = {"day": str(today)}
                 for_day = reading.get("date")
-                when = f" (forecast for {for_day:%a %d %b})" if for_day and for_day != today else ""
+                when = f" (forecast for {day_text(for_day, year=False)})" if for_day and for_day != today else ""
                 await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen_and_asthma")
         self.state.save()

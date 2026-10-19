@@ -1,7 +1,11 @@
 import time
 from datetime import datetime, timedelta, timezone
 
-from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor, with_footer
+import pytest
+
+from lib.airgradient import Latest
+from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor
+from lib.entities import with_link
 from tests.fakes import TZ
 
 T0 = int(datetime(2026, 9, 29, 13, 0, tzinfo=TZ).timestamp())  # 1pm Melbourne, a settled day
@@ -28,7 +32,8 @@ class FakeStation:
         return self.live
 
     async def recent(self, hours):
-        return self.data
+        """The readings of the last `hours` (up to the newest one, which stands for now)."""
+        return [(ts, r) for ts, r in self.data if ts >= self.data[-1][0] - hours * 3600] if self.data else []
 
     def now(self):
         return datetime.now(TZ).replace(tzinfo=None)
@@ -61,6 +66,17 @@ async def test_rain_starts_once_then_stops_after_30_dry_minutes(tmp_path):
     m.station.data = rain(0, 0, 1, 1, *[0] * 6)  # 30 dry minutes since the last wet reading
     await m.check()
     assert len(sent) == 2 and "stopped" in sent[1] and "mm fell" in sent[1]
+
+
+@pytest.mark.parametrize("wet, told", [(60, "12.0 mm fell over 5h"),
+                                       (31, "6.2 mm fell over 2h 35m")])   # its first tip is the oldest of the 3 hours looked at
+async def test_the_rain_stopped_alert_counts_a_spell_longer_than_the_readings_it_looks_at(tmp_path, wet, told):
+    m, state, sent = monitor(tmp_path, None)
+    spell = rain(0, 0, *[1] * wet, *[0] * 6)                # 0.2 mm a wet reading, then 30 dry minutes
+    for n in (3, len(spell)):
+        m.station.data = spell[:n]
+        await m.check()
+    assert len(sent) == 2 and sent[1] == f"\U0001f324️ The rain has stopped. {told}."
 
 
 async def test_a_dry_gap_shorter_than_the_stop_time_does_not_flap(tmp_path):
@@ -190,13 +206,6 @@ async def test_a_crossing_soon_after_the_state_was_learned_waits_out_the_cooldow
     assert len(sent) == 1 and "cooler for 30 min" in sent[0]
 
 
-async def test_crossing_state_saved_by_an_earlier_version_still_works(tmp_path):
-    m, state, sent = monitor(tmp_path, temps(25, 20, T0 + 2 * 3600))
-    state.monitor["cross"] = {"side": "cooler", "since": T0}
-    await m.check()
-    assert len(sent) == 1 and "cooler for 2h" in sent[0] and state.monitor["cross"]["alerted_state"] == "warmer"
-
-
 async def test_small_temperature_differences_are_noise(tmp_path):
     m, state, sent = monitor(tmp_path, temps(20.1, 20.0))
     await m.check()
@@ -205,8 +214,8 @@ async def test_small_temperature_differences_are_noise(tmp_path):
 
 # ---------- air ----------
 def air_reading(pm25, pm10=10.0, age=timedelta(minutes=5)):
-    return {"pm2_5": {"value": pm25, "aqi_us": 160}, "pm10": {"value": pm10},
-            "_time_utc": datetime.now(timezone.utc) - age}
+    """What air.latest() gives: the reading, when it was taken, and (none here: the reading's own) the lowest of the last readings."""
+    return Latest({"pm2_5": {"value": pm25, "aqi_us": 160}, "pm10": {"value": pm10}}, datetime.now(timezone.utc) - age, {})
 
 
 class FakeAir:
@@ -265,22 +274,22 @@ def test_alert_state_survives_restarts_and_opt_out(tmp_path):
     state = AlertState(path)
     state.add_chat(1, "Home")
     state.add_chat(2, "Work")
-    state.set_alerts(2, "Work", False)
+    state.set_alerts(2, False)
     state.monitor["rain"] = {"alerted_state": "raining", "alerted_time": 5, "since": 5}
     state.save()
     again = AlertState(path)
-    assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.alerts_on(2)
+    assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.subscribed(2)
 
 
-def test_footer_marks_up_link_and_mute_hint():
-    text, entities = with_footer("\U0001f327️ Rain", ("live chart", "https://x"), "/alerts off to mute")
-    assert text.endswith("live chart · /alerts off to mute")
+def test_the_footer_is_the_links_label_in_italic_placed_in_utf16_units():
+    text, entities = with_link("\U0001f327️ Rain \n", ("live chart", "https://x"))
+    assert text == "\U0001f327️ Rain\nlive chart" and with_link("Rain \n", None) == ("Rain", [])
     italic, link = entities
-    assert italic.offset == link.offset == len("\U0001f327️ Rain".encode("utf-16-le")) // 2 + 1
-    assert link.length == len("live chart") and link.url == "https://x"
+    assert italic.type == "italic" and italic.offset == link.offset == len("\U0001f327️ Rain".encode("utf-16-le")) // 2 + 1
+    assert italic.length == link.length == len("live chart") and link.url == "https://x"
 
 
-async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
+async def test_alerts_are_silent_and_a_chat_that_blocked_the_bot_is_marked_gone(tmp_path):
     from telegram.error import Forbidden
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "ok")
@@ -293,7 +302,131 @@ async def test_alerts_are_silent_and_dead_chats_are_forgotten(tmp_path):
             if chat_id == 2:
                 raise Forbidden("bot was blocked")
     await Notifier(Bot(), state)("hi")
-    assert all(kw["disable_notification"] for _, kw in calls) and 2 not in state.chats and 1 in state.chats
+    assert all(kw["disable_notification"] for _, kw in calls) and state.chats[2]["gone"] and state.alert_chats() == [1]
+
+
+async def test_an_alerts_chart_is_drawn_once_and_only_when_some_chat_gets_the_alert(tmp_path):
+    state = AlertState(tmp_path / "s.json")
+    for chat in (1, 2):
+        state.add_chat(chat, str(chat))
+    state.set_kind(2, "uv", False)
+    drawn, sent = [], []
+
+    async def chart():
+        drawn.append(1)
+        return b"png"
+
+    class Bot:
+        async def send_photo(self, chat_id, photo, **kw):
+            sent.append((chat_id, photo))
+    notifier = Notifier(Bot(), state)
+    assert await notifier("Gusts", kind="gusts", chart=chart) == 2 and drawn == [1] and [p for _, p in sent] == [b"png"] * 2
+    assert await notifier("UV", kind="uv", chart=chart, chats=[2]) == 0 and drawn == [1]       # chat 2 has UV alerts off: not drawn
+    assert await notifier("UV", kind="uv", chart=chart, chats=[1, 2]) == 1 and drawn == [1, 1] and sent[-1] == (1, b"png")
+
+
+async def test_a_gone_chat_keeps_its_settings_gets_nothing_and_is_back_when_it_writes(tmp_path):
+    from telegram.error import BadRequest, Forbidden
+    state = AlertState(tmp_path / "s.json")
+    for chat in (1, 2, 3):
+        state.add_chat(chat, str(chat))
+    state.set_kind(2, "rain", False)
+    calls, refusals = [], {2: Forbidden("bot was blocked by the user"), 3: BadRequest("Message thread not found")}
+
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            calls.append(chat_id)
+            if chat_id in refusals:
+                raise refusals[chat_id]
+    await Notifier(Bot(), state)("hi", kind="uv")
+    assert state.chats[2]["gone"] and state.muted(2) == {"rain"} and state.present() == [1, 3]
+    assert not state.chats[3].get("gone")                         # only "chat not found" means gone: the chat is still there
+    calls.clear()
+    await Notifier(Bot(), state)("again", kind="uv")
+    assert calls == [1, 3]                                        # nothing is sent to a gone chat
+    state.add_chat(2, "2")                                        # it writes again
+    assert state.subscribed(2, "uv") and not state.subscribed(2, "rain") and AlertState(state.path).present() == [1, 2, 3]
+
+
+def test_a_migrated_groups_forecast_moves_with_it(tmp_path):
+    from datetime import date
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(-5, "group")
+    today = date(2026, 10, 3)
+    state.record_forecast(-5, [{"date": today, "max_c": 20.0, "rain_chance_pct": 90}], today)
+    state.migrate_chat(-5, -1005)
+    assert state.forecast_sent(-1005)[today]["rain_chance_pct"] == 90 and state.forecast_sent(-5) == {} and state.forecast_chats() == [-1005]
+
+
+def test_a_damaged_state_file_is_kept_aside_not_overwritten(tmp_path, caplog):
+    path = tmp_path / "s.json"
+    path.write_text('{"chats": {"1": {"title": "Home"}}, "monitor": {"rain": {"alerted_st')   # cut short
+    state = AlertState(path)
+    assert state.chats == {}
+    state.add_chat(2, "Work")                                      # the next save
+    aside = list(tmp_path.glob("s.json.damaged-*"))
+    assert len(aside) == 1 and aside[0].read_text().startswith('{"chats": {"1"') and "moved it to" in caplog.text
+    assert AlertState(path).chats == {2: {"title": "Work"}}
+
+
+def test_a_save_is_on_disk_before_it_replaces_the_old_file(tmp_path, monkeypatch):
+    from lib.alerts import notify
+    calls, replace = [], notify.os.replace
+    monkeypatch.setattr(notify.os, "fsync", lambda fd: calls.append("fsync"))
+    monkeypatch.setattr(notify.os, "replace", lambda a, b: (calls.append("replace"), replace(a, b)))
+    AlertState(tmp_path / "s.json").add_chat(1, "Home")
+    assert calls == ["fsync", "replace"]
+
+
+async def test_one_chat_failing_never_stops_the_alert_reaching_the_others(tmp_path, monkeypatch):
+    from telegram.error import Forbidden
+    state = AlertState(tmp_path / "s.json")
+    for chat in (1, 2, 3):
+        state.add_chat(chat, f"chat {chat}")
+    got = []
+
+    class Bot:
+        async def send_message(self, chat_id, text, **kw):
+            if chat_id == 1:
+                raise Forbidden("bot was blocked")
+            got.append(chat_id)
+
+    def full():
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(state, "save", full)                       # forgetting chat 1 can't be saved
+    await Notifier(Bot(), state)("hi")
+    assert got == [2, 3]
+
+
+@pytest.mark.filterwarnings("ignore:Deprecated since version v22.2")   # python-telegram-bot 22: retry_after will be a timedelta
+async def test_a_short_flood_wait_or_a_dropped_connection_is_tried_once_more_and_a_timeout_is_not(tmp_path, monkeypatch):
+    from telegram.error import NetworkError, RetryAfter, TimedOut
+    from lib.alerts import notify
+    waits = []
+
+    async def sleep(seconds):
+        waits.append(seconds)
+    monkeypatch.setattr(notify.asyncio, "sleep", sleep)
+    flood, long_flood = RetryAfter(5), RetryAfter(300)
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "chat")
+
+    class Bot:
+        def __init__(self, *errors):
+            self.errors, self.tries = list(errors), 0
+
+        async def send_message(self, chat_id, text, **kw):
+            self.tries += 1
+            if self.errors:
+                raise self.errors.pop(0)
+    cases = [((flood,), True, 2, [5]), ((NetworkError("Connection reset by peer"),), True, 2, [3]),
+             ((NetworkError("down"), NetworkError("down")), False, 2, [3]),    # once more, not twice
+             ((TimedOut(),), False, 1, []),                                   # it may have arrived
+             ((long_flood,), False, 1, [])]                                   # not waited out
+    for errors, sent, tries, waited in cases:
+        waits.clear()
+        bot = Bot(*errors)
+        assert (bool(await Notifier(bot, state)("hi", chats=[1])), bot.tries, waits) == (sent, tries, waited), errors
 
 
 def uv(*values, start=T0):
@@ -467,12 +600,12 @@ async def test_no_rain_alerts_in_quiet_hours_and_one_summary_after_them(tmp_path
     m, state, sent = monitor(tmp_path, None)
     m.quiet = (0, 6)
     one_am = int(datetime(2026, 9, 30, 1, 0, tzinfo=TZ).timestamp())
-    for data in (night_rain(one_am, 0, 0, 0), night_rain(one_am, 0, 0, 1), night_rain(one_am, 0, 0, 1, 1, 1),
-                 night_rain(one_am, 0, 0, 1, 1, 1, *[0] * 13)):   # it starts, rains, stops after 60 dry minutes
-        m.station.data = data
+    night = night_rain(one_am, 0, 0, 1, 1, 1, *[0] * 57)           # 1am to 6:05am
+    for n in (3, 4, 6, 18, 60):                                    # it starts, rains, stops after 60 dry minutes; 5:55
+        m.station.data = night[:n]
         await m.check()
     assert sent == []                                              # all in quiet hours
-    m.station.data = night_rain(int(datetime(2026, 9, 30, 5, 55, tzinfo=TZ).timestamp()), 0, 0, 0)   # 5:55 to 6:05
+    m.station.data = night                                         # 6:05
     await m.check()
     assert len(sent) == 1 and sent[0].startswith("\U0001f327️ Overnight rain: 1.2 mm, from about 1:10am to 1:25am.")
     await m.check()
@@ -480,6 +613,31 @@ async def test_no_rain_alerts_in_quiet_hours_and_one_summary_after_them(tmp_path
     m.station.data = night_rain(int(datetime(2026, 9, 30, 13, 0, tzinfo=TZ).timestamp()), 0, 1)
     await m.check()
     assert len(sent) == 2 and "started raining" in sent[1]         # by day, rain alerts are back
+
+
+async def test_quiet_hours_across_midnight_keep_the_evening_rain_for_the_summary(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.quiet = (22, 6)
+    evening = night_rain(int(datetime(2026, 9, 29, 22, 0, tzinfo=TZ).timestamp()), *[0] * 12, *[1] * 6, *[0] * 6)   # 11pm, 2.4 mm
+    morning = night_rain(int(datetime(2026, 9, 30, 0, 0, tzinfo=TZ).timestamp()), *[0] * 12, *[1] * 3, *[0] * 59)  # the gauge
+    night = evening + morning                                      # reset at midnight; 1am, 1.2 mm; dry to 6:05am
+    for n in range(1, len(night) + 1):                             # a check every 5 minutes
+        m.station.data = night[:n]
+        await m.check()
+    assert sent == ["\U0001f327️ Overnight rain: 3.6 mm, from about 11:00pm to 1:15am."]
+
+
+async def test_a_note_left_from_a_night_the_bot_missed_gives_way_to_the_next_nights(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    m.quiet = (22, 6)
+    m.station.data = night_rain(int(datetime(2026, 9, 29, 23, 0, tzinfo=TZ).timestamp()), 0, 1)
+    await m.check()                                                # rain noted at 11:05pm, then the bot is down until the next night
+    night = night_rain(int(datetime(2026, 9, 30, 22, 30, tzinfo=TZ).timestamp()), 0, 1, *[0] * 89)   # to 6am
+    m.station.data = night[:2]
+    await m.check()
+    m.station.data = night
+    await m.check()
+    assert sent == ["\U0001f327️ Overnight rain: 0.4 mm, from about 10:35pm to 10:40pm."]
 
 
 async def test_a_dry_night_has_no_summary_and_quiet_hours_can_be_off(tmp_path):
@@ -512,25 +670,22 @@ def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tm
     assert not state.subscribed(1)                        # nothing on at all
     state.set_kind(1, "all", True)                        # subscribe to all: new types come on again
     assert state.subscribed(1, "newer") and state.subscribed(1, "rain")
-    for kind in list(menu.LABELS):                        # turning every type off one by one is not "unsubscribe from all"
-        state.set_kind(3, kind, False)
+    offered = ["rain", "gusts", "uv", "temps"]            # a bot with the weather station alone
+    for kind in offered[:-1]:
+        state.set_kind(3, kind, False, offered)
     monkeypatch.setitem(menu.LABELS, "newest", "newest")
-    assert state.subscribed(3, "newest")
+    assert state.subscribed(3, "newest") and state.subscribed(3, "temps")   # some still on: the normal mode
+    state.set_kind(3, "temps", False, offered)            # every type the bot sends, off one by one: "unsubscribe from all"
+    monkeypatch.setitem(menu.LABELS, "newer still", "newer still")
+    assert not state.subscribed(3) and not state.subscribed(3, "newer still")
+    state.set_kind(3, "rain", True, offered)
+    again = notify.AlertState(state.path)                 # and it survives a restart
+    assert again.subscribed(3, "rain") and not again.subscribed(3, "uv") and not again.subscribed(3, "newer still")
 
 
-def test_chats_that_already_unsubscribed_from_all_load_as_opt_in(tmp_path, monkeypatch):
-    import json
-    from lib.alerts import menu, notify
-    path = tmp_path / "s.json"
-    path.write_text(json.dumps({"chats": {"1": {"title": "a", "muted": list(menu.LABELS)}, "2": {"title": "b", "alerts": False},
-                                          "3": {"title": "c", "muted": ["rain"]}}}))
-    state = notify.AlertState(path)
-    monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
-    assert not state.subscribed(1, "newthing") and not state.subscribed(2, "newthing") and state.subscribed(3, "newthing")
-    state.set_kind(1, "uv", True)
-    state.save()
-    again = notify.AlertState(path)                       # and it survives a restart
-    assert again.subscribed(1, "uv") and not again.subscribed(1, "rain") and not again.subscribed(1, "newthing")
+async def picture_of(kw):
+    """The picture an alert sent with these arguments would carry: what its chart draws (None: the text alone)."""
+    return await kw["chart"]() if kw.get("chart") else None
 
 
 def asking(mon, photo=b"png"):
@@ -550,7 +705,7 @@ async def test_the_crossing_alert_carries_the_temperature_chart_when_there_is_on
 
     async def notify(text, link=None, **kw):
         sent.append(text)
-        photos.append(kw.get("photo"))
+        photos.append(await picture_of(kw))
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # learns: outdoor cooler
@@ -569,7 +724,7 @@ async def test_the_gusts_alert_carries_the_wind_chart(tmp_path):
     seen = []
 
     async def notify(text, link=None, **kw):
-        seen.append((text, kw.get("photo")))
+        seen.append((text, await picture_of(kw)))
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # the first look sets the mark
@@ -581,20 +736,20 @@ async def test_the_gusts_alert_carries_the_wind_chart(tmp_path):
     plain = []
 
     async def notify2(text, link=None, **kw):
-        plain.append(kw)
+        plain.append((kw["kind"], await picture_of(kw)))
     m2.notify = notify2
     asking(m2, photo=None)
     await m2.check()
     m2.station.data = [(T0, {"wind.wind_gust": 10}), (T0 + 300, {"wind.wind_gust": 12}), (T0 + 600, {"wind.wind_gust": 70})]
     await m2.check()
-    assert plain == [{"kind": "gusts"}]                # no chart: text only
+    assert plain == [("gusts", None)]                  # no chart: text only
 
 
 async def test_both_particulates_alerts_carry_the_particulates_chart(tmp_path):
     state, seen = AlertState(tmp_path / "s.json"), []
 
     async def notify(text, link=None, **kw):
-        seen.append((text, kw.get("photo")))
+        seen.append((text, await picture_of(kw)))
     mon = ParticulatesMonitor(FakeAir(), state, notify)
     asked = asking(mon)
     for pm in (90, 90, 30, 30):
@@ -618,7 +773,7 @@ async def test_other_alerts_send_no_picture(tmp_path):
     for data in (rain(0, 0, 0), rain(0, 0, 1)):
         m.station.data = data
         await m.check()
-    assert seen and all("photo" not in kw for kw in seen)
+    assert seen and all("chart" not in kw for kw in seen)
 
 
 async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sources_history(tmp_path, archived_cache):
@@ -649,7 +804,7 @@ async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path)
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.start()
-    read = intent.read("Particulates chart 1d", now_local(TZ), True, True)
+    read = intent.read("Particulates chart 1d", now_local(TZ))
     turn = Turn(chart_asked=read.chart_asked, text="Particulates chart 1d")
     await air.handle(read.fast[1], turn)
     (panel,) = turn.charts[0].panels
@@ -663,7 +818,7 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     seen = []
 
     async def notify(text, link=None, **kw):
-        seen.append((text, kw.get("photo")))
+        seen.append((text, await picture_of(kw)))
     m.notify = notify
     asked = asking(m)
     await m.check()                                    # the first look sets the mark
@@ -678,13 +833,27 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     got = []
 
     async def notify2(text, link=None, **kw):
-        got.append(kw)
+        got.append((kw["kind"], await picture_of(kw)))
     plain.notify = notify2
     asking(plain, photo=None)
     await plain.check()
     plain.station.data = uv(3, 5, 11, 12)
     await plain.check()
-    assert got == [{"kind": "uv"}]                     # no chart: text only
+    assert got == [("uv", None)]                       # no chart: text only
+
+
+def test_an_alert_rearms_only_once_its_condition_has_stopped_for_the_whole_wait():
+    from lib.alerts import confirm
+    m = {"active": True, "calm_since": None}             # it has fired
+    for now in (T0, T0 + 60):
+        confirm.rearm(m, False, now, 100)
+    assert m["active"] and m["calm_since"] == T0
+    confirm.rearm(m, True, T0 + 90, 100)                 # the condition again: the calm starts over
+    for now in (T0 + 120, T0 + 200):
+        confirm.rearm(m, False, now, 100)
+    assert m["active"]                                   # only 80 s of calm since T0 + 120
+    confirm.rearm(m, False, T0 + 220, 100)
+    assert not m["active"] and m["calm_since"] is None   # it can fire again
 
 
 def test_the_confirmation_rule_counts_distinct_readings_in_a_row():
@@ -764,11 +933,8 @@ async def test_a_single_spike_never_makes_the_air_unhealthy_but_two_readings_in_
     mon = ParticulatesMonitor(FakeAir(), state, notify)
     stamp = datetime.now(timezone.utc)
 
-    def reading(minutes, latest, before):
-        r = air_reading(latest)
-        r["_time_utc"] = stamp + timedelta(minutes=minutes)
-        r["_sustained"] = {"pm2_5": min(latest, before)}            # what air.current() gives: the lowest of the last readings
-        return r
+    def reading(minutes, latest, before):                           # the lowest of the last readings, as air.latest() gives it
+        return Latest(air_reading(latest).reading, stamp + timedelta(minutes=minutes), {"pm2_5": min(latest, before)})
     await mon.check(reading(0, 90, 5))                              # a spike: the reading before it was clean
     await mon.check(reading(30, 90, 5))                             # and again at the next check, still alone
     assert not sent and state.monitor["particulates"]["above"] == 0

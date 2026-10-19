@@ -6,22 +6,21 @@ drawing code, so a chart the bot has never drawn before is still made from check
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
 import asyncio
-import json
 import logging
-from datetime import date, datetime, time, tzinfo
+from datetime import date, datetime, time, timedelta, tzinfo
 from statistics import fmean
 
 from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
 from .analysis import scan
 from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
-from .ecowitt.link import driver_series
-from .series import WEATHER, derives_range
+from .ecowitt.link import driver_series, reading_slots
+from .series import WEATHER
 from .panels import panel_for
 from .specs import Panel, Shares, stack
-from .rain import bar_layout, rain_bars, rain_slots
-from .timeutil import SLOT, day_bounds, now_local, parse_period
-from .tools import Tool, Turn
+from .rain import bar_layout, bar_of, rain_bars, rain_slots
+from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
+from .tools import Tool, Turn, json_result
 
 log = logging.getLogger(__name__)
 
@@ -45,14 +44,14 @@ PLOT_PARAMETERS = {
                    "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
                                                               "style": {"type": "string", "enum": list(STYLES)}},
                              "required": ["series"]}},
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 30 days before the end."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(DEFAULT_DAYS),
     },
     "required": ["panels"],
 }
 
 
 SCAN_DAYS = 90
+SCAN_MAX_DAYS = 400   # a longer scan is cut to its latest days: the shuffles grow with the period
 SCAN_AIR = ("pm2_5", "pm10", "co2", "voc_index", "nox_index")
 # What the scan compares the air with: name -> (group, field, label, unit)
 SCAN_WEATHER = {**{n: (WEATHER[n].group, WEATHER[n].field, WEATHER[n].label.lower(), WEATHER[n].unit)
@@ -68,8 +67,7 @@ SCAN_PARAMETERS = {
     "type": "object",
     "properties": {
         "metric": {"type": "string", "enum": ["all", *SCAN_AIR], "description": "One air reading, or all (default)."},
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 90 days before the end."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(SCAN_DAYS),
         "chart": {"type": "boolean", "description": "Set true for a chart of the strongest relationship found."},
     },
 }
@@ -84,24 +82,23 @@ LINK_PARAMETERS = {
     "type": "object",
     "properties": {
         "metric": {"type": "string", "enum": list(LINK_METRICS), "description": "The air reading. Default pm2_5."},
-        "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Default: 60 days before the end."},
-        "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."},
+        **period_parameters(LINK_DAYS),
         "chart": {"type": "boolean", "description": "Set true for a chart: the reading (with its rating zones) over rain bars."},
     },
 }
 
 
 def _error(text: str) -> str:
-    return json.dumps({"error": text}, ensure_ascii=False)
+    return json_result({"error": text})
 
 
 def rating_shares(values: dict[int, float], limits: tuple[float, float], tz: tzinfo, first: date, last: date, label: str) -> Shares:
     """Per bar (see bar_layout): the percentage of its 30-minute readings that were good, poor and very poor."""
-    origin, width, per = bar_layout(tz, first, last)
+    starts, width, per = bar_layout(tz, first, last)
     counts: dict[int, list[int]] = {}
     for t, v in values.items():
-        k = origin + (t - origin) // width * width
-        counts.setdefault(k, [0, 0, 0])[zone(v, limits)] += 1
+        if (k := bar_of(starts, t)) is not None:
+            counts.setdefault(k, [0, 0, 0])[zone(v, limits)] += 1
     xs = sorted(counts)
     total = {k: sum(counts[k]) for k in xs}
     good, poor, very_poor = ([round(100 * counts[k][i] / total[k], 1) for k in xs] for i in range(3))
@@ -121,22 +118,18 @@ class Composer:
         """(first, last) day, or an error text. The last day is at most yesterday: today is still settling."""
         return parse_period(args, now_local(self.tz).date(), default_days)
 
+    def _span(self, first: date, last: date) -> tuple[int, int]:
+        return day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
+
     def weather(self, group: str, field: str, first: date, last: date) -> dict[int, float]:
         """One reading per 30-minute slot from the weather station's cache."""
-        return self.weather_band(group, field, first, last, bands=False)[0]
-
-    def weather_band(self, group: str, field: str, first: date, last: date, bands: bool = True) -> tuple[dict, dict, dict]:
-        """(values, lows, highs) per 30-minute slot; lows and highs are Ecowitt's own where it gives them, else the cached 5-minute readings'."""
-        lo, hi = day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
-        fields = [field, field + "_low", field + "_high"] if bands else [field]
-        values, lows, highs = [*self.eco.cache.slots(self.eco.mac, "30min", group, fields, lo, hi), {}, {}][:3]
-        if bands and derives_range(field) and not (lows or highs):   # no range of its own: from the cached 5-minute readings
-            lows, highs = self.eco.cache.slot_ranges(self.eco.mac, group, field, values, lo, hi)
-        return values, lows, highs
+        return self.eco.cache.slots(self.eco.mac, "30min", group, [field], *self._span(first, last))[0]
 
     async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:
         """({metric: (values, lows, highs)}, notes): the sensor's readings averaged into 30-minute slots, with each slot's
-        range, from one load of the period."""
+        range, from one load of the period (none when no metric is asked for)."""
+        if not metrics:
+            return {}, {}
         rows, hourly, skipped = await self.air.rows(datetime.combine(first, time()), datetime.combine(last, time(23, 59, 59)))
         out = {}
         for metric in metrics:
@@ -153,11 +146,6 @@ class Composer:
             notes["resolution"] = f"{hourly} day(s) only exist as hourly averages"
         return out, notes
 
-    async def air_slots(self, metric: str, first: date, last: date) -> tuple[dict, dict, dict, dict]:
-        """(values, lows, highs, notes) for one air metric; see air_series."""
-        series, notes = await self.air_series([metric], first, last)
-        return (*series[metric], notes)
-
     async def plot_chart(self, args: dict, turn: Turn | None = None) -> str:
         turn = turn or Turn()
         panels = args.get("panels")
@@ -166,21 +154,23 @@ class Composer:
         if isinstance(period := self.period(args), str):
             return _error(period)
         first, last = period
-        built, summary, notes = [], [], {}
-        for p in panels:
-            name, style = p.get("series"), p.get("style") or ("bars" if p.get("series") == "rain" else "line")
+        asked = [(p.get("series"), p.get("style") or ("bars" if p.get("series") == "rain" else "line")) for p in panels]
+        for name, style in asked:
             if name not in SERIES or style not in STYLES:
                 return _error(f"series must be one of {', '.join(SERIES)} and style one of {', '.join(STYLES)}")
             if (style == "bars") != (name == "rain") or (style == "rating" and name not in ALL_METRICS):
                 return _error("'bars' is for rain only, and 'rating' for the air-quality series only; use 'line' otherwise")
-            panel, facts = await self._panel(name, style, first, last, notes)
+        air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS], first, last)
+        built, summary = [], []
+        for name, style in asked:
+            panel, facts = self._panel(name, style, first, last, air.get(name))
             if panel is None:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
         out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
         self._add_chart(out, built, first, last, turn)
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
     def _add_chart(self, out: dict, panels: list[Panel], first: date, last: date, turn: Turn):
         """Send the panels as one chart (rain behind the first line) and tell the model what its reply is for."""
@@ -196,10 +186,10 @@ class Composer:
         if isinstance(period := self.period(args, LINK_DAYS), str):
             return _error(period)
         first, last = period
-        values, lows, highs, notes = await self.air_slots(metric, first, last)
-        air_panel, _ = await self._panel(metric, "line", first, last, {}, data=(values, lows, highs))
+        series, notes = await self.air_series([metric], first, last)
+        air_panel, _ = self._panel(metric, "line", first, last, series[metric])
         rain = rain_slots(self.weather("rainfall", "daily", first, last))
-        result = analyse_air(values, rain, RATINGS[metric], self.tz, LABELS[metric])
+        result = analyse_air(series[metric][0], rain, RATINGS[metric], self.tz, LABELS[metric])
         out = {"period": f"{first} to {last}", "metric": f"{LABELS[metric]} ({CHART_UNITS[metric]})",
                "resolution": "30-minute slots (air readings averaged, rain from the weather station's cache)",
                "how_to_read": ("Open with `verdict`, then the evidence in `findings`. Rain and clean air share weather (wind, fronts), "
@@ -210,7 +200,7 @@ class Composer:
         bars = rain_bars(rain, self.tz, first, last)
         if result and air_panel and bars.x and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             self._add_chart(out, [air_panel, panel_for("rain", bars=bars)], first, last, turn)
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
     async def air_scan(self, args: dict, turn: Turn | None = None) -> str:
         turn = turn or Turn()
@@ -220,7 +210,11 @@ class Composer:
         if isinstance(period := self.period(args, SCAN_DAYS), str):
             return _error(period)
         first, last = period
+        trimmed = (last - first).days >= SCAN_MAX_DAYS
+        first = max(first, last - timedelta(days=SCAN_MAX_DAYS - 1))
         air, notes = await self.air_series(list(SCAN_AIR) if metric == "all" else [metric], first, last)
+        if trimmed:
+            notes["period"] = f"Only the last {SCAN_MAX_DAYS} days can be scanned per question; this covers {first} to {last}"
         weather = {}
         for name, (group, field, _, _) in SCAN_WEATHER.items():
             if values := self.weather(group, field, first, last):
@@ -236,7 +230,7 @@ class Composer:
         weather_names = {**{k: (v[2], v[3]) for k, v in SCAN_WEATHER.items()}, "pressure_change": ("3-hour pressure change", "hPa"),
                          "rain": ("rain", "mm")}
         origin, days = day_bounds(first, self.tz)[0], (last - first).days + 1
-        result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days)
+        result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days, self.tz)
         summary = scan.summarise(result, air_names, weather_names)
         strongest = summary.pop("strongest")
         out = {"period": f"{first} to {last}", "resolution": "30-minute slots; each pair compared within the day and day to day",
@@ -246,33 +240,26 @@ class Composer:
         if strongest and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             drawn = [n for n in (strongest["air"], {"wind_speed": "wind"}.get(strongest["weather"], strongest["weather"])) if n in SERIES]
             if len(drawn) == 2:
-                panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, {}, data=air.get(n)))[0] for n in drawn]
+                panels = [self._panel(n, "bars" if n == "rain" else "line", first, last, air.get(n))[0] for n in drawn]
                 if all(panels):
                     self._add_chart(out, panels, first, last, turn)
-        return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        return json_result(out)
 
-    async def _panel(self, name: str, style: str, first: date, last: date, notes: dict,
-                     data: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
-        """(the panel, its figures for the caption); the panel is None when there is nothing to draw. `data` is an air series
-        already loaded (values, lows, highs)."""
+    def _panel(self, name: str, style: str, first: date, last: date,
+               air: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
+        """(the panel, its figures for the caption); the panel is None when there is nothing to draw. A weather reading comes from
+        the station's cache, an air metric's readings in `air` (values, lows, highs: see air_series)."""
         if name in WEATHER:
             reading = WEATHER[name]
-            group, field, label, unit = reading.group, reading.field, reading.label, reading.unit
-            values, lows, highs = self.weather_band(group, field, first, last)
             if name == "rain":
-                bars = rain_bars(rain_slots(values), self.tz, first, last)
+                bars = rain_bars(rain_slots(self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
-            if reading.band_field:  # a mean shaded up to another field (wind: the gusts)
-                gust, _, gust_high = self.weather_band(group, reading.band_field, first, last)
-                highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
-            line = driver_series(values, self.tz, first, last, label, lows, highs, banded_short=bool(reading.band_field))
-            facts = {"series": name, **self._stats(values, unit)}
+            values, lows, highs = reading_slots(self.eco.cache, self.eco.mac, name, *self._span(first, last))
+            line = driver_series(values, self.tz, first, last, reading.label, lows, highs, banded_short=bool(reading.band_field))
+            facts = {"series": name, **self._stats(values, reading.unit)}
             return (panel_for(name, [line]) if line else None), facts
-        if data is None:
-            *data, more = await self.air_slots(name, first, last)
-            notes.update(more)
-        values, lows, highs = data
+        values, lows, highs = air or ({}, {}, {})
         if len(values) < 2:
             return None, {}
         if style == "rating":

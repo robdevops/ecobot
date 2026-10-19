@@ -10,17 +10,19 @@
 
 import logging
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from .series import PRESSURE_WORDS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
+from .daytable import GROUPING
+from .series import AIR as AIR_TABLE, INDOOR_READINGS, PRESSURE_WORDS, READING_GROUPS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
 
 log = logging.getLogger(__name__)
 
 I = re.IGNORECASE
 
 # ---------- reasoning and fetching ----------
-EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_FORECAST = "none", "low", "medium"
+EFFORT_DEFAULT, EFFORT_DESCRIBE, EFFORT_THINK = "none", "low", "medium"
 EFFORT_STEPS = ("none", "low", "medium", "high")
 
 
@@ -39,16 +41,21 @@ _PRESSURE = PRESSURE_WORDS
 # The two devices by name: "ecowitt" is the weather, "ag" / "airgradient" / "air gradient" the air quality
 _ECOWITT = r"ecowitt"
 _AG = r"air ?gradient|ag"
+AIR_METRICS = [(m.words, name) for name, m in AIR_TABLE.items()]   # words -> metric; checked in order, so PM10 wins over PM1
+_AIR_METRIC = "|".join(words for words, _ in AIR_METRICS)   # the words that name an air reading, for every pattern below
 _OTHER_THAN_AIR = rf"temp\w*|rain\w*|wind\w*|humid\w*|hot|cold|warm|pressure|weather|{_ECOWITT}"  # a question that is not (only) about the air
+# The words of every reading but temperature and feels-like, which name their reading more broadly than a question asks for it
+# ("cool, thanks", "feeling better"): those two ask with _TEMP_ASK and "feels" instead
+_READING_ASK = "|".join(r.words for name, r in WEATHER_READINGS.items() if name not in ("temperature", "feels_like"))
 
 # Messages about the weather or air must fetch fresh data; anything else (thanks, chat) needn't
 WEATHER = re.compile(
-    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP_ASK}|frost\w*|pollen|hay ?fever|asthma|"
+    rf"\b(weather|{_ECOWITT}|{_AG}|{_TEMP_ASK}|{_READING_ASK}|frost\w*|pollen|hay ?fever|asthma|"
     rf"rain\w*|showers?|drizzle|storms?|thunder\w*|hail|snow|fog\w*|cloud\w*|sun\w*|uv|solar|"
     rf"{_WIND}|humid\w*|dew|{_PRESSURE}|forecast\w*|umbrella|"
     r"highs?|lows?|max\w*|min\w*|records?|extremes?|average|chart\w*|graph\w*|plot\w*|trend\w*|"
     r"indoors?|outdoors?|inside|outside|conditions|feels?|today|tonight|tomorrow|yesterday|"
-    r"week|month|year|air|aqi|pm ?2\.?5|pm ?10|co2|voc\w*|nox|smok\w*|pollut\w*|stuffy)\b|°|"
+    rf"week|month|year|air|aqi|{_AIR_METRIC}|smok\w*|pollut\w*|stuffy)\b|°|"
     r"\b\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|"
     r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}\b|\b\d{1,2}/\d{1,2}\b", I)
 
@@ -81,7 +88,7 @@ LINK = re.compile(
 # Asking the model to think: "think about it", "try to work out why", "reason it through", "predict", "estimate", "grind", "whirl"
 THINK = re.compile(r"\b(think\w*|try|trying|reason\w*|predict\w*|estimat\w*|grind\w*|whirl\w*)\b", I)
 
-EFFORT_RULES = ((EFFORT_FORECAST, (LINK, THINK)), (EFFORT_DESCRIBE, (FORECAST, ANALYSIS, DESCRIBE)))
+EFFORT_RULES = ((EFFORT_THINK, (LINK, THINK)), (EFFORT_DESCRIBE, (FORECAST, ANALYSIS, DESCRIBE)))
 
 
 def reasoning_effort(text: str) -> str:
@@ -96,26 +103,29 @@ def _only(words: str, lead: str = "") -> str:
     return rf"^\s*(please\s+)?{lead}({words})(\s+please)?\s*[?.!]*\s*$"
 
 
+_ASK = r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"   # the usual lead-in: "show me the ...", "what's the ..."
+
+
 # "status", "report": the whole current picture from both devices (a period word or a subject makes it something else)
 REPORT = re.compile(_only(r"status|report|sitrep|overview|dashboard|summary|everything|what you'?ve got",
-                          r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?(a\s+)?(full\s+|current\s+|complete\s+)?"), I)
+                          _ASK + r"(a\s+)?(full\s+|current\s+|complete\s+)?"), I)
 
 
 def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
 
 
-def report_calls(ecowitt: bool, air: bool, pollen: bool = False, forecast: bool = False) -> list[tuple[str, dict]]:
-    """What the full report needs, fetched together before the model sees the question."""
-    return ([("weather_now", {"groups": NOW_GROUPS})] if ecowitt else []) + ([("air_quality", {})] if air else []) + (
-        [("pollen_asthma", {"cached": True})] if pollen else []) + (
-        [("weather_forecast", {"days": 3, "cached": True})] if forecast else [])
+def report_calls(sources: Collection[str]) -> list[tuple[str, dict]]:
+    """What the full report needs from these sources (by name), fetched together before the model sees the question."""
+    calls = {"Ecowitt": ("weather_now", {"groups": NOW_GROUPS}), "AirGradient": ("air_quality", {}),
+             "Pollen": ("pollen_asthma", {"cached": True}), "Forecast": ("weather_forecast", {"days": 3, "cached": True})}
+    return [call for name, call in calls.items() if name in sources]
 
 
 # Pollen and thunderstorm asthma (the Pollen source)
 POLLEN_WORDS = re.compile(r"\b(pollen|hay ?fever|thunderstorm asthma|asthma)\b", I)
 POLLEN_NOW = re.compile(_only(r"pollen( count| level| forecast| today| now)?|hay ?fever|(thunderstorm )?asthma( risk)?",
-                              r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+                              _ASK), I)
 
 
 def mentions_pollen(text: str) -> bool:
@@ -128,14 +138,18 @@ POLLEN_FILLER = frozenset("pollen hay fever hayfever asthma thunderstorm count c
 
 def pollen_ask(text: str) -> bool:
     """Is this only a plain question about the pollen or thunderstorm asthma ("is the pollen bad today", "how's the hay fever")?"""
-    return bool(mentions_pollen(text)) and all(
-        word in POLLEN_FILLER or word in FILLER for word in re.findall(r"[\w'’.]+", text.lower()))
+    return mentions_pollen(text) and _only_words(text, POLLEN_FILLER.__contains__)
+
+
+def _only_words(text: str, fits) -> bool:
+    """Is every word of the text filler (FILLER: what, is, the, now ...) or one `fits` (a word -> bool) takes?"""
+    return all(word in FILLER or fits(word) for word in re.findall(r"[\w'’.]+", text.lower()))
 
 
 # "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
-NOW_GROUPS = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
+NOW_GROUPS = ",".join(READING_GROUPS)
 WEATHER_NOW = re.compile(_only(rf"(weather|{_ECOWITT}|conditions)(\s+(now|right now|currently|at the moment))?|(current|latest)\s+(weather|conditions)",
-                               r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+                               _ASK), I)
 
 
 def wants_weather_now(text: str) -> bool:
@@ -220,7 +234,7 @@ TIME_WORDS = re.compile(r"\b(hours?|days?|weeks?|months?|years?|quarter|fortnigh
 def span(name: str, now: datetime) -> tuple[datetime, datetime]:
     """Start and end of a named period. The rolling "last 24 hours" ends now; others cover whole days."""
     if name == "last 24 hours":
-        return now - timedelta(hours=24), now
+        return default_span(now)[1:]
     first, last = period_ranges(now.date())[name]
     return datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
 
@@ -311,8 +325,8 @@ EXTREMES = re.compile(r"\b(hottest|coldest|warmest|coolest|highest|lowest|highs?
                       r"extremes?|temperatures?|temps?)\b", I)
 GRAPH = re.compile(r"\b(graph\w*|chart\w*|plot\w*|trend\w*|visuali[sz]\w*)\b", I)
 # Anything that needs other data, a judgement, or a comparison goes the normal way
-_NOT_SIMPLE = (r"rain\w*|pressure|humid\w*|uv|solar|lightning|pm ?2\.?5|pm2|pm ?10|pm ?1|"
-               rf"air|air quality|aqi?|co2|co₂|voc\w*|nox|smok\w*|pollut\w*|{_AG}|"
+_NOT_SIMPLE = (rf"rain\w*|pressure|humid\w*|uv|solar|lightning|{_AIR_METRIC}|pm2|"
+               rf"air|air quality|aqi?|smok\w*|pollut\w*|{_AG}|"
                r"compare\w*|vs|versus|than|average|mean|median|why|how many|days (above|below|over|under)|"
                r"feels?|dew|forecast\w*|will|going to|tomorrow|tonight|later|now|current\w*|right now")
 NOT_SIMPLE = re.compile(rf"\b(wind\w*|gusts?|{_NOT_SIMPLE})\b", I)
@@ -347,7 +361,8 @@ def weather_period(text: str, now: datetime) -> tuple[str, datetime, datetime] |
 
 
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
-ALL = re.compile(r"\b(all|every\w*|each)\b", I)
+# "all metrics", "everything", "aq all week" (every reading, a week), but not the period "all time" nor "every day" or "each month"
+ALL = re.compile(r"\b(all(?![\s-]+time\b)|everything|(?:every|each)(?!\s+(?:days?|nights?|weeks?|months?|years?|hours?|times?)\b))\b", I)
 PER_DAY = re.compile(r"\b(each|every|per|by)\s+day|daily|day[- ]by[- ]day|which days|list|breakdown|one by one", I)
 
 
@@ -362,7 +377,6 @@ def _named(text: str) -> dict[str, int]:
 FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
 VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
 ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")   # the panels of "weather all week", top to bottom
-INDOOR_READINGS = ("temperature", "humidity", "dew_point", "feels_like")   # what the indoor sensor measures
 LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
@@ -383,7 +397,7 @@ def wants_chart_all(text: str) -> bool:
     if named < 2 and ALL.search(text) and WEATHER_WORD.search(text):
         return True
     asked = GRAPH.search(text) or WEATHER_WORD.search(text) and _has_days(text, 2)   # "weather 30d" is a chart too
-    return named == 0 and bool(asked) and not mentions_air(text) and not any(p.search(text) for p in JUDGEMENT)
+    return named == 0 and bool(asked) and not mentions_air(text) and not _judgement(text)
 
 
 def chart_field(text: str) -> str | None:
@@ -405,9 +419,22 @@ _NOT_CHART = re.compile(r"\b(compare\w*|vs|versus|than|why|how many|days (above|
 JUDGEMENT = (FORECAST, LINK, THINK, ANALYSIS, DESCRIBE)   # questions that want the model's thinking, not just a chart
 
 
+def _judgement(text: str) -> bool:
+    return any(p.search(text) for p in JUDGEMENT)
+
+
 def _sides(text: str) -> list[str]:
     indoor, outdoor = bool(INDOOR.search(text)), bool(OUTDOOR.search(text))
     return ["indoor"] if indoor and not outdoor else ["outdoor"] if outdoor and not indoor else ["outdoor", "indoor"]
+
+
+def _groups(text: str, names: list[str]) -> list[str]:
+    """The Ecowitt groups for these readings. Temperature and humidity come from both sensors unless one side is named; the
+    rest of what the indoor sensor measures (dew point, feels like) from the indoor one only when it is named."""
+    groups = list(dict.fromkeys(WEATHER_READINGS[n].group for n in names))
+    if "outdoor" in groups and ({"temperature", "humidity"} & set(names) or INDOOR.search(text) and set(INDOOR_READINGS) & set(names)):
+        groups = [g for g in groups if g != "outdoor"] + _sides(text)
+    return list(dict.fromkeys(groups))
 
 
 def bare_chart_ask(text: str, now: datetime) -> bool:
@@ -418,24 +445,21 @@ def bare_chart_ask(text: str, now: datetime) -> bool:
     for said, _ in _periods(text, now).values():
         rest = re.sub(rf"\b{re.escape(said)}\b", " ", rest, flags=I)
     patterns = [re.compile(rf"({r.words}|weather|{_ECOWITT}|conditions|indoors?|outdoors?)", I) for r in WEATHER_READINGS.values()]
-    return all(word in FILLER or any(p.fullmatch(word) for p in patterns) for word in re.findall(r"[\w'’.]+", rest.lower()))
+    return _only_words(rest, lambda word: any(p.fullmatch(word) for p in patterns))
 
 
 def weather_chart(text: str, now: datetime) -> tuple[str, datetime, datetime, list[str]] | None:
     """(period name, start, end, Ecowitt groups) for a plain chart of named readings ("rain chart 7d", "plot temperature and
     humidity"), else None. A comparison, a forecast or a question that wants thinking is the model's."""
     if (not (GRAPH.search(text) or bare_chart_ask(text, now)) or mentions_air(text) or _NOT_CHART.search(text)
-            or any(p.search(text) for p in JUDGEMENT) or not (fields := chart_fields(text) or list(_named(text)))):
+            or _judgement(text) or not (fields := chart_fields(text) or list(_named(text)))):
         return None
     spans = spans_in(text, now)
     if not spans and not TIME_WORDS.search(text):
         spans = [default_span(now)]   # a chart with no period is the last day
     if len(spans) != 1:
         return None
-    groups = list(dict.fromkeys(WEATHER_READINGS[f].group for f in fields))
-    if "outdoor" in groups and {"temperature", "humidity"} & set(fields):   # these two have an indoor sensor as well
-        groups = [g for g in groups if g != "outdoor"] + _sides(text)
-    return (*spans[0], list(dict.fromkeys(groups)))
+    return (*spans[0], _groups(text, fields))
 
 
 AVERAGE_READINGS = ("temperature", "humidity", "pressure", "wind", "dew_point", "feels_like", "vpd", "solar", "uv")   # a rain total has no average
@@ -447,16 +471,13 @@ HILO = re.compile(r"\b(highest|lowest|highs?|lows?|max(imum)?|min(imum)?|peak|ex
 def weather_average(text: str, now: datetime) -> tuple[str, datetime, datetime, list[str]] | None:
     """(period name, start, end, Ecowitt groups) for a plain "average temp last week" or "highest humidity yesterday" (the chart-less
     cousin of weather_chart)."""
-    if (not (AVERAGE.search(text) or HILO.search(text)) or mentions_air(text) or _NOT_CHART.search(text) or any(p.search(text) for p in JUDGEMENT)
+    if (not (AVERAGE.search(text) or HILO.search(text)) or mentions_air(text) or _NOT_CHART.search(text) or _judgement(text)
             or not (names := list(_named(text))) or not set(names) <= set(AVERAGE_READINGS)):
         return None
     spans = spans_in(text, now)
     if len(spans) != 1:
         return None
-    groups = list(dict.fromkeys(WEATHER_READINGS[n].group for n in names))
-    if "outdoor" in groups and {"temperature", "humidity"} & set(names):
-        groups = [g for g in groups if g != "outdoor"] + _sides(text)
-    return (*spans[0], list(dict.fromkeys(groups)))
+    return (*spans[0], _groups(text, names))
 
 
 def weather_groups(text: str) -> str:
@@ -470,7 +491,7 @@ def weather_groups(text: str) -> str:
 # ---------- air-quality fast path ----------
 # "how's the air?", "what's the AQI", "report my airgradient aq". History, comparisons and mixed
 # weather questions go the normal way.
-AIR = re.compile(rf"\b(air|aqi|aq|pm ?2\.?5|pm ?10|pm ?1|co2|voc\w*|nox|smok\w*|pollut\w*|particulates?|particles?|{_AG})\b", I)
+AIR = re.compile(rf"\b(air|aqi|aq|{_AIR_METRIC}|smok\w*|pollut\w*|particulates?|particles?|{_AG})\b", I)
 AIR_QUALITY = re.compile(r"\bair quality\b", I)
 AIR_NOT_NOW = re.compile(
     r"\b(yesterday|overnight|last|past|week|month|year|since|earlier|this morning|was|were|been|trend\w*|"
@@ -478,10 +499,6 @@ AIR_NOT_NOW = re.compile(
     r"average|highest|lowest|peak|max\w*|min\w*|record\w*|"
     rf"{_OTHER_THAN_AIR})\b", I)
 AIR_CHART_NOT = re.compile(rf"\b(compare\w*|vs|versus|than|why|forecast\w*|tomorrow|will|{_OTHER_THAN_AIR})\b", I)
-AIR_METRICS = [  # word -> metric; checked in order, so PM10 wins over PM1
-    (r"pm ?2\.?5|pm25", "pm2_5"), (r"pm ?10", "pm10"), (r"pm ?1(?![0-9])", "pm1"), (r"co2|co₂", "co2"),
-    (r"voc\w*", "voc_index"), (r"nox", "nox_index"),
-]
 
 
 def mentions_air(text: str) -> bool:
@@ -496,7 +513,7 @@ def air_period(text: str, now: datetime) -> tuple[str, datetime, datetime] | Non
         return None
     spans = spans_in(text, now)
     if not spans and GRAPH.search(text) and not TIME_WORDS.search(text):
-        spans = [("last 24 hours", *numbered_span("24", "h", now)[1:])]
+        spans = [default_span(now)]
     return spans[0] if len(spans) == 1 else None
 
 
@@ -529,19 +546,16 @@ FILLER = frozenset("what whats what's how hows how's is are it its it's the a an
                    "now currently current right at moment outside outdoors outdoor indoors indoor inside out there any we point".split())
 FORECAST_PLAIN = re.compile(_only(r"(weather\s+)?forecast(\s+(for\s+)?(the\s+)?(this\s+|next\s+)?(week|7 days|seven days|coming days))?|"
                                   r"(the\s+)?(7|seven)[- ]day (weather )?forecast|(the\s+)?week ahead",
-                                  r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"), I)
+                                  _ASK), I)
 
 
 def reading_now(text: str) -> list[str] | None:
     """The readings named when the text is only a plain question about them right now ("how hot is it", "is it raining", "uv"), else None."""
     if (GRAPH.search(text) or TIME_WORDS.search(text) or SPECIFIC_MOMENT.search(text) or mentions_air(text)
-            or any(p.search(text) for p in JUDGEMENT) or not (names := list(_named(text))) or len(names) > 2):
+            or _judgement(text) or not (names := list(_named(text))) or len(names) > 2):
         return None
     patterns = [re.compile(rf"({WEATHER_READINGS[n].words}|indoors?|outdoors?)", I) for n in names]
-    for word in re.findall(r"[\w'’.]+", text.lower()):
-        if word not in FILLER and not any(p.fullmatch(word) for p in patterns):
-            return None
-    return names
+    return names if _only_words(text, lambda word: any(p.fullmatch(word) for p in patterns)) else None
 
 
 # Counting, ranking or totalling over periods ("count days over PM2.5 of 90 per year", "how many times", "rain per month"): the model
@@ -552,18 +566,52 @@ COUNTING = re.compile(r"\b(count\w*|how many|how often|number of|days? (over|abo
 
 # "days over UVI 10 by year", "count days over PM2.5 of 90 per year", "how many days was UV 9 or more": one reading against one limit,
 # counted in code with weather_days or air_days (the model is not asked, so the answer is always the same bar chart or count)
-GROUPING = re.compile(r"\b(?:per|by|each|every)\s+(year|month)\b|\b(yearly|annual\w*)\b|\b(monthly)\b", I)
 OR_MORE = re.compile(r"\bor (?:more|higher|above|greater|over)\b", I)
 OR_LESS = re.compile(r"\bor (?:less|lower|below|under)\b", I)
 AT_LEAST = re.compile(r"\b(?:at least|reach\w*|hit|hits)\b", I)
 ABOVE = re.compile(r"\b(?:over|above|more than|greater than|higher than|exceed\w*)\b", I)
 BELOW = re.compile(r"\b(?:under|below|less than|lower than|fewer than|at most)\b", I)
-DAY_COUNT = {"temperature": "temp", "humidity": "humidity", "pressure": "pressure", "dew_point": "dew_point", "feels_like": "feels_like",
-             "vpd": "vpd", "solar": "solar", "uv": "uv"}   # reading -> the stem of its daily field (temp_max, uv_max ...)
+def _figures(name: str, stem: str) -> tuple[dict[str, str], str]:
+    """A reading's daily fields by stat (temp_max, temp_min, temp_avg); none for its lowest when it has no low worth telling."""
+    return {"max": f"{stem}_max", **({"min": f"{stem}_min"} if WEATHER_READINGS[name].low else {}), "avg": f"{stem}_avg"}, "avg"
+
+
+# A reading's weather_days field for each stat a question asks of it ("max" its highest, "min" its lowest, "avg" its average,
+# "sum" its total), and the stat when it names none. Without a "min" it has no lowest to ask for.
+DAILY = {
+    **{name: _figures(name, stem) for name, stem in (("temperature", "temp"), ("humidity", "humidity"), ("pressure", "pressure"),
+                                                    ("dew_point", "dew_point"), ("feels_like", "feels_like"), ("vpd", "vpd"),
+                                                    ("solar", "solar"))},
+    "uv": ({"max": "uv_max", "min": "uv_max", "avg": "uv_max"}, "max"),   # a UV index is its day's high, whatever is asked of it
+    "wind": ({"max": "wind_gust", "avg": "wind_speed_avg"}, "avg"),       # its highest is a gust
+    "rain": ({"max": "rain", "min": "rain", "sum": "rain"}, "sum"),       # a day's rain is its total
+}
 HOLIDAYISH = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", I)
 
 
-def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+def _limits(rest: str) -> list[str]:
+    """The numbers in the text that aren't a year or part of a period: "UV over 9 for 3 months in 2024" -> ["9"]."""
+    return re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", NUMBERED_PERIOD.sub(" ", re.sub(r"\b(?:19|20)\d\d\b", " ", rest)))
+
+
+def _whole_period(rest: str, now: datetime) -> tuple[str, datetime, datetime] | None:
+    """(name, start, end) of what a count or a figure per period covers: the period named, a calendar year ("in 2024": up to now,
+    if it is this one), else everything on record; None when the text names more than one."""
+    spans, years = spans_in(rest, now), set(re.findall(r"\b((?:19|20)\d\d)\b", rest))
+    if len(spans) + len(years) > 1:
+        return None
+    if years:
+        year = int(years.pop())
+        return str(year), datetime(year, 1, 1), min(datetime(year, 12, 31, 23, 59, 59), now)
+    return spans[0] if spans else ("on record", *span("on record", now))
+
+
+def _by(group: re.Match) -> str:
+    """"month" or "year", as GROUPING found it."""
+    return "month" if (group.group(1) or "").lower() == "month" or group.group(3) else "year"
+
+
+def count_days_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
     """(tool, arguments, label) when the text asks how many days one reading was over or under one limit (optionally per year or month),
     else None and the model decides."""
     if (not re.search(r"\bdays?\b|\btimes\b", text, I) or any(p.search(text) for p in (FORECAST, LINK, THINK, DESCRIBE, HOLIDAYISH))
@@ -575,45 +623,32 @@ def count_days_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple
     op = ">=" if OR_MORE.search(text) or AT_LEAST.search(text) else "<=" if OR_LESS.search(text) else "<" if below else ">"
     group = GROUPING.search(text)
     rest = GROUPING.sub(" ", text)
-    plain = NUMBERED_PERIOD.sub(" ", re.sub(r"\b(?:19|20)\d\d\b", " ", rest))
-    numbers = re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", plain)
-    if len(numbers) != 1:
+    if len(numbers := _limits(rest)) != 1:
         return None
     if mentions_air(text):
         metrics = air_named(text)
-        if not air or len(metrics) != 1 or ALL.search(text):
+        if "AirGradient" not in sources or len(metrics) != 1 or ALL.search(text):
             return None
         tool, field = "air_days", f"{metrics[0]}_{'min' if below else 'max'}"
     else:
         names = list(_named(text))
-        if not ecowitt or len(names) != 1:
+        if "Ecowitt" not in sources or len(names) != 1:
             return None
         name = names[0]
-        if name == "rain":
-            field = "rain"
-        elif name == "wind":
-            field = "wind_gust"
-        elif name in DAY_COUNT:
-            field = f"{DAY_COUNT[name]}_{'min' if below and name not in ('uv', 'solar') else 'max'}"
-        else:
+        if name not in DAILY:
             return None
-        tool = "weather_days"
+        fields = DAILY[name][0]
+        field, tool = fields.get("min", fields["max"]) if below else fields["max"], "weather_days"   # under a limit: its lowest, if it has one
         if name == "uv" and op == ">":   # a UV index is quoted in whole numbers: "over 10" means the days that read 10
             op = ">="
-    spans = spans_in(rest, now)
-    years = set(re.findall(r"\b((?:19|20)\d\d)\b", rest))
-    if len(spans) + len(years) > 1:
+    if not (period := _whole_period(rest, now)):
         return None
-    if years:   # "in 2024": that calendar year (so far, if it is this one)
-        year = int(years.pop())
-        spans = [(str(year), datetime(year, 1, 1), min(datetime(year, 12, 31, 23, 59, 59), now))]
-    period = spans[0] if spans else ("on record", *span("on record", now))
-    _, start, end = period
+    name_, start, end = period
     args = {"where": [{"field": field, "op": op, "value": float(numbers[0])}], "count_only": True,
             "start_date": start.strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}
     if group:
-        args["group_by"] = "month" if (group.group(1) or "").lower() == "month" or group.group(3) else "year"
-    return tool, args, f"days count, {period[0]}"
+        args["group_by"] = _by(group)
+    return tool, args, f"days count, {name_}"
 
 
 # "rain by month for 2 years", "average temperature per year", "highest PM2.5 by month": one reading, a figure for each month or year, worked
@@ -622,62 +657,48 @@ HIGHER = re.compile(r"\b(hottest|highest|max\w*|peak\w*|wettest|windiest|warmest
 LOWER = re.compile(r"\b(coldest|lowest|min\w*|driest|coolest|calmest|smallest)\b", I)
 
 
-def period_figures_call(text: str, now: datetime, ecowitt: bool, air: bool) -> tuple[str, dict, str] | None:
+def period_figures_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
     """(tool, arguments, label) when the text asks for one reading's figure by or per month or year, else None (the model decides)."""
     group = GROUPING.search(text)
     if (not group or any(p.search(text) for p in (FORECAST, LINK, THINK, DESCRIBE, HOLIDAYISH, ABOVE, BELOW, OR_MORE, OR_LESS, AT_LEAST))
             or re.search(r"\b(and|also|both|but|days|times)\b", text, I)):
         return None
     rest = GROUPING.sub(" ", text)
-    if re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?", NUMBERED_PERIOD.sub(" ", re.sub(r"\b(?:19|20)\d\d\b", " ", rest))):
+    if _limits(rest):
         return None   # a limit or another number: not a plain figure per period
     high, low = bool(HIGHER.search(text)), bool(LOWER.search(text))
     if high and low:
         return None
     if mentions_air(text):
         metrics = air_named(text)
-        if not air or len(metrics) != 1 or ALL.search(text):
+        if "AirGradient" not in sources or len(metrics) != 1 or ALL.search(text):
             return None
         tool, stat, field = "air_days", ("max" if high else "min" if low else "avg"), f"{metrics[0]}_{'max' if high else 'min' if low else 'avg'}"
     else:
         names = list(_named(text))
-        if not ecowitt or len(names) != 1:
+        if "Ecowitt" not in sources or len(names) != 1:
             return None
         name, tool = names[0], "weather_days"
-        if name == "rain":
-            stat, field = ("max", "rain") if high else ("min", "rain") if low else ("sum", "rain")
-        elif name == "uv":
-            stat, field = ("max", "uv_max")
-        elif name == "wind":
-            if low:
-                return None
-            stat, field = ("max", "wind_gust") if high else ("avg", "wind_speed_avg")
-        elif name in DAY_COUNT:
-            stem = DAY_COUNT[name]
-            stat = "max" if high else "min" if low else "avg"
-            field = f"{stem}_{'max' if high else 'min' if low else 'avg'}"
-            if stem in ("solar",) and low:
-                return None
-        else:
+        if name not in DAILY:
             return None
-    spans = spans_in(rest, now)
-    years = set(re.findall(r"\b((?:19|20)\d\d)\b", rest))
-    if len(spans) + len(years) > 1:
+        fields, plain = DAILY[name]
+        stat = "max" if high else "min" if low else plain
+        if stat not in fields:   # a lowest of a reading that has none (wind, solar)
+            return None
+        field = fields[stat]
+    if not (period := _whole_period(rest, now)):
         return None
-    if years:
-        year = int(years.pop())
-        spans = [(str(year), datetime(year, 1, 1), min(datetime(year, 12, 31, 23, 59, 59), now))]
-    name_, start, end = spans[0] if spans else ("on record", *span("on record", now))
-    by = "month" if (group.group(1) or "").lower() == "month" or group.group(3) else "year"
+    name_, start, end = period
+    by = _by(group)
     return tool, {"stat": stat, "of": field, "count_only": True, "group_by": by,
                   "start_date": start.strftime("%Y-%m-%d"), "end_date": end.strftime("%Y-%m-%d")}, f"figures by {by}, {name_}"
 
 
-def fast_call(text: str, now: datetime, ecowitt: bool, air: bool, pollen: bool = False,
-              forecast: bool = False) -> tuple[str, dict, str] | None:
-    """(tool name, arguments, what it is) for a question the bot can fetch for without the model."""
-    if (counted := count_days_call(text, now, ecowitt, air)) or (counted := period_figures_call(text, now, ecowitt, air)):
+def fast_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
+    """(tool name, arguments, what it is) for a question the bot can fetch for without the model, from these sources (by name)."""
+    if (counted := count_days_call(text, now, sources)) or (counted := period_figures_call(text, now, sources)):
         return counted
+    ecowitt, air, pollen, forecast = ("Ecowitt" in sources, "AirGradient" in sources, "Pollen" in sources, "Forecast" in sources)
     if SPECIFIC_MOMENT.search(text) or COUNTING.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
         return None
     if air and (period := air_period(text, now)):
@@ -731,11 +752,8 @@ def topics(text: str, before: list[str] = ()) -> set[str]:
             ("air", mentions_air(said)), ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
             ("link", bool(LINK.search(said)) or bool(COMPARE.search(said)) and bool(OUTLOOK_WORDS.search(said))),
             ("outlook", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
-            ("forecast", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
             ("wind", bool(WIND_WORDS.search(said))), ("describe", bool(DESCRIBE.search(said))),
-            ("pollen", mentions_pollen(said)),
             ("bot", bool(BOT_WORDS.search(said)) or about_the_bot(said) or bool(COMMAND.search(said))),
-            ("compose", mentions_air(said) and bool(COMPARE.search(said) or GRAPH.search(said) or LINK.search(said) or ANALYSIS.search(said))),
         ) if hit}
     return found
 
@@ -746,16 +764,17 @@ RAIN_AHEAD = re.compile(r"\b(umbrella|chance of rain|(will|going to|gonna|likely
 WEEK_AHEAD = re.compile(r"\b(week|days|weekend|next \w+day)\b", I)
 
 
-def model_prefetch(text: str, now: datetime, ecowitt: bool, forecast: bool) -> list[tuple[str, dict]]:
+def model_prefetch(text: str, now: datetime, sources: Collection[str]) -> list[tuple[str, dict]]:
     """What the model would fetch first for these questions, fetched here instead (so it answers in one call, not two): for rain
     ahead, the current reading, the last 3 hours and the forecast (cached); for a described today or yesterday, that day's readings."""
     calls: list[tuple[str, dict]] = []
+    ecowitt = "Ecowitt" in sources
     if RAIN_AHEAD.search(text):
         if ecowitt:
             groups = "outdoor,pressure,rainfall,rainfall_piezo,wind"
             calls += [("weather_now", {"groups": groups}),
                       ("weather_history", {"groups": groups, "start_date": (now - timedelta(hours=3)).strftime(FMT), "end_date": now.strftime(FMT)})]
-        if forecast:
+        if "Forecast" in sources:
             calls.append(("weather_forecast", {"days": 7 if WEEK_AHEAD.search(text) else 3, "cached": True}))
     elif ecowitt and DESCRIBE.search(text) and not SPECIFIC_MOMENT.search(text):
         spans = spans_in(text, now)
@@ -767,7 +786,7 @@ def model_prefetch(text: str, now: datetime, ecowitt: bool, forecast: bool) -> l
 
 
 @dataclass
-class Reading:
+class Intent:
     """Everything decided about one message before the model sees it."""
     effort: str = EFFORT_DEFAULT
     needs_data: bool = False              # the model must call a tool first
@@ -783,13 +802,18 @@ class Reading:
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
     rain_caption: bool = False            # "rain chart 7d": the caption is just the least and most rain
     chart_in_code: bool = False           # a chart asked for plainly: fetched and captioned in code, no model
-    chart_all: bool = False               # "weather all week": every reading charted, sent with no caption
     readings: list[str] = field(default_factory=list)     # the readings the words name
     per_day: bool = False                 # figures day by day were asked for
     extra: list[tuple[str, dict]] = field(default_factory=list)   # fetched with the model's first step (the forecast, for "will it rain?")
-    lookup: str = ""                      # "reading", "air", "pollen", "forecast" or "about": answered in code, no model
+    lookup: str = ""                      # "reading", "air", "days", "extremes", "pollen", "forecast" or "about": answered in code, no model
     lookup_arg: list[str] = field(default_factory=list)   # the readings named ("reading", "air"; none: all)
     sides: list[str] = field(default_factory=list)        # "indoor", "outdoor" or both, for a reading
+
+    @property
+    def tool_choice(self) -> str:
+        """What the model's first step may do with the tools (see Agent.run): none about the bot itself, a fetch it must make
+        when the answer needs data, else its own choice."""
+        return "none" if self.about_the_bot else "required" if self.needs_data else "auto"
 
 
 def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
@@ -805,10 +829,10 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
         return "days", []
     if tool == "weather_forecast":
         return "forecast", []
-    if any(p.search(text) for p in JUDGEMENT):
+    if _judgement(text):
         return "", []
-    if tool == "weather_history" and not args.get("chart") and not any(p.search(text) for p in JUDGEMENT):
-        return "extremes", [n for n in _named(text)]
+    if tool == "weather_history" and not args.get("chart"):
+        return "extremes", list(_named(text))
     if tool == "weather_now" and (names := reading_now(text)):
         return "reading", names
     if tool == "air_quality" and not args and len(text.split()) <= 6:
@@ -816,21 +840,28 @@ def plain_lookup(text: str, fast: tuple | None) -> tuple[str, list[str]]:
     return "", []
 
 
-def read(text: str, now: datetime, ecowitt: bool = True, air: bool = True, pollen: bool = False,
-         forecast: bool = False) -> Reading:
-    """The decisions made in code for this message. A shortcut that fails is dropped: the model handles the question."""
+APOSTROPHES = str.maketrans("’‘", "''")   # a phone's typographic apostrophes ("what’s"), read as the plain one every pattern uses
+
+
+def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGradient")) -> Intent:
+    """The decisions made in code for this message, given the sources the bot has (by name: "Ecowitt", "AirGradient", "Pollen",
+    "Forecast"). A shortcut that fails is dropped: the model handles the question."""
+    text = text.translate(APOSTROPHES)
+    ecowitt = "Ecowitt" in sources
     report = wants_report(text)
-    calls = report_calls(ecowitt, air, pollen, forecast) if report else []
+    calls = report_calls(sources) if report else []
     try:
-        fast = (*calls[0], "report") if calls else fast_call(text, now, ecowitt, air, pollen, forecast)
+        fast = (*calls[0], "report") if calls else fast_call(text, now, sources)
     except Exception:
         log.exception("Fast path failed; using the normal path")
         fast = None
     in_code = bool(fast and fast[0] in ("weather_history", "air_quality") and fast[1].get("chart")
-                   and not any(p.search(text) for p in JUDGEMENT))
+                   and not _judgement(text))
     rain_caption = ecowitt and wants_rain_caption(text)
     lookup, named = plain_lookup(text, fast) if not (report or in_code) else ("", [])
-    return Reading(reasoning_effort(text), needs_data(text), about_the_bot(text), report, period_hints(text, now),
-                   fast, bool(GRAPH.search(text)), chart_field(text), chart_fields(text), bool(AVERAGE.search(text)),
-                   more=calls[1:], weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code, chart_all=in_code and wants_chart_all(text),
-                   lookup=lookup, lookup_arg=named, sides=_sides(text), extra=model_prefetch(text, now, ecowitt, forecast) if not fast else [], readings=list(_named(text)), per_day=bool(PER_DAY.search(text)))
+    return Intent(effort=reasoning_effort(text), needs_data=needs_data(text), about_the_bot=about_the_bot(text), report=report,
+                  hints=period_hints(text, now), fast=fast, chart_asked=bool(GRAPH.search(text)), chart_field=chart_field(text),
+                  chart_fields=chart_fields(text), average_asked=bool(AVERAGE.search(text)), more=calls[1:],
+                  weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
+                  readings=list(_named(text)), per_day=bool(PER_DAY.search(text)),
+                  extra=model_prefetch(text, now, sources) if not fast else [], lookup=lookup, lookup_arg=named, sides=_sides(text))

@@ -1,10 +1,10 @@
 """Turning Ecowitt readings into per-series points and finding their lowest and highest, with when each happened."""
 
-from datetime import date, datetime, tzinfo, UTC
+from datetime import datetime, tzinfo, UTC
 from typing import NamedTuple
 
-from ..timeutil import local_date
-from .api import CYCLE_SECONDS
+from ..timeutil import clock_text, day_text
+from .api import CYCLES
 from .fetch import series_in
 
 
@@ -68,20 +68,12 @@ def high_of(rec: dict) -> float:
     return rec["high"][0] if "high" in rec else rec["value"][0]
 
 
-def daily_readings(pts: dict, before: date | None = None, tz: tzinfo | None = None) -> list[tuple]:
-    """(ts, value, low, high, fine) for the 5- and 30-minute readings (those before `before`), for daily_summary."""
-    return [(t, r["value"][0], low_of(r), high_of(r), r["cycle"] == "5min") for t, r in pts.items()
-            if r["cycle"] != "1day" and "value" in r and (before is None or local_date(t, tz) < before)]
+def daily_readings(pts: dict) -> list[tuple]:
+    """(ts, value, low, high, fine) for the 5- and 30-minute readings, for daily_summary."""
+    return [(t, r["value"][0], low_of(r), high_of(r), r["cycle"] == "5min") for t, r in pts.items() if r["cycle"] != "1day" and "value" in r]
 
 
-def _clock(dt: datetime) -> str:
-    """12-hour clock, e.g. '7:05am', '3:30pm', '10am'."""
-    text = dt.strftime("%I:%M%p").lstrip("0").lower()
-    return text.replace(":00", "") if dt.minute == 0 else text
-
-
-def _day(dt: datetime) -> str:
-    return f"{dt:%a} {dt.day} {dt:%b %Y}"
+_clock = lambda dt: clock_text(dt, whole_hours=True)   # "7:05am", "3:30pm", "10am"
 
 
 def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
@@ -90,12 +82,12 @@ def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
     the window it happened in, so the model can copy it as is. The date is separate (so an emoji
     can go before it) and empty when the window spans two days, since then the wording has both."""
     start = datetime.fromtimestamp(ts, UTC).astimezone(tz)
-    raw = start.strftime("%a %d %b %Y %H:%M")
+    raw = f"{day_text(start)} {clock_text(start)}"
     if cycle == "5min":
-        return raw, f"at {_clock(start)}", _day(start)
+        return raw, f"at {_clock(start)}", day_text(start)
     if cycle == "30min":
-        return raw, f"around {_clock(start)}", _day(start)
-    end = datetime.fromtimestamp(ts + CYCLE_SECONDS[cycle], UTC).astimezone(tz)
+        return raw, f"around {_clock(start)}", day_text(start)
+    end = datetime.fromtimestamp(ts + CYCLES[cycle].seconds, UTC).astimezone(tz)
     if start.date() == end.date():
-        return raw, f"sometime between {_clock(start)} and {_clock(end)}", _day(start)
-    return raw, f"sometime between {_clock(start)} {_day(start)} and {_clock(end)} {_day(end)}", ""
+        return raw, f"sometime between {_clock(start)} and {_clock(end)}", day_text(start)
+    return raw, f"sometime between {_clock(start)} {day_text(start)} and {_clock(end)} {day_text(end)}", ""

@@ -2,8 +2,7 @@
 air-quality reading on its own, its good / poor / very poor zones. Every chart producer (a history answer, plot_chart, the
 weather links, the air-quality charts) builds its panels here, so a reading looks the same whichever path drew it."""
 
-from .airgradient.metrics import CHART_UNITS, LABELS, RATINGS
-from .series import WEATHER
+from .series import AIR, WEATHER
 from .specs import Bars, Line, Panel
 
 
@@ -16,5 +15,5 @@ def panel_for(name: str | list[str], lines: list[Line] | None = None, bars: Bars
         return Panel(reading.label, reading.unit, lines, bars=bars, reading=name)
     names = [name] if isinstance(name, str) else name
     one = len(names) == 1
-    return Panel(", ".join(LABELS[n] for n in names), CHART_UNITS[names[0]], lines, bars=bars, reading=names[0] if one else "",
-                 zones=tuple(RATINGS[names[0]]) if one and len(lines) == 1 else None, peaks="pills" if one else "aside")
+    return Panel(", ".join(AIR[n].label for n in names), AIR[names[0]].unit, lines, bars=bars, reading=names[0] if one else "",
+                 zones=AIR[names[0]].limits if one and len(lines) == 1 else None, peaks="pills" if one else "aside")

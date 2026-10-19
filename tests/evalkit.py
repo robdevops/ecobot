@@ -17,6 +17,7 @@ from lib.airgradient import days as air_days, source as air
 from lib.ecowitt import days, link, source as station
 from lib.forecast import source as forecast
 from lib.pollen import source as pollen
+from tests.fakes import EVERY_SOURCE
 from lib.llm import Agent
 from lib.tools import Tool, Tools
 
@@ -135,7 +136,7 @@ def deterministic(case: Case) -> list[str]:
     """Failures of the decisions made in code (no model): reasoning effort, fast path, hints, chart choices."""
     e, fails = case.expect, []
     text = case.ask
-    r = intent.read(text, NOW, pollen=True, forecast=True)
+    r = intent.read(text, NOW, EVERY_SOURCE)
     if "effort" in e and r.effort != e["effort"]:
         fails.append(f"effort {r.effort}, expected {e['effort']}")
     if "fast" in e:
@@ -167,16 +168,16 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     """Ask the real model; returns the tool calls it made and its final reply."""
     calls: list[tuple[str, dict]] = []
     text = case.ask
-    r = intent.read(text, NOW, pollen=True, forecast=True)
-    system = prompt.build(NOW, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor",
-                                "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
-                                "Weather forecast for the owner's location (Open-Meteo)"],
-                          r.hints, r.about_the_bot, r.rain_caption, found := intent.topics(content(case), [m["content"] for m in case.history if m["role"] == "user"][-2:]))
+    r = intent.read(text, NOW, EVERY_SOURCE)
+    system = prompt.build(NOW, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor",
+                                "Pollen": "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
+                                "Forecast": "Weather forecast for the owner's location (Open-Meteo)"},
+                          r.hints, r.about_the_bot, r.rain_caption, intent.topics(content(case), [m["content"] for m in case.history if m["role"] == "user"][-2:]))
     fast = r.fast
     messages = [*case.history, {"role": "user", "content": content(case)}]
     reply = await Agent(client, model, make_tools(calls)).run(
-        messages, system, effort or r.effort, first_call=[*([fast[:2], *r.more] if fast else []), *r.extra] or None, require_tool=r.needs_data,
-        no_tools=r.about_the_bot)
+        messages, system, effort or r.effort, first_call=[*([fast[:2], *r.more] if fast else []), *r.extra] or None,
+        tool_choice=r.tool_choice)
     if fast or r.extra:
         calls[0:0] = [*([(fast[0], fast[1]), *r.more] if fast else []), *r.extra]  # the bot ran them itself, before the model
     return calls, reply

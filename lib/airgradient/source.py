@@ -13,26 +13,27 @@ where available, plus a US EPA AQI and band for PM2.5.
 
 import asyncio
 import statistics
-import json
 import logging
 import time
 from datetime import date, datetime, timedelta, UTC
 from itertools import pairwise
+from typing import NamedTuple
 
 import httpx
 
 from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
-from ..lines import Plotted, build_line
+from ..sources import Source
+from ..lines import Plotted, Sample, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import local_date, now_local, to_local, when
-from ..tools import Tool, Turn
+from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
+from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
-from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, epoch, normalise, pm25_aqi, rating, value_of, without_spikes
+from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, normalise, pm25_aqi, rating, value_of, without_spikes
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -70,7 +71,14 @@ DESCRIPTION = ("Air quality from the owner's AirGradient outdoor sensor: PM2.5 (
                "happened. chart=true sends a graph.")
 
 
-class AirGradient:
+class Latest(NamedTuple):
+    """The latest reading as the air_quality tool gives it, and what the particulates alert also needs."""
+    reading: dict                  # the sensor, the time, and each metric's value, unit and rating
+    at: datetime | None            # when it was taken (UTC)
+    sustained: dict[str, float]    # each metric's lowest over the last REQUIRE_CONSECUTIVE readings: what the air has been that long
+
+
+class AirGradient(Source):
     """AirGradient client with its data kept warm and cached:
       - the current reading and today's history are refreshed every few minutes (warm);
       - finished days are fetched once and stored on disk, so they never need fetching again."""
@@ -104,27 +112,24 @@ class AirGradient:
         """Should a question start refreshing this source? Only air-quality questions."""
         return intent.mentions_air(text)
 
-    def poke(self):
-        self.warmer.poke()
-
-    async def close(self):
-        await self.client.aclose()
-        self.store.close()
-
-    async def _get(self, kind: str, **params):
+    async def _get(self, kind: str, **params) -> dict | list:
+        """The reply: an object for "current", a list of readings for "past". A period with no readings is an empty list (AirGradient
+        says so with a 404); a reply of any other shape raises, so it is never stored as days without readings."""
         self.requests += 1
         res = await self.client.get(API.format(loc=self.loc, kind=kind), params={**params, "token": self.token})
-        if res.status_code == 404 and kind == "past":  # "No data available" for the period
+        if res.status_code == 404 and kind == "past" and "no data" in res.text.lower():   # "No data available" for the period
             return []
         if res.status_code != 200:
             raise RuntimeError(f"AirGradient {kind} failed: HTTP {res.status_code}")
-        return res.json()
+        data = res.json()
+        if kind == "past" and isinstance(data, dict) and isinstance(data.get("data"), list):
+            data = data["data"]
+        if not isinstance(data, list if kind == "past" else dict):
+            raise RuntimeError(f"AirGradient {kind} sent something unexpected: {res.text[:100]}")
+        return data
 
     def _lock(self, key) -> asyncio.Lock:
         return self._locks.setdefault(key, asyncio.Lock())
-
-    def _now(self) -> datetime:
-        return now_local(self.tz)
 
     # ---------- cached data ----------
     async def _current_row(self, refresh: bool = False) -> dict:
@@ -135,37 +140,37 @@ class AirGradient:
 
     def _final(self, day: date) -> bool:
         """Over for more than an hour, so its data won't change."""
-        return self._now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
+        return self.now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
 
     async def _held(self, days: list[date]) -> dict[date, int | None]:
         """Readings stored per finished day, in one query (None: not fetched yet, or not finished)."""
         stored = await asyncio.to_thread(self.store.counts, days)
         return {d: stored[d] if self._final(d) else None for d in days}
 
-    def _utc(self, local: datetime) -> str:
-        return local.replace(tzinfo=self.tz).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def _unstored(self, held: dict[date, int | None]) -> list[date]:
+        """The finished days in `held` (see _held) that aren't stored yet."""
+        return [d for d, n in held.items() if n is None and self._final(d)]
 
-    async def _past(self, start: datetime, end: datetime) -> list[dict]:
-        """Readings between two local times, normalised and oldest first."""
-        data = await self._get("past", **{"from": self._utc(start), "to": self._utc(end)})
-        raw = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
+    async def _past(self, start: int, end: int) -> list[dict]:
+        """Readings between two epochs (never past now), normalised and oldest first."""
+        utc = lambda ts: datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        raw = await self._get("past", **{"from": utc(start), "to": utc(min(end, time.time()))})
         return sorted((normalise(r) for r in raw if isinstance(r, dict) and r.get("timestamp")), key=lambda r: r["ts"])
 
-    async def _fetch_days(self, days: list[date]):
-        """Fetch finished days and store them, in as few requests as the API allows (it takes up to
-        10 days at a time; we use 9)."""
-        days = sorted(days)
+    async def _fetch_days(self, days: list[date]) -> dict[date, int]:
+        """Fetch finished days and store them, in as few requests as the API allows (it takes up to 10 days at a time; we use 9).
+        Returns how many readings each day has stored."""
+        days, stored = sorted(days), {}
         while days:
             window = [d for d in days if (d - days[0]).days < MAX_REQUEST_DAYS]
             days = days[len(window):]
-            start = datetime.combine(window[0], datetime.min.time())
-            end = datetime.combine(window[-1], datetime.min.time()) + timedelta(days=1)
             by_day: dict = {d: [] for d in window}
-            for r in await self._past(start, min(end, self._now())):
+            for r in await self._past(day_bounds(window[0], self.tz)[0], day_bounds(window[-1], self.tz)[1]):
                 by_day.get(local_date(r["ts"], self.tz), []).append(r)
             for d, day_rows in by_day.items():
-                await asyncio.to_thread(self.store.save_day, d, day_rows)
+                stored[d] = await asyncio.to_thread(self.store.save_day, d, day_rows)
                 self._recent.pop(d, None)
+        return stored
 
     async def _day_rows(self, day: date, refresh: bool = False) -> list[dict]:
         """All of one local day's readings, normalised. Finished days come from the disk cache (and
@@ -174,25 +179,23 @@ class AirGradient:
         final = self._final(day)
         async with self._lock(day):
             if final:
-                if await asyncio.to_thread(self.store.day_count, day) is None:
+                if self._unstored(await self._held([day])):
                     await self._fetch_days([day])
                 return await asyncio.to_thread(self.store.load_day, day)
             cached = self._recent.get(day)
             if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
                 return cached[0]
-            start = datetime.combine(day, datetime.min.time())
-            rows = await self._past(start, min(start + timedelta(days=1), self._now()))
+            rows = await self._past(*day_bounds(day, self.tz))
             self._recent[day] = (rows, time.time())
             return rows
 
     async def warm(self, fresh: bool = True) -> str:
         """Current reading, today, and the last week of finished days."""
-        before, today = self.requests, self._now().date()
+        before, today = self.requests, self.now().date()
         await self._current_row(fresh)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
-        held = await self._held(week)
-        await self._fetch_days([d for d in week if self._final(d) and held[d] is None])  # one request for all of them
+        await self._fetch_days(self._unstored(await self._held(week)))  # one request for all of them
         for day in week:
             if not self._final(day):  # a day that just ended is still refetched for a while; finished ones are stored
                 await self._day_rows(day)
@@ -206,7 +209,7 @@ class AirGradient:
         pace = BACKFILL_PACE if pace is None else pace
         empty_stop = BACKFILL_EMPTY_STOP if empty_stop is None else empty_stop
         empty_before_data = BACKFILL_EMPTY_BEFORE_DATA if empty_before_data is None else empty_before_data
-        today = self._now().date()
+        today = self.now().date()
         fetched = failed = failed_run = empty_run = total = 0
         seen_data = False
         n = 1
@@ -214,12 +217,10 @@ class AirGradient:
             days = [today - timedelta(days=k) for k in range(n, min(n + MAX_REQUEST_DAYS, max_days + 1))]
             n += MAX_REQUEST_DAYS
             counts = await self._held(days)
-            missing = [d for d in days if self._final(d) and counts[d] is None]
-            if missing:
+            if missing := self._unstored(counts):
                 try:
-                    await self._fetch_days(missing)
+                    counts.update(await self._fetch_days(missing))
                     fetched, failed_run = fetched + len(missing), 0
-                    counts.update(await asyncio.to_thread(self.store.counts, missing))
                     if fetched // 30 != (fetched - len(missing)) // 30:
                         log.info("AirGradient archive: %d day(s) fetched so far, now at %s", fetched, days[-1])
                 except Exception as e:
@@ -249,13 +250,9 @@ class AirGradient:
         try:
             chart = wants_chart(args, turn)
             if args.get("start_date") or args.get("end_date") or chart:
-                return json.dumps(await self.history(args.get("start_date"), args.get("end_date"),
-                                                     chart=chart, metrics=args.get("metrics"), turn=turn),
-                                  ensure_ascii=False)
-            reading = await self.current()
-            reading.pop("_time_utc", None)
-            reading.pop("_sustained", None)
-            return json.dumps(reading, ensure_ascii=False)
+                return json_result(await self.history(args.get("start_date"), args.get("end_date"),
+                                                      chart=chart, metrics=args.get("metrics"), turn=turn))
+            return json_result(await self.current())
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
             return f"Error: couldn't read the air-quality sensor ({e})"
@@ -263,12 +260,6 @@ class AirGradient:
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
         """The air_days tool: count, rank and total days from the stored readings."""
         return await air_days_tool(self.store, self.tz, args, turn)
-
-    async def _previous_row(self, ts: int) -> dict | None:
-        """The newest of today's cached readings older than `ts` and within MAX_GAP_SECONDS of it, else None."""
-        today = to_local(ts, self.tz).date()
-        rows = [r for r in await self._day_rows(today) if r["ts"] < ts]
-        return rows[-1] if rows and ts - rows[-1]["ts"] <= MAX_GAP_SECONDS else None
 
     async def _previous_rows(self, ts: int, count: int) -> list[dict]:
         """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first."""
@@ -281,62 +272,67 @@ class AirGradient:
             after = r["ts"]
         return got
 
-    async def current(self) -> dict:
+    async def latest(self) -> Latest:
         """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
-        spike is not called poor until the next reading agrees; the value shown is always the latest one."""
+        spike is not called poor until the next reading agrees; the value shown is always the latest one. The readings before it
+        come from today's history: when that can't be read, the latest is rated alone."""
         row = await self._current_row()
-        previous = await self._previous_row(epoch(row["timestamp"])) if row.get("timestamp") else None
-        out = {"sensor": row.get("locationName"), "sensor_type": row.get("locationType"),
-               "time": when(epoch(row["timestamp"]), self.tz) if row.get("timestamp") else None}
-        if row.get("timestamp"):  # for the air alerts' staleness check (removed before the model sees it)
-            out["_time_utc"] = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+        at = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")) if row.get("timestamp") else None
+        need = metrics.REQUIRE_CONSECUTIVE - 1   # the readings before the latest that `sustained` takes in
+        try:
+            earlier = await self._previous_rows(int(at.timestamp()), max(need, 1)) if at else []
+        except Exception as e:   # only the history failing: the latest reading still stands
+            log.warning("AirGradient: today's readings unavailable (%s); rating the latest alone", e)
+            earlier = []
+        previous, held = (earlier[-1] if earlier else {}), (earlier[-need:] if need else [])
+        reading = {"sensor": row.get("locationName"), "sensor_type": row.get("locationType"),
+                   "time": when(int(at.timestamp()), self.tz) if at else None}
+        sustained = {}
         for name, (_, unit) in METRICS.items():
             v = value_of(row, name)
-            if v is not None:
-                before = previous.get(name) if previous else None   # today's rows are already normalised
-                rated = v if before is None else min(v, before)   # thresholds only rise: the lower value's zone is the one both reached
-                out[name] = {"value": v, "unit": unit, "rating": rating(name, rated)}
-                if out[name]["rating"] != rating(name, v):
-                    out[name]["rating_note"] = "rated on the last two readings: the previous one was lower"
-                out[name]["_rated"] = rated
-        if "pm2_5" in out:
-            aqi, band = pm25_aqi(out["pm2_5"]["_rated"])
-            out["pm2_5"].update(aqi_us=aqi, band=band)
-        sustained = {}   # each metric's lowest value over the last REQUIRE_CONSECUTIVE readings: what the air has been for that long
-        if row.get("timestamp"):
-            earlier = await self._previous_rows(epoch(row["timestamp"]), max(metrics.REQUIRE_CONSECUTIVE - 1, 0))
-            for name, entry in out.items():
-                if isinstance(entry, dict) and "value" in entry:
-                    sustained[name] = min([entry["value"], *(r[name] for r in earlier if name in r)])
-        for entry in out.values():
-            if isinstance(entry, dict):
-                entry.pop("_rated", None)
-        out["_sustained"] = sustained   # for the alerts (removed before the model sees it)
-        return out
+            if v is None:
+                continue
+            rated = min(v, previous.get(name, v))   # thresholds only rise: the lower value's zone is the one both reached
+            reading[name] = {"value": v, "unit": unit, "rating": rating(name, rated)}
+            if reading[name]["rating"] != rating(name, v):
+                reading[name]["rating_note"] = "rated on the last two readings: the previous one was lower"
+            if name == "pm2_5":
+                aqi, band = pm25_aqi(rated)
+                reading[name].update(aqi_us=aqi, band=band)
+            sustained[name] = min([v, *(r[name] for r in held if name in r)])
+        return Latest(reading, at, sustained)
+
+    async def current(self) -> dict:
+        """The latest reading as the air_quality tool gives it (see latest)."""
+        return (await self.latest()).reading
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
         """(readings in [t0, t1] (naive local times), days that only exist as hourly averages, older days still waiting for
-        the backfill and left out). Finished days not yet stored are fetched first, up to MAX_INLINE_DAYS."""
+        the backfill and left out). Finished days not yet stored are fetched first, up to MAX_INLINE_DAYS. A single-reading spike
+        of the particles is a glitch of the sensor: it is taken out here, once, so no figure or chart has it."""
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
         held = await self._held(days)
-        missing = [d for d in days if self._final(d) and held[d] is None]
+        missing = self._unstored(held)
         skipped = missing[:-MAX_INLINE_DAYS] if len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
-        await self._fetch_days([d for d in missing if d not in skipped])
-        rows = []
-        for d in days:
-            if d not in skipped:  # finished days are all stored by now; today and a just-ended day come via _day_rows
-                rows += await (asyncio.to_thread(self.store.load_day, d) if self._final(d) else self._day_rows(d))
-        counts = await self._held([d for d in days if d not in skipped])
-        hourly = sum(1 for c in counts.values() if c and c <= HOURLY_MAX_READINGS)
-        lo_ts, hi_ts = t0.replace(tzinfo=self.tz).timestamp(), t1.replace(tzinfo=self.tz).timestamp()
-        return [r for r in rows if lo_ts <= r["ts"] <= hi_ts], hourly, skipped
+        held.update(await self._fetch_days([d for d in missing if d not in skipped]))
+        finished = [d for d in days if self._final(d)]   # all stored by now but the skipped: read in one query
+        rows = (await asyncio.to_thread(self.store.load, day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1])
+                if finished else [])
+        for d in days[len(finished):]:   # today, and a day that has just ended: fetched, not stored
+            rows += await self._day_rows(d)
+        hourly = sum(1 for n in held.values() if n and n <= HOURLY_MAX_READINGS)
+        lo, hi = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
+        return [r for r in without_spikes(rows) if lo <= r["ts"] <= hi], hourly, skipped
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,
                       metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
         turn = turn or Turn()
-        now = self._now()
-        parse = lambda s, d: datetime.fromisoformat(str(s).replace("T", " ")) if s else d
-        t0, t1 = parse(start, now - timedelta(days=1)), min(parse(end, now), now)
+        now = self.now()
+        try:   # a date the model sends, with or without an offset; a bad one is its mistake, not the sensor's
+            t0 = parse_local(start, self.tz) if start else now - timedelta(days=1)
+            t1 = min(parse_local(end, self.tz), now) if end else now
+        except ValueError as e:
+            return {"error": f"bad date ({e}); use 'YYYY-MM-DD HH:MM:SS'"}
         trimmed = t0 < t1 - timedelta(days=MAX_DAYS)
         t0 = max(t0, t1 - timedelta(days=MAX_DAYS))
         if t0 >= t1:
@@ -345,10 +341,9 @@ class AirGradient:
         before, started = self.requests, time.perf_counter()
         rows, hourly, skipped = await self.rows(t0, t1)
         turn.times["data"] = turn.times.get("data", 0.0) + time.perf_counter() - started   # for the reply's timing line
-        rows = without_spikes(rows)   # a single-reading spike of the particles is a glitch of the sensor: in no figure or chart
         log.log(logging.DEBUG if turn.ahead else logging.INFO, "AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}",
                 f"{t1:%m-%d %H:%M}", len(rows), self.requests - before)
-        out = {"sensor_type": "outdoor", "period": f"{t0:%a} {t0.day} {t0:%b %Y} - {t1:%a} {t1.day} {t1:%b %Y}",
+        out = {"sensor_type": "outdoor", "period": f"{day_text(t0)} - {day_text(t1)}",
                "readings": len(rows)}
         for name, (_, unit) in METRICS.items():
             pts = [(r["ts"], r[name]) for r in rows if name in r]
@@ -375,7 +370,8 @@ class AirGradient:
         if not rows:
             out["note"] = "No readings for this period."
         if chart and rows:
-            chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"])
+            chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"],
+                                     (t0.date(), t1.date()))
             if chart_spec:
                 turn.charts.append(chart_spec)
                 out["chart"] = CHART_HINT
@@ -389,16 +385,16 @@ class AirGradient:
         if len(pts) < 2:
             return None
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
-        plotted = build_line([(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+        plotted = build_line([Sample(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name), plotted
 
-    def _chart(self, names: list[str], rows: list[dict], period: str) -> Chart | None:
+    def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
-        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone)."""
-        rows = without_spikes(rows)   # (a no-op for the rows history() gives it; a caller with its own rows gets the same drawing)
+        shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone). `period` is the subtitle's
+        text for it, `days` its first and last day (for the caption)."""
         drawn = {n: got for n in names if (got := self._line(n, rows))}
         if not drawn:
             return None
@@ -406,11 +402,11 @@ class AirGradient:
             (name, (line, plotted)), = drawn.items()
             subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
-            return Chart(LABELS[name], subtitle, [panel_for(name, [line])])
+            return Chart(LABELS[name], subtitle, [panel_for(name, [line])], period=days)
         panels = []
         for group in AIR_PANELS:
             members = [m for m in group if m in drawn]
             if members:
                 panels.append(panel_for(members, [drawn[m][0] for m in members]))
         return Chart("Air quality", f"{period}  ·  AirGradient readings"
-                     + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels)
+                     + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels, period=days)

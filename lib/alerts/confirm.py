@@ -3,7 +3,9 @@ distinct readings in a row, "distinct" meaning by the reading's own timestamp, n
 counted (the same or an older time) is ignored; a reading that does not meet the condition ends the run; a reading with no value is skipped
 (it neither extends nor ends the run). The run lives in the monitor's saved dict, so it carries across checks and restarts.
 
-(Rain and the temperature crossing use the back-off rule in backoff.py instead: a change that must stand for a cooldown.)"""
+(Rain and the temperature crossing use the back-off rule in backoff.py instead: a change that must stand for a cooldown.)
+
+Once an alert (gusts, UV) has fired it waits to re-arm: rearm() lets it fire again after its condition has stopped holding for a while."""
 
 CONFIRM_READINGS = 2
 
@@ -21,3 +23,14 @@ def run(saved: dict, key: str, hit: bool | None) -> int:
     if hit is not None:
         saved[key] = saved.get(key, 0) + 1 if hit else 0
     return saved.get(key, 0)
+
+
+def rearm(saved: dict, hit: bool, now: float, after: float):
+    """The alert in `saved` (saved["active"]: it has fired) can fire again once its condition has not held (`hit`) for `after`
+    seconds; while it holds, the calm hasn't begun."""
+    if hit:
+        saved["calm_since"] = None
+    elif saved["active"]:
+        saved["calm_since"] = saved["calm_since"] or now
+        if now - saved["calm_since"] >= after:
+            saved.update(active=False, calm_since=None)

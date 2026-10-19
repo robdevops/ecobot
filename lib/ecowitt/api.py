@@ -14,18 +14,39 @@ busy.") is an error. Ecowitt keeps and allows per request:
 
 import asyncio
 import logging
+import re
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from typing import NamedTuple
 
 import httpx
 
 log = logging.getLogger(__name__)
 
 BASE = "https://api.ecowitt.net/api/v3/device"
-RETENTION = {"5min": 90, "30min": 365, "4hour": 730, "1day": 1460}  # days kept
-MAX_SPAN = {"5min": timedelta(days=1), "30min": timedelta(days=7),
-            "4hour": timedelta(days=28), "1day": timedelta(days=365)}
-CYCLE_SECONDS = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
+
+
+class Cycle(NamedTuple):
+    """One of Ecowitt's resolutions."""
+    seconds: int       # the time one reading covers
+    span: timedelta    # the most one request may ask for
+    kept: int          # days Ecowitt keeps its readings
+    settle: int        # seconds after a reading's time is over before its value is final
+
+
+CYCLES = {"5min": Cycle(300, timedelta(days=1), 90, 3600), "30min": Cycle(1800, timedelta(days=7), 365, 7200),
+          "4hour": Cycle(14400, timedelta(days=28), 730, 8 * 3600), "1day": Cycle(86400, timedelta(days=365), 1460, 86400)}
+# Readings every half hour or finer: they fit a local day exactly (Ecowitt's 4-hour and daily ones are cut on UTC hours),
+# and they change at every refresh.
+FINE_CYCLES = tuple(name for name, c in CYCLES.items() if c.seconds <= 1800)
+
+
+def kept_from(cycle: str, today: date) -> date:
+    """The first day whose readings at this cycle Ecowitt is sure still to have: two days clear of its retention edge, so a
+    request can't race the deletion."""
+    return today - timedelta(days=CYCLES[cycle].kept - 2)
+
+
 # What the bot keeps cached and warm (the extras feed the rain alerts and predictions). One list, so the
 # warm-up and the archive fetch the same thing and can reuse each other's data.
 GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo", "solar_and_uvi"]
@@ -35,15 +56,31 @@ GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo",
 UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh", "rainfall_unitid": "mm"}
 UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rainfall_unitid": 12}
 
+
+def unit_text(text: str | None) -> str | None:
+    """A reading or a unit as Ecowitt writes it, written the bot's way: "12.3 ℃" -> "12.3 °C", "131 º" -> "131°", "1.8 mm/hr" ->
+    "1.8 mm/h". None for nothing."""
+    return text.replace("℃", "°C").replace(" º", "°").replace("º", "°").replace("mm/hr", "mm/h").strip() if text else None
+
 BUSY_RETRIES = 3
 MIN_GAP_SECONDS = 1.0  # Ecowitt rejects requests that come too fast ("Operation too frequent")
 RETRY_ON = ("busy", "too frequent")
 FMT = "%Y-%m-%d %H:%M:%S"
+KEYS_IN_URL = re.compile(r"\b(application_key|api_key)=[^&\s'\"]*")   # the keys go in the query string
 
 
 # Fields Ecowitt reports in a unit we do not use: (field prefix, its unit) -> (the unit kept, the factor). The vapour pressure
 # deficit comes back in inHg whatever the pressure unit asked for; it is stored and charted in kPa.
 UNIT_FIXES = {("vpd", "inHg"): ("kPa", 3.38639)}
+
+
+def daily_run(tz: tzinfo, first: date, last: date) -> str:
+    """When Ecowitt's daily records start and end, local time ("10am to 10am"): they are UTC days, so in Melbourne they run from
+    10am, or from 11am in daylight saving; a period that has both says both."""
+    days = [first + timedelta(days=n) for n in range(0, (last - first).days + 1, 30)] + [last]
+    hours = sorted({datetime.combine(d, time(), UTC).astimezone(tz).hour for d in days})
+    run = [f"{h % 12 or 12}{'am' if h < 12 else 'pm'} to {h % 12 or 12}{'am' if h < 12 else 'pm'}" for h in hours]
+    return run[0] if len(run) == 1 else f"{run[0]} ({run[1]} in daylight saving)"
 
 
 def fix_units(data) -> dict:
@@ -133,37 +170,41 @@ class EcowittAPI:
         await self.client.aclose()
 
     async def _get(self, path: str, urgent: bool = False, **params) -> dict | list:
-        """The response's "data". Retries when Ecowitt says it is busy or we were too quick;
-        raises EcowittError. urgent: someone is waiting for it, so it goes before queued background requests."""
+        """The response's "data"; raises EcowittError. Asked again, up to BUSY_RETRIES times and waiting longer each time, when
+        Ecowitt is busy, rate limited or erring (429, 5xx), not when it refuses the request or there is no answer at all.
+        urgent: someone is waiting for it, so it goes before queued background requests (and the turn is free while a request
+        waits to be asked again)."""
         loop = asyncio.get_running_loop()
-        await self._turn.acquire(urgent)
-        try:
-            for attempt in range(BUSY_RETRIES + 1):
+        for attempt in range(BUSY_RETRIES + 1):
+            await self._turn.acquire(urgent)
+            try:
                 if (pause := self._last + MIN_GAP_SECONDS - loop.time()) > 0:
                     await asyncio.sleep(pause)
                 self._last = loop.time()
                 self.requests += 1
                 try:
                     res = await self.client.get(f"{BASE}/{path}", params={**self.keys, **params})
+                except httpx.HTTPError as e:   # no answer: the network, a timeout
+                    msg, passing, again = str(e) or type(e).__name__, True, False
+                else:
                     body = _body(res)
-                    if body is None:  # no Ecowitt answer: the network, or a gateway error page
-                        res.raise_for_status()
-                        raise ValueError("unreadable response")
-                    if str(body.get("code")) == "0" and res.is_success:
+                    if body is not None and str(body.get("code")) == "0" and res.is_success:
                         return body.get("data") or {}
-                    msg = str(body.get("msg") or f"HTTP {res.status_code}")
-                    # Ecowitt answered and said no (any HTTP status): passing only if busy or rate limited
-                    passing = res.status_code in (408, 429) or res.status_code >= 500 or any(k in msg.lower() for k in RETRY_ON)
-                except (httpx.HTTPError, ValueError) as e:
-                    msg, passing = str(e) or type(e).__name__, True
-                if any(k in msg.lower() for k in RETRY_ON) and attempt < BUSY_RETRIES:
-                    wait = 3 * 2 ** attempt
-                    log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
-                    await asyncio.sleep(wait)
-                    continue
-                raise EcowittError(msg, transient=passing)
-        finally:
-            self._turn.release()
+                    if body is None:   # a gateway's error page, or something unreadable
+                        msg = f"HTTP {res.status_code}" if not res.is_success else "unreadable response"
+                    else:              # Ecowitt said no: passing only if it is busy, rate limiting or failing itself
+                        msg = str(body.get("msg") or f"HTTP {res.status_code}")
+                    again = res.status_code == 429 or res.status_code >= 500 or any(k in msg.lower() for k in RETRY_ON)
+                    passing = again or body is None or res.status_code == 408
+            finally:
+                self._turn.release()
+            msg = KEYS_IN_URL.sub(r"\1=…", msg)   # an error can quote the URL; its text is shown to the model and logged
+            if again and attempt < BUSY_RETRIES:
+                wait = 3 * 2 ** attempt
+                log.info("Ecowitt says %r (%s), retrying in %.1fs", msg, path, wait)
+                await asyncio.sleep(wait)
+                continue
+            raise EcowittError(msg, transient=passing)
 
     async def devices(self) -> list[dict]:
         data = await self._get("list", limit=50)

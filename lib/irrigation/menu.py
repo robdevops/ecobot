@@ -3,7 +3,7 @@
 Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the valve is on, a [Water off ❌] row follows. While the timer is paused,
 Pause is [▶️ Unpause] (one press ends the pause) and Water is hidden. A press on Water, Pause or Alerts opens its options under the
 rows (▸ after the text marks a menu, ▾ the open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes (a run is always timed). Alerts has
-one toggle per alert type, green while this chat gets it, struck through and uncoloured while it does not; pressing it flips it.
+one toggle per alert type, blue while this chat gets it, struck through and uncoloured while it does not; pressing it flips it.
 Callback data
 (short, self-contained, so an old message's buttons still work after a restart):
   ir:open:<water|delay|alerts> | ir:close | ir:refresh (read the state again, change nothing)
@@ -17,11 +17,13 @@ import re
 from telegram import InlineKeyboardMarkup, MessageEntity
 
 from ..buttons import button, opener, toggle_button
+from ..entities import footer
+from .tuya import DELAYS, is_paused
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)
-DELAYS = ("24h", "48h", "72h", "cancel")
 SECTIONS = ("water", "delay", "alerts")
+ALERTS = {"batt": ("irrigation_battery", "battery"), "pause": ("irrigation_pause", "pause")}   # an Alerts toggle's word -> (its alert type, its name)
 LOW_BATTERY = 10          # below this the battery shows as 🪫
 PAUSED_ERROR = "error: can not turn on water while paused!"
 KEYWORDS = re.compile(r"\b(irrigation|irrigate|sprinklers?|taps?|water(?:ing)?)\b", re.IGNORECASE)
@@ -33,17 +35,11 @@ def asked(text: str) -> bool:
     return 0 < len(text.split()) <= MAX_WORDS and bool(KEYWORDS.search(text))
 
 
-def is_paused(status: dict) -> bool:
-    """Is the timer paused (the controller has a weather delay other than "cancel")?"""
-    return status.get("weather_delay") not in (None, "cancel")
-
-
 def paused_in(text: str | None) -> bool:
-    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller.
-    Messages sent before the line was reworded ("pause time: inactive") still read right."""
-    line = next((l for l in (text or "").splitlines() if l.startswith(("pause:", "pause time:"))), "")
-    value = line.partition(":")[2].strip()
-    return bool(value) and not value.startswith(("not paused", "inactive"))
+    """Does a status message (as status_text wrote it) say the timer is paused? For redrawing only the buttons, without asking the controller."""
+    line = next((l for l in (text or "").splitlines() if l.startswith("pause:")), "")
+    value = line.removeprefix("pause:").strip()
+    return bool(value) and not value.startswith("not paused")
 
 
 def running_in(text: str | None) -> bool:
@@ -52,11 +48,8 @@ def running_in(text: str | None) -> bool:
 
 
 def with_error(text: str, error: str = PAUSED_ERROR) -> tuple[str, list[MessageEntity]]:
-    """The status with an error under it as a bold footer. Plain text plus entities (no markup to escape); Telegram counts
-    positions in UTF-16 code units, where an emoji is two."""
-    units = lambda s: len(s.encode("utf-16-le")) // 2
-    head = f"{text}\n\n"
-    return head + error, [MessageEntity(MessageEntity.BOLD, units(head), units(error))]
+    """The status with an error under it, after a blank line, in bold."""
+    return footer(f"{text}\n", error, MessageEntity.BOLD)
 
 
 def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | None = None) -> str:
@@ -79,25 +72,27 @@ def status_text(status: dict, alerts: bool | None = None, pause_alerts: bool | N
     return "\n".join([TITLE,
                       f"mode: {status.get('work_state') or 'unknown'}",
                       f"state: {'on ✅' if on else 'off ❌'}{left}",
-                      f"pause: {'not paused' if delay in (None, 'cancel') else delay}{bracket(pause_alerts)}",
+                      f"pause: {delay if is_paused(status) else 'not paused'}{bracket(pause_alerts)}",
                       f"battery: {level}{bracket(alerts)}"])
 
 
 def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool = False, running: bool = False) -> InlineKeyboardMarkup:
     """The buttons under the status. `battery` and `pause`: this chat gets the irrigation battery / pause alerts; each Alerts button
-    is a toggle (green when on, struck through and uncoloured when off). `paused`: the timer is paused, so its
-    button unpauses and Water is hidden. `running`: the valve is on, so Water off is a top-level row."""
+    is a toggle (blue when on, struck through and uncoloured when off). `paused`: the timer is paused, so its
+    button unpauses and Water is hidden. `running`: the valve is on, so Water off is always shown. While a menu is open only its own button (the heading) and its list are shown."""
     head = lambda name, text: opener(text, open == name, f"ir:open:{name}", "ir:close")
     delay = button("▶️ Unpause", "ir:delay:cancel") if paused else head("delay", "⏸ Pause")
-    rows = [[delay] if paused else [head("water", "💧 Water"), delay],
-            [head("alerts", "🔔 Alerts"), button("🔄 Refresh", "ir:refresh")]]
-    if running:   # the valve is open: off is one press away, whatever else is open
-        rows.append([button("Water off ❌", "ir:sw:off")])
     if open == "water" and not paused:
-        rows.append([button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES])
+        rows = [[head("water", "💧 Water")], [button(f"{m} min", f"ir:water:{m}") for m in WATER_MINUTES]]
     elif open == "delay" and not paused:
-        rows.append([button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"])
+        rows = [[delay], [button(d, f"ir:delay:{d}") for d in DELAYS if d != "cancel"]]
     elif open == "alerts":
-        for on, kind, name in ((battery, "batt", "battery"), (pause, "pause", "pause")):
-            rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, kind=kind: f"ir:{kind}:{'on' if turn_on else 'off'}")])
+        rows = [[head("alerts", "🔔 Alerts")]]
+        for on, (word, (_, name)) in zip((battery, pause), ALERTS.items()):
+            rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, word=word: f"ir:{word}:{'on' if turn_on else 'off'}")])
+    else:
+        rows = [[delay] if paused else [head("water", "💧 Water"), delay],
+                [head("alerts", "🔔 Alerts"), button("🔄 Refresh", "ir:refresh")]]
+    if running:   # the valve is open: off is one press away, whatever else is open
+        rows.insert(1 if rows[0][0].text.endswith(("▾",)) else len(rows), [button("Water off ❌", "ir:sw:off")])
     return InlineKeyboardMarkup(rows)

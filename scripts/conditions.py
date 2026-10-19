@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.config import _tz  # noqa: E402
+from lib.config import local_tz  # noqa: E402
 from lib.forecast import Forecast  # noqa: E402
 from lib.pollen import Pollen  # noqa: E402
 
@@ -28,7 +28,7 @@ async def main():
     ap.add_argument("--district", default="Central")
     ap.add_argument("--raw", action="store_true")
     args = ap.parse_args()
-    cfg = SimpleNamespace(tz=_tz(), pollen_district=args.district, forecast_lat=args.lat, forecast_lon=args.lon,
+    cfg = SimpleNamespace(tz=local_tz(), pollen_district=args.district, forecast_lat=args.lat, forecast_lon=args.lon,
                          place=os.getenv("PLACE", "Melbourne"), conditions_cache_path=os.path.join(tempfile.mkdtemp(), "conditions.sqlite"))   # a scratch cache: the bot's is left alone
 
     pollen = Pollen(cfg)

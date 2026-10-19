@@ -11,7 +11,11 @@ from .logs import QUOTES
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_CHARS = 60000
-TOOL_TIMEOUT = 90
+
+
+def json_result(out) -> str:
+    """A tool's result as the model is sent it: compact JSON, with °, ² and emoji written as they are, not escaped."""
+    return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
 
 @dataclass
@@ -29,6 +33,12 @@ class Turn:
     forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
     times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
     ahead: bool = False                          # a chart drawn ahead, nobody waiting: its requests wait their turn and its routine log lines are quiet
+
+    @classmethod
+    def of(cls, read, text: str, **more) -> "Turn":
+        """The Turn for a question as intent.read read it (`read`): what its words ask of a chart and of the figures."""
+        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+                   average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, **more)
 
 
 @dataclass
@@ -48,10 +58,6 @@ class Tools:
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
 
-    def schemas_for(self, names=None) -> list[dict]:
-        """The tool definitions to send: those named (that exist), or all when no names are given."""
-        return self.schemas if names is None else [self.by_name[n].schema() for n in names if n in self.by_name]
-
     async def call(self, name: str, raw_args: str, turn: Turn | None = None) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""
         tool = self.by_name.get(name)
@@ -63,10 +69,8 @@ class Tools:
             return f"Error: tool arguments were not valid JSON ({e})"
         level = logging.DEBUG if turn and turn.ahead else logging.INFO
         log.log(level, "Tool call %s %s", name, raw_args, extra=QUOTES)
-        try:
-            out = await asyncio.wait_for(tool.handler(args, turn or Turn()), TOOL_TIMEOUT)
-        except TimeoutError:
-            return f"Error: tool timed out after {TOOL_TIMEOUT}s"
+        try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
+            out = await tool.handler(args, turn or Turn())
         except Exception as e:
             log.exception("Tool %s failed", name)
             return f"Error calling tool: {e}"
@@ -78,3 +82,7 @@ class Tools:
         if turn:
             turn.result_chars += len(out)
         return out
+
+    async def call_all(self, calls: list[tuple[str, dict]], turn: Turn | None = None) -> list[str]:
+        """The bot's own calls (name, arguments), made together; their results in the same order."""
+        return await asyncio.gather(*(self.call(name, json.dumps(args), turn) for name, args in calls))

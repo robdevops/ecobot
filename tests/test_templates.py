@@ -3,7 +3,7 @@ from types import SimpleNamespace as NS
 
 from lib import intent, templates
 from lib.bot import Bot
-from tests.fakes import TZ
+from tests.fakes import EVERY_SOURCE, TZ
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
@@ -13,15 +13,16 @@ def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left
     assert templates.sentence("\U0001f4c8 Temperature") == "Temperature chart 1d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
     assert templates.sentence("report") is None and templates.sentence("Report") is None
-    assert len(templates.LABELS) == 9
+    assert len(templates.SENTENCES) == 9
 
 
 def test_every_button_asks_something_the_bot_understands():
     def read(label):
-        return intent.read(templates.sentence(label), NOW, True, True)
+        return intent.read(templates.sentence(label), NOW)
     assert read("\U0001f4cb Status").report
     weather = read("\U0001f326️ Weather")
-    assert weather.chart_all and weather.chart_in_code and weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
+    assert intent.wants_chart_all(templates.sentence("\U0001f326️ Weather")) and weather.chart_in_code
+    assert weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
     for label, groups in (("\U0001f327️ Rain", "rainfall"), ("\U0001f4c8 Temperature", "outdoor,indoor"),
                           ("\U0001f4a7 Humidity", "outdoor,indoor"), ("\U0001f4a8 Wind", "wind")):
         name, args, _ = read(label).fast
@@ -37,13 +38,13 @@ def test_every_button_asks_something_the_bot_understands():
 def test_the_keyboard_is_persistent_and_has_every_button():
     kb = templates.keyboard()
     assert kb.is_persistent and kb.resize_keyboard
-    assert {b.text for row in kb.keyboard for b in row} == templates.LABELS
+    assert {b.text for row in kb.keyboard for b in row} == set(templates.SENTENCES)
     assert [len(row) for row in kb.keyboard] == [3, 3, 3]
 
 
 class Recorder(Bot):
-    def __init__(self):
-        super().__init__(NS(tz=TZ), None, [], None)
+    def __init__(self, state):
+        super().__init__(NS(tz=TZ), None, [], state)
         self.asked, self.alerts = [], 0
 
     async def respond(self, update, context, text):
@@ -63,15 +64,15 @@ def message(text, chat_type="private"):
     return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(id=7, full_name="Rob", username="rob")), sent
 
 
-async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both():
-    bot = Recorder()
+async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both(alert_state):
+    bot = Recorder(alert_state)
     for text in ("\U0001f4cb Status", "weather now", templates.CAPABILITIES):
         await bot.on_message(message(text)[0], NS(bot=NS(username="b", id=99)))
     assert bot.asked == ["Report", "weather now"] and bot.alerts == 1       # capabilities are not sent to the model
 
 
-async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it():
-    bot = Recorder()
+async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it(alert_state):
+    bot = Recorder(alert_state)
     update, sent = message("/start")
     await bot.on_start(update, NS(args=[]))
     assert sent[0][1]["reply_markup"].is_persistent
@@ -116,17 +117,17 @@ async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tm
     from lib.bot import deliver
     markup = templates.keyboard()
     msg = Replies()
-    assert await deliver(msg, "hello", [], markup=markup) is True and msg.sent[-1][1]["reply_markup"] is markup
+    assert (await deliver(msg, "hello", [], markup=markup)).carried is True and msg.sent[-1][1]["reply_markup"] is markup
     msg = Replies()
-    assert await deliver(msg, "", [b"p"], markup=markup, titles=["T"]) is True and msg.sent == [("photo", msg.sent[0][1])]
+    assert (await deliver(msg, "", [b"p"], markup=markup, titles=["T"])).carried is True and msg.sent == [("photo", msg.sent[0][1])]
     assert msg.sent[0][1]["reply_markup"] is markup and msg.sent[0][1]["caption"] == "T"
     msg = Replies()
-    assert await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"]) is True       # text first, the photo carries it
+    assert (await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"])).carried is True       # text first, the photo carries it
     assert [k for k, _ in msg.sent] == ["text", "photo"] and msg.sent[1][1]["reply_markup"] is markup and "reply_markup" not in msg.sent[0][1]
     msg = Replies()
-    assert await deliver(msg, "", [b"p", b"q"], markup=markup, titles=["T", "U"]) is False       # a group of photos can't carry it
+    assert (await deliver(msg, "", [b"p", b"q"], markup=markup, titles=["T", "U"])).carried is False       # a group of photos can't carry it
     msg = Replies()
-    assert await deliver(msg, "hello", []) is False and "reply_markup" not in msg.sent[0][1]
+    assert (await deliver(msg, "hello", [])).carried is False and "reply_markup" not in msg.sent[0][1]
 
 
 async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_next_reply_once(tmp_path):
@@ -138,12 +139,11 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
     assert bot._keyboard_stale(msg)                                    # never had it
     state.set_keyboard(1, "old1234")
     assert bot._keyboard_stale(msg)                                    # the buttons changed since
-    state.set_keyboard(1, templates.VERSION)
+    state.set_keyboard(1, templates.version())
     assert not bot._keyboard_stale(msg)                                # up to date: nothing is added
     state.set_keyboard(1, templates.HIDDEN)
     assert not bot._keyboard_stale(msg)                                # they hid it: leave it hidden
     assert not bot._keyboard_stale(Replies("supergroup"))
-    assert not Bot(NS(tz=TZ), None, [], None)._keyboard_stale(msg)
 
 
 async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tmp_path):
@@ -156,11 +156,11 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
     assert state.keyboard(1) == templates.HIDDEN
     update, _ = message("/keyboard")
     await bot.on_keyboard(update, NS(args=[]))
-    assert state.keyboard(1) == templates.VERSION
+    assert state.keyboard(1) == templates.version()
     state.set_keyboard(1, "old1234")
     update, _ = message("/start")
     await bot.on_start(update, NS(args=[]))
-    assert state.keyboard(1) == templates.VERSION
+    assert state.keyboard(1) == templates.version()
 
 
 async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
@@ -181,7 +181,7 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
         return sent
     first, second = await ask(), await ask()
     assert first[0][1].get("reply_markup") is not None and second[0][1].get("reply_markup") is None
-    assert state.keyboard(1) == templates.VERSION
+    assert state.keyboard(1) == templates.version()
 
 
 async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_others_left_alone(tmp_path):
@@ -191,29 +191,30 @@ async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_other
     for chat_id in (10, 11, 12, 13, -20):                     # -20 is a group
         state.add_chat(chat_id, str(chat_id))
     state.set_keyboard(10, "old1234")
-    state.set_keyboard(11, templates.VERSION)
+    state.set_keyboard(11, templates.version())
     state.set_keyboard(12, templates.HIDDEN)                  # 13 and the group have no record
-    sent = []
+    sent, tried = [], []
 
     class TG:
         async def send_message(self, chat_id, text, **kw):
+            tried.append(chat_id)
             if chat_id == 13:
                 raise Forbidden("bot was blocked by the user")
             sent.append((chat_id, text, kw["reply_markup"].is_persistent))
     bot = Bot(NS(tz=TZ), None, [], state)
     assert await bot.refresh_keyboards(TG()) == 1
     assert sent == [(10, "Buttons updated.", True)]
-    assert state.keyboard(10) == templates.VERSION and 13 not in state.chats and state.keyboard(-20) is None
-    assert await bot.refresh_keyboards(TG()) == 0             # nothing more on the next start
-    assert await Bot(NS(tz=TZ), None, [], None).refresh_keyboards(TG()) == 0
+    assert state.keyboard(10) == templates.version() and state.chats[13]["gone"] and state.keyboard(-20) is None
+    tried.clear()
+    assert await bot.refresh_keyboards(TG()) == 0 and tried == []   # nothing more on the next start: 13 blocked the bot
 
 
 def test_the_capabilities_list_is_the_users_bullets():
     assert templates.capabilities_text() == "\n".join([
         "\u2022 Temperature, humidity (indoor, outdoor)", "\u2022 Dew point, vapour pressure deficit, pressure, wind speed",
         "\u2022 Rain, solar radiation, UV index", "\u2022 PM1, PM2.5, PM10, CO₂, VOC, NOx", "\u2022 History charts"])
-    assert len(templates.capabilities_text(air=False).splitlines()) == 4 and len(templates.capabilities_text(weather=False).splitlines()) == 2
-    full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
+    assert len(templates.capabilities_text(["Ecowitt"]).splitlines()) == 4 and len(templates.capabilities_text(["AirGradient"]).splitlines()) == 2
+    full = templates.capabilities_text(EVERY_SOURCE).splitlines()
     assert len(full) == 7 and full[4:] == ["\u2022 Pollen and thunderstorm asthma risk (October to December)", "\u2022 Forecast", "\u2022 History charts"]
 
 
@@ -223,5 +224,5 @@ def test_the_capabilities_list_is_the_users_bullets():
 def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
     plain = templates.capabilities_text()
     assert "Pollen" not in plain and "Forecast" not in plain
-    full = templates.capabilities_text(pollen=True, forecast=True).splitlines()
+    full = templates.capabilities_text(EVERY_SOURCE).splitlines()
     assert full[-3:] == ["• Pollen and thunderstorm asthma risk (October to December)", "• Forecast", "• History charts"]

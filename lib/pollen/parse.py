@@ -11,6 +11,7 @@ LEVELS = ("Low", "Moderate", "High")   # the site's scale; "No data" is not a le
 LEVEL_EMOJI = {"Low": "🟢", "Moderate": "🟠", "High": "🔴"}
 DISTRICTS = {"Central", "East Gippsland", "Mallee", "North Central", "North East",
              "Northern Country", "South West", "West and South Gippsland", "Wimmera"}
+GRASS_HEADING, ASTHMA_HEADING = "Victorian District Grass Pollen Forecast", "Thunderstorm Asthma Forecast"
 
 
 class _TextLines(HTMLParser):
@@ -34,15 +35,19 @@ class _TextLines(HTMLParser):
             self.lines.append(text)
 
 
+def _find(lines: list[str], heading: str) -> int | None:
+    """The first line that starts with `heading`, whatever its case (the site adds words after a heading at times)."""
+    return next((i for i, line in enumerate(lines) if line.lower().startswith(heading.lower())), None)
+
+
 def _section(lines: list[str], heading: str, stops: list[str]) -> list[str]:
-    """Lines after the first line equal to `heading`, up to a line starting with a stop."""
-    try:
-        i = lines.index(heading)
-    except ValueError:
+    """Lines after the heading's, up to a line starting with a stop."""
+    i = _find(lines, heading)
+    if i is None:
         return []
     out = []
     for line in lines[i + 1:]:
-        if any(line.startswith(s) for s in stops):
+        if any(line.lower().startswith(s.lower()) for s in stops):
             break
         out.append(line)
     return out
@@ -79,9 +84,9 @@ def parse_melbourne_pollen(html: str) -> dict:
         except ValueError:
             pass
 
-    grass = _section(lines, "Victorian District Grass Pollen Forecast", ["Thunderstorm Asthma Forecast"])
-    asthma = _section(lines, "Thunderstorm Asthma Forecast", ["Note:", "Recent News"])
-    after = lines[lines.index("Thunderstorm Asthma Forecast"):] if "Thunderstorm Asthma Forecast" in lines else []
+    grass = _section(lines, GRASS_HEADING, [ASTHMA_HEADING])
+    asthma = _section(lines, ASTHMA_HEADING, ["Note:", "Recent News"])
+    after = lines[i:] if (i := _find(lines, ASTHMA_HEADING)) is not None else []
     return {
         "melbourne_grass": level,
         "melbourne_date": date,

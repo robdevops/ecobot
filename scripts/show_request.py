@@ -12,16 +12,14 @@ is printed in full.
 
 import asyncio
 import json
-import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace as NS
-from zoneinfo import ZoneInfo
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
-from lib.config import data_dir  # noqa: E402
+from lib.config import data_dir, local_tz  # noqa: E402
 
 from lib import intent, prompt  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
@@ -66,7 +64,7 @@ async def main():
     ap.add_argument("--call", help="JSON tool call the stand-in model makes first")
     args = ap.parse_args()
 
-    tz = ZoneInfo(os.getenv("TZ") or "Australia/Melbourne")
+    tz = local_tz()
     now = datetime.now(tz)
     macs = [m for (m,) in sqlite3.connect(f"file:{args.cache}?mode=ro", uri=True).execute("SELECT DISTINCT mac FROM coverage")]
     if not macs:
@@ -85,14 +83,14 @@ async def main():
                    Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable)])
     text = args.question
     r = intent.read(text, now.replace(tzinfo=None))
-    system = prompt.build(now, ["Ecowitt weather station", "AirGradient outdoor air-quality sensor"], r.hints)
+    system = prompt.build(now, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor"}, r.hints)
     effort, fast = r.effort, r.fast
     call = json.loads(args.call) if args.call else default_call(now.date())
 
     client = Recorder([call, "(the model's answer goes here)"])
     messages = [{"role": "user", "content": text}]
     await Agent(client, "grok-4.3", tools).run(messages, system, effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None,
-                                               require_tool=r.needs_data)
+                                               tool_choice=r.tool_choice)
 
     banner("DECISIONS MADE IN CODE")
     print(f"reasoning effort: {effort}   fast path: {fast[2] if fast else 'no (the model chooses the tool)'}   "

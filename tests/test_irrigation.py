@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace as NS
 
 import httpx
@@ -124,6 +124,29 @@ async def test_errors_name_the_problem_without_the_secrets(tmp_path):
     assert SECRET not in str(e.value) and "ConnectError" in str(e.value)
 
 
+TOKEN = {"success": True, "result": {"access_token": "tok", "expire_time": 7200}}
+
+
+@pytest.mark.parametrize("token, status", [({"success": True}, None),                         # a token reply with no token
+                                           ({"success": True, "result": ["tok"]}, None),
+                                           ([TOKEN], None),                                    # a reply that isn't an object
+                                           (TOKEN, {"success": True, "result": {"switch": True}}),   # a status that isn't a list
+                                           (TOKEN, "OK")])
+async def test_a_reply_of_an_unexpected_shape_is_an_irrigation_error(tmp_path, token, status):
+    def serve(request):
+        return httpx.Response(200, json=token if request.url.path.startswith("/v1.0/token") else status)
+    device = Tuya(cfg(tmp_path), transport=httpx.MockTransport(serve))
+    with pytest.raises(IrrigationError):
+        await device.status()
+    await device.close()
+
+
+async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
+    device, fake = tuya(tmp_path, status=[{"code": "switch"}, "battery", {"value": 3}, {"code": "countdown", "value": 60}])
+    assert await device.status() == {"switch": None, "countdown": 60}
+    await device.close()
+
+
 def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely(monkeypatch, tmp_path):
     assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
     env = {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}
@@ -171,6 +194,8 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
     assert rows(menu.keyboard(True, True, running=True)) == collapsed + [[("Water off ❌", "ir:sw:off")]]   # only while the valve is on
     assert rows(menu.keyboard(True, True, paused=True, running=True))[-1] == [("Water off ❌", "ir:sw:off")]
     assert "ir:sw:on" not in [data for row in water for _, data in row]
+    assert [len(r) for r in water] == [1, 4] and rows(menu.keyboard(True, True, "delay"))[0] == [("⏸ Pause ▾", "ir:close")]   # an open menu hides the other buttons
+    assert rows(menu.keyboard(True, True, "water", running=True))[1] == [("Water off ❌", "ir:sw:off")]   # but Off stays
     assert rows(menu.keyboard(True, True, "delay"))[-1] == [("24h", "ir:delay:24h"), ("48h", "ir:delay:48h"), ("72h", "ir:delay:72h")]
     paused = rows(menu.keyboard(True, True, paused=True))                                      # paused: the button unpauses, in one press
     assert paused[0] == [("▶️ Unpause", "ir:delay:cancel")] and paused[1] == collapsed[1]   # no Water button while paused
@@ -183,8 +208,7 @@ def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
             (False, True, (strike("battery alerts"), "ir:batt:on"), ("pause alerts", "ir:pause:off")),
             (True, True, ("battery alerts", "ir:batt:off"), ("pause alerts", "ir:pause:off"))):
         alerts = rows(menu.keyboard(battery, pause, "alerts"))
-        assert alerts[:2] == collapsed[:1] + [[("🔔 Alerts ▾", "ir:close"), ("🔄 Refresh", "ir:refresh")]]
-        assert alerts[2:] == [[battery_button], [pause_button]]                                    # each names the action it takes
+        assert alerts == [[("🔔 Alerts ▾", "ir:close")], [battery_button], [pause_button]]   # the open menu's own button is its heading; the rest are hidden                                    # each names the action it takes
     for section in (None, *menu.SECTIONS):
         for battery in (True, False):
             for pause in (True, False):
@@ -196,7 +220,7 @@ def test_the_irrigation_button_takes_wind_s_place_only_when_configured_and_chang
     assert [b.text for row in plain for b in row][-1] == "\U0001f4a8 Wind" and templates.IRRIGATION not in [b.text for row in plain for b in row]
     labels = [b.text for row in with_irrigation for b in row]
     assert labels[-1] == templates.IRRIGATION and "\U0001f4a8 Wind" not in labels and len(labels) == 9 and with_irrigation[:2] == plain[:2]
-    assert templates.version() == templates.VERSION != templates.version(True)
+    assert templates.version() != templates.version(True)
     assert templates.sentence(templates.IRRIGATION) is None                              # not a question for the model
 
 
@@ -255,6 +279,7 @@ class Forecast:
     def __init__(self, *chances):
         self.days = [{"date": datetime(2026, 10, 8 + i).date(), "rain_1mm_pct": c} for i, c in enumerate(chances)] + [
             {"date": datetime(2026, 10, 10).date(), "rain_1mm_pct": 90}]               # the day after tomorrow never counts
+        self.fetched_at = datetime(2026, 10, 8, 17, 45, tzinfo=TZ).timestamp()
 
     def now(self):
         return datetime(2026, 10, 8, 18, 0)
@@ -305,6 +330,30 @@ async def test_a_delay_already_set_is_never_shortened_or_repeated(tmp_path):
     assert device.commands == [] and sent == []                                          # nothing changed: nothing to tell
 
 
+async def test_the_bots_own_pause_from_yesterday_is_started_again_and_one_someone_set_is_not(tmp_path):
+    device = Device()
+    m, state, sent = daily(tmp_path, device, Station(0, 3))
+    await m.check(NOW)                                                                   # paused at 6pm
+    await m.check(NOW + timedelta(days=1))                                               # 6pm the next day: still on, for seconds
+    assert device.commands == [("delay", "24h"), ("delay", "cancel"), ("delay", "24h")]
+    assert sent[1][0] == "☔ Irrigation paused for another 24 hours: 3 mm of rain in the last 24 hours."
+    m.station = Station(0, 0)
+    await m.check(NOW + timedelta(days=2))                                               # dry: it lapses
+    m.station = Station(0, 3)
+    await m.check(NOW + timedelta(days=4))                                               # a 24h someone set (the bot's is days old)
+    assert len(device.commands) == 3 and len(sent) == 2
+
+
+async def test_a_forecast_more_than_a_day_old_does_not_decide(tmp_path, caplog):
+    stale = Forecast(90, 90)
+    stale.fetched_at -= 25 * 3600
+    device = Device()
+    m, state, sent = daily(tmp_path, device, Station(0, 0), stale)
+    with caplog.at_level("INFO"):
+        await m.check(NOW)
+    assert device.commands == [] and sent == [] and "over a day old: only the measured rain decides" in caplog.text
+
+
 async def test_a_battery_under_5_percent_is_told_once_a_day_to_the_irrigation_alert_type(tmp_path):
     device = Device(battery_percentage=4)
     m, state, sent = daily(tmp_path, device)
@@ -338,6 +387,7 @@ def test_a_check_is_due_once_a_day_after_the_hour_and_the_next_is_the_following_
     assert not m.due(datetime(2026, 10, 8, 23, 0)) and not m.due(datetime(2026, 10, 9, 3, 0)) and m.due(datetime(2026, 10, 9, 18, 0))
     assert m.seconds_until_next(datetime(2026, 10, 8, 17, 0)) == 3600 and m.seconds_until_next(datetime(2026, 10, 8, 18, 0)) == 86400
     assert m.seconds_until_next(datetime(2026, 10, 8, 23, 30)) == 18.5 * 3600
+    assert m.seconds_until_next(datetime(2026, 10, 3, 18, 0)) == 23 * 3600   # the clocks go forward that night: 23 real hours, not 24
 
 
 async def test_run_checks_when_due_retries_after_a_failure_and_then_waits_for_tomorrow(tmp_path, monkeypatch):
@@ -458,6 +508,25 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
     assert sent[1][0] == "Sorry, I couldn't reach the irrigation controller." and len(sent) == 2
 
 
+async def test_an_odd_reply_from_the_controller_is_a_toast_not_a_press_left_hanging(tmp_path):
+    def odd(request):
+        return httpx.Response(200, json=["not", "a", "reply"])
+    bot, state, device = irrigation_bot(tmp_path, Tuya(cfg(tmp_path), transport=httpx.MockTransport(odd)))
+    q = await press(bot, "ir:refresh")
+    assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []
+    await device.close()
+
+
+async def test_a_run_whose_reply_is_lost_is_still_watched(tmp_path):
+    class Lost(Remote):
+        async def water(self, minutes):
+            await super().water(minutes)                                 # the valve opened
+            raise IrrigationError("Tuya request failed (ReadTimeout)")   # but the reply never came
+    bot, state, device = irrigation_bot(tmp_path, Lost())
+    q = await press(bot, "ir:water:10")
+    assert q.toast == "Couldn't reach the irrigation controller" and bot.watchdog.off_at is not None
+
+
 async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
     bot, _, device = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:water")
@@ -491,14 +560,14 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
 async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_stays_open(tmp_path):
     bot, state, _ = irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:alerts")
-    assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[2:]] == ["battery alerts", "pause alerts"]
+    assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[1:]] == ["battery alerts", "pause alerts"]
     q = await press(bot, "ir:batt:off")
     assert state.muted(1) == {"irrigation_battery"} and q.toast == "Irrigation battery alerts off in this chat"
-    assert rows(q.edits[0][2])[2:] == [[(strike("battery alerts"), "ir:batt:on")], [("pause alerts", "ir:pause:off")]]   # still open
+    assert rows(q.edits[0][2])[1:] == [[(strike("battery alerts"), "ir:batt:on")], [("pause alerts", "ir:pause:off")]]   # still open
     assert q.edits[0][1].endswith("pause: not paused (alerts: on)\nbattery: 100% 🔋 (alerts: off)")        # the status text follows
     q = await press(bot, "ir:pause:off")
     assert state.muted(1) == {"irrigation_battery", "irrigation_pause"} and q.toast == "Irrigation pause alerts off in this chat"
-    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[3] == [(strike("pause alerts"), "ir:pause:on")]
+    assert q.edits[0][1].endswith("pause: not paused (alerts: off)\nbattery: 100% 🔋 (alerts: off)") and rows(q.edits[0][2])[2] == [(strike("pause alerts"), "ir:pause:on")]
     q = await press(bot, "ir:batt:on")
     assert state.muted(1) == {"irrigation_pause"} and q.toast == "Irrigation battery alerts on in this chat"           # the other type is untouched
     q = await press(bot, "ir:pause:on")
@@ -506,7 +575,7 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
     for kind, prefix in (("irrigation_battery", "batt"), ("irrigation_pause", "pause")):               # a button shows the state, pressing it flips it
         for _ in range(2):
             alerts = rows(menu.keyboard(state.subscribed(1, "irrigation_battery"), state.subscribed(1, "irrigation_pause"), "alerts"))
-            text, data = next(b for row in alerts[2:] for b in row if b[1].startswith(f"ir:{prefix}:"))
+            text, data = next(b for row in alerts[1:] for b in row if b[1].startswith(f"ir:{prefix}:"))
             await press(bot, data)
             assert state.subscribed(1, kind) is (text != text.replace("\u0336", "")), (text, data)
     other = await press(bot, "ir:water:5")
@@ -543,7 +612,7 @@ async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_
     assert len(added) == len(added_plain)                                                    # one entry point for every button, with or without a controller
     assert "ir:" in bot.buttons() and "ir:" not in plain.buttons() and {"al:", "pd:"} <= set(plain.buttons())
     assert "irrigation_battery" in bot._alert_kinds() and "irrigation_battery" not in plain._alert_kinds()
-    assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.VERSION
+    assert bot.keyboard_version == templates.version(True) != plain.keyboard_version == templates.version()
 
 
 @pytest.mark.parametrize("text, yes", [
@@ -810,7 +879,7 @@ def test_a_status_message_says_whether_it_is_paused():
     assert menu.paused_in(menu.status_text({"weather_delay": "72h"}, True, True)) is True
     assert menu.paused_in(menu.status_text({"weather_delay": "cancel"}, True, True)) is False
     assert menu.paused_in(menu.status_text({}, True, True)) is False and menu.paused_in("") is False and menu.paused_in(None) is False
-    assert menu.paused_in("mode: idle\npause time: 24h (alerts: on)") is True and menu.paused_in("pause time: inactive (alerts: on)") is False   # an older message
+    assert menu.paused_in("mode: idle\npause: 24h (alerts: on)") is True
 
 
 async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(tmp_path):

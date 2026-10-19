@@ -115,9 +115,12 @@ async def test_the_forecast_is_fetched_only_in_the_day_and_not_again_while_young
     await forecast.close()
 
 
-async def test_the_station_location_is_used_when_none_is_configured_and_without_one_the_source_does_not_start(tmp_path):
+async def test_the_station_location_is_used_when_none_is_configured_and_without_one_the_source_does_not_start(tmp_path, caplog):
     cfg = config(tmp_path, forecast=True)
     assert Forecast(cfg, (-37.8, 144.9)).location == (-37.8, 144.9)
+    half = config(tmp_path, forecast=True, forecast_lat=-33.9)                       # one half alone is not a place: not paired with the station's
+    assert Forecast(half, (-37.8, 144.9)).location == (-37.8, 144.9) and "FORECAST_LAT and FORECAST_LON go together" in caplog.text
+    assert Forecast(config(tmp_path, forecast=True, forecast_lat=-33.9, forecast_lon=151.2), (-37.8, 144.9)).location == (-33.9, 151.2)
     with pytest.raises(RuntimeError, match="FORECAST_LAT"):
         await Forecast(cfg).start()
 

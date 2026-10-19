@@ -229,6 +229,16 @@ async def test_one_known_day_can_be_looked_up_with_no_conditions(station):
     assert row["rain"] == truth(day)[1] and row["temp_max"] == round(truth(day)[0], 1)
 
 
+async def test_with_nothing_named_days_rank_hottest_first_and_a_figure_per_month_lists_no_days(station):
+    eco, _ = station
+    first, last = dates(eco, 30, 1)
+    days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
+    out = await ask(eco, start_date=str(first), end_date=str(last), limit=3)
+    assert [r["date"] for r in out["days"]] == [label(d) for d in sorted(days, key=lambda d: -truth(d)[0])[:3]]
+    monthly = await ask(eco, start_date=str(first), end_date=str(last), stat="sum", of="rain", group_by="month")
+    assert monthly["by_month"] and "days" not in monthly        # the figures alone, count_only or not
+
+
 async def test_days_can_be_counted_by_any_reading_not_only_temperature_rain_and_gusts(station):
     eco, fake = station
     first, last = dates(eco, 10, 1)
@@ -363,5 +373,35 @@ def test_the_field_list_is_in_the_tool_schema_once_and_a_wrong_sort_or_of_field_
     props = days.PARAMETERS["properties"]
     assert "enum" in props["where"]["items"]["properties"]["field"] and "enum" not in props["sort_by"] and "enum" not in props["of"]
     from lib.daytable import validate
-    units = {n: f[3] for n, f in days.FIELDS.items()}
+    units = days.FIELD_UNITS
     assert "sort_by must be one of" in validate({"sort_by": "nonsense"}, units) and "needs `of`" in validate({"stat": "sum", "of": "nonsense"}, units)
+    assert "of must be one of" in validate({"stat": "count", "of": "nonsense"}, units)   # a count needs no `of`, but a wrong one is caught
+
+
+async def test_a_wrong_of_with_a_plain_count_is_an_error_not_a_crash(station):
+    eco, _ = station
+    first, last = dates(eco, 10, 1)
+    out = await ask(eco, start_date=str(first), end_date=str(last), of="nonsense")
+    assert "of must be one of" in out["error"]
+
+
+def test_the_description_names_every_field_and_which_have_a_lowest():
+    """The model learns the fields from the description. A reading whose lowest says nothing (0 every night or calm hour) has no _min."""
+    import re
+    from lib.ecowitt import days
+    both, max_only = (re.search(rf"(\w+(?:, \w+)*) \(_max {kind}\)", days.DESCRIPTION)[1].split(", ") for kind in ("and _min", "only"))
+    assert all(f"{n}_max" in days.FIELDS and f"{n}_min" in days.FIELDS for n in both)
+    assert all(f"{n}_max" in days.FIELDS and f"{n}_min" not in days.FIELDS for n in max_only)
+    assert {n.removesuffix("_max").removesuffix("_min").removesuffix("_avg") for n in days.FIELDS} == {"temp", "rain", "wind_gust", *both, *max_only}
+
+
+async def test_a_figure_per_month_with_no_matching_day_promises_no_chart(station):
+    """Highest temperature per month on days over 99°: every month is None, so there is no bar to draw and the model must not be
+    told a chart is attached."""
+    from lib.tools import Turn
+    eco, _ = station
+    first, last = dates(eco, 70, 1)
+    turn = Turn()
+    out = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), count_only=True, group_by="month",
+                                                     stat="max", of="temp_max", where=[{"field": "temp_max", "op": ">", "value": 99}]), turn))
+    assert out["by_month"] and all(v is None for v in out["by_month"].values()) and "chart" not in out and turn.charts == []

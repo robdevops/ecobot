@@ -1,4 +1,4 @@
-"""Shared look of the bot's inline buttons: a plain button, a menu opener (▸ closed, ▾ open) and a toggle (green while on, struck
+"""Shared look of the bot's inline buttons: a plain button, a menu opener (▸ closed, ▾ open) and a toggle (blue while on, struck
 through while off). Every menu builds its buttons with these."""
 
 from collections.abc import Callable
@@ -23,6 +23,6 @@ def struck(text: str) -> str:
 
 
 def toggle_button(word: str, on: bool, data: Callable[[bool], str]) -> InlineKeyboardButton:
-    """A button that flips a setting: its word on a green button while the setting is on, the word struck through on a plain button while it
+    """A button that flips a setting: its word on a blue button while the setting is on, the word struck through on a plain button while it
     is off. `data(turn_on)`: the callback data of pressing it, which sets the setting to `turn_on` (the opposite of how it is now)."""
-    return button(word if on else struck(word), data(not on), KeyboardButtonStyle.SUCCESS if on else None)
+    return button(word if on else struck(word), data(not on), KeyboardButtonStyle.PRIMARY if on else None)

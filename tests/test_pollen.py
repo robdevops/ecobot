@@ -61,11 +61,31 @@ async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path
     await pollen.close()
 
 
-async def test_a_forecast_for_another_day_and_a_missing_asthma_forecast_are_said_so(tmp_path):
+async def test_a_forecast_for_another_day_and_a_missing_asthma_forecast_are_said_so(tmp_path, caplog):
     pollen, _ = make(tmp_path, lambda: page(grass="Moderate", day=SEASON_DAY + timedelta(days=1), season=False))
-    await pollen.start()
+    with caplog.at_level("WARNING"):
+        await pollen.start()
     assert pollen.lines() == ["Grass pollen: 🟠 Moderate (forecast for Wed 11 Nov)"]
-    assert "asthma_note" in json.loads(await pollen.handle({}))
+    assert json.loads(await pollen.handle({}))["asthma_note"] == "The page had no thunderstorm asthma level for this district when it was last read."
+    assert "no thunderstorm asthma level for Central on the page" in caplog.text            # in season the page should have one
+    await pollen.close()
+
+
+def test_a_heading_with_words_after_it_or_in_another_case_is_still_found():
+    reworded = page(grass="Low", asthma="High").replace("<h2>Thunderstorm Asthma Forecast</h2>",
+                                                        "<h2>Thunderstorm asthma forecast for Tuesday 10 November</h2>")
+    got = parse_melbourne_pollen(reworded)
+    assert got["thunderstorm_asthma"] == {"Central": "High", "Wimmera": "High"} and got["asthma_updated"] == "1 Oct 2026 4:00pm"
+    assert got["district_grass"] == {"Central": "Low", "Mallee": "Moderate"}               # the grass list still ends at it
+
+
+async def test_the_district_is_the_sites_whatever_its_case_and_one_it_lacks_is_warned_about(tmp_path, caplog):
+    pollen, _ = make(tmp_path, pollen_district="north east")
+    assert pollen.district == "North East"
+    await pollen.close()
+    with caplog.at_level("WARNING"):
+        pollen, _ = make(tmp_path, pollen_district="Centrl")
+    assert pollen.district == "Centrl" and "POLLEN_DISTRICT 'Centrl' is not one of the site's districts" in caplog.text
     await pollen.close()
 
 
@@ -113,10 +133,10 @@ def test_pollen_words_need_data_and_a_bare_pollen_question_is_fetched_without_th
     from lib import intent
     now = datetime(2026, 10, 1, 12, 0)
     for text in ("pollen", "Hay fever", "thunderstorm asthma risk"):
-        assert intent.read(text, now, True, True, True).fast[0] == "pollen_asthma"
-    assert intent.read("pollen", now, True, True, False).fast is None
+        assert intent.read(text, now, ["Ecowitt", "AirGradient", "Pollen"]).fast[0] == "pollen_asthma"
+    assert intent.read("pollen", now).fast is None
     for text in ("is the pollen bad today?", "any asthma risk"):
-        assert intent.read(text, now, True, True, True).needs_data
+        assert intent.read(text, now, ["Ecowitt", "AirGradient", "Pollen"]).needs_data
 
 
 def make_on(tmp_path, day, hour=12, html=None):
@@ -156,8 +176,22 @@ async def test_last_seasons_page_is_not_shown_and_the_report_leaves_the_block_ou
     assert january.data is not None and january.lines() == [] and january.current()["grass"] is None and calls == []
     result = await january.handle({"cached": True})
     assert "error" in json.loads(result)
-    assert "Pollen" not in report.report({"pollen_asthma": result})                       # no block in the report
+    assert "Pollen" not in report.report({"pollen_asthma": result}, date(2027, 1, 5))                       # no block in the report
     await january.close()
+
+
+async def test_last_seasons_page_is_never_shown_on_the_first_of_october_and_is_fetched_again_even_at_night(tmp_path):
+    december = lambda: page(grass="High", asthma="High", day=date(2025, 12, 31))
+    pollen, _ = make_on(tmp_path, date(2025, 12, 31), html=december)
+    await pollen.start()
+    await pollen.close()
+    october, calls = make_on(tmp_path, date(2026, 10, 1), hour=3, html=december)   # a restart at 3 am, the saved page December's
+    assert october.data is not None and october.current()["grass"] is None and october.current()["asthma"] is None
+    await october.warm(True)                                                       # outside the sync hours: fetched all the same
+    assert len(calls) == 1 and october.current()["grass"] is None                  # the site still has December's page (not modified)
+    october.data["melbourne_date"], october.fetched_at = None, datetime(2025, 12, 31, 12, tzinfo=TZ).timestamp()
+    assert october.page is None                                                    # with no date on the page, when it was fetched says
+    await october.close()
 
 
 async def test_the_first_warm_on_the_first_of_october_fetches_without_a_restart(tmp_path):

@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 
 from . import confirm, pictures
+from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -21,16 +22,16 @@ STALE_SECONDS = 2 * 3600               # ignore readings older than this (sensor
 
 
 class ParticulatesMonitor:
-    KINDS = ("particulates",)
+    KINDS = kinds_of("AirGradient")
 
     def __init__(self, air, state, notify):
         self.air, self.state, self.notify = air, state, notify
 
-    async def check(self, reading: dict | None = None, now: datetime | None = None):
-        reading = reading if reading is not None else await self.air.current()
+    async def check(self, latest=None, now: datetime | None = None):
+        """latest: the sensor's latest reading (AirGradient.latest(): the reading, when it was taken, what it has been sustained at)."""
+        reading, when, held = latest if latest is not None else await self.air.latest()
         now = now or datetime.now(self.air.tz)
         m = self.state.monitor.setdefault("particulates", {"unsafe": False, "above": 0, "below": 0})
-        when = reading.get("_time_utc")
         if when and (now - when).total_seconds() > STALE_SECONDS:
             log.info("Particulates: latest reading is stale (%s); skipping", when)
             return
@@ -40,7 +41,7 @@ class ParticulatesMonitor:
             return
         if when is not None and not confirm.new_reading(m, when.timestamp()):   # the sensor has said nothing new since the last check
             return
-        held = reading.get("_sustained") or {}   # the lowest of the last readings (ANTISPIKE_REQUIRE_CONSECUTIVE): a spike alone can't make the air unhealthy
+        # held: the lowest of the last readings (ANTISPIKE_REQUIRE_CONSECUTIVE), so a spike alone can't make the air unhealthy
         high25, high10 = held.get("pm2_5", pm25), held.get("pm10", pm10)
         bad = (high25 is not None and high25 >= MASK_PM25) or (high10 is not None and high10 >= MASK_PM10)
         good = (pm25 is None or pm25 <= SAFE_PM25) and (pm10 is None or pm10 <= SAFE_PM10)
@@ -48,14 +49,12 @@ class ParticulatesMonitor:
         confirm.run(m, "below", good)
         if not m["unsafe"] and m["above"] >= confirm.CONFIRM_READINGS:
             m["unsafe"] = True
-            photo = await self._picture()
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
-                              link=self.air.link, kind="particulates", **({"photo": photo} if photo else {}))
+                              link=self.air.link, kind="particulates", chart=self._picture)
         elif m["unsafe"] and m["below"] >= confirm.CONFIRM_READINGS:
             m["unsafe"] = False
-            photo = await self._picture()
             await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates",
-                              **({"photo": photo} if photo else {}))
+                              chart=self._picture)
         self.state.save()
 
     async def _picture(self) -> bytes | None:

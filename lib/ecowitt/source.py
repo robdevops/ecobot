@@ -3,31 +3,30 @@ start() finds the station, tools are what the model can call, warm()/poke() keep
 readings ready, readings() feeds the alert monitors."""
 
 import asyncio
-import json
 import logging
 import os
 import time
 from datetime import datetime, timedelta, UTC
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
-from ..intent import NOW_GROUPS
-from ..timeutil import now_local
-from ..tools import Tool, Turn
+from ..sources import Source
+from ..timeutil import local_epoch, naive_local, when
+from ..tools import Tool, Turn, json_result
 from ..warm import FAST_REFRESH_SECONDS, Warmer
-from .api import EcowittAPI, GROUPS, UNITS
+from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .glance import glance
-from .fetch import Fetcher, spans
-from ..series import WEATHER, find
-from .query import HistoryQuery, stack_names
+from .fetch import Fetcher, series_in
+from ..series import READING_GROUPS, WEATHER, find
+from .query import HistoryQuery, chart_field, stack_names
 from .store import HistoryCache, HotStore
 
 log = logging.getLogger(__name__)
 
 DEFAULT_GROUPS = "outdoor,indoor"
-FAST_CYCLES = ("5min", "30min")   # kept warm by refetching every cycle; the 4-hour and daily tails only when their memory copy is stale
 
 
 def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
@@ -43,16 +42,12 @@ def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
 def readings(data: dict) -> list[tuple[int, dict]]:
     """Ecowitt 'data' -> [(epoch, {"group.field": value})] sorted by time."""
     rows: dict[int, dict] = {}
-    for grp, fields in data.items():
-        if not isinstance(fields, dict):
-            continue
-        for field, obj in fields.items():
-            if isinstance(obj, dict) and isinstance(obj.get("list"), dict):
-                for ts, v in obj["list"].items():
-                    try:
-                        rows.setdefault(int(ts), {})[f"{grp}.{field}"] = float(v)
-                    except (TypeError, ValueError):
-                        pass
+    for group, field, obj in series_in(data):
+        for ts, v in obj["list"].items():
+            try:
+                rows.setdefault(int(ts), {})[f"{group}.{field}"] = float(v)
+            except (TypeError, ValueError):
+                pass
     return sorted(rows.items())
 
 
@@ -89,7 +84,7 @@ REALTIME_PARAMS = {
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
 
-LIVE_GROUPS = NOW_GROUPS.split(",")   # what the once-a-minute live reading asks for: everything "weather now" and the report show
+LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
 
@@ -100,7 +95,7 @@ def live_summary(data: dict) -> str:
         obj = (data.get(group) or {}).get(field)
         if not isinstance(obj, dict) or "value" not in obj:
             return None
-        unit = obj.get("unit", "").replace("℃", "°C").replace("mm/hr", "mm/h")
+        unit = unit_text(obj.get("unit")) or ""
         return f"{obj['value']}{'' if unit in ('°C', '%') else ' '}{unit}".strip()
     wind = get("wind", "wind_speed")
     parts = [f"rain {rate}" if (rate := get("rainfall", "rain_rate")) else None,
@@ -110,7 +105,7 @@ def live_summary(data: dict) -> str:
     return ", ".join(p for p in parts if p) or "no readings"
 
 
-class Ecowitt:
+class Ecowitt(Source):
     name = "Ecowitt"
 
     def __init__(self, cfg: Config, transport=None):
@@ -125,8 +120,8 @@ class Ecowitt:
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
-        self.longitude = 145.0  # Melbourne; only used to time the pressure tide
         self.latitude: float | None = None  # the station's own location (the forecast uses it unless one is configured)
+        self.longitude: float | None = None
         self.tools = [Tool("weather_now", REALTIME_DESCRIPTION, REALTIME_PARAMS, self._realtime),
                       Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history),
                       Tool("weather_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days),
@@ -139,6 +134,11 @@ class Ecowitt:
         device = devices[0]
         self.mac = str(device["mac"]).upper()
         self.station_name = device.get("name") or "station"
+        if zone := device.get("date_zone_id"):   # the station's own time zone ("Australia/Melbourne"): its days are local to it
+            try:
+                self.tz = ZoneInfo(zone)
+            except (ValueError, ZoneInfoNotFoundError):
+                log.warning("Ecowitt names a time zone Python doesn't know, %r; using %s", zone, self.tz)
         try:
             self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
         except (KeyError, TypeError, ValueError):
@@ -153,7 +153,7 @@ class Ecowitt:
             pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        log.info("Weather station: Ecowitt '%s' (%s)%s", self.station_name, self.mac,
+        log.info("Weather station: Ecowitt '%s' (%s), %s%s", self.station_name, self.mac, self.tz,
                  f", devices found: {len(devices)}" if len(devices) > 1 else "")
         try:
             size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
@@ -169,16 +169,12 @@ class Ecowitt:
         """urgent: for a question (its requests go before the background ones)."""
         return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent)
 
-    def now(self) -> datetime:
-        return now_local(self.tz)
-
     # ---------- tools ----------
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
         turn = turn or Turn()
         groups = parse_groups(args.get("groups"))
         groups += [g for n in stack_names(args, turn) if (g := WEATHER[n].group) not in groups]  # what "plot temperature and rain" needs
-        named = str(turn.chart_field or args.get("chart_field") or "").strip().lower()      # ... and what a chart of one reading needs
-        if (r := find(named)) and r.group not in groups:
+        if (r := find(chart_field(args, turn) or "")) and r.group not in groups:      # ... and what a chart of one reading needs
             groups.append(r.group)
         return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
 
@@ -205,9 +201,7 @@ class Ecowitt:
                         newest = max(newest, int(obj.get("time") or 0))
                     except (TypeError, ValueError):
                         pass
-        when = datetime.fromtimestamp(newest, UTC).astimezone(self.tz).strftime("%a %d %b %Y %H:%M") if newest else None
-        return json.dumps({"time": when, **out, **({"emoji": emoji} if emoji else {})},
-                          ensure_ascii=False, separators=(",", ":"))
+        return json_result({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})})
 
     async def _live_data(self, groups: list[str]) -> dict:
         """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and asked for them,
@@ -251,18 +245,13 @@ class Ecowitt:
                    "4hour": today - timedelta(days=3), "1day": today - timedelta(days=3)}
         fetchers = {cycle: self.fetcher(self.groups) for cycle in windows}
 
-        async def one(cycle: str):
-            for start, end in spans(cycle, windows[cycle], now):   # each piece fits Ecowitt's per-request limit
-                await fetchers[cycle].get(cycle, start, end, refresh=fresh and cycle in FAST_CYCLES, load=False)
-        await asyncio.gather(*(one(cycle) for cycle in windows))
+        await asyncio.gather(*(fetchers[cycle].get(cycle, start, now, refresh=fresh and cycle in FINE_CYCLES, load=False)
+                               for cycle, start in windows.items()))
         return f"Ecowitt {sum(f.calls for f in fetchers.values())} req"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Weather data is used by nearly all."""
         return True
-
-    def poke(self):
-        self.warmer.poke()
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
                        groups: list[str] | None = None) -> list[tuple[int, dict]]:
@@ -270,8 +259,9 @@ class Ecowitt:
         return readings(await self.fetcher(groups or self.groups).get(cycle, start, end))
 
     async def recent(self, hours: float) -> list[tuple[int, dict]]:
+        """The last `hours` of 5-minute readings: real hours, so the night the clocks change is no longer or shorter."""
         now = self.now()
-        return await self.readings("5min", now - timedelta(hours=hours), now)
+        return await self.readings("5min", naive_local(local_epoch(now, self.tz) - hours * 3600, self.tz), now)
 
     async def close(self):
         await self.api.close()

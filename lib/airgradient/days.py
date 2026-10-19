@@ -3,13 +3,13 @@ AirGradient). The same fields as a day's highest (_max), lowest (_min) or mean (
 days particles passed 25 µg/m³. The counting, ranking, grouping and bar charts are shared with weather_days (lib/daytable.py)."""
 
 import asyncio
-import json
 import logging
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import date, datetime, tzinfo
 from statistics import fmean
 
-from ..daytable import analyse, grouped_as_asked, parameters, validate
+from ..daytable import analyse, grouped_as_asked, parameters, prepare
 from ..timeutil import day_bounds, local_date, now_local
+from ..tools import json_result
 from .metrics import ALL_METRICS, CHART_UNITS, without_spikes
 
 log = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 HOURLY_MAX_READINGS = 30   # a day with this few readings holds hourly averages (24), not 5-minute ones (288)
 SUFFIX_KIND = {"max": max, "min": min, "avg": fmean}
 FIELDS = {f"{m}_{kind}": CHART_UNITS[m] for m in ALL_METRICS for kind in SUFFIX_KIND}
+ALWAYS_SHOWN = ("pm2_5_max",)   # every listed day shows it; days rank by it when nothing else is named
 
 PARAMETERS = parameters(list(FIELDS), "pm2_5_max > 25 and co2_max > 800")
 DESCRIPTION = ("Find, rank or count DAYS by the air-quality sensor's readings, from the stored history (any period, fast): for "
@@ -44,26 +45,15 @@ def daily_values(rows: list[dict], shown: list[str], tz: tzinfo) -> dict[str, di
 
 
 def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
-    today = now.date()
-    try:
-        first = date.fromisoformat(str(args["start_date"])[:10])
-        last = min(date.fromisoformat(str(args["end_date"])[:10]), today - timedelta(days=1))
-    except (KeyError, ValueError) as e:
-        return {"error": f"bad date ({e}); use 'YYYY-MM-DD'"}
-    if first > last:
-        return {"error": "start_date must be before end_date (today isn't final, so the latest day is yesterday)"}
-    if problem := validate(args, FIELDS):
-        return {"error": problem}
-    where = args.get("where") or []
-    sort_by = args.get("sort_by") or (where[0]["field"] if where else args.get("of") or "pm2_5_max")
-    args = {**args, "sort_by": sort_by}
-    shown = list(dict.fromkeys(["pm2_5_max", sort_by, *(c["field"] for c in where), *([args["of"]] if args.get("of") else [])]))
-    days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
-    rows = store.load(day_bounds(first, tz)[0], day_bounds(last, tz)[1])
+    asked = prepare(args, FIELDS, ALWAYS_SHOWN, now.date())
+    if isinstance(asked, str):
+        return {"error": asked}
+    days, shown = asked.days, asked.shown
+    rows = store.load(day_bounds(asked.first, tz)[0], day_bounds(asked.last, tz)[1])
     counts = store.counts(days)
     values = daily_values(rows, shown, tz)
     checked = [d for d in days if any(d in values[n] for n in shown)]
-    got = analyse(values, shown, {n: FIELDS[n] for n in shown}, args, checked, first, last, tz, turn)
+    got = analyse(values, asked, checked, tz, turn)
     out = got.out
     hourly = [d for d in checked if (counts.get(d) or 0) <= HOURLY_MAX_READINGS]
     if hourly and any(n.endswith(("_max", "_min")) for n in shown):
@@ -74,10 +64,10 @@ def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> di
         out["note_missing"] = f"{missing} day(s) in this period have no stored readings (not downloaded yet, or the sensor was off) and are not counted."
     if not checked:
         out["note"] = "No stored readings for this period yet (the bot may still be downloading history)."
-    log.info("Air days %s to %s: %d checked, %d match", first, last, len(checked), len(got.matches))
+    log.info("Air days %s to %s: %d checked, %d match", asked.first, asked.last, len(checked), len(got.matches))
     return out
 
 
 async def air_days_tool(store, tz: tzinfo, args: dict, turn=None) -> str:
     result = await asyncio.to_thread(find_air_days, store, tz, grouped_as_asked(args, turn), now_local(tz), turn)
-    return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+    return json_result(result)

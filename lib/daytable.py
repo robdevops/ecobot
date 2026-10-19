@@ -8,14 +8,15 @@ reading per month or year. A count or figure per month or year is drawn as a bar
 import logging
 import operator
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from collections.abc import Callable
-from datetime import date, datetime, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from statistics import fmean
 
 from .captions import COUNT_CHART_HINT
-from .specs import Bars, Chart, Panel
-from .timeutil import day_bounds
+from .series import AIR
+from .specs import Chart, Panel, calendar_bars
+from .timeutil import day_text
 
 log = logging.getLogger(__name__)
 
@@ -25,8 +26,7 @@ STATS = ("count", "max", "min", "avg", "sum")
 MAX_LIMIT = 20
 PRETTY = {"temp": "temperature", "uv": "UV index", "dew_point": "dew point", "feels_like": "feels-like", "vpd": "vapour pressure deficit",
           "wind_gust": "wind gust", "wind_speed": "wind speed", "rain_rate": "rain rate", "indoor_temp": "indoor temperature",
-          "indoor_humidity": "indoor humidity", "solar": "solar radiation", "pm2_5": "PM2.5", "pm10": "PM10", "pm1": "PM1",
-          "co2": "CO₂", "voc_index": "VOC index", "nox_index": "NOx index"}
+          "indoor_humidity": "indoor humidity", "solar": "solar radiation", **{name: m.label for name, m in AIR.items()}}
 SUFFIXES = ("_max", "_min", "_avg")
 
 
@@ -96,9 +96,61 @@ def validate(args: dict, fields: dict[str, str]) -> str | None:
         return f"stat must be one of {', '.join(STATS)}"
     if args.get("stat") not in (None, "count") and args.get("of") not in fields:
         return f"stat {args['stat']} needs `of`: one of {', '.join(fields)}"
+    if args.get("of") and args["of"] not in fields:
+        return f"of must be one of {', '.join(fields)}"
     if args.get("group_by") not in (None, "month", "year"):
         return "group_by must be month or year"
     return None
+
+
+@dataclass(frozen=True)
+class Asked:
+    """A days question, checked: the period (up to yesterday), the arguments with sort_by filled in, and the fields a listed
+    day shows, each with its unit."""
+    first: date
+    last: date
+    args: dict
+    units: dict[str, str]
+
+    @property
+    def days(self) -> list[date]:
+        return [self.first + timedelta(days=k) for k in range((self.last - self.first).days + 1)]
+
+    @property
+    def shown(self) -> list[str]:
+        return list(self.units)
+
+    @property
+    def where(self) -> list[dict]:
+        return self.args.get("where") or []
+
+    @property
+    def sort_by(self) -> str:
+        return self.args["sort_by"]
+
+
+def prepare(args: dict, fields: dict[str, str], shown: tuple[str, ...], today: date) -> Asked | str:
+    """The question checked (an error text when it can't be used) and filled in. `fields` maps each field the tool offers to
+    its unit; `shown` are the ones every listed day shows, before those the arguments name. Days are ranked by sort_by, else
+    the first condition's field, else `of`, else the first of `shown`."""
+    try:
+        first = date.fromisoformat(str(args["start_date"])[:10])
+        last = min(date.fromisoformat(str(args["end_date"])[:10]), today - timedelta(days=1))
+    except (KeyError, ValueError) as e:
+        return f"bad date ({e}); use 'YYYY-MM-DD'"
+    if first > last:
+        return "start_date must be before end_date (today isn't final, so the latest day is yesterday)"
+    if problem := validate(args, fields):
+        return problem
+    where = args.get("where") or []
+    sort_by = args.get("sort_by") or (where[0]["field"] if where else args.get("of") or shown[0])
+    named = dict.fromkeys([*shown, sort_by, *(c["field"] for c in where), *([args["of"]] if args.get("of") else [])])
+    return Asked(first, last, {**args, "sort_by": sort_by}, {n: fields[n] for n in named})
+
+
+def lists_days(args: dict) -> bool:
+    """Does the answer list the days? Not when only the counts are asked for, nor a figure per month or year."""
+    return not (args.get("count_only") or (args.get("stat") not in (None, "count") and args.get("group_by")))
 
 
 def conditions_text(where: list[dict], units: dict[str, str]) -> str:
@@ -129,13 +181,12 @@ def aggregate(stat: str, numbers: list[float]) -> float | None:
     return round({"max": max, "min": min, "sum": sum, "avg": fmean}[stat](numbers), 1)
 
 
-def bars_chart(figures: dict[str, float | None], by: str, title: str, subtitle: str, label: str, unit: str, tz: tzinfo) -> Chart:
-    """One bar per month or year (those with no figure left out), the number above each."""
-    shown = {k: v for k, v in figures.items() if v is not None}
-    starts = [datetime.strptime(k, "%Y-%m" if by == "month" else "%Y").date() for k in shown]
-    bars = Bars(label, unit, [day_bounds(d, tz)[0] for d in starts], [float(v) for v in shown.values()],
-                28 * 86400 if by == "month" else 365 * 86400, by, values=True)
-    return Chart(title, subtitle, [Panel(label, "" if unit == "days" else unit, bars=bars)])
+def bars_chart(figures: dict[str, float | None], by: str, title: str, subtitle: str, label: str, unit: str, tz: tzinfo,
+               period: tuple[date, date]) -> Chart:
+    """One bar per month or year (those with no figure left out), the number above each; `period` is the first and last day counted."""
+    shown = {datetime.strptime(k, "%Y-%m" if by == "month" else "%Y").date(): v for k, v in figures.items() if v is not None}
+    return Chart(title, subtitle, [Panel(label, "" if unit == "days" else unit, bars=calendar_bars(label, unit, shown, by, tz))],
+                 period=period)
 
 
 @dataclass
@@ -146,26 +197,23 @@ class Analysis:
     rank: Callable
     holds: Callable
     row: Callable
-    rows: list = field(default_factory=list)
 
 
-def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[str, str], args: dict, checked: list[date],
-            first: date, last: date, tz: tzinfo, turn=None, row_extra: Callable[[date], dict] | None = None,
-            scope: str = "") -> Analysis:
-    """Find, rank, count and group the checked days. `values` has {day: figure} for every field in `shown`."""
-    where = args.get("where") or []
-    sort_by = args.get("sort_by") or (where[0]["field"] if where else shown[0])
+def analyse(values: dict[str, dict[date, float]], asked: Asked, checked: list[date], tz: tzinfo, turn=None,
+            row_extra: Callable[[date], dict] | None = None, scope: str = "") -> Analysis:
+    """Find, rank, count and group the checked days. `values` has {day: figure} for every field the question shows."""
+    args, where, shown, units, sort_by = asked.args, asked.where, asked.shown, asked.units, asked.sort_by
+    first, last = asked.first, asked.last
     limit = max(1, min(int(args.get("limit") or 5), MAX_LIMIT))
-    label = lambda d: f"{d:%a} {d.day} {d:%b %Y}"
     holds = lambda d, conds: all(d in values[c["field"]] and OPS[c["op"]](values[c["field"]][d], c["value"]) for c in conds)
     rank = lambda ds: sorted((d for d in ds if d in values[sort_by]), key=lambda d: values[sort_by][d],
                              reverse=args.get("order", "desc") != "asc")
-    row = lambda d: {"date": label(d), **(row_extra(d) if row_extra else {}),
+    row = lambda d: {"date": day_text(d), **(row_extra(d) if row_extra else {}),
                      **{n: round(values[n][d], 1) for n in shown if d in values[n]}}
     matches = [d for d in checked if holds(d, where)]
     ranked = rank(matches)
-    out = {"period": f"{label(first)} - {label(last)}", "days_checked": len(checked), "matching_days": len(matches),
-           "units": {n: units[n] for n in shown}}
+    out = {"period": f"{day_text(first)} - {day_text(last)}", "days_checked": len(checked), "matching_days": len(matches),
+           "units": dict(units)}
     if where:
         out["condition"] = conditions_text(where, units)
     stat, of, by = args.get("stat") or "count", args.get("of"), args.get("group_by")
@@ -184,7 +232,7 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
             buckets[key(d)] += 1
     if by and buckets:
         out[f"by_{by}"] = buckets
-        if turn is not None:   # a count or figure per month or year is a bar chart, not a list
+        if turn is not None and any(v is not None for v in buckets.values()):   # a bar chart, not a list (unless no bucket has a figure)
             on = f" on days with {conditions_text(where, units)}" if where and stat != "count" else ""
             if stat == "count":
                 title, name, unit = (f"Days with {conditions_text(where, units)}" if where else "Days checked"), "Days", "days"
@@ -193,10 +241,9 @@ def analyse(values: dict[str, dict[date, float]], shown: list[str], units: dict[
                 title, name, unit = phrase(stat, of) + on, noun(of).capitalize(), units[of]
                 detail = f"{len(matches):,} days counted"
             detail += f"  ·  {scope}" if scope else ""
-            turn.charts.append(bars_chart(buckets, by, title, f"{label(first)} – {label(last)}  ·  {detail}  ·  per {by}",
-                                          name, unit, tz))
+            turn.charts.append(bars_chart(buckets, by, title, f"{day_text(first)} – {day_text(last)}  ·  {detail}  ·  per {by}",
+                                          name, unit, tz, (first, last)))
             out["chart"] = COUNT_CHART_HINT
-    rows = [] if args.get("count_only") or stat != "count" and by else [row(d) for d in ranked[:limit]]
-    if not args.get("count_only") and not (stat != "count" and by):
-        out["days"] = rows
-    return Analysis(out, matches, ranked, rank, holds, row, rows)
+    if lists_days(args):
+        out["days"] = [row(d) for d in ranked[:limit]]
+    return Analysis(out, matches, ranked, rank, holds, row)

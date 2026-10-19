@@ -1,5 +1,6 @@
 """ADMIN_ONLY (who may use the bot), /alerts in groups, /usage, and the checks every button press goes through."""
 
+import asyncio
 import random
 from types import SimpleNamespace as NS
 
@@ -107,10 +108,13 @@ def test_admin_only_is_on_unless_switched_off_and_the_listed_ids_are_read_safely
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("ADMIN_ONLY", raising=False)
     assert Config.from_env().admin_only is True and Config.from_env().admin_chat_ids == frozenset()
-    for value, on in (("", True), ("on", True), ("ON", True), ("1", True), ("off", False), ("Off", False), ("0", False), ("no", False), ("false", False)):
+    for value, on in (("", True), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
+                      ("no", False), ("false", False), ("ture", True), ("of", True)):   # a typo keeps the default: never open by mistake
         monkeypatch.setenv("ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
-    assert _ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and _ids("") == frozenset()
+    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (on)" in caplog.text
+    ids = lambda text: _ids(text, frozenset(), "ADMIN_CHAT_IDS")
+    assert ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and ids("") == frozenset()
     assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
     monkeypatch.setenv("ADMIN_CHAT_IDS", "5 -9")
     assert Config.from_env().admin_chat_ids == frozenset({5, -9})
@@ -153,6 +157,41 @@ async def test_a_failed_lookup_keeps_the_old_list_and_is_retried_soon_without_ra
     fresh = Admins(state)
     tg.admins[GROUP] = RuntimeError("down")
     assert not await fresh.allowed(tg, [ADMIN])                                              # nothing known: nobody
+
+
+class SlowTG(TG):
+    """A Telegram client whose admin lists take a moment to come back; `most` is the most it was asked for at once."""
+    def __init__(self, admins):
+        super().__init__(admins)
+        self.at_once = self.most = 0
+
+    async def get_chat_administrators(self, chat_id):
+        self.at_once += 1
+        self.most = max(self.most, self.at_once)
+        await asyncio.sleep(0.01)
+        self.at_once -= 1
+        return await super().get_chat_administrators(chat_id)
+
+
+async def test_the_groups_are_looked_up_together_and_messages_arriving_together_share_the_lookup(tmp_path):
+    state, tg = AlertState(tmp_path / "s.json"), SlowTG({GROUP: [ADMIN], OTHER_GROUP: [3]})
+    state.add_chat(GROUP, "Home")
+    state.add_chat(OTHER_GROUP, "Away")
+    admins = Admins(state)
+    got = await asyncio.gather(*(admins.allowed(tg, [user]) for user in (ADMIN, 3, STRANGER, ADMIN)))
+    assert got == [True, True, False, True]
+    assert sorted(tg.fetches) == sorted([GROUP, OTHER_GROUP]) and tg.most == 2         # each list once, both at the same time
+
+
+async def test_the_admins_of_a_group_that_removed_the_bot_no_longer_count(tmp_path):
+    state, tg = AlertState(tmp_path / "s.json"), TG({GROUP: [ADMIN]})
+    state.add_chat(GROUP, "Home")
+    admins = Admins(state)
+    assert await admins.allowed(tg, [ADMIN])                                                 # its list is kept for ten minutes now
+    state.mark_gone(GROUP, "bot kicked")
+    assert admins.groups() == [] and not await admins.allowed(tg, [ADMIN])                   # gone: its admins don't count
+    state.add_chat(GROUP, "Home")                                                            # the bot is added back
+    assert await admins.allowed(tg, [ADMIN])
 
 
 async def test_listed_ids_are_added_to_the_known_admins_never_replacing_them(tmp_path):
@@ -275,7 +314,7 @@ async def test_usage_is_the_help_and_alerts_button(tmp_path, kind):
     shown = lambda sent: [(b, [[(x.text, x.callback_data) for x in row] for row in kw["reply_markup"].inline_keyboard] if kw.get("reply_markup") else None)
                           for b, kw in sent]
     assert len(from_command) == 2 and shown(from_command) == shown(from_button)
-    assert from_command[0][0] == templates.capabilities_text(True, False, False, False)
+    assert from_command[0][0] == templates.capabilities_text(["Ecowitt"])
     update, refused = message("/usage", user=STRANGER, kind=kind)
     await bot.on_usage(update, ctx(tg))
     assert [b for b, _ in refused] == [NOT_ADMIN]                                              # gated like the other commands

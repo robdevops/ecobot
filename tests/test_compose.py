@@ -56,6 +56,21 @@ async def test_a_reading_with_its_zones_over_rain_is_one_stacked_chart(tmp_path,
     await eco.close()
 
 
+async def test_the_air_panels_share_one_load_and_a_weather_chart_asks_the_sensor_nothing(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    loads, rows = [], comp.air.rows
+
+    async def counted(t0, t1):
+        loads.append((t0, t1))
+        return await rows(t0, t1)
+    comp.air.rows = counted
+    out, _ = await plot(comp, panels=[{"series": "pm2_5"}, {"series": "pm10", "style": "rating"}, {"series": "rain"}])
+    assert "chart" in out and len(loads) == 1
+    out, _ = await plot(comp, panels=[{"series": "temperature"}])
+    assert "chart" in out and len(loads) == 1
+    await eco.close()
+
+
 async def test_the_traffic_light_rating_is_the_share_of_each_days_readings(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
     out, specs = await plot(comp, panels=[{"series": "pm2_5", "style": "rating"}, {"series": "rain", "style": "bars"}])
@@ -122,6 +137,13 @@ def test_air_that_clears_after_every_rain_is_a_yes_and_air_that_ignores_rain_is_
     assert analyse_air(air, rain, limits, TZ, "PM2.5")["verdict"].startswith("No")
     air, rain = synthetic(60, lambda washed: 40.0 if washed else 20.0)                # the air is worse around rain
     assert analyse_air(air, rain, limits, TZ, "PM2.5")["verdict"].startswith("Yes, the other way")
+
+
+def test_air_that_reads_zero_when_dry_and_events_that_change_nothing_are_counted_as_such():
+    air, rain = synthetic(60, lambda washed: 0.0)                     # a clean sensor: zero before and after every rain
+    out = analyse_air(air, rain, (9.0, 55.4), TZ, "PM2.5")
+    assert out["events"]["cleaner_after"] == out["events"]["worse_after"] == 0 and out["events"]["count"] >= 15
+    assert out["findings"][0].endswith("when dry (good)") and f"{out['events']['count']} about the same" in out["findings"][1]
 
 
 def test_too_few_rain_events_or_no_overlap_says_so():

@@ -1,20 +1,19 @@
 """The forecast source: the daily forecast from Open-Meteo (open-meteo.com), kept warm and cached; fetched only from 6 am to 6 pm
 local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once at the start (or the first question) when nothing is cached."""
 
-import json
 import logging
 import math
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date
 
 import httpx
 
-from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
-from ..timeutil import now_local, when
-from ..tools import Tool, Turn
+from ..sources import Source
+from ..timeutil import when
+from ..tools import Tool, Turn, json_result
 from ..warm import Warmer, in_sync_hours
 
 log = logging.getLogger(__name__)
@@ -84,21 +83,22 @@ def day_label(day: date, today: date) -> str:
     return "Today" if day == today else f"{day:%A}"
 
 
-class Forecast:
+class Forecast(Source):
     name = "Forecast"
 
     def __init__(self, cfg: Config, location: tuple[float, float] | None = None, transport=None):
         """location: (lat, lon), used when the config has none (the weather station's own)."""
         self.tz, self.place = cfg.tz, cfg.place
-        lat = cfg.forecast_lat if cfg.forecast_lat is not None else (location[0] if location else None)
-        lon = cfg.forecast_lon if cfg.forecast_lon is not None else (location[1] if location else None)
-        self.location = (lat, lon) if lat is not None and lon is not None else None
+        configured = (cfg.forecast_lat, cfg.forecast_lon)
+        if configured != (None, None) and None in configured:
+            log.warning("FORECAST_LAT and FORECAST_LON go together: with only one set, the weather station's location is used")
+        self.location = configured if None not in configured else location if location and None not in location else None
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
         self.source = ""
         self.fetched_at = 0.0
         self.requests = 0
-        self.store = Snapshots.open(cfg.conditions_cache_path)
+        self.store = Snapshots(cfg.conditions_cache_path)
         self._load()
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
         self.tools = [Tool("weather_forecast", DESCRIPTION, PARAMETERS, self.handle)]
@@ -119,13 +119,6 @@ class Forecast:
         """Only forecast questions start a refresh; the report always uses what is cached."""
         return bool(re.search(r"\bforecast\w*|\btomorrow\b|\bthis week\b", text, re.I))
 
-    def poke(self):
-        self.warmer.poke()
-
-    async def close(self):
-        await self.client.aclose()
-        self.store.close()
-
     # ---------- kept on disk ----------
     def _load(self):
         """Start from the last forecast fetched (before the restart), so a night-time start needs no fetch."""
@@ -138,9 +131,6 @@ class Forecast:
         self.store.save("forecast", {"source": self.source,
                                      "days": [{**d, "date": d["date"].isoformat()} for d in self.days]},
                         now=self.fetched_at)
-
-    def now(self) -> datetime:
-        return now_local(self.tz)
 
     # ---------- fetching ----------
     async def _json(self, url: str, **params) -> dict:
@@ -159,7 +149,7 @@ class Forecast:
              "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
             for i in range(len(dd["time"]))]
 
-    async def _ensemble(self, first: date, days: int) -> dict[date, int]:
+    async def _ensemble(self, days: int) -> dict[date, int]:
         """{local day: % of ensemble members with at least RAIN_MM that day}, to the nearest 5; a day with no usable members is left out.
         Every `hourly` series named precipitation* is one member (the response names them by member and model)."""
         lat, lon = self.location
@@ -181,10 +171,10 @@ class Forecast:
         return {date.fromisoformat(day): 5 * round(100 * sum(t >= RAIN_MM for t in totals) / len(totals) / 5)
                 for day, totals in sums.items()}
 
-    async def _with_chance(self, source: str, days: list[dict]) -> list[dict]:
+    async def _with_chance(self, days: list[dict]) -> list[dict]:
         """The days with the ensemble's chance of at least 1 mm added; Open-Meteo's own figure stays where the ensemble has none."""
         try:
-            chance = await self._ensemble(days[0]["date"], len(days)) if days else {}
+            chance = await self._ensemble(len(days)) if days else {}
         except Exception as e:   # the forecast still works without it
             log.warning("Ensemble rain chance unavailable (%s: %s); using Open-Meteo's own", type(e).__name__, e)
             return days
@@ -197,7 +187,7 @@ class Forecast:
             return "Forecast cached"
         before = self.requests
         self.source, self.days = await self._open_meteo()   # a failure raises: the warmer logs it
-        self.days = await self._with_chance(self.source, self.days)
+        self.days = await self._with_chance(self.days)
         self.fetched_at = time.time()
         self._save()
         return f"Forecast {self.requests - before} req"
@@ -224,8 +214,8 @@ class Forecast:
             count = 7
         lines = self.lines(count)
         if not lines:
-            return json.dumps({"error": "No forecast is available right now."})
+            return json_result({"error": "No forecast is available right now."})
         if turn:
             turn.forecast_shown.extend(self.upcoming(count))   # remembered for the chat once the answer is sent
         stamped = {"time": when(int(self.fetched_at), self.tz)} if self.fetched_at else {}   # when it was last fetched
-        return json.dumps({"lines": lines, "place": self.place, "source": self.source, **stamped}, ensure_ascii=False)
+        return json_result({"lines": lines, "place": self.place, "source": self.source, **stamped})

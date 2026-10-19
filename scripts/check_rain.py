@@ -13,15 +13,13 @@ What to look for: "lower" days at 30-minute resolution mean the totals are avera
 so days just over the 1 mm line can be missed.
 """
 
-import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
-from lib.config import data_dir  # noqa: E402
+from lib.config import data_dir, local_tz  # noqa: E402
 
 from lib.ecowitt import days as day_tool  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
@@ -49,8 +47,7 @@ def totals(cache: HistoryCache, mac: str, tz, cycle: str, days: list) -> dict:
     lo, hi = day_bounds(min(days), tz, True)[0], day_bounds(max(days), tz, True)[1]
     if cycle == "1day":
         lo, hi = lo - 86400, hi + 86400
-    store = day_tool.load_cached(cache, mac, cycle, ["rain"], lo, hi)
-    return day_tool.per_day(store, "rain", set(days), tz)
+    return day_tool.day_figures(cache, mac, cycle, ["rain"], set(days), tz, lo, hi)["rain"]
 
 
 def compare_rain(cache: HistoryCache, mac: str, tz, today, days_back: int = 88) -> dict:
@@ -110,7 +107,7 @@ def main():
     ap.add_argument("--days", type=int, default=88)
     ap.add_argument("--cache", type=Path, default=data_dir() / "ecowitt_cache.sqlite")
     args = ap.parse_args()
-    tz = ZoneInfo(os.getenv("TZ") or "Australia/Melbourne")
+    tz = local_tz()
     macs = [m for (m,) in sqlite3.connect(f"file:{args.cache}?mode=ro", uri=True).execute("SELECT DISTINCT mac FROM coverage")]
     if not macs:
         sys.exit(f"{args.cache} has no cached history")

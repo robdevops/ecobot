@@ -6,7 +6,7 @@ from lib import bot as botmod
 from lib import intent, periods
 from lib.bot import Bot
 from lib.specs import Chart, Line, Panel
-from tests.fakes import TZ
+from tests.fakes import TZ, StandInTools
 
 NOW = datetime(2026, 10, 2, 12, 0)
 
@@ -36,7 +36,7 @@ def test_only_the_newest_questions_are_remembered():
     charted = periods.Charted()
     for i in range(periods.REMEMBERED + 5):
         charted.remember(1, i, f"q{i}")
-    assert len(charted) == periods.REMEMBERED and (1, 0) not in charted and (1, periods.REMEMBERED + 4) in charted
+    assert len(charted.store) == periods.REMEMBERED and charted.get(1, 0) is None and charted.get(1, periods.REMEMBERED + 4)
 
 
 def test_the_questions_behind_charts_survive_a_restart(tmp_path):
@@ -47,7 +47,7 @@ def test_the_questions_behind_charts_survive_a_restart(tmp_path):
     assert again.charted.get(1, 101) == "Temperature chart 7d"
 
 
-class Tools:
+class Tools(StandInTools):
     def __init__(self):
         self.calls = []
 
@@ -57,7 +57,7 @@ class Tools:
         return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {"outdoor.temperature": {"unit": "℃", "low": "1", "high": "2"}}})
 
 
-def make_bot(monkeypatch):
+def make_bot(alert_state, monkeypatch):
     class Agent:
         tools = Tools()
 
@@ -65,7 +65,16 @@ def make_bot(monkeypatch):
             raise AssertionError("no model for a plain chart")
     monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
-    return Bot(NS(tz=TZ), Agent(), sources, None)
+    return Bot(NS(tz=TZ), Agent(), sources, alert_state)
+
+
+async def test_closing_the_bot_cancels_its_uploads_still_running(alert_state, monkeypatch):
+    import asyncio
+    bot = make_bot(alert_state, monkeypatch)
+    upload = asyncio.create_task(asyncio.Event().wait())
+    bot.background.add(upload)
+    await bot.close()
+    assert upload.cancelled()
 
 
 def chat_message(sent, edits=None):
@@ -86,18 +95,18 @@ async def send_chat_action(*a, **k):
 CONTEXT = NS(bot=NS(send_chat_action=send_chat_action, id=99))
 
 
-async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_is_remembered(monkeypatch):
-    bot, sent = make_bot(monkeypatch), []
+async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_is_remembered(alert_state, monkeypatch):
+    bot, sent = make_bot(alert_state, monkeypatch), []
     msg = chat_message(sent)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
     assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("\u25cf 1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
-    assert bot.charted[(1, 101)] == "Temperature chart 30d"
+    assert bot.charted.get(1, 101) == "Temperature chart 30d"
 
 
-async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_left_out(monkeypatch):
-    bot, edits = make_bot(monkeypatch), []
+async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_left_out(alert_state, monkeypatch):
+    bot, edits = make_bot(alert_state, monkeypatch), []
     msg = chat_message([], edits)
     bot.charted.remember(1, 50, "Temperature chart 30d")
     answers = []
@@ -111,11 +120,11 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 3M..."]
     caption, markup = edits[0]
     assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "\u25cf 3M", "1Y"]
-    assert bot.charted[(1, 50)] == "Temperature chart 90d"
+    assert bot.charted.get(1, 50) == "Temperature chart 90d"
 
 
-async def test_a_button_on_a_chart_from_before_a_restart_says_so(monkeypatch):
-    bot = make_bot(monkeypatch)
+async def test_a_button_on_a_chart_from_before_a_restart_says_so(alert_state, monkeypatch):
+    bot = make_bot(alert_state, monkeypatch)
     answers = []
 
     async def answer(text=None):
@@ -133,9 +142,8 @@ async def test_a_reply_with_period_buttons_leaves_the_persistent_keyboard_for_th
         async def reply_photo(self, photo, **kw):
             sent.append(kw["reply_markup"])
             return NS(message_id=7)
-    shown = []
-    carried = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard(), sent_photo=shown)
-    assert carried is False and labels(sent[0])[0][0][0] == "1D" and shown[0].message_id == 7
+    got = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard())
+    assert got.carried is False and labels(sent[0])[0][0][0] == "1D" and got.photo.message_id == 7
 
 
 def test_a_chart_drawn_lately_comes_back_from_the_cache_until_it_is_too_old_or_pushed_out():
@@ -152,8 +160,8 @@ def test_a_chart_drawn_lately_comes_back_from_the_cache_until_it_is_too_old_or_p
     assert len(cache.items) == periods.ImageCache.CHART_IMAGES and "q0" not in cache.items
 
 
-async def test_toggling_back_to_a_period_just_drawn_uses_the_cached_image_and_asks_nothing_again(monkeypatch):
-    bot, sent, edits = make_bot(monkeypatch), [], []
+async def test_toggling_back_to_a_period_just_drawn_uses_the_cached_image_and_asks_nothing_again(alert_state, monkeypatch):
+    bot, sent, edits = make_bot(alert_state, monkeypatch), [], []
     msg = chat_message(sent, edits)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 7d")
@@ -169,8 +177,8 @@ async def test_toggling_back_to_a_period_just_drawn_uses_the_cached_image_and_as
     assert [e[0] for e in edits] == ["Temperature"] * 4   # the repeated 30d press edited nothing and bot.charted[(1, 101)] == "Temperature chart 7d"
 
 
-async def test_a_chart_once_sent_goes_again_as_telegrams_copy_not_a_new_upload(monkeypatch):
-    bot, uploads, edits = make_bot(monkeypatch), [], []
+async def test_a_chart_once_sent_goes_again_as_telegrams_copy_not_a_new_upload(alert_state, monkeypatch):
+    bot, uploads, edits = make_bot(alert_state, monkeypatch), [], []
 
     async def reply_photo(photo, caption=None, **kw):
         uploads.append(photo)
@@ -192,8 +200,8 @@ async def test_a_chart_once_sent_goes_again_as_telegrams_copy_not_a_new_upload(m
     assert uploads == [b"png"] and edits == ["upload", "7d", "edit 1"]   # 30d drawn and uploaded once; then both by Telegram's copy
 
 
-async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(monkeypatch):
-    bot = make_bot(monkeypatch)
+async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(alert_state, monkeypatch):
+    bot = make_bot(alert_state, monkeypatch)
     actions = []
 
     async def chat_action(*a, **k):
@@ -221,8 +229,8 @@ def pressed(bot, sent):
     return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
 
 
-async def test_the_button_charts_are_drawn_ahead_and_a_press_is_sent_one_at_once(monkeypatch, caplog):
-    bot, sent = make_bot(monkeypatch), []
+async def test_the_button_charts_are_drawn_ahead_and_a_press_is_sent_one_at_once(alert_state, monkeypatch, caplog):
+    bot, sent = make_bot(alert_state, monkeypatch), []
     with caplog.at_level("INFO"):
         await bot.predraw()
     calls = len(bot.agent.tools.calls)
@@ -242,9 +250,9 @@ async def test_the_button_charts_are_drawn_ahead_and_a_press_is_sent_one_at_once
     assert not any("drawn ahead" in r.getMessage() for r in caplog.records)                          # only the first round is logged
 
 
-async def test_a_chart_drawn_ahead_is_drawn_again_once_it_is_stale_and_never_answers_other_words(monkeypatch):
+async def test_a_chart_drawn_ahead_is_drawn_again_once_it_is_stale_and_never_answers_other_words(alert_state, monkeypatch):
     clock = [0.0]
-    bot, sent = make_bot(monkeypatch), []
+    bot, sent = make_bot(alert_state, monkeypatch), []
     bot.images = periods.ImageCache(lambda: clock[0])
     await bot.predraw()
     calls = len(bot.agent.tools.calls)
@@ -257,9 +265,9 @@ async def test_a_chart_drawn_ahead_is_drawn_again_once_it_is_stale_and_never_ans
     assert len(bot.agent.tools.calls) == calls + 1
 
 
-async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(monkeypatch):
+async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(alert_state, monkeypatch):
     import asyncio
-    bot = make_bot(monkeypatch)
+    bot = make_bot(alert_state, monkeypatch)
     bot.answering = 1
     bot.idle.clear()
     drawing = asyncio.create_task(bot.predraw())
@@ -274,11 +282,11 @@ async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(mon
 
 
 
-def preloading_bot(monkeypatch, refuse=None, clock=None):
+def preloading_bot(alert_state, monkeypatch, refuse=None, clock=None):
     """A bot with TELEGRAM_PRELOAD_CHAT set, and the (chat, photo, silent) of every upload to it. The periods are uploaded side by side,
     in no fixed order, so each period's picture is its question's words and its file id "file " and those words; context.refused.error
     is what the uploads raise (none: they go through)."""
-    bot, uploads, refused = make_bot(monkeypatch), [], NS(error=refuse)
+    bot, uploads, refused = make_bot(alert_state, monkeypatch), [], NS(error=refuse)
     bot.cfg = NS(tz=TZ, telegram_preload_chat=-1001)
     if clock:
         bot.images = periods.ImageCache(lambda: clock[0])
@@ -307,8 +315,8 @@ async def settle(bot):
     await asyncio.gather(*bot.background)
 
 
-async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits_by_file_id(monkeypatch):
-    bot, uploads, context = preloading_bot(monkeypatch)
+async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits_by_file_id(alert_state, monkeypatch):
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
     sent, edits = [], []
 
     async def edit_media(media, reply_markup=None):
@@ -329,15 +337,15 @@ async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits
     assert len(bot.agent.tools.calls) == calls and edits[0] == "file Temperature chart 90d"   # Telegram's copy of the 3M, no new question or upload
 
 
-async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_upload_stops_it_with_one_warning(monkeypatch, caplog):
-    bot, uploads, context = preloading_bot(monkeypatch)
+async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_upload_stops_it_with_one_warning(alert_state, monkeypatch, caplog):
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
     bot.cfg = NS(tz=TZ)
     update = pressed(bot, [])
     await bot.respond(update, context, "Temperature chart 7d")
     await settle(bot)
     assert uploads == [] and not bot.background
     from telegram.error import BadRequest
-    bot, uploads, context = preloading_bot(monkeypatch, refuse=BadRequest("Chat not found"))
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch, refuse=BadRequest("Chat not found"))
     with caplog.at_level("WARNING"):
         await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
         await settle(bot)
@@ -346,13 +354,13 @@ async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_uploa
     assert [r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()].__len__() == 1 and uploads == [] and bot.preload_off
 
 
-async def test_a_flood_limit_or_a_timeout_skips_those_uploads_and_the_next_chart_uploads_again(monkeypatch, caplog):
+async def test_a_flood_limit_or_a_timeout_skips_those_uploads_and_the_next_chart_uploads_again(alert_state, monkeypatch, caplog):
     import warnings
     from telegram.error import RetryAfter, TimedOut
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")   # python-telegram-bot 22 warns whenever it builds a RetryAfter
         flood = RetryAfter(30)
-    bot, uploads, context = preloading_bot(monkeypatch)
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
     for error, asked in ((flood, "Temperature chart 7d"), (TimedOut(), "Temperature chart 30d")):
         context.refused.error = error
         with caplog.at_level("WARNING"):
@@ -366,8 +374,8 @@ async def test_a_flood_limit_or_a_timeout_skips_those_uploads_and_the_next_chart
     assert sorted(uploads) == uploads_of(1, 365)                        # the 7D and the 1M were sent as the questions' own charts
 
 
-async def test_a_period_that_cannot_be_drawn_is_left_out_and_the_others_are_uploaded(monkeypatch):
-    bot, uploads, context = preloading_bot(monkeypatch)
+async def test_a_period_that_cannot_be_drawn_is_left_out_and_the_others_are_uploaded(alert_state, monkeypatch):
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
     draw = bot._draw_ahead
 
     async def draw_ahead(text, now):
@@ -381,9 +389,9 @@ async def test_a_period_that_cannot_be_drawn_is_left_out_and_the_others_are_uplo
     assert bot.images.has_copy(bot.images.key("Temperature chart 30d", 30, NOW)) and not bot.images.has_copy(bot.images.key("Temperature chart 90d", 90, NOW))
 
 
-async def test_charts_are_uploaded_ahead_at_once_even_while_a_question_is_being_answered(monkeypatch):
+async def test_charts_are_uploaded_ahead_at_once_even_while_a_question_is_being_answered(alert_state, monkeypatch):
     import asyncio
-    bot, uploads, context = preloading_bot(monkeypatch)
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
     bot.answering = 1
     bot.idle.clear()
     bot.preload_soon(context.bot, "Temperature chart 7d")
@@ -391,9 +399,9 @@ async def test_charts_are_uploaded_ahead_at_once_even_while_a_question_is_being_
     assert sorted(uploads) == uploads_of(1, 30, 90, 365)
 
 
-async def test_each_period_is_uploaded_as_soon_as_it_is_drawn_not_when_the_slowest_is(monkeypatch):
+async def test_each_period_is_uploaded_as_soon_as_it_is_drawn_not_when_the_slowest_is(alert_state, monkeypatch):
     import asyncio
-    bot, uploads, context = preloading_bot(monkeypatch)
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
     slow, three, draw, send = asyncio.Event(), asyncio.Event(), bot._draw_ahead, context.bot.send_photo
 
     async def draw_ahead(text, now):
@@ -415,9 +423,9 @@ async def test_each_period_is_uploaded_as_soon_as_it_is_drawn_not_when_the_slowe
     assert sorted(uploads) == uploads_of(1, 30, 90, 365)
 
 
-async def test_a_chart_uploaded_ahead_is_used_for_30_minutes_and_then_drawn_afresh(monkeypatch):
+async def test_a_chart_uploaded_ahead_is_used_for_30_minutes_and_then_drawn_afresh(alert_state, monkeypatch):
     clock = [0.0]
-    bot, uploads, context = preloading_bot(monkeypatch, clock=clock)
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
     await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
     await settle(bot)
     key = bot.images.key("Temperature chart 30d", 30, NOW)

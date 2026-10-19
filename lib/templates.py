@@ -2,6 +2,7 @@
 message, so the answer comes through the usual path; the label stands for a plain sentence (its words without the emoji)."""
 
 import hashlib
+from collections.abc import Collection
 
 from telegram import ReplyKeyboardMarkup
 
@@ -15,7 +16,6 @@ ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f4cb Status", "Report"), ("
         [("\U0001f3ed Air Quality", "Air quality all metrics 1d"), ("\U0001f52c Particulates", "Particulates chart 1d"),
          ("\U0001f4a8 Wind", "Wind chart 1d")]]
 SENTENCES = dict(button for row in ROWS for button in row)
-LABELS = set(SENTENCES)
 # Telegram keeps the keyboard in each app until a message brings a new one; this changes whenever the buttons do, so a chat
 # whose stored value differs gets the current keyboard with its next reply. HIDDEN is what a chat that hid the buttons stores.
 HIDDEN = "hidden"
@@ -30,9 +30,6 @@ def version(irrigation: bool = False) -> str:
     return hashlib.md5("|".join(label for row in rows(irrigation) for label, _ in row).encode()).hexdigest()[:8]
 
 
-VERSION = version()
-
-
 def keyboard(irrigation: bool = False) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([[label for label, _ in row] for row in rows(irrigation)], resize_keyboard=True, is_persistent=True,
                                input_field_placeholder="Ask about the weather or air…")
@@ -43,16 +40,16 @@ def sentence(text: str) -> str | None:
     return SENTENCES.get(text.strip())
 
 
-WEATHER_METRICS = ["Temperature, humidity (indoor, outdoor)", "Dew point, vapour pressure deficit, pressure, wind speed",
-                   "Rain, solar radiation, UV index"]
-AIR_METRICS = ["PM1, PM2.5, PM10, CO₂, VOC, NOx"]
-POLLEN = ["Pollen and thunderstorm asthma risk (October to December)"]
-FORECAST = ["Forecast"]
-HISTORY = ["History charts"]
+MEASURES = {   # a source (by name) -> what it measures, as the Capabilities button lists it
+    "Ecowitt": ["Temperature, humidity (indoor, outdoor)", "Dew point, vapour pressure deficit, pressure, wind speed",
+                "Rain, solar radiation, UV index"],
+    "AirGradient": ["PM1, PM2.5, PM10, CO₂, VOC, NOx"],
+    "Pollen": ["Pollen and thunderstorm asthma risk (October to December)"],
+    "Forecast": ["Forecast"],
+}
 
 
-def capabilities_text(weather: bool = True, air: bool = True, pollen: bool = False, forecast: bool = False) -> str:
-    """What the bot measures, as a short bulleted list (no dates, no detail): the answer to the Capabilities button."""
-    lines = (WEATHER_METRICS if weather else []) + (AIR_METRICS if air else []) + (POLLEN if pollen else []) + (
-        FORECAST if forecast else []) + HISTORY
+def capabilities_text(sources: Collection[str] = ("Ecowitt", "AirGradient")) -> str:
+    """What the bot measures with these sources, as a short bulleted list (no dates, no detail): the answer to the Capabilities button."""
+    lines = [line for name, measured in MEASURES.items() if name in sources for line in measured] + ["History charts"]
     return "\n".join(f"\u2022 {line}" for line in lines)
