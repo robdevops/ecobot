@@ -15,7 +15,7 @@ python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 Developing, the tests and the GitHub checks: see `DEVELOPMENT.md`.
 
-Under systemd see `ecobot.service` (it loads the environment file; the clone's location is its one `WorkingDirectory` line, the rest is relative).
+Under systemd see `ecobot.service`: the clone goes in `/opt/ecobot`, outside any home directory, and the unit runs it sandboxed as a dynamic user with its state in `/var/lib/ecobot` (it loads the environment file; the clone's location is its `WorkingDirectory` and `ExecStart` lines).
 
 In Docker, the `Dockerfile` builds a python:3.13-slim image (278 MB unpacked, 98 MB compressed):
 

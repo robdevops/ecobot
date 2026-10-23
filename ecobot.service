@@ -1,21 +1,77 @@
-# Install as /etc/systemd/system/ecobot.service. Nothing here names the project's directory except the one
-# WorkingDirectory line: %h is the home directory of the User below, so a clone at ~/ecobot needs no editing, and any other
-# place needs only that line. The bot's code and data files (caches, state) are found relative to its own location.
-# The .venv is built with Python 3.13.5 (.python-version): python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# Install as /etc/systemd/system/ecobot.service, with the code outside every home directory:
+#   sudo git clone <repo> /opt/ecobot && cd /opt/ecobot
+#   sudo python3.13 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt     # Python 3.13.5 (.python-version)
+# The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them,
+# so its bytecode goes to /var/cache/ecobot (CacheDirectory=, PYTHONPYCACHEPREFIX=) and is rebuilt on its own after an update.
+# Any other place needs only the WorkingDirectory and ExecStart lines changed.
 # The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
 # TELEGRAM_BOT_TOKEN, ...).
+# StateDirectory= gives the bot /var/lib/ecobot (the state file, the SQLite caches and Matplotlib's font cache): the bot finds it through
+# STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older install kept in
+# the clone (bot_state.json, *_cache.sqlite) are not read from there: with the service stopped, copy them into /var/lib/ecobot once;
+# systemd hands the folder to the dynamic user when it starts.
 [Unit]
 Description=ecobot (Telegram weather and air-quality bot)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=rob
-WorkingDirectory=%h/ecobot
+DynamicUser=yes
+WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
-ExecStart=/bin/sh -c 'exec .venv/bin/python ecobot.py'
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
+# One BLAS thread: numpy's thread pool gains a bot this small nothing and counts against TasksMax.
+Environment=OPENBLAS_NUM_THREADS=1
+StateDirectory=ecobot
+CacheDirectory=ecobot
+ExecStart=/opt/ecobot/.venv/bin/python ecobot.py
 Restart=on-failure
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecobot
+
+# Filesystem isolation
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+InaccessiblePaths=/boot /media /mnt
+UMask=0077
+
+# Privilege restrictions
+AmbientCapabilities=
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
+
+# Kernel and system protection
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Process isolation
+ProtectProc=invisible
+RestrictNamespaces=yes
+
+# Network: HTTPS to the weather, air, pollen, Tuya, Telegram and model APIs (AF_UNIX: the local name resolver)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Resource limits
+TasksMax=64
+MemoryAccounting=yes
+MemoryHigh=300M
+MemoryMax=450M
 
 [Install]
 WantedBy=multi-user.target
