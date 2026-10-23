@@ -235,3 +235,21 @@ def test_every_chart_and_report_button_has_a_command_of_the_same_name():
                                   "air_quality": "Air quality all metrics 1d", "particulates": "Particulates chart 1d",
                                   "wind": "Wind chart 1d"}
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) for name in templates.COMMANDS)          # what Telegram accepts as a command
+
+
+async def test_the_command_menu_is_sent_to_telegram_and_a_refusal_is_only_logged(caplog):
+    sent = []
+
+    class TG:
+        async def set_my_commands(self, commands):
+            sent.append([(c.command, c.description) for c in commands])
+
+    class Refusing:
+        async def set_my_commands(self, commands):
+            raise RuntimeError("no")
+
+    await Bot.publish_commands(TG())
+    await Bot.publish_commands(Refusing())
+    assert sent == [templates.MENU] and "Couldn't set the command menu: RuntimeError: no" in caplog.text
+    known = {*templates.COMMANDS, "alerts", "usage", "keyboard", "reset"}
+    assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) and 3 <= len(text) <= 256 and name in known for name, text in templates.MENU)

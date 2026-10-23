@@ -9,6 +9,7 @@ Type a question in any chat the bot is in ("how hot is it?", "will it rain?", "r
 - **Days and totals:** count or rank days by any reading ("how many days was UV 9 or more", "hottest day each year"), or total rain per month or year as bars.
 - **Analysis:** whether rain follows a reading, or how air quality relates to everything else, over the stored history.
 - **Commands:** each chart or report button also works as a command, in private chats and groups: `/report` (or `/status`), `/rain`, `/weather`, `/temperature`, `/humidity`, `/air_quality`, `/particulates`, `/wind`.
+- The commands also appear in Telegram's `/` menu beside the message box.
 - **Private chats** also get a button keyboard (Help & Alerts, Status, Rain, Weather, Temperature, Humidity, Air Quality, Particulates, Wind) and show Telegram's "Thinking…" while the answer is written.
 
 ## Alerts

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import NamedTuple
 
-from telegram import InputMediaPhoto, Message, ReplyKeyboardRemove, Update
+from telegram import BotCommand, InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -682,6 +682,14 @@ class Bot:
             reply_markup=templates.keyboard(self.irrigation is not None) if private else None)
         if private:
             self.state.set_keyboard(update.effective_chat.id, self.keyboard_version)
+
+    @staticmethod
+    async def publish_commands(tg_bot) -> None:
+        """At startup: give Telegram the command menu (templates.MENU). A refusal is logged and the bot carries on."""
+        try:
+            await tg_bot.set_my_commands([BotCommand(name, description) for name, description in templates.MENU])
+        except Exception as e:
+            log.warning("Couldn't set the command menu: %s: %s", type(e).__name__, e)
 
     async def refresh_keyboards(self, tg_bot) -> int:
         """At startup: tell each private chat whose buttons are out of date that they changed, with the new keyboard (silently).
