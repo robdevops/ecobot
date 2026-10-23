@@ -1,9 +1,8 @@
 # Install as /etc/systemd/system/ecobot.service, with the code outside every home directory:
 #   sudo git clone <repo> /opt/ecobot && cd /opt/ecobot
 #   sudo python3.13 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt     # Python 3.13.5 (.python-version)
-#   sudo .venv/bin/python -m compileall -q ecobot.py lib                                # again after every git pull
 # The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them,
-# so it cannot save bytecode (PYTHONDONTWRITEBYTECODE below); the compileall line saves it for the service, which reads it.
+# so its bytecode goes to /var/cache/ecobot (CacheDirectory=, PYTHONPYCACHEPREFIX=) and is rebuilt on its own after an update.
 # Any other place needs only the WorkingDirectory and ExecStart lines changed.
 # The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
 # TELEGRAM_BOT_TOKEN, ...).
@@ -21,10 +20,11 @@ DynamicUser=yes
 WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
 # One BLAS thread: numpy's thread pool gains a bot this small nothing and counts against TasksMax.
 Environment=OPENBLAS_NUM_THREADS=1
 StateDirectory=ecobot
+CacheDirectory=ecobot
 ExecStart=/opt/ecobot/.venv/bin/python ecobot.py
 Restart=on-failure
 RestartSec=10
