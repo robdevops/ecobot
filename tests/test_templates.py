@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from types import SimpleNamespace as NS
 
@@ -226,3 +227,11 @@ def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
     assert "Pollen" not in plain and "Forecast" not in plain
     full = templates.capabilities_text(EVERY_SOURCE).splitlines()
     assert full[-3:] == ["• Pollen and thunderstorm asthma risk (October to December)", "• Forecast", "• History charts"]
+
+
+def test_every_chart_and_report_button_has_a_command_of_the_same_name():
+    assert templates.COMMANDS == {"report": "Report", "status": "Report", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
+                                  "temperature": "Temperature chart 1d", "humidity": "Humidity chart 1d",
+                                  "air_quality": "Air quality all metrics 1d", "particulates": "Particulates chart 1d",
+                                  "wind": "Wind chart 1d"}
+    assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) for name in templates.COMMANDS)          # what Telegram accepts as a command
