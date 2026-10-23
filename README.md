@@ -43,7 +43,7 @@ AIRGRADIENT_API_TOKEN=
 AIRGRADIENT_LOCATION_ID=
 ```
 
-Then open your bot in Telegram and send `/report`. Each sensor switches on when its variables are set; use either or both. The same file is what systemd and Docker read when you run the bot for real, so there is nothing to redo ([deployment](docs/deployment.md)).
+Then open your bot in Telegram and send `/report`. The same file is what systemd and Docker read when you run the bot for real, so there is nothing to redo ([deployment](docs/deployment.md)).
 
 ## More
 
