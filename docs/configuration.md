@@ -1,6 +1,19 @@
 # Configuration
 
-The bot is configured only through environment variables (under systemd, the file named by `EnvironmentFile=`; in Docker, `--env-file`). Only the first row is required; each data source switches on when its variables are set.
+The bot is configured only through environment variables. They live in one file, `/etc/ecobot.env`, which the systemd unit (`EnvironmentFile=`) and Docker (`--env-file`) both read. Only the first row below is required; each data source switches on when its variables are set.
+
+## The environment file
+
+It holds secrets, so create it private to root before putting anything in it:
+
+```
+sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
+sudoedit /etc/ecobot.env
+```
+
+One `NAME=value` per line, no `export`; a line starting with `#` is a comment (not text after a value). systemd reads it as root before it drops to the service's own user, so the service itself needs no access to the file, and nobody else on the machine can read your keys. To run the bot by hand from your own shell, load it with `set -a; . <(sudo cat /etc/ecobot.env); set +a`. (Docker reads the file as the person who runs `docker`, so use `sudo docker run`, or give your user read access with `sudo chown root:youruser /etc/ecobot.env && sudo chmod 640 /etc/ecobot.env`. It also keeps quotes around a value that systemd would drop.)
+
+## Settings
 
 | Variable | Purpose |
 |---|---|

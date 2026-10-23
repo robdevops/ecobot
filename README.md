@@ -17,15 +17,31 @@ You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFa
 git clone https://github.com/robdevops/ecobot && cd ecobot
 python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-export TELEGRAM_BOT_TOKEN=...      # from BotFather
-export XAI_API_KEY=...             # for questions that need the AI model
-export ECOWITT_API_KEY=... ECOWITT_APP_KEY=...                       # your weather station
-export AIRGRADIENT_API_TOKEN=... AIRGRADIENT_LOCATION_ID=...         # your air sensor (optional)
+sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env      # a private file for your keys
+sudoedit /etc/ecobot.env                                           # add the lines below
 
+set -a; . <(sudo cat /etc/ecobot.env); set +a                      # load it into this shell
 .venv/bin/python ecobot.py
 ```
 
-Then open your bot in Telegram and send `report`. Each sensor switches on when its variables are set; use either or both.
+`/etc/ecobot.env` holds one `NAME=value` per line:
+
+```
+# Telegram: the token from BotFather
+TELEGRAM_BOT_TOKEN=...
+# the AI model, for questions that need it
+XAI_API_KEY=...
+# your weather station
+ECOWITT_API_KEY=...
+ECOWITT_APP_KEY=...
+# your air sensor (optional)
+AIRGRADIENT_API_TOKEN=...
+AIRGRADIENT_LOCATION_ID=...
+```
+
+Put a comment on a line of its own: systemd would take text after a value as part of it.
+
+Then open your bot in Telegram and send `report`. Each sensor switches on when its variables are set; use either or both. The same file is what systemd and Docker read when you run the bot for real, so there is nothing to redo ([deployment](docs/deployment.md)).
 
 ## More
 

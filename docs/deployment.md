@@ -8,7 +8,7 @@ Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so o
 
 ```
 python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python ecobot.py          # with the variables in the environment
+.venv/bin/python ecobot.py          # with /etc/ecobot.env loaded, see configuration.md
 ```
 
 ## systemd
