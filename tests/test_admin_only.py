@@ -207,7 +207,7 @@ async def test_listed_ids_are_added_to_the_known_admins_never_replacing_them(tmp
 
 
 # ---------- the gate: private chats ----------
-@pytest.mark.parametrize("command, args", [("on_start", []), ("on_reset", []), ("on_keyboard", []), ("on_usage", []), ("on_alerts", [])])
+@pytest.mark.parametrize("command, args", [("on_start", []), ("on_reset", []), ("on_keyboard", []), ("on_usage", []), ("on_report", []), ("on_alerts", [])])
 async def test_a_stranger_is_refused_every_command_in_a_private_chat_and_is_not_remembered(tmp_path, command, args):
     bot, state, tg = make(tmp_path)
     update, sent = message("/x", user=STRANGER)
@@ -215,8 +215,8 @@ async def test_a_stranger_is_refused_every_command_in_a_private_chat_and_is_not_
     assert [body for body, _ in sent] == [NOT_ADMIN] and STRANGER not in state.chats
     update, sent = message("/x", user=ADMIN)                                                  # an admin of a known group is let in
     await getattr(bot, command)(update, ctx(tg, *args))
-    assert sent and NOT_ADMIN not in [body for body, _ in sent]
-    if command in ("on_start", "on_usage", "on_alerts"):
+    assert (bot.asked == ["Report"] if command == "on_report" else sent) and NOT_ADMIN not in [body for body, _ in sent]   # /report asks for the report
+    if command in ("on_start", "on_usage", "on_report", "on_alerts"):
         assert ADMIN in state.chats
 
 

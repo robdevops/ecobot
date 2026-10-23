@@ -4,7 +4,7 @@ A Telegram bot that answers questions about your Ecowitt weather station and Air
 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period.
-- **Instant reports:** a "report" button shows weather, air quality, pollen and forecast in one message.
+- **Instant reports:** `/report` (or the Status button in a private chat) shows weather, air quality, pollen and forecast in one message.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes, silent unless you want sound.
 - **Optional extras:** Melbourne pollen and thunderstorm asthma, a daily forecast, and a Tuya irrigation controller.
 - **Cheap to run:** most answers are worked out in code, and the AI model is called only when it is needed.
@@ -41,7 +41,7 @@ AIRGRADIENT_LOCATION_ID=...
 
 Put a comment on a line of its own: systemd would take text after a value as part of it.
 
-Then open your bot in Telegram and send `report`. Each sensor switches on when its variables are set; use either or both. The same file is what systemd and Docker read when you run the bot for real, so there is nothing to redo ([deployment](docs/deployment.md)).
+Then open your bot in Telegram and send `/report`. Each sensor switches on when its variables are set; use either or both. The same file is what systemd and Docker read when you run the bot for real, so there is nothing to redo ([deployment](docs/deployment.md)).
 
 ## More
 

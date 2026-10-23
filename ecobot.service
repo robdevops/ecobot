@@ -8,7 +8,7 @@
 # TELEGRAM_BOT_TOKEN, ...).
 # StateDirectory= gives the bot /var/lib/ecobot (the state file, the SQLite caches and Matplotlib's font cache): the bot finds it through
 # STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older install kept in
-# the clone (bot_state.json, *_cache.sqlite) are not read from there: with the service stopped, copy them into /var/lib/ecobot once;
+# the checkout (bot_state.json, *_cache.sqlite) are not read from there: with the service stopped, copy them into /var/lib/ecobot once;
 # systemd hands the folder to the dynamic user when it starts.
 [Unit]
 Description=ecobot (Telegram weather and air-quality bot)

@@ -284,6 +284,7 @@ class Bot:
         app.add_handler(CommandHandler("keyboard", self.on_keyboard))
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(CommandHandler("usage", self.on_usage))
+        app.add_handler(CommandHandler("report", self.on_report))
         app.add_handler(CallbackQueryHandler(self.on_button))   # every button press, whatever its data: see on_button
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -422,6 +423,13 @@ class Bot:
             return
         self.remember_chat(update)
         await self._help_and_alerts(update, context)
+
+    async def on_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/report: the same as the Status button, in a private chat or a group."""
+        if not await self._allowed(update, context):
+            return
+        self.remember_chat(update)
+        await self.respond(update, context, "Report")
 
     @staticmethod
     def _alerts_named(kind: str) -> str:

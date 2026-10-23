@@ -80,7 +80,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
     assert "failed" not in final and "days (5m/30m/4h/1d)" in final
-    assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
+    assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
     assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
     assert ecobot._handler.formatter.width == 120                   # LOG_WIDTH reaches the bot's own log lines
 
@@ -363,7 +363,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     await ecobot.main()
     await stopper
     assert "irrigation battery" in caplog.text                       # in the list of alert types
-    assert len(app.handlers) == 10 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
+    assert len(app.handlers) == 11 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
 
 
 def test_log_lines_do_not_name_their_module():

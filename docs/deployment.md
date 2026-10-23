@@ -13,7 +13,7 @@ python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ## systemd
 
-Under systemd see `ecobot.service`: the clone goes in `/opt/ecobot`, outside any home directory, and the unit runs it sandboxed as a dynamic user with its state in `/var/lib/ecobot` (it loads the environment file; the clone's location is its `WorkingDirectory` and `ExecStart` lines).
+Under systemd see `ecobot.service`. The Git repo is checked out to `/opt/ecobot`, outside any home directory, and the unit runs it sandboxed as a dynamic user with its state in `/var/lib/ecobot` (it loads the environment file; the checkout's location is its `WorkingDirectory` and `ExecStart` lines).
 
 The unit file's header has the install steps and how to move an older install's state into `/var/lib/ecobot`.
 
