@@ -34,7 +34,7 @@ TELEGRAM_BOT_TOKEN=
 # the AI model, for questions that need it
 XAI_API_KEY=
 
-# your weather station
+# your weather station (optional)
 ECOWITT_API_KEY=
 ECOWITT_APP_KEY=
 
