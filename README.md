@@ -1,119 +1,36 @@
 # ecobot
 
-A Telegram bot for a personal Ecowitt weather station and AirGradient air-quality sensor.
-Ask it about the weather or air quality (text or charts); it also sends silent alerts to every
-chat it is in: rain starting/stopping, gusts over 40 km/h (with the last day's wind chart), UV index of 10 or more in two readings in a row (with the last day's UV chart), indoor/outdoor temperatures crossing by more than 1°C (held back for the cooldown, then announced if it still stands, with the last day's temperature chart),
-and unhealthy air (two readings in a row; with when it is safe again; both with the last day's particulates chart). Every alert carries one 🔔 button that opens up to two toggles for that alert type: Alert (on or off in this chat) and, while that is on and in a private chat, Sound (whether it makes a notification sound; alerts are silent unless you turn it on). Every toggle in the bot is a blue button while on and a plain one with its name struck through while off. `/alerts` has two buttons, 🔔 Alerts and (in a private chat) 🔊 Sound; each opens a list of alert types (rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes; Sound lists only those that are on) as toggles, blue while on and with the name struck through while off, while one is open its own button stays (press it to close the list) and the other is hidden until you do; `/alerts on|off` still subscribes or unsubscribes every type, and turning off every type one by one is the same as `/alerts off` (a type added later stays off too). A chat that blocks or removes the bot gets no more alerts but keeps its settings, which apply again when it next writes (or the bot is added back). `/usage` is the Help & Alerts button. In a group anyone can open `/alerts`, but only admins can change anything (`lib/alerts/menu.py`).
+A Telegram bot that answers questions about your Ecowitt weather station and AirGradient air-quality sensor, and sends you alerts when something changes.
 
-## Run
+- **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
+- **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period.
+- **Instant reports:** a "report" button shows weather, air quality, pollen and forecast in one message.
+- **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes, silent unless you want sound.
+- **Optional extras:** Melbourne pollen and thunderstorm asthma, a daily forecast, and a Tuya irrigation controller.
+- **Cheap to run:** most answers are worked out in code, and the AI model is called only when it is needed.
 
-Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so older Pythons will not run it):
+## Quick start
+
+You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
 
 ```
+git clone https://github.com/robdevops/ecobot && cd ecobot
 python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python ecobot.py          # with the variables below in the environment
-```
-Developing, the tests and the GitHub checks: see `DEVELOPMENT.md`.
 
-Under systemd see `ecobot.service`: the clone goes in `/opt/ecobot`, outside any home directory, and the unit runs it sandboxed as a dynamic user with its state in `/var/lib/ecobot` (it loads the environment file; the clone's location is its `WorkingDirectory` and `ExecStart` lines).
+export TELEGRAM_BOT_TOKEN=...      # from BotFather
+export XAI_API_KEY=...             # for questions that need the AI model
+export ECOWITT_API_KEY=... ECOWITT_APP_KEY=...                       # your weather station
+export AIRGRADIENT_API_TOKEN=... AIRGRADIENT_LOCATION_ID=...         # your air sensor (optional)
 
-In Docker, the `Dockerfile` builds a python:3.13-slim image (278 MB unpacked, 98 MB compressed):
-
-```
-docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .   # COMMIT: the commit the start-up log names
-docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v ecobot-data:/data ecobot
-```
-The state and caches go in `/data` (its `DATA_DIR`), here a named volume. A host folder instead (`-v /srv/ecobot:/data`) must be writable by the image's user, uid 10001 (`sudo chown 10001:10001 /srv/ecobot`). Docker reads the environment file's `KEY=value` lines as they are: a value in quotes keeps its quotes, where systemd would drop them.
-
-| Variable | Purpose |
-|---|---|
-| `TELEGRAM_BOT_TOKEN`, `XAI_API_KEY` | required |
-| `XAI_MODEL` (`grok-4.3`), `XAI_BASE_URL` (`https://api.x.ai/v1`) | model |
-| `TZ` | only without an Ecowitt station: the station names its own time zone, which is used (a `TZ` that disagrees is logged). Without either, the system's zone (what `/etc/localtime` links to); e.g. `Australia/Melbourne` |
-| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
-| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient |
-| `DATA_DIR` | optional: the folder that holds the bot's state (`bot_state.json`) and its SQLite caches (`ecowitt_cache.sqlite`, `airgradient_cache.sqlite`, `conditions_cache.sqlite`), kept apart from the code so a container can mount it (e.g. `/data`). A relative path is also accepted and is taken from the working directory; the folder is created if missing. Unset, a systemd service with `StateDirectory=` uses that folder (`STATE_DIRECTORY`, e.g. `/var/lib/ecobot`), else the app's own folder. Matplotlib's font cache goes in a `matplotlib` sub-folder (unless `MPLCONFIGDIR` is set). Default: the app's own folder, where the files have always been |
-| `AIRGRADIENT_DASHBOARD_URL` | optional "live chart" link under air-quality replies and alerts |
-| `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed; the others are East Gippsland, Mallee, North Central, North East, Northern Country, South West, West and South Gippsland and Wimmera, in any case; one the site doesn't have is warned about at start) |
-| `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
-| `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
-| `ADMIN_ONLY` | on by default: the bot answers nobody (private chats and groups alike) except the admins and creators of the groups it is in; anyone else gets "Sorry, only group admins can use this bot." when they address it (ordinary group talk is ignored). The one exception is `/alerts` in a group, which anyone may open (its buttons and `/alerts on|off` stay admin-only). `ADMIN_ONLY=off` answers everyone, as before. The admins are asked of Telegram and remembered for 10 minutes; a group counts once the bot is added to it or someone speaks there |
-| `ADMIN_CHAT_IDS` | optional, with `ADMIN_ONLY`: more ids allowed besides those admins (added to them, not instead of them), separated by commas or spaces. A user id (the same number as their private chat) lets someone in before the bot is in any group; a group id (negative) adds that group's admins and lets its anonymous admins (those who post "as the group") in |
-| `ALERT_COOLDOWN_MINUTES` | optional: the rain and temperature-crossing alerts: how long it must stay dry before "the rain has stopped" is sent, and the least time between alerts of the same kind (default 30, from 5 to 150). A change that comes inside the cooldown is held and announced when it ends, if the state still differs from the last one alerted; if it is back where it was, nothing is sent |
-| `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
-| `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
-| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET` | enables the irrigation controller (a Tuya smart irrigation timer, through the Tuya cloud API): an Irrigation button in private chats (it replaces Wind) with its status and buttons to water for 5 to 30 minutes or switch the valve off, pause for 24 to 72 hours (the Pause button becomes Unpause while paused), refresh, and an Alerts menu to turn the chat's irrigation battery and irrigation pause alerts on or off (or type irrigation, water, tap or sprinkler); a daily check at 18:00 that delays it 24 hours when more than 1 mm fell in the last 24 hours or Open-Meteo gives today or tomorrow a 50% or better chance of 1 mm (needs Ecowitt and `FORECAST=on` for each half; a forecast more than a day old doesn't count); on a second rainy day the bot's own delay is started again, and a delay you set is left alone; an "irrigation pause" alert when it does, and an "irrigation battery" alert below 5%. `TUYA_BASE_URL` (default `https://openapi.tuyaeu.com`, the EU data centre) and `IRRIGATION_CHECK_HOUR` (default `18`) are optional |
-| `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
-| `TELEGRAM_PRELOAD_CHAT` | optional: a chat id (negative for a group or channel) the bot silently uploads charts to ahead of need. With it set, each chart sent with period buttons has its other periods drawn and uploaded there in the background, each on its own the moment it is drawn, starting as soon as the chart is sent and whatever else is being answered, so pressing a period button edits the message with Telegram's copy and uploads nothing. A chart uploaded this way is used for 30 minutes, then drawn afresh. The bot must be able to post in that chat; the uploaded messages are left there. If Telegram refuses an upload (the bot can't post there) none is tried again until a restart; a flood limit or a timeout only skips that photo. Unset: off |
-| `ANTISPIKE_REQUIRE_CONSECUTIVE` | optional: how many readings in a row a rise of the particles (PM1, PM2.5, PM10) needs to count as the air rather than a glitch of the sensor. Default `2`: a single-reading spike (at least 2.5 times, and 5 µg/m³ above, the readings either side) is left out of PM charts and of every air figure (highs, lows, averages, days over a limit), and the unhealthy-air alert counts a check only when the sensor's last 2 readings are all over the mask level. `3` also drops two-reading spikes, and so on; `1` or `off` turns the rule off. The live "air now" reading and the "safe again" check are unchanged |
-| `LOG_WIDTH` | optional: the most characters of a log line, cut with an ellipsis (…); `0` cuts none. Default 71. Every log line obeys it, whatever its level (a warning is printed as `WARN`); a request, chat message, reply or alert is also put on one line |
-| `LOG_LEVEL` | optional: `DEBUG`, `INFO` (default), `WARNING` or `ERROR` (any other value keeps `INFO`, with a warning). `DEBUG` adds the bot's own debug lines (the chart timings, charts it couldn't draw ahead); the libraries stay at their usual level. |
-
-An on/off setting takes `on`, `yes`, `true` or `1`, and `off`, `no`, `false` or `0`; any other value keeps its default (and the log says so), so a typo can't switch `ADMIN_ONLY` off. A setting left blank is its default.
-
-## Layout
-
-```
-ecobot.py            wiring and lifecycle
-lib/config.py           settings
-lib/logs.py             how log lines look: the module that spoke, and quoted requests and chat messages cut to LOG_WIDTH
-lib/bot.py              Telegram handlers and replies; every button press comes in through one entry point that checks it first
-lib/admins.py           who may use the bot with ADMIN_ONLY: the admins of the groups it is in, plus ADMIN_CHAT_IDS
-lib/llm.py, prompt.py   tool-calling loop; system prompt
-lib/intent.py           intent.read(text) -> one Reading: effort, needs data, fast path, chart asks, period hints
-lib/tools.py, warm.py   tool registry and the per-question Turn; keep-warm helper shared by both sources
-lib/series.py           the weather readings a chart can plot (one table)
-lib/lines.py            the one rule that turns readings into a chart line (raw, bucketed, daily band, smoothing)
-lib/rain.py             rain per slot, spells and bars from the daily total
-lib/analysis/           pairs (rain vs a reading, rain vs air quality), scan (air quality vs everything)
-lib/compose.py          plot_chart / air_link / air_scan: any series on one time axis
-lib/specs.py            what a chart is (typed: Chart > Panel > Line/Bars/Shares), validated when built; stack() titles a stacked chart
-lib/panels.py           how a reading becomes a panel (title, unit, colour key, zones): every chart producer uses it
-lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading
-lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
-lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
-                        days (rank/count days), rain (rain times and amounts for the alerts), station, nightly archive
-lib/airgradient/        metrics, store (SQLite), source
-lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation (battery and rain delay)
-lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)
-lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
-tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images
-scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), eval_prompts.py, show_request.py (exactly what is
-                        sent to the model for a question), check_rain.py (are rain totals trustworthy?), migrate_cache.py (one-off: converts an Ecowitt cache from before the series layout),
-                        dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
+.venv/bin/python ecobot.py
 ```
 
-A design for tappable commands and buttons is in `TELEGRAM_UX.md` (not built yet).
+Then open your bot in Telegram and send `report`. Each sensor switches on when its variables are set; use either or both.
 
-Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.
+## More
 
-## The pollen and forecast sources
-Both are off by default. They are websites, not APIs (the pollen page is parsed), so they are fetched gently: only between 6 am and 6 pm local time, pollen every 30 minutes with a conditional request (a 304 costs the site almost nothing) and the forecast every 15 minutes (a failure is logged), and questions use the last fetch. The forecast's rain figure is the Bureau-style "chance of at least 1 mm": the share of Open-Meteo's ECMWF ensemble members (51) that put 1 mm or more on the day, to the nearest 5% (a second request to `ensemble-api.open-meteo.com`; if it is down, Open-Meteo's own figure, the chance of more than 0.1 mm in the wettest hour, is shown as "chance of rain"). The report never fetches them: it always uses the cache. When a forecast day that was sent to a chat (in a report or an answer) is later revised substantially (rain to dry or dry to rain, or the highest temperature more than 2 degrees different), that chat is told, once per revision (`lib/alerts/forecast.py`). What they returned is kept in `conditions_cache.sqlite` (one row per distinct result), so a restart, even at night, starts from the last fetch. One fetch is made at start (or at the first question) when nothing is cached, even at night. `python scripts/conditions.py --lat .. --lon ..` fetches both once and prints what the report would show: run it before switching them on. Grass pollen and the thunderstorm asthma forecast both run October to December, so the pollen source only fetches, shows (in the report or an answer) and alerts in those months; outside them it makes no requests (not even at start), the report has no Pollen & asthma block, and a pollen question is told they only run October to December.
-
-## How it stays fast and cheap
-
-- Private chats also get a persistent button keyboard (`lib/templates.py`): tapping one sends its label as a message (a 3x3 grid: Help & Alerts = what the bot can do, then the alert settings, Status, Rain; Weather = every reading, a panel each, Temperature, Humidity; Air Quality = every air metric, Particulates = PM1, PM2.5 and PM10 on one chart, Wind, which the Irrigation button replaces when the controller is configured; every chart button is the last day). `/keyboard` shows it, `/keyboard off` hides it. When the buttons change, the bot says "Buttons updated." with the new keyboard to each private chat at its next start, and any chat missed gets it with its next reply (the bot remembers which version each chat has; a chat that hid it keeps it hidden). Typed "weather now" shows every reading the station has. Weather lines of 31 days or fewer are drawn with no shaded min–max range (except wind's gusts; AirGradient charts keep theirs); longer periods are daily with the range. Pressure, CO₂, VOC, NOx, solar, wind and VPD also show their latest value beside the line (not when it is zero). A single-panel chart's caption is one line ("Temperature, since Tue 7 Jul 2026" when the period runs up to today, else "Temperature, Wed 24 – Tue 30 Sep 2026"); a chart of several panels has its title and then its time range on a second line; any answer text is a message of its own, sent just before the chart. A single chart carries period buttons under it (1D, 7D, 1M, 3M and 1Y, the chart's own marked with ●; pressing it does nothing): pressing one redraws that chart in place for the new period (`lib/periods.py`, `Bot.on_period_button`). The bot keeps the question behind its last 300 charts in its state file, so the buttons keep working across restarts; an older chart answers "out of date, please ask again". A reply with period buttons doesn't carry the persistent keyboard; that follows on the next reply. A group of several charts has no buttons. Charts drawn in the last 10 minutes are kept (the newest 60), so toggling between periods brings a chart back instantly without a new question. Any reading or "weather" with a period of two days or more ("humidity 7d", "weather 30d", "particulates 7d") is a chart, sent with no text.
-- In private chats the bot shows Telegram's "Thinking..." draft (sendMessageDraft, re-sent every 20 s, as drafts expire after 30) and streams the answer into it before sending the real message; groups show "typing...". A "message generation stopped" update is only logged.
-- The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
-- Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
-  model is called once, at the end, just to word the answer.
-- Recent readings are kept in memory, refreshed every minute (the weather station) and every 4 minutes (the air sensor); a question that may need them starts a refresh as it arrives (a chart made in code doesn't: it reads just what it needs). A question never waits for a refresh in flight when the cache and memory already hold what it needs, and its own Ecowitt requests go before the background ones.
-- The chart buttons' charts are drawn ahead every 5 minutes, one at a time and never while a question is being answered: a press is sent the one drawn in the last 5½ minutes at once (its write-up kept in the chat's memory, as for one drawn on the spot); an alert's chart is still drawn when it goes out, so it shows the reading the alert is about. A chart is uploaded once: sending it again (to the next chat an alert goes to, toggling back to a period drawn lately, the next press of a button) uses Telegram's copy.
-- Each chart reply logs (at DEBUG) where its time went: `Chart ms: data 12, calc 6, draw 112, PNG 41 (22 KB), send 812`, or `Chart ms: drawn 40s ago, send 210 (Telegram's copy)` for one drawn ahead.
-- The whole history of both sensors is kept in SQLite (`ecowitt_cache.sqlite`,
-  `airgradient_cache.sqlite`): a background archive copies every Ecowitt cycle (5-minute, 30-minute,
-  4-hour, daily) before Ecowitt expires it, and backfills AirGradient day by day to where the sensor's
-  data starts. Questions only go to the APIs for data the cache is missing.
-
-## The report
-"report" (and "status", "sitrep") and "weather now" are written in code, with no model call (`lib/report.py`): the bot fetches the tools' results together and lays them out, so they are quick and always the same. Sun, UV and wind are left out when zero (night, calm). The report is: Weather station, Air quality, and Pollen & asthma and Forecast when those sources are on (pollen and forecast always come from the cache). The report carries a 🔄 Refresh button that reads everything again and redraws it in the same message (`lib/report_menu.py`).
-
-A plain chart request ("rain chart 7d", "plot temperature and humidity", "air quality 30d", the chart buttons) is also drawn and written up in code, with no model call (the chart goes out with just its title as the caption; the write-up is kept in the chat's memory, not sent) (`intent.weather_chart`, `report.chart_caption`): the period, then low and high per reading (the average first if one was asked), the peak and rating for air quality, and for a rain chart the least and most rain and whether more is expected. Anything that asks for correlation, analysis, a forecast, thinking or a description, or compares readings or names a particular date or time, still goes to the model.
-
-Other plain lookups are answered in code too, from the one tool result (`intent.plain_lookup`, `report.lookup`): a single reading now ("how hot is it", "is it raining", "uv"), the air ("how's the air", "pm10"), pollen, the plain forecast ("forecast", "7 day forecast"), the highs, lows or average of a short period ("hottest today", "average temp yesterday", "highest humidity yesterday") and what the bot can do ("what can you do"). Any question with forecast, correlation, thinking, analysis or description words, a comparison, or anything beyond the reading itself goes to the model; so does a lookup whose result can't be used.
-
-`weather_days` can count and rank days by any reading (a day's highest or lowest humidity, pressure, UV, solar, wind, dew point and so on), from the cache, so "how many days was UV 9 or more" is one cheap call (`count_only` returns just the counts; `group_by` month or year adds a count for each and draws them as a bar chart, a number above every bar; `stat` and `of` give a total, average, highest or lowest of any reading per month or year the same way, e.g. rain per month or the hottest day each year). A plain "rain by month for 2 years" or "average temperature per year" (one reading, a figure for each month or year) is worked out in code the same way (`weather_days`/`air_days` with `stat`, `of`, `group_by`): one bar for each month or year, a one-line caption with the figure for the whole period. A rain chart reaching back past the 30-minute readings (about a year) uses the daily records for the older days, and one asked for by month or year is monthly or yearly bars, even if the model answers it. A plain "days over UVI 10 by year" or "count days over PM2.5 of 90 per year" (one reading against one limit, optionally per year or month, over the whole record unless a period is named) is worked out in code without the model, so it always gives the same bar chart; if the model is asked instead and leaves out the by-year or by-month grouping the words ask for, it is added. `air_days` does the same for the air sensor's metrics (days PM2.5 passed 25, the worst day each month), from the stored readings. A question that pulls in a lot of data is not refused: when the tool results of one question pass twice what a 500-point query returns (about 10,000 tokens, roughly a cent and a quarter of input at Grok 4.3's price, and it rides on every later step), the bot sends a one-line heads-up to the chat before the model is sent them, then carries on without waiting for a reply (`lib/timeutil.py` `WARN_TOKENS`).
-
-What still goes to the model is kept small (and, for "will it rain?" and a described today or yesterday, the readings it would fetch first are fetched ahead of it, so it answers in one call; each chat's calls carry one `x-grok-conv-id` so the provider's prompt cache is reused; a chat's older answers are cut to their first lines, the last one kept whole; the `weather_days`/`air_days` definitions list their fields once): the system prompt has a core that is the same on every call (so the provider can cache it) and adds guidance only for the topics a question touches (`intent.topics`: air, days, correlation, outlook, wind, describing a day, the bot itself); every call sends the same tool list in the same order (so the provider can cache the tools and the core prompt together; a changing list cost cache hits); a chat keeps its last 16 messages; `weather_history` leaves out humidity when only temperature was named (and the reverse) and, for periods over a week, sends only the days of the records unless day by day was asked for. Looking ahead, analysis and describing a day think a little (low), correlation and "think" more (medium), everything else not at all.
-
-The system prompt starts with what never changes (the model provider caches the start of a prompt) and ends with the date ranges and the time.
+- [What the bot does](docs/features.md): questions, charts, reports, alerts and who can use it
+- [Configuration](docs/configuration.md): every setting
+- [Running it for real](docs/deployment.md): systemd and Docker
+- [How it works](docs/how-it-works.md): code layout and design notes
+- [Developing](DEVELOPMENT.md): tests and the GitHub checks

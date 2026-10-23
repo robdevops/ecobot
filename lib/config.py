@@ -58,7 +58,7 @@ def _required(value: str, default: str, name: str) -> str:
     """A setting the bot can't run without; it stops with a message naming it when it is unset or blank."""
     if value:
         return value
-    raise SystemExit(f"{name} is not set: the bot can't start without it (see the README)")
+    raise SystemExit(f"{name} is not set: the bot can't start without it (see docs/configuration.md)")
 
 
 def _url(value: str, default: str, name: str) -> str:

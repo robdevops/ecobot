@@ -1,6 +1,6 @@
 # Developing
 
-How to test the bot and what the GitHub checks do. (Running it is in `README.md`.)
+How to test the bot and what the GitHub checks do. (Running it is in `README.md` and `docs/deployment.md`.)
 
 ## Tests
 ```
