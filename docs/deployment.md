@@ -15,7 +15,7 @@ python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ## systemd
 
-Under systemd see `ecobot.service`. The Git repo is checked out to `/opt/ecobot`, outside any home directory, and the unit runs it sandboxed as a dynamic user with its state in `/var/lib/ecobot` (it loads the environment file; the checkout's location is its `WorkingDirectory` and `ExecStart` lines).
+Under systemd see `ecobot.service`. The Git repo is checked out to `/opt/ecobot`, outside any home directory, and the unit runs it sandboxed as the `ecobot` user (uid 10001, the same as the Docker image's) with its state in `/var/lib/ecobot` (it loads the environment file; the checkout's location is its `WorkingDirectory` and `ExecStart` lines).
 
 The unit file's header has the install steps and how to move an older install's state into `/var/lib/ecobot`.
 
@@ -25,6 +25,6 @@ In Docker, the `Dockerfile` builds a python:3.13-slim image (278 MB unpacked, 98
 
 ```
 docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .   # COMMIT: the commit the start-up log names
-docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v ecobot-data:/data ecobot
+docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/ecobot:/data ecobot
 ```
-The state and caches go in `/data` (its `DATA_DIR`), here a named volume. A host folder instead (`-v /srv/ecobot:/data`) must be writable by the image's user, uid 10001 (`sudo chown 10001:10001 /srv/ecobot`). Docker reads the environment file's `KEY=value` lines as they are: a value in quotes keeps its quotes, where systemd would drop them.
+The state and caches go in `/data` (its `DATA_DIR`), here the same `/var/lib/ecobot` the systemd unit uses, which belongs to uid 10001 in both, so you can switch between systemd and Docker with nothing to migrate (run only one at a time). If the folder does not exist yet, create it with `sudo install -d -o 10001 -g 10001 /var/lib/ecobot`; any other host folder must be writable by uid 10001 too. Docker reads the environment file's `KEY=value` lines as they are: a value in quotes keeps its quotes, where systemd would drop them.
