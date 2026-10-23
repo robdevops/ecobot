@@ -17,10 +17,11 @@ You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFa
 git clone https://github.com/robdevops/ecobot && cd ecobot
 python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
-sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env      # a private file for your keys
-sudoedit /etc/ecobot.env                                           # add the lines below
+# a private file for your keys
+sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
+sudoedit /etc/ecobot.env
 
-set -a; . <(sudo cat /etc/ecobot.env); set +a                      # load it into this shell
+set -a; . <(sudo cat /etc/ecobot.env); set +a
 .venv/bin/python ecobot.py
 ```
 
@@ -28,15 +29,18 @@ set -a; . <(sudo cat /etc/ecobot.env); set +a                      # load it int
 
 ```
 # Telegram: the token from BotFather
-TELEGRAM_BOT_TOKEN=...
+TELEGRAM_BOT_TOKEN=
+
 # the AI model, for questions that need it
-XAI_API_KEY=...
+XAI_API_KEY=
+
 # your weather station
-ECOWITT_API_KEY=...
-ECOWITT_APP_KEY=...
+ECOWITT_API_KEY=
+ECOWITT_APP_KEY=
+
 # your air sensor (optional)
-AIRGRADIENT_API_TOKEN=...
-AIRGRADIENT_LOCATION_ID=...
+AIRGRADIENT_API_TOKEN=
+AIRGRADIENT_LOCATION_ID=
 ```
 
 Put a comment on a line of its own: systemd would take text after a value as part of it.
