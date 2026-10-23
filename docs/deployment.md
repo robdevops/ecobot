@@ -25,6 +25,12 @@ In Docker, the `Dockerfile` builds a python:3.13-slim image (278 MB unpacked, 98
 
 ```
 docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .   # COMMIT: the commit the start-up log names
-docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v ecobot-data:/data ecobot
+docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data ecobot
 ```
-The state and caches go in `/data` (its `DATA_DIR`), here a named volume. A host folder instead (`-v /srv/ecobot:/data`) must be writable by the image's user, uid 10001 (`sudo chown 10001:10001 /srv/ecobot`). Docker reads the environment file's `KEY=value` lines as they are: a value in quotes keeps its quotes, where systemd would drop them.
+The state and caches go in `/data` (its `DATA_DIR`), here the folder the systemd unit keeps its state in (`/var/lib/private/ecobot`, which `/var/lib/ecobot` links to), so the two share one set of data. The image runs as uid 10001, so before every `docker run` give it the folder:
+
+```
+sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
+```
+
+Run only one of systemd and Docker at a time. Starting the service again takes the folder back for its own user, and the `chown` above hands it to Docker. Any other host folder instead must be writable by uid 10001. Docker reads the environment file's `KEY=value` lines as they are: a value in quotes keeps its quotes, where systemd would drop them.
