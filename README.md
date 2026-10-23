@@ -42,7 +42,7 @@ AIRGRADIENT_API_TOKEN=
 AIRGRADIENT_LOCATION_ID=
 ```
 
-Then start it:
+### Systemd method
 
 ```
 sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
