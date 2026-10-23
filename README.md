@@ -17,16 +17,14 @@ You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFa
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
 sudo python3.13 -m venv /opt/ecobot/.venv
 sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
-
-# a private file for your keys
-sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
-sudoedit /etc/ecobot.env
-
-sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
-sudo systemctl enable --now ecobot
 ```
 
-`/etc/ecobot.env` holds one `NAME=value` per line:
+Create a private file for your keys and fill it in:
+
+```
+sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
+sudoedit /etc/ecobot.env
+```
 
 ```
 # Telegram: the token from BotFather
@@ -42,6 +40,13 @@ ECOWITT_APP_KEY=
 # your air sensor (optional)
 AIRGRADIENT_API_TOKEN=
 AIRGRADIENT_LOCATION_ID=
+```
+
+Then start it:
+
+```
+sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
+sudo systemctl enable --now ecobot
 ```
 
 Then open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl -u ecobot -f` shows why. To run it without systemd, or in Docker, see [deployment](docs/deployment.md).
