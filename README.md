@@ -11,14 +11,6 @@ A Telegram bot that answers questions about your Ecowitt weather station and Air
 
 ## Install
 
-You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
-
-```
-sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
-sudo python3.13 -m venv /opt/ecobot/.venv
-sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
-```
-
 Create a private file for your keys and fill it in:
 
 ```
@@ -44,6 +36,16 @@ AIRGRADIENT_LOCATION_ID=
 
 ### Systemd method
 
+You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
+
+```
+sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
+sudo python3.13 -m venv /opt/ecobot/.venv
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+```
+
+Then start it:
+
 ```
 sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
 sudo systemctl enable --now ecobot
@@ -61,6 +63,7 @@ The `Dockerfile` builds a small python:3.13-slim image (98 MB compressed). It sh
 sudo systemctl stop ecobot
 sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
 
+sudo git clone https://github.com/robdevops/ecobot /opt/ecobot      # skip if you did the systemd method
 cd /opt/ecobot
 sudo docker build --build-arg COMMIT=$(sudo git rev-parse HEAD) -t ecobot .
 sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data \
