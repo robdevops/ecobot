@@ -49,12 +49,39 @@ sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
 sudo systemctl enable --now ecobot
 ```
 
-Then open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl -u ecobot -f` shows why. To run it without systemd, or in Docker, see [deployment](docs/deployment.md).
+Open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl -u ecobot -f` shows why.
+
+The unit runs the bot sandboxed as a dynamic user, with its state and caches in `/var/lib/ecobot` (a link to `/var/lib/private/ecobot`). The header of `ecobot.service` explains the install and how to move an older install's data there.
+
+### In Docker instead
+
+The `Dockerfile` builds a small python:3.13-slim image (98 MB compressed). It shares the service's data folder, so you can switch between the two with nothing to migrate, as long as only one runs at a time:
+
+```
+sudo systemctl stop ecobot
+sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
+
+cd /opt/ecobot
+sudo docker build --build-arg COMMIT=$(sudo git rev-parse HEAD) -t ecobot .
+sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data ecobot
+```
+
+The image runs as uid 10001, hence the `chown`; the folder is `/data` inside the container (its `DATA_DIR`). Docker reads the env file as it is, so a value in quotes keeps its quotes, where systemd drops them. To go back: `sudo docker rm -f ecobot && sudo systemctl start ecobot`, which gives the folder back to the service.
+
+### In the foreground
+
+To watch it run, with the service stopped:
+
+```
+sudo systemctl stop ecobot
+sudo sh -c 'set -a; . /etc/ecobot.env; set +a; cd /opt/ecobot && DATA_DIR=/var/lib/private/ecobot exec .venv/bin/python ecobot.py'
+```
+
+Ctrl-C stops it; `sudo systemctl start ecobot` brings the service back.
 
 ## More
 
 - [What the bot does](docs/features.md): questions, charts, reports, alerts and who can use it
 - [Configuration](docs/configuration.md): every setting
-- [Running it for real](docs/deployment.md): systemd and Docker
 - [How it works](docs/how-it-works.md): code layout and design notes
 - [Developing](DEVELOPMENT.md): tests and the GitHub checks
