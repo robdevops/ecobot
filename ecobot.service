@@ -1,7 +1,9 @@
 # Install as /etc/systemd/system/ecobot.service, with the code outside every home directory:
 #   sudo git clone <repo> /opt/ecobot && cd /opt/ecobot
 #   sudo python3.13 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt     # Python 3.13.5 (.python-version)
-# The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them.
+#   sudo .venv/bin/python -m compileall -q ecobot.py lib                                # again after every git pull
+# The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them,
+# so it cannot save bytecode (PYTHONDONTWRITEBYTECODE below); the compileall line saves it for the service, which reads it.
 # Any other place needs only the WorkingDirectory and ExecStart lines changed.
 # The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
 # TELEGRAM_BOT_TOKEN, ...).
