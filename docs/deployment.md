@@ -4,6 +4,8 @@ Three ways to run the bot, from simplest to most locked down. Settings are in [c
 
 ## By hand
 
+Handy for trying it out. In a clone you own (not `/opt/ecobot`, which is root's) with `/etc/ecobot.env` loaded as in [configuration.md](configuration.md).
+
 Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so older Pythons will not run it):
 
 ```

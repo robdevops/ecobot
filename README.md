@@ -14,15 +14,16 @@ A Telegram bot that answers questions about your Ecowitt weather station and Air
 You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
 
 ```
-git clone https://github.com/robdevops/ecobot && cd ecobot
-python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
+sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
+sudo python3.13 -m venv /opt/ecobot/.venv
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
 
 # a private file for your keys
 sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
 sudoedit /etc/ecobot.env
 
-set -a; . <(sudo cat /etc/ecobot.env); set +a
-.venv/bin/python ecobot.py
+sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
+sudo systemctl enable --now ecobot
 ```
 
 `/etc/ecobot.env` holds one `NAME=value` per line:
@@ -43,7 +44,7 @@ AIRGRADIENT_API_TOKEN=
 AIRGRADIENT_LOCATION_ID=
 ```
 
-Then open your bot in Telegram and send `/report`. The same file is what systemd and Docker read when you run the bot for real, so there is nothing to redo ([deployment](docs/deployment.md)).
+Then open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl -u ecobot -f` shows why. To run it without systemd, or in Docker, see [deployment](docs/deployment.md).
 
 ## More
 
