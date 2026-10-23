@@ -53,7 +53,7 @@ Open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl 
 
 The unit runs the bot sandboxed as a dynamic user, with its state and caches in `/var/lib/private/ecobot`. The header of `ecobot.service` explains the install and how to move an older install's data there.
 
-### In Docker instead
+### Docker method
 
 The `Dockerfile` builds a small python:3.13-slim image (98 MB compressed). It shares the service's data folder, so you can switch between the two with nothing to migrate, as long as only one runs at a time:
 
@@ -68,7 +68,7 @@ sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot
 
 The image runs as uid 10001, hence the `chown`; the folder is `/data` inside the container (its `DATA_DIR`). Docker reads the env file as it is, so a value in quotes keeps its quotes, where systemd drops them. To go back: `sudo docker rm -f ecobot && sudo systemctl start ecobot`, which gives the folder back to the service.
 
-### In the foreground
+### Foreground method
 
 To watch it run, with the service stopped:
 
