@@ -14,7 +14,6 @@ A Telegram bot that answers questions about your Ecowitt weather station and Air
 You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
 
 ```
-sudo useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin ecobot
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
 sudo python3.13 -m venv /opt/ecobot/.venv
 sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
