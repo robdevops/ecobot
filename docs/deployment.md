@@ -4,14 +4,14 @@ Three ways to run the bot, from simplest to most locked down. Settings are in [c
 
 ## By hand
 
-Handy for trying it out. In a clone you own (not `/opt/ecobot`, which is root's) with `/etc/ecobot.env` loaded as in [configuration.md](configuration.md).
-
-Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so older Pythons will not run it):
+For trying it out or watching the log. Use the install from the quick start (`/opt/ecobot`, its `.venv` and `/etc/ecobot.env`), with the service stopped, so there is only one copy of the code and of the data:
 
 ```
-python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python ecobot.py          # with /etc/ecobot.env loaded, see configuration.md
+sudo systemctl stop ecobot
+sudo sh -c 'set -a; . /etc/ecobot.env; set +a; cd /opt/ecobot && DATA_DIR=/var/lib/private/ecobot exec .venv/bin/python ecobot.py'
 ```
+
+Python 3.13.5 (see `.python-version`; the code uses 3.12 and 3.13 features, so older Pythons will not run it). Ctrl-C stops it, and `sudo systemctl start ecobot` hands the data folder back to the service.
 
 ## systemd
 
