@@ -51,7 +51,7 @@ sudo systemctl enable --now ecobot
 
 Open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl -u ecobot -f` shows why.
 
-The unit runs the bot sandboxed as a dynamic user, with its state and caches in `/var/lib/ecobot` (a link to `/var/lib/private/ecobot`). The header of `ecobot.service` explains the install and how to move an older install's data there.
+The unit runs the bot sandboxed as a dynamic user, with its state and caches in `/var/lib/private/ecobot`. The header of `ecobot.service` explains the install and how to move an older install's data there.
 
 ### In Docker instead
 
