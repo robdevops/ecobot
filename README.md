@@ -49,7 +49,7 @@ sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
 sudo systemctl enable --now ecobot
 ```
 
-Open your bot in Telegram and send `/report`. If it doesn't answer, `journalctl -u ecobot -f` shows why.
+Open your bot in Telegram and send `/report`. If it doesn't answer, [the log](#logging) shows why.
 
 The unit runs the bot sandboxed as a dynamic user, with its state and caches in `/var/lib/private/ecobot`. The header of `ecobot.service` explains the install and how to move an older install's data there.
 
@@ -63,21 +63,20 @@ sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/priv
 
 cd /opt/ecobot
 sudo docker build --build-arg COMMIT=$(sudo git rev-parse HEAD) -t ecobot .
-sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data ecobot
+sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data \
+  --log-driver $(test -S /run/systemd/journal/socket && echo journald || echo local) ecobot
 ```
 
 The image runs as uid 10001, hence the `chown`; the folder is `/data` inside the container (its `DATA_DIR`). Docker reads the env file as it is, so a value in quotes keeps its quotes, where systemd drops them. To go back: `sudo docker rm -f ecobot && sudo systemctl start ecobot`, which gives the folder back to the service.
 
-### Foreground method
-
-To watch it run, with the service stopped:
+## Logging
 
 ```
-sudo systemctl stop ecobot
-sudo sh -c 'set -a; . /etc/ecobot.env; set +a; cd /opt/ecobot && DATA_DIR=/var/lib/private/ecobot exec .venv/bin/python ecobot.py'
+journalctl -fu ecobot     # systemd
+docker logs -f ecobot     # Docker
 ```
 
-Ctrl-C stops it; `sudo systemctl start ecobot` brings the service back.
+Under Docker the log goes to the journal when there is one (`journalctl -f CONTAINER_NAME=ecobot` reads it too), else to Docker's `local` driver, which rotates its files on its own (20 MB, 5 files).
 
 ## More
 
