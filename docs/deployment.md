@@ -27,7 +27,7 @@ In Docker, the `Dockerfile` builds a python:3.13-slim image (278 MB unpacked, 98
 docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .   # COMMIT: the commit the start-up log names
 docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data ecobot
 ```
-The state and caches go in `/data` (its `DATA_DIR`), here the folder the systemd unit keeps its state in (`/var/lib/private/ecobot`, which `/var/lib/ecobot` links to), so the two share one set of data. The image runs as uid 10001, so before every `docker run` give it the folder:
+The state and caches are kept in `/var/lib/private/ecobot` on the host, the folder the systemd unit uses too (`/var/lib/ecobot` links to it), so the two share one set of data. It is mounted at `/data` inside the container, which is the image's `DATA_DIR`. The image runs as uid 10001, so before every `docker run` give it the folder:
 
 ```
 sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
