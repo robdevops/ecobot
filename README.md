@@ -9,7 +9,7 @@ A Telegram bot that answers questions about your Ecowitt weather station and Air
 - **Optional extras:** Melbourne pollen and thunderstorm asthma, a daily forecast, and a Tuya irrigation controller.
 - **Cheap to run:** most answers are worked out in code, and the AI model is called only when it is needed.
 
-## Quick start
+## Install
 
 You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
 
