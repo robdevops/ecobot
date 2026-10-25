@@ -265,8 +265,8 @@ def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatc
     monkeypatch.setenv("ECOWITT_API_KEY", "a")
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("ALERT_COOLDOWN_MINUTES", raising=False)
-    assert Config.from_env().alert_cooldown_minutes == 30
-    for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 30)):   # 0 is under 5 like 1 is
+    assert Config.from_env().alert_cooldown_minutes == 60
+    for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 60)):   # 0 is under 5 like 1 is
         monkeypatch.setenv("ALERT_COOLDOWN_MINUTES", value)
         assert Config.from_env().alert_cooldown_minutes == want, value
 
