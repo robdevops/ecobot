@@ -40,6 +40,7 @@ from .logs import QUOTES, fit
 log = logging.getLogger(__name__)
 
 TG_LIMIT = 4000
+CAPTION_LIMIT = 1024   # what Telegram lets a photo's caption hold
 MAX_CHARTS = 3
 RETRY_SECONDS = 60           # the second try, one reasoning step lower, after a question timed out
 PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down) is not answered: its moment has passed
@@ -237,8 +238,8 @@ class Delivered(NamedTuple):
 
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
                   titles: list[str] | None = None, period_row=None, bold_headings: bool = False) -> Delivered:
-    """Send the answer with any charts. A chart carries only its title as its caption; any answer text is its own message,
-    sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
+    """Send the answer with any charts. One chart and an answer that fits a caption (CAPTION_LIMIT) go as one message, the picture with its
+    title and the answer; otherwise a chart carries only its title as its caption and any answer text is its own message, sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
     the last text, or on the single photo when there is no text (a group of photos can't carry one). period_row (the period
     buttons) rides on a single photo instead, and then the keyboard waits. bold_headings: the text is the report (or a pollen /
     forecast lookup), whose heading names are set in bold."""
@@ -247,6 +248,17 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
         text = strip_chart_talk(text)
     titles = titles or []
     carried = False
+    if text and len(photos) == 1:   # one chart and an answer that fits its caption: one message, the picture with its title and the answer
+        title = titles[0] if titles else ""
+        body, ents = with_link(f"{title}\n\n{text}" if title else text, link)
+        if len(body) <= CAPTION_LIMIT:
+            buttons = period_row or markup
+            try:
+                sent = await msg.reply_photo(photos[0], caption=body, caption_entities=ents or None,
+                                             **({"reply_markup": buttons} if buttons else {}))
+                return Delivered(bool(markup) and not period_row, sent)
+            except TelegramError:
+                log.exception("Couldn't send the chart with its answer; sending them apart")
     if text:
         chunks = split_message(text)
         for i, chunk in enumerate(chunks):

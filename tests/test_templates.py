@@ -123,7 +123,10 @@ async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tm
     assert (await deliver(msg, "", [b"p"], markup=markup, titles=["T"])).carried is True and msg.sent == [("photo", msg.sent[0][1])]
     assert msg.sent[0][1]["reply_markup"] is markup and msg.sent[0][1]["caption"] == "T"
     msg = Replies()
-    assert (await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"])).carried is True       # text first, the photo carries it
+    assert (await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"])).carried is True       # one message: the photo carries the answer and the keyboard
+    assert [k for k, _ in msg.sent] == ["photo"] and msg.sent[0][1]["reply_markup"] is markup and msg.sent[0][1]["caption"] == "T\n\nanswer"
+    msg = Replies()
+    assert (await deliver(msg, "x" * 1100, [b"p"], markup=markup, titles=["T"])).carried is True    # too long for a caption: text first, the photo carries it
     assert [k for k, _ in msg.sent] == ["text", "photo"] and msg.sent[1][1]["reply_markup"] is markup and "reply_markup" not in msg.sent[0][1]
     msg = Replies()
     assert (await deliver(msg, "", [b"p", b"q"], markup=markup, titles=["T", "U"])).carried is False       # a group of photos can't carry it

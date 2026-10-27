@@ -185,7 +185,7 @@ async def test_a_generation_stopped_update_is_logged(alert_state, caplog):
     assert "generation stopped" in caplog.text and "message_generation_stopped" in caplog.text
 
 
-async def test_a_chart_carries_only_its_title_and_any_answer_text_is_a_message_of_its_own():
+async def test_one_chart_and_a_short_answer_are_one_message_otherwise_the_answer_is_a_message_of_its_own():
     from lib import bot as botmod
     sent = []
 
@@ -194,12 +194,21 @@ async def test_a_chart_carries_only_its_title_and_any_answer_text_is_a_message_o
 
     async def reply_text(body, **kw):
         sent.append(("text", body))
-    msg = NS(reply_photo=reply_photo, reply_text=reply_text)
+
+    async def reply_media_group(media, **kw):
+        sent.append(("group", len(media)))
+    msg = NS(reply_photo=reply_photo, reply_text=reply_text, reply_media_group=reply_media_group)
     await botmod.deliver(msg, "", [b"png"], link=("live chart", "https://x"), titles=["Humidity"])
     assert sent == [("photo", "Humidity")]                    # no text, no footer: just the title
     sent.clear()
     await botmod.deliver(msg, "Fri was the hottest day.", [b"png"], titles=["Temperature"])
-    assert sent == [("text", "Fri was the hottest day."), ("photo", "Temperature")]
+    assert sent == [("photo", "Temperature\n\nFri was the hottest day.")]              # one message: the picture with its title and the answer
+    sent.clear()
+    await botmod.deliver(msg, "x" * 1100, [b"png"], titles=["Temperature"])
+    assert [kind for kind, _ in sent] == ["text", "photo"] and sent[1][1] == "Temperature"   # too long for a caption: apart, as before
+    sent.clear()
+    await botmod.deliver(msg, "Both are up.", [b"a", b"b"], titles=["A", "B"])             # several charts: the answer first
+    assert sent == [("text", "Both are up."), ("group", 2)]
 
 
 async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_model_is_not_asked(alert_state):
