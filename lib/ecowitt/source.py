@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, UTC
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
+from ..lines import RANGE_KEEP_DAYS
 from ..sources import Source
 from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
@@ -21,6 +22,7 @@ from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS
 from .dashboard import dashboard
 from .glance import glance
 from .fetch import Fetcher, series_in
+from .homeassistant import HomeAssistant
 from .live import LiveRanges
 from ..series import READING_GROUPS, WEATHER, find
 from .query import HistoryQuery, chart_field, stack_names
@@ -89,6 +91,8 @@ REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather statio
 
 
 LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
+HA_IMPORT_SECONDS = 900                # how often Home Assistant's readings are folded into the 5-minute ranges ...
+HA_RECENT_SECONDS = 3 * 3600           # ... the last few hours each time (the whole RANGE_KEEP_DAYS the first time)
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
 
@@ -117,6 +121,8 @@ class Ecowitt(Source):
         self.api = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport)
         self.cache = HistoryCache(cfg.cache_path, UNITS)
         self.hot = HotStore()
+        self.ha = HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # the readings it kept, for the ranges
+        self._ha_ok: bool | None = None
         self.live = LiveRanges(cfg.cache_path.with_name("ecowitt_live.sqlite"))   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
@@ -217,6 +223,24 @@ class Ecowitt(Source):
         await self._record_live(data)
         return data
 
+    async def import_ranges(self):
+        """Fold Home Assistant's readings into the 5-minute ranges: the last RANGE_KEEP_DAYS days the first time, then the last few hours.
+        Nothing when no Home Assistant is set. A failure is logged once, then again when it recovers; the next try is a while off."""
+        if self.ha is None:
+            return
+        first = self._ha_ok is None
+        try:
+            found = await self.ha.ranges(time.time() - (RANGE_KEEP_DAYS * 86400 if first else HA_RECENT_SECONDS))
+            marks = await asyncio.to_thread(self.live.put, found)
+        except Exception as e:
+            if self._ha_ok is not False:
+                log.warning("Home Assistant's readings couldn't be read (%s: %s); the charts' ranges come from the bot's own readings", type(e).__name__, e)
+            self._ha_ok = False
+            return
+        if first or not self._ha_ok:
+            log.info("Home Assistant: %d 5-minute ranges for %d readings%s", marks, len(found), f" (the last {RANGE_KEEP_DAYS} days at most)" if first else "")
+        self._ha_ok = True
+
     async def _record_live(self, data: dict):
         """Count a live reading into the 5-minute ranges. Only a chart's shading depends on it, so a failure is logged and goes no further."""
         try:
@@ -287,3 +311,5 @@ class Ecowitt(Source):
         await self.api.close()
         self.cache.close()
         self.live.close()
+        if self.ha:
+            await self.ha.close()

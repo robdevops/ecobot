@@ -31,6 +31,7 @@ from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor,
 from lib.alerts.menu import LABELS, available_kinds
 from lib.bot import PREDRAW_SECONDS, TURN_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
+from lib.ecowitt.source import HA_IMPORT_SECONDS
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
@@ -153,6 +154,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
         # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
         # need Ecowitt inline
         tasks.start(Archive(eco).loop())
+        if eco.ha:   # the readings Home Assistant kept: the charts' 5-minute ranges, for the days the bot was not watching too
+            tasks.start(every(HA_IMPORT_SECONDS, eco.import_ranges))
 
     async def air_part():
         parts.append(await safely(air.warm, True) or "AirGradient failed")

@@ -176,6 +176,8 @@ class Config:
     airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
     airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
     airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
+    homeassistant_url: str = _setting("HOMEASSISTANT_URL", "", _url)       # Home Assistant, to read the station's readings back for the charts' shaded ranges, e.g. http://192.168.1.219:8123
+    homeassistant_token: str = _setting("HOMEASSISTANT_TOKEN", "")         # a long-lived access token (your profile page in Home Assistant)
     place: str = _setting("PLACE", "Melbourne")                     # named after the Pollen & asthma and Forecast headings in the report
     pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
@@ -201,6 +203,10 @@ class Config:
     @property
     def ecowitt(self) -> bool:
         return bool(self.ecowitt_api_key and self.ecowitt_app_key)
+
+    @property
+    def homeassistant(self) -> bool:
+        return bool(self.homeassistant_url and self.homeassistant_token)
 
     @property
     def irrigation(self) -> bool:

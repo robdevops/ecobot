@@ -35,6 +35,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | – | Enables Ecowitt. Station's time zone is used |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | – | Enables AirGradient via cloud API: history and gap fill |
 | `AIRGRADIENT_LOCAL_URL` | – | Sensor's local server, e.g. `http://airgradient_<serial>.local` or an IP. Live reading polled every 60 s, recorded as 5-min means (`pm02Compensated` over `pm02`). Cloud, if configured, only fills gaps. Without cloud vars: sensor + SQLite only, no cloud requests. `.local` resolved in-process (mDNS); in Docker needs `--network host` or an IP. Sensor down → cloud fallback, retry after 5 min |
+| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | – | Home Assistant (e.g. `http://192.168.1.219:8123`) and a long-lived access token (your profile page there). With its Ecowitt integration the bot reads the station's readings back to shade the recent charts between each 5 minutes' lowest and highest, for the days it was not watching too (the last 31 days at most; Home Assistant keeps 10 unless its recorder says otherwise). Both needed; without them the shading comes from the bot's own readings |
 | `AIRGRADIENT_DASHBOARD_URL` | – | "live chart" link in air replies and alerts |
 | `TZ` | system zone | Only used without Ecowitt (the station's zone wins; a mismatch is logged). IANA name, e.g. `Australia/Melbourne` |
 | `PLACE` | `Melbourne` | Name in the Pollen & asthma and Forecast headings |

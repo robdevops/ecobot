@@ -76,6 +76,16 @@ class LiveRanges:
             self.db.commit()
         return counted
 
+    def put(self, found: dict[str, dict[int, tuple[int, float, float]]]) -> int:
+        """Fold ranges worked out elsewhere ({series: {5-minute mark: (readings, lowest, highest)}}, as homeassistant.ranges gives them) into what
+        is kept: the lower lowest, the higher highest and the larger count. Doing it twice for the same readings changes nothing."""
+        rows = [(series, mark, n, lo, hi) for series, marks in found.items() for mark, (n, lo, hi) in marks.items()]
+        with self._lock:
+            self.db.executemany("INSERT INTO ranges VALUES (?, ?, ?, ?, ?) ON CONFLICT (series, ts) DO UPDATE SET "
+                                "n = MAX(n, excluded.n), lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)", rows)
+            self.db.commit()
+        return len(rows)
+
     def between(self, series: str, start: int, end: int) -> dict[int, tuple[float, float]]:
         """{the 5-minute mark: (lowest, highest)} for the stretches with a range, in [start, end]."""
         with self._lock:
