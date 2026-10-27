@@ -79,6 +79,19 @@ class AirStore:
             self.db.commit()
             return self.db.total_changes - before
 
+    def forget_days(self) -> None:
+        """Note no day as fetched, so the next backfill fetches every finished day again (the readings stay until a day is replaced)."""
+        with self._lock:
+            self.db.execute("DELETE FROM days WHERE loc=?", (self.loc,))
+            self.db.commit()
+
+    def lacking(self) -> dict[str, int]:
+        """How many stored readings have no value for each column, and \"all\": how many readings are stored."""
+        with self._lock:
+            total, *nulls = self.db.execute(
+                f"SELECT COUNT(*), {', '.join(f'COUNT(*) - COUNT({c})' for c in COLUMNS)} FROM readings WHERE loc=?", (self.loc,)).fetchone()
+        return {"all": total, **dict(zip(COLUMNS, nulls))}
+
     def has_recorded(self, day: date) -> bool:
         """Did the bot record any of this day's readings itself? (Such a day is completed by merging, never replaced.)"""
         lo, hi = day_bounds(day, self.tz)

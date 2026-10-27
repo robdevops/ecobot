@@ -128,6 +128,23 @@ async def test_backfill_walks_back_to_the_start_of_the_sensors_data(tmp_path):
     await air.close()
 
 
+async def test_a_refill_fetches_every_day_again_and_fills_in_what_the_stored_readings_lack(tmp_path):
+    transport, calls = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=10))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.backfill(pace=0, empty_stop=3)
+    held = air.store.lacking()
+    assert held["all"] > 100 and held["air_humidity"] == held["air_temperature"] == 0
+    air.store.db.execute("UPDATE readings SET air_humidity = NULL, air_temperature = NULL")      # as stored before those columns
+    assert air.store.lacking()["air_humidity"] == held["all"]
+    assert await air.backfill(pace=0, empty_stop=3) == (0, 0, (await air.backfill(pace=0, empty_stop=3))[2])   # not fetched again by itself
+    n = len(calls)
+    air.store.forget_days()
+    fetched, failed, _ = await air.backfill(pace=0, empty_stop=3)
+    assert failed == 0 and fetched >= 10 and len(calls) > n
+    assert air.store.lacking() == held
+    await air.close()
+
+
 async def test_backfill_stops_after_repeated_failures(tmp_path):
     air = AirGradient(config(tmp_path), transport=httpx.MockTransport(lambda r: httpx.Response(429)))
     fetched, failed, total = await air.backfill(pace=0)
