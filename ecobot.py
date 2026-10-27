@@ -155,7 +155,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
 
     async def air_part():
         parts.append(await safely(air.warm, True) or "AirGradient failed")
-        tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
+        if air.cloud:
+            tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
 
     async def air_backfill():
         started = time.monotonic()

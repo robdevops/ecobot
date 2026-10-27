@@ -190,3 +190,50 @@ async def test_a_finished_day_the_bot_recorded_is_completed_with_only_the_missin
     await air._day_rows(DAY)
     assert calls.count("past") == 1                                                     # a finished day is never asked about again
     await air.close()
+
+
+# ---------- no cloud account: the sensor and the disk only ----------
+def only_the_sensor(tmp_path, clock):
+    transport, calls = air_transport(rows_per_day=288)
+    cfg = config(tmp_path, airgradient_local_url=URL, airgradient_token="", airgradient_location="")
+    air = AirGradient(cfg, transport=transport)
+    air.local, _ = sensor(lambda request: httpx.Response(200, json=DEVICE), clock)
+    air.now = lambda: datetime.fromtimestamp(clock.t, TZ).replace(tzinfo=None)
+    return cfg, air, calls
+
+
+def test_the_sensors_address_alone_switches_air_quality_on_with_no_cloud_account(tmp_path):
+    assert config(tmp_path, airgradient_local_url=URL, airgradient_token="", airgradient_location="").airgradient
+    assert not config(tmp_path, airgradient_token="", airgradient_location="").airgradient
+    assert config(tmp_path).airgradient_cloud and not config(tmp_path, airgradient_token="").airgradient_cloud
+
+
+async def test_without_a_cloud_account_the_cloud_is_never_asked(tmp_path, monkeypatch):
+    clock = Now(T0)
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    cfg, air, calls = only_the_sensor(tmp_path, clock)
+    await air.start()
+    reading = (await air.latest()).reading
+    assert reading["pm2_5"]["value"] == 2.5 and reading["sensor"] == "AirGradient d83bda1c1e08"   # named by its serial number
+    for k in range(12):
+        clock.t = T0 + 60 * k
+        await air.warm()
+    assert air.requests == 0 and calls == [] and await air.backfill() == (0, 0, 0)
+    rows, hourly, skipped = await air.rows(datetime(2026, 10, 20), datetime(2026, 10, 27, 23, 0))   # a week of which only today was recorded
+    assert {r["ts"] for r in rows} <= {T0, T0 + 300, T0 + 600} and skipped == [] and calls == []
+    assert air.store.counts([date(2026, 10, 20) + timedelta(days=k) for k in range(7)]) == {date(2026, 10, 20) + timedelta(days=k): None for k in range(7)}
+    await air.close()
+
+
+async def test_without_a_cloud_account_a_finished_day_with_gaps_stays_open_and_a_whole_one_is_done(tmp_path, monkeypatch):
+    clock = Now(int(datetime(2026, 10, 29, 12, 0, tzinfo=TZ).timestamp()))
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    cfg, air, calls = only_the_sensor(tmp_path, clock)
+    lo, hi = day_bounds(DAY, TZ)
+    for t in range(lo, hi, 300):
+        if t != lo + 300 * 10:
+            air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+    assert len(await air._day_rows(DAY)) == 287 and air.store.counts([DAY]) == {DAY: None} and calls == []   # a gap nothing can fill: not marked
+    air.store.add_recorded({"ts": lo + 300 * 10, "pm2_5": 1.0})
+    assert len(await air._day_rows(DAY)) == 288 and air.store.counts([DAY]) == {DAY: 288} and calls == []
+    await air.close()

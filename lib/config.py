@@ -207,8 +207,13 @@ class Config:
         return bool(self.tuya_device_id and self.tuya_client_id and self.tuya_client_secret)
 
     @property
-    def airgradient(self) -> bool:
+    def airgradient_cloud(self) -> bool:
         return bool(self.airgradient_token and self.airgradient_location)
+
+    @property
+    def airgradient(self) -> bool:
+        """AirGradient is on with its cloud account, or with only the sensor's own server (then nothing is ever asked of the cloud)."""
+        return self.airgradient_cloud or bool(self.airgradient_local_url)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -227,5 +232,5 @@ class Config:
                   air_cache_path=data / "airgradient_cache.sqlite", conditions_cache_path=data / "conditions_cache.sqlite",
                   **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
         if not (cfg.ecowitt or cfg.airgradient):
-            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID")
+            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
         return cfg

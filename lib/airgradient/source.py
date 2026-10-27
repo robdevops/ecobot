@@ -92,8 +92,9 @@ class AirGradient(Source):
     name = "AirGradient"
 
     def __init__(self, cfg: Config, transport=None):
-        self.loc, self.tz = cfg.airgradient_location, cfg.tz
+        self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
+        self.cloud = cfg.airgradient_cloud    # without an account only the sensor itself is asked, and the cloud never is
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
         self.local = LocalSensor(cfg.airgradient_local_url) if cfg.airgradient_local_url else None   # the live reading from the sensor itself
@@ -111,13 +112,13 @@ class AirGradient(Source):
     async def start(self):
         try:
             row = await self._current_row(refresh=True)
-            if self.local:   # the cloud is still asked once: it names the sensor, and its token and location are checked
+            if self.local and self.cloud:   # the cloud is still asked once: it names the sensor, and its token and location are checked
                 self._names = {k: v for k, v in (await self._get("current")).items() if k in ("locationName", "locationType")}
-                row = {**self._names, **row}
+                row = {**row, **self._names}
                 self._current = (row, self._current[1])
-            log.info("Air quality: AirGradient '%s' (location %s)", row.get("locationName"), self.loc)
+            log.info("Air quality: AirGradient '%s'%s", row.get("locationName"), f" (location {self.loc})" if self.cloud else " (the sensor only, no cloud)")
         except Exception as e:  # keep going: the sensor may just be briefly unreachable
-            log.warning("AirGradient location %s not readable yet: %s", self.loc, e)
+            log.warning("AirGradient %s not readable yet: %s", f"location {self.loc}" if self.cloud else "sensor", e)
 
     def describe(self) -> str:
         return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"
@@ -129,6 +130,8 @@ class AirGradient(Source):
     async def _get(self, kind: str, **params) -> dict | list:
         """The reply: an object for "current", a list of readings for "past". A period with no readings is an empty list (AirGradient
         says so with a 404); a reply of any other shape raises, so it is never stored as days without readings."""
+        if not self.cloud:
+            raise RuntimeError("AirGradient's cloud is not configured")
         self.requests += 1
         res = await self.client.get(API.format(loc=self.loc, kind=kind), params={**params, "token": self.token})
         if res.status_code == 404 and kind == "past" and "no data" in res.text.lower():   # "No data available" for the period
@@ -156,10 +159,16 @@ class AirGradient(Source):
         """The live reading: from the sensor's own server when AIRGRADIENT_LOCAL_URL answers (with the cloud's name for the sensor,
         last heard), else the cloud."""
         if self.local and (row := await self.local.read()):
-            return {**self._names, **row}
+            return {**(self._names or self._sensor_name()), **row}
+        if not self.cloud:
+            raise RuntimeError("the sensor did not answer")
         row = await self._get("current")
         self._names = {k: v for k, v in row.items() if k in ("locationName", "locationType")}
         return row
+
+    def _sensor_name(self) -> dict:
+        """What the sensor is called when the cloud has not said: its serial number."""
+        return {"locationName": f"AirGradient {self.local.serial}"} if self.local and self.local.serial else {}
 
     def _final(self, day: date) -> bool:
         """Over for more than an hour, so its data won't change."""
@@ -175,7 +184,9 @@ class AirGradient(Source):
         return [d for d, n in held.items() if n is None and self._final(d)]
 
     async def _past(self, start: int, end: int) -> list[dict]:
-        """Readings between two epochs (never past now), normalised and oldest first."""
+        """Readings between two epochs (never past now), normalised and oldest first. Without a cloud account there are none to ask for."""
+        if not self.cloud:
+            return []
         utc = lambda ts: datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         raw = await self._get("past", **{"from": utc(start), "to": utc(min(end, time.time()))})
         return sorted((normalise(r) for r in raw if isinstance(r, dict) and r.get("timestamp")), key=lambda r: r["ts"])
@@ -187,7 +198,7 @@ class AirGradient(Source):
         for d in [d for d in days if await asyncio.to_thread(self.store.has_recorded, d)]:   # the bot's own readings: only the gaps are fetched
             stored[d] = await self._complete_day(d)
             days.remove(d)
-        while days:
+        while days and self.cloud:
             window = [d for d in days if (d - days[0]).days < MAX_REQUEST_DAYS]
             days = days[len(window):]
             by_day: dict = {d: [] for d in window}
@@ -208,7 +219,7 @@ class AirGradient(Source):
                 if self._unstored(await self._held([day])):
                     await self._fetch_days([day])
                 return await asyncio.to_thread(self.store.load_day, day)
-            if self.local and self.local.working:
+            if self.local and (self.local.working or not self.cloud):
                 return await self._recorded_day_rows(day)
             cached = self._recent.get(day)
             if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
@@ -266,7 +277,7 @@ class AirGradient(Source):
         """An unfinished day (today, or one that has just ended) while the sensor answers: the stored readings, the bucket being averaged
         as the last one, and the cloud asked, at most every GAP_RETRY_SECONDS, only for buckets that are missing."""
         rows = await asyncio.to_thread(self.store.load_day, day)
-        if time.time() - self._gap_tried.get(day, 0) > GAP_RETRY_SECONDS and (missing := self._missing(day, rows, time.time() - GAP_GRACE)):
+        if self.cloud and time.time() - self._gap_tried.get(day, 0) > GAP_RETRY_SECONDS and (missing := self._missing(day, rows, time.time() - GAP_GRACE)):
             self._gap_tried[day] = time.time()
             try:
                 await self._fill(day, missing)
@@ -281,6 +292,8 @@ class AirGradient(Source):
         """A finished day the bot recorded readings of: the cloud is asked only for the buckets it lacks (once), and the day is noted as done."""
         rows = await asyncio.to_thread(self.store.load_day, day)
         if missing := self._missing(day, rows, day_bounds(day, self.tz)[1]):
+            if not self.cloud:   # nothing to fill it with: the day is left open, in case an account is added later
+                return len(rows)
             await self._fill(day, missing)
             rows = await asyncio.to_thread(self.store.load_day, day)
         await asyncio.to_thread(self.store.mark_day, day, len(rows))
@@ -305,6 +318,8 @@ class AirGradient(Source):
         """Cache every finished day back to where the sensor's data starts (newest first, so recent
         charts are ready soonest; up to 9 days per request). Returns (days fetched, days failed,
         days cached in total)."""
+        if not self.cloud:
+            return 0, 0, 0
         pace = BACKFILL_PACE if pace is None else pace
         empty_stop = BACKFILL_EMPTY_STOP if empty_stop is None else empty_stop
         empty_before_data = BACKFILL_EMPTY_BEFORE_DATA if empty_before_data is None else empty_before_data
@@ -412,7 +427,7 @@ class AirGradient(Source):
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
         held = await self._held(days)
         missing = self._unstored(held)
-        skipped = missing[:-MAX_INLINE_DAYS] if len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
+        skipped = missing[:-MAX_INLINE_DAYS] if self.cloud and len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
         held.update(await self._fetch_days([d for d in missing if d not in skipped]))
         finished = [d for d in days if self._final(d)]   # all stored by now but the skipped: read in one query
         rows = (await asyncio.to_thread(self.store.load, day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1])

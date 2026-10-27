@@ -80,6 +80,7 @@ class LocalSensor:
         self.address: tuple[str, float] | None = None   # (IP, when looked up)
         self.retry_at = 0.0
         self.working: bool | None = None                # for the log: say so when it changes
+        self.serial: str | None = None                  # the sensor's serial number, from its last reply
 
     def describe(self) -> str:
         return f"{self.host}" + (f":{self.port}" if self.port else "")
@@ -103,9 +104,11 @@ class LocalSensor:
             res = await self.client.get(f"http://{host}{':' + str(self.port) if self.port else ''}/measures/current",
                                         headers={"Host": self.host})
             res.raise_for_status()
-            row = cloud_shaped(res.json(), datetime.now(UTC))
+            data = res.json()
+            row = cloud_shaped(data, datetime.now(UTC))
             if row is None:
                 raise ValueError("no readings in the reply")
+            self.serial = data.get("serialno") or self.serial
         except Exception as e:
             self.address, self.retry_at = None, self.clock() + RETRY_SECONDS
             if self.working is not False:
