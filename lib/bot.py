@@ -1001,7 +1001,13 @@ class Bot:
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             turn = Turn.of(read, text)
-            turn.air_extra = turn.air_extra or chat.air_extra_idle < AIR_EXTRA_RUNS   # named in the words, or still being used in this chat
+            earlier = working[:-1]
+            recent = ([str(m["content"]) for m in earlier if m["role"] == "user"][-2:]
+                      + [str(m["content"]) for m in earlier if m["role"] == "assistant"][-1:])
+            # offered when the words name them, or the last messages (the person's last two, the bot's last reply) did, or the model has used
+            # them in this chat within the last AIR_EXTRA_RUNS runs
+            turn.air_extra = (turn.air_extra or chat.air_extra_idle < AIR_EXTRA_RUNS
+                              or any(intent.wants_air_extra(said) for said in recent))
             try:
                 answer = await self._answer(msg, read, turn, working, draft, now, redraw)
                 mentioned = intent.wants_air_extra(text) or intent.wants_air_extra(answer.reply or "")   # either side named the sensor's readings

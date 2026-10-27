@@ -729,3 +729,31 @@ async def test_either_side_naming_the_air_sensors_readings_keeps_them_offered(al
         await bot.respond(update, context, said)
     # the person's words named it (offered) and the reply did too (still offered for the next two runs); then they stop
     assert seen == [False, True, True, True, False]
+
+
+async def test_the_air_sensors_own_readings_are_offered_to_a_follow_up_when_the_last_messages_named_them_whatever_the_count(alert_state):
+    seen = []
+
+    class Capturing:
+        async def run(self, messages, system, effort, *, turn=None, **k):
+            seen.append(turn.air_extra)
+            return "ok"
+    sent = []
+
+    async def reply_text(body, **kw):
+        sent.append(body)
+
+    async def send_chat_action(*a, **k):
+        pass
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    for earlier in (
+            [{"role": "user", "content": "plot airgradient humidity"}, {"role": "assistant", "content": "Done."}],     # the person named it
+            [{"role": "user", "content": "plot humidity"}, {"role": "assistant", "content": "Here is AirGradient humidity over Ecowitt."}],   # the reply did
+            [{"role": "user", "content": "plot humidity"}, {"role": "assistant", "content": "Done."}]):                # neither did
+        bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
+        bot.chats[bot._key(msg)].history = list(earlier)                   # a chat whose count has run out: only the messages are left
+        await bot.respond(update, context, "do that again but for temperature")
+    assert seen == [True, True, False]
