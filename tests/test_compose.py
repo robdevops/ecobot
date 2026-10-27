@@ -172,7 +172,7 @@ async def test_two_series_can_share_one_panel_with_a_scale_each(tmp_path, archiv
     assert [s.right for s in specs[0].panels[0].lines] == [False, False, True] or [s.right for s in specs[0].panels[0].lines].count(True) >= 1
     assert render(specs[0], TZ)[:4] == b"\x89PNG" and len(out["panels"]) == 2          # both series are still described
     out, specs = await plot(comp, panels=[{"series": "temperature"}, {"series": "rain"}], two_axes=True)
-    assert "two_axes needs exactly two line series" in out["error"] and specs == []
+    assert "two_axes needs line series" in out["error"] and specs == []
     out, specs = await plot(comp, panels=[{"series": "temperature"}], two_axes=True)
     assert "error" in out and specs == []
     await eco.close()
@@ -189,6 +189,11 @@ async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axi
     assert "same unit" in out["error"] and specs == []                                    # % and °C: two_axes is for that
     out, specs = await plot(comp, panels=[{"series": "air_humidity"}, {"series": "temperature"}], two_axes=True)
     assert [s.right for s in specs[0].panels[0].lines] == [False, True]
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "pm2_5"}, {"series": "pm10"}],
+                            two_axes=True)                                                # two pairs: a unit to each axis
+    assert [(s.label, s.right) for s in specs[0].panels[0].lines] == [
+        ("AirGradient temperature (°C)", False), ("Ecowitt temperature (°C)", False), ("PM2.5 (µg/m³)", True), ("PM10 (µg/m³)", True)]
+    assert render(specs[0], TZ)[:4] == b"\x89PNG"
     out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], two_axes=True, same_axis=True)
     assert "can't both be set" in out["error"]
     out, specs = await plot(comp, panels=[{"series": "air_humidity", "style": "rating"}])

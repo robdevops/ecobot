@@ -164,9 +164,13 @@ def test_two_panels_of_lines_become_one_panel_with_a_scale_each_and_nothing_else
     assert both.label == "UV index and Solar radiation" and both.unit == "" and both.peaks == "none"
     assert [(s.label, s.right, s.reading) for s in both.lines] == [("UV index", False, "uv"), ("Solar radiation (W/m²)", True, "solar")]
     rain = panel_for("rain", bars=Bars("Rain", "mm", [1], [1.0], 3600))
-    assert two_axes([uv]) is None and two_axes([uv, solar, uv]) is None and two_axes([uv, rain]) is None
+    assert two_axes([uv]) is None and two_axes([uv, rain]) is None
     with pytest.raises(ValueError):
         Panel("x", "", [Line("a", [1, 2], [1.0, 2.0], right=True)])      # a right-hand scale needs a line on the left
+    wind = made("pm2_5", "PM2.5")
+    pairs = two_axes([uv, solar, uv, solar])                              # more than two: a side for each unit
+    assert [s.right for s in pairs.lines] == [False, True, False, True]
+    assert two_axes([uv, solar, wind]) is None                            # three units: no two sides to put them on
 
 
 def test_a_panel_with_two_scales_is_drawn_with_both_latest_values_and_a_right_axis():

@@ -46,8 +46,9 @@ PLOT_PARAMETERS = {
                    "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
                                                               "style": {"type": "string", "enum": list(STYLES)}},
                              "required": ["series"]}},
-        "two_axes": {"type": "boolean", "description": "Set true for exactly two line series on ONE panel, each with its own scale (left and "
-                                                       "right axis): 'on two axes', 'dual axis', 'overlay', 'combine them on one chart'. "
+        "two_axes": {"type": "boolean", "description": "Set true for line series on ONE panel with a scale each (left and right axis): "
+                                                       "two series, or more in exactly two units (humidity pair left, temperature pair "
+                                                       "right): 'on two axes', 'dual axis', 'overlay', 'combine them on one chart'. "
                                                        "Not for rain or ratings."},
         **period_parameters(DEFAULT_DAYS),
     },
@@ -193,7 +194,7 @@ class Composer:
             return _error("two_axes (a scale each) and same_axis (one scale) can't both be set")
         if args.get("two_axes"):
             if (merged := two_axes(built)) is None:
-                return _error("two_axes needs exactly two line series (not rain bars or ratings)")
+                return _error("two_axes needs line series (not rain bars or ratings): two, or more in exactly two units")
             built = [merged]
         elif args.get("same_axis"):
             if (merged := same_axis(built)) is None:

@@ -24,13 +24,22 @@ def panel_for(name: str | list[str], lines: list[Line] | None = None, bars: Bars
 
 
 def two_axes(panels: list[Panel]) -> Panel | None:
-    """Two panels of lines as one panel with two scales: the first one's lines against the left axis, the second's against a
-    right-hand axis of its own (a UV index of 0 to 12 beside a solar radiation of 0 to 1000). Each line's name carries its unit,
-    as the panel's heading no longer can. None when they are not two panels that are only lines (rain bars and ratings can't share)."""
-    if len(panels) != 2 or any(not p.lines or p.bars or p.shares for p in panels):
+    """Panels of lines as one panel with two scales: the lines of the first against the left axis, those of the second against a
+    right-hand axis of its own (a UV index of 0 to 12 beside a solar radiation of 0 to 1000). With more than two panels, those in the
+    first panel's unit share the left axis and those in the one other unit the right (two humidities left, two temperatures right).
+    Each line's name carries its unit, as the panel's heading no longer can. None when they are not panels that are only lines
+    (rain bars and ratings can't share), or are more than two but not in exactly two units."""
+    if len(panels) < 2 or any(not p.lines or p.bars or p.shares for p in panels):
         return None
+    if len(panels) == 2:
+        sides = [False, True]
+    else:
+        units = list(dict.fromkeys(p.unit for p in panels))
+        if len(units) != 2:
+            return None
+        sides = [p.unit != units[0] for p in panels]
     lines = []
-    for panel, right in zip(panels, (False, True)):
+    for panel, right in zip(panels, sides):
         for line in panel.lines:
             name = line.label if len(panel.lines) > 1 else panel.label
             lines.append(replace(line, label=f"{name} ({panel.unit})" if panel.unit and len(panel.lines) == 1 else name,
