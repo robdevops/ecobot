@@ -433,3 +433,16 @@ async def test_a_chart_uploaded_ahead_is_used_for_30_minutes_and_then_drawn_afre
     assert bot.images.has_copy(key) and isinstance(bot.images.get(key)[0], str)
     clock[0] = 31 * 60
     assert not bot.images.has_copy(key) and bot.images.get(key) is None
+
+
+async def test_a_redrawn_chart_carries_a_short_answer_in_its_caption_and_a_long_one_follows_as_a_message(alert_state, monkeypatch):
+    bot, edits, replies = make_bot(alert_state, monkeypatch), [], []
+    msg = chat_message([], edits)
+
+    async def reply_text(text, **kw):
+        replies.append(text)
+    msg.reply_text = reply_text
+    assert await bot._redraw(msg, "Last 7 days: 72% avg.", b"png", "Humidity", periods.keyboard(7), "q")
+    assert edits[0][0] == "Humidity\n\nLast 7 days: 72% avg." and replies == []                  # one message, as when the chart was first sent
+    assert await bot._redraw(msg, "x" * botmod.CAPTION_LIMIT, b"png", "Humidity", periods.keyboard(7), "q")
+    assert edits[1][0] == "Humidity" and replies == ["x" * botmod.CAPTION_LIMIT]                  # too long for a caption: its own message

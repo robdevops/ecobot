@@ -674,15 +674,20 @@ class Bot:
 
     async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str, key: str | None = None) -> bool:
         """Put a new chart into the message a period button was pressed under (its answer text, if any, follows as a message of
-        its own). False when Telegram refuses, and the chart is then sent as a new message. key: where the image cache keeps it."""
+        its own, unless it fits the caption: then the chart's caption is its title and the answer, as deliver sends them). False when
+        Telegram refuses, and the chart is then sent as a new message. key: where the image cache keeps it."""
+        text = strip_chart_talk(reply.strip())
+        body, ents = with_link(f"{title}\n\n{text}" if title else text, None) if text else (title, [])
+        in_caption = bool(text) and len(body) <= CAPTION_LIMIT
         try:
-            self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=row))
+            self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=(body if in_caption else title) or None,
+                                                                          caption_entities=(ents or None) if in_caption else None), reply_markup=row))
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 log.warning("Couldn't edit the chart in place (%s); sending a new one", e)
                 return False
         self.charted.remember(message.chat_id, message.message_id, question)
-        if reply.strip():
+        if text and not in_caption:
             await deliver(message, reply, [])
         return True
 

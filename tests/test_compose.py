@@ -196,6 +196,7 @@ async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axi
     assert render(specs[0], TZ)[:4] == b"\x89PNG"
     out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "air_humidity"}, {"series": "humidity"}],
                             two_axes=True, invert_second_axis=True)                       # the right-hand axis upside down
+    assert specs[0].panels[0].label == "Temperature and Humidity"                      # not every panel's name in a row
     assert specs[0].panels[0].flip_right and render(specs[0], TZ)[:4] == b"\x89PNG"
     assert not (await plot(comp, panels=[{"series": "air_temperature"}, {"series": "humidity"}], two_axes=True))[1][0].panels[0].flip_right
     out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], invert_second_axis=True)

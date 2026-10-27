@@ -44,7 +44,18 @@ def two_axes(panels: list[Panel], flip_right: bool = False) -> Panel | None:
             name = line.label if len(panel.lines) > 1 else panel.label
             lines.append(replace(line, label=f"{name} ({panel.unit})" if panel.unit and len(panel.lines) == 1 else name,
                                  right=right, reading=line.reading or panel.reading))
-    return Panel(" and ".join(p.label for p in panels), "", lines, peaks="none", flip_right=flip_right)
+    heading = " and ".join(_shared_name([p.label for p, right in zip(panels, sides) if right == side]) for side in (False, True) if side in sides)
+    return Panel(heading, "", lines, peaks="none", flip_right=flip_right)
+
+
+def _shared_name(labels: list[str]) -> str:
+    """What the labels share at their ends ("Ecowitt humidity", "AirGradient humidity": "Humidity"), or all of them when that is nothing."""
+    words = [label.split() for label in labels]
+    common = 0
+    while len(labels) > 1 and all(len(w) > common for w in words) and len({w[-1 - common] for w in words}) == 1:
+        common += 1
+    shared = " ".join(words[0][len(words[0]) - common:]) if common else ""
+    return shared[:1].upper() + shared[1:] if shared else " and ".join(labels)
 
 
 def same_axis(panels: list[Panel]) -> Panel | None:
