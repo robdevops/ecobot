@@ -27,12 +27,13 @@ from .alerts import menu
 from .alerts import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
+from . import gauges
 from .charts import render as render_chart
 from .tools import Turn
 from .config import Config
 from .entities import with_link
 from .sources import Source
-from .timeutil import now_local
+from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .topicmemory import TopicMemory
 from .logs import QUOTES, fit
@@ -855,6 +856,15 @@ class Bot:
             turn.forecast_shown.clear()
         return caption
 
+    async def _dashboard(self, ecowitt) -> Answer:
+        """The station's gauges as one picture, sent with just its title (no period buttons: it is the state now)."""
+        sheet = await ecowitt.dashboard()
+        if sheet is None:
+            return Answer("The weather station isn't answering right now.", ok=False)
+        now = now_local(self.cfg.tz)
+        title = f"Weather station dashboard, {day_text(now)} {clock_text(now)}"
+        return Answer(title, [await asyncio.to_thread(gauges.render, sheet)], [title], silent=True)
+
     async def _lookup_in_code(self, read, turn: Turn) -> str | None:
         """A plain lookup (a reading, the air, the pollen, the forecast, what the bot can do) answered from its one tool result; None
         (the model then takes the question) when it can't be."""
@@ -1058,6 +1068,8 @@ class Bot:
             began = time.monotonic()
             reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
             answer = Answer(reply, silent=reply is not None, made=time.monotonic() - began if reply is not None else None)
+        elif read.dashboard and "Ecowitt" in self.by_name:
+            answer = await asyncio.wait_for(self._dashboard(self.by_name["Ecowitt"]), TURN_SECONDS)
         elif read.lookup:
             answer = Answer(await asyncio.wait_for(self._lookup_in_code(read, turn), TURN_SECONDS))
             if answer.reply is None:
@@ -1101,7 +1113,7 @@ class Bot:
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         refresh = answer.ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
-        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 else None   # period buttons under a single chart
+        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 and not read.dashboard else None   # period buttons under a single chart
         drawn = list(photos)
         kept = self.images.key(text, intent.period_days(text, now), now) if row and answer.ok and not reply.strip() else None
         if kept and not answer.ready:   # a chart and nothing else: keep it for the period buttons (and, its words being its key, for the next to ask them)
@@ -1119,7 +1131,7 @@ class Bot:
                           " (Telegram's copy)" if isinstance(drawn[0], str) else "")
             elif drawn:
                 log.debug("Chart ms: %s", chart_times(turn.times, answer.made, drawn, time.monotonic() - began))
-            if sent.photo:
+            if sent.photo and not read.dashboard:
                 self.charted.remember(msg.chat_id, sent.photo.message_id, text)
                 self.images.sent(kept, sent.photo)
             if kept and read.chart_in_code:   # a chart with period buttons, made in code: its other periods are uploaded ahead

@@ -15,7 +15,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
-- **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message.
+- **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message. `/dashboard` draws the station's gauges with the day's, month's and year's highs and lows.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.
 - **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast.
 - **Cheap to run:** most answers are worked out by the bot itself, and the AI model is only called when it's needed.

@@ -34,7 +34,7 @@ COVERAGE = {
     "q:known-day": "a question about one named day", "q:describe-day": "describing a day or a hypothetical",
     "q:correlation": "does one reading go with another", "q:follow-up": "a follow-up that keeps the subject",
     "q:correction": "the person says the answer was wrong", "q:about-the-bot": "questions about the bot itself",
-    "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report",
+    "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report", "q:dashboard": "the station's gauges",
     "q:detail-level": "asking for a finer data resolution", "q:cross-source": "a question that needs both devices together",
     "q:scan": "which readings go with which (every pair)",
     "m:temperature": "temperature", "m:humidity": "humidity", "m:pressure": "pressure", "m:wind-speed": "wind speed and gusts",
@@ -153,7 +153,7 @@ def deterministic(case: Case) -> list[str]:
     if "hints" in e:
         hints = " | ".join(r.hints)
         fails += [f"period hints lack {h!r} (got: {hints or 'none'})" for h in e["hints"] if h not in hints]
-    for key, got in (("chart_fields", r.chart_fields), ("two_axes", r.two_axes), ("air_extra", r.air_extra), ("chart_field", r.chart_field), ("report", r.report),
+    for key, got in (("chart_fields", r.chart_fields), ("two_axes", r.two_axes), ("air_extra", r.air_extra), ("chart_field", r.chart_field), ("report", r.report), ("dashboard", r.dashboard),
                      ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data),
                      ("weather_now", r.weather_now), ("rain_caption", r.rain_caption), ("chart_in_code", r.chart_in_code), ("lookup", r.lookup)):
         if key in e and got != e[key]:

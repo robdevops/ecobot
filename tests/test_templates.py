@@ -233,7 +233,7 @@ def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
 
 
 def test_every_chart_and_report_button_has_a_command_of_the_same_name():
-    assert templates.COMMANDS == {"report": "Report", "status": "Report", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
+    assert templates.COMMANDS == {"report": "Report", "dashboard": "Dashboard", "status": "Report", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
                                   "temperature": "Temperature chart 1d", "humidity": "Humidity chart 1d",
                                   "air_quality": "Air quality all metrics 1d", "particulates": "Particulates chart 1d",
                                   "wind": "Wind chart 1d"}

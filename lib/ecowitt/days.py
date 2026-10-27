@@ -93,23 +93,10 @@ def day_figures(cache: HistoryCache, mac: str, cycle: str, names: list[str], day
     return out
 
 
-def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
-    asked = prepare(args, FIELD_UNITS, ALWAYS_SHOWN, now.date())
-    if isinstance(asked, str):
-        return {"error": asked}
-    only = args.get("only")
-    if only not in (None, "public_holiday", "weekend"):
-        return {"error": "only must be public_holiday or weekend"}
-    calendar = PublicHolidays(tz)
-    if only == "public_holiday" and not calendar.available:
-        return {"error": calendar.problem()}
-    kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
-            "public_holiday": lambda d: calendar.name(d) is not None}[only]
-    first, last, shown, where, sort_by = asked.first, asked.last, asked.shown, asked.where, asked.sort_by
+def day_values(cache: HistoryCache, mac: str, tz: tzinfo, shown: list[str], days) -> tuple[dict[str, dict[date, float]], dict[date, str]]:
+    """({reading: {day: its figure}}, {day: where it came from}) for these days, each from the best data the cache holds: exact days
+    from the 5- or 30-minute readings where every group needed has them, else the daily buckets (source "daily": approximate)."""
     groups = sorted({FIELDS[n][0] for n in shown})
-
-    # which cycle each day is answered from: exact sub-daily data where every needed group has it
-    days = asked.days
     windows = [(cycle, d) for cycle in FINE_CYCLES for d in days]
     source: dict[date, str] = {}
     for (cycle, d), gaps in zip(windows, cache.uncovered(mac, groups, [(cycle, *day_bounds(d, tz, True)) for cycle, d in windows])):
@@ -131,6 +118,24 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
         for d in rest:
             if any(d in values[n] for n in shown):
                 source[d] = "daily"
+    return values, source
+
+
+def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
+    asked = prepare(args, FIELD_UNITS, ALWAYS_SHOWN, now.date())
+    if isinstance(asked, str):
+        return {"error": asked}
+    only = args.get("only")
+    if only not in (None, "public_holiday", "weekend"):
+        return {"error": "only must be public_holiday or weekend"}
+    calendar = PublicHolidays(tz)
+    if only == "public_holiday" and not calendar.available:
+        return {"error": calendar.problem()}
+    kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
+            "public_holiday": lambda d: calendar.name(d) is not None}[only]
+    first, last, shown, where, sort_by = asked.first, asked.last, asked.shown, asked.where, asked.sort_by
+    days = asked.days
+    values, source = day_values(cache, mac, tz, shown, days)
 
     checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
     got = analyse(values, asked, checked, tz, turn,

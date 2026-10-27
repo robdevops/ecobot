@@ -107,12 +107,20 @@ _ASK = r"((give me|show me|show|get|what's|whats)\s+)?(the\s+)?"   # the usual l
 
 
 # "status", "report": the whole current picture from both devices (a period word or a subject makes it something else)
-REPORT = re.compile(_only(r"status|report|sitrep|overview|dashboard|summary|everything|what you'?ve got",
+REPORT = re.compile(_only(r"status|report|sitrep|overview|summary|everything|what you'?ve got",
                           _ASK + r"(a\s+)?(full\s+|current\s+|complete\s+)?"), I)
 
 
 def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
+
+
+# "dashboard", "gauges": the station's readings as gauges, with each one's highs and lows (drawn in code from the station alone)
+DASHBOARD = re.compile(_only(r"(weather\s+)?(dashboard|gauges?|dials?)(\s+(now|right now))?", _ASK), I)
+
+
+def wants_dashboard(text: str) -> bool:
+    return bool(DASHBOARD.search(text)) and not TIME_WORDS.search(text)
 
 
 def report_calls(sources: Collection[str]) -> list[tuple[str, dict]]:
@@ -818,6 +826,7 @@ class Intent:
     needs_data: bool = False              # the model must call a tool first
     about_the_bot: bool = False           # answered without tools
     report: bool = False                  # "status": the full report
+    dashboard: bool = False               # "dashboard": the station's gauges, one picture
     hints: list[str] = field(default_factory=list)   # what the period words in the message mean
     fast: tuple[str, dict, str] | None = None        # (tool, arguments, what it is): fetched here, before the model
     chart_asked: bool = False             # "plot" means a chart, whatever the model calls
@@ -890,6 +899,6 @@ def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGr
     return Intent(effort=reasoning_effort(text), needs_data=needs_data(text), about_the_bot=about_the_bot(text), report=report,
                   hints=period_hints(text, now), fast=fast, chart_asked=bool(GRAPH.search(text)), chart_field=chart_field(text),
                   chart_fields=chart_fields(text), two_axes=bool(TWO_AXES.search(text)) and len(chart_fields(text)) == 2, air_extra=wants_air_extra(text), average_asked=bool(AVERAGE.search(text)), more=calls[1:],
-                  weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
+                  weather_now=ecowitt and wants_weather_now(text), dashboard=ecowitt and wants_dashboard(text), rain_caption=rain_caption, chart_in_code=in_code,
                   readings=list(_named(text)), per_day=bool(PER_DAY.search(text)),
                   extra=model_prefetch(text, now, sources) if not fast else [], lookup=lookup, lookup_arg=named, sides=_sides(text))

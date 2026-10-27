@@ -18,6 +18,7 @@ from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
+from .dashboard import dashboard
 from .glance import glance
 from .fetch import Fetcher, series_in
 from ..series import READING_GROUPS, WEATHER, find
@@ -211,6 +212,11 @@ class Ecowitt(Source):
         if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
             return {g: self._live[1][g] for g in groups if g in self._live[1]}
         return await self.api.realtime(self.mac, ",".join(groups), urgent=True)
+
+    async def dashboard(self):
+        """The station's gauges (specs.Dashboard): the live reading and each one's highs and lows today, this month and this year; None
+        when the station has no reading."""
+        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date())
 
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags

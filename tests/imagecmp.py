@@ -13,7 +13,8 @@ import matplotlib
 import numpy as np
 from PIL import Image
 
-from lib import charts
+from lib import charts, gauges
+from lib.specs import Dashboard
 from tests.fakes import TZ
 
 GOLDEN = Path(__file__).parent / "charts"
@@ -29,7 +30,7 @@ COLOURS = 64
 def snapshot(chart) -> Image.Image:
     """The chart as the reference images are made: DejaVu Sans, shrunk, 64 colours (a palette image)."""
     with matplotlib.rc_context({"font.family": "DejaVu Sans"}), mock.patch.object(charts, "TITLE_WEIGHT", "bold"):
-        png = charts.render(chart, TZ)
+        png = gauges.render(chart) if isinstance(chart, Dashboard) else charts.render(chart, TZ)
     image = Image.open(io.BytesIO(png)).convert("RGB")
     small = image.resize((round(image.width * SCALE), round(image.height * SCALE)), Image.Resampling.LANCZOS)
     return small.quantize(colors=COLOURS, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)

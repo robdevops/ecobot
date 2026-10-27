@@ -195,3 +195,38 @@ def stack(panels: list[Panel], first: date, last: date) -> Chart:
     return Chart(", ".join(p.label for p in panels),
                  "  ·  ".join(filter(None, [period_text(first, last), per, "range shaded" if shaded else ""])), rain_behind(panels),
                  period=(first, last))
+
+
+@dataclass
+class Tile:
+    """One gauge of the dashboard: a reading drawn as a thermometer, a dial or a rain beaker, with its extremes below."""
+    title: str
+    unit: str
+    value: float | None                    # now; None draws the gauge empty and dimmed
+    kind: str                              # "thermometer", "dial" or "beaker"
+    low: float                             # the scale's ends
+    high: float
+    colours: tuple[str, ...]               # the scale's bands, from the low end to the high one
+    columns: tuple[str, ...] = ()          # what the table under the gauge lists: "Max", "Min" or "Total"
+    rows: dict[str, tuple[float | None, ...]] = field(default_factory=dict)   # "Daily" / "Monthly" / "Yearly" -> a figure per column
+    ticks: tuple[float, ...] = ()          # the scale's labels
+    decimals: int = 1
+
+    def __post_init__(self):
+        if self.kind not in ("thermometer", "dial", "beaker"):
+            raise ValueError(f"tile {self.title!r}: kind is 'thermometer', 'dial' or 'beaker'")
+        if self.high <= self.low:
+            raise ValueError(f"tile {self.title!r}: the scale needs a high end above its low end")
+        if any(len(figures) != len(self.columns) for figures in self.rows.values()):
+            raise ValueError(f"tile {self.title!r}: each row needs a figure per column")
+
+
+@dataclass
+class Dashboard:
+    """The gauges of the weather station, left to right and top to bottom, three to a row."""
+    tiles: list[Tile]
+    per_row: int = 3
+
+    def __post_init__(self):
+        if not self.tiles:
+            raise ValueError("a dashboard needs a tile")

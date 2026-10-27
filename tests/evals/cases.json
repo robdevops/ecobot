@@ -771,6 +771,18 @@
     ]
   },
   {
+    "id": "dashboard",
+    "ask": "dashboard",
+    "note": "the station's gauges, drawn in code with no model; it used to mean the report",
+    "expect": {
+      "dashboard": true,
+      "report": false
+    },
+    "covers": [
+      "q:dashboard"
+    ]
+  },
+  {
     "id": "weather-report-for-a-day",
     "ask": "weather report for Tuesday",
     "expect": {
