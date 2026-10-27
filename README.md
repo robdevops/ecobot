@@ -81,7 +81,7 @@ Then send `/report` to your bot. Logs: `docker logs -f ecobot`.
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
-To read your air sensor by its `.local` name, add `--network host` to `docker run`.
+To read your air sensor by its `.local` mDNS name, add `--network host` to `docker run`.
 
 ## Configuration
 
