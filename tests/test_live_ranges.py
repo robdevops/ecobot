@@ -1,7 +1,8 @@
 import json
 from datetime import datetime, timedelta
 
-from lib.ecowitt.live import BUCKET, KEEP_DAYS, LiveRanges, readings_in
+from lib.ecowitt.live import BUCKET, LiveRanges, readings_in
+from lib.lines import RANGE_KEEP_DAYS
 from lib.tools import Turn
 from tests.fakes import archived_station
 
@@ -40,7 +41,7 @@ def test_readings_fold_into_their_five_minutes_and_a_range_needs_two_of_them(tmp
 def test_what_is_older_than_the_chart_ranges_reach_is_dropped_and_the_ranges_survive_a_restart(tmp_path):
     path = tmp_path / "live.sqlite"
     ranges = LiveRanges(path)
-    old = T - (KEEP_DAYS + 1) * 86400
+    old = T - (RANGE_KEEP_DAYS + 1) * 86400
     ranges.add(live(5.0, old), now=old)
     ranges.add(live(6.0, old + 60), now=old + 60)
     assert ranges.between("outdoor.temperature", old, old + 600)

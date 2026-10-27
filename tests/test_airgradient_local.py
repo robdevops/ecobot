@@ -264,3 +264,15 @@ def test_zeroconf_is_not_loaded_unless_a_local_name_is_looked_up():
             "import asyncio; asyncio.run(l.address_of('192.168.1.5')); assert 'zeroconf' not in sys.modules")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "MPLCONFIGDIR": "/tmp"})
     assert done.returncode == 0, done.stderr
+
+
+def test_the_ranges_of_recorded_buckets_are_dropped_after_a_month_but_their_readings_stay(tmp_path):
+    from lib.airgradient.store import AirStore
+    from lib.lines import RANGE_KEEP_DAYS
+    store = AirStore(tmp_path / "air.sqlite", "1", TZ)
+    now = T0 + 90 * 86400
+    old = now - (RANGE_KEEP_DAYS + 1) * 86400
+    store.add_recorded({"ts": old, "pm2_5": 5.0, "_range": {"pm2_5": (4.0, 6.0)}}, now=old)
+    store.add_recorded({"ts": now, "pm2_5": 7.0, "_range": {"pm2_5": (6.0, 8.0)}}, now=now)
+    assert store.load(old, old + 1) == [{"ts": old, "pm2_5": 5.0}] and store.load(now, now + 1)[0]["_range"] == {"pm2_5": (6.0, 8.0)}
+    store.close()

@@ -12,11 +12,11 @@ import sqlite3
 import threading
 import time
 
+from ..lines import RANGE_KEEP_DAYS
 from ..series import derives_range
 
 BUCKET = 300
 MIN_READINGS = 2           # a stretch with fewer live readings than this has no range
-KEEP_DAYS = 35             # about as far back as the 5-minute charts that use them go
 PRUNE_EVERY = 3600         # seconds between clean-ups of what is older
 
 
@@ -72,7 +72,7 @@ class LiveRanges:
                 counted += 1
             if now - self._pruned > PRUNE_EVERY:
                 self._pruned = now
-                self.db.execute("DELETE FROM ranges WHERE ts < ?", (int(now) - KEEP_DAYS * 86400,))
+                self.db.execute("DELETE FROM ranges WHERE ts < ?", (int(now) - RANGE_KEEP_DAYS * 86400,))
             self.db.commit()
         return counted
 

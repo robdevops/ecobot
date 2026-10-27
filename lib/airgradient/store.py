@@ -8,18 +8,22 @@ so days before the sensor existed aren't asked for again.
 
 import sqlite3
 import threading
+import time
 from datetime import date, tzinfo
 
+from ..lines import RANGE_KEEP_DAYS
 from ..timeutil import day_bounds
 from .metrics import STORED
 
 COLUMNS = list(STORED)
+PRUNE_EVERY = 3600   # seconds between clean-ups of the ranges older than RANGE_KEEP_DAYS
 
 
 class AirStore:
     def __init__(self, path, loc: str, tz: tzinfo):
         self.loc, self.tz = str(loc), tz
         self._lock = threading.Lock()
+        self._pruned = 0.0
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(f"""
@@ -63,13 +67,17 @@ class AirStore:
             self.db.commit()
         return len(rows)
 
-    def add_recorded(self, row: dict) -> None:
+    def add_recorded(self, row: dict, now: float | None = None) -> None:
         """Store a reading the bot took itself from the sensor (a 5-minute average), in place of any the bucket had, and note that it did.
         row["_range"], if it has one, is {metric: (lowest, highest)} of the readings averaged: kept apart, for a chart's shaded range."""
         with self._lock:
             self.db.execute("DELETE FROM spreads WHERE loc=? AND ts=?", (self.loc, row["ts"]))
             self.db.executemany("INSERT INTO spreads VALUES (?, ?, ?, ?, ?)",
                                 [(self.loc, row["ts"], name, lo, hi) for name, (lo, hi) in (row.get("_range") or {}).items()])
+            now = time.time() if now is None else now
+            if now - self._pruned > PRUNE_EVERY:   # the ranges are kept for RANGE_KEEP_DAYS; the readings they belong to stay
+                self._pruned = now
+                self.db.execute("DELETE FROM spreads WHERE loc=? AND ts<?", (self.loc, int(now) - RANGE_KEEP_DAYS * 86400))
             self.db.execute(f"INSERT OR REPLACE INTO readings VALUES (?, ?, {', '.join('?' * len(COLUMNS))})",
                             (self.loc, row["ts"], *(row.get(c) for c in COLUMNS)))
             self.db.execute("INSERT OR REPLACE INTO recorded VALUES (?, ?)", (self.loc, row["ts"]))

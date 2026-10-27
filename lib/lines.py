@@ -22,6 +22,7 @@ from .timeutil import SLOT, at_hour, local_date
 
 DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
+RANGE_KEEP_DAYS = 31   # how long the ranges the bot recorded itself (ecowitt.live, airgradient.store) are kept: the 1M chart's 30 days and a day over
 SHORT_DAYS = 31   # up to this long a weather line is drawn with no shaded range (see Plotted.unbanded)
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
 WIDTHS = (300, SLOT, 3600, 7200, 14400, DAY)        # bucket sizes a chart line can be drawn at: 5 min ... a day
