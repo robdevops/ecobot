@@ -1,7 +1,8 @@
 """AirGradient readings kept on disk, so history is fetched once and survives restarts.
 
 Only the six metrics the bot uses are stored, per reading, which keeps a year of data small.
-A day is recorded once it is over (and its data has had an hour to arrive), even if empty,
+Readings the bot takes itself from the sensor (local.py) are kept the same way, and noted in `recorded`, so a day that has some is completed by
+adding only what is missing, never by replacing it. A day is recorded once it is over (and its data has had an hour to arrive), even if empty,
 so days before the sensor existed aren't asked for again.
 """
 
@@ -26,6 +27,7 @@ class AirStore:
                 loc TEXT, ts INTEGER, {", ".join(f"{c} REAL" for c in COLUMNS)},
                 PRIMARY KEY (loc, ts)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS recorded (loc TEXT, ts INTEGER, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
         """)
         self.db.commit()
 
@@ -54,6 +56,35 @@ class AirStore:
             self.db.execute("INSERT OR REPLACE INTO days VALUES (?, ?, ?)", (self.loc, day.isoformat(), len(rows)))
             self.db.commit()
         return len(rows)
+
+    def add_recorded(self, row: dict) -> None:
+        """Store a reading the bot took itself from the sensor (a 5-minute average), in place of any the bucket had, and note that it did."""
+        with self._lock:
+            self.db.execute(f"INSERT OR REPLACE INTO readings VALUES (?, ?, {', '.join('?' * len(COLUMNS))})",
+                            (self.loc, row["ts"], *(row.get(c) for c in COLUMNS)))
+            self.db.execute("INSERT OR REPLACE INTO recorded VALUES (?, ?)", (self.loc, row["ts"]))
+            self.db.commit()
+
+    def merge(self, rows: list[dict]) -> int:
+        """Store these readings where the store has none at that time (what it has already, recorded or fetched, is kept). Returns how many were new."""
+        with self._lock:
+            before = self.db.total_changes
+            self.db.executemany(f"INSERT OR IGNORE INTO readings VALUES (?, ?, {', '.join('?' * len(COLUMNS))})",
+                                [(self.loc, r["ts"], *(r.get(c) for c in COLUMNS)) for r in rows])
+            self.db.commit()
+            return self.db.total_changes - before
+
+    def has_recorded(self, day: date) -> bool:
+        """Did the bot record any of this day's readings itself? (Such a day is completed by merging, never replaced.)"""
+        lo, hi = day_bounds(day, self.tz)
+        with self._lock:
+            return self.db.execute("SELECT 1 FROM recorded WHERE loc=? AND ts>=? AND ts<? LIMIT 1", (self.loc, lo, hi)).fetchone() is not None
+
+    def mark_day(self, day: date, n: int) -> None:
+        """Note that this finished day is complete, with n readings."""
+        with self._lock:
+            self.db.execute("INSERT OR REPLACE INTO days VALUES (?, ?, ?)", (self.loc, day.isoformat(), n))
+            self.db.commit()
 
     def load(self, start_ts: int, end_ts: int) -> list[dict]:
         """Readings with start_ts <= ts < end_ts, oldest first."""

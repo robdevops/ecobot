@@ -45,6 +45,11 @@ MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
 HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly averages (24), not 5-minute (288)
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
+BUCKET = 300                      # the readings kept are 5-minute averages, on the clock (as AirGradient's are)
+SAMPLE_SECONDS = 60               # with the sensor's own server: how often it is read (the keep-warm interval)
+MIN_SAMPLES = 3                   # a 5-minute average of fewer readings than this is not kept (the cloud fills that gap)
+GAP_GRACE = 120                   # a bucket is called missing only this long after it ends (its average is stored when the next one starts)
+GAP_RETRY_SECONDS = 1800          # a gap in today's readings is asked of the cloud at most this often
 MAX_GAP_SECONDS = 900             # the reading before the latest counts as its neighbour only if it is this recent
 WARM_DAYS = 7                     # finished days kept ready by every refresh
 BACKFILL_PACE = 1.0               # seconds between backfill requests
@@ -98,7 +103,9 @@ class AirGradient(Source):
         self._recent: dict[date, tuple[list[dict], float]] = {}  # today / just-finished days, refreshed
         self._locks: dict = {}
         self.requests = 0
-        self.warmer = Warmer(self.warm)
+        self.warmer = Warmer(self.warm, SAMPLE_SECONDS) if self.local else Warmer(self.warm)
+        self._bucket: tuple[int, list[dict]] | None = None   # the bucket being averaged: (its start, the readings so far)
+        self._gap_tried: dict[date, float] = {}               # when the cloud was last asked to fill a gap in a day
         self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle), Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
 
     async def start(self):
@@ -177,6 +184,9 @@ class AirGradient(Source):
         """Fetch finished days and store them, in as few requests as the API allows (it takes up to 10 days at a time; we use 9).
         Returns how many readings each day has stored."""
         days, stored = sorted(days), {}
+        for d in [d for d in days if await asyncio.to_thread(self.store.has_recorded, d)]:   # the bot's own readings: only the gaps are fetched
+            stored[d] = await self._complete_day(d)
+            days.remove(d)
         while days:
             window = [d for d in days if (d - days[0]).days < MAX_REQUEST_DAYS]
             days = days[len(window):]
@@ -198,6 +208,8 @@ class AirGradient(Source):
                 if self._unstored(await self._held([day])):
                     await self._fetch_days([day])
                 return await asyncio.to_thread(self.store.load_day, day)
+            if self.local and self.local.working:
+                return await self._recorded_day_rows(day)
             cached = self._recent.get(day)
             if cached and not refresh and time.time() - cached[1] <= FRESH_SECONDS:
                 return cached[0]
@@ -205,10 +217,81 @@ class AirGradient(Source):
             self._recent[day] = (rows, time.time())
             return rows
 
+    # ---------- the sensor's own readings, kept by the bot ----------
+    async def _record(self) -> bool:
+        """Read the sensor itself; True if it answered. Its readings are averaged into 5-minute buckets, and a bucket with enough of them is
+        stored (as the cloud would give it) when the next one starts."""
+        row = await self.local.read()
+        if not row:
+            return False
+        now = time.time()
+        self._current = ({**self._names, **row}, now)
+        bucket = int(now) // BUCKET * BUCKET
+        if self._bucket and self._bucket[0] != bucket:
+            await self._flush_bucket()
+        if self._bucket is None:
+            self._bucket = (bucket, [])
+        self._bucket[1].append({n: v for n in METRICS if (v := value_of(row, n)) is not None})
+        return True
+
+    @staticmethod
+    def _average(bucket: int, samples: list[dict]) -> dict:
+        row = {"ts": bucket}
+        for name in METRICS:
+            values = [s[name] for s in samples if name in s]
+            if values:
+                row[name] = statistics.fmean(values)
+        return row
+
+    async def _flush_bucket(self):
+        bucket, samples = self._bucket
+        self._bucket = None
+        if len(samples) >= MIN_SAMPLES:
+            await asyncio.to_thread(self.store.add_recorded, self._average(bucket, samples))
+
+    def _missing(self, day: date, rows: list[dict], until: float) -> list[int]:
+        """The start of each 5-minute bucket of this day, over by `until`, that has no reading."""
+        lo, hi = day_bounds(day, self.tz)
+        have = {r["ts"] // BUCKET * BUCKET for r in rows}
+        return [t for t in range(lo // BUCKET * BUCKET, min(hi, int(until) // BUCKET * BUCKET), BUCKET) if t not in have]
+
+    async def _fill(self, day: date, missing: list[int]):
+        """Ask the cloud for the span that holds these missing buckets, and keep what it has for them."""
+        lo, hi = day_bounds(day, self.tz)
+        got = await self._past(missing[0], missing[-1] + BUCKET)
+        wanted = set(missing)
+        await asyncio.to_thread(self.store.merge, [r for r in got if lo <= r["ts"] < hi and r["ts"] // BUCKET * BUCKET in wanted])
+
+    async def _recorded_day_rows(self, day: date) -> list[dict]:
+        """An unfinished day (today, or one that has just ended) while the sensor answers: the stored readings, the bucket being averaged
+        as the last one, and the cloud asked, at most every GAP_RETRY_SECONDS, only for buckets that are missing."""
+        rows = await asyncio.to_thread(self.store.load_day, day)
+        if time.time() - self._gap_tried.get(day, 0) > GAP_RETRY_SECONDS and (missing := self._missing(day, rows, time.time() - GAP_GRACE)):
+            self._gap_tried[day] = time.time()
+            try:
+                await self._fill(day, missing)
+                rows = await asyncio.to_thread(self.store.load_day, day)
+            except Exception as e:   # the stored readings still stand
+                log.warning("AirGradient: couldn't fill the gaps of %s from the cloud: %s", day, e)
+        if self._bucket and self._bucket[1] and local_date(self._bucket[0], self.tz) == day and self._bucket[0] not in {r["ts"] for r in rows}:
+            rows = [*rows, self._average(*self._bucket)]
+        return rows
+
+    async def _complete_day(self, day: date) -> int:
+        """A finished day the bot recorded readings of: the cloud is asked only for the buckets it lacks (once), and the day is noted as done."""
+        rows = await asyncio.to_thread(self.store.load_day, day)
+        if missing := self._missing(day, rows, day_bounds(day, self.tz)[1]):
+            await self._fill(day, missing)
+            rows = await asyncio.to_thread(self.store.load_day, day)
+        await asyncio.to_thread(self.store.mark_day, day, len(rows))
+        self._recent.pop(day, None)
+        return len(rows)
+
     async def warm(self, fresh: bool = True) -> str:
         """Current reading, today, and the last week of finished days."""
         before, today = self.requests, self.now().date()
-        await self._current_row(fresh)
+        if not (self.local and await self._record()):   # (the sensor itself, when it answers: the reading is also kept)
+            await self._current_row(fresh)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
         await self._fetch_days(self._unstored(await self._held(week)))  # one request for all of them

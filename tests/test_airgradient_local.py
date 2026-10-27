@@ -110,3 +110,83 @@ async def test_the_keep_warm_refresh_reads_the_device_and_asks_the_cloud_only_fo
     await air.warm()
     assert len(device) == 1 and "current" not in calls and "past" in calls               # the live reading from the sensor, the history from the cloud
     await air.close()
+
+
+# ---------- the bot keeps what the sensor says ----------
+from datetime import date, datetime, timedelta  # noqa: E402
+from types import SimpleNamespace as NS  # noqa: E402
+
+from lib.airgradient import source  # noqa: E402
+from lib.timeutil import day_bounds  # noqa: E402
+from tests.fakes import TZ  # noqa: E402
+
+DAY = date(2026, 10, 27)
+T0 = int(datetime(2026, 10, 27, 10, 0, tzinfo=TZ).timestamp())
+
+
+class Now:
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+async def recording_air(tmp_path, clock, values):
+    """An AirGradient whose sensor says values[n] for PM2.5 at its n-th reading, and whose clock (also the cloud's) is `clock`."""
+    transport, calls = air_transport(rows_per_day=288)
+    air = AirGradient(config(tmp_path, airgradient_local_url=URL), transport=transport)
+    readings = iter(values)
+    air.local, _ = sensor(lambda request: httpx.Response(200, json={**DEVICE, "pm02Compensated": next(readings)}), clock)
+    air.now = lambda: datetime.fromtimestamp(clock.t, TZ).replace(tzinfo=None)
+    return air, calls
+
+
+async def test_readings_are_averaged_into_five_minute_buckets_kept_with_the_cloud_only_filling_gaps(tmp_path, monkeypatch):
+    clock = Now(T0)
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    air, calls = await recording_air(tmp_path, clock, [10 + k for k in range(12)])
+    for k in range(12):                              # one reading a minute from 10:00 to 10:11
+        clock.t = T0 + 60 * k
+        assert await air._record()
+    stored = {r["ts"]: r["pm2_5"] for r in air.store.load_day(DAY)}
+    assert stored == {T0: 12.0, T0 + 300: 17.0}      # 10:00-10:04 and 10:05-10:09 averaged; 10:10 has two readings so far: not kept
+    rows = {r["ts"]: r["pm2_5"] for r in await air._day_rows(DAY)}
+    assert rows[T0] == 12.0 and rows[T0 + 300] == 17.0 and rows[T0 + 600] == 20.5     # what the sensor said wins; the open bucket is shown
+    assert calls.count("past") == 1 and T0 - 3600 in rows                             # the hours before were asked of the cloud, once
+    await air._day_rows(DAY)
+    assert calls.count("past") == 1                                                    # and not again for a while
+    clock.t = T0 + 300 * 20
+    await air._day_rows(DAY)
+    assert calls.count("past") == 2                                                    # (the readings stopped: those buckets are a gap)
+    await air.close()
+
+
+async def test_a_bucket_with_too_few_readings_is_not_kept(tmp_path, monkeypatch):
+    clock = Now(T0)
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    air, _ = await recording_air(tmp_path, clock, [10, 11, 12, 13])
+    for t in (T0, T0 + 60, T0 + 300, T0 + 360):      # two readings in each of two buckets
+        clock.t = t
+        await air._record()
+    await air._flush_bucket()                        # the open bucket ends
+    assert air.store.load_day(DAY) == []
+    await air.close()
+
+
+async def test_a_finished_day_the_bot_recorded_is_completed_with_only_the_missing_buckets(tmp_path, monkeypatch):
+    clock = Now(int(datetime(2026, 10, 29, 12, 0, tzinfo=TZ).timestamp()))
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    air, calls = await recording_air(tmp_path, clock, [])
+    lo, hi = day_bounds(DAY, TZ)
+    gone = {lo + 300 * 50, lo + 300 * 51, lo + 300 * 200}
+    for t in range(lo, hi, 300):
+        if t not in gone:
+            air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+    assert await air._day_rows(DAY) and calls.count("past") == 1
+    rows = air.store.load_day(DAY)
+    assert len(rows) == 288 and {r["ts"] for r in rows if r["pm2_5"] != 1.0} == gone    # the cloud's rows only where there were none
+    assert air.store.counts([DAY]) == {DAY: 288}
+    await air._day_rows(DAY)
+    assert calls.count("past") == 1                                                     # a finished day is never asked about again
+    await air.close()
