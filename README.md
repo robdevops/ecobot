@@ -70,7 +70,7 @@ sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot
   --log-driver $(test -S /run/systemd/journal/socket && echo journald || echo local) ecobot
 ```
 
-The image runs as uid 10001, hence the `chown`; the folder is `/data` inside the container (its `DATA_DIR`). Docker reads the env file as it is, so a value in quotes keeps its quotes, where systemd drops them. To go back: `sudo docker rm -f ecobot && sudo systemctl start ecobot`, which gives the folder back to the service.
+The image runs as uid 10001, hence the `chown`; the folder is `/data` inside the container (its `DATA_DIR`). To read the air sensor by its `.local` name (`AIRGRADIENT_LOCAL_URL`), add `--network host` to `docker run`. Docker reads the env file as it is, so a value in quotes keeps its quotes, where systemd drops them. To go back: `sudo docker rm -f ecobot && sudo systemctl start ecobot`, which gives the folder back to the service.
 
 ## Logging
 

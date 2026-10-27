@@ -64,8 +64,9 @@ ProtectHostname=yes
 ProtectProc=invisible
 RestrictNamespaces=yes
 
-# Network: HTTPS to the weather, air, pollen, Tuya, Telegram and model APIs (AF_UNIX: the local name resolver)
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Network: HTTPS to the weather, air, pollen, Tuya, Telegram and model APIs (AF_UNIX: the local name resolver; AF_NETLINK: listing
+# the network interfaces, which finding the air sensor by its .local name on the network needs)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 # Resource limits
 TasksMax=64

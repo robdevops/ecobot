@@ -34,6 +34,7 @@ from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
 from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, normalise, pm25_aqi, rating, value_of, without_spikes
+from .local import LocalSensor
 from .store import AirStore
 
 log = logging.getLogger(__name__)
@@ -90,8 +91,10 @@ class AirGradient(Source):
         self.token = cfg.airgradient_token
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
+        self.local = LocalSensor(cfg.airgradient_local_url) if cfg.airgradient_local_url else None   # the live reading from the sensor itself
         self.store = AirStore(cfg.air_cache_path, self.loc, self.tz)
         self._current: tuple[dict, float] | None = None       # (raw row, fetched at)
+        self._names: dict = {}                                # the sensor's name and type, from the last cloud reading
         self._recent: dict[date, tuple[list[dict], float]] = {}  # today / just-finished days, refreshed
         self._locks: dict = {}
         self.requests = 0
@@ -101,6 +104,10 @@ class AirGradient(Source):
     async def start(self):
         try:
             row = await self._current_row(refresh=True)
+            if self.local:   # the cloud is still asked once: it names the sensor, and its token and location are checked
+                self._names = {k: v for k, v in (await self._get("current")).items() if k in ("locationName", "locationType")}
+                row = {**self._names, **row}
+                self._current = (row, self._current[1])
             log.info("Air quality: AirGradient '%s' (location %s)", row.get("locationName"), self.loc)
         except Exception as e:  # keep going: the sensor may just be briefly unreachable
             log.warning("AirGradient location %s not readable yet: %s", self.loc, e)
@@ -135,8 +142,17 @@ class AirGradient(Source):
     async def _current_row(self, refresh: bool = False) -> dict:
         async with self._lock("current"):
             if refresh or not self._current or time.time() - self._current[1] > FRESH_SECONDS:
-                self._current = (await self._get("current"), time.time())
+                self._current = (await self._fetch_current(), time.time())
             return self._current[0]
+
+    async def _fetch_current(self) -> dict:
+        """The live reading: from the sensor's own server when AIRGRADIENT_LOCAL_URL answers (with the cloud's name for the sensor,
+        last heard), else the cloud."""
+        if self.local and (row := await self.local.read()):
+            return {**self._names, **row}
+        row = await self._get("current")
+        self._names = {k: v for k, v in row.items() if k in ("locationName", "locationType")}
+        return row
 
     def _final(self, day: date) -> bool:
         """Over for more than an hour, so its data won't change."""

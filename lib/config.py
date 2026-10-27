@@ -175,6 +175,7 @@ class Config:
     airgradient_token: str = _setting("AIRGRADIENT_API_TOKEN", "")
     airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
     airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
+    airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
     place: str = _setting("PLACE", "Melbourne")                     # named after the Pollen & asthma and Forecast headings in the report
     pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
