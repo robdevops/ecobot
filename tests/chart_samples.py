@@ -7,7 +7,7 @@ import random
 from datetime import date, datetime
 
 import lib.airgradient  # noqa: F401  (imported first: lib.panels and the air package import each other)
-from lib.panels import panel_for
+from lib.panels import panel_for, two_axes
 from lib.specs import Bars, Chart, Compass, Line, Panel, stack
 from tests.fakes import TZ
 
@@ -101,5 +101,14 @@ def counts() -> Chart:
     return Chart("Days with UV index ≥ 10", "Thu 1 Jan – Wed 30 Sep 2026  ·  70 of 273 days  ·  per month", [Panel("Days", "", bars=bars)])
 
 
+def two_scales() -> Chart:
+    n = len(HALF_HOURS)
+    sun = [max(0.0, daily(i, -0.1)) for i in range(n)]
+    uv = panel_for("uv", [line("UV index", [round(11 * v, 1) for v in sun], "uv")])
+    solar = panel_for("solar", [line("Solar radiation", [round(900 * v + w * 20) if v else 0 for v, w in zip(sun, wobble(7, n))], "solar")])
+    panel = two_axes([uv, solar])
+    return Chart(panel.label, "Mon 28 Sep – Sun 4 Oct 2026  ·  30-minute readings", [panel])
+
+
 SAMPLES = {"temperature": temperature, "humidity_rain": humidity_rain, "all_week": all_week, "quarter": quarter, "air": air,
-           "wind": wind, "counts": counts}
+           "wind": wind, "counts": counts, "two_scales": two_scales}

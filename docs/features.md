@@ -4,7 +4,7 @@
 
 Type a question in any chat the bot is in ("how hot is it?", "will it rain?", "rain by month for 2 years", "air quality 30d"). Simple lookups, reports and charts are worked out by the bot itself, instantly; only questions that need reasoning go to the AI model.
 
-- **Charts:** any reading or several on one time axis, rain behind the lines, one colour per reading. Under a single chart are period buttons (1D, 7D, 1M, 3M, 1Y); pressing one redraws it in place. "weather all week" draws every reading, a panel each.
+- **Charts:** any reading or several on one time axis, rain behind the lines, one colour per reading. Under a single chart are period buttons (1D, 7D, 1M, 3M, 1Y); pressing one redraws it in place. Ask for "plot uv and solar on two axes" (or "dual axis", "overlay") to put two readings on one chart, each with its own scale: the left axis for the first, the right for the second. "weather all week" draws every reading, a panel each.
 - **Reports:** `/report` (or the Status button, or typing "report", "status" or "weather now") lays out the weather station, the air quality and, if switched on, pollen and the forecast, with a 🔄 Refresh button.
 - **Days and totals:** count or rank days by any reading ("how many days was UV 9 or more", "hottest day each year"), or total rain per month or year as bars.
 - **Analysis:** whether rain follows a reading, or how air quality relates to everything else, over the stored history.

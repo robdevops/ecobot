@@ -25,6 +25,7 @@ class Turn:
     chart_asked: bool = False                    # the person's words asked for a chart ("plot"), whatever the model sets
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
+    two_axes: bool = False                       # the words ask for two readings on one chart with a scale each ("on two axes")
     average_asked: bool = False                  # an average was asked for: the caption leads with it
     text: str = ""                               # what the person said (a tool can check an argument against it)
     readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others
@@ -37,7 +38,7 @@ class Turn:
     @classmethod
     def of(cls, read, text: str, **more) -> "Turn":
         """The Turn for a question as intent.read read it (`read`): what its words ask of a chart and of the figures."""
-        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields,
+        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, two_axes=read.two_axes,
                    average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, **more)
 
 

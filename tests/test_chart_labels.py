@@ -151,3 +151,30 @@ def test_every_weather_reading_and_air_metric_has_a_colour_of_its_own():
     from lib.series import AIR, WEATHER
     lines = [name for name in WEATHER if name != "rain"]          # rain is drawn as bars, in its own blue
     assert not [name for name in (*lines, *AIR) if name not in charts.READING_COLOURS]
+
+
+def test_two_panels_of_lines_become_one_panel_with_a_scale_each_and_nothing_else_does():
+    from lib.panels import panel_for, two_axes
+    from lib.specs import Bars
+
+    def made(reading, label):
+        return panel_for(reading, [Line(label, [1, 2, 3], [1.0, 2.0, 3.0], reading=reading)])
+    uv, solar = made("uv", "UV index"), made("solar", "Solar")
+    both = two_axes([uv, solar])
+    assert both.label == "UV index and Solar radiation" and both.unit == "" and both.peaks == "none"
+    assert [(s.label, s.right, s.reading) for s in both.lines] == [("UV index", False, "uv"), ("Solar radiation (W/m²)", True, "solar")]
+    rain = panel_for("rain", bars=Bars("Rain", "mm", [1], [1.0], 3600))
+    assert two_axes([uv]) is None and two_axes([uv, solar, uv]) is None and two_axes([uv, rain]) is None
+    with pytest.raises(ValueError):
+        Panel("x", "", [Line("a", [1, 2], [1.0, 2.0], right=True)])      # a right-hand scale needs a line on the left
+
+
+def test_a_panel_with_two_scales_is_drawn_with_both_latest_values_and_a_right_axis():
+    from lib.panels import panel_for, two_axes
+    xs = list(range(1_790_000_000, 1_790_000_000 + 60 * 1800, 1800))
+    uv = panel_for("uv", [Line("UV index", xs, [float(i % 11) for i in range(60)], reading="uv")])
+    solar = panel_for("solar", [Line("Solar", xs, [float(i % 11) * 90 + 40.5 for i in range(60)], reading="solar")])
+    panel = two_axes([uv, solar])
+    chart = Chart(panel.label, "s", [panel])
+    assert labels_of(chart)[-2:] == ["4", "400.5"]                          # each line's latest value, by its own scale
+    assert charts.render(chart, timezone.utc)[:4] == b"\x89PNG"

@@ -1149,6 +1149,11 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
     assert specs[0].title == "Rain, Wind" and [p.label for p in specs[0].panels] == ["Wind"] and specs[0].panels[0].bars
     out, specs = await ask_chart(chart_fields=["temperature"])                        # one reading: the usual chart
     assert len(specs[0].panels) == 1 and not specs[0].panels[0].bars
+    out, specs = await ask_chart(chart_fields=["pressure", "temperature"], two_axes=True, groups="outdoor,indoor")   # the model asked for a scale each
+    assert [p.label for p in specs[0].panels] == ["Pressure and Temperature"] and [s.right for s in specs[0].panels[0].lines] == [False, True, True]
+    assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
+    out, specs = await ask_chart(chart_fields=["temperature", "rain"], two_axes=True)  # rain can't share a panel: stacked as ever
+    assert specs[0].panels[0].label == "Temperature" and specs[0].panels[0].bars
     await eco.close()
 
 

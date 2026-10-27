@@ -1450,5 +1450,28 @@
       "c:line",
       "m:temperature"
     ]
+  },
+  {
+    "id": "two-axes-chart",
+    "ask": "graph combine uvi and solar radiation on two axis",
+    "note": "two readings with different scales on one panel: fast path, drawn in code with the second on a right-hand axis",
+    "expect": {
+      "chart_fields": [
+        "uv",
+        "solar"
+      ],
+      "two_axes": true,
+      "chart_in_code": true,
+      "fast": {
+        "tool": "weather_history",
+        "args": {
+          "chart": true,
+          "groups": "solar_and_uvi"
+        }
+      }
+    },
+    "covers": [
+      "c:two-axes"
+    ]
   }
 ]
