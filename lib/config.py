@@ -167,7 +167,7 @@ class Config:
     air_cache_path: Path
     conditions_cache_path: Path                                    # the last pollen page and forecast, kept across restarts
     telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
-    xai_api_key: str = _setting("XAI_API_KEY", "", _required)
+    xai_api_key: str = _setting("XAI_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
     xai_base_url: str = _setting("XAI_BASE_URL", "https://api.x.ai/v1")
     xai_model: str = _setting("XAI_MODEL", "grok-4.3")
     ecowitt_api_key: str = _setting("ECOWITT_API_KEY", "")

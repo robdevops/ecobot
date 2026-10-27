@@ -220,8 +220,12 @@ async def main():
         # A model request may run as long as the bot gives a whole question (it then asks again, a reasoning step lower); a
         # dropped connection, a 429 or a 5xx is tried again twice, at once, inside that time
         client = AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0),
-                             max_retries=2)
-        stack.push_async_callback(safely, client.close)
+                             max_retries=2) if cfg.xai_api_key else None   # without a key the bot answers only what it works out in code
+        if client:
+            stack.push_async_callback(safely, client.close)
+        else:
+            log.warning("XAI_API_KEY is not set: running without the model, which answers only what the bot works out itself "
+                        "(the report, charts, plain lookups, alerts)")
         state = AlertState(cfg.state_path)
         if cfg.admin_only:
             log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
@@ -253,7 +257,7 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
 
-        log.info("@%s + %s", app.bot.username, cfg.xai_model)
+        log.info("@%s + %s", app.bot.username, cfg.xai_model if client else "no model")
         log.info("Sources: %s", ", ".join(s.name for s in sources))
         notify = Notifier(app.bot, state)
         await bot.publish_commands(app.bot)   # the / menu

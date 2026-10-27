@@ -44,6 +44,20 @@ async def test_error_details_stay_in_the_log_not_the_chat(alert_state):
     assert "RuntimeError" in replies[0]      # just the kind of problem
 
 
+class NoModel:
+    ready = False
+
+    async def run(self, *a, **k):
+        raise AssertionError("there is no model to ask")
+
+
+async def test_without_a_model_a_question_for_it_is_told_so_and_what_works_still_answers(alert_state):
+    replies = await ask(alert_state, NoModel(), "will it rain tomorrow, do you think?")
+    assert len(replies) == 1 and "needs the AI model" in replies[0] and "/report" in replies[0] and "/air_quality" in replies[0]
+    replies = await ask(alert_state, NoModel(), "what can you do")
+    assert len(replies) == 1 and "needs the AI model" not in replies[0]               # answered in code, as before
+
+
 async def test_a_failing_shortcut_falls_back_to_the_model(alert_state, monkeypatch):
     def boom(*a, **k):
         raise OverflowError("date value out of range")

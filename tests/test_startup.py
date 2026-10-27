@@ -296,7 +296,9 @@ def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypa
         "t", "grok-4.3", "https://api.x.ai/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert cfg.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
     monkeypatch.setenv("XAI_API_KEY", " ")
-    with pytest.raises(SystemExit, match="XAI_API_KEY is not set"):
+    assert Config.from_env().xai_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", " ")
+    with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
         Config.from_env()
 
 

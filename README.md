@@ -22,7 +22,7 @@ sudoedit /etc/ecobot.env
 # Telegram: the token from BotFather
 TELEGRAM_BOT_TOKEN=
 
-# the AI model, for questions that need it
+# the AI model, for questions that need it (optional)
 XAI_API_KEY=
 
 # your weather station (optional)

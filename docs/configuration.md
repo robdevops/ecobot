@@ -17,12 +17,12 @@ One `NAME=value` per line, no `export`; a line starting with `#` is a comment (n
 
 `on|off` values: `on yes true 1` / `off no false 0`. Any other value → default (logged). Blank → default.
 
-### Required
+### Required and model
 
 | Variable | Default | Description |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | – | Bot token (@BotFather) |
-| `XAI_API_KEY` | – | xAI API key |
+| `TELEGRAM_BOT_TOKEN` | – | Required. Bot token (@BotFather) |
+| `XAI_API_KEY` | – | xAI API key. Unset → no model: `/report`, chart commands, plain lookups ("how hot is it?", "rain chart 7d", "forecast") and all alerts work; anything needing the model gets a "no model" reply |
 | `XAI_MODEL` | `grok-4.3` | Model |
 | `XAI_BASE_URL` | `https://api.x.ai/v1` | API endpoint |
 

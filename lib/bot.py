@@ -57,6 +57,12 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
+NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n"
+            "Without it I can still do: /report, the chart commands (/rain, /weather, /temperature, /humidity, /air_quality, /particulates, "
+            "/wind) and plain questions like \"how hot is it?\", \"is it raining?\", \"air quality now\", \"highest humidity yesterday\", "
+            "\"rain chart 7d\" or \"forecast\", as well as all the alerts.")
+
+
 @dataclass
 class ChatState:
     history: list[dict] = field(default_factory=list)
@@ -1019,6 +1025,10 @@ class Bot:
         else:
             answer = Answer()
         if answer.reply is not None:
+            working.append({"role": "assistant", "content": answer.reply})
+            return answer
+        if not getattr(self.agent, "ready", True):   # no XAI_API_KEY: what is left is for the model
+            answer.reply = NO_MODEL
             working.append({"role": "assistant", "content": answer.reply})
             return answer
         before = [str(m["content"]) for m in working[:-1] if m["role"] == "user"][-2:]
