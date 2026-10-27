@@ -372,6 +372,7 @@ class AirGradient(Source):
         """The air_quality tool: current reading, or a summary of a past period."""
         turn = turn or Turn()
         try:
+            turn.air_extra_used = turn.air_extra_used or any(m in EXTRA for m in args.get("metrics") or [])
             chart = wants_chart(args, turn)
             if args.get("start_date") or args.get("end_date") or chart:
                 return json_result(await self.history(args.get("start_date"), args.get("end_date"),

@@ -673,12 +673,15 @@ async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_
         await answer_query(Query(BadRequest("Message is not modified")))
 
 
-async def test_a_follow_up_keeps_the_air_sensors_own_readings_offered_when_the_question_before_asked_for_them(alert_state):
+async def test_the_air_sensors_own_readings_stay_offered_in_a_chat_until_two_runs_go_by_without_the_model_using_them(alert_state):
     seen = []
+    uses = iter([True, True, False, False, False])      # what the model does with the series when it has them: used, used, then not
 
     class Capturing:
         async def run(self, messages, system, effort, *, turn=None, **k):
             seen.append((turn.air_extra, "AIRGRADIENT'S OWN TEMPERATURE AND HUMIDITY" in system))
+            if turn.air_extra and next(uses):
+                turn.air_extra_used = True              # a tool served them
             return "ok"
     replies = []
 
@@ -692,7 +695,37 @@ async def test_a_follow_up_keeps_the_air_sensors_own_readings_offered_when_the_q
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
     bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
-    for said in ("overlay ecowitt humidity with airgradient humidity", "do that again but for temperature", "what is the weather like",
-                 "and the wind?"):
+    for said in ("what is the weather like", "overlay ecowitt humidity with airgradient humidity", "do that again but for temperature",
+                 "and the wind?", "and the rain?", "and the pressure?", "and the uv?"):
         await bot.respond(update, context, said)
-    assert seen == [(True, True), (True, True), (True, True), (False, False)]      # the follow-up is offered them; two questions on, not
+    assert seen == [(False, False),                       # nothing about the air sensor yet
+                    (True, True), (True, True),           # named, used; the follow-up (no AirGradient in it) still offered, used again
+                    (True, True), (True, True),           # two runs the model did not use them in ...
+                    (False, False), (False, False)]       # ... and they are no longer offered, nor mentioned in the prompt
+
+
+async def test_either_side_naming_the_air_sensors_readings_keeps_them_offered(alert_state):
+    seen = []
+    replies_by_question = {"what is the weather like": "It is mild.", "tell me about airgradient humidity": "The AirGradient humidity is 61%.",
+                           "and tomorrow?": "Sunny.", "and the day after?": "Cloudy.", "what about the wind?": "Calm."}
+
+    class Capturing:
+        async def run(self, messages, system, effort, *, turn=None, **k):
+            seen.append(turn.air_extra)
+            return replies_by_question[messages[-1]["content"]]
+    sent = []
+
+    async def reply_text(body, **kw):
+        sent.append(body)
+
+    async def send_chat_action(*a, **k):
+        pass
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
+    for said in replies_by_question:
+        await bot.respond(update, context, said)
+    # the person's words named it (offered) and the reply did too (still offered for the next two runs); then they stop
+    assert seen == [False, True, True, True, False]

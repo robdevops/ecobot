@@ -57,6 +57,8 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
+AIR_EXTRA_RUNS = 2   # the tools keep offering the air sensor's own readings in a chat until this many runs in a row go by without the model using them
+
 NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n"
             "Without it I can still do: /report, the chart commands (/rain, /weather, /temperature, /humidity, /air_quality, /particulates, "
             "/wind) and plain questions like \"how hot is it?\", \"is it raining?\", \"air quality now\", \"highest humidity yesterday\", "
@@ -67,6 +69,7 @@ NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n
 class ChatState:
     history: list[dict] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    air_extra_idle: int = AIR_EXTRA_RUNS   # runs since the model last used the air sensor's own temperature or humidity here (see Turn.air_extra)
 
 
 @dataclass
@@ -998,8 +1001,11 @@ class Bot:
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             turn = Turn.of(read, text)
+            turn.air_extra = turn.air_extra or chat.air_extra_idle < AIR_EXTRA_RUNS   # named in the words, or still being used in this chat
             try:
                 answer = await self._answer(msg, read, turn, working, draft, now, redraw)
+                mentioned = intent.wants_air_extra(text) or intent.wants_air_extra(answer.reply or "")   # either side named the sensor's readings
+                chat.air_extra_idle = 0 if turn.air_extra_used or mentioned else chat.air_extra_idle + 1 if turn.air_extra else chat.air_extra_idle
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
                     try:
@@ -1046,7 +1052,9 @@ class Bot:
             return answer
         before = [str(m["content"]) for m in working[:-1] if m["role"] == "user"][-2:]
         found = intent.topics(str(working[-1]["content"]), before)
-        turn.air_extra = turn.air_extra or "air_extra" in found   # a follow-up ("and for temperature?") keeps the tools the question before it was offered
+        found.discard("air_extra")   # the prompt's note on them follows what the tools offer (turn.air_extra), not the words of earlier messages
+        if turn.air_extra:
+            found.add("air_extra")
         system = prompt.build(datetime.now(self.cfg.tz), {s.name: s.describe() for s in self.sources}, read.hints,
                               read.about_the_bot, read.rain_caption, found)
         answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens),

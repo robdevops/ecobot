@@ -26,7 +26,8 @@ class Turn:
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
     two_axes: bool = False                       # the words ask for two readings on one chart with a scale each ("on two axes")
-    air_extra: bool = False                      # the words ask for the air sensor's own temperature or humidity: the tools then offer them
+    air_extra: bool = False                      # the tools offer the air sensor's own temperature and humidity: the words name them, or this chat is still using them
+    air_extra_used: bool = False                 # a tool served them for this question
     average_asked: bool = False                  # an average was asked for: the caption leads with it
     text: str = ""                               # what the person said (a tool can check an argument against it)
     readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others

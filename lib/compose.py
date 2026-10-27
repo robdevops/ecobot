@@ -184,6 +184,7 @@ class Composer:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
+        turn.air_extra_used = turn.air_extra_used or any(name in EXTRA for name, _ in asked)
         if (args.get("two_axes") or args.get("same_axis")) and any(name in EXTRA for name, _ in asked):
             for (name, _), panel in zip(asked, built):   # the station's readings next to the air sensor's own: say whose each is
                 if name in WEATHER and name != "rain":
