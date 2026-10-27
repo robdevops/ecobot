@@ -20,6 +20,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
 from openai import AsyncOpenAI, Timeout
 from telegram import Update
+from telegram.error import InvalidToken
 from telegram.ext import Application, Defaults
 
 from lib import intent
@@ -246,7 +247,10 @@ async def main():
         stop = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_running_loop().add_signal_handler(sig, stop.set)
-        await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
+        try:
+            await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
+        except InvalidToken:   # (its message names the token, so it is not shown)
+            raise SystemExit("TELEGRAM_BOT_TOKEN was rejected by Telegram: check it is the token @BotFather gave for this bot") from None
         await app.start()
         stack.push_async_callback(app.stop)
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,

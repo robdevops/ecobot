@@ -441,3 +441,22 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
                                ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
     assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
+
+
+async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_does_not_show_the_token(tmp_path, monkeypatch):
+    from telegram.error import InvalidToken
+
+    class Rejecting(FakeApp):
+        async def __aenter__(self):
+            raise InvalidToken("The token `SECRET-TOKEN-123` was rejected by the server.")
+    cfg = config(tmp_path)
+    eco_t, _ = ecowitt_transport(history_days=3)
+    air_t, _ = air_transport()
+    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
+    for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(Rejecting())))
+    with pytest.raises(SystemExit) as stopped:
+        await ecobot.main()
+    assert "TELEGRAM_BOT_TOKEN was rejected by Telegram" in str(stopped.value) and "SECRET" not in str(stopped.value)
+    assert stopped.value.__cause__ is None and stopped.value.__suppress_context__
