@@ -81,8 +81,6 @@ Then send `/report` to your bot. Logs: `docker logs -f ecobot`.
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
-To read your AirGradient sensor by its `.local` mDNS name, add `--network host` to `docker run`.
-
 ## Configuration
 
 Settings are environment variables in `/etc/ecobot.env`. The ones you're most likely to change:
@@ -94,7 +92,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `XAI_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station. |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
-| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network instead, e.g. `http://airgradient_<serial>.local`. |
+| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network instead, e.g. `http://airgradient_<serial>.local` (requires `--network host` in Docker, else use a fixed IP address). |
 | `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
 
 After editing the file, restart: `sudo systemctl restart ecobot` or `sudo docker restart ecobot`.
