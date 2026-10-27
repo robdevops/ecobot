@@ -1,6 +1,6 @@
 # Configuration
 
-The bot is configured only through environment variables. They live in one file, `/etc/ecobot.env`, which the systemd unit (`EnvironmentFile=`) and Docker (`--env-file`) both read. Only the first row below is required; each data source switches on when its variables are set.
+The bot is configured only through environment variables. They live in one file, `/etc/ecobot.env`, which the systemd unit (`EnvironmentFile=`) and Docker (`--env-file`) both read. Each data source switches on when its variables are set.
 
 ## The environment file
 
@@ -15,29 +15,64 @@ One `NAME=value` per line, no `export`; a line starting with `#` is a comment (n
 
 ## Settings
 
-| Variable | Purpose |
-|---|---|
-| `TELEGRAM_BOT_TOKEN`, `XAI_API_KEY` | required |
-| `XAI_MODEL` (`grok-4.3`), `XAI_BASE_URL` (`https://api.x.ai/v1`) | model |
-| `TZ` | only without an Ecowitt station: the station names its own time zone, which is used (a `TZ` that disagrees is logged). Without either, the system's zone (what `/etc/localtime` links to); e.g. `Australia/Melbourne` |
-| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | enables Ecowitt |
-| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | enables AirGradient through its cloud (history from before the bot began; optional with `AIRGRADIENT_LOCAL_URL`) |
-| `DATA_DIR` | optional: the folder that holds the bot's state (`bot_state.json`) and its SQLite caches (`ecowitt_cache.sqlite`, `airgradient_cache.sqlite`, `conditions_cache.sqlite`), kept apart from the code so a container can mount it (e.g. `/data`). A relative path is also accepted and is taken from the working directory; the folder is created if missing. Unset, a systemd service with `StateDirectory=` uses that folder (`STATE_DIRECTORY`, e.g. `/var/lib/ecobot`), else the app's own folder. Matplotlib's font cache goes in a `matplotlib` sub-folder (unless `MPLCONFIGDIR` is set). Default: the app's own folder, where the files have always been |
-| `AIRGRADIENT_LOCAL_URL` | optional: the sensor's own web server, e.g. `http://airgradient_d83bda1c1e08.local` (the serial number is on the sensor). The bot reads it every minute, so "air now" and the particulates alert checks use the live reading with no cloud in between, and it keeps what it reads as 5-minute averages (AirGradient's own PM2.5 correction, `pm02Compensated`, when the sensor sends it) alongside the history it fetched. The cloud is then asked only for gaps: the time before the bot was recording and any period it or the sensor was off, each asked once. Set it together with the cloud account to have the cloud fill that history; **without `AIRGRADIENT_API_TOKEN` and `AIRGRADIENT_LOCATION_ID` this is all there is: the bot reads only the sensor and its own saved readings, never the cloud**, so charts reach back only to when it began recording and no archive is built. A `.local` name is looked up by the bot itself, so the host needs no avahi; under Docker that needs `--network host`, or put the sensor's IP address in the URL (then give it a fixed address in your router). If the sensor does not answer, the bot says so once in the log and uses the cloud as before, trying the sensor again after 5 minutes. The bot has to run on the sensor's own network |
-| `AIRGRADIENT_DASHBOARD_URL` | optional "live chart" link under air-quality replies and alerts |
-| `POLLEN=on` | optional: Melbourne grass pollen and thunderstorm asthma risk (scraped from melbournepollen.com.au) in the report, a `pollen_asthma` tool and an alert when High. Off by default; `POLLEN_DISTRICT` picks the district (default `Central`, never printed; the others are East Gippsland, Mallee, North Central, North East, Northern Country, South West, West and South Gippsland and Wimmera, in any case; one the site doesn't have is warned about at start) |
-| `PLACE` | the name shown after the Pollen & asthma and Forecast headings in the report (default `Melbourne`) |
-| `FORECAST=on` | optional: the Open-Meteo daily forecast in the report and a `weather_forecast` tool. Off by default; `FORECAST_LAT` / `FORECAST_LON` set the location, else the weather station's own is used |
-| `ADMIN_ONLY` | on by default: the bot answers nobody (private chats and groups alike) except the admins and creators of the groups it is in; anyone else gets "Sorry, only group admins can use this bot." when they address it (ordinary group talk is ignored). The one exception is `/alerts` in a group, which anyone may open (its buttons and `/alerts on|off` stay admin-only). `ADMIN_ONLY=off` answers everyone, as before. The admins are asked of Telegram and remembered for 10 minutes; a group counts once the bot is added to it or someone speaks there |
-| `ADMIN_CHAT_IDS` | optional, with `ADMIN_ONLY`: more ids allowed besides those admins (added to them, not instead of them), separated by commas or spaces. A user id (the same number as their private chat) lets someone in before the bot is in any group; a group id (negative) adds that group's admins and lets its anonymous admins (those who post "as the group") in |
-| `ALERT_COOLDOWN_MINUTES` | optional: the rain and temperature-crossing alerts: how long it must stay dry before "the rain has stopped" is sent, and the least time between alerts of the same kind (default 60, from 5 to 150). A change that comes inside the cooldown is held and announced when it ends, if the state still differs from the last one alerted; if it is back where it was, nothing is sent |
-| `RAIN_QUIET_HOURS` | optional: local hours with no rain alerts (started, stopped), as `0-6` (the default; `22-6` wraps midnight; `off` for none). Rain that fell in them is summed up in one message once they end |
-| `CHART_ALL_FEELS_LIKE=on` | optional: "weather all week" (every reading, a panel each, sent with just its title; UV is left out as it has the same shape as solar) also draws the feels-like panel; off by default, as it nearly repeats temperature. Naming either ("plot feels like", "plot solar and uv") always works |
-| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET` | enables the irrigation controller (a Tuya smart irrigation timer, through the Tuya cloud API): an Irrigation button in private chats (it replaces Wind) with its status and buttons to water for 5 to 30 minutes or switch the valve off, pause for 24 to 72 hours (the Pause button becomes Unpause while paused), refresh, and an Alerts menu to turn the chat's irrigation battery and irrigation pause alerts on or off (or type irrigation, water, tap or sprinkler); a daily check at 18:00 that delays it 24 hours when more than 1 mm fell in the last 24 hours or Open-Meteo gives today or tomorrow a 50% or better chance of 1 mm (needs Ecowitt and `FORECAST=on` for each half; a forecast more than a day old doesn't count); on a second rainy day the bot's own delay is started again, and a delay you set is left alone; an "irrigation pause" alert when it does, and an "irrigation battery" alert below 5%. `TUYA_BASE_URL` (default `https://openapi.tuyaeu.com`, the EU data centre) and `IRRIGATION_CHECK_HOUR` (default `18`) are optional |
-| `CHART_ALL_VPD=on` | optional: "weather all week" also draws the vapour pressure deficit panel; off by default, as it is temperature and humidity combined (the station reports it for the outdoor sensor only). Naming it ("plot vpd") always works |
-| `TELEGRAM_PRELOAD_CHAT` | optional: a chat id (negative for a group or channel) the bot silently uploads charts to ahead of need. With it set, each chart sent with period buttons has its other periods drawn and uploaded there in the background, each on its own the moment it is drawn, starting as soon as the chart is sent and whatever else is being answered, so pressing a period button edits the message with Telegram's copy and uploads nothing. A chart uploaded this way is used for 30 minutes, then drawn afresh. The bot must be able to post in that chat; the uploaded messages are left there. If Telegram refuses an upload (the bot can't post there) none is tried again until a restart; a flood limit or a timeout only skips that photo. Unset: off |
-| `ANTISPIKE_REQUIRE_CONSECUTIVE` | optional: how many readings in a row a rise of the particles (PM1, PM2.5, PM10) needs to count as the air rather than a glitch of the sensor. Default `2`: a single-reading spike (at least 2.5 times, and 5 µg/m³ above, the readings either side) is left out of PM charts and of every air figure (highs, lows, averages, days over a limit), and the unhealthy-air alert counts a check only when the sensor's last 2 readings are all over the mask level. `3` also drops two-reading spikes, and so on; `1` or `off` turns the rule off. The live "air now" reading and the "safe again" check are unchanged |
-| `LOG_WIDTH` | optional: the most characters of a log line, cut with an ellipsis (…); `0` cuts none. Default 71. Every log line obeys it, whatever its level (a warning is printed as `WARN`); a request, chat message, reply or alert is also put on one line |
-| `LOG_LEVEL` | optional: `DEBUG`, `INFO` (default), `WARNING` or `ERROR` (any other value keeps `INFO`, with a warning). `DEBUG` adds the bot's own debug lines (the chart timings, charts it couldn't draw ahead); the libraries stay at their usual level. |
+`on|off` values: `on yes true 1` / `off no false 0`. Any other value → default (logged). Blank → default.
 
-An on/off setting takes `on`, `yes`, `true` or `1`, and `off`, `no`, `false` or `0`; any other value keeps its default (and the log says so), so a typo can't switch `ADMIN_ONLY` off. A setting left blank is its default.
+### Required
+
+| Variable | Default | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | – | Bot token (@BotFather) |
+| `XAI_API_KEY` | – | xAI API key |
+| `XAI_MODEL` | `grok-4.3` | Model |
+| `XAI_BASE_URL` | `https://api.x.ai/v1` | API endpoint |
+
+At least one of Ecowitt, AirGradient (cloud or local) must be configured.
+
+### Sources
+
+| Variable | Default | Description |
+|---|---|---|
+| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | – | Enables Ecowitt. Station's time zone is used |
+| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | – | Enables AirGradient via cloud API: history and gap fill |
+| `AIRGRADIENT_LOCAL_URL` | – | Sensor's local server, e.g. `http://airgradient_<serial>.local` or an IP. Live reading polled every 60 s, recorded as 5-min means (`pm02Compensated` over `pm02`). Cloud, if configured, only fills gaps. Without cloud vars: sensor + SQLite only, no cloud requests. `.local` resolved in-process (mDNS); in Docker needs `--network host` or an IP. Sensor down → cloud fallback, retry after 5 min |
+| `AIRGRADIENT_DASHBOARD_URL` | – | "live chart" link in air replies and alerts |
+| `TZ` | system zone | Only used without Ecowitt (the station's zone wins; a mismatch is logged). IANA name, e.g. `Australia/Melbourne` |
+| `PLACE` | `Melbourne` | Name in the Pollen & asthma and Forecast headings |
+| `POLLEN` | `off` | Melbourne grass pollen + thunderstorm asthma (melbournepollen.com.au): report, `pollen_asthma` tool, alert at High. Oct–Dec only |
+| `POLLEN_DISTRICT` | `Central` | East Gippsland, Mallee, North Central, North East, Northern Country, South West, West and South Gippsland, Wimmera. Case-insensitive; unknown → warning |
+| `FORECAST` | `off` | Open-Meteo daily forecast: report, `weather_forecast` tool, forecast-change alert |
+| `FORECAST_LAT`, `FORECAST_LON` | station's | Forecast location |
+| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET` | – | Enables the irrigation controller (Tuya cloud): Irrigation button, rain delay check, pause/battery alerts |
+| `TUYA_BASE_URL` | `https://openapi.tuyaeu.com` | Tuya data centre |
+| `IRRIGATION_CHECK_HOUR` | `18` | Local hour of the daily rain-delay check (0–23) |
+
+### Access
+
+| Variable | Default | Description |
+|---|---|---|
+| `ADMIN_ONLY` | `on` | Answer only admins/creators of groups the bot is in. Others get "only group admins" when addressed. `/alerts` is openable by anyone in a group (changes stay admin-only). Admin list cached 10 min |
+| `ADMIN_CHAT_IDS` | – | Extra allowed ids, comma/space separated. User id: allowed before any group exists. Group id (negative): adds its admins and anonymous admins |
+
+### Alerts
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALERT_COOLDOWN_MINUTES` | `60` (5–150) | Rain: dry time before "stopped". Rain and temperature crossing: minimum gap between alerts. A change inside the cooldown is held, then sent if still different |
+| `RAIN_QUIET_HOURS` | `0-6` | Local hours with no rain alerts; summarised afterwards. `22-6` wraps midnight, `off` disables |
+| `ANTISPIKE_REQUIRE_CONSECUTIVE` | `2` | Readings in a row a PM1/PM2.5/PM10 rise needs to count (spike ≥ 2.5× and +5 µg/m³ over neighbours otherwise dropped from charts, figures, unhealthy-air alert). `1` / `off` disables. Live "air now" unaffected |
+
+### Charts
+
+| Variable | Default | Description |
+|---|---|---|
+| `CHART_ALL_FEELS_LIKE` | `off` | Add feels-like panel to "weather all week" |
+| `CHART_ALL_VPD` | `off` | Add VPD panel to "weather all week" |
+| `TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload the other periods of each chart to. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
+
+### Storage and logging
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | State (`bot_state.json`) and SQLite caches. Relative paths from the working dir. Created if missing. Matplotlib cache in `matplotlib/` (or `MPLCONFIGDIR`) |
+| `LOG_WIDTH` | `71` | Max log line length, cut with `…`; `0` = no cut |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the bot's own lines (chart timings) |
