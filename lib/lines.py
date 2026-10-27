@@ -155,6 +155,8 @@ def build_line(readings: list[Sample], tz, span_seconds: float, *, smooth: bool 
         if len(smoothed) == len(line.x):  # every reading was a finite number
             smoothed[line.x[-1]] = line.y[-1]  # the end dot is the latest reading
             line.y, line.smoothed = [smoothed[t] for t in line.x], True
+            if line.low is not None:   # the smoothed line stays inside its band
+                line.low, line.high = [min(lo, y) for lo, y in zip(line.low, line.y)], [max(hi, y) for hi, y in zip(line.high, line.y)]
     return line
 
 

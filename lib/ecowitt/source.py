@@ -21,6 +21,7 @@ from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS
 from .dashboard import dashboard
 from .glance import glance
 from .fetch import Fetcher, series_in
+from .live import LiveRanges
 from ..series import READING_GROUPS, WEATHER, find
 from .query import HistoryQuery, chart_field, stack_names
 from .store import HistoryCache, HotStore
@@ -116,6 +117,7 @@ class Ecowitt(Source):
         self.api = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport)
         self.cache = HistoryCache(cfg.cache_path, UNITS)
         self.hot = HotStore()
+        self.live = LiveRanges(cfg.cache_path.with_name("ecowitt_live.sqlite"))   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self._live_ok: bool | None = None  # the live rain reading: None until first tried
@@ -170,7 +172,7 @@ class Ecowitt(Source):
 
     def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
         """urgent: for a question (its requests go before the background ones)."""
-        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent)
+        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent, self.live)
 
     # ---------- tools ----------
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
@@ -211,7 +213,16 @@ class Ecowitt(Source):
         else a request of its own, ahead of the background refreshes (someone is waiting)."""
         if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
             return {g: self._live[1][g] for g in groups if g in self._live[1]}
-        return await self.api.realtime(self.mac, ",".join(groups), urgent=True)
+        data = await self.api.realtime(self.mac, ",".join(groups), urgent=True)
+        await self._record_live(data)
+        return data
+
+    async def _record_live(self, data: dict):
+        """Count a live reading into the 5-minute ranges. Only a chart's shading depends on it, so a failure is logged and goes no further."""
+        try:
+            await asyncio.to_thread(self.live.add, data)
+        except Exception as e:
+            log.warning("Couldn't keep the live readings' ranges: %s", e)
 
     async def dashboard(self):
         """The station's gauges (specs.Dashboard): the live reading and each one's highs and lows today, this month and this year; None
@@ -225,6 +236,7 @@ class Ecowitt(Source):
         try:
             data = await self.api.realtime(self.mac, ",".join(LIVE_GROUPS))
             self._live = (time.time(), data)
+            await self._record_live(data)
             group = data.get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)
@@ -274,3 +286,4 @@ class Ecowitt(Source):
     async def close(self):
         await self.api.close()
         self.cache.close()
+        self.live.close()

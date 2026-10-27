@@ -59,9 +59,10 @@ class Fetcher:
     """History for one job (a question, a refresh, an alert check): from the disk cache where
     possible, recent readings from memory if fresh, the rest from Ecowitt."""
 
-    def __init__(self, api, cache: HistoryCache, hot: HotStore, mac: str, groups: list[str], tz: tzinfo, urgent: bool = False):
+    def __init__(self, api, cache: HistoryCache, hot: HotStore, mac: str, groups: list[str], tz: tzinfo, urgent: bool = False, live=None):
         """urgent: someone is waiting for the answer, so its requests go before the background ones queued for Ecowitt."""
         self.api, self.cache, self.hot, self.tz, self.urgent = api, cache, hot, tz, urgent
+        self.live = live   # live.LiveRanges: the lows and highs of the live readings, for 5-minute bands (None: no such bands)
         self.mac = mac.strip().upper()
         self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
         self.ranges = self.from_cache = self.from_memory = self.calls = 0

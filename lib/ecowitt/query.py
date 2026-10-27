@@ -29,6 +29,7 @@ from .api import CYCLES, daily_run, kept_from
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
 from .fetch import Fetcher, spans
+from .live import BUCKET
 
 log = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ class HistoryQuery:
 
         await self._fetch_period()
         await self._fine_ranges()
+        await self._live_bands()
         if "rain" in stack_names(self.args, self.turn) or "rainfall.daily" in self.store:   # rain alone is drawn as bars too
             self.rain_bars = await self._rain_bars()
         await self._summarise_direction()
@@ -174,6 +176,23 @@ class HistoryQuery:
             pts = self.store[key]["pts"]
             for t in lows:
                 pts[t]["low"], pts[t]["high"] = (lows[t], str(lows[t])), (highs[t], str(highs[t]))
+
+    async def _live_bands(self):
+        """5-minute readings get the lowest and highest of the live readings the bot saw in their five minutes (live.LiveRanges), so a
+        recent chart is shaded as Home Assistant's is. A reading with none (before the bot was watching, or too few readings) has no
+        range, and a series whose readings the station itself gave a range keeps it."""
+        if self.f.live is None:
+            return
+        lo, hi = self.f.epoch(self.start) - BUCKET, self.f.epoch(self.end) + BUCKET
+        for key, series in self.store.items():
+            fine = {t: r for t, r in series["pts"].items() if r["cycle"] == "5min" and "value" in r and "low" not in r and "high" not in r}
+            if not (fine and derives_range(key.split(".", 1)[1])):
+                continue
+            found = await self.f.read(self.f.live.between, key, lo, hi)
+            for t, r in fine.items():
+                if got := found.get(round(t / BUCKET) * BUCKET):
+                    low, high = min(got[0], r["value"][0]), max(got[1], r["value"][0])
+                    r["low"], r["high"] = (low, str(low)), (high, str(high))
 
     async def _held_locally(self) -> bool:
         """Is the whole period already in the cache at 30 minutes (bar the newest day, which is still settling), and
@@ -515,7 +534,8 @@ class HistoryQuery:
         if line is None:
             return None
         group = k.split(".", 1)[0]
-        line = line.unbanded(self.span.days + 1, keep=self._band_key(k) is not None)   # a short period: a clean line, except wind's gusts
+        recent = line.raw and line.width == BUCKET and line.low is not None   # 5-minute readings with the lows and highs the bot saw in each
+        line = line.unbanded(self.span.days + 1, keep=recent or self._band_key(k) is not None)   # a short period: a clean line, except these and wind's gusts
         return line.spec(group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:
