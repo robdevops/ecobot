@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 import lib.airgradient  # noqa: F401  (imported first: lib.panels and the air package import each other)
 from lib.panels import panel_for, two_axes
-from lib.ecowitt.dashboard import GAUGES, sheet
+from lib.ecowitt.dashboard import STATUS, sheet
 from lib.specs import Bars, Chart, Compass, Line, Panel, stack
 from tests.fakes import TZ
 
@@ -111,8 +111,8 @@ def two_scales() -> Chart:
     return Chart(panel.label, "Mon 28 Sep – Sun 4 Oct 2026  ·  30-minute readings", [panel])
 
 
-def dashboard():
-    """The station's gauges for a cool October evening: a thermometer, a dial and the rain beaker among them; no indoor sensor."""
+def _station() -> tuple[dict, dict, date]:
+    """A live reading and the days' figures for a cool October evening, with no indoor sensor: (live, values, today)."""
     live = {"outdoor": {"temperature": {"value": "12.9"}, "humidity": {"value": "70"}, "dew_point": {"value": "7.6"}, "feels_like": {"value": "12.9"}},
             "pressure": {"relative": {"value": "1026.0"}}, "wind": {"wind_speed": {"value": "5"}},
             "rainfall": {"daily": {"value": "0.2"}, "rain_rate": {"value": "0"}}, "solar_and_uvi": {"solar": {"value": "0"}, "uvi": {"value": "0"}}}
@@ -125,8 +125,18 @@ def dashboard():
               "pressure_max": series(1020, 14), "pressure_min": series(1012, 14), "dew_point_max": series(10, 7), "dew_point_min": series(4, 6),
               "feels_like_max": series(19, 12), "feels_like_min": series(6, 8), "wind_gust": series(28, 18), "rain": {d: float(i % 7 == 0) * 5.4 for d, i in days.items()},
               "rain_rate_max": series(8, 6), "solar_max": series(700, 400), "uv_max": series(6, 5)}
-    return sheet(live, values, today)
+    return live, values, today
+
+
+def dashboard():
+    """The station's gauges: thermometers, dials and the rain beaker."""
+    return sheet(*_station())
+
+
+def status():
+    """The report's picture: the temperature, humidity and rain gauges in a row."""
+    return sheet(*_station(), STATUS)
 
 
 SAMPLES = {"temperature": temperature, "humidity_rain": humidity_rain, "all_week": all_week, "quarter": quarter, "air": air,
-           "wind": wind, "counts": counts, "two_scales": two_scales, "dashboard": dashboard}
+           "wind": wind, "counts": counts, "two_scales": two_scales, "dashboard": dashboard, "status": status}

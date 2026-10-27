@@ -29,9 +29,10 @@ from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
 from . import gauges
 from .charts import render as render_chart
+from .ecowitt.dashboard import STATUS
 from .tools import Turn
 from .config import Config
-from .entities import with_link
+from .entities import utf16_len, with_link
 from .sources import Source
 from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
@@ -237,29 +238,71 @@ class Delivered(NamedTuple):
     photo: Message | None = None  # the single chart, as sent
 
 
+def caption_of(text: str, title: str = "", link: tuple[str, str] | None = None, bold_headings: bool = False):
+    """(caption, entities) for a photo: its title and the text, the link under them as a footer, the report's heading names bold; None
+    when that is longer than a caption may be (CAPTION_LIMIT, counted as Telegram counts it)."""
+    body, ents = with_link(f"{title}\n\n{text}" if title else text, link)
+    if utf16_len(body) > CAPTION_LIMIT:
+        return None
+    return body, [*(report.heading_entities(body) if bold_headings else []), *ents]
+
+
+def report_caption(text: str):
+    """(caption, entities) for the report under its gauges: the whole report, or as many of its first sections as fit a caption (only a
+    report longer than any yet, refreshed in its photo, needs cutting: a new one that long goes apart from its picture)."""
+    sections = text.split("\n\n")
+    while len(sections) > 1 and caption_of("\n\n".join(sections), bold_headings=True) is None:
+        sections.pop()
+    lines = "\n\n".join(sections).splitlines()
+    while len(lines) > 1 and caption_of("\n".join(lines), bold_headings=True) is None:
+        lines.pop()
+    return caption_of("\n".join(lines), bold_headings=True) or (lines[0][:CAPTION_LIMIT // 2], [])
+
+
+async def _nothing():
+    return None
+
+
+async def _photos(msg: Message, photos: list[bytes], titles: list[str], buttons, alone: bool) -> tuple[bool, Message | None]:
+    """Send the charts, each with its title as its caption; a single one carries `buttons`. (whether a single one went, as sent).
+    alone: no text goes with them, so a failure is said in the chat."""
+    caption = lambda i: (titles[i] if i < len(titles) else "") or None
+    try:
+        if len(photos) == 1:
+            return True, await msg.reply_photo(photos[0], caption=caption(0), **({"reply_markup": buttons} if buttons else {}))
+        await msg.reply_media_group([InputMediaPhoto(p, caption=caption(i)) for i, p in enumerate(photos)])
+    except TelegramError:
+        log.exception("Couldn't send the chart")
+        if alone:
+            await msg.reply_text("Sorry, I couldn't send that chart. Please try again in a moment.")
+    return False, None
+
+
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
-                  titles: list[str] | None = None, period_row=None, bold_headings: bool = False) -> Delivered:
+                  titles: list[str] | None = None, period_row=None, bold_headings: bool = False, photos_first: bool = False) -> Delivered:
     """Send the answer with any charts. One chart and an answer that fits a caption (CAPTION_LIMIT) go as one message, the picture with its
-    title and the answer; otherwise a chart carries only its title as its caption and any answer text is its own message, sent first. link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on
-    the last text, or on the single photo when there is no text (a group of photos can't carry one). period_row (the period
-    buttons) rides on a single photo instead, and then the keyboard waits. bold_headings: the text is the report (or a pollen /
-    forecast lookup), whose heading names are set in bold."""
+    title and the answer; otherwise a chart carries only its title as its caption and any answer text is its own message, sent first
+    (photos_first: sent after the pictures, carrying the buttons: the report and its gauges). link = (label, url) adds a small italic link
+    line at the end of the text. markup (the button keyboard) rides on the last text, or on the single photo when there is no text (a
+    group of photos can't carry one). period_row (the period buttons) rides on a single photo instead, and then the keyboard waits.
+    bold_headings: the text is the report (or a pollen / forecast lookup), whose heading names are set in bold."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
     titles = titles or []
-    carried = False
-    if text and len(photos) == 1:   # one chart and an answer that fits its caption: one message, the picture with its title and the answer
-        title = titles[0] if titles else ""
-        body, ents = with_link(f"{title}\n\n{text}" if title else text, link)
-        if len(body) <= CAPTION_LIMIT:
-            buttons = period_row or markup
-            try:
-                sent = await msg.reply_photo(photos[0], caption=body, caption_entities=ents or None,
-                                             **({"reply_markup": buttons} if buttons else {}))
-                return Delivered(bool(markup) and not period_row, sent)
-            except TelegramError:
-                log.exception("Couldn't send the chart with its answer; sending them apart")
+    if text and len(photos) == 1 and (fitted := caption_of(text, titles[0] if titles else "", link, bold_headings)):
+        body, ents = fitted   # one chart and an answer that fits its caption: one message, the picture with its title and the answer
+        buttons = period_row or markup
+        try:
+            sent = await msg.reply_photo(photos[0], caption=body, caption_entities=ents or None,
+                                         **({"reply_markup": buttons} if buttons else {}))
+            return Delivered(bool(markup) and not period_row, sent)
+        except TelegramError:
+            log.exception("Couldn't send the chart with its answer; sending them apart")
+    sent = None
+    if photos and photos_first:
+        _, sent = await _photos(msg, photos, titles, None, not text)
+    on_text = bool(markup) and (not photos or photos_first)   # the keyboard rides on the text
     if text:
         chunks = split_message(text)
         for i, chunk in enumerate(chunks):
@@ -267,21 +310,11 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
             body, ents = with_link(chunk, link) if last else (chunk, [])
             ents = [*(report.heading_entities(chunk) if bold_headings else []), *ents]
             await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True,
-                                 **({"reply_markup": markup} if markup and last and not photos else {}))
-        carried = bool(markup) and not photos
-    if photos:
-        caption = lambda i: (titles[i] if i < len(titles) else "") or None
-        try:
-            if len(photos) == 1:
-                buttons = period_row or markup
-                sent = await msg.reply_photo(photos[0], caption=caption(0), **({"reply_markup": buttons} if buttons else {}))
-                return Delivered(bool(markup) and not period_row, sent)
-            await msg.reply_media_group([InputMediaPhoto(p, caption=caption(i)) for i, p in enumerate(photos)])
-        except TelegramError:
-            log.exception("Couldn't send the chart")
-            if not text:
-                await msg.reply_text("Sorry, I couldn't send that chart. Please try again in a moment.")
-    return Delivered(carried)
+                                 **({"reply_markup": markup} if on_text and last else {}))
+    if photos and not photos_first:
+        went, sent = await _photos(msg, photos, titles, period_row or markup, not text)
+        return Delivered(bool(markup) and not period_row and went, sent)
+    return Delivered(on_text and bool(text), sent)
 
 
 class Bot:
@@ -632,14 +665,33 @@ class Bot:
         conversation is not touched (this is not a new question)."""
         query = update.callback_query
         read = intent.read("Report", now_local(self.cfg.tz), self.by_name)
+        pictured = bool(getattr(getattr(query, "message", None), "photo", None))   # the report is the caption of its gauges: they are drawn again too
         try:
-            text = await asyncio.wait_for(self._written_in_code(read, Turn(text="Report")), TURN_SECONDS)
+            text, gauge = await asyncio.wait_for(asyncio.gather(self._written_in_code(read, Turn(text="Report")),
+                                                                self._status_gauges() if pictured else _nothing()), TURN_SECONDS)
         except Exception as e:   # the message stays as it was
             log.warning("Report refresh failed: %s", e)
             await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
             return
         await answer_query(query)   # no toast: the times in the headings show what changed
-        await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
+        if pictured:
+            await self._recaption(query, text, gauge)
+        else:
+            await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
+
+    @staticmethod
+    async def _recaption(query, text: str, photo: bytes | None):
+        """Put the report's new text, and its gauges drawn again, into the photo message its Refresh was pressed under (no new picture:
+        the caption alone). Telegram refusing an edit that changes nothing is fine."""
+        body, ents = report_caption(text)
+        try:
+            if photo:
+                await query.edit_message_media(InputMediaPhoto(photo, caption=body, caption_entities=ents or None), reply_markup=report_menu.keyboard())
+            else:
+                await query.edit_message_caption(caption=body, caption_entities=ents or None, reply_markup=report_menu.keyboard())
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                raise
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart
@@ -678,8 +730,9 @@ class Bot:
         its own, unless it fits the caption: then the chart's caption is its title and the answer, as deliver sends them). False when
         Telegram refuses, and the chart is then sent as a new message. key: where the image cache keeps it."""
         text = strip_chart_talk(reply.strip())
-        body, ents = with_link(f"{title}\n\n{text}" if title else text, None) if text else (title, [])
-        in_caption = bool(text) and len(body) <= CAPTION_LIMIT
+        fitted = caption_of(text, title) if text else None
+        in_caption = fitted is not None
+        body, ents = fitted or (title, [])
         try:
             self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=(body if in_caption else title) or None,
                                                                           caption_entities=(ents or None) if in_caption else None), reply_markup=row))
@@ -837,6 +890,19 @@ class Bot:
         if read.report:
             return report.report(by_tool, now_local(self.cfg.tz).date())
         return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
+
+    async def _status_gauges(self) -> bytes | None:
+        """The report's picture: the weather station's temperature, humidity and rain gauges (ecowitt.dashboard.STATUS). None without the
+        station, or when they can't be drawn (the report then goes as text alone)."""
+        station = self.by_name.get("Ecowitt")
+        if getattr(station, "dashboard", None) is None:
+            return None
+        try:
+            sheet = await station.dashboard(STATUS)
+            return await asyncio.to_thread(gauges.render, sheet) if sheet else None
+        except Exception:
+            log.exception("The report's gauges failed; sending it without them")
+            return None
 
     async def _warn(self, msg: Message, tokens: int):
         """A heads-up before a big job: the question has pulled in a lot of data. Sent now, silently; the answer follows by itself."""
@@ -1074,8 +1140,10 @@ class Bot:
             answer = Answer(await asyncio.wait_for(self._lookup_in_code(read, turn), TURN_SECONDS))
             if answer.reply is None:
                 turn.forecast_shown.clear()
-        elif read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model
-            answer = Answer(await asyncio.wait_for(self._written_in_code(read, turn), TURN_SECONDS))
+        elif read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model (the report: with its gauges)
+            text, gauge = await asyncio.wait_for(asyncio.gather(self._written_in_code(read, turn),
+                                                                self._status_gauges() if read.report else _nothing()), TURN_SECONDS)
+            answer = Answer(text, [gauge] if gauge else [], [""] if gauge else [])
         else:
             answer = Answer()
         if answer.reply is not None:
@@ -1112,8 +1180,8 @@ class Bot:
         used_air = any(tc["function"]["name"] == "air_quality" for m in added for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
-        refresh = answer.ok and read.report and not photos and 0 < len(reply) <= TG_LIMIT and not markup   # the report, in one message, to be refreshed in place
-        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 and not read.dashboard else None   # period buttons under a single chart
+        refresh = answer.ok and read.report and 0 < len(reply) <= TG_LIMIT and not markup   # the report, to be refreshed in place
+        row = periods.keyboard(intent.period_days(text, now)) if len(photos) == 1 and not (read.dashboard or read.report) else None   # period buttons under a single chart
         drawn = list(photos)
         kept = self.images.key(text, intent.period_days(text, now), now) if row and answer.ok and not reply.strip() else None
         if kept and not answer.ready:   # a chart and nothing else: keep it for the period buttons (and, its words being its key, for the next to ask them)
@@ -1124,14 +1192,14 @@ class Bot:
                 reply, photos, row = "", [], None
             sent = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
                                  markup=markup or (report_menu.keyboard() if refresh else None), titles=titles, period_row=row,
-                                 bold_headings=answer.ok and bool(read.report or read.lookup in ("pollen", "forecast")))
+                                 bold_headings=answer.ok and bool(read.report or read.lookup in ("pollen", "forecast")), photos_first=read.report)
             carried_keyboard = sent.carried and bool(markup)   # the refresh button is not the chat's keyboard
             if answer.ready:
                 log.debug("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(answer.ready), (time.monotonic() - began) * 1000,
                           " (Telegram's copy)" if isinstance(drawn[0], str) else "")
             elif drawn:
                 log.debug("Chart ms: %s", chart_times(turn.times, answer.made, drawn, time.monotonic() - began))
-            if sent.photo and not read.dashboard:
+            if sent.photo and row is not None:
                 self.charted.remember(msg.chat_id, sent.photo.message_id, text)
                 self.images.sent(kept, sent.photo)
             if kept and read.chart_in_code:   # a chart with period buttons, made in code: its other periods are uploaded ahead

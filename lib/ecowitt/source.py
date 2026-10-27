@@ -123,6 +123,7 @@ class Ecowitt(Source):
         self.hot = HotStore()
         self.ha = HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # the readings it kept, for the ranges
         self._ha_ok: bool | None = None
+        self._days_memo: dict = {}   # the dashboard's figures for the days before yesterday, kept for the day (they no longer change)
         self.live = LiveRanges(cfg.cache_path.with_name("ecowitt_live.sqlite"))   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
@@ -220,6 +221,8 @@ class Ecowitt(Source):
         if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
             return {g: self._live[1][g] for g in groups if g in self._live[1]}
         data = await self.api.realtime(self.mac, ",".join(groups), urgent=True)
+        if set(groups) >= set(LIVE_GROUPS):   # every group: as good as the minute's own reading, for the next to ask (the report's gauges)
+            self._live = (time.time(), data)
         await self._record_live(data)
         return data
 
@@ -248,10 +251,10 @@ class Ecowitt(Source):
         except Exception as e:
             log.warning("Couldn't keep the live readings' ranges: %s", e)
 
-    async def dashboard(self):
-        """The station's gauges (specs.Dashboard): the live reading and each one's highs and lows today, this month and this year; None
-        when the station has no reading."""
-        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date())
+    async def dashboard(self, titles=None):
+        """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
+        lows today, this month and this year; None when the station has no reading."""
+        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo)
 
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags

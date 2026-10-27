@@ -1,5 +1,5 @@
 import io
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace as NS
 
 import pytest
@@ -123,3 +123,158 @@ async def test_the_dashboard_command_sends_one_picture_with_no_period_buttons_an
     assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ")
     assert not isinstance(markup, InlineKeyboardMarkup)                         # the chat's own keyboard may ride on it, never the period buttons
     assert bot.charted.get(1, 7) is None
+
+
+def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
+    live = {"outdoor": {"temperature": reading(12.0), "humidity": reading(70)}, "rainfall": {"daily": reading(0.2)},
+            "pressure": {"relative": reading(1020)}}
+    sheet = dash.sheet(live, {}, TODAY, dash.STATUS)
+    assert [t.title for t in sheet.tiles] == ["Temperature", "Humidity", "Rain"] and sheet.per_row == 3
+    image = Image.open(io.BytesIO(gauges.render(sheet)))
+    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, gauges.CELL_H + 2 * gauges.MARGIN)   # one row
+
+
+async def test_the_days_before_yesterday_are_read_once_a_day_and_yesterday_and_today_every_time(monkeypatch):
+    calls = []
+
+    def day_values(cache, mac, tz, names, days):
+        calls.append((tuple(names), min(days), max(days)))
+        return {n: {d: 1.0 for d in days} for n in names}, {}
+    monkeypatch.setattr(dash, "day_values", day_values)
+    memo, live = {}, {"outdoor": {"temperature": reading(12.0)}}
+    for _ in range(3):
+        await dash.dashboard(live, None, "mac", TZ, TODAY, dash.STATUS, memo)
+    settled = [c for c in calls if c[2] < TODAY - timedelta(days=1)]
+    assert len(settled) == 1 and settled[0][1:] == (date(2026, 1, 1), TODAY - timedelta(days=2))            # once
+    assert [c[1:] for c in calls if c not in settled] == [(TODAY - timedelta(days=1), TODAY)] * 3             # every time
+    assert settled[0][0] == ("humidity_max", "humidity_min", "rain", "temp_max", "temp_min")                 # only what the three gauges show
+    await dash.dashboard(live, None, "mac", TZ, TODAY + timedelta(days=1), dash.STATUS, memo)
+    assert len(memo) == 1 and next(iter(memo))[0] == TODAY + timedelta(days=1)                               # a new day: yesterday's are forgotten
+
+
+def report_bot(alert_state, sheet):
+    """A bot whose station gives the report's tool results and, through dashboard(), its gauges (`sheet()`: a Dashboard, or raises)."""
+    import json
+
+    from tests.fakes import StandInTools
+
+    class Tools(StandInTools):
+        reading = "12.3 ℃"
+
+        async def call(self, name, raw, turn=None):
+            return {"weather_now": json.dumps({"outdoor": {"temperature": self.reading}}),
+                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
+
+    class Agent:
+        tools = Tools()
+
+    async def dashboard(titles=None):
+        assert titles == dash.STATUS
+        return sheet()
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt", dashboard=dashboard),
+               NS(name="AirGradient", wants=lambda t: True, poke=lambda: None, describe=lambda: "AirGradient")]
+    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state)
+    alert_state.add_chat(1, "Rob")
+    alert_state.set_keyboard(1, bot.keyboard_version)
+    return bot, Agent.tools
+
+
+def three_tiles():
+    tile = Tile("Humidity", "%", 70, "dial", 0, 100, ("#DFFBFF", "#2C7592"), ("Max",), {"Daily": (87,)}, (0, 100), 0)
+    return Dashboard([tile, tile, tile])
+
+
+def chat(sent):
+    async def reply_photo(photo, caption=None, **kw):
+        sent.append(("photo", photo[:4], caption, kw))
+        return NS(message_id=7)
+
+    async def reply_text(text, **kw):
+        sent.append(("text", None, text, kw))
+    msg = NS(chat_id=1, message_id=50, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    return msg, NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+
+async def no_action(*a, **k):
+    pass
+
+
+CONTEXT = NS(bot=NS(send_chat_action=no_action, id=99))
+
+
+async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_refresh_redraws_both(alert_state, monkeypatch):
+    from lib import report_menu
+    bot, tools = report_bot(alert_state, three_tiles)
+    sent = []
+    msg, update = chat(sent)
+    await bot.respond(update, CONTEXT, "report")
+    assert len(sent) == 1
+    kind, photo, caption, kw = sent[0]
+    assert kind == "photo" and photo == b"\x89PNG" and caption.startswith("Weather station\n• Outdoor: 12.3 °C")
+    assert [e.type for e in kw["caption_entities"]] == ["bold", "bold"]                                        # the headings, as in the text report
+    assert [b.callback_data for b in kw["reply_markup"].inline_keyboard[0]] == [report_menu.REFRESH]         # Refresh, no period buttons
+    assert bot.charted.get(1, 7) is None
+
+    edits = []
+
+    class Query:
+        data, message = report_menu.REFRESH, NS(photo=[NS(file_id="x")])
+
+        async def answer(self, *a, **k):
+            pass
+
+        async def edit_message_media(self, media, reply_markup=None):
+            edits.append(("media", media.caption, media.caption_entities, reply_markup))
+
+        async def edit_message_caption(self, caption=None, caption_entities=None, reply_markup=None):
+            edits.append(("caption", caption, caption_entities, reply_markup))
+    tools.reading = "13.0 ℃"
+    await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
+    what, caption, entities, markup = edits[-1]
+    assert what == "media" and "13.0 °C" in caption and [e.type for e in entities] == ["bold", "bold"]
+    assert markup.inline_keyboard[0][0].callback_data == report_menu.REFRESH
+
+    async def failing(titles=None):
+        raise RuntimeError("cache gone")
+    bot.by_name["Ecowitt"].dashboard = failing
+    tools.reading = "14.0 ℃"
+    await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
+    assert edits[-1][0] == "caption" and "14.0 °C" in edits[-1][1]                                             # no new picture: the caption alone
+
+
+async def test_a_report_without_its_gauges_is_the_text_report_as_before(alert_state, caplog):
+    from lib import report_menu
+
+    def broken():
+        raise RuntimeError("no cache")
+    bot, _ = report_bot(alert_state, broken)
+    sent = []
+    msg, update = chat(sent)
+    await bot.respond(update, CONTEXT, "report")
+    assert [k for k, *_ in sent] == ["text"] and sent[0][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
+    assert "gauges failed" in caplog.text
+
+
+async def test_a_report_too_long_for_a_caption_goes_after_its_gauges_with_the_refresh_button_on_the_text():
+    from lib.bot import deliver
+    from lib import report_menu
+    sent = []
+    msg, _ = chat(sent)
+    text = "Weather station\n" + "\n".join(f"• line {i} " + "x" * 40 for i in range(30))
+    await deliver(msg, text, [b"\x89PNG"], markup=report_menu.keyboard(), titles=[""], bold_headings=True, photos_first=True)
+    assert [k for k, *_ in sent] == ["photo", "text"]
+    assert "reply_markup" not in sent[0][3] and sent[1][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
+
+
+def test_a_refreshed_report_too_long_for_its_caption_keeps_its_first_sections():
+    from lib.bot import CAPTION_LIMIT, report_caption
+    from lib.entities import utf16_len
+    first = "Weather station (2:21am)\n• Outdoor: 12.3 °C"
+    long = first + "\n\nAir quality\n" + "\n".join(f"• line {i} 🟢" + "x" * 30 for i in range(40))
+    body, entities = report_caption(long)
+    assert body == first and [e.type for e in entities] == ["bold"]
+    body, _ = report_caption(first + "\n\nForecast\n• Today: fine")
+    assert body.endswith("• Today: fine")                                                                  # it fits: all of it
+    body, _ = report_caption("Weather station\n" + "\n".join(f"• {i} " + "y" * 60 for i in range(40)))
+    assert utf16_len(body) <= CAPTION_LIMIT and body.startswith("Weather station\n• 0 ")                    # one long section: its first lines

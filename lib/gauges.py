@@ -23,6 +23,8 @@ MAX_CHIP, MIN_CHIP, TOTAL_CHIP = "#C62828", "#4FB3F6", "#5BC8F0"
 CHIPS = {"Max": MAX_CHIP, "Min": MIN_CHIP, "Total": TOTAL_CHIP}
 MARKS = {"Max": "▲", "Min": "▼", "Total": "+"}   # in front of a column's name
 FILL = "#D32F27"            # the thermometer's mercury
+TUBE_HALF, BULB_RADIUS = 28, 38   # the thermometer: half the tube's width, the bulb's radius (pixels, to the outline)
+MERCURY_GAP = 7             # the gap between the outline and the red, the same round the bulb as up the tube
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
 CELL_W, CELL_H, MARGIN = 480, 575, 20
@@ -62,16 +64,30 @@ def _scale_bar(ax, x: float, y0: float, y1: float, tile: Tile, ink):
         _text(ax, x - 8, y, f"{tick:g}", 17, ink(SOFT), ha="right")
 
 
+def _thermometer_shape(cx: float, top: float, half: float, bulb_y: float, radius: float) -> list[tuple[float, float]]:
+    """A thermometer's outline as one closed line: the tube (`half` its width, round at the top, its top at `top`) running into the bulb
+    (centred `bulb_y`), the two joined where the tube's sides meet the bulb, so no line crosses between them."""
+    meet = math.degrees(math.atan2(math.sqrt(radius ** 2 - half ** 2), half))   # where the right side meets the bulb (0 = right, 90 = up)
+    join = bulb_y - math.sqrt(radius ** 2 - half ** 2)
+    cap = [(cx + half * math.cos(math.radians(a)), top + half - half * math.sin(math.radians(a))) for a in np.linspace(180, 0, 37)]
+    bulb = [(cx + radius * math.cos(math.radians(a)), bulb_y - radius * math.sin(math.radians(a))) for a in np.linspace(meet, -180 - meet, 73)]
+    return [(cx - half, join), *cap, (cx + half, join), *bulb]
+
+
 def _thermometer(ax, tile: Tile, ox: float, oy: float, ink):
-    top, bottom, cx, bulb = oy + 95, oy + 250, ox + 290, oy + 280
-    _scale_bar(ax, ox + 150, top, oy + 238, tile, ink)
-    outline = ink(SOFT)
-    ax.add_patch(FancyBboxPatch((cx - 28, top - 10), 56, bulb - top, boxstyle="round,pad=0,rounding_size=28", fc="none", ec=outline, lw=2.5))
-    ax.add_patch(Circle((cx, bulb), 38, fc=BG, ec=outline, lw=2.5, zorder=2))
-    ax.add_patch(Circle((cx, bulb), 31, fc=ink(FILL), ec="none", zorder=3))
+    top, bottom, cx, bulb = oy + 95, oy + 238, ox + 290, oy + 280   # the red rises against the scale beside it, which runs top to bottom
+    _scale_bar(ax, ox + 150, top, bottom, tile, ink)
+    half, radius, gap = TUBE_HALF, BULB_RADIUS, MERCURY_GAP
+    ax.add_patch(Polygon(_thermometer_shape(cx, top - 10, half, bulb, radius), closed=True, fc="none", ec=ink(SOFT), lw=2.5, zorder=4))
+    inside = Polygon(_thermometer_shape(cx, top - 10 + gap, half - gap, bulb, radius - gap), closed=True, fc="none", ec="none")
+    ax.add_patch(inside)
+    level = bulb - math.sqrt((radius - gap) ** 2 - (half - gap) ** 2)   # no reading: just the bulb
     if tile.value is not None:
         level = top + (1 - min(max((tile.value - tile.low) / (tile.high - tile.low), 0), 1)) * (bottom - top)
-        ax.add_patch(FancyBboxPatch((cx - 15, level), 30, bulb - level, boxstyle="square,pad=0", fc=ink(FILL), ec="none", zorder=3))
+    mercury = Rectangle((cx - radius, level), 2 * radius, bulb + radius - level, fc=ink(FILL), ec="none", zorder=3)
+    ax.add_patch(mercury)
+    mercury.set_clip_path(inside)   # the column and the bulb, one shape, the same gap from the outline all round
+    if tile.value is not None:
         _text(ax, cx - 50, bulb, f"{_figure(tile.value, tile.decimals)} {tile.unit}", 40, ink(SOFT), ha="right")
 
 

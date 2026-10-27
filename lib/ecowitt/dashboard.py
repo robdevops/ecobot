@@ -55,6 +55,12 @@ GAUGES = (
           "indoor_humidity_min", 0),
 )
 PERIODS = ("Daily", "Monthly", "Yearly")
+STATUS = ("Temperature", "Humidity", "Rain")   # the gauges the report ("status") carries
+
+
+def gauges_of(titles=None) -> list[Gauge]:
+    """The gauges with these titles, in the dashboard's order (all of them when None)."""
+    return [g for g in GAUGES if titles is None or g.title in titles]
 
 
 def periods_of(today: date) -> dict[str, list[date]]:
@@ -87,11 +93,12 @@ def figures(gauge: Gauge, values: dict, days: list[date], now: float | None) -> 
     return tuple(row)
 
 
-def sheet(live: dict, values: dict, today: date) -> Dashboard | None:
-    """The dashboard from a live reading and the days' figures; None when the station has none of the readings."""
+def sheet(live: dict, values: dict, today: date, titles=None) -> Dashboard | None:
+    """The dashboard from a live reading and the days' figures, with the gauges of these titles only (all when None); None when the
+    station has none of the readings."""
     tiles = []
     days = periods_of(today)
-    for gauge in GAUGES:
+    for gauge in gauges_of(titles):
         now = live_value(live, gauge.live)
         if now is None and not any(values.get(name) for name in (gauge.highest, gauge.lowest) if name):
             continue
@@ -103,9 +110,21 @@ def sheet(live: dict, values: dict, today: date) -> Dashboard | None:
     return Dashboard(tiles) if tiles else None
 
 
-async def dashboard(live: dict, cache: HistoryCache, mac: str, tz: tzinfo, today: date) -> Dashboard | None:
-    """The gauges for a live reading ({group: {field: {value, unit}}}, as Ecowitt's real_time gives it), the extremes from the cache."""
-    names = sorted({n for g in GAUGES for n in (g.highest, g.lowest) if n})
+async def dashboard(live: dict, cache: HistoryCache, mac: str, tz: tzinfo, today: date, titles=None,
+                    memo: dict | None = None) -> Dashboard | None:
+    """The gauges (of these titles; all when None) for a live reading ({group: {field: {value, unit}}}, as Ecowitt's real_time gives
+    it), the extremes from the cache. `memo` keeps the figures of the days before yesterday between calls (they no longer change), so
+    the report's Refresh reads only yesterday's and today's again."""
+    names = sorted({n for g in gauges_of(titles) for n in (g.highest, g.lowest) if n})
     year = periods_of(today)["Yearly"]
-    values, _ = await asyncio.to_thread(day_values, cache, mac, tz, names, year)
-    return sheet(live, values, today)
+    settled = [d for d in year if d < today - timedelta(days=1)]
+    key = (today, tuple(names))
+    old = memo.get(key) if memo is not None else None
+    if old is None:
+        old = (await asyncio.to_thread(day_values, cache, mac, tz, names, settled))[0] if settled else {}
+        if memo is not None:
+            for stale in [k for k in memo if k[0] != today]:
+                del memo[stale]
+            memo[key] = old
+    fresh, _ = await asyncio.to_thread(day_values, cache, mac, tz, names, [d for d in year if d not in settled])
+    return sheet(live, {n: {**old.get(n, {}), **fresh.get(n, {})} for n in names}, today, titles)
