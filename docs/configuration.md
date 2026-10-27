@@ -74,5 +74,5 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | Variable | Default | Description |
 |---|---|---|
 | `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | State (`bot_state.json`) and SQLite caches. Relative paths from the working dir. Created if missing. Matplotlib cache in `matplotlib/` (or `MPLCONFIGDIR`) |
-| `LOG_WIDTH` | `71` | Max log line length, cut with `…`; `0` = no cut |
+| `LOG_WIDTH` | `0` | Max log line length, cut with `…`; `0` = no cut |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the bot's own lines (chart timings) |

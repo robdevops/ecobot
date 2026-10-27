@@ -412,13 +412,13 @@ def test_a_traceback_is_logged_whole_after_its_cut_message():
     assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
 
 
-def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):
+def test_the_log_width_is_0_unless_set_and_0_cuts_none(monkeypatch):
     from lib.config import Config
     for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_WIDTH", raising=False)
-    assert Config.from_env().log_width == 71
-    for value, want in (("120", 120), ("0", 0), ("junk", 71), ("-5", 71), ("7.5", 71), ("²", 71)):
+    assert Config.from_env().log_width == 0
+    for value, want in (("120", 120), ("71", 71), ("junk", 0), ("-5", 0), ("7.5", 0), ("²", 0)):
         monkeypatch.setenv("LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
 

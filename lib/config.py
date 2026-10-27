@@ -195,7 +195,7 @@ class Config:
     alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts
     telegram_preload_chat: int | None = _setting("TELEGRAM_PRELOAD_CHAT", None, _chat_id)   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
     antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
-    log_width: int = _setting("LOG_WIDTH", 71, _whole)              # the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
+    log_width: int = _setting("LOG_WIDTH", 0, _whole)              # the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property
