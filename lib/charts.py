@@ -271,13 +271,9 @@ def _bars_behind(ax, bars) -> float:
     return _end_of(bx, bars.width, 0.0)
 
 
-END_LABELLED = ("pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd")   # one line, and still its latest value beside it
-
-
 def _axes_width(chart: Chart) -> float:
     """The plot's width: narrower when a panel has rain's scale or end labels on its right, to leave room for them."""
-    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 or (p.lines and p.reading in END_LABELLED)
-                                     for p in chart.panels) else 0)
+    return AX_RECT[2] - (0.07 if any(p.lines for p in chart.panels) else 0)
 
 
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
@@ -484,12 +480,9 @@ def _figure(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".") if abs(value) >= 100 else f"{value:.3g}"
 
 
-def _end_labels(ax, drawn: list[tuple], show_floor: bool = False):
-    """The latest value of each line in the margin beside it, nudged apart where they would touch. Lines that all sit on the
-    floor have nothing to read off and get no label, unless `show_floor` (a zero wind or solar reading is worth saying)."""
+def _end_labels(ax, drawn: list[tuple]):
+    """The latest value of each line in the margin beside it, nudged apart where they would touch."""
     y_lo, y_hi = ax.get_ylim()
-    if not show_floor and max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
-        return
     height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
     gap = 10 * (y_hi - y_lo) / height_pt                    # 10 points, in data units
     placed = []
@@ -540,10 +533,35 @@ def _draw_bars_alone(ax, b, x1: float):
     return 0, _end_of(bx, b.width, x1), []
 
 
+def _right_axis(ax, lines: list[Line], first: int, look: Look) -> tuple:
+    """The lines of a panel's second scale, on an axis of their own at the right (ticks in the first line's colour, no frame, no
+    grid: the left axis keeps the grid). Returns (the axis, what was drawn on it as _draw_lines gives it)."""
+    twin = ax.twinx()
+    twin.patch.set_visible(False)
+    for side in ("top", "left", "bottom", "right"):
+        twin.spines[side].set_visible(False)
+    _pad_limits(twin, *_extent(lines), top=0.12, bottom=0.12, floor=0)
+    drawn = _draw_lines(twin, lines, look, first)
+    twin.tick_params(axis="y", length=0, labelsize=7.5, labelcolor=drawn[0][0], pad=5)
+    twin.yaxis.set_major_locator(MaxNLocator(nbins=look.nbins, steps=[1, 2, 2.5, 5, 10]))
+    twin.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    return twin, drawn
+
+
+def _own_end_labels(ax, drawn: list[tuple], above: bool):
+    """The latest value of each line beside its own end dot, above it (the left scale) or below it (the right): a panel with two scales
+    has its right margin taken by the second scale's ticks."""
+    for colour, xs, ys in drawn:
+        ax.annotate(_figure(ys[-1]), (xs[-1], ys[-1]), xytext=(-5, 8 if above else -8), textcoords="offset points", ha="right",
+                    va="bottom" if above else "top", fontsize=8.5, fontweight="bold", color=colour, annotation_clip=False)
+
+
 def _draw_readings(ax, p: Panel, first: int, x0: float, x1: float, look: Look):
     """The panel's lines, each with its band, the rating zones of a rated reading behind it, the peaks labelled (as pills on the
-    lines, or aside), rain behind them on a scale of its own, and the latest values beside them."""
-    lines = p.lines
+    lines, or aside), rain behind them on a scale of its own, and the latest values beside them. Lines marked `right` are on a
+    second scale of their own."""
+    lines = [s for s in p.lines if not s.right]
+    on_right = [s for s in p.lines if s.right]
     marked = [i for i, s in enumerate(lines) if s.records and p.peaks != "none"]
     pilled = bool(marked) and p.peaks == "pills"
     _pad_limits(ax, *_extent(lines, [float(r[1]) for s in lines for r in s.records.values()] if pilled else []),
@@ -560,12 +578,16 @@ def _draw_readings(ax, p: Panel, first: int, x0: float, x1: float, look: Look):
         _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look, _deg(p.unit))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars))
-    if len(lines) > 1:
-        _end_labels(ax, drawn)
-    elif p.reading in END_LABELLED and drawn[0][2][-1] != 0:   # a latest value of zero (night, calm) has nothing to say
-        _end_labels(ax, drawn, show_floor=True)
-    entries = [(_colour(s, first + i, p.reading), s.label) for i, s in enumerate(lines)] + ([(RAIN, p.bars.label)] if p.bars else [])
-    return len(lines), x1, entries
+    if on_right:
+        twin, drawn_right = _right_axis(ax, on_right, first + len(lines), look)
+        ax.tick_params(axis="y", labelcolor=drawn[0][0])   # each scale's numbers are in its line's colour
+        _own_end_labels(ax, drawn, above=True)
+        _own_end_labels(twin, drawn_right, above=False)
+        drawn += drawn_right
+    else:
+        _end_labels(ax, drawn)   # every line ends with its latest value, a zero (night, calm) included
+    entries = [(c, s.label) for (c, _, _), s in zip(drawn, [*lines, *on_right])] + ([(RAIN, p.bars.label)] if p.bars else [])
+    return len(lines) + len(on_right), x1, entries
 
 
 def _build(chart: Chart, tz: tzinfo) -> Figure:
@@ -596,10 +618,11 @@ def _build(chart: Chart, tz: tzinfo) -> Figure:
         count, x1, entries = _draw_panel(ax, p, used, x0, x1, look)
         used += count
         if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
-            key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - TITLE_IN / height)) if look.in_headline else \
-                dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
-            _legend(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries], ncol=len(entries),
-                    fontsize=look.legend_font, **key)
+            two_scales = look.in_headline and any(line.right for line in p.lines)   # two long names with units: stacked, between the title and subtitle rows
+            key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - ((TITLE_IN + SUBTITLE_IN) / 2 if two_scales else TITLE_IN) / height)) \
+                if look.in_headline else dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
+            _legend(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries],
+                    ncol=1 if two_scales else len(entries), fontsize=look.legend_font, **key)
         deg = _deg(p.unit)
         tick_unit = deg if deg == "°" else ""
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10],

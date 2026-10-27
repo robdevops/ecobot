@@ -39,18 +39,20 @@ def one_line(reading, ys):
     return Chart("T", "s", [Panel("P", "", [Line("L", xs, ys, reading=reading)], reading=reading)])
 
 
-@pytest.mark.parametrize("reading", ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd"])
-def test_these_readings_show_their_latest_value_beside_the_line(reading):
+READINGS = ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd", "humidity", "temperature", "uv", "pm2_5"]
+
+
+@pytest.mark.parametrize("reading", READINGS)
+def test_every_line_ends_with_its_latest_value_beside_it(reading):
     ys = [10.0 + (i % 7) for i in range(40)] + [13.4]
-    assert "13.4" in labels_of(one_line(reading, ys))
+    assert labels_of(one_line(reading, ys))[-1] == "13.4"                  # after any peak or low that is tagged
 
 
-@pytest.mark.parametrize("reading", ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd"])
-def test_a_latest_value_of_zero_is_not_labelled_for_any_of_them_and_other_readings_are_not_labelled(reading):
+@pytest.mark.parametrize("reading", READINGS)
+def test_a_latest_value_of_zero_is_labelled_too(reading):
     flat = [5.0 + (i % 6) for i in range(40)] + [0.0]
-    assert "0" not in labels_of(one_line(reading, flat))
-    assert "0.4" in labels_of(one_line(reading, flat[:-1] + [0.4]))       # a tiny but non-zero value still is
-    assert "52.3" not in labels_of(one_line("humidity", [50.0 + (i % 7) for i in range(40)] + [52.3]))   # a peak or low is tagged, the latest is not
+    assert labels_of(one_line(reading, flat))[-1] == "0"
+    assert labels_of(one_line(reading, flat[:-1] + [0.4]))[-1] == "0.4"
 
 
 def test_the_wind_rose_is_scaled_as_matplotlib_scales_its_bars():
@@ -149,3 +151,30 @@ def test_every_weather_reading_and_air_metric_has_a_colour_of_its_own():
     from lib.series import AIR, WEATHER
     lines = [name for name in WEATHER if name != "rain"]          # rain is drawn as bars, in its own blue
     assert not [name for name in (*lines, *AIR) if name not in charts.READING_COLOURS]
+
+
+def test_two_panels_of_lines_become_one_panel_with_a_scale_each_and_nothing_else_does():
+    from lib.panels import panel_for, two_axes
+    from lib.specs import Bars
+
+    def made(reading, label):
+        return panel_for(reading, [Line(label, [1, 2, 3], [1.0, 2.0, 3.0], reading=reading)])
+    uv, solar = made("uv", "UV index"), made("solar", "Solar")
+    both = two_axes([uv, solar])
+    assert both.label == "UV index and Solar radiation" and both.unit == "" and both.peaks == "none"
+    assert [(s.label, s.right, s.reading) for s in both.lines] == [("UV index", False, "uv"), ("Solar radiation (W/m²)", True, "solar")]
+    rain = panel_for("rain", bars=Bars("Rain", "mm", [1], [1.0], 3600))
+    assert two_axes([uv]) is None and two_axes([uv, solar, uv]) is None and two_axes([uv, rain]) is None
+    with pytest.raises(ValueError):
+        Panel("x", "", [Line("a", [1, 2], [1.0, 2.0], right=True)])      # a right-hand scale needs a line on the left
+
+
+def test_a_panel_with_two_scales_is_drawn_with_both_latest_values_and_a_right_axis():
+    from lib.panels import panel_for, two_axes
+    xs = list(range(1_790_000_000, 1_790_000_000 + 60 * 1800, 1800))
+    uv = panel_for("uv", [Line("UV index", xs, [float(i % 11) for i in range(60)], reading="uv")])
+    solar = panel_for("solar", [Line("Solar", xs, [float(i % 11) * 90 + 40.5 for i in range(60)], reading="solar")])
+    panel = two_axes([uv, solar])
+    chart = Chart(panel.label, "s", [panel])
+    assert labels_of(chart)[-2:] == ["4", "400.5"]                          # each line's latest value, by its own scale
+    assert charts.render(chart, timezone.utc)[:4] == b"\x89PNG"

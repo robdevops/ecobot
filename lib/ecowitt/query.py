@@ -23,7 +23,7 @@ from ..rain import rain_bars, rain_slots
 from ..timeutil import day_bounds, day_text, local_date, now_local, parse_local, SLOT
 from ..tools import json_result
 from ..series import WEATHER, derives_range, field_of, find, find_name
-from ..panels import panel_for
+from ..panels import panel_for, two_axes
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
 from .api import CYCLES, daily_run, kept_from
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
@@ -559,4 +559,6 @@ class HistoryQuery:
                 panels.append(panel_for(name, lines))
         if len(panels) < 2:
             return None
+        if (self.turn.two_axes or self.args.get("two_axes")) and (merged := two_axes(panels)):   # one panel, a scale each
+            panels = [merged]
         return stack(panels, self.start.date(), self.end.date())

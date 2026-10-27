@@ -162,3 +162,16 @@ async def test_air_link_reports_a_verdict_and_can_chart_the_reading_over_rain(tm
     assert specs[0].title == "PM2.5, Rain" and specs[0].panels[0].bars                     # the rain is behind the reading
     assert "error" in json.loads(await comp.air_link({"metric": "co2"}))
     await eco.close()
+
+
+async def test_two_series_can_share_one_panel_with_a_scale_each(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    out, specs = await plot(comp, panels=[{"series": "temperature"}, {"series": "pm2_5"}], two_axes=True)
+    assert len(specs) == 1 and [p.label for p in specs[0].panels] == ["Temperature and PM2.5"]
+    assert [s.right for s in specs[0].panels[0].lines] == [False, False, True] or [s.right for s in specs[0].panels[0].lines].count(True) >= 1
+    assert render(specs[0], TZ)[:4] == b"\x89PNG" and len(out["panels"]) == 2          # both series are still described
+    out, specs = await plot(comp, panels=[{"series": "temperature"}, {"series": "rain"}], two_axes=True)
+    assert "two_axes needs exactly two line series" in out["error"] and specs == []
+    out, specs = await plot(comp, panels=[{"series": "temperature"}], two_axes=True)
+    assert "error" in out and specs == []
+    await eco.close()

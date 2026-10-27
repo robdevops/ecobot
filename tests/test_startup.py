@@ -80,7 +80,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
     assert "failed" not in final and "days (5m/30m/4h/1d)" in final
-    assert len(app.handlers) == 10  # start+help, reset, keyboard, alerts, usage, the one button handler, other updates, membership, messages, errors
+    assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
     assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
     assert ecobot._handler.formatter.width == 120                   # LOG_WIDTH reaches the bot's own log lines
 
@@ -265,8 +265,8 @@ def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatc
     monkeypatch.setenv("ECOWITT_API_KEY", "a")
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("ALERT_COOLDOWN_MINUTES", raising=False)
-    assert Config.from_env().alert_cooldown_minutes == 30
-    for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 30)):   # 0 is under 5 like 1 is
+    assert Config.from_env().alert_cooldown_minutes == 60
+    for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 60)):   # 0 is under 5 like 1 is
         monkeypatch.setenv("ALERT_COOLDOWN_MINUTES", value)
         assert Config.from_env().alert_cooldown_minutes == want, value
 
@@ -296,7 +296,9 @@ def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypa
         "t", "grok-4.3", "https://api.x.ai/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert cfg.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
     monkeypatch.setenv("XAI_API_KEY", " ")
-    with pytest.raises(SystemExit, match="XAI_API_KEY is not set"):
+    assert Config.from_env().xai_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", " ")
+    with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
         Config.from_env()
 
 
@@ -363,7 +365,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     await ecobot.main()
     await stopper
     assert "irrigation battery" in caplog.text                       # in the list of alert types
-    assert len(app.handlers) == 10 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
+    assert len(app.handlers) == 11 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
 
 
 def test_log_lines_do_not_name_their_module():
@@ -410,13 +412,13 @@ def test_a_traceback_is_logged_whole_after_its_cut_message():
     assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
 
 
-def test_the_log_width_is_71_unless_set_and_0_cuts_none(monkeypatch):
+def test_the_log_width_is_0_unless_set_and_0_cuts_none(monkeypatch):
     from lib.config import Config
     for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_WIDTH", raising=False)
-    assert Config.from_env().log_width == 71
-    for value, want in (("120", 120), ("0", 0), ("junk", 71), ("-5", 71), ("7.5", 71), ("²", 71)):
+    assert Config.from_env().log_width == 0
+    for value, want in (("120", 120), ("71", 71), ("junk", 0), ("-5", 0), ("7.5", 0), ("²", 0)):
         monkeypatch.setenv("LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
 
@@ -439,3 +441,22 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
                                ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
     assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
+
+
+async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_does_not_show_the_token(tmp_path, monkeypatch):
+    from telegram.error import InvalidToken
+
+    class Rejecting(FakeApp):
+        async def __aenter__(self):
+            raise InvalidToken("The token `SECRET-TOKEN-123` was rejected by the server.")
+    cfg = config(tmp_path)
+    eco_t, _ = ecowitt_transport(history_days=3)
+    air_t, _ = air_transport()
+    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
+    for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+    monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(Rejecting())))
+    with pytest.raises(SystemExit) as stopped:
+        await ecobot.main()
+    assert "TELEGRAM_BOT_TOKEN was rejected by Telegram" in str(stopped.value) and "SECRET" not in str(stopped.value)
+    assert stopped.value.__cause__ is None and stopped.value.__suppress_context__

@@ -585,3 +585,16 @@ def test_the_air_table_is_the_one_in_series_and_panels_imports_on_its_own():
 
 def test_the_models_first_step_must_fetch_for_data_may_just_reply_to_chat_and_gets_no_tools_about_the_bot():
     assert [intent.read(t, NOW).tool_choice for t in ("will it rain tomorrow?", "thanks!", "what can you do")] == ["required", "auto", "none"]
+
+
+def test_two_readings_on_two_axes_is_asked_for_in_so_many_words_and_goes_to_the_weather_history_chart():
+    from datetime import datetime
+    from tests.fakes import TZ
+    now = datetime(2026, 10, 27, 12, tzinfo=TZ)
+    for said in ("graph combine uvi and solar radiation on two axis", "plot temperature and humidity on two axes", "uv vs solar, dual axis",
+                 "graph uv and solar 2 axes", "plot uv and solar with a secondary axis", "graph uv and solar overlaid"):
+        assert intent.read(said, now).two_axes, said
+    for said in ("plot temperature and humidity", "graph uv on two axes", "plot rain", "what is the axis of the earth"):
+        assert not intent.read(said, now).two_axes, said                    # one reading, or no such request
+    read = intent.read("graph combine uvi and solar radiation on two axis", now)
+    assert read.chart_in_code and read.chart_fields == ["uv", "solar"] and read.fast[0] == "weather_history"

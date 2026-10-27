@@ -16,7 +16,7 @@ from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series, reading_slots
 from .series import WEATHER
-from .panels import panel_for
+from .panels import panel_for, two_axes
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
@@ -44,6 +44,9 @@ PLOT_PARAMETERS = {
                    "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
                                                               "style": {"type": "string", "enum": list(STYLES)}},
                              "required": ["series"]}},
+        "two_axes": {"type": "boolean", "description": "Set true for exactly two line series on ONE panel, each with its own scale (left and "
+                                                       "right axis): 'on two axes', 'dual axis', 'overlay', 'combine them on one chart'. "
+                                                       "Not for rain or ratings."},
         **period_parameters(DEFAULT_DAYS),
     },
     "required": ["panels"],
@@ -168,6 +171,10 @@ class Composer:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
+        if args.get("two_axes"):
+            if (merged := two_axes(built)) is None:
+                return _error("two_axes needs exactly two line series (not rain bars or ratings)")
+            built = [merged]
         out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
         self._add_chart(out, built, first, last, turn)
         return json_result(out)

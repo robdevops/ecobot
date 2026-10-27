@@ -380,6 +380,10 @@ ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point"
 LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
 
 
+# "on two axes", "dual axis", "2 axes", "secondary axis", "overlay": two readings on one panel, each with a scale of its own
+TWO_AXES = re.compile(r"\b(?:(?:two|2|dual|twin|double|secondary|second)[- ](?:y[- ]?)?ax[ie]s|overla(?:y(?:ed|ing|s)?|id))\b", I)
+
+
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
@@ -797,6 +801,7 @@ class Intent:
     chart_asked: bool = False             # "plot" means a chart, whatever the model calls
     chart_field: str | None = None        # humidity questions get a humidity chart
     chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
+    two_axes: bool = False                # "uvi and solar on two axes": the two share one panel, a scale each
     average_asked: bool = False
     more: list[tuple[str, dict]] = field(default_factory=list)   # the rest of the report's calls (fast is the first)
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
@@ -861,7 +866,7 @@ def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGr
     lookup, named = plain_lookup(text, fast) if not (report or in_code) else ("", [])
     return Intent(effort=reasoning_effort(text), needs_data=needs_data(text), about_the_bot=about_the_bot(text), report=report,
                   hints=period_hints(text, now), fast=fast, chart_asked=bool(GRAPH.search(text)), chart_field=chart_field(text),
-                  chart_fields=chart_fields(text), average_asked=bool(AVERAGE.search(text)), more=calls[1:],
+                  chart_fields=chart_fields(text), two_axes=bool(TWO_AXES.search(text)) and len(chart_fields(text)) == 2, average_asked=bool(AVERAGE.search(text)), more=calls[1:],
                   weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
                   readings=list(_named(text)), per_day=bool(PER_DAY.search(text)),
                   extra=model_prefetch(text, now, sources) if not fast else [], lookup=lookup, lookup_arg=named, sides=_sides(text))

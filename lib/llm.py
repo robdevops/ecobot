@@ -25,8 +25,13 @@ LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data alr
 
 
 class Agent:
-    def __init__(self, client: AsyncOpenAI, model: str, tools: Tools):
-        self.client, self.model, self.tools = client, model, tools
+    def __init__(self, client: AsyncOpenAI | None, model: str, tools: Tools):
+        self.client, self.model, self.tools = client, model, tools   # no client (no XAI_API_KEY): the tools are still called, the model never is
+
+    @property
+    def ready(self) -> bool:
+        """Is there a model to ask?"""
+        return self.client is not None
 
     async def _complete(self, kwargs: dict, call_no: int, on_text=None) -> tuple[str, list[dict], float]:
         """One LLM call. Returns (content, tool_calls, seconds) and logs timing/usage. With on_text the answer is streamed

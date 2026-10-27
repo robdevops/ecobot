@@ -44,6 +44,20 @@ async def test_error_details_stay_in_the_log_not_the_chat(alert_state):
     assert "RuntimeError" in replies[0]      # just the kind of problem
 
 
+class NoModel:
+    ready = False
+
+    async def run(self, *a, **k):
+        raise AssertionError("there is no model to ask")
+
+
+async def test_without_a_model_a_question_for_it_is_told_so_and_what_works_still_answers(alert_state):
+    replies = await ask(alert_state, NoModel(), "will it rain tomorrow, do you think?")
+    assert len(replies) == 1 and "needs the AI model" in replies[0] and "/report" in replies[0] and "/air_quality" in replies[0]
+    replies = await ask(alert_state, NoModel(), "what can you do")
+    assert len(replies) == 1 and "needs the AI model" not in replies[0]               # answered in code, as before
+
+
 async def test_a_failing_shortcut_falls_back_to_the_model(alert_state, monkeypatch):
     def boom(*a, **k):
         raise OverflowError("date value out of range")
@@ -632,3 +646,28 @@ async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(aler
     await bot.on_report_button(NS(callback_query=query), context)
     assert query.toast is None and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH
     assert [e.type for e in query.entities] == ["bold", "bold"]
+
+
+async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_still_raise(caplog):
+    import pytest
+    from telegram.error import BadRequest
+
+    from lib.bot import answer_query
+
+    class Query:
+        data = "pd:7"
+
+        def __init__(self, error=None):
+            self.error, self.told = error, []
+
+        async def answer(self, *args, **kwargs):
+            if self.error:
+                raise self.error
+            self.told.append((args, kwargs))
+    ok = Query()
+    assert await answer_query(ok, "Drawing 7D...", show_alert=False) and ok.told == [(("Drawing 7D...",), {"show_alert": False})]
+    caplog.set_level("INFO")
+    assert not await answer_query(Query(BadRequest("Query is too old and response timeout expired or query id is invalid")), "x")
+    assert "too old to answer" in caplog.text and "pd:7" in caplog.text
+    with pytest.raises(BadRequest):
+        await answer_query(Query(BadRequest("Message is not modified")))

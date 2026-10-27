@@ -47,7 +47,7 @@ def monitor(tmp_path, data):
 
     async def notify(text, link=None, **kw):
         sent.append(text)
-    m = WeatherMonitor(FakeStation(data), state, notify)
+    m = WeatherMonitor(FakeStation(data), state, notify, cooldown_seconds=30 * 60)   # 30 minutes, whatever the default is
     return m, state, sent
 
 
@@ -872,7 +872,7 @@ async def test_uv_needs_two_distinct_readings_even_across_checks_and_a_restart(t
     await m.check()
     await m.check()                                    # the same reading looked at again does not count twice
     assert sent == []
-    restarted = WeatherMonitor(m.station, AlertState(state.path), m.notify)    # a restart: the run is in the state file
+    restarted = WeatherMonitor(m.station, AlertState(state.path), m.notify, cooldown_seconds=30 * 60)    # a restart: the run is in the state file
     sent2 = []
 
     async def notify(text, link=None, **kw):
@@ -941,3 +941,8 @@ async def test_a_single_spike_never_makes_the_air_unhealthy_but_two_readings_in_
     await mon.check(reading(60, 90, 80))                            # two in a row at this check ...
     await mon.check(reading(90, 85, 90))                            # ... and at the next
     assert len(sent) == 1 and "Unhealthy air" in sent[0]
+
+
+def test_the_default_wait_before_the_rain_has_stopped_is_an_hour(tmp_path):
+    from lib.alerts.weather import ALERT_COOLDOWN_SECONDS
+    assert ALERT_COOLDOWN_SECONDS == 60 * 60 == WeatherMonitor(FakeStation([]), AlertState(tmp_path / "s.json"), None).cooldown

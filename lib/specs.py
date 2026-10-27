@@ -29,6 +29,7 @@ class Line:
     records: dict[str, tuple[int, float]] = field(default_factory=dict)   # "low" / "high": (epoch, the true reading)
     reading: str = ""                                  # which reading it is ("pm2_5", ...), for its colour; else its panel's
     indoor: bool = False                               # the indoor sensor's line: the reading's complementary colour
+    right: bool = False                                # drawn against the panel's second axis, on the right (see panels.two_axes)
 
     def __post_init__(self):
         if len(self.x) != len(self.y) or len(self.x) < 2:
@@ -100,6 +101,8 @@ class Panel:
             raise ValueError(f"panel {self.label!r}: shares draw alone")
         if self.peaks not in ("pills", "aside", "none"):
             raise ValueError(f"panel {self.label!r}: peaks are 'pills', 'aside' or 'none'")
+        if self.lines and all(line.right for line in self.lines):
+            raise ValueError(f"panel {self.label!r}: a right-hand axis needs a line on the left too")
 
     @property
     def bars_only(self) -> bool:

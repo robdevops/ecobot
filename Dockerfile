@@ -1,8 +1,8 @@
 # The bot as a small image: python:3.13-slim with the runtime packages in a venv that has no pip, no pip cache and no test suites,
 # and bytecode for only what the bot imports at start (bytecode for everything is 48 MB more; none adds ~2 s to every start).
 #   docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .
-#   docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v ecobot-data:/data ecobot
-# Settings come from the environment, as under systemd (README); the state and caches are kept in /data.
+#   docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data ecobot   (README: also --log-driver journald, else local)
+# Settings come from the environment, as under systemd (README); the state and caches are kept in /data, the folder mounted from the host.
 FROM python:3.13-slim AS base
 
 FROM base AS build

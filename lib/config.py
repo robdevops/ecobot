@@ -58,7 +58,7 @@ def _required(value: str, default: str, name: str) -> str:
     """A setting the bot can't run without; it stops with a message naming it when it is unset or blank."""
     if value:
         return value
-    raise SystemExit(f"{name} is not set: the bot can't start without it (see the README)")
+    raise SystemExit(f"{name} is not set: the bot can't start without it (see docs/configuration.md)")
 
 
 def _url(value: str, default: str, name: str) -> str:
@@ -167,7 +167,7 @@ class Config:
     air_cache_path: Path
     conditions_cache_path: Path                                    # the last pollen page and forecast, kept across restarts
     telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
-    xai_api_key: str = _setting("XAI_API_KEY", "", _required)
+    xai_api_key: str = _setting("XAI_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
     xai_base_url: str = _setting("XAI_BASE_URL", "https://api.x.ai/v1")
     xai_model: str = _setting("XAI_MODEL", "grok-4.3")
     ecowitt_api_key: str = _setting("ECOWITT_API_KEY", "")
@@ -175,6 +175,7 @@ class Config:
     airgradient_token: str = _setting("AIRGRADIENT_API_TOKEN", "")
     airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
     airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
+    airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
     place: str = _setting("PLACE", "Melbourne")                     # named after the Pollen & asthma and Forecast headings in the report
     pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
@@ -191,10 +192,10 @@ class Config:
     irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
     admin_only: bool = _setting("ADMIN_ONLY", True, _flag)          # the bot answers nobody but the admins of the groups it is in
     admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
-    alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 30, _between(5, 150))   # the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts
+    alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts
     telegram_preload_chat: int | None = _setting("TELEGRAM_PRELOAD_CHAT", None, _chat_id)   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
     antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
-    log_width: int = _setting("LOG_WIDTH", 71, _whole)              # the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
+    log_width: int = _setting("LOG_WIDTH", 0, _whole)              # the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property
@@ -206,8 +207,13 @@ class Config:
         return bool(self.tuya_device_id and self.tuya_client_id and self.tuya_client_secret)
 
     @property
-    def airgradient(self) -> bool:
+    def airgradient_cloud(self) -> bool:
         return bool(self.airgradient_token and self.airgradient_location)
+
+    @property
+    def airgradient(self) -> bool:
+        """AirGradient is on with its cloud account, or with only the sensor's own server (then nothing is ever asked of the cloud)."""
+        return self.airgradient_cloud or bool(self.airgradient_local_url)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -226,5 +232,5 @@ class Config:
                   air_cache_path=data / "airgradient_cache.sqlite", conditions_cache_path=data / "conditions_cache.sqlite",
                   **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
         if not (cfg.ecowitt or cfg.airgradient):
-            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID")
+            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
         return cfg

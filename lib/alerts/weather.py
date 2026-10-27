@@ -26,7 +26,7 @@ from ..timeutil import at_hour, clock_text, to_local
 
 log = logging.getLogger(__name__)
 
-ALERT_COOLDOWN_SECONDS = 30 * 60   # the default; ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
+ALERT_COOLDOWN_SECONDS = 60 * 60   # the default; ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 CROSS_MARGIN = 1.0
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600

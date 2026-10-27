@@ -20,6 +20,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
 from openai import AsyncOpenAI, Timeout
 from telegram import Update
+from telegram.error import InvalidToken
 from telegram.ext import Application, Defaults
 
 from lib import intent
@@ -155,7 +156,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
 
     async def air_part():
         parts.append(await safely(air.warm, True) or "AirGradient failed")
-        tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
+        if air.cloud:
+            tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
 
     async def air_backfill():
         started = time.monotonic()
@@ -219,8 +221,11 @@ async def main():
         # A model request may run as long as the bot gives a whole question (it then asks again, a reasoning step lower); a
         # dropped connection, a 429 or a 5xx is tried again twice, at once, inside that time
         client = AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0),
-                             max_retries=2)
-        stack.push_async_callback(safely, client.close)
+                             max_retries=2) if cfg.xai_api_key else None   # without a key the bot answers only what it works out in code
+        if client:
+            stack.push_async_callback(safely, client.close)
+        else:
+            log.warning("XAI_API_KEY is not set: running without the model, so answers are limited")
         state = AlertState(cfg.state_path)
         if cfg.admin_only:
             log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
@@ -241,7 +246,10 @@ async def main():
         stop = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_running_loop().add_signal_handler(sig, stop.set)
-        await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
+        try:
+            await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
+        except InvalidToken:   # (its message names the token, so it is not shown)
+            raise SystemExit("TELEGRAM_BOT_TOKEN was rejected by Telegram: check it is the token @BotFather gave for this bot") from None
         await app.start()
         stack.push_async_callback(app.stop)
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
@@ -252,9 +260,10 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
 
-        log.info("@%s + %s", app.bot.username, cfg.xai_model)
+        log.info("@%s + %s", app.bot.username, cfg.xai_model if client else "no model")
         log.info("Sources: %s", ", ".join(s.name for s in sources))
         notify = Notifier(app.bot, state)
+        await bot.publish_commands(app.bot)   # the / menu
         await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
         running, weather = start_alerts(cfg, bot, notify, tasks)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive

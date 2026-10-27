@@ -16,6 +16,14 @@ ROWS = [[(CAPABILITIES, "What can you do?"), ("\U0001f4cb Status", "Report"), ("
         [("\U0001f3ed Air Quality", "Air quality all metrics 1d"), ("\U0001f52c Particulates", "Particulates chart 1d"),
          ("\U0001f4a8 Wind", "Wind chart 1d")]]
 SENTENCES = dict(button for row in ROWS for button in row)
+# The command menu Telegram shows beside the message box (the "/" button): command, description
+MENU = [("report", "Weather, air quality and more in one message"), ("rain", "Rain chart"), ("weather", "Every reading, a chart each"),
+        ("temperature", "Temperature chart"), ("humidity", "Humidity chart"), ("air_quality", "Every air quality metric"),
+        ("particulates", "PM1, PM2.5 and PM10 chart"), ("wind", "Wind chart"), ("alerts", "Alert settings"),
+        ("usage", "What I can do"), ("keyboard", "Show or hide the buttons"), ("reset", "Clear this chat's memory")]
+# The same questions as commands, named as their buttons are ("📋 Status" is /status, "🏭 Air Quality" is /air_quality), and /report for Status
+COMMANDS = {"report": "Report", **{label.split(" ", 1)[1].lower().replace(" ", "_"): question
+                                   for label, question in SENTENCES.items() if label != CAPABILITIES}}
 # Telegram keeps the keyboard in each app until a message brings a new one; this changes whenever the buttons do, so a chat
 # whose stored value differs gets the current keyboard with its next reply. HIDDEN is what a chat that hid the buttons stores.
 HIDDEN = "hidden"
