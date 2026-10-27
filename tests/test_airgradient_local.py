@@ -33,7 +33,7 @@ def sensor(handler, clock=None, found="192.168.1.116"):
 def test_a_reading_is_given_in_the_clouds_field_names_with_the_correction_first():
     row = cloud_shaped(DEVICE, local.datetime(2026, 10, 27, 1, 2, 3, tzinfo=local.UTC))
     assert row == {"pm01": 1.5, "pm02": 4.0, "pm02_corrected": 2.5, "pm10": 6.0, "rco2": 419, "tvocIndex": 74.5, "noxIndex": 3,
-                   "timestamp": "2026-10-27T01:02:03+00:00".replace("+00:00", "Z")}
+                   "atmp": 19.45, "atmp_corrected": 17.86, "timestamp": "2026-10-27T01:02:03+00:00".replace("+00:00", "Z")}
     assert cloud_shaped({"model": "x"}, local.datetime.now(local.UTC)) is None          # nothing the bot uses
     assert "pm02_corrected" not in cloud_shaped({"pm02": 4.0}, local.datetime.now(local.UTC))   # an older firmware: the plain value stands
 

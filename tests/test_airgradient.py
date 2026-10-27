@@ -497,3 +497,42 @@ async def test_an_air_chart_up_to_now_is_captioned_since_its_first_day_as_a_weat
     await air.history(f"{now - timedelta(days=3):%Y-%m-%d %H:%M:%S}", None, chart=True, turn=turn)
     assert turn.charts[0].caption(now.date()) == f"PM2.5, since {first:%a} {first.day} {first:%b %Y}"   # not "... - ..." as one day
     await air.close()
+
+
+async def test_the_sensors_own_temperature_and_humidity_are_kept_but_given_only_when_asked_for(tmp_path):
+    air, _ = await make(tmp_path)
+    day = local_date(datetime.now(TZ).timestamp() - 86400, TZ)
+    span = {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
+    assert "air_humidity" not in json.loads(await air.handle({})) and "air_humidity" not in json.loads(await air.handle(span))
+    now = json.loads(await air.handle({"metrics": ["air_humidity", "air_temperature"]}))
+    assert now["air_humidity"]["unit"] == "%" and now["air_temperature"]["unit"] == "°C" and "rating" not in now["air_humidity"]
+    assert "pm2_5" in now                                                              # the air itself is still there
+    out = json.loads(await air.handle({**span, "metrics": ["air_humidity"]}))
+    assert out["air_humidity"]["unit"] == "%" and {"low", "high", "average"} <= set(out["air_humidity"]) and "air_temperature" not in out
+    turn = Turn()
+    out = json.loads(await air.handle({**span, "chart": True, "metrics": ["air_temperature", "air_humidity"]}, turn))
+    assert turn.charts[0].title == "AirGradient temperature and AirGradient humidity" and len(turn.charts[0].panels) == 2
+    assert [p.unit for p in turn.charts[0].panels] == ["°C", "%"]
+    await air.close()
+
+
+def test_a_cache_from_before_the_sensors_own_readings_gains_their_columns_and_is_fetched_again(tmp_path):
+    import sqlite3
+
+    from lib.airgradient.store import AirStore
+    path = tmp_path / "old.sqlite"
+    db = sqlite3.connect(path)
+    db.executescript("CREATE TABLE readings (loc TEXT, ts INTEGER, pm2_5 REAL, pm10 REAL, pm1 REAL, co2 REAL, voc_index REAL, nox_index REAL,"
+                     " PRIMARY KEY (loc, ts)) WITHOUT ROWID; CREATE TABLE days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;"
+                     "INSERT INTO readings VALUES ('1', 1000, 5.0, 8.0, 3.0, 450.0, 100.0, 1.0); INSERT INTO days VALUES ('1', '2026-01-01', 1);")
+    db.commit()
+    db.close()
+    store = AirStore(path, "1", TZ)
+    assert store.load(0, 2000) == [{"ts": 1000, "pm2_5": 5.0, "pm10": 8.0, "pm1": 3.0, "co2": 450.0, "voc_index": 100.0, "nox_index": 1.0}]   # kept
+    assert store.counts([local_date(1000, TZ)]) == {local_date(1000, TZ): None}                     # the day is to be fetched again
+    store.save_day(local_date(1000, TZ), [{"ts": 1000, "pm2_5": 5.0, "air_humidity": 61.0}])
+    assert store.load(0, 2000)[0]["air_humidity"] == 61.0
+    store.close()
+    again = AirStore(path, "1", TZ)                                                                  # and not again on the next start
+    assert again.counts([local_date(1000, TZ)]) == {local_date(1000, TZ): 1}
+    again.close()

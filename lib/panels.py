@@ -4,7 +4,7 @@ weather links, the air-quality charts) builds its panels here, so a reading look
 
 from dataclasses import replace
 
-from .series import AIR, WEATHER
+from .series import AIR, AIR_EXTRA, WEATHER
 from .specs import Bars, Line, Panel
 
 
@@ -15,6 +15,8 @@ def panel_for(name: str | list[str], lines: list[Line] | None = None, bars: Bars
     if isinstance(name, str) and name in WEATHER:
         reading = WEATHER[name]
         return Panel(reading.label, reading.unit, lines, bars=bars, reading=name)
+    if isinstance(name, str) and name in AIR_EXTRA:   # the sensor's own temperature or humidity: a line on its own axis, no zones
+        return Panel(AIR_EXTRA[name].label, AIR_EXTRA[name].unit, lines, bars=bars, reading=name)
     names = [name] if isinstance(name, str) else name
     one = len(names) == 1
     return Panel(", ".join(AIR[n].label for n in names), AIR[names[0]].unit, lines, bars=bars, reading=names[0] if one else "",
@@ -34,3 +36,14 @@ def two_axes(panels: list[Panel]) -> Panel | None:
             lines.append(replace(line, label=f"{name} ({panel.unit})" if panel.unit and len(panel.lines) == 1 else name,
                                  right=right, reading=line.reading or panel.reading))
     return Panel(" and ".join(p.label for p in panels), "", lines, peaks="none")
+
+
+def same_axis(panels: list[Panel]) -> Panel | None:
+    """Panels of lines in one unit as one panel with one axis, the lines over each other ("AirGradient humidity over Ecowitt humidity"):
+    each line keeps its own colour and is named for the panel it came from. None unless there are two or more panels that are only lines,
+    all in the same unit."""
+    if len(panels) < 2 or any(not p.lines or p.bars or p.shares for p in panels) or len({p.unit for p in panels}) != 1:
+        return None
+    lines = [replace(line, label=line.label if len(panel.lines) > 1 else panel.label, reading=line.reading or panel.reading)
+             for panel in panels for line in panel.lines]
+    return Panel(" and ".join(p.label for p in panels), panels[0].unit, lines, peaks="none")

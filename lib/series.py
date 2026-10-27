@@ -62,6 +62,14 @@ AIR = {
 }
 
 
+# The sensor's own temperature and humidity: stored with every reading, but offered to the model only when a question asks for
+# them (they are not in AIR: the air-quality report, its charts and its ratings are about the air). No ratings.
+AIR_EXTRA = {
+    "air_temperature": Metric("AirGradient temperature", "°C", r"temp\w*", (0.0, 0.0)),
+    "air_humidity": Metric("AirGradient humidity", "%", r"humid\w*", (0.0, 0.0)),
+}
+
+
 def find_name(name: str) -> str | None:
     """The name of a reading given its name ("uv", "pressure"), the field it plots ("uvi", "relative") or the field it is shaded
     up to ("wind_gust"); None if none of those."""
