@@ -39,18 +39,20 @@ def one_line(reading, ys):
     return Chart("T", "s", [Panel("P", "", [Line("L", xs, ys, reading=reading)], reading=reading)])
 
 
-@pytest.mark.parametrize("reading", ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd"])
-def test_these_readings_show_their_latest_value_beside_the_line(reading):
+READINGS = ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd", "humidity", "temperature", "uv", "pm2_5"]
+
+
+@pytest.mark.parametrize("reading", READINGS)
+def test_every_line_ends_with_its_latest_value_beside_it(reading):
     ys = [10.0 + (i % 7) for i in range(40)] + [13.4]
-    assert "13.4" in labels_of(one_line(reading, ys))
+    assert labels_of(one_line(reading, ys))[-1] == "13.4"                  # after any peak or low that is tagged
 
 
-@pytest.mark.parametrize("reading", ["pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd"])
-def test_a_latest_value_of_zero_is_not_labelled_for_any_of_them_and_other_readings_are_not_labelled(reading):
+@pytest.mark.parametrize("reading", READINGS)
+def test_a_latest_value_of_zero_is_labelled_too(reading):
     flat = [5.0 + (i % 6) for i in range(40)] + [0.0]
-    assert "0" not in labels_of(one_line(reading, flat))
-    assert "0.4" in labels_of(one_line(reading, flat[:-1] + [0.4]))       # a tiny but non-zero value still is
-    assert "52.3" not in labels_of(one_line("humidity", [50.0 + (i % 7) for i in range(40)] + [52.3]))   # a peak or low is tagged, the latest is not
+    assert labels_of(one_line(reading, flat))[-1] == "0"
+    assert labels_of(one_line(reading, flat[:-1] + [0.4]))[-1] == "0.4"
 
 
 def test_the_wind_rose_is_scaled_as_matplotlib_scales_its_bars():

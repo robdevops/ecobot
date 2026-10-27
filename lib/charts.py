@@ -271,13 +271,9 @@ def _bars_behind(ax, bars) -> float:
     return _end_of(bx, bars.width, 0.0)
 
 
-END_LABELLED = ("pressure", "co2", "voc_index", "nox_index", "solar", "wind", "vpd")   # one line, and still its latest value beside it
-
-
 def _axes_width(chart: Chart) -> float:
     """The plot's width: narrower when a panel has rain's scale or end labels on its right, to leave room for them."""
-    return AX_RECT[2] - (0.07 if any((p.lines and p.bars) or len(p.lines) > 1 or (p.lines and p.reading in END_LABELLED)
-                                     for p in chart.panels) else 0)
+    return AX_RECT[2] - (0.07 if any(p.lines for p in chart.panels) else 0)
 
 
 def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
@@ -484,12 +480,9 @@ def _figure(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".") if abs(value) >= 100 else f"{value:.3g}"
 
 
-def _end_labels(ax, drawn: list[tuple], show_floor: bool = False):
-    """The latest value of each line in the margin beside it, nudged apart where they would touch. Lines that all sit on the
-    floor have nothing to read off and get no label, unless `show_floor` (a zero wind or solar reading is worth saying)."""
+def _end_labels(ax, drawn: list[tuple]):
+    """The latest value of each line in the margin beside it, nudged apart where they would touch."""
     y_lo, y_hi = ax.get_ylim()
-    if not show_floor and max(d[2][-1] for d in drawn) - y_lo < 0.05 * (y_hi - y_lo):
-        return
     height_pt = ax.get_position().height * ax.figure.get_figheight() * 72
     gap = 10 * (y_hi - y_lo) / height_pt                    # 10 points, in data units
     placed = []
@@ -560,10 +553,7 @@ def _draw_readings(ax, p: Panel, first: int, x0: float, x1: float, look: Look):
         _pills(ax, [lines[i] for i in marked], [drawn[i] for i in marked], x0, x1, look, _deg(p.unit))
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars))
-    if len(lines) > 1:
-        _end_labels(ax, drawn)
-    elif p.reading in END_LABELLED and drawn[0][2][-1] != 0:   # a latest value of zero (night, calm) has nothing to say
-        _end_labels(ax, drawn, show_floor=True)
+    _end_labels(ax, drawn)   # every line ends with its latest value, a zero (night, calm) included
     entries = [(_colour(s, first + i, p.reading), s.label) for i, s in enumerate(lines)] + ([(RAIN, p.bars.label)] if p.bars else [])
     return len(lines), x1, entries
 
