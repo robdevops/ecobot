@@ -542,7 +542,7 @@ def _draw_bars_alone(ax, b, x1: float):
     return 0, _end_of(bx, b.width, x1), []
 
 
-def _right_axis(ax, lines: list[Line], first: int, look: Look) -> tuple:
+def _right_axis(ax, lines: list[Line], first: int, look: Look, flip: bool = False) -> tuple:
     """The lines of a panel's second scale, on an axis of their own at the right (ticks in the first line's colour, no frame, no
     grid: the left axis keeps the grid). Returns (the axis, what was drawn on it as _draw_lines gives it)."""
     twin = ax.twinx()
@@ -554,6 +554,8 @@ def _right_axis(ax, lines: list[Line], first: int, look: Look) -> tuple:
     twin.tick_params(axis="y", length=0, labelsize=7.5, labelcolor=drawn[0][0], pad=5)
     twin.yaxis.set_major_locator(MaxNLocator(nbins=look.nbins, steps=[1, 2, 2.5, 5, 10]))
     twin.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    if flip:
+        twin.invert_yaxis()
     return twin, drawn
 
 
@@ -588,7 +590,7 @@ def _draw_readings(ax, p: Panel, first: int, x0: float, x1: float, look: Look):
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars))
     if on_right:
-        twin, drawn_right = _right_axis(ax, on_right, first + len(lines), look)
+        twin, drawn_right = _right_axis(ax, on_right, first + len(lines), look, p.flip_right)
         ax.tick_params(axis="y", labelcolor=drawn[0][0])   # each scale's numbers are in its line's colour
         _own_end_labels(ax, drawn, above=True)
         _own_end_labels(twin, drawn_right, above=False)

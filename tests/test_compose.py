@@ -194,6 +194,12 @@ async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axi
     assert [(s.label, s.right) for s in specs[0].panels[0].lines] == [
         ("AirGradient temperature (°C)", False), ("Ecowitt temperature (°C)", False), ("AirGradient humidity (%)", True), ("Ecowitt humidity (%)", True)]
     assert render(specs[0], TZ)[:4] == b"\x89PNG"
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "air_humidity"}, {"series": "humidity"}],
+                            two_axes=True, invert_second_axis=True)                       # the right-hand axis upside down
+    assert specs[0].panels[0].flip_right and render(specs[0], TZ)[:4] == b"\x89PNG"
+    assert not (await plot(comp, panels=[{"series": "air_temperature"}, {"series": "humidity"}], two_axes=True))[1][0].panels[0].flip_right
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], invert_second_axis=True)
+    assert "needs two_axes" in out["error"] and specs == []
     out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], two_axes=True, same_axis=True)
     assert "can't both be set" in out["error"]
     out, specs = await plot(comp, panels=[{"series": "air_humidity", "style": "rating"}])

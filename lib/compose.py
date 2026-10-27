@@ -48,6 +48,8 @@ PLOT_PARAMETERS = {
                              "required": ["series"]}},
         "two_axes": {"type": "boolean", "description": "Set true to draw the series on ONE panel with a left and a right axis: "
                                                        "'on two axes', 'dual axis', 'overlay', 'combine them on one chart'."},
+        "invert_second_axis": {"type": "boolean", "description": "With two_axes: the right-hand axis runs top to bottom, so its lines fall as the "
+                                                                 "reading rises ('invert the second Y axis')."},
         **period_parameters(DEFAULT_DAYS),
     },
     "required": ["panels"],
@@ -188,10 +190,12 @@ class Composer:
             for (name, _), panel in zip(asked, built):   # the station's readings next to the air sensor's own: say whose each is
                 if name in WEATHER and name != "rain":
                     panel.label = f"Ecowitt {panel.label.lower()}"
+        if args.get("invert_second_axis") and not args.get("two_axes"):
+            return _error("invert_second_axis needs two_axes: it turns the right-hand axis upside down")
         if args.get("two_axes") and args.get("same_axis"):
             return _error("two_axes (a scale each) and same_axis (one scale) can't both be set")
         if args.get("two_axes"):
-            if (merged := two_axes(built)) is None:
+            if (merged := two_axes(built, bool(args.get("invert_second_axis")))) is None:
                 return _error("two_axes needs line series (not rain bars or ratings): two, or more in exactly two units (one axis each); use same_axis for one unit, or separate panels")
             built = [merged]
         elif args.get("same_axis"):

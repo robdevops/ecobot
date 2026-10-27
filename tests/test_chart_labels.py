@@ -165,6 +165,7 @@ def test_two_panels_of_lines_become_one_panel_with_a_scale_each_and_nothing_else
     assert [(s.label, s.right, s.reading) for s in both.lines] == [("UV index", False, "uv"), ("Solar radiation (W/m²)", True, "solar")]
     rain = panel_for("rain", bars=Bars("Rain", "mm", [1], [1.0], 3600))
     assert two_axes([uv]) is None and two_axes([uv, rain]) is None
+    assert not both.flip_right and two_axes([uv, solar], flip_right=True).flip_right
     with pytest.raises(ValueError):
         Panel("x", "", [Line("a", [1, 2], [1.0, 2.0], right=True)])      # a right-hand scale needs a line on the left
     wind = made("pm2_5", "PM2.5")

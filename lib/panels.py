@@ -23,12 +23,12 @@ def panel_for(name: str | list[str], lines: list[Line] | None = None, bars: Bars
                  zones=AIR[names[0]].limits if one and len(lines) == 1 else None, peaks="pills" if one else "aside")
 
 
-def two_axes(panels: list[Panel]) -> Panel | None:
+def two_axes(panels: list[Panel], flip_right: bool = False) -> Panel | None:
     """Panels of lines as one panel with two scales: the lines of the first against the left axis, those of the second against a
     right-hand axis of its own (a UV index of 0 to 12 beside a solar radiation of 0 to 1000). With more than two panels, those in the
     first panel's unit share the left axis and those in the one other unit the right (two humidities left, two temperatures right).
     Each line's name carries its unit, as the panel's heading no longer can. None when they are not panels that are only lines
-    (rain bars and ratings can't share), or are more than two but not in exactly two units."""
+    (rain bars and ratings can't share), or are more than two but not in exactly two units. `flip_right`: the right axis runs downwards."""
     if len(panels) < 2 or any(not p.lines or p.bars or p.shares for p in panels):
         return None
     if len(panels) == 2:
@@ -44,7 +44,7 @@ def two_axes(panels: list[Panel]) -> Panel | None:
             name = line.label if len(panel.lines) > 1 else panel.label
             lines.append(replace(line, label=f"{name} ({panel.unit})" if panel.unit and len(panel.lines) == 1 else name,
                                  right=right, reading=line.reading or panel.reading))
-    return Panel(" and ".join(p.label for p in panels), "", lines, peaks="none")
+    return Panel(" and ".join(p.label for p in panels), "", lines, peaks="none", flip_right=flip_right)
 
 
 def same_axis(panels: list[Panel]) -> Panel | None:

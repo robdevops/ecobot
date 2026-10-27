@@ -92,6 +92,7 @@ class Panel:
     shares: Shares | None = None
     zones: tuple[float, float] | None = None           # good and poor limits, shaded behind a single rated reading
     reading: str = ""                                  # which reading this is ("humidity", "pressure" ...), for the rain rule
+    flip_right: bool = False                           # the second axis runs top to bottom (a line on it falls as its reading rises)
     peaks: str = "pills"                               # how peaks are labelled: "pills" on the lines, "aside" in empty space, "none"
 
     def __post_init__(self):
