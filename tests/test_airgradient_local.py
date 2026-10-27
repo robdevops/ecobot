@@ -162,6 +162,24 @@ async def test_readings_are_averaged_into_five_minute_buckets_kept_with_the_clou
     await air.close()
 
 
+async def test_a_recorded_bucket_keeps_its_lowest_and_highest_reading_and_the_chart_shades_between_them(tmp_path, monkeypatch):
+    clock = Now(T0)
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    air, _ = await recording_air(tmp_path, clock, [10 + k for k in range(12)])
+    for k in range(12):
+        clock.t = T0 + 60 * k
+        await air._record()
+    rows = air.store.load_day(DAY)
+    assert [r["_range"]["pm2_5"] for r in rows] == [(10.0, 14.0), (15.0, 19.0)]       # five readings each: 10..14, then 15..19
+    line, plotted = air._line("pm2_5", rows)
+    assert plotted.low == [10.0, 15.0] and plotted.high == [14.0, 19.0] and line.low == plotted.low
+    air.store.add_recorded({"ts": T0 + 3000, "pm2_5": 5.0})                              # a bucket with no spread has none
+    assert "_range" not in air.store.load(T0 + 3000, T0 + 3300)[0]
+    open_bucket = (await air._day_rows(DAY))[-1]                                           # the bucket still being averaged is shaded too
+    assert open_bucket["_range"]["pm2_5"] == (20.0, 21.0)
+    await air.close()
+
+
 async def test_a_bucket_with_too_few_readings_is_not_kept(tmp_path, monkeypatch):
     clock = Now(T0)
     monkeypatch.setattr(source, "time", NS(time=clock))

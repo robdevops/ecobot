@@ -28,6 +28,7 @@ class AirStore:
                 PRIMARY KEY (loc, ts)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS recorded (loc TEXT, ts INTEGER, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS spreads (loc TEXT, ts INTEGER, name TEXT, lo REAL, hi REAL, PRIMARY KEY (loc, ts, name)) WITHOUT ROWID;
         """)
         have = {row[1] for row in self.db.execute("PRAGMA table_info(readings)")}
         if added := [c for c in COLUMNS if c not in have]:   # a file from before these columns: they are added, and every day is fetched
@@ -63,8 +64,12 @@ class AirStore:
         return len(rows)
 
     def add_recorded(self, row: dict) -> None:
-        """Store a reading the bot took itself from the sensor (a 5-minute average), in place of any the bucket had, and note that it did."""
+        """Store a reading the bot took itself from the sensor (a 5-minute average), in place of any the bucket had, and note that it did.
+        row["_range"], if it has one, is {metric: (lowest, highest)} of the readings averaged: kept apart, for a chart's shaded range."""
         with self._lock:
+            self.db.execute("DELETE FROM spreads WHERE loc=? AND ts=?", (self.loc, row["ts"]))
+            self.db.executemany("INSERT INTO spreads VALUES (?, ?, ?, ?, ?)",
+                                [(self.loc, row["ts"], name, lo, hi) for name, (lo, hi) in (row.get("_range") or {}).items()])
             self.db.execute(f"INSERT OR REPLACE INTO readings VALUES (?, ?, {', '.join('?' * len(COLUMNS))})",
                             (self.loc, row["ts"], *(row.get(c) for c in COLUMNS)))
             self.db.execute("INSERT OR REPLACE INTO recorded VALUES (?, ?)", (self.loc, row["ts"]))
@@ -110,7 +115,12 @@ class AirStore:
             found = self.db.execute(
                 f"SELECT ts, {', '.join(COLUMNS)} FROM readings WHERE loc=? AND ts>=? AND ts<? ORDER BY ts",
                 (self.loc, start_ts, end_ts)).fetchall()
-        return [{"ts": ts, **{c: v for c, v in zip(COLUMNS, vals) if v is not None}} for ts, *vals in found]
+            spread = self.db.execute("SELECT ts, name, lo, hi FROM spreads WHERE loc=? AND ts>=? AND ts<?", (self.loc, start_ts, end_ts)).fetchall()
+        ranges: dict[int, dict] = {}
+        for ts, name, lo, hi in spread:
+            ranges.setdefault(ts, {})[name] = (lo, hi)
+        return [{"ts": ts, **{c: v for c, v in zip(COLUMNS, vals) if v is not None}, **({"_range": ranges[ts]} if ts in ranges else {})}
+                for ts, *vals in found]
 
     def load_day(self, day: date) -> list[dict]:
         return self.load(*day_bounds(day, self.tz))

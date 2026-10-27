@@ -219,3 +219,18 @@ async def test_the_tools_offer_the_air_sensors_own_temperature_and_humidity_only
     assert series == [*SERIES, "air_temperature", "air_humidity"] and "same_axis" in asked["plot_chart"]["parameters"]["properties"]
     assert [s["function"]["name"] for s in tools.schemas_for(Turn(air_extra=True))] == [s["function"]["name"] for s in plain]   # the same tools, in order
     await eco.close()
+
+
+async def test_a_composed_air_series_takes_its_range_from_the_readings_the_bot_recorded(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    air = StubAir(days=2)
+    for r in air.readings[-12:]:                                      # the last hour was recorded by the bot, with a spread
+        r["_range"] = {"pm2_5": (r["pm2_5"] - 2.0, r["pm2_5"] + 3.0)}
+    comp.air = air
+    first = datetime.now(TZ).date() - timedelta(days=2)
+    series, _ = await comp.air_series(["pm2_5"], first, datetime.now(TZ).date())
+    values, lows, highs = series["pm2_5"]
+    spread = [t for t in values if highs[t] - lows[t] >= 5.0]
+    assert spread and all(highs[t] - lows[t] >= 5.0 for t in spread[-1:])
+    assert any(highs[t] == lows[t] == values[t] for t in values)       # a slot with no recorded range is a single value
+    await eco.close()

@@ -151,11 +151,14 @@ class Composer:
         out = {}
         for metric in metrics:
             slots: dict[int, list[float]] = {}
+            extremes: dict[int, list[float]] = {}   # the readings, and the lowest and highest the bot saw within a bucket it recorded
             for r in rows:
                 if metric in r:
-                    slots.setdefault(r["ts"] // SLOT * SLOT, []).append(r[metric])
-            out[metric] = ({t: fmean(v) for t, v in slots.items()}, {t: min(v) for t, v in slots.items()},
-                           {t: max(v) for t, v in slots.items()})
+                    slot = r["ts"] // SLOT * SLOT
+                    slots.setdefault(slot, []).append(r[metric])
+                    extremes.setdefault(slot, []).extend(r.get("_range", {}).get(metric) or (r[metric],))
+            out[metric] = ({t: fmean(v) for t, v in slots.items()}, {t: min(v) for t, v in extremes.items()},
+                           {t: max(v) for t, v in extremes.items()})
         notes = {}
         if skipped:
             notes["missing"] = f"{len(skipped)} older day(s) aren't in the bot's cache yet and were left out"

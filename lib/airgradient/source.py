@@ -257,12 +257,14 @@ class AirGradient(Source):
 
     @staticmethod
     def _average(bucket: int, samples: list[dict]) -> dict:
-        row = {"ts": bucket}
+        row, spread = {"ts": bucket}, {}
         for name in STORED:
             values = [s[name] for s in samples if name in s]
             if values:
                 row[name] = statistics.fmean(values)
-        return row
+            if len(values) >= 2:   # the lowest and highest reading in the bucket: what a chart shades
+                spread[name] = (min(values), max(values))
+        return {**row, **({"_range": spread} if spread else {})}
 
     async def _flush_bucket(self):
         bucket, samples = self._bucket
@@ -518,7 +520,9 @@ class AirGradient(Source):
         if len(pts) < 2:
             return None
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
-        plotted = build_line([Sample(t, v, None, None, gap) for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+        spread = {r["ts"]: r["_range"][name] for r in rows if name in r and name in r.get("_range", {})}   # what the bot saw in a bucket it recorded
+        plotted = build_line([Sample(t, v, *(((min(spread[t][0], v), max(spread[t][1], v)) if t in spread else (None, None))), gap)
+                              for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
@@ -534,7 +538,7 @@ class AirGradient(Source):
         if len(drawn) == 1:
             (name, (line, plotted)), = drawn.items()
             subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
-                        if not plotted.raw else f"{period}  ·  AirGradient readings")
+                        if not plotted.raw else f"{period}  ·  AirGradient readings" + (", range shaded" if plotted.low else ""))
             return Chart(LABELS.get(name) or EXTRA_LABELS[name], subtitle, [panel_for(name, [line])], period=days)
         panels = []
         for group in AIR_PANELS:
