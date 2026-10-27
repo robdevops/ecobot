@@ -28,6 +28,7 @@ class Turn:
     two_axes: bool = False                       # the words ask for two readings on one chart with a scale each ("on two axes")
     air_extra: bool = False                      # the tools offer the air sensor's own temperature and humidity: the words name them, or this chat is still using them
     air_extra_used: bool = False                 # a tool served them for this question
+    topics: set = field(default_factory=set)     # the guidance topics this question was given (intent.topics, and the chat's memory of them)
     average_asked: bool = False                  # an average was asked for: the caption leads with it
     text: str = ""                               # what the person said (a tool can check an argument against it)
     readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others

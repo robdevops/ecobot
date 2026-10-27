@@ -756,20 +756,32 @@ BOT_WORDS = re.compile(r"\b(can|could|do|does|are|will)\s+(you|the bot)\b|\b(ale
 COMPARE = re.compile(r"\b(against|versus|vs|compare\w*|affect\w*|influence\w*|correlat\w*|relat\w*|link\w*|cause\w*)\b", I)
 
 
+def topics_in(said: str) -> set[str]:
+    """The guidance topics one message touches: air, air_extra (the air sensor's own temperature or humidity), days, link, outlook, wind,
+    describe, bot."""
+    return {name for name, hit in (
+        ("air", mentions_air(said)), ("air_extra", wants_air_extra(said)),
+        ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
+        ("link", bool(LINK.search(said)) or bool(COMPARE.search(said)) and bool(OUTLOOK_WORDS.search(said))),
+        ("outlook", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
+        ("wind", bool(WIND_WORDS.search(said))), ("describe", bool(DESCRIBE.search(said))),
+        ("bot", bool(BOT_WORDS.search(said)) or about_the_bot(said) or bool(COMMAND.search(said))),
+    ) if hit}
+
+
 def topics(text: str, before: list[str] = ()) -> set[str]:
     """What guidance and tools the question needs beyond the basics, from its words and the messages just before it (a follow-up
     like "and indoors?" is about what came before). Generous on purpose: a topic that isn't needed costs a few tokens, one that
     is missing costs the answer."""
     found: set[str] = set()
     for said in (*before, text):
-        found |= {name for name, hit in (
-            ("air", mentions_air(said)), ("air_extra", wants_air_extra(said)), ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
-            ("link", bool(LINK.search(said)) or bool(COMPARE.search(said)) and bool(OUTLOOK_WORDS.search(said))),
-            ("outlook", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
-            ("wind", bool(WIND_WORDS.search(said))), ("describe", bool(DESCRIBE.search(said))),
-            ("bot", bool(BOT_WORDS.search(said)) or about_the_bot(said) or bool(COMMAND.search(said))),
-        ) if hit}
+        found |= topics_in(said)
     return found
+
+
+# The topic a tool call is evidence of: a chat that is being answered with these is still on the topic
+TOOL_TOPICS = {"weather_days": "days", "air_days": "days", "weather_link": "link", "air_link": "link", "air_scan": "link",
+               "weather_forecast": "outlook", "air_quality": "air"}
 
 
 # "will it rain?", "do I need an umbrella?", "rain later?": the model reasons from the station, and the forecast (if on) comes with it

@@ -757,3 +757,39 @@ async def test_the_air_sensors_own_readings_are_offered_to_a_follow_up_when_the_
         bot.chats[bot._key(msg)].history = list(earlier)                   # a chat whose count has run out: only the messages are left
         await bot.respond(update, context, "do that again but for temperature")
     assert seen == [True, True, False]
+
+
+async def test_every_guidance_topic_stays_on_in_a_chat_while_either_side_names_it_or_its_tools_are_used_then_goes_after_two_quiet_runs(alert_state):
+    seen = []
+    script = {"how many days was uv over 9": ("ok", "weather_days"),       # the person names days, and its tool is used
+              "and for solar": ("ok", None), "thanks": ("ok", None), "right": ("ok", None),
+              "tell me something": ("The pressure is steady and the wind was strong.", None),   # the reply names wind
+              "and the pressure": ("ok", None), "and humidity": ("ok", None), "fine": ("ok", None), "good": ("ok", None)}
+
+    class Capturing:
+        async def run(self, messages, system, effort, *, turn=None, **k):
+            seen.append((messages[-1]["content"], sorted(turn.topics & {"days", "wind"})))
+            reply, tool = script[messages[-1]["content"]]
+            if tool:
+                messages.append({"role": "assistant", "content": None, "tool_calls": [{"function": {"name": tool}}]})
+            return reply
+    sent = []
+
+    async def reply_text(body, **kw):
+        sent.append(body)
+
+    async def send_chat_action(*a, **k):
+        pass
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
+    for said in script:
+        await bot.respond(update, context, said)
+    got = dict(seen)
+    assert got["how many days was uv over 9"] == ["days"]
+    assert got["and for solar"] == ["days"] and got["thanks"] == ["days"]            # no word of it, but its tool was just used
+    assert got["right"] == []                                                          # two quiet runs: gone
+    assert got["and the pressure"] == ["wind"]                                         # the reply to the question before named the wind
+    assert got["and humidity"] == ["wind"] and got["fine"] == [] and got["good"] == []   # and that goes too, after two quiet runs
