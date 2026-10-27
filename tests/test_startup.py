@@ -77,7 +77,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     await stopper
     log = caplog.text
     assert "Weather station: Ecowitt 'Fairleigh'" in log and "@testbot + " in log
-    assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
+    assert "Startup fetch:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
     assert "failed" not in final and "days (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
@@ -151,7 +151,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     assert "Ecowitt failed" in log and "AirGradient failed" in log        # the summary says so
     assert "the network dropped" in log                                     # and the reason is in the log
     assert " req, held " in log and "AirGradient archive:" in log         # yet both archives ran
-    assert "Startup warm-up failed" not in log                            # not lost to the catch-all
+    assert "Startup fetch failed" not in log                            # not lost to the catch-all
 
 
 async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_start(tmp_path, monkeypatch, caplog):

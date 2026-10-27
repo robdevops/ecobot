@@ -167,8 +167,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
     try:
         await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
     except Exception:
-        log.exception("Startup warm-up failed (the regular refreshes will catch up)")
-    log.info("Startup warm-up: %s, %.1fs", ", ".join(parts) or "nothing to fetch", time.monotonic() - started)
+        log.exception("Startup fetch failed (the regular refreshes will catch up)")
+    log.info("Startup fetch: %s, %.1fs", ", ".join(parts) or "nothing to fetch", time.monotonic() - started)
     tasks.start(every(PREDRAW_SECONDS, bot.predraw))   # the button charts, ready before they are pressed
     on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
     log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(bot.state.alert_chats()))
@@ -268,7 +268,7 @@ async def main():
         running, weather = start_alerts(cfg, bot, notify, tasks)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
             tasks.start(source.warmer.run())
-        log.info("Keeping warm: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
+        log.info("Refreshing every: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
         tasks.start(warm_up(bot, weather, running, tasks))
         await stop.wait()
 
