@@ -46,10 +46,8 @@ PLOT_PARAMETERS = {
                    "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
                                                               "style": {"type": "string", "enum": list(STYLES)}},
                              "required": ["series"]}},
-        "two_axes": {"type": "boolean", "description": "Set true for line series on ONE panel with a scale each (left and right axis): "
-                                                       "two series, or more in exactly two units (humidity pair left, temperature pair "
-                                                       "right): 'on two axes', 'dual axis', 'overlay', 'combine them on one chart'. "
-                                                       "Not for rain or ratings."},
+        "two_axes": {"type": "boolean", "description": "Set true to draw the series on ONE panel with a left and a right axis: "
+                                                       "'on two axes', 'dual axis', 'overlay', 'combine them on one chart'."},
         **period_parameters(DEFAULT_DAYS),
     },
     "required": ["panels"],
@@ -61,8 +59,8 @@ def plot_asked() -> tuple[str, dict]:
     parameters = copy.deepcopy(PLOT_PARAMETERS)
     parameters["properties"]["panels"]["items"]["properties"]["series"]["enum"] = SERIES_ASKED
     parameters["properties"]["same_axis"] = {
-        "type": "boolean", "description": "Set true to draw the series (two or more, all in the same unit) as ONE panel on one axis, the "
-                                          "lines over each other: 'plot airgradient humidity over ecowitt humidity'. Not for rain or ratings."}
+        "type": "boolean", "description": "Set true to draw the series as ONE panel on one axis, the lines over each other: "
+                                          "'plot airgradient humidity over ecowitt humidity'."}
     return (PLOT_DESCRIPTION + " Also air_temperature and air_humidity: the AirGradient sensor's own temperature and humidity (ask for "
             "them only by those names: plain temperature and humidity are the weather station's).", parameters)
 
@@ -194,7 +192,7 @@ class Composer:
             return _error("two_axes (a scale each) and same_axis (one scale) can't both be set")
         if args.get("two_axes"):
             if (merged := two_axes(built)) is None:
-                return _error("two_axes needs line series (not rain bars or ratings): two, or more in exactly two units")
+                return _error("two_axes needs line series (not rain bars or ratings): two, or more in exactly two units (one axis each); use same_axis for one unit, or separate panels")
             built = [merged]
         elif args.get("same_axis"):
             if (merged := same_axis(built)) is None:

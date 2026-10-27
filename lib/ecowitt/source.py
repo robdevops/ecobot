@@ -61,7 +61,7 @@ HISTORY_PARAMS = {
         "chart_fields": {"type": "array", "items": {"type": "string", "enum": list(WEATHER)},
                          "description": "To plot SEVERAL readings together ('plot temperature and rain'): which, in order, "
                                         "one panel each on a shared time axis. The groups they need are fetched for you."},
-        "two_axes": {"type": "boolean", "description": "With exactly two chart_fields: set true to draw them as ONE panel with a scale each "
+        "two_axes": {"type": "boolean", "description": "Set true to draw the chart_fields as ONE panel with a scale each "
                                                        "(left and right axis) when the question says 'on two axes', 'dual axis' or 'overlay'."},
         "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
                                                       "period's average (and per day or month). Highs and lows are the default."},
