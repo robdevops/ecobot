@@ -1473,15 +1473,5 @@
     "covers": [
       "c:two-axes"
     ]
-  },
-  {
-    "id": "airgradient-humidity-over-ecowitt",
-    "ask": "plot airgradient humidity over ecowitt outdoor humidity",
-    "note": "the air sensor's own humidity is offered to the model only when the AirGradient is named with it; the chart is the model's (plot_chart)",
-    "expect": {
-      "air_extra": true,
-      "fast": null
-    },
-    "covers": []
   }
 ]

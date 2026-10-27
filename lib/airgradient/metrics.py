@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from ..series import AIR, AIR_EXTRA
+from ..series import AIR
 
 # name -> (fields to try, in order: corrected first), unit
 METRICS = {
@@ -13,15 +13,6 @@ METRICS = {
     "voc_index": (("tvocIndex", "tvoc_index"), "relative index (100 = this sensor's recent average)"),
     "nox_index": (("noxIndex", "nox_index"), "relative index (1 = baseline)"),
 }
-
-# The sensor's own temperature and humidity (the corrected values first): kept with every reading, shown only when asked for
-EXTRA = {
-    "air_temperature": (("atmp_corrected", "atmp"), "°C"),
-    "air_humidity": (("rhum_corrected", "rhum"), "%"),
-}
-STORED = {**METRICS, **EXTRA}   # every column of a stored reading
-EXTRA_LABELS = {name: m.label for name, m in AIR_EXTRA.items()}
-EXTRA_UNITS = {name: m.unit for name, m in AIR_EXTRA.items()}
 
 # Traffic-light ratings (series.AIR): value <= first -> good, <= second -> poor, above -> very poor.
 RATINGS = {name: m.limits for name, m in AIR.items()}
@@ -101,7 +92,7 @@ def pm25_aqi(conc: float) -> tuple[int, str]:
 
 def value_of(row: dict, name: str) -> float | None:
     """One metric from a raw reading (corrected value first), or None."""
-    for field in STORED[name][0]:
+    for field in METRICS[name][0]:
         v = row.get(field)
         if isinstance(v, int | float):
             return float(v)
@@ -115,7 +106,7 @@ def epoch(iso: str) -> int:
 def normalise(raw: dict) -> dict:
     """{"ts": epoch, "pm2_5": ..., ...} with only the metrics the reading has."""
     row = {"ts": epoch(raw["timestamp"])}
-    for name in STORED:
+    for name in METRICS:
         if (v := value_of(raw, name)) is not None:
             row[name] = v
     return row

@@ -101,10 +101,6 @@ Indoor
 # What the model is told only when the question needs it. Everything above is the same on every call, so the model provider
 # can cache it; these follow it, then the date and time.
 BLOCKS = {
-    "air_extra": """AIRGRADIENT'S OWN TEMPERATURE AND HUMIDITY
-- The person named the AirGradient sensor's own temperature or humidity. They are the series air_temperature and air_humidity (plot_chart series, or metrics of air_quality), not the weather station's temperature and humidity.
-- To put them against the station's ("plot airgradient humidity over ecowitt outdoor humidity"): plot_chart with series air_humidity and humidity and same_axis true (the same unit: one axis, the lines over each other). For readings in different units use two_axes true. Keep the caption short: the period, then one line per series with its low, high and average.
-""",
     "air": """AIR QUALITY
 - For air quality (AQI, PM2.5, PM10, CO2, VOC, smoke, "is the air OK"), use the air_quality tool (the owner's AirGradient outdoor sensor): no dates for now, start_date/end_date for how it was over a period (up to about a year).
 - Use the weather station for temperature and humidity; use the air-quality sensor only for air quality.

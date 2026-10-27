@@ -12,7 +12,6 @@ where available, plus a US EPA AQI and band for PM2.5.
 """
 
 import asyncio
-import copy
 import statistics
 import logging
 import time
@@ -34,7 +33,7 @@ from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
-from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
+from .metrics import AIR_PANELS, ALL_METRICS, MARK_LOW, LABELS, METRICS, normalise, pm25_aqi, rating, value_of, without_spikes
 from .local import LocalSensor
 from .store import AirStore
 
@@ -78,15 +77,6 @@ DESCRIPTION = ("Air quality from the owner's AirGradient outdoor sensor: PM2.5 (
                "happened. chart=true sends a graph.")
 
 
-def asked() -> tuple[str, dict]:
-    """air_quality as a question about the sensor's own temperature or humidity is offered it: those two as metrics too."""
-    parameters = copy.deepcopy(PARAMETERS)
-    parameters["properties"]["metrics"]["items"]["enum"] = [*LABELS, *EXTRA]
-    parameters["properties"]["metrics"]["description"] += " air_temperature and air_humidity are the sensor's own temperature and humidity."
-    return (DESCRIPTION + " With metrics air_temperature / air_humidity it gives the sensor's own temperature (°C) and humidity (%), only "
-            "when the question names the AirGradient's.", parameters)
-
-
 class Latest(NamedTuple):
     """The latest reading as the air_quality tool gives it, and what the particulates alert also needs."""
     reading: dict                  # the sensor, the time, and each metric's value, unit and rating
@@ -117,7 +107,7 @@ class AirGradient(Source):
         self.warmer = Warmer(self.warm, SAMPLE_SECONDS) if self.local else Warmer(self.warm)
         self._bucket: tuple[int, list[dict]] | None = None   # the bucket being averaged: (its start, the readings so far)
         self._gap_tried: dict[date, float] = {}               # when the cloud was last asked to fill a gap in a day
-        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle, asked=asked), Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
+        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle), Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
 
     async def start(self):
         try:
@@ -252,13 +242,13 @@ class AirGradient(Source):
             await self._flush_bucket()
         if self._bucket is None:
             self._bucket = (bucket, [])
-        self._bucket[1].append({n: v for n in STORED if (v := value_of(row, n)) is not None})
+        self._bucket[1].append({n: v for n in METRICS if (v := value_of(row, n)) is not None})
         return True
 
     @staticmethod
     def _average(bucket: int, samples: list[dict]) -> dict:
         row = {"ts": bucket}
-        for name in STORED:
+        for name in METRICS:
             values = [s[name] for s in samples if name in s]
             if values:
                 row[name] = statistics.fmean(values)
@@ -376,7 +366,7 @@ class AirGradient(Source):
             if args.get("start_date") or args.get("end_date") or chart:
                 return json_result(await self.history(args.get("start_date"), args.get("end_date"),
                                                       chart=chart, metrics=args.get("metrics"), turn=turn))
-            return json_result(await self.current([m for m in args.get("metrics") or [] if m in EXTRA]))
+            return json_result(await self.current())
         except Exception as e:
             log.warning("AirGradient request failed: %s", e)
             return f"Error: couldn't read the air-quality sensor ({e})"
@@ -396,7 +386,7 @@ class AirGradient(Source):
             after = r["ts"]
         return got
 
-    async def latest(self, extras: list[str] = ()) -> Latest:
+    async def latest(self) -> Latest:
         """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
         spike is not called poor until the next reading agrees; the value shown is always the latest one. The readings before it
         come from today's history: when that can't be read, the latest is rated alone."""
@@ -424,14 +414,11 @@ class AirGradient(Source):
                 aqi, band = pm25_aqi(rated)
                 reading[name].update(aqi_us=aqi, band=band)
             sustained[name] = min([v, *(r[name] for r in held if name in r)])
-        for name in extras:   # the sensor's own temperature and humidity, only when asked for: no rating
-            if name in EXTRA and (v := value_of(row, name)) is not None:
-                reading[name] = {"value": v, "unit": EXTRA_UNITS[name]}
         return Latest(reading, at, sustained)
 
-    async def current(self, extras: list[str] = ()) -> dict:
-        """The latest reading as the air_quality tool gives it (see latest); `extras`: the sensor's own temperature and humidity, if asked."""
-        return (await self.latest(extras)).reading
+    async def current(self) -> dict:
+        """The latest reading as the air_quality tool gives it (see latest)."""
+        return (await self.latest()).reading
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
         """(readings in [t0, t1] (naive local times), days that only exist as hourly averages, older days still waiting for
@@ -485,11 +472,6 @@ class AirGradient(Source):
                 entry["high_aqi_us"], entry["high_band"] = pm25_aqi(hi[1])
                 entry["average_aqi_us"], entry["average_band"] = pm25_aqi(entry["average"])
             out[name] = entry
-        for name in [m for m in metrics or [] if m in EXTRA]:   # the sensor's own temperature and humidity, only when asked for
-            if pts := [(r["ts"], r[name]) for r in rows if name in r]:
-                lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-                out[name] = {"unit": EXTRA_UNITS[name], "low": lo[1], "low_time": when(lo[0], self.tz), "high": hi[1],
-                             "high_time": when(hi[0], self.tz), "average": round(statistics.fmean(v for _, v in pts), 1)}
         if trimmed:
             out["note_period"] = f"Only the last {MAX_DAYS} days can be covered per question; this covers {out['period']}."
         if hourly:
@@ -502,7 +484,7 @@ class AirGradient(Source):
         if not rows:
             out["note"] = "No readings for this period."
         if chart and rows:
-            chart_spec = self._chart([m for m in (*ALL_METRICS, *EXTRA) if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"],
+            chart_spec = self._chart([m for m in ALL_METRICS if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"],
                                      (t0.date(), t1.date()))
             if chart_spec:
                 turn.charts.append(chart_spec)
@@ -521,7 +503,7 @@ class AirGradient(Source):
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-        return plotted.spec(LABELS.get(name) or EXTRA_LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name), plotted
+        return plotted.spec(LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name), plotted
 
     def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
@@ -534,13 +516,11 @@ class AirGradient(Source):
             (name, (line, plotted)), = drawn.items()
             subtitle = (f"{period}  ·  {plotted.name}" + (", range shaded" if plotted.low else "") + "  ·  records marked"
                         if not plotted.raw else f"{period}  ·  AirGradient readings")
-            return Chart(LABELS.get(name) or EXTRA_LABELS[name], subtitle, [panel_for(name, [line])], period=days)
+            return Chart(LABELS[name], subtitle, [panel_for(name, [line])], period=days)
         panels = []
         for group in AIR_PANELS:
             members = [m for m in group if m in drawn]
             if members:
                 panels.append(panel_for(members, [drawn[m][0] for m in members]))
-        panels += [panel_for(m, [drawn[m][0]]) for m in EXTRA if m in drawn]   # the sensor's own temperature and humidity, each alone
-        only_extra = all(m in EXTRA for m in drawn)
-        return Chart(" and ".join(EXTRA_LABELS[m] for m in drawn) if only_extra else "Air quality", f"{period}  ·  AirGradient readings"
+        return Chart("Air quality", f"{period}  ·  AirGradient readings"
                      + ("  ·  range shaded" if any(plotted.low for _, plotted in drawn.values()) else ""), panels, period=days)

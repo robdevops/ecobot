@@ -153,7 +153,7 @@ def deterministic(case: Case) -> list[str]:
     if "hints" in e:
         hints = " | ".join(r.hints)
         fails += [f"period hints lack {h!r} (got: {hints or 'none'})" for h in e["hints"] if h not in hints]
-    for key, got in (("chart_fields", r.chart_fields), ("two_axes", r.two_axes), ("air_extra", r.air_extra), ("chart_field", r.chart_field), ("report", r.report),
+    for key, got in (("chart_fields", r.chart_fields), ("two_axes", r.two_axes), ("chart_field", r.chart_field), ("report", r.report),
                      ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data),
                      ("weather_now", r.weather_now), ("rain_caption", r.rain_caption), ("chart_in_code", r.chart_in_code), ("lookup", r.lookup)):
         if key in e and got != e[key]:

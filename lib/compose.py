@@ -6,18 +6,17 @@ drawing code, so a chart the bot has never drawn before is still made from check
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
 import asyncio
-import copy
 import logging
 from datetime import date, datetime, time, timedelta, tzinfo
 from statistics import fmean
 
-from .airgradient.metrics import ALL_METRICS, CHART_UNITS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, LABELS, RATINGS, ZONES, zone
+from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
 from .analysis import scan
 from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series, reading_slots
 from .series import WEATHER
-from .panels import panel_for, same_axis, two_axes
+from .panels import panel_for, two_axes
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
@@ -29,7 +28,6 @@ MAX_PANELS = 4
 DEFAULT_DAYS = 30
 # Weather station series: name -> (group, field, label, unit); the composer draws the wind as its average speed
 SERIES = [*WEATHER, *ALL_METRICS]
-SERIES_ASKED = [*SERIES, *EXTRA]   # what a question that asks for the air sensor's own temperature or humidity is offered
 STYLES = ("line", "bars", "rating")
 
 PLOT_DESCRIPTION = (
@@ -53,17 +51,6 @@ PLOT_PARAMETERS = {
     },
     "required": ["panels"],
 }
-
-
-def plot_asked() -> tuple[str, dict]:
-    """plot_chart as a question about the air sensor's own temperature or humidity is offered it: those two series too, and same_axis."""
-    parameters = copy.deepcopy(PLOT_PARAMETERS)
-    parameters["properties"]["panels"]["items"]["properties"]["series"]["enum"] = SERIES_ASKED
-    parameters["properties"]["same_axis"] = {
-        "type": "boolean", "description": "Set true to draw the series (two or more, all in the same unit) as ONE panel on one axis, the "
-                                          "lines over each other: 'plot airgradient humidity over ecowitt humidity'. Not for rain or ratings."}
-    return (PLOT_DESCRIPTION + " Also air_temperature and air_humidity: the AirGradient sensor's own temperature and humidity (ask for "
-            "them only by those names: plain temperature and humidity are the weather station's).", parameters)
 
 
 SCAN_DAYS = 90
@@ -126,7 +113,7 @@ class Composer:
 
     def __init__(self, eco, air):
         self.eco, self.air, self.tz = eco, air, eco.tz
-        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart, asked=plot_asked),
+        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart),
                       Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link),
                       Tool("air_scan", SCAN_DESCRIPTION, SCAN_PARAMETERS, self.air_scan)]
 
@@ -172,11 +159,11 @@ class Composer:
         first, last = period
         asked = [(p.get("series"), p.get("style") or ("bars" if p.get("series") == "rain" else "line")) for p in panels]
         for name, style in asked:
-            if name not in SERIES_ASKED or style not in STYLES:
+            if name not in SERIES or style not in STYLES:
                 return _error(f"series must be one of {', '.join(SERIES)} and style one of {', '.join(STYLES)}")
             if (style == "bars") != (name == "rain") or (style == "rating" and name not in ALL_METRICS):
                 return _error("'bars' is for rain only, and 'rating' for the air-quality series only; use 'line' otherwise")
-        air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS or name in EXTRA], first, last)
+        air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS], first, last)
         built, summary = [], []
         for name, style in asked:
             panel, facts = self._panel(name, style, first, last, air.get(name))
@@ -184,19 +171,9 @@ class Composer:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
-        if (args.get("two_axes") or args.get("same_axis")) and any(name in EXTRA for name, _ in asked):
-            for (name, _), panel in zip(asked, built):   # the station's readings next to the air sensor's own: say whose each is
-                if name in WEATHER and name != "rain":
-                    panel.label = f"Ecowitt {panel.label.lower()}"
-        if args.get("two_axes") and args.get("same_axis"):
-            return _error("two_axes (a scale each) and same_axis (one scale) can't both be set")
         if args.get("two_axes"):
             if (merged := two_axes(built)) is None:
                 return _error("two_axes needs exactly two line series (not rain bars or ratings)")
-            built = [merged]
-        elif args.get("same_axis"):
-            if (merged := same_axis(built)) is None:
-                return _error("same_axis needs two or more line series in the same unit (not rain bars or ratings); use two_axes for different units")
             built = [merged]
         out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
         self._add_chart(out, built, first, last, turn)
@@ -300,10 +277,10 @@ class Composer:
             overall = {k: round(100 * n / len(values), 1) for k, n in zip(ZONES, totals)}
             return (Panel(shares.label, "%", shares=shares),
                     {"series": name, "style": "rating", "share_of_time_percent": overall})
-        line = driver_series(values, self.tz, first, last, LABELS.get(name) or EXTRA_LABELS[name], lows, highs)
+        line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
         if line is None:
             return None, {}
-        return panel_for(name, [line]), {"series": name, **self._stats(values, CHART_UNITS.get(name) or EXTRA_UNITS[name])}
+        return panel_for(name, [line]), {"series": name, **self._stats(values, CHART_UNITS[name])}
 
     @staticmethod
     def _stats(values: dict, unit: str) -> dict:

@@ -373,19 +373,3 @@ def test_older_answers_are_cut_to_their_first_lines_but_the_last_answer_and_ever
     assert llm.shorten_old(out) == out                                                   # idempotent
     one_line = [{"role": "assistant", "content": "word " * 200}, {"role": "assistant", "content": "last"}]
     assert len(llm.shorten_old(one_line)[0]["content"]) <= llm.OLD_ANSWER_CHARS + 2
-
-
-async def test_a_question_that_asks_for_the_air_sensors_own_readings_is_sent_the_tools_that_offer_them():
-    from lib.tools import Turn
-
-    async def handler(args, turn=None):
-        return json.dumps({"ok": True})
-    base = {"type": "object", "properties": {"series": {"enum": ["humidity"]}}}
-    wider = {"type": "object", "properties": {"series": {"enum": ["humidity", "air_humidity"]}}}
-    t = Tools([Tool("plot_chart", "d", base, handler, asked=lambda: ("d+", wider)), Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)])
-    plain, asked = FakeLLM(["a"]), FakeLLM(["b"])
-    await llm.Agent(plain, "m", t).run([{"role": "user", "content": "x"}], "sys", "none", turn=Turn())
-    await llm.Agent(asked, "m", t).run([{"role": "user", "content": "x"}], "sys", "none", turn=Turn(air_extra=True))
-    assert plain.requests[0]["tools"] == t.schemas and "air_humidity" not in json.dumps(plain.requests[0]["tools"])
-    names = [s["function"]["name"] for s in asked.requests[0]["tools"]]
-    assert names == ["plot_chart", "weather_now"] and "air_humidity" in json.dumps(asked.requests[0]["tools"])

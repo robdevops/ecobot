@@ -384,16 +384,6 @@ LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index 
 TWO_AXES = re.compile(r"\b(?:(?:two|2|dual|twin|double|secondary|second)[- ](?:y[- ]?)?ax[ie]s|overla(?:y(?:ed|ing|s)?|id))\b", I)
 
 
-AG_NAMED = re.compile(rf"\b({_AG})\b", I)
-AIR_EXTRA_WORDS = re.compile(r"\b(temp\w*|humid\w*)\b", I)
-
-
-def wants_air_extra(text: str) -> bool:
-    """The air sensor's own temperature or humidity, named as the AirGradient's ("plot airgradient humidity over ecowitt humidity"): only
-    then are the tools offered those series. Temperature and humidity without the sensor named are the weather station's."""
-    return bool(AG_NAMED.search(text) and AIR_EXTRA_WORDS.search(text))
-
-
 def chart_fields(text: str) -> list[str]:
     """The readings named in the text, in order, when it names two or more ("plot temperature and rain"); else []."""
     found = _named(text)
@@ -763,7 +753,7 @@ def topics(text: str, before: list[str] = ()) -> set[str]:
     found: set[str] = set()
     for said in (*before, text):
         found |= {name for name, hit in (
-            ("air", mentions_air(said)), ("air_extra", wants_air_extra(said)), ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
+            ("air", mentions_air(said)), ("days", bool(DAYS_WORDS.search(said) or ANALYSIS.search(said) or SPECIFIC_MOMENT.search(said))),
             ("link", bool(LINK.search(said)) or bool(COMPARE.search(said)) and bool(OUTLOOK_WORDS.search(said))),
             ("outlook", bool(FORECAST.search(said)) or bool(OUTLOOK_WORDS.search(said))),
             ("wind", bool(WIND_WORDS.search(said))), ("describe", bool(DESCRIBE.search(said))),
@@ -812,7 +802,6 @@ class Intent:
     chart_field: str | None = None        # humidity questions get a humidity chart
     chart_fields: list[str] = field(default_factory=list)   # "temperature and rain": one chart, a panel each
     two_axes: bool = False                # "uvi and solar on two axes": the two share one panel, a scale each
-    air_extra: bool = False               # "airgradient humidity": the air sensor's own temperature and humidity are offered to the model
     average_asked: bool = False
     more: list[tuple[str, dict]] = field(default_factory=list)   # the rest of the report's calls (fast is the first)
     weather_now: bool = False             # "weather now": every reading the station has, in the report's layout
@@ -877,7 +866,7 @@ def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGr
     lookup, named = plain_lookup(text, fast) if not (report or in_code) else ("", [])
     return Intent(effort=reasoning_effort(text), needs_data=needs_data(text), about_the_bot=about_the_bot(text), report=report,
                   hints=period_hints(text, now), fast=fast, chart_asked=bool(GRAPH.search(text)), chart_field=chart_field(text),
-                  chart_fields=chart_fields(text), two_axes=bool(TWO_AXES.search(text)) and len(chart_fields(text)) == 2, air_extra=wants_air_extra(text), average_asked=bool(AVERAGE.search(text)), more=calls[1:],
+                  chart_fields=chart_fields(text), two_axes=bool(TWO_AXES.search(text)) and len(chart_fields(text)) == 2, average_asked=bool(AVERAGE.search(text)), more=calls[1:],
                   weather_now=ecowitt and wants_weather_now(text), rain_caption=rain_caption, chart_in_code=in_code,
                   readings=list(_named(text)), per_day=bool(PER_DAY.search(text)),
                   extra=model_prefetch(text, now, sources) if not fast else [], lookup=lookup, lookup_arg=named, sides=_sides(text))

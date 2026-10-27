@@ -598,13 +598,3 @@ def test_two_readings_on_two_axes_is_asked_for_in_so_many_words_and_goes_to_the_
         assert not intent.read(said, now).two_axes, said                    # one reading, or no such request
     read = intent.read("graph combine uvi and solar radiation on two axis", now)
     assert read.chart_in_code and read.chart_fields == ["uv", "solar"] and read.fast[0] == "weather_history"
-
-
-def test_the_air_sensors_own_temperature_and_humidity_are_offered_only_when_the_airgradient_is_named_with_them():
-    from datetime import datetime
-    from tests.fakes import TZ
-    now = datetime(2026, 10, 27, 12, tzinfo=TZ)
-    for said in ("plot airgradient humidity over ecowitt outdoor humidity", "what is the air gradient temperature", "ag humidity 7d"):
-        assert intent.wants_air_extra(said) and intent.read(said, now).air_extra and "air_extra" in intent.topics(said), said
-    for said in ("plot humidity", "how hot is it", "air quality now", "plot pm2.5 and temperature", "what's the average humidity yesterday"):
-        assert not intent.wants_air_extra(said) and not intent.read(said, now).air_extra, said
