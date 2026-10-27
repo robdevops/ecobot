@@ -646,3 +646,28 @@ async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(aler
     await bot.on_report_button(NS(callback_query=query), context)
     assert query.toast is None and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH
     assert [e.type for e in query.entities] == ["bold", "bold"]
+
+
+async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_still_raise(caplog):
+    import pytest
+    from telegram.error import BadRequest
+
+    from lib.bot import answer_query
+
+    class Query:
+        data = "pd:7"
+
+        def __init__(self, error=None):
+            self.error, self.told = error, []
+
+        async def answer(self, *args, **kwargs):
+            if self.error:
+                raise self.error
+            self.told.append((args, kwargs))
+    ok = Query()
+    assert await answer_query(ok, "Drawing 7D...", show_alert=False) and ok.told == [(("Drawing 7D...",), {"show_alert": False})]
+    caplog.set_level("INFO")
+    assert not await answer_query(Query(BadRequest("Query is too old and response timeout expired or query id is invalid")), "x")
+    assert "too old to answer" in caplog.text and "pd:7" in caplog.text
+    with pytest.raises(BadRequest):
+        await answer_query(Query(BadRequest("Message is not modified")))

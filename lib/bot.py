@@ -81,6 +81,19 @@ class Answer:
     ok: bool = True                          # False: the reply says something went wrong
 
 
+async def answer_query(query, *args, **kwargs) -> bool:
+    """query.answer(...) (the toast, or just the end of the button's spinner). A press made while the bot was down is too old for Telegram to
+    take an answer to: that is only logged, and what the press asks for is still done. Returns whether the answer was taken."""
+    try:
+        await query.answer(*args, **kwargs)
+        return True
+    except BadRequest as e:
+        if "query is too old" not in str(e).lower() and "query id is invalid" not in str(e).lower():
+            raise
+        log.info("A button press too old to answer (made while the bot was down?): %s", query.data)
+        return False
+
+
 async def watchdog(label: str, seconds: float):
     """Log every task's stack if the question is still running after `seconds`: a hang says where it waits."""
     await asyncio.sleep(seconds)
@@ -319,7 +332,7 @@ class Bot:
         log.info("Refused %s: not a known group admin", describe_source(update))
         with contextlib.suppress(TelegramError):
             if update.callback_query is not None:
-                await update.callback_query.answer(NOT_ADMIN_TOAST)
+                await answer_query(update.callback_query, NOT_ADMIN_TOAST)
             elif update.effective_message is not None:
                 await update.effective_message.reply_text(NOT_ADMIN)
         return False
@@ -346,7 +359,7 @@ class Bot:
         if not believed:
             log.info("Ignored a button press that is not on its message: %s", _short(repr(data), 60))
             with contextlib.suppress(TelegramError):
-                await query.answer(STALE_BUTTON)
+                await answer_query(query, STALE_BUTTON)
         return believed
 
     def buttons(self) -> dict:
@@ -363,7 +376,7 @@ class Bot:
         handler = next((h for prefix, h in self.buttons().items() if query.data.startswith(prefix)), None)
         if handler is None:
             with contextlib.suppress(TelegramError):
-                await query.answer(STALE_BUTTON)
+                await answer_query(query, STALE_BUTTON)
             return
         if not await self._allowed(update, context):
             return
@@ -372,7 +385,7 @@ class Bot:
         except ChatMigrated as e:   # a press on an alert from before its group became a supergroup (the chat has a new id)
             self.state.migrate_chat(query.message.chat.id, e.new_chat_id)
             with contextlib.suppress(TelegramError):
-                await query.answer("This group was upgraded to a supergroup: please use the buttons on new alerts")
+                await answer_query(query, "This group was upgraded to a supergroup: please use the buttons on new alerts")
 
     # ---------- alert chats ----------
     @staticmethod
@@ -450,17 +463,17 @@ class Bot:
         query = update.callback_query
         press = menu.parse(query.data)
         if press is None:
-            await query.answer()
+            await answer_query(query)
             return
         message = query.message
         chat = message.chat
         if chat.type != ChatType.PRIVATE and not await self._is_group_admin(context.bot, chat.id, query.from_user.id):
-            await query.answer("Only group admins can change alerts")
+            await answer_query(query, "Only group admins can change alerts")
             return
         kinds = self._alert_kinds()
         parent = press.parent   # set: the buttons under an alert of that type; None: the /alerts message
         if parent and parent not in kinds:   # an alert of a type the bot no longer sends
-            await query.answer(STALE_BUTTON)
+            await answer_query(query, STALE_BUTTON)
             return
         private = chat.type == ChatType.PRIVATE
         toast, opened = None, press.section if press.action != "close" else None
@@ -471,11 +484,11 @@ class Bot:
             self.state.set_kind(chat.id, press.kind, press.on, kinds)
             toast = f"{self._alerts_named(press.kind)} {'on' if press.on else 'off'} in this chat"
         elif press.action not in ("open", "close"):
-            await query.answer()
+            await answer_query(query)
             return
         muted = self.state.muted(chat.id)
         loud = self.state.loud(chat.id) if private else None
-        await query.answer(toast)
+        await answer_query(query, toast)
         if parent:   # an alert: only its buttons change
             await self._edit(query, None, menu.alert_keyboard(parent, muted, loud, opened))
         else:        # the /alerts message: its on/off summary is kept current too
@@ -533,11 +546,11 @@ class Bot:
         message = query.message
         action, arg = ((query.data or "").split(":") + ["", ""])[1:3]
         if not self.irrigation or not message:
-            await query.answer()
+            await answer_query(query)
             return
         if action in ("open", "close"):
             opened = arg if action == "open" and arg in irrigation_menu.SECTIONS else None
-            await query.answer()
+            await answer_query(query)
             # the message says it: no need to ask the controller to open a list
             await self._edit(query, None, self._irrigation_keyboard(message.chat_id, opened, irrigation_menu.paused_in(message.text),
                                                                     irrigation_menu.running_in(message.text)))
@@ -547,9 +560,9 @@ class Bot:
                 status = await self.irrigation.status()
             except IrrigationError as e:
                 log.warning("Irrigation refresh failed: %s", e)
-                await query.answer("Couldn't reach the irrigation controller", show_alert=True)
+                await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
                 return
-            await query.answer("Refreshed")
+            await answer_query(query, "Refreshed")
             await self._edit(query, *self._irrigation_view(status, message.chat_id))
             return
         if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:   # not while the timer is paused
@@ -557,11 +570,11 @@ class Bot:
                 status = await self.irrigation.status()
             except IrrigationError as e:
                 log.warning("Irrigation water %s failed: %s", arg, e)
-                await query.answer("Couldn't reach the irrigation controller", show_alert=True)
+                await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
                 return
             if irrigation_menu.is_paused(status):
                 log.info("Irrigation: water %s refused, paused for %s (chat %s)", arg, status["weather_delay"], message.chat_id)
-                await query.answer(irrigation_menu.PAUSED_ERROR)
+                await answer_query(query, irrigation_menu.PAUSED_ERROR)
                 text, markup = self._irrigation_view(status, message.chat_id)
                 text, entities = irrigation_menu.with_error(text)
                 await self._edit(query, text, markup, entities)   # nothing was sent: no wait
@@ -570,13 +583,13 @@ class Bot:
             toast = await self._irrigation_act(action, arg, message.chat_id)
         except IrrigationError as e:
             log.warning("Irrigation %s %s failed: %s", action, arg, e)
-            await query.answer("Couldn't reach the irrigation controller", show_alert=True)
+            await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
             return
         if toast is None:
-            await query.answer()
+            await answer_query(query)
             return
         log.info("Irrigation: %s %s in chat %s", action, arg, message.chat_id)
-        await query.answer(toast)
+        await answer_query(query, toast)
         await asyncio.sleep(IRRIGATION_SETTLE_SECONDS)   # every action, before the state is read
         try:
             status = await self.irrigation.status()
@@ -608,9 +621,9 @@ class Bot:
             text = await asyncio.wait_for(self._written_in_code(read, Turn(text="Report")), TURN_SECONDS)
         except Exception as e:   # the message stays as it was
             log.warning("Report refresh failed: %s", e)
-            await query.answer("Couldn't refresh, please try again", show_alert=True)
+            await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
             return
-        await query.answer()   # no toast: the times in the headings show what changed
+        await answer_query(query)   # no toast: the times in the headings show what changed
         await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -621,13 +634,13 @@ class Bot:
         message = query.message
         question = self.charted.get(message.chat_id, message.message_id) if days and message else None
         if not question:
-            await query.answer("That chart is out of date, please ask again")
+            await answer_query(query, "That chart is out of date, please ask again")
             return
         now = now_local(self.cfg.tz)
         if intent.period_days(question, now) == days:   # the chart already shows this period
-            await query.answer()
+            await answer_query(query)
             return
-        await query.answer(f"Drawing {periods.NAMES[days]}...")
+        await answer_query(query, f"Drawing {periods.NAMES[days]}...")
         asked = intent.with_period(question, days, now)
         log.info("Period button %s: %s", periods.NAMES[days], question, extra=QUOTES)
         key = self.images.key(asked, days, now)
