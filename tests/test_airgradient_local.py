@@ -237,3 +237,12 @@ async def test_without_a_cloud_account_a_finished_day_with_gaps_stays_open_and_a
     air.store.add_recorded({"ts": lo + 300 * 10, "pm2_5": 1.0})
     assert len(await air._day_rows(DAY)) == 288 and air.store.counts([DAY]) == {DAY: 288} and calls == []
     await air.close()
+
+
+def test_zeroconf_is_not_loaded_unless_a_local_name_is_looked_up():
+    import subprocess
+    import sys
+    code = ("import sys, lib.bot, lib.airgradient.local as l; assert 'zeroconf' not in sys.modules; "
+            "import asyncio; asyncio.run(l.address_of('192.168.1.5')); assert 'zeroconf' not in sys.modules")
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "MPLCONFIGDIR": "/tmp"})
+    assert done.returncode == 0, done.stderr

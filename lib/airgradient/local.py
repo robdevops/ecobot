@@ -16,10 +16,6 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
-from zeroconf import DNSOutgoing, DNSQuestion
-from zeroconf.asyncio import AsyncZeroconf
-from zeroconf.const import _CLASS_IN, _FLAGS_QR_QUERY, _TYPE_A
-
 log = logging.getLogger(__name__)
 
 TIMEOUT = 3.0           # seconds for the lookup and for the device to answer: a sensor that is off must not slow the answers
@@ -31,6 +27,9 @@ FIELDS = {"pm01": "pm01", "pm02": "pm02", "pm02Compensated": "pm02_corrected", "
 
 async def mdns_address(host: str, timeout: float = TIMEOUT) -> str | None:
     """The IPv4 address a `.local` name has on the network, asked of the network by multicast; None when nothing answers."""
+    from zeroconf import DNSOutgoing, DNSQuestion   # only a `.local` name needs it: it is not loaded for anything else
+    from zeroconf.asyncio import AsyncZeroconf
+    from zeroconf.const import _CLASS_IN, _FLAGS_QR_QUERY, _TYPE_A
     name = host.rstrip(".").lower() + "."
     aiozc = AsyncZeroconf()
     try:
