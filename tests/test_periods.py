@@ -446,3 +446,28 @@ async def test_a_redrawn_chart_carries_a_short_answer_in_its_caption_and_a_long_
     assert edits[0][0] == "Humidity\n\nLast 7 days: 72% avg." and replies == []                  # one message, as when the chart was first sent
     assert await bot._redraw(msg, "x" * botmod.CAPTION_LIMIT, b"png", "Humidity", periods.keyboard(7), "q")
     assert edits[1][0] == "Humidity" and replies == ["x" * botmod.CAPTION_LIMIT]                  # too long for a caption: its own message
+
+
+async def test_pressing_a_period_under_a_chart_the_model_drew_keeps_its_answer_in_the_caption(alert_state, monkeypatch):
+    bot, edits, replies = make_bot(alert_state, monkeypatch), [], []
+
+    class Agent:
+        ready = True
+
+        async def run(self, working, system, effort, turn=None, **kw):
+            turn.charts.append(Chart("Humidity and Temperature", "", [Panel("Humidity", "%", [Line("Ecowitt", [1, 2], [1.0, 2.0])])]))
+            return "Last 7 days (21-27 Oct):\nHumidity: Ecowitt 72.1% avg."
+    bot.agent = Agent()
+    msg = chat_message([], edits)
+
+    async def reply_text(text, **kw):
+        replies.append(text)
+    msg.reply_text = reply_text
+    bot.charted.remember(1, 50, "overlay ecowitt outdoor humidity with airgradient humidity, on another axis the temperatures")
+
+    async def answer(text=None):
+        pass
+    update = NS(callback_query=NS(data="pd:7", message=msg, answer=answer), effective_message=msg, effective_chat=msg.chat,
+                effective_user=NS(username="rob", full_name="Rob"))
+    await bot.on_period_button(update, CONTEXT)
+    assert replies == [] and edits and "Humidity: Ecowitt 72.1% avg." in edits[0][0]
