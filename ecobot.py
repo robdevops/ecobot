@@ -225,8 +225,7 @@ async def main():
         if client:
             stack.push_async_callback(safely, client.close)
         else:
-            log.warning("XAI_API_KEY is not set: running without the model, which answers only what the bot works out itself "
-                        "(the report, charts, plain lookups, alerts)")
+            log.warning("XAI_API_KEY is not set: running without the model, so answers are limited")
         state = AlertState(cfg.state_path)
         if cfg.admin_only:
             log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
