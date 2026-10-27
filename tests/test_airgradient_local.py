@@ -97,3 +97,16 @@ async def test_an_address_is_used_as_given_a_local_name_is_asked_of_the_network_
     monkeypatch.setattr(local, "mdns_address", mdns)
     assert await address_of("airgradient_d83bda1c1e08.local") == "10.0.0.7" and await address_of("Ag.LOCAL.") == "10.0.0.7"
     assert await address_of("localhost") in ("127.0.0.1", "::1")
+
+
+async def test_the_keep_warm_refresh_reads_the_device_and_asks_the_cloud_only_for_the_history(tmp_path):
+    transport, calls = air_transport()
+    air = AirGradient(config(tmp_path, airgradient_local_url=URL), transport=transport)
+    device = []
+    air.local, _ = sensor(lambda request: device.append(request) or httpx.Response(200, json=DEVICE))
+    await air.start()
+    calls.clear()
+    device.clear()
+    await air.warm()
+    assert len(device) == 1 and "current" not in calls and "past" in calls               # the live reading from the sensor, the history from the cloud
+    await air.close()
