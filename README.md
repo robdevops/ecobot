@@ -36,7 +36,7 @@ AIRGRADIENT_LOCATION_ID=
 
 ### Systemd method
 
-You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and an [xAI API key](https://x.ai/api) for the AI model.
+You need Python 3.13, a Telegram bot token (from [@BotFather](https://t.me/BotFather)) and, optionally, an [xAI API key](https://x.ai/api) for the AI model.
 
 ```
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
