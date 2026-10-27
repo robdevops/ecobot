@@ -1,12 +1,23 @@
 # ecobot
 
-A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask it about the weather or the air, and it tells you when something changes.
+A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask it questions to pull charts, or receive alerts on certain triggers.
+
+**Data sources** (each one is optional)
+- AirGradient air quality, from the sensor on your network, from AirGradient's cloud, or both
+- Ecowitt weather station
+- Open-Meteo weather forecast
+- Melbourne Pollen: pollen and thunderstorm asthma risk
+
+**Outputs**
+- Tuya irrigation controllers
+
+## Features
 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
-- **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period.
+- **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
 - **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.
-- **Optional extras:** pollen and thunderstorm asthma for Melbourne, a daily forecast, and a Tuya irrigation controller.
+- **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast.
 - **Cheap to run:** most answers are worked out by the bot itself, and the AI model is only called when it's needed.
 
 ## Install
