@@ -64,6 +64,7 @@ W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
+STACKED_KEY_IN = 0.28            # more room above a big chart whose colour key is stacked below its title (see _stacked_key)
 TITLE_IN, SUBTITLE_IN = 0.27, 0.52   # the headline's lines, centred this far below the top (the colour key beside a big chart's title too)
 ROSE_RECT = [0.685, 0.12, 0.27, 0.62]   # the wind rose beside a wind chart (figure fraction); the line's plot ends before it, at:
 BESIDE_ROSE_WIDTH = 0.57
@@ -102,6 +103,12 @@ BIG = Look(end_dot=30, end_rim=1.5, pill_font=8.5, pill_dot=18, pill_rim=1.2, pi
            pad=0.26, legend_font=10, key_from=1, units=True, nbins=5, card=False, in_headline=True)
 SMALL = Look(end_dot=20, end_rim=1.2, pill_font=7.5, pill_dot=12, pill_rim=0.8, pill_lift=5, pill_box=(0.25, 0.6), pill_z=4, pitch=14,
              pad=0.3, legend_font=8.5, key_from=2, units=False, nbins=4, card=True, in_headline=False)
+
+
+def _stacked_key(p: Panel, look: Look) -> bool:
+    """Is the colour key of this big chart set in a column below the title (long names, or two scales), not in a row beside it?"""
+    names = [s.label for s in p.lines] + ([p.bars.label] if p.bars else [])
+    return look.in_headline and len(names) >= 2 and (any(s.right for s in p.lines) or sum(len(n) for n in names) > 24)
 
 
 def _look_for(chart: Chart) -> Look:
@@ -602,7 +609,8 @@ def _build(chart: Chart, tz: tzinfo) -> Figure:
     FigureCanvasAgg(fig)   # drawn on its own canvas: no pyplot, whose figures would need closing
     _headline(fig, panels[0].label if look.in_headline else chart.title, chart.subtitle, height, panels[0].unit if look.in_headline else "")
     width = _axes_width(chart)
-    body = height - HEAD_IN - FOOT_IN
+    head = HEAD_IN + (STACKED_KEY_IN if chart.single and _stacked_key(panels[0], look) else 0)
+    body = height - head - FOOT_IN
     gap = 0.27 if n > 2 else 0.22
     each = (body - gap * (n - 1)) / n
     xs = _nums({t for p in panels for t in p.xs})   # each time once: only the range is wanted
@@ -620,11 +628,12 @@ def _build(chart: Chart, tz: tzinfo) -> Figure:
         count, x1, entries = _draw_panel(ax, p, used, x0, x1, look)
         used += count
         if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
-            two_scales = look.in_headline and (any(line.right for line in p.lines) or sum(len(label) for _, label in entries) > 24)   # long names: stacked, between the title and subtitle rows
-            key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - ((TITLE_IN + SUBTITLE_IN) / 2 if two_scales else TITLE_IN) / height)) \
-                if look.in_headline else dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
+            stacked = _stacked_key(p, look)   # long names or two scales: a column under the title, clear of it
+            key = dict(loc="upper right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - (TITLE_IN + 0.17) / height)) if stacked else \
+                dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - TITLE_IN / height)) if look.in_headline else \
+                dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
             _legend(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries],
-                    ncol=1 if two_scales else len(entries), fontsize=look.legend_font, **key)
+                    ncol=1 if stacked else len(entries), fontsize=look.legend_font, **key)
         deg = _deg(p.unit)
         tick_unit = deg if deg == "°" else ""
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10],

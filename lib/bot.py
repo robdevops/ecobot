@@ -857,7 +857,8 @@ class Bot:
                 return await asyncio.wait_for(
                     self.agent.run(working, system, effort, first_call=first, tool_choice=read.tool_choice, turn=turn,
                                    on_heavy=on_heavy, conv_id=conv_id,
-                                   **({"on_text": draft.update} if draft else {})), budget)
+                                   **({"on_text": lambda text: None if turn.chart_asked or turn.charts else draft.update(text)} if draft else {})),
+                budget)
             except TimeoutError:
                 lower = intent.lower_effort(effort)
                 if not lower or retried:

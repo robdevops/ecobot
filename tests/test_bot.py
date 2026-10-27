@@ -131,7 +131,7 @@ class StreamingAgent:
         return "It is 12 degrees."
 
 
-async def ask_private(alert_state, agent, bot, chat_type="private"):
+async def ask_private(alert_state, agent, bot, chat_type="private", text="how hot is it"):
     replies = []
 
     async def reply_text(body, **kw):
@@ -139,7 +139,7 @@ async def ask_private(alert_state, agent, bot, chat_type="private"):
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
              chat=NS(type=chat_type, title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    await Bot(NS(tz=TZ), agent, [], alert_state).respond(update, NS(bot=bot), "how hot is it")
+    await Bot(NS(tz=TZ), agent, [], alert_state).respond(update, NS(bot=bot), text)
     return replies
 
 
@@ -793,3 +793,13 @@ async def test_every_guidance_topic_stays_on_in_a_chat_while_either_side_names_i
     assert got["right"] == []                                                          # two quiet runs: gone
     assert got["and the pressure"] == ["wind"]                                         # the reply to the question before named the wind
     assert got["and humidity"] == ["wind"] and got["fine"] == [] and got["good"] == []   # and that goes too, after two quiet runs
+
+
+async def test_an_answer_that_comes_with_a_chart_is_not_streamed_into_the_draft(alert_state, monkeypatch):
+    monkeypatch.setattr("lib.bot.DRAFT_MIN_GAP", 0.01)
+    bot = DraftBot()
+    assert await ask_private(alert_state, StreamingAgent(), bot, text="plot humidity for a week") == ["It is 12 degrees."]
+    assert bot.drafts and all(t is None for _, t in bot.drafts)         # only "Thinking...": no text to be followed by a picture and a second message
+    bot = DraftBot()
+    await ask_private(alert_state, StreamingAgent(), bot, text="how hot is it")
+    assert [t for _, t in bot.drafts][-1] == "It is 12 degrees."         # a plain answer still streams
