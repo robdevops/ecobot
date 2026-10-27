@@ -1141,7 +1141,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG" and fake.calls == []            # cache only
     out, specs = await ask_chart(chart_fields=["pressure", "humidity", "wind", "rain", "temperature"], groups="outdoor,indoor")
     assert [p.label for p in specs[0].panels][0] == "Pressure" and len(specs[0].panels) >= 3
-    assert specs[0].panels[0].bars                                                     # rain goes behind the first line
+    assert next(p for p in specs[0].panels if p.label == "Humidity").bars              # rain goes behind humidity (else pressure)
     temperature = next(p for p in specs[0].panels if p.label == "Temperature")
     assert [s.label for s in temperature.lines] == ["Indoor", "Outdoor"]              # both lines in one panel
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"

@@ -189,10 +189,10 @@ async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axi
     assert "same unit" in out["error"] and specs == []                                    # % and °C: two_axes is for that
     out, specs = await plot(comp, panels=[{"series": "air_humidity"}, {"series": "temperature"}], two_axes=True)
     assert [s.right for s in specs[0].panels[0].lines] == [False, True]
-    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "pm2_5"}, {"series": "pm10"}],
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "air_humidity"}, {"series": "humidity"}],
                             two_axes=True)                                                # two pairs: a unit to each axis
     assert [(s.label, s.right) for s in specs[0].panels[0].lines] == [
-        ("AirGradient temperature (°C)", False), ("Ecowitt temperature (°C)", False), ("PM2.5 (µg/m³)", True), ("PM10 (µg/m³)", True)]
+        ("AirGradient temperature (°C)", False), ("Ecowitt temperature (°C)", False), ("AirGradient humidity (%)", True), ("Ecowitt humidity (%)", True)]
     assert render(specs[0], TZ)[:4] == b"\x89PNG"
     out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], two_axes=True, same_axis=True)
     assert "can't both be set" in out["error"]

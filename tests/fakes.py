@@ -39,6 +39,12 @@ def temp(ts: int) -> float:
 
 
 @lru_cache(maxsize=None)  # pure and called for every sample of every request
+def humidity(ts: int) -> float:
+    """Outdoor humidity: the mirror of the temperature, so it is highest at night."""
+    return 70 - (temp(ts) - 14) * 2.5
+
+
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
 def rain_day(ts: int) -> float:
     """The rain counter, from 2pm to midnight: every 8th day of the year is wet (5 mm), the 4th after
     it is a trace (0.5 mm), the rest are dry."""
@@ -118,15 +124,15 @@ class FakeEcowitt:
         first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            named = {"outdoor": [("temperature", temp), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
+            named = {"outdoor": [("temperature", temp), ("humidity", humidity), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)]):
                 for ts in range(first, end + 1, step):
                     samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                    fields.setdefault(name, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
+                    fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
                     if p["cycle_type"] != "5min":
                         for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
-                            fields.setdefault(name + suffix, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{val:.1f}"
+                            fields.setdefault(name + suffix, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = f"{val:.1f}"
             out[group] = fields
         return out
 
