@@ -6,7 +6,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 - AirGradient air quality, from the sensor on your network, from AirGradient's cloud, or both
 - Ecowitt weather station
 - Open-Meteo weather forecast
-- Melbourne Pollen: pollen and thunderstorm asthma risk
+- Melbourne Pollen: pollen and thunderstorm asthma forecast
 
 **Outputs**
 - Tuya irrigation controllers
