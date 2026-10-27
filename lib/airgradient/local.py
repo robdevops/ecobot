@@ -22,7 +22,8 @@ TIMEOUT = 3.0           # seconds for the lookup and for the device to answer: a
 RETRY_SECONDS = 300     # after a failure the device is left alone this long (the cloud answers meanwhile)
 ADDRESS_SECONDS = 600   # a looked-up address is kept this long; a failure forgets it
 FIELDS = {"pm01": "pm01", "pm02": "pm02", "pm02Compensated": "pm02_corrected", "pm10": "pm10", "rco2": "rco2",
-          "tvocIndex": "tvocIndex", "noxIndex": "noxIndex"}   # the device's field -> the cloud's (metrics.METRICS tries these)
+          "tvocIndex": "tvocIndex", "noxIndex": "noxIndex", "atmp": "atmp", "atmpCompensated": "atmp_corrected", "rhum": "rhum",
+          "rhumCompensated": "rhum_corrected"}   # the device's field -> the cloud's (metrics.STORED tries these)
 
 
 async def mdns_address(host: str, timeout: float = TIMEOUT) -> str | None:

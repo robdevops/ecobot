@@ -140,7 +140,7 @@ def ecowitt_transport(fake: FakeEcowitt | None = None, history_days: int = HISTO
 def air_row(ts: datetime, pm25: float = 5.0, pm10: float = 8.0, pm1: float = 3.0) -> dict:
     return {"timestamp": ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "locationName": "Outdoor",
             "locationType": "outdoor", "pm02_corrected": pm25, "pm10_corrected": pm10, "pm01_corrected": pm1, "rco2_corrected": 450,
-            "tvocIndex": 100, "noxIndex": 1}
+            "tvocIndex": 100, "noxIndex": 1, "atmp_corrected": 18.0 + ts.hour / 4, "rhum_corrected": 60.0 - ts.hour}
 
 
 def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly_before: datetime | None = None,

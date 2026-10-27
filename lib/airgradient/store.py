@@ -11,9 +11,9 @@ import threading
 from datetime import date, tzinfo
 
 from ..timeutil import day_bounds
-from .metrics import METRICS
+from .metrics import STORED
 
-COLUMNS = list(METRICS)
+COLUMNS = list(STORED)
 
 
 class AirStore:
@@ -29,6 +29,11 @@ class AirStore:
             CREATE TABLE IF NOT EXISTS days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS recorded (loc TEXT, ts INTEGER, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
         """)
+        have = {row[1] for row in self.db.execute("PRAGMA table_info(readings)")}
+        if added := [c for c in COLUMNS if c not in have]:   # a file from before these columns: they are added, and every day is fetched
+            for c in added:                                  # once more (the backfill) so that the earlier readings get them too
+                self.db.execute(f"ALTER TABLE readings ADD COLUMN {c} REAL")
+            self.db.execute("DELETE FROM days")
         self.db.commit()
 
     def close(self):

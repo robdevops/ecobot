@@ -140,7 +140,7 @@ class Agent:
                 if conv_id:   # the same id for every call of a chat sends them to the server holding its cached prompt
                     kwargs["extra_headers"] = {"x-grok-conv-id": conv_id}
                 if self.tools.schemas:   # every tool, every time: the same list keeps the provider's cached prompt valid
-                    kwargs["tools"] = self.tools.schemas
+                    kwargs["tools"] = self.tools.schemas_for(turn)
                     kwargs["tool_choice"] = "none" if final or tool_choice == "none" else tool_choice if step == 0 else "auto"
                 if final:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)

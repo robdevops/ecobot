@@ -26,6 +26,7 @@ class Turn:
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
     two_axes: bool = False                       # the words ask for two readings on one chart with a scale each ("on two axes")
+    air_extra: bool = False                      # the words ask for the air sensor's own temperature or humidity: the tools then offer them
     average_asked: bool = False                  # an average was asked for: the caption leads with it
     text: str = ""                               # what the person said (a tool can check an argument against it)
     readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others
@@ -38,7 +39,7 @@ class Turn:
     @classmethod
     def of(cls, read, text: str, **more) -> "Turn":
         """The Turn for a question as intent.read read it (`read`): what its words ask of a chart and of the figures."""
-        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, two_axes=read.two_axes,
+        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, two_axes=read.two_axes, air_extra=read.air_extra,
                    average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, **more)
 
 
@@ -48,16 +49,25 @@ class Tool:
     description: str
     parameters: dict
     handler: Callable[[dict, Turn], Awaitable[str]]   # (arguments, the question's Turn); a Turn is optional when called directly
+    asked: Callable[[], tuple[str, dict]] | None = None   # (description, parameters) a question that asks for the air sensor's own
+                                                          # temperature or humidity is offered instead (Turn.air_extra)
 
-    def schema(self) -> dict:
-        return {"type": "function", "function": {"name": self.name, "description": self.description,
-                                                 "parameters": self.parameters}}
+    def schema(self, turn: "Turn | None" = None) -> dict:
+        description, parameters = self.asked() if turn and turn.air_extra and self.asked else (self.description, self.parameters)
+        return {"type": "function", "function": {"name": self.name, "description": description, "parameters": parameters}}
 
 
 class Tools:
     def __init__(self, tools: list[Tool]):
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
+
+    def schemas_for(self, turn: "Turn | None") -> list[dict]:
+        """The tool list for this question: every tool, the same list as every other question's (so the provider's cached prompt holds),
+        except that a question asking for the air sensor's own temperature or humidity is offered them in the tools that can use them."""
+        if turn and turn.air_extra and any(t.asked for t in self.by_name.values()):
+            return [t.schema(turn) for t in self.by_name.values()]
+        return self.schemas
 
     async def call(self, name: str, raw_args: str, turn: Turn | None = None) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""

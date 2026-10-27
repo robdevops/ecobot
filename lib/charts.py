@@ -47,6 +47,8 @@ READING_COLOURS = {
     "humidity": "#4F46E5",      # indigo
     "dew_point": "#5794F2",     # blue (indoors: yellow)
     "wind": "#64748B",          # slate grey
+    "air_temperature": "#E11D48",   # the air sensor's own temperature and humidity: apart from the station's (orange, indigo)
+    "air_humidity": "#0D9488",
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
 # Indoors: the pair of the outdoor line in its panel. Temperature is orange outdoors and purple indoors, dew point blue and yellow
@@ -618,7 +620,7 @@ def _build(chart: Chart, tz: tzinfo) -> Figure:
         count, x1, entries = _draw_panel(ax, p, used, x0, x1, look)
         used += count
         if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
-            two_scales = look.in_headline and any(line.right for line in p.lines)   # two long names with units: stacked, between the title and subtitle rows
+            two_scales = look.in_headline and (any(line.right for line in p.lines) or sum(len(label) for _, label in entries) > 24)   # long names: stacked, between the title and subtitle rows
             key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - ((TITLE_IN + SUBTITLE_IN) / 2 if two_scales else TITLE_IN) / height)) \
                 if look.in_headline else dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
             _legend(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries],
