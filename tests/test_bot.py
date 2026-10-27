@@ -671,3 +671,28 @@ async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_
     assert "too old to answer" in caplog.text and "pd:7" in caplog.text
     with pytest.raises(BadRequest):
         await answer_query(Query(BadRequest("Message is not modified")))
+
+
+async def test_a_follow_up_keeps_the_air_sensors_own_readings_offered_when_the_question_before_asked_for_them(alert_state):
+    seen = []
+
+    class Capturing:
+        async def run(self, messages, system, effort, *, turn=None, **k):
+            seen.append((turn.air_extra, "AIRGRADIENT'S OWN TEMPERATURE AND HUMIDITY" in system))
+            return "ok"
+    replies = []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+
+    async def send_chat_action(*a, **k):
+        pass
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
+    for said in ("overlay ecowitt humidity with airgradient humidity", "do that again but for temperature", "what is the weather like",
+                 "and the wind?"):
+        await bot.respond(update, context, said)
+    assert seen == [(True, True), (True, True), (True, True), (False, False)]      # the follow-up is offered them; two questions on, not

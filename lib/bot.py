@@ -1046,6 +1046,7 @@ class Bot:
             return answer
         before = [str(m["content"]) for m in working[:-1] if m["role"] == "user"][-2:]
         found = intent.topics(str(working[-1]["content"]), before)
+        turn.air_extra = turn.air_extra or "air_extra" in found   # a follow-up ("and for temperature?") keeps the tools the question before it was offered
         system = prompt.build(datetime.now(self.cfg.tz), {s.name: s.describe() for s in self.sources}, read.hints,
                               read.about_the_bot, read.rain_caption, found)
         answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens),
