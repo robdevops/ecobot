@@ -25,6 +25,9 @@ MARKS = {"Max": "▲", "Min": "▼", "Total": "+"}   # in front of a column's na
 FILL = "#D32F27"            # the thermometer's mercury
 TUBE_HALF, BULB_RADIUS = 28, 38   # the thermometer: half the tube's width, the bulb's radius (pixels, to the outline)
 MERCURY_GAP = 7             # the gap between the outline and the red, the same round the bulb as up the tube
+BAR_WIDTH, BAR_GAP = 13, 12   # the scale's coloured blocks beside a thermometer or beaker: how wide, and how far from its outline
+RING_OUTER, BAND_WIDTH = 130, 14   # a dial's coloured scale: its outer radius and how wide it is (the outline is at 138)
+LABEL_RADIUS = 96           # where a dial's numbers sit, just inside its scale
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
 CELL_W, CELL_H, MARGIN = 480, 575, 20
@@ -58,10 +61,10 @@ def _scale_bar(ax, x: float, y0: float, y1: float, tile: Tile, ink):
     n = len(tile.colours)
     step = (y1 - y0) / n
     for i, colour in enumerate(reversed(tile.colours)):
-        ax.add_patch(FancyBboxPatch((x, y0 + i * step + 1), 26, step - 2, boxstyle="square,pad=0", fc=ink(colour), ec="none"))
+        ax.add_patch(FancyBboxPatch((x, y0 + i * step + 1), BAR_WIDTH, step - 2, boxstyle="square,pad=0", fc=ink(colour), ec="none"))
     for tick in tile.ticks:
         y = y0 + (tile.high - tick) / (tile.high - tile.low) * (y1 - y0)
-        _text(ax, x - 8, y, f"{tick:g}", 17, ink(SOFT), ha="right")
+        _text(ax, x - 6, y, f"{tick:g}", 17, ink(SOFT), ha="right")
 
 
 def _thermometer_shape(cx: float, top: float, half: float, bulb_y: float, radius: float) -> list[tuple[float, float]]:
@@ -75,9 +78,9 @@ def _thermometer_shape(cx: float, top: float, half: float, bulb_y: float, radius
 
 
 def _thermometer(ax, tile: Tile, ox: float, oy: float, ink):
-    top, bottom, cx, bulb = oy + 95, oy + 238, ox + 290, oy + 280   # the red rises against the scale beside it, which runs top to bottom
-    _scale_bar(ax, ox + 150, top, bottom, tile, ink)
+    top, bottom, cx, bulb = oy + 95, oy + 238, ox + 285, oy + 280   # the red rises against the scale beside it, which runs top to bottom
     half, radius, gap = TUBE_HALF, BULB_RADIUS, MERCURY_GAP
+    _scale_bar(ax, cx - half - BAR_GAP - BAR_WIDTH, top, bottom, tile, ink)
     ax.add_patch(Polygon(_thermometer_shape(cx, top - 10, half, bulb, radius), closed=True, fc="none", ec=ink(SOFT), lw=2.5, zorder=4))
     inside = Polygon(_thermometer_shape(cx, top - 10 + gap, half - gap, bulb, radius - gap), closed=True, fc="none", ec="none")
     ax.add_patch(inside)
@@ -93,7 +96,7 @@ def _thermometer(ax, tile: Tile, ox: float, oy: float, ink):
 
 def _beaker(ax, tile: Tile, ox: float, oy: float, ink):
     top, bottom, left, right = oy + 90, oy + 300, ox + 235, ox + 345
-    _scale_bar(ax, ox + 150, top, bottom - 10, tile, ink)
+    _scale_bar(ax, left - BAR_GAP - BAR_WIDTH, top, bottom - 10, tile, ink)
     outline, round_ = ink(SOFT), 34
     jar = FancyBboxPatch((left, top - round_), right - left, bottom - top + round_, boxstyle=f"round,pad=0,rounding_size={round_}",
                          fc="none", ec=outline, lw=2.5, zorder=3)
@@ -131,14 +134,14 @@ def _dial(ax, tile: Tile, ox: float, oy: float, ink):
     step = SWEEP / n
     for i, colour in enumerate(tile.colours):
         a0 = START - i * step - 0.8
-        ax.add_patch(Polygon(_band(cx, cy, 98, 130, a0, a0 - step + 1.6), fc=ink(colour), ec="none"))
+        ax.add_patch(Polygon(_band(cx, cy, RING_OUTER - BAND_WIDTH, RING_OUTER, a0, a0 - step + 1.6), fc=ink(colour), ec="none"))
     for tick in tile.ticks:
-        x, y = _polar(cx, cy, 74, _angle(tile, tick))
+        x, y = _polar(cx, cy, LABEL_RADIUS, _angle(tile, tick))
         _text(ax, x, y, f"{tick:g}", 17, ink(SOFT))
     _text(ax, cx, cy + 64, tile.unit, 18, ink(SOFT))
     if tile.value is not None:
         a = _angle(tile, tile.value)
-        tip, tail = _polar(cx, cy, 106, a), _polar(cx, cy, -24, a)
+        tip, tail = _polar(cx, cy, RING_OUTER - BAND_WIDTH - 6, a), _polar(cx, cy, -24, a)   # the needle reaches nearly to the scale
         left, right = _polar(cx, cy, 10, a + 90), _polar(cx, cy, 10, a - 90)
         ax.add_patch(Polygon([tip, left, tail, right], fc=ink(NEEDLE), ec="none", zorder=3))
         _text(ax, cx, cy + 102, _figure(tile.value, tile.decimals), 50, ink(INK))
