@@ -94,12 +94,7 @@ cd /opt/ecobot
 ```
 
 ```
-sudo docker build --build-arg COMMIT=$(sudo git rev-parse HEAD) -t ecobot .
-```
-
-```
-sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data \
-  --log-driver $(test -S /run/systemd/journal/socket && echo journald || echo local) ecobot
+sudo COMMIT=$(sudo git rev-parse HEAD) LOG_DRIVER=$(test -S /run/systemd/journal/socket && echo journald || echo local) docker compose up -d --build
 ```
 
 Then send `/report` to your bot. Logs, with timestamps:
@@ -108,19 +103,27 @@ Then send `/report` to your bot. Logs, with timestamps:
 sudo docker logs -tf ecobot
 ```
 
-On a host with a journal (the `docker run` above then logs to it), the same logs are in the journal, as for the systemd service:
+On a host with a journal (the command above then logs to it), the same logs are in the journal, as for the systemd service:
 
 ```
 sudo journalctl -f CONTAINER_NAME=ecobot
 ```
 
-To update, pull and build as above, then replace the container. `docker restart` keeps the old image and the old `--env-file` settings, so it changes nothing:
+To update, pull and run the same `docker compose` command again. It replaces the container only if the image or the settings changed (`docker restart` would keep the old image and the old env file). The log's first line, `Starting ecobot <commit>`, says which version is running.
 
 ```
-sudo docker rm -f ecobot
+sudo git pull
 ```
 
-Then run the same `docker run` again. The log's first line, `Starting ecobot <commit>`, says which version is running.
+To remove the old images and build cache that updates leave behind:
+
+```
+sudo docker image prune -f
+```
+
+```
+sudo docker builder prune -f
+```
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
@@ -136,7 +139,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
 | `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
-| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local`<br><br>Docker note: mDNS for .local requires `--network host` in `docker run`. Alternatively use a fixed IP address e.g. `http://192.168.5.5` |
+| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local`<br><br>Docker note: mDNS for .local requires `network_mode: host` under the service in `compose.yaml`. Alternatively use a fixed IP address e.g. `http://192.168.5.5` |
 | `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
 
 After editing the file, restart: `sudo systemctl restart ecobot` or `sudo docker restart ecobot`.

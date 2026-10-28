@@ -1,0 +1,17 @@
+# The bot in Docker: `sudo COMMIT=$(sudo git rev-parse HEAD) docker compose up -d --build` builds the image and starts the bot, and
+# replaces a running one only when its image or settings changed (README). COMMIT is what the log's first line says it is running.
+# LOG_DRIVER: journald where the host has a journal (then `journalctl -f CONTAINER_NAME=ecobot` reads the log), else Docker's own.
+services:
+  ecobot:
+    image: ecobot
+    container_name: ecobot
+    build:
+      context: .
+      args:
+        COMMIT: ${COMMIT:-unknown}
+    restart: unless-stopped
+    env_file: /etc/ecobot.env
+    volumes:
+      - /var/lib/private/ecobot:/data
+    logging:
+      driver: ${LOG_DRIVER:-local}
