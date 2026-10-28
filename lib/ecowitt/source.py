@@ -26,6 +26,7 @@ from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
 from .live import LiveRanges
+from .minutes import KEEP_HOURS, MinuteStore
 from ..series import READING_GROUPS, WEATHER, find
 from .query import HistoryQuery, chart_field, stack_names
 from .store import HistoryCache, HotStore
@@ -132,6 +133,8 @@ class Ecowitt(Source):
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
         self.via = "Home Assistant, Ecowitt's cloud as its fallback" if home and cloud else "Home Assistant" if home else "Ecowitt's cloud"
+        self.minute_store = MinuteStore(cfg.cache_path.with_name("ecowitt_minutes.sqlite")) if home else None   # (only Home Assistant has minutes)
+        self._minutes_ok: bool | None = None
         self.fast = home                     # the API that can be asked every few seconds, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
         self._ha_ok: bool | None = None
@@ -204,7 +207,7 @@ class Ecowitt(Source):
 
     def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
         """urgent: for a question (its requests go before the background ones)."""
-        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent, self.live)
+        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent, self.live, self.minute_store)
 
     # ---------- tools ----------
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
@@ -287,6 +290,7 @@ class Ecowitt(Source):
         recovery; the cloud, where there is one, answers the questions meanwhile."""
         if self.fast is None:
             return
+        await self.pull_minutes()
         while True:
             await asyncio.sleep(LIVE_POLL_SECONDS)
             try:
@@ -305,8 +309,26 @@ class Ecowitt(Source):
             if time.time() - self._recorded >= LIVE_RECORD_SECONDS:
                 self._recorded = time.time()
                 await self._record_live(data)
+            await self.pull_minutes()
             for callback in self.on_live:
                 await safely(callback)
+
+    async def pull_minutes(self):
+        """Take Home Assistant's minute readings since the newest held (the last KEEP_HOURS at first, or after the bot was down) into the
+        minute store, for the short charts. A failure is logged once; the charts then use the 5-minute readings."""
+        now = time.time()
+        since = max(await asyncio.to_thread(self.minute_store.newest) or 0, now - KEEP_HOURS * 3600)
+        try:
+            data = await self.fast.history(self.mac, "1min", naive_local(since, self.tz), naive_local(now, self.tz), ",".join(self.groups))
+            await asyncio.to_thread(self.minute_store.put, data, now)
+        except Exception as e:
+            if self._minutes_ok is not False:
+                log.warning("Home Assistant's minute readings couldn't be taken (%s); short charts use the 5-minute readings", e)
+            self._minutes_ok = False
+            return
+        if self._minutes_ok is False:
+            log.info("Home Assistant's minute readings are back")
+        self._minutes_ok = True
 
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags
@@ -369,5 +391,7 @@ class Ecowitt(Source):
         await self.api.close()
         self.cache.close()
         self.live.close()
+        if self.minute_store:
+            self.minute_store.close()
         if self.ha:
             await self.ha.close()

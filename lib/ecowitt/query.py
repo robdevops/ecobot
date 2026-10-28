@@ -25,6 +25,7 @@ from ..tools import json_result
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for, two_axes
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
+from .minutes import MINUTE_HOURS
 from .api import CYCLES, MINUTE, cycle_seconds, daily_run, kept_from
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
@@ -33,7 +34,6 @@ from .live import BUCKET
 
 log = logging.getLogger(__name__)
 
-MINUTE_HOURS = 8                # up to this long: minute readings, where the station's source has them (Home Assistant)
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings and a breakdown by day; longer periods use daily records, by month
 DAILY_ALL_DAYS = 7              # longer periods send every day's figures only when day by day was asked for
@@ -226,7 +226,7 @@ class HistoryQuery:
         f, start, end, today = self.f, self.start, self.end, self.now.date()
         thirty_floor = datetime.combine(kept_from("30min", today), time())
         recent = datetime.combine(today - timedelta(days=6), time())
-        if self.span <= timedelta(hours=MINUTE_HOURS) and getattr(f.api, "minute_lines", False) and (minutes := await f.minutes(start, end)):
+        if self.span <= timedelta(hours=MINUTE_HOURS) and (minutes := await f.minutes(start, end)):
             collect(self.store, minutes, MINUTE)    # a short stretch: a reading a minute (Home Assistant's), straight from it
         elif self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or await f.covered(
                 "5min", f.epoch(start), f.epoch(end))):
