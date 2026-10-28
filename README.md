@@ -26,6 +26,9 @@ You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and opt
 
 ```
 sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
+```
+
+```
 sudoedit /etc/ecobot.env
 ```
 
@@ -54,10 +57,21 @@ Needs Python 3.13.
 
 ```
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
-sudo python3.13 -m venv /opt/ecobot/.venv
-sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+```
 
+```
+sudo python3.13 -m venv /opt/ecobot/.venv
+```
+
+```
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+```
+
+```
 sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
+```
+
+```
 sudo systemctl enable --now ecobot
 ```
 
@@ -69,10 +83,21 @@ The service runs sandboxed as its own user, and keeps its data in `/var/lib/priv
 
 ```
 sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
+```
 
+```
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
+```
+
+```
 cd /opt/ecobot
+```
+
+```
 sudo docker build --build-arg COMMIT=$(sudo git rev-parse HEAD) -t ecobot .
+```
+
+```
 sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data \
   --log-driver $(test -S /run/systemd/journal/socket && echo journald || echo local) ecobot
 ```
