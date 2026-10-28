@@ -104,7 +104,7 @@ def board(*data):
 
 # ---------- the settings ----------
 def test_admin_only_is_on_unless_switched_off_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
-    for k, v in {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
+    for k, v in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("ADMIN_ONLY", raising=False)
     assert Config.from_env().admin_only is True and Config.from_env().admin_chat_ids == frozenset()

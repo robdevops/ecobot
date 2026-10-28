@@ -4,7 +4,7 @@
 # The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them,
 # so its bytecode goes to /var/cache/ecobot (CacheDirectory=, PYTHONPYCACHEPREFIX=) and is rebuilt on its own after an update.
 # Any other place needs only the WorkingDirectory and ExecStart lines changed.
-# The bot never opens the environment file itself: systemd loads it (TZ, XAI_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
+# The bot never opens the environment file itself: systemd loads it (TZ, OPENROUTER_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
 # TELEGRAM_BOT_TOKEN, ...).
 # StateDirectory= gives the bot /var/lib/ecobot (the state file, the SQLite caches and Matplotlib's font cache): the bot finds it through
 # STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older install kept in

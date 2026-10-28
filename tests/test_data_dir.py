@@ -11,7 +11,7 @@ NAMES = ("bot_state.json", "ecowitt_cache.sqlite", "airgradient_cache.sqlite", "
 
 
 def configured(monkeypatch, **env):
-    for key, value in {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "x", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", **env}.items():
+    for key, value in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "x", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", **env}.items():
         monkeypatch.setenv(key, value)
     return Config.from_env()
 

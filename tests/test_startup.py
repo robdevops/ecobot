@@ -262,7 +262,7 @@ def test_the_time_zone_without_a_station_is_tz_else_the_one_etc_localtime_links_
 def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatch):
     from lib.config import Config
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("XAI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ECOWITT_API_KEY", "a")
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("ALERT_COOLDOWN_MINUTES", raising=False)
@@ -274,7 +274,7 @@ def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatc
 
 def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     assert Config.from_env().log_level == "INFO"
@@ -287,17 +287,17 @@ def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeyp
 
 def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", " t "), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", " t "), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    for k in ("XAI_MODEL", "XAI_BASE_URL", "PLACE", "POLLEN_DISTRICT", "TUYA_BASE_URL"):
+    for k in ("OPENROUTER_MODEL", "OPENROUTER_BASE_URL", "PLACE", "POLLEN_DISTRICT", "TUYA_BASE_URL"):
         monkeypatch.setenv(k, "  ")
     monkeypatch.setenv("POLLEN", "enabled")
     cfg = Config.from_env()
-    assert (cfg.telegram_token, cfg.xai_model, cfg.xai_base_url, cfg.place, cfg.pollen_district, cfg.tuya_base_url) == (
-        "t", "grok-4.3", "https://api.x.ai/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
+    assert (cfg.telegram_token, cfg.openrouter_model, cfg.openrouter_base_url, cfg.place, cfg.pollen_district, cfg.tuya_base_url) == (
+        "t", "deepseek/deepseek-v4.1-flash-1017", "https://openrouter.ai/api/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert cfg.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
-    monkeypatch.setenv("XAI_API_KEY", " ")
-    assert Config.from_env().xai_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
+    monkeypatch.setenv("OPENROUTER_API_KEY", " ")
+    assert Config.from_env().openrouter_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", " ")
     with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
         Config.from_env()
@@ -313,7 +313,7 @@ def test_the_rain_quiet_hours_are_configurable():
 def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("XAI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ECOWITT_API_KEY", "a")
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("CHART_ALL_FEELS_LIKE", raising=False)
@@ -324,7 +324,7 @@ def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_
 
 def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("CHART_ALL_VPD", raising=False)
     assert Config.from_env().chart_all_vpd is False
@@ -415,7 +415,7 @@ def test_a_traceback_is_logged_whole_after_its_cut_message():
 
 def test_the_log_width_is_0_unless_set_and_0_cuts_none(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_WIDTH", raising=False)
     assert Config.from_env().log_width == 0
@@ -426,7 +426,7 @@ def test_the_log_width_is_0_unless_set_and_0_cuts_none(monkeypatch):
 
 def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("TELEGRAM_PRELOAD_CHAT", raising=False)
     assert Config.from_env().telegram_preload_chat is None
@@ -439,8 +439,8 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s", width=80)
     record = logging.LogRecord("httpx2", logging.INFO, __file__, 1, 'HTTP Request: %s %s "%s %d %s"',
-                               ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
-    assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
+                               ("POST", "https://openrouter.ai/api/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
+    assert fmt.format(record) == 'INFO POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
 
 

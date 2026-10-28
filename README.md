@@ -22,7 +22,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 
 ## Install
 
-You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [xAI API key](https://x.ai/api) for questions that need the AI model. Either way, start by putting your keys in one private file:
+You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [OpenRouter API key](https://openrouter.ai/keys) for questions that need the AI model. Either way, start by putting your keys in one private file:
 
 ```
 sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
@@ -40,7 +40,7 @@ TELEGRAM_BOT_TOKEN=
 ADMIN_CHAT_IDS=
 
 # AI model (optional)
-XAI_API_KEY=
+OPENROUTER_API_KEY=
 
 # Weather station (optional)
 ECOWITT_API_KEY=
@@ -127,7 +127,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Required. |
 | `ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
-| `XAI_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
+| `OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
 | `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
 | `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |

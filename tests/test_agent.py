@@ -41,7 +41,7 @@ async def test_fast_path_calls_the_model_only_at_the_end():
     msgs = [{"role": "user", "content": "highs today"}]
     reply = await agent.run(msgs, "sys", "none", first_call=("weather_now", {"groups": "outdoor"}))
     assert reply == "Sunny." and len(client.requests) == 1 and seen == [{"groups": "outdoor"}]
-    assert client.requests[0]["tool_choice"] == "auto" and client.requests[0]["extra_body"] == {"reasoning_effort": "none"}
+    assert client.requests[0]["tool_choice"] == "auto" and client.requests[0]["extra_body"] == {"reasoning": {"effort": "none"}}
     assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
 
 
@@ -52,7 +52,7 @@ async def test_weather_questions_must_fetch_first_and_reasoning_is_passed_throug
     reply = await agent.run([{"role": "user", "content": "will it rain?"}], "sys", "medium", tool_choice="required")
     assert reply == "Rain unlikely." and [r["tool_choice"] for r in client.requests] == ["required", "auto"]
     assert all(r["tools"] == t.schemas for r in client.requests)          # every tool on every call: the cached prompt holds
-    assert client.requests[0]["extra_body"]["reasoning_effort"] == "medium" and len(seen) == 1
+    assert client.requests[0]["extra_body"]["reasoning"]["effort"] == "medium" and len(seen) == 1
 
 
 async def test_chat_needs_no_tools_and_identical_calls_are_made_once():
@@ -348,14 +348,11 @@ def test_the_prompt_says_to_use_the_whole_record_without_a_period_and_holidays_o
     assert "use the whole record" in text and "only when the person's words say holidays or weekends" in text
 
 
-async def test_every_call_of_a_chat_carries_the_same_conversation_id_for_the_prompt_cache():
+async def test_the_reasoning_effort_goes_to_openrouter_in_its_own_form():
     t, _ = tools()
     client = FakeLLM([[("weather_now", {})], "Done."])
-    await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", conv_id="ecobot-42")
-    assert [r["extra_headers"] for r in client.requests] == [{"x-grok-conv-id": "ecobot-42"}] * 2
-    plain = FakeLLM(["Hi."])
-    await llm.Agent(plain, "m", t).run([{"role": "user", "content": "q"}], "sys", "none", tool_choice="auto")
-    assert "extra_headers" not in plain.requests[0]
+    await llm.Agent(client, "m", t).run([{"role": "user", "content": "q"}], "sys", "low")
+    assert [r["extra_body"] for r in client.requests] == [{"reasoning": {"effort": "low"}}] * 2 and not any("extra_headers" in r for r in client.requests)
 
 
 def test_older_answers_are_cut_to_their_first_lines_but_the_last_answer_and_every_question_stay_whole():

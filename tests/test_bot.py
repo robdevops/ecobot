@@ -12,7 +12,7 @@ from tests.fakes import TZ, StandInTools
 
 class RaisingAgent:
     async def run(self, *a, **k):
-        raise RuntimeError("401 Bearer xai-SECRET-1234 quota exceeded for org acme")
+        raise RuntimeError("401 Bearer sk-or-SECRET-1234 quota exceeded for org acme")
 
 
 class AnsweringAgent:

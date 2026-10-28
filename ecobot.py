@@ -1,5 +1,5 @@
 """Telegram bot for a personal weather station (Ecowitt) and air-quality sensor (AirGradient),
-answered by xAI Grok, with proactive alerts. Settings come from environment variables
+answered by a model through OpenRouter, with proactive alerts. Settings come from environment variables
 (see lib/config.py); run it under systemd with the unit's EnvironmentFile set.
 """
 
@@ -224,12 +224,13 @@ async def main():
         tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
         # A model request may run as long as the bot gives a whole question (it then asks again, a reasoning step lower); a
         # dropped connection, a 429 or a 5xx is tried again twice, at once, inside that time
-        client = AsyncOpenAI(api_key=cfg.xai_api_key, base_url=cfg.xai_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0),
-                             max_retries=2) if cfg.xai_api_key else None   # without a key the bot answers only what it works out in code
+        client = AsyncOpenAI(api_key=cfg.openrouter_api_key, base_url=cfg.openrouter_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0),
+                             max_retries=2) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
         if client:
             stack.push_async_callback(safely, client.close)
         else:
-            log.warning("XAI_API_KEY is not set: running without the model, so answers are limited")
+            log.warning("OPENROUTER_API_KEY is not set%s: running without the model, so answers are limited",
+                        " (XAI_API_KEY is no longer used: the model now comes through OpenRouter)" if os.getenv("XAI_API_KEY") else "")
         state = AlertState(cfg.state_path)
         if cfg.admin_only:
             log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
@@ -239,7 +240,7 @@ async def main():
         irrigation = Tuya(cfg) if cfg.irrigation else None
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
-        bot = Bot(cfg, Agent(client, cfg.xai_model, tools), sources, state, irrigation)
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation)
         stack.push_async_callback(bot.close)
 
         app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
@@ -265,7 +266,7 @@ async def main():
             stack.push_async_callback(source.warmer.stop)
 
         log.info("Telegram: @%s", app.bot.username)
-        log.info("Model: %s", cfg.xai_model if client else "none")
+        log.info("Model: %s", cfg.openrouter_model if client else "none")
         notify = Notifier(app.bot, state)
         await bot.publish_commands(app.bot)   # the / menu
         await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones

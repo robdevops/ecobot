@@ -180,9 +180,9 @@ class Config:
     air_cache_path: Path
     conditions_cache_path: Path                                    # the last pollen page and forecast, kept across restarts
     telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
-    xai_api_key: str = _setting("XAI_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
-    xai_base_url: str = _setting("XAI_BASE_URL", "https://api.x.ai/v1")
-    xai_model: str = _setting("XAI_MODEL", "grok-4.3")
+    openrouter_api_key: str = _setting("OPENROUTER_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
+    openrouter_base_url: str = _setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_model: str = _setting("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     ecowitt_api_key: str = _setting("ECOWITT_API_KEY", "")
     ecowitt_app_key: str = _setting("ECOWITT_APP_KEY", "")
     airgradient_token: str = _setting("AIRGRADIENT_API_TOKEN", "")

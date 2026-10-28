@@ -19,7 +19,7 @@ The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build t
 | `image` | pushes that change `Dockerfile`, `.dockerignore` or `requirements.txt` (any branch), or the Run workflow button | builds the Docker image, checks the bot starts in it and names the commit, draws the sample charts in it (they must be in Inter and match `tests/charts`); the image's size goes in the run's summary. |
 
 Repository secrets (Settings, Secrets and variables, Actions, New repository secret):
-- `XAI_API_KEY`: for `live-evals`. `XAI_MODEL` is optional (default `grok-4.3`): add it only if production runs another model.
+- `OPENROUTER_API_KEY`: for `live-evals`. `OPENROUTER_MODEL` is optional (default `deepseek/deepseek-v4.1-flash-1017`): add it only if production runs another model.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: optional; failures of `newest` and `live-evals`, and of `test` on `main`, are then sent to Telegram.
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the Python packages and the actions. `matplotlib`, `numpy` and `Pillow` come as one pull request, because the chart pictures depend on them.

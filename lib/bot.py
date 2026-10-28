@@ -934,7 +934,7 @@ class Bot:
         result = await self.agent.tools.call(name, json.dumps(args), turn)
         return report.lookup(read.lookup, result, read.lookup_arg, read.sides, now_local(self.cfg.tz).date())
 
-    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, on_heavy=None, conv_id=None) -> str:
+    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, on_heavy=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
         none), for RETRY_SECONDS; a question already at no reasoning just times out."""
         first = [*([read.fast[:2], *read.more] if read.fast else []), *read.extra] or None
@@ -943,7 +943,7 @@ class Bot:
             try:
                 return await asyncio.wait_for(
                     self.agent.run(working, system, effort, first_call=first, tool_choice=read.tool_choice, turn=turn,
-                                   on_heavy=on_heavy, conv_id=conv_id,
+                                   on_heavy=on_heavy,
                                    **({"on_text": lambda text: None if turn.chart_asked or turn.charts else draft.update(text)} if draft else {})),
                 budget)
             except TimeoutError:
@@ -1106,7 +1106,7 @@ class Bot:
         if answer.reply is not None:
             working.append({"role": "assistant", "content": answer.reply})
             return answer
-        if not getattr(self.agent, "ready", True):   # no XAI_API_KEY: what is left is for the model
+        if not getattr(self.agent, "ready", True):   # no OPENROUTER_API_KEY: what is left is for the model
             answer.reply = NO_MODEL
             working.append({"role": "assistant", "content": answer.reply})
             return answer
@@ -1116,8 +1116,7 @@ class Bot:
         turn.air_extra = turn.air_extra or "air_extra" in found   # the tools offer the air sensor's own readings whenever the prompt tells of them
         system = prompt.build(datetime.now(self.cfg.tz), {s.name: s.describe() for s in self.sources}, read.hints,
                               read.about_the_bot, read.rain_caption, found)
-        answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens),
-                                             f"ecobot-{msg.chat_id}")
+        answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens))
         return answer
 
     async def _send(self, msg: Message, bot, read, turn: Turn, answer: Answer, added: list[dict], now: datetime,

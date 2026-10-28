@@ -18,7 +18,7 @@ jobs:
         run: docker build --build-arg COMMIT="$GITHUB_SHA" -t ecobot .
       - name: The bot starts and names this commit
         run: |
-          docker run --rm --network none -e TELEGRAM_BOT_TOKEN=0:x -e XAI_API_KEY=x ecobot > start.log 2>&1 || true   # stops: no data source set
+          docker run --rm --network none -e TELEGRAM_BOT_TOKEN=0:x -e OPENROUTER_API_KEY=x ecobot > start.log 2>&1 || true   # stops: no data source set
           cat start.log
           grep -q "Starting ecobot ${GITHUB_SHA::7}" start.log
       - name: Charts drawn in the image

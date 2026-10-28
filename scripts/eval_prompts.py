@@ -1,7 +1,7 @@
 """Run the saved questions (tests/evals/cases.json).
 
 Without --live: only the decisions made in code (fast path, period hints, reasoning effort, chart choices), no key needed.
-With --live: also asks the real model (XAI_API_KEY, XAI_BASE_URL, XAI_MODEL in the environment) with recording stand-in
+With --live: also asks the real model (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL in the environment) with recording stand-in
 tools, and checks which tool it called and with what. Nothing is fetched.
 
     python scripts/eval_prompts.py                       # decisions made in code
@@ -33,10 +33,10 @@ async def main() -> int:
     client = model = None
     if args.live:
         from openai import AsyncOpenAI
-        if not os.getenv("XAI_API_KEY"):
-            sys.exit("--live needs XAI_API_KEY (and XAI_BASE_URL, XAI_MODEL) in the environment")
-        client = AsyncOpenAI(api_key=os.environ["XAI_API_KEY"], base_url=os.getenv("XAI_BASE_URL", "https://api.x.ai/v1"))
-        model = os.getenv("XAI_MODEL", "grok-4.3")
+        if not os.getenv("OPENROUTER_API_KEY"):
+            sys.exit("--live needs OPENROUTER_API_KEY (and OPENROUTER_BASE_URL, OPENROUTER_MODEL) in the environment")
+        client = AsyncOpenAI(api_key=os.environ["OPENROUTER_API_KEY"], base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+        model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     failed = 0
     for case in cases:
         problems = evalkit.deterministic(case)

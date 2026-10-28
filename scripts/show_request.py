@@ -89,7 +89,7 @@ async def main():
 
     client = Recorder([call, "(the model's answer goes here)"])
     messages = [{"role": "user", "content": text}]
-    await Agent(client, "grok-4.3", tools).run(messages, system, effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None,
+    await Agent(client, "deepseek/deepseek-v4.1-flash-1017", tools).run(messages, system, effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None,
                                                tool_choice=r.tool_choice)
 
     banner("DECISIONS MADE IN CODE")

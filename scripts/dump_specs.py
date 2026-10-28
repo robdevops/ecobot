@@ -123,7 +123,7 @@ async def main():
             db = sqlite3.connect(f"file:{air_path}?mode=ro", uri=True)
             loc = (db.execute("SELECT loc FROM days LIMIT 1").fetchone() or [""])[0]
             db.close()
-        cfg = Config(telegram_token="", xai_api_key="", xai_base_url="", xai_model="", tz=tz, ecowitt_api_key="offline",
+        cfg = Config(telegram_token="", openrouter_api_key="", openrouter_base_url="", openrouter_model="", tz=tz, ecowitt_api_key="offline",
                      ecowitt_app_key="offline", airgradient_token="offline", airgradient_location=str(loc or "offline"),
                      airgradient_dashboard="", state_path=Path(tmp) / "state.json", cache_path=eco_path, air_cache_path=air_path,
                      conditions_cache_path=Path(tmp) / "conditions.sqlite")
