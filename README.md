@@ -93,8 +93,14 @@ sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
 cd /opt/ecobot
 ```
 
+The bot logs to the host's journal when there is one, else to Docker's own log. Record which, once, in a `.env` file next to `compose.yaml` (Compose reads it by itself):
+
 ```
-sudo COMMIT=$(sudo git rev-parse HEAD) LOG_DRIVER=$(test -S /run/systemd/journal/socket && echo journald || echo local) docker compose up -d --build
+echo "LOG_DRIVER=$(test -S /run/systemd/journal/socket && echo journald || echo local)" | sudo tee .env
+```
+
+```
+sudo docker compose up -d --build
 ```
 
 Then send `/report` to your bot. Logs, with timestamps:
@@ -103,13 +109,13 @@ Then send `/report` to your bot. Logs, with timestamps:
 sudo docker logs -tf ecobot
 ```
 
-On a host with a journal (the command above then logs to it), the same logs are in the journal, as for the systemd service:
+On a host with a journal (`LOG_DRIVER=journald` above), the same logs are in the journal, as for the systemd service:
 
 ```
 sudo journalctl -f CONTAINER_NAME=ecobot
 ```
 
-To update, pull and run the same `docker compose` command again. It replaces the container only if the image or the settings changed (`docker restart` would keep the old image and the old env file). The log's first line, `Starting ecobot <commit>`, says which version is running.
+To update, pull and run the same `docker compose` command again (a build needs the clone's `.git`, which is where the log's `Starting ecobot <commit>` comes from). It replaces the container only if the image or the settings changed (`docker restart` would keep the old image and the old env file). The log's first line, `Starting ecobot <commit>`, says which version is running.
 
 ```
 sudo git pull

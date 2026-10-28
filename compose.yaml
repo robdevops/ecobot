@@ -1,6 +1,7 @@
-# The bot in Docker: `sudo COMMIT=$(sudo git rev-parse HEAD) docker compose up -d --build` builds the image and starts the bot, and
-# replaces a running one only when its image or settings changed (README). COMMIT is what the log's first line says it is running.
-# LOG_DRIVER: journald where the host has a journal (then `journalctl -f CONTAINER_NAME=ecobot` reads the log), else Docker's own.
+# The bot in Docker: `sudo docker compose up -d --build` builds the image and starts the bot, and replaces a running one only when its
+# image or settings changed (README). The commit the log's first line names is read from the clone's .git (see the Dockerfile).
+# LOG_DRIVER, from a .env file next to this one (README): journald where the host has a journal (then
+# `journalctl -f CONTAINER_NAME=ecobot` reads the log), else Docker's own.
 services:
   ecobot:
     image: ecobot
@@ -8,7 +9,7 @@ services:
     build:
       context: .
       args:
-        COMMIT: ${COMMIT:-unknown}
+        COMMIT: ${COMMIT:-}
     restart: unless-stopped
     # Docker's default is a private bridge network, where .local names (mDNS) can't be found: use IP addresses in HOMEASSISTANT_URL and
     # AIRGRADIENT_LOCAL_URL, or share the host's network by removing the # below (README: "Docker networking").

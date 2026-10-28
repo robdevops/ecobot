@@ -3,4 +3,8 @@
 !ecobot.py
 !lib/
 !requirements.txt
+# the commit the log says it is running is read from these (a clone; the files are a few hundred bytes)
+!.git/HEAD
+!.git/refs/heads/
+!.git/packed-refs
 **/__pycache__
