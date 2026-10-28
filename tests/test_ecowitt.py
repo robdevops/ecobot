@@ -356,7 +356,7 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
-    assert arch.held() == "0/0/0/0 days (5m/30m/4h/1d)"
+    assert arch.held() == "0/0/0/0 days held (5m/30m/4h/1d)"
     await arch.run_once()
     held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
     assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
@@ -383,7 +383,7 @@ async def test_archive_estimates_its_duration_from_the_pace(tmp_path, monkeypatc
     await Archive(eco).run_once()
     line = next(r.message for r in caplog.records if "to fetch" in r.message)
     n = int(line.split(": ")[1].split(" ")[0])
-    assert f"{n} req to fetch (about {n * 3 / 60:.0f} min)" in line
+    assert f"{n} requests to fetch (about {n * 3 / 60:.0f} min)" in line
     await eco.close()
 
 

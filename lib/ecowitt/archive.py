@@ -78,7 +78,7 @@ class Archive:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
             if seconds >= 60:   # a short run only gets the line when it finishes
-                log.info("Ecowitt: %d req to fetch (about %s)", len(todo),
+                log.info("Ecowitt backfill: %d requests to fetch (about %s)", len(todo),
                          f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
         fetched = failed = in_a_row = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
@@ -90,13 +90,13 @@ class Archive:
                 failed += 1
                 in_a_row = 0 if fetcher.rejected else in_a_row + 1   # a refusal is about this range; a timeout, about Ecowitt
                 if in_a_row == OUTAGE_STOP:
-                    log.warning("Ecowitt: %d requests in a row failed (%s); the other %d wait for the next run", in_a_row,
+                    log.warning("Ecowitt backfill: %d requests in a row failed (%s); the other %d wait for the next run", in_a_row,
                                 fetcher.errors[-1], len(todo) - i)
                     break
             if i % 20 == 0 and i < len(todo):
-                log.info("Ecowitt: %d of %d req done", i, len(todo))
+                log.info("Ecowitt backfill: %d of %d requests done", i, len(todo))
             await asyncio.sleep(self.pace)
-        log.info("Ecowitt: %d req, %sheld %s, %.0fs", fetched, f"{failed} failed, " if failed else "", self.held(), monotonic() - started)
+        log.info("Ecowitt backfill: %d requests fetched, %d failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
         return fetched, failed
 
     async def _drop_unsupported_groups(self, cycle: str, start: datetime, end: datetime) -> bool:
@@ -119,10 +119,10 @@ class Archive:
         return False
 
     def held(self) -> str:
-        """Days of history held per resolution, e.g. "88/363/728/1456 days (5min/30min/4h/1d)" """
+        """Days of history held per resolution, e.g. "88/363/728/1456 days held (5m/30m/4h/1d)" """
         cycles = ("5min", "30min", "4hour", "1day")
         days = "/".join(str(self.station.cache.days_held(self.station.mac, c, self.groups)) for c in cycles)
-        return f"{days} days (5m/30m/4h/1d)"
+        return f"{days} days held (5m/30m/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:
         return seconds_until(RUN_AT.hour, RUN_AT.minute, self.station.tz)

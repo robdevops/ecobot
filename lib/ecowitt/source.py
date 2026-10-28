@@ -263,7 +263,7 @@ class Ecowitt(Source):
         Nothing when no Home Assistant is set. A failure is logged once, then again when it recovers; the next try is a while off."""
         if self.ha is None:
             return
-        first = self._ha_ok is None
+        first, started = self._ha_ok is None, time.monotonic()
         try:
             found = await self.ha.ranges(time.time() - (RANGE_KEEP_DAYS * 86400 if first else HA_RECENT_SECONDS))
             marks = await asyncio.to_thread(self.live.put, found)
@@ -274,7 +274,7 @@ class Ecowitt(Source):
             return
         self.ha.trouble.ok()
         if first or not self._ha_ok:
-            log.info("Home Assistant: %d 5-minute ranges for %d readings%s", marks, len(found), f" (the last {RANGE_KEEP_DAYS} days at most)" if first else "")
+            log.info("Home Assistant backfill: %d ranges fetched, 0 failed, %d readings, %.0fs", marks, len(found), time.monotonic() - started)
         self._ha_ok = True
 
     async def _record_live(self, data: dict):
