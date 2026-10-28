@@ -10,6 +10,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
+from . import counts
 from .logs import BUGS
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class Warmer:
         self._lock = asyncio.Lock()   # one refresh at a time: a timed one waits for a question's
 
     async def _refresh(self, fresh: bool):
+        counts.detach()   # a refresh a question started is not the question's work
         async with self._lock:
             await safely(self.refresh, fresh)
 

@@ -9,6 +9,8 @@ import sqlite3
 import threading
 import time
 
+from .counts import watch
+
 KEEP_SECONDS = 400 * 86400
 
 
@@ -18,7 +20,7 @@ class Snapshots:
 
     def __init__(self, path):
         self._lock = threading.Lock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = watch(sqlite3.connect(path, check_same_thread=False))
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS snapshots (

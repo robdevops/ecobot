@@ -33,7 +33,7 @@ lib/alerts/             notify (chats, silent send), weather, particulates, poll
 lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)
 lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images
-scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), refill_airgradient.py (one-off: fetch the whole AirGradient history again), eval_prompts.py, show_request.py (exactly what is
+scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), bench_storage.py (how long typical requests take on a copy of the caches, with their SQL statements and thread hops; in the Docker image too), refill_airgradient.py (one-off: fetch the whole AirGradient history again), eval_prompts.py, show_request.py (exactly what is
                         sent to the model for a question), check_rain.py (are rain totals trustworthy?), migrate_cache.py (one-off: converts an Ecowitt cache from before the series layout),
                         dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
 ```

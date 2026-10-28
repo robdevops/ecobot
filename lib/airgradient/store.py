@@ -11,6 +11,7 @@ import threading
 import time
 from datetime import date, tzinfo
 
+from ..counts import watch
 from ..lines import RANGE_KEEP_DAYS
 from ..timeutil import day_bounds
 from .metrics import STORED
@@ -24,7 +25,7 @@ class AirStore:
         self.loc, self.tz = str(loc), tz
         self._lock = threading.Lock()
         self._pruned = 0.0
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = watch(sqlite3.connect(path, check_same_thread=False))
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(f"""
             CREATE TABLE IF NOT EXISTS readings (

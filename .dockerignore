@@ -1,7 +1,9 @@
-# Only what the image is built from: no state, caches, secrets (*.env), tests or venv can reach it
+# Only what the image is built from: no state, caches, secrets (*.env), tests or venv can reach it (the scripts are there to be run
+# in the container: docker compose exec ecobot python scripts/...)
 *
 !ecobot.py
 !lib/
+!scripts/
 !requirements.txt
 # the commit the log says it is running is read from these (a clone; the files are a few hundred bytes)
 !.git/HEAD

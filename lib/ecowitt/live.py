@@ -12,6 +12,7 @@ import sqlite3
 import threading
 import time
 
+from ..counts import watch
 from ..lines import RANGE_KEEP_DAYS
 from ..series import derives_range
 
@@ -47,7 +48,7 @@ class LiveRanges:
         self._lock = threading.Lock()
         self._seen: dict[str, int] = {}       # series -> the reading time last counted: the same reading, asked for again, is not another one
         self._pruned = 0.0
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = watch(sqlite3.connect(path, check_same_thread=False))
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("""CREATE TABLE IF NOT EXISTS ranges (
                            series TEXT, ts INTEGER, n INTEGER, lo REAL, hi REAL, PRIMARY KEY (series, ts)) WITHOUT ROWID""")

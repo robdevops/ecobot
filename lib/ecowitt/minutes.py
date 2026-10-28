@@ -8,6 +8,8 @@ kept only as long as a chart can use them, and in the shape the history is told 
 import sqlite3
 import threading
 
+from ..counts import watch
+
 MINUTE_HOURS = 8                     # a chart of up to this long is drawn from minutes
 KEEP_HOURS = MINUTE_HOURS + 1        # ... and may end an hour ago: what is older is no use
 SLACK_SECONDS = 300                  # the first minute held may be this much after a chart's start (the chart's first point is then a little late)
@@ -16,7 +18,7 @@ SLACK_SECONDS = 300                  # the first minute held may be this much af
 class MinuteStore:
     def __init__(self, path):
         self._lock = threading.Lock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = watch(sqlite3.connect(path, check_same_thread=False))
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("""CREATE TABLE IF NOT EXISTS minutes (
                            grp TEXT, field TEXT, t INTEGER, unit TEXT, value TEXT, PRIMARY KEY (grp, field, t)) WITHOUT ROWID""")

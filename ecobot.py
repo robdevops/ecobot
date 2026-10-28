@@ -36,6 +36,7 @@ from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
+from lib import counts
 from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
 from lib.compose import Composer
@@ -206,6 +207,7 @@ def commit_in(git_dir) -> str:
 
 
 async def main():
+    counts.install()   # the thread hops of each question, for the DEBUG timing line
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
     _format.width = cfg.log_width   # a chat message in the log is cut to it from here on

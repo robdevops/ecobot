@@ -26,6 +26,7 @@ RUN groupadd --system --gid 10001 ecobot \
 WORKDIR /app
 COPY ecobot.py ./
 COPY lib lib
+COPY scripts scripts
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
 # The bot reads the running commit for its start-up log line from .git (HEAD, the branch's ref, packed-refs: .dockerignore lets only these
 # through), so building from a clone needs nothing more; COMMIT, if given, is used instead (a build from files that are not a clone).
