@@ -114,6 +114,14 @@ On a host with a journal (the `docker run` above then logs to it), the same logs
 sudo journalctl -f CONTAINER_NAME=ecobot
 ```
 
+To update, pull and build as above, then replace the container. `docker restart` keeps the old image and the old `--env-file` settings, so it changes nothing:
+
+```
+sudo docker rm -f ecobot
+```
+
+Then run the same `docker run` again. The log's first line, `Starting ecobot <commit>`, says which version is running.
+
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
 ## Configuration
