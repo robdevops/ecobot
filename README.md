@@ -90,7 +90,7 @@ sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
 sudo systemctl enable --now ecobot
 ```
 
-Then send `/report` to your bot. Logs: `journalctl -fu ecobot`.
+Then message `/report` to your Telegram bot. Logs: `journalctl -fu ecobot`.
 
 The service runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
 
@@ -112,13 +112,11 @@ cd /opt/ecobot
 sudo docker compose up -d --build
 ```
 
-Then send `/report` to your bot. Logs, with timestamps:
+Then message `/report` to your Telegram bot. Logs, with timestamps:
 
 ```
 sudo docker logs -tf ecobot
 ```
-
-Docker keeps at most 5 files of 10 MB of them, compressed, so they do not fill the disk.
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
