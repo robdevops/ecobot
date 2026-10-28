@@ -60,11 +60,11 @@ class Pollen(Source):
 
     async def start(self):
         if not self.in_season():
-            log.info("Pollen: out of season (October to December)")
+            log.info("Pollen [melbournepollen.com.au]: out of season (October to December)")
             return
         try:
             await self.warm(True)
-            log.info("Pollen: %s", "; ".join(self.lines()) or "no levels on the page")
+            log.info("Pollen [melbournepollen.com.au]: %s (every %gs)", "; ".join(self.lines()) or "no levels on the page", self.warmer.interval)
         except Exception as e:  # the site may just be briefly unreachable
             log.warning("Pollen not readable yet: %s", e)
 

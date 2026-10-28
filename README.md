@@ -105,21 +105,7 @@ sudo docker logs -tf ecobot
 
 Docker keeps at most 5 files of 10 MB of them, compressed, so they do not fill the disk.
 
-To update, pull and run the same `docker compose` command again (a build needs the clone's `.git`, which is where the log's `Starting ecobot <commit>` comes from). It replaces the container only if the image or the settings changed (`docker restart` would keep the old image and the old env file). The log's first line, `Starting ecobot <commit>`, says which version is running.
-
-```
-sudo git pull
-```
-
-To remove the old images and build cache that updates leave behind:
-
-```
-sudo docker image prune -f
-```
-
-```
-sudo docker builder prune -f
-```
+To upgrade, see [Upgrading](#upgrading).
 
 #### Docker networking
 
@@ -148,6 +134,44 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local`<br><br>Docker note: mDNS for .local requires `network_mode: host` under the service in `compose.yaml`. Alternatively use a fixed IP address e.g. `http://192.168.5.5` |
 | `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
 
-After editing the file, restart: `sudo systemctl restart ecobot` or `sudo docker restart ecobot`.
+After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 
 Every setting is in [docs/configuration.md](docs/configuration.md). More: [what the bot does](docs/features.md), [how it works](docs/how-it-works.md), [developing](DEVELOPMENT.md).
+
+## Upgrading
+
+Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept. The log's first line, `Starting ecobot <commit>`, says which version is running.
+
+### systemd
+
+```
+cd /opt/ecobot && sudo git pull
+```
+
+```
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+```
+
+```
+sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+```
+
+```
+sudo systemctl restart ecobot
+```
+
+### Docker
+
+```
+cd /opt/ecobot && sudo git pull
+```
+
+```
+sudo docker compose up -d --build
+```
+
+Compose replaces the container only if the image or the settings changed. To remove the old images and build cache that upgrades leave behind:
+
+```
+sudo docker image prune -f && sudo docker builder prune -f
+```

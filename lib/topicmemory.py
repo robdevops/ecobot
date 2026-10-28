@@ -1,6 +1,6 @@
 """Which guidance topics a chat is still on. A follow-up ("and for temperature?") often says nothing that names its topic, so a topic
 stays on for a chat while either side keeps naming it or the model keeps using its tools, until RUNS runs in a row go by with none of
-that. (The last messages are looked at as well: see Bot._respond.)"""
+that. (The last messages are looked at as well: see Bot.respond.)"""
 
 RUNS = 2
 

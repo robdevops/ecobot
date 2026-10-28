@@ -55,7 +55,6 @@ NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
 WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
-PREDRAW_SECONDS = 300        # the button charts are drawn ahead this often (a press finds one drawn within periods.ImageCache.FRESH)
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
@@ -328,12 +327,7 @@ class Bot:
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
-        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant (and the buttons' drawn ahead)
-        self.answering = 0                   # questions being answered right now: the button charts are drawn ahead (predraw) only when there are none
-        self.idle = asyncio.Event()
-        self.idle.set()
-        self.predrawn = False                # the first round of charts drawn ahead has been logged
-        self.predraw_failing: set[str] = set()   # button charts that couldn't be drawn ahead (said once, until they can again)
+        self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
         self.background: set[asyncio.Task] = set()   # tasks running on their own, kept so they aren't dropped
@@ -1027,44 +1021,7 @@ class Bot:
         finally:
             self.preloading.discard(question)
 
-    async def predraw(self):
-        """Draw the charts the buttons ask for ahead of the press: one pressed in the next ImageCache.FRESH seconds is sent at once.
-        One chart at a time, and never while a question is being answered (its own drawing would wait behind these). Run every
-        PREDRAW_SECONDS; the first round is logged, and a chart that can't be drawn once, until it can again."""
-        started, done = time.monotonic(), []
-        for text in dict.fromkeys(question for row in templates.rows(self.irrigation is not None) for _, question in row if question):
-            await self.idle.wait()
-            try:
-                drawn = await self._draw_ahead(text, now_local(self.cfg.tz))
-                if drawn is None:
-                    continue
-            except Exception as e:
-                if text not in self.predraw_failing:
-                    self.predraw_failing.add(text)
-                    log.warning("Can't draw %r ahead: %s: %s", text, type(e).__name__, e)
-                continue
-            key, png, title, caption = drawn
-            self.images.put(key, png, title, caption)
-            done.append(text)
-            if text in self.predraw_failing:
-                self.predraw_failing.discard(text)
-                log.info("Drawn ahead again: %s", text)
-        if not self.predrawn:
-            self.predrawn = True
-            log.info("Button charts drawn ahead every %ds: %d in %.1fs", PREDRAW_SECONDS, len(done), time.monotonic() - started)
-
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
-        """Answer a question (_respond), counted while it runs: predraw waits for it."""
-        self.answering += 1
-        self.idle.clear()
-        try:
-            await self._respond(update, context, text, redraw)
-        finally:
-            self.answering -= 1
-            if not self.answering:
-                self.idle.set()
-
-    async def _respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
         """Answer `text` (redraw: a chart's message, when a period button asks for that chart again in place)."""
         msg = update.effective_message
         text = text.strip()

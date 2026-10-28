@@ -72,7 +72,7 @@ class Drawn:
 class ImageCache:
     """The charts drawn lately, by question: toggling between the period buttons brings a chart back at once instead of drawing it
     again, and once it has been sent, as Telegram's copy instead of an upload. A chart is kept CHART_TTL seconds (the readings move
-    slowly) and the newest CHART_IMAGES stay. The button charts are also drawn ahead (Bot.predraw): one drawn in the last FRESH
+    slowly) and the newest CHART_IMAGES stay. A chart drawn in the last FRESH
     seconds is the answer to its question (ready)."""
 
     CHART_TTL = 10 * 60

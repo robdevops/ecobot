@@ -229,57 +229,30 @@ def pressed(bot, sent):
     return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
 
 
-async def test_the_button_charts_are_drawn_ahead_and_a_press_is_sent_one_at_once(alert_state, monkeypatch, caplog):
+async def test_a_chart_just_drawn_is_sent_again_at_once_and_then_as_telegrams_copy(alert_state, monkeypatch):
     bot, sent = make_bot(alert_state, monkeypatch), []
-    with caplog.at_level("INFO"):
-        await bot.predraw()
-    calls = len(bot.agent.tools.calls)
-    assert calls >= 1 and all(name == "weather_history" for name, _ in bot.agent.tools.calls)   # the station's buttons (no air sensor here)
-    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("Tool ")] == []      # quiet: nobody asked
-    assert any(r.getMessage().startswith("Button charts drawn ahead every 300s: ") for r in caplog.records)
     update = pressed(bot, sent)
     await bot.respond(update, CONTEXT, "Temperature chart 1d")
-    assert len(bot.agent.tools.calls) == calls and sent == [(b"png", "Temperature")]                 # no new question: the one drawn ahead
+    calls = len(bot.agent.tools.calls)
+    assert calls >= 1 and sent == [(b"png", "Temperature")]
+    await bot.respond(update, CONTEXT, "Temperature chart 1d")
+    assert len(bot.agent.tools.calls) == calls and sent[-1] == ("copy 1", "Temperature")             # drawn lately: no new question, Telegram's copy
     history = bot.chats[(1, None)].history
     assert history[-1]["role"] == "assistant" and history[-1]["content"]                             # its text is kept, as a drawn one's is
-    await bot.respond(update, CONTEXT, "Temperature chart 1d")
-    assert len(bot.agent.tools.calls) == calls and sent[-1] == ("copy 1", "Temperature")             # and once sent, by Telegram's copy
-    caplog.clear()
-    with caplog.at_level("INFO"):
-        await bot.predraw()
-    assert not any("drawn ahead" in r.getMessage() for r in caplog.records)                          # only the first round is logged
 
 
-async def test_a_chart_drawn_ahead_is_drawn_again_once_it_is_stale_and_never_answers_other_words(alert_state, monkeypatch):
+async def test_a_chart_is_drawn_again_once_it_is_stale_and_never_answers_other_words(alert_state, monkeypatch):
     clock = [0.0]
     bot, sent = make_bot(alert_state, monkeypatch), []
     bot.images = periods.ImageCache(lambda: clock[0])
-    await bot.predraw()
+    await bot.respond(pressed(bot, sent), CONTEXT, "Temperature chart 1d")
     calls = len(bot.agent.tools.calls)
     await bot.respond(pressed(bot, sent), CONTEXT, "temperature chart today")     # kept under the 1d key, but since midnight: drawn
     assert len(bot.agent.tools.calls) == calls + 1
-    await bot.predraw()
     calls = len(bot.agent.tools.calls)
     clock[0] = periods.ImageCache.FRESH + 1
     await bot.respond(pressed(bot, sent), CONTEXT, "Temperature chart 1d")        # too old to send as it is
     assert len(bot.agent.tools.calls) == calls + 1
-
-
-async def test_charts_are_not_drawn_ahead_while_a_question_is_being_answered(alert_state, monkeypatch):
-    import asyncio
-    bot = make_bot(alert_state, monkeypatch)
-    bot.answering = 1
-    bot.idle.clear()
-    drawing = asyncio.create_task(bot.predraw())
-    await asyncio.sleep(0.05)
-    assert bot.agent.tools.calls == []
-    bot.answering = 0
-    bot.idle.set()
-    await drawing
-    assert bot.agent.tools.calls
-    await bot.respond(pressed(bot, []), CONTEXT, "Temperature chart 7d")
-    assert bot.answering == 0 and bot.idle.is_set()                    # counted while it ran, and let go after
-
 
 
 def preloading_bot(alert_state, monkeypatch, refuse=None, clock=None):
@@ -387,16 +360,6 @@ async def test_a_period_that_cannot_be_drawn_is_left_out_and_the_others_are_uplo
     await settle(bot)
     assert sorted(uploads) == uploads_of(1, 30, 365)
     assert bot.images.has_copy(bot.images.key("Temperature chart 30d", 30, NOW)) and not bot.images.has_copy(bot.images.key("Temperature chart 90d", 90, NOW))
-
-
-async def test_charts_are_uploaded_ahead_at_once_even_while_a_question_is_being_answered(alert_state, monkeypatch):
-    import asyncio
-    bot, uploads, context = preloading_bot(alert_state, monkeypatch)
-    bot.answering = 1
-    bot.idle.clear()
-    bot.preload_soon(context.bot, "Temperature chart 7d")
-    await asyncio.wait_for(settle(bot), 5)                  # it would wait for ever if it waited for the question
-    assert sorted(uploads) == uploads_of(1, 30, 90, 365)
 
 
 async def test_each_period_is_uploaded_as_soon_as_it_is_drawn_not_when_the_slowest_is(alert_state, monkeypatch):

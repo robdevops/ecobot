@@ -132,7 +132,7 @@ class Ecowitt(Source):
                                 ha_transport) if cfg.ecowitt_home_assistant else None
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
-        self.via = "Home Assistant, Ecowitt's cloud as its fallback" if home and cloud else "Home Assistant" if home else "Ecowitt's cloud"
+        self.via = "Home Assistant, Ecowitt cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
         self.minute_store = MinuteStore(cfg.cache_path.with_name("ecowitt_minutes.sqlite")) if home else None   # (only Home Assistant has minutes)
         self._minutes_ok: bool | None = None
         self.fast = home                     # the API that can be asked every few seconds, if any
@@ -187,8 +187,8 @@ class Ecowitt(Source):
             pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        log.info("Weather station: Ecowitt '%s' (%s), %s, from %s%s", self.station_name, self.mac, self.tz, self.via,
-                 f", devices found: {len(devices)}" if len(devices) > 1 else "")
+        log.info("Weather [Ecowitt]: '%s' (%s) via %s (every %gs)%s", self.station_name, self.mac, self.via, self.warmer.interval,
+                 f", {len(devices)} devices" if len(devices) > 1 else "")
         try:
             size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
             log.info("History cache: %s (%.1f MB)", self.cache.path, size / 1e6)
@@ -348,9 +348,7 @@ class Ecowitt(Source):
                 log.warning("Live readings failed: %s; rain alert uses history", e)
             self._live_ok = False
             return None
-        if self._live_ok is None:
-            log.info("%s", live_summary(data))
-        elif not self._live_ok:
+        if self._live_ok is False:
             log.info("Recovered: %s", live_summary(data))
         self._live_ok = True
         return ts, row

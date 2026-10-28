@@ -29,7 +29,7 @@ from lib.airgradient import metrics as air_metrics
 from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
 from lib.alerts.menu import LABELS, available_kinds
-from lib.bot import PREDRAW_SECONDS, TURN_SECONDS, Bot, polling_error
+from lib.bot import TURN_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.ecowitt.source import HA_IMPORT_SECONDS
 from lib.forecast import Forecast
@@ -136,7 +136,7 @@ def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks) -> tuple
 
 async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], tasks: Tasks):
     """Fetch everything once, together, and log one summary line; then start what waited for it: the weather alerts, the
-    archives (copying each source's history into its cache) and the button charts drawn ahead."""
+    archives (copying each source's history into its cache)."""
     eco, air = bot.by_name.get("Ecowitt"), bot.by_name.get("AirGradient")
     started, parts = time.monotonic(), []
 
@@ -176,9 +176,6 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
     except Exception:
         log.exception("Startup fetch failed (the regular refreshes will catch up)")
     log.info("Startup fetch: %s, %.1fs", ", ".join(parts) or "nothing to fetch", time.monotonic() - started)
-    tasks.start(every(PREDRAW_SECONDS, bot.predraw))   # the button charts, ready before they are pressed
-    on = [k for k in LABELS if k in running]   # the line says what started, not what is configured
-    log.info("Alerts: %s: %d chats", ", ".join(LABELS[k] for k in on) or "none", len(bot.state.alert_chats()))
     if missing := [LABELS[k] for k in available_kinds(bot.by_name, bot.irrigation is not None) if k not in running]:
         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
@@ -267,15 +264,14 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
 
-        log.info("@%s + %s", app.bot.username, cfg.xai_model if client else "no model")
-        log.info("Sources: %s", ", ".join(s.name for s in sources))
+        log.info("Telegram: @%s", app.bot.username)
+        log.info("Model: %s", cfg.xai_model if client else "none")
         notify = Notifier(app.bot, state)
         await bot.publish_commands(app.bot)   # the / menu
         await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
         running, weather = start_alerts(cfg, bot, notify, tasks)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
             tasks.start(source.warmer.run())
-        log.info("Refreshing every: %s", ", ".join(f"{s.name} {s.warmer.interval:.0f}s" for s in sources))
         tasks.start(warm_up(bot, weather, running, tasks))
         await stop.wait()
 

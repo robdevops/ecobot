@@ -116,8 +116,6 @@ class LocalSensor:
                             self.describe(), type(e).__name__, e, RETRY_SECONDS // 60)
             self.working = False
             return None
-        if not self.working:
-            log.info("AirGradient: live readings from the sensor itself (%s at %s)", self.describe(), ip)
         self.working = True
         return row
 

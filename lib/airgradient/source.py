@@ -126,9 +126,19 @@ class AirGradient(Source):
                 self._names = {k: v for k, v in (await self._get("current")).items() if k in ("locationName", "locationType")}
                 row = {**row, **self._names}
                 self._current = (row, self._current[1])
-            log.info("Air quality: AirGradient '%s'%s", row.get("locationName"), f" (location {self.loc})" if self.cloud else " (the sensor only, no cloud)")
+            log.info("Air [AirGradient]: %s", self._summary(row))
         except Exception as e:  # keep going: the sensor may just be briefly unreachable
             log.warning("AirGradient %s not readable yet: %s", f"location {self.loc}" if self.cloud else "sensor", e)
+
+    def _summary(self, row: dict) -> str:
+        """The start-up line: the sensor's name, its cloud location, where the readings come from and how often."""
+        local = self.local
+        sensor = f"{local.describe()} ({local.address[0]})" if local and local.working and local.address else None
+        via = [sensor, "AirGradient cloud fallback" if sensor else "AirGradient cloud"] if self.cloud else [sensor]
+        if local and not sensor and self.cloud:
+            via.append(f"{local.describe()} not answering")
+        name = row.get("locationName") or (local and local.serial) or "sensor"
+        return f"'{name}'{f' ({self.loc})' if self.cloud else ''} via {', '.join(v for v in via if v)} (every {self.warmer.interval:g}s)"
 
     def describe(self) -> str:
         return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"

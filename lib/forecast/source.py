@@ -108,7 +108,7 @@ class Forecast(Source):
             raise RuntimeError("no location: set FORECAST_LAT and FORECAST_LON (or the weather station supplies one)")
         try:
             await self.warm(True)
-            log.info("Forecast: %s, %d days", self.source, len(self.days or []))
+            log.info("Forecast [%s]: %d days (every %gs)", self.source, len(self.days or []), self.warmer.interval)
         except Exception as e:
             log.warning("Forecast not readable yet: %s", e)
 
