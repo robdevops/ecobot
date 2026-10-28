@@ -90,6 +90,8 @@ sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon
 sudo systemctl enable --now ecobot
 ```
 
+Watch the logs:
+
 ```
 journalctl -fu ecobot
 ```
@@ -115,6 +117,8 @@ cd /opt/ecobot
 ```
 sudo docker compose up -d --build
 ```
+
+Watch the logs:
 
 ```
 sudo docker logs -tf ecobot
