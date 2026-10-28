@@ -165,7 +165,7 @@ Logs go to Docker's own rotated log; to send them to the journal instead (kept a
 echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee /opt/ecobot/.env
 ```
 
-To use both this and Docker networking, set `COMPOSE_FILE=compose.yaml:compose.host-network.yaml:compose.journald.yaml`.
+To use both this and Docker host network, set `COMPOSE_FILE=compose.yaml:compose.host-network.yaml:compose.journald.yaml`.
 
 ## Upgrading
 
