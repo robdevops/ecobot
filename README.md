@@ -17,14 +17,12 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 - [Install](#install)
   - [systemd](#systemd)
   - [Docker](#docker)
-- [Configuration](#configuration)
-  - [Docker networking](#docker-networking)
-- [Logging](#logging)
+    - [Docker networking](#docker-networking)
+    - [Docker logging](#docker-logging)
+- [Upgrading](#upgrading)
   - [systemd](#systemd-1)
   - [Docker](#docker-1)
-- [Upgrading](#upgrading)
-  - [systemd](#systemd-2)
-  - [Docker](#docker-2)
+- [Configuration](#configuration)
 
 ## Features
 
@@ -92,6 +90,10 @@ sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon
 sudo systemctl enable --now ecobot
 ```
 
+```
+journalctl -fu ecobot
+```
+
 Then message `/report` to your Telegram bot.
 
 The service runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
@@ -114,30 +116,15 @@ cd /opt/ecobot
 sudo docker compose up -d --build
 ```
 
+```
+sudo docker logs -tf ecobot
+```
+
 Then message `/report` to your Telegram bot.
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
-## Configuration
-
-Settings are environment variables in `/etc/ecobot.env`. The ones you're most likely to change:
-
-| Variable | What it does |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Required. |
-| `ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
-| `OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
-| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
-| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
-| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
-| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local`<br><br>Docker note: mDNS for .local needs the host network (see [Docker networking](#docker-networking)). Alternatively use a fixed IP address e.g. `http://192.168.5.5` |
-| `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
-
-After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
-
-Every setting is in [docs/configuration.md](docs/configuration.md).
-
-### Docker networking
+#### Docker networking
 
 `.local` names (mDNS) can't be found from Docker's private network: use IP addresses, or share the host's network (then run the `docker compose` command again):
 
@@ -145,19 +132,7 @@ Every setting is in [docs/configuration.md](docs/configuration.md).
 echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobot/.env
 ```
 
-## Logging
-
-### systemd
-
-```
-journalctl -fu ecobot
-```
-
-### Docker
-
-```
-sudo docker logs -tf ecobot
-```
+#### Docker logging
 
 Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`):
 
@@ -200,5 +175,24 @@ Compose replaces the container only if the image or the settings changed. To rem
 ```
 sudo docker image prune -f && sudo docker builder prune -f
 ```
+
+## Configuration
+
+Settings are environment variables in `/etc/ecobot.env`. The ones you're most likely to change:
+
+| Variable | What it does |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Required. |
+| `ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
+| `OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
+| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
+| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
+| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
+| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local`<br><br>Docker note: mDNS for .local needs the host network (see [Docker networking](#docker-networking)). Alternatively use a fixed IP address e.g. `http://192.168.5.5` |
+| `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
+
+After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
+
+Every setting is in [docs/configuration.md](docs/configuration.md).
 
 More: [what the bot does](docs/features.md), [how it works](docs/how-it-works.md), [developing](DEVELOPMENT.md).
