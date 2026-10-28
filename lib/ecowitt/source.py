@@ -274,7 +274,7 @@ class Ecowitt(Source):
             return
         self.ha.trouble.ok()
         if first or not self._ha_ok:
-            log.info("Home Assistant backfill: %d ranges fetched, 0 failed, %d readings, %.0fs", marks, len(found), time.monotonic() - started)
+            log.info("Backfill Home Assistant: %d ranges fetched, 0 failed, %d readings, %.0fs", marks, len(found), time.monotonic() - started)
         self._ha_ok = True
 
     async def _record_live(self, data: dict):

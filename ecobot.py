@@ -168,7 +168,7 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
     async def air_backfill():
         started = time.monotonic()
         fetched, failed, total = await air.backfill()
-        log.info("AirGradient backfill: %d days fetched, %d failed, %d days held, %.0fs", fetched, failed, total, time.monotonic() - started)
+        log.info("Backfill AirGradient: %d days fetched, %d failed, %d days held, %.0fs", fetched, failed, total, time.monotonic() - started)
 
     try:
         await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))

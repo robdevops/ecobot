@@ -68,7 +68,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
 
     async def stop_when_archived():  # the background archives finish, then we shut down
         for _ in range(300):
-            if " requests fetched, " in caplog.text and "AirGradient backfill:" in caplog.text:
+            if " requests fetched, " in caplog.text and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -78,8 +78,8 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     log = caplog.text
     assert "Ecowitt: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot, Model: " in log
     assert not any(line.startswith(("Sources:", "Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
-    assert "Startup fetch:" not in log and " requests to fetch" in log and "AirGradient backfill:" in log
-    final = next(line for line in log.splitlines() if "Ecowitt backfill: " in line and " fetched, " in line)
+    assert "Startup fetch:" not in log and " requests to fetch" in log and "Backfill AirGradient:" in log
+    final = next(line for line in log.splitlines() if "Backfill Ecowitt: " in line and " fetched, " in line)
     assert " 0 failed, " in final and "days held (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
     assert "Alerts NOT running" not in log
@@ -106,7 +106,7 @@ async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(
 
     async def stop_when_archived():
         for _ in range(300):
-            if " requests fetched, " in caplog.text and "AirGradient backfill:" in caplog.text:
+            if " requests fetched, " in caplog.text and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -141,7 +141,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
 
     async def stop_when_archived():
         for _ in range(300):
-            if " requests fetched, " in caplog.text and "AirGradient backfill:" in caplog.text:
+            if " requests fetched, " in caplog.text and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -150,7 +150,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     await stopper
     log = caplog.text
     assert "the network dropped" in log                                     # the reason is in the log
-    assert "Ecowitt backfill: " in log and "AirGradient backfill:" in log         # yet both archives ran
+    assert "Backfill Ecowitt: " in log and "Backfill AirGradient:" in log         # yet both archives ran
     assert "Startup fetch failed" not in log                            # not lost to the catch-all
 
 
@@ -357,7 +357,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
 
     async def stop_when_archived():
         for _ in range(300):
-            if " requests fetched, " in caplog.text and "AirGradient backfill:" in caplog.text:
+            if " requests fetched, " in caplog.text and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)

@@ -78,7 +78,7 @@ class Archive:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
             if seconds >= 60:   # a short run only gets the line when it finishes
-                log.info("Ecowitt backfill: %d requests to fetch (about %s)", len(todo),
+                log.info("Backfill Ecowitt: %d requests to fetch (about %s)", len(todo),
                          f"{seconds:.0f} s" if seconds < 90 else f"{seconds / 60:.0f} min")
         fetched = failed = in_a_row = 0
         for i, (cycle, start, end) in enumerate(todo, 1):
@@ -90,13 +90,13 @@ class Archive:
                 failed += 1
                 in_a_row = 0 if fetcher.rejected else in_a_row + 1   # a refusal is about this range; a timeout, about Ecowitt
                 if in_a_row == OUTAGE_STOP:
-                    log.warning("Ecowitt backfill: %d requests in a row failed (%s); the other %d wait for the next run", in_a_row,
+                    log.warning("Backfill Ecowitt: %d requests in a row failed (%s); the other %d wait for the next run", in_a_row,
                                 fetcher.errors[-1], len(todo) - i)
                     break
             if i % 20 == 0 and i < len(todo):
-                log.info("Ecowitt backfill: %d of %d requests done", i, len(todo))
+                log.info("Backfill Ecowitt: %d of %d requests done", i, len(todo))
             await asyncio.sleep(self.pace)
-        log.info("Ecowitt backfill: %d requests fetched, %d failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
+        log.info("Backfill Ecowitt: %d requests fetched, %d failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
         return fetched, failed
 
     async def _drop_unsupported_groups(self, cycle: str, start: datetime, end: datetime) -> bool:
