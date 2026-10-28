@@ -39,4 +39,4 @@ It has only been run against a fake Home Assistant. Check in the log and the cha
 - with both set, nothing is asked of the cloud except what Home Assistant lacks.
 
 Then the storage redesign: [docs/storage-plan.md](docs/storage-plan.md) has the measurements, the design, the migration and the steps (the
-requirements that were here are its section 2). It starts with three decisions (its section 6.1) and step 0, measuring the real cache.
+requirements that were here are its section 2, the decisions its section 6.1). It starts with step 0, measuring the real cache.

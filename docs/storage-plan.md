@@ -129,7 +129,7 @@ CREATE TABLE climate (
 
 | `res` | From | Kept |
 |---|---|---|
-| `1min` | Home Assistant's states (the station, the AirGradient), the bot's own minute reads of the AirGradient | 9 hours (a decision: 6.1) |
+| `1min` | Home Assistant's states (the station, the AirGradient), the bot's own minute reads of the AirGradient | 10 days (6.1) |
 | `5min` | Ecowitt's cloud, Home Assistant, the bot's own AirGradient averages; bands from the live readings and Home Assistant | for ever (the archive) |
 | `30min`, `4hour`, `1day` | Ecowitt's cloud (lows and highs included), Home Assistant | for ever |
 | `1hour` | AirGradient's cloud, for the days it no longer has at 5 minutes | for ever |
@@ -175,7 +175,13 @@ Every band is in the rows, so a chart's band comes with its line:
   narrowed, and doing it twice changes nothing, as now.
 
 Retention: the bot's ranges are kept for 31 days now (`RANGE_KEEP_DAYS`). In the rows they cost a null when absent and two numbers when
-present, so they can be kept for good with no table to prune. That is a decision too (6.1).
+present, so they are kept for good, with no table to prune (6.1).
+
+Which charts they show on: a line drawn reading by reading at 5 minutes (a chart of up to about a day and a half, the 1D button) has a
+band only from them, because Ecowitt's 5-minute readings have no range. From the 7D button on, the line is drawn from 30-minute readings
+or wider buckets, whose band is Ecowitt's own lows and highs (kept for ever), which the bot's only widen a little. A 3M or 1Y chart is
+drawn a point a day, so each band is that day's whole swing from its lowest to its highest: that is why the band looks so much bigger
+from 3M on, and it never depended on the bot's 31 days. Keeping the bot's ranges for good gives a 1D chart of any past day its band too.
 
 ### 3.7 Coverage in memory
 
@@ -196,8 +202,15 @@ stays (`HotStore.lock`), as a dict of locks of its own.
 The minutes go in the same tables, at `res = '1min'`, so a chart of a few hours is the same query as any other. They are pruned hourly by
 `DELETE ... WHERE res = '1min' AND ts < ?`, a run of rows at the front of each sensor's minutes. The freed pages are reused by the next
 minutes, so the file settles at its busiest size; `auto_vacuum` stays off (it moves pages about and can make fragmentation worse), and a
-plain `VACUUM` in the night job is the remedy if `dbstat` ever shows a table badly scattered. At 9 hours the minutes are about 4,000 rows; at
-31 days about 360,000 (8 sensors), some 25 MB.
+plain `VACUUM` in the night job is the remedy if `dbstat` ever shows a table badly scattered. Kept 10 days, the minutes are about 115,000
+rows (8 sensors), some 8 MB; 31 days would be about 25 MB and 90 days about 75 MB.
+
+What uses them: by the charts' rule (`lines.bucket_width`: the finest readings that keep a line within 500 points), a reading a minute is
+drawn only for a stretch of up to about 8 hours, so no period button ever draws them (1D is 288 five-minute readings). They are drawn for
+a question about a short stretch ("the last 3 hours", "yesterday from 2 to 6"), and they give a day's records their time to the minute.
+The bands do not need them kept: each 5 minutes' range is written into its 5-minute row as the minutes come in. Ten days is as long as
+Home Assistant keeps its own (so after the bot was down the gap can always be read back from it), and covers nearly every question about
+a few hours.
 
 ### 3.10 Connections and threads
 
@@ -205,6 +218,31 @@ Two connections to the one file: one that writes (the archive, the refreshes, th
 questions, the reports, the alerts), each on a single thread of its own. In WAL mode a read never waits for a write, a request makes one hop
 to the reader's thread for all its queries, and the default thread pool (which also draws the charts) is left alone. `busy_timeout` covers
 the rare write that meets another. `PRAGMA optimize` runs at close.
+
+### 3.11 What the database does, and what is left to Python
+
+SQLite does the work wherever the work is the same for every row:
+- **Finding the rows:** a range of the primary key, `sensor, res, ts`, and nothing else is read.
+- **Buckets for long lines:** `GROUP BY ts / width` with `AVG`, `MIN(COALESCE(_lo, value))`, `MAX(COALESCE(_hi, value))`, so a year
+  of 5-minute readings comes back as 500 rows, not 105,120. `lines.bucket_summary` stays as the reference the SQL is tested against.
+- **The days:** `INSERT ... SELECT ... GROUP BY`, written as the readings arrive (3.5).
+- **Months and years:** `GROUP BY` on the day rows.
+- **Records:** `ORDER BY ... LIMIT 1` on the day rows.
+- **`weather_days`:** its condition ("rain >= 1 and temp_max > 30"), ranking and counting by month or year become the `WHERE`,
+  `ORDER BY` and `GROUP BY` of one query on the day rows (`daytable` builds them from the same fields it checks now).
+- **Rain per slot:** the rise of the day's rain counter, with its midnight reset and the gap rule of `rain.rain_slots`, is a window
+  function (`LAG(daily) OVER (PARTITION BY sensor ORDER BY ts)`), so rain bars and spells read their amounts directly.
+- **The wind rose:** counts per compass point and speed band are a `GROUP BY` of the direction's sector and the speed's band.
+- **The AirGradient's spike filter:** a reading far above both its neighbours is a `LAG`/`LEAD` comparison, so the filter can run in the
+  query instead of over every row in Python (`metrics.without_spikes`, with the same setting).
+
+Left to Python on purpose:
+- **Time zones.** SQLite knows only UTC and the computer's own zone, so local days come from Python as a small table of each day's
+  start and end (which also gets the 23- and 25-hour days of the clock changes right), joined in the query.
+- **The statistics** of `weather_link` and `air_scan` (correlations, the share of rain while a reading falls): numpy over the arrays one
+  query returns.
+- **Drawing, captions and answers:** from the few hundred rows a query returns, handled as columns (lists of numbers), not a dict per
+  reading.
 
 ## 4. How each request reads
 
@@ -216,6 +254,8 @@ the rare write that meets another. `PRAGMA optimize` runs at close.
 | `weather_days`, `air_days` | one query on the day rows for the whole period |
 | `/dashboard` | one query per kind on the day rows (today, this month, this year) with the live reading |
 | `weather_link`, `/compose` | one query per reading at 30 minutes |
+| Rain bars | one query: the counter's rises per slot (`LAG`), summed per bar |
+| The wind rose | one query: counts per compass point and speed band |
 | The alerts' last 3 hours | one query per kind at 5 minutes |
 
 Aims, to be checked against the real cache: a chart under 50 ms whatever its length, `/dashboard` and `weather_days` over the whole
@@ -263,16 +303,17 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    `AirStore` goes.
 4. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
    `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
-5. **Several sensors in use.** Settings for more than one AirGradient, the station's extra channels found from its live reading, a
-   `sensor` argument for the tools and the words for it in the prompt, labels, alerts per sensor, and a sensor per Home Assistant
-   prefix (today it takes the first and warns).
+5. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
+   channels found from its live reading, a `sensor` argument for the tools and the words for it in the prompt, labels, alerts per sensor,
+   and a sensor per Home Assistant prefix (today it takes the first and warns).
 
-### 6.1 Decisions for you
+### 6.1 Decisions
 
-- **How long the minutes are kept:** 9 hours (enough for the charts of up to 8 hours, as now) or 31 days (zooming in on any day of the
-  last month), about 25 MB more.
-- **How long the bot's own bands are kept:** 31 days, as now, or for good (they are two numbers in a row that is kept anyway).
-- **Several sensors:** the schema has them from step 1; is step 5 wanted now, or later, when there is a second sensor?
+- **The minutes are kept 10 days.** Only charts of up to about 8 hours draw them (3.9), so more than that holds readings that are
+  almost never drawn; 10 days is what Home Assistant keeps, so the bot can always read a gap back. A constant, if that changes.
+- **The bot's own bands are kept for good.** They are two numbers in a row that is kept anyway, and a 1D chart of any past day keeps
+  its band (3.6).
+- **Several sensors: the schema now, step 5 later**, when there is a second sensor.
 
 ## 7. Testing
 
