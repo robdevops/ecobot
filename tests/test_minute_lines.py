@@ -63,3 +63,23 @@ async def test_a_home_assistant_that_is_down_leaves_the_five_minute_line_from_th
     (line,) = turn.charts[0].panels[0].lines
     assert len(line.x) >= 20 and all(b - a == 300 for a, b in zip(line.x, line.x[1:]))
     await eco.close()
+
+
+async def test_days_home_assistant_has_forgotten_keep_their_bands_in_a_chart_of_twenty_days(tmp_path):
+    kw = {"ecowitt_api_key": "", "ecowitt_app_key": "", "homeassistant_url": "http://ha", "homeassistant_token": "tok"}
+    long_memory, _ = home_assistant_transport(history_days=20)
+    eco = Ecowitt(config(tmp_path, **kw), None, long_memory)
+    await eco.start()
+    now = eco.now()
+    await eco.fetcher(["outdoor"]).get("30min", now - timedelta(days=19), now, load=False)      # what the archive copies in
+    await eco.close()
+
+    short_memory, ha = home_assistant_transport(history_days=10)                                 # ten days on, Home Assistant has forgotten the rest
+    eco = Ecowitt(config(tmp_path, **kw), None, short_memory)
+    await eco.start()
+    _, turn = await chart(eco, 19 * 24)
+    (line,) = turn.charts[0].panels[0].lines
+    old = [i for i, t in enumerate(line.x) if t < eco.now().timestamp() - 12 * 86400]
+    assert len(old) > 100 and line.low is not None and line.high is not None
+    assert all(line.low[i] <= line.y[i] <= line.high[i] for i in old) and any(line.low[i] < line.high[i] for i in old)
+    await eco.close()
