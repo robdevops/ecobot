@@ -103,16 +103,16 @@ def board(*data):
 
 
 # ---------- the settings ----------
-def test_admin_only_is_on_unless_switched_off_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
+def test_admin_only_is_off_unless_switched_on_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
     for k, v in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("ADMIN_ONLY", raising=False)
-    assert Config.from_env().admin_only is True and Config.from_env().admin_chat_ids == frozenset()
-    for value, on in (("", True), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
-                      ("no", False), ("false", False), ("ture", True), ("of", True)):   # a typo keeps the default: never open by mistake
+    assert Config.from_env().admin_only is False and Config.from_env().admin_chat_ids == frozenset()
+    for value, on in (("", False), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
+                      ("no", False), ("false", False), ("ture", False), ("of", False)):   # a typo keeps the default
         monkeypatch.setenv("ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
-    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (on)" in caplog.text
+    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (off)" in caplog.text
     ids = lambda text: _ids(text, frozenset(), "ADMIN_CHAT_IDS")
     assert ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and ids("") == frozenset()
     assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text

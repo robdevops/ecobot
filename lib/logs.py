@@ -1,13 +1,12 @@
-"""How the bot's log lines look: the message alone, marked WARN, ERROR or DEBUG when it is not an ordinary (INFO) line. Every line of a message is cut to the log width (LOG_WIDTH), an ellipsis (…) marking the cut,
-whatever its level; a traceback after it is logged whole. A line that quotes a request or a chat message (the quote last on the
-line) also has the quote put on one line first and cut to QUOTE_WIDTH, whatever the log width."""
+"""How the bot's log lines look: the message alone, marked WARN, ERROR or DEBUG when it is not an ordinary (INFO) line. Only a chat
+message (a request quoted last on a line) is shortened: put on one line and cut to the log width (LOG_WIDTH) with an ellipsis (…)
+marking the cut. Every other line, and a traceback, is logged whole."""
 
 import logging
 
 # Errors that point at the code are logged with their traceback; any other failure (an outage, a refusal, a full disk) is one line
 BUGS = (AssertionError, AttributeError, IndexError, KeyError, NameError, TypeError, ValueError, ZeroDivisionError)
 
-QUOTE_WIDTH = 48          # a quoted request or chat message keeps this many characters, then an ellipsis if it was longer (LOG_WIDTH cuts the whole line, if set)
 QUOTES = {"quotes": True}   # extra= for a line whose last argument is a request or a chat message
 
 
@@ -17,11 +16,11 @@ def fit(text: str, room: int) -> str:
 
 
 class LogFormat(logging.Formatter):
-    """"INFO message": the level (WARNING is shown as WARN) and the message, with no module name. Cuts each line of the message to
+    """"INFO message": the level (WARNING is shown as WARN) and the message, with no module name. Cuts a quoted chat message to
     the width; a traceback (or stack) follows whole."""
 
-    def __init__(self, fmt: str, width: int = 0):
-        """width: the most characters of a line of the log; 0 cuts none."""
+    def __init__(self, fmt: str, width: int = 48):
+        """width: the most characters of a chat message kept in the log, then an ellipsis; 0 keeps all."""
         super().__init__(fmt)
         self.width = width
 
@@ -41,9 +40,8 @@ class LogFormat(logging.Formatter):
             record.levelname, record.msg = shown, text
         quote = str(record.args[-1]) if getattr(record, "quotes", False) and isinstance(record.args, tuple) and record.args else None
         if quote and line.endswith(quote):
-            line = line[:len(line) - len(quote)] + fit(" ".join(quote.split()), QUOTE_WIDTH + 1)   # the quote on one line, and short
-        if self.width:
-            line = "\n".join(fit(part, self.width) for part in line.split("\n"))
+            one = " ".join(quote.split())   # the quote on one line, and short
+            line = line[:len(line) - len(quote)] + (one if not self.width or len(one) <= self.width else one[:self.width] + "…")
         if record.exc_info and not record.exc_text:
             record.exc_text = self.formatException(record.exc_info)
         return "\n".join(filter(None, [line, record.exc_text, record.stack_info and self.formatStack(record.stack_info)]))

@@ -44,7 +44,7 @@ ON, OFF = ("on", "yes", "true", "1"), ("off", "no", "false", "0")
 # Each reader takes a setting's text (stripped; empty when unset or blank), its default and the variable's name.
 def _flag(value: str, default: bool, name: str) -> bool:
     """An on/off setting: on, yes, true or 1; off, no, false or 0; unset or empty is the default. Any other value keeps the
-    default too, with a warning, so a typo can't switch a safeguard such as ADMIN_ONLY off."""
+    default too, with a warning, so a typo changes nothing."""
     if value.lower() in ON:
         return True
     if value.lower() in OFF:
@@ -206,12 +206,12 @@ class Config:
     tuya_client_secret: str = _setting("TUYA_CLIENT_SECRET", "")
     tuya_base_url: str = _setting("TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url)   # the data centre's address (EU by default)
     irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
-    admin_only: bool = _setting("ADMIN_ONLY", True, _flag)          # the bot answers nobody but the admins of the groups it is in
+    admin_only: bool = _setting("ADMIN_ONLY", False, _flag)         # on: the bot answers nobody but the admins of the groups it is in (and ADMIN_CHAT_IDS)
     admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts
     telegram_preload_chat: int | None = _setting("TELEGRAM_PRELOAD_CHAT", None, _chat_id)   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
     antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
-    log_width: int = _setting("LOG_WIDTH", 0, _whole)              # the most characters of a log line, cut with an ellipsis (…); 0 cuts none (a chat message in the log keeps 48 characters, then …)
+    log_width: int = _setting("LOG_WIDTH", 48, _whole)             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property

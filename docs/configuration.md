@@ -52,7 +52,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADMIN_ONLY` | `on` | Answer only admins/creators of groups the bot is in. Others get "only group admins" when addressed. `/alerts` is openable by anyone in a group (changes stay admin-only). Admin list cached 10 min |
+| `ADMIN_ONLY` | `off` | `on`: answer only admins/creators of groups the bot is in. Others get "only group admins" when addressed. `/alerts` is openable by anyone in a group (changes stay admin-only). Admin list cached 10 min |
 | `ADMIN_CHAT_IDS` | – | Extra allowed ids, comma/space separated. User id: allowed before any group exists. Group id (negative): adds its admins and anonymous admins |
 
 ### Alerts
@@ -76,5 +76,5 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | Variable | Default | Description |
 |---|---|---|
 | `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | State (`bot_state.json`) and SQLite caches. Relative paths from the working dir. Created if missing. Matplotlib cache in `matplotlib/` (or `MPLCONFIGDIR`) |
-| `LOG_WIDTH` | `0` | Max log line length, cut with `…`; `0` = no cut. A chat message quoted in the log always keeps its first 48 characters, then `…` |
+| `LOG_WIDTH` | `48` | Characters of a chat message kept in the log, then `…`; `0` keeps all. No other line is cut |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the bot's own lines (chart timings) |

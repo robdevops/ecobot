@@ -380,9 +380,9 @@ def test_log_lines_do_not_name_their_module():
     assert fmt.format(record("ecobot")) == "hello" and fmt.format(record("lib.bot")) == "hello"        # and no "INFO" before an ordinary line
 
 
-def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line():
+def test_only_a_chat_message_is_cut_to_the_log_width_and_it_is_put_on_one_line():
     from lib.logs import QUOTES, LogFormat
-    fmt = LogFormat("%(levelname)s %(message)s", width=40)
+    fmt = LogFormat("%(levelname)s %(message)s", width=20)
 
     def line(msg, *args, quotes=True):
         record = logging.LogRecord("lib.bot", logging.INFO, __file__, 1, msg, args, None)
@@ -391,21 +391,19 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
         return fmt.format(record)
     asked = "what was the hottest it got last week, and when?"
     assert line("[@rob] %s", "how hot\nis  it") == "[@rob] how hot is it"        # short enough: whole, on one line
-    assert line("[@rob] %s", asked) == "[@rob] what was the hottest it got last…"               # 40 characters, the ellipsis included
+    assert line("[@rob] %s", asked) == "[@rob] " + asked[:20] + "…"                # 20 characters kept, then the ellipsis
     timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
-    assert line(timings, quotes=False) == "Chart ms: data 12, calc 6, draw 112, PN…"      # a line that quotes nothing is cut too
-    assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
-    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is cut too
+    assert line(timings, quotes=False) == timings                                  # a line that quotes nothing is never cut
+    assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 50
+    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # nor is a warning or an error
         record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
-        assert fmt.format(record) == f"{name} " + timings[:40 - len(name) - 2] + "…" and record.levelname == logging.getLevelName(level)
+        assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
     fmt.width = 0
-    long = "what was the hottest and the coldest it got last week, and on which days?"
-    assert line("[@rob] %s", asked) == "[@rob] " + asked and line(timings, quotes=False) == timings   # 0 cuts no line ...
-    assert line("[@rob] %s", long) == "[@rob] " + long[:48] + "…"                      # ... but a chat message keeps 48 characters, then …
-    assert line(timings, quotes=False) == timings
+    assert line("[@rob] %s", asked) == "[@rob] " + asked                           # 0 keeps the whole message
+    assert LogFormat("%(message)s").width == 48                                     # and the default is 48
 
 
-def test_a_traceback_is_logged_whole_after_its_cut_message():
+def test_a_traceback_is_logged_whole_after_its_message():
     import sys
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s", width=40)
@@ -415,18 +413,18 @@ def test_a_traceback_is_logged_whole_after_its_cut_message():
         record = logging.LogRecord("lib.bot", logging.ERROR, __file__, 1, "Failed to deliver reply to chat 12345678 in the group", None,
                                    sys.exc_info())
     lines = fmt.format(record).split("\n")
-    assert lines[0] == "ERROR Failed to deliver reply to chat 1…" and lines[1] == "Traceback (most recent call last):"
+    assert lines[0] == "ERROR Failed to deliver reply to chat 12345678 in the group" and lines[1] == "Traceback (most recent call last):"
     assert lines[-1] == "KeyError: 'a key whose name is far longer than the forty characters of the log width'"
     assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
 
 
-def test_the_log_width_is_0_unless_set_and_0_cuts_none(monkeypatch):
+def test_the_log_width_is_48_unless_set_and_0_keeps_whole_messages(monkeypatch):
     from lib.config import Config
     for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_WIDTH", raising=False)
-    assert Config.from_env().log_width == 0
-    for value, want in (("120", 120), ("71", 71), ("junk", 0), ("-5", 0), ("7.5", 0), ("²", 0)):
+    assert Config.from_env().log_width == 48
+    for value, want in (("120", 120), ("0", 0), ("junk", 48), ("-5", 48), ("7.5", 48), ("²", 48)):
         monkeypatch.setenv("LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
 

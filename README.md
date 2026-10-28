@@ -135,7 +135,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 
 After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 
-Every setting is in [docs/configuration.md](docs/configuration.md). More: [what the bot does](docs/features.md), [how it works](docs/how-it-works.md), [developing](DEVELOPMENT.md).
+Every setting is in [docs/configuration.md](docs/configuration.md).
 
 ### Docker networking
 
@@ -204,3 +204,5 @@ Compose replaces the container only if the image or the settings changed. To rem
 ```
 sudo docker image prune -f && sudo docker builder prune -f
 ```
+
+More: [what the bot does](docs/features.md), [how it works](docs/how-it-works.md), [developing](DEVELOPMENT.md).

@@ -203,7 +203,7 @@ def commit_in(git_dir) -> str:
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
-    _handler.formatter.width = cfg.log_width   # every log line is cut to it from here on
+    _handler.formatter.width = cfg.log_width   # a chat message in the log is cut to it from here on
     for name in ("ecobot", "lib"):   # the bot's own lines: the libraries keep theirs
         logging.getLogger(name).setLevel(cfg.log_level)
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
