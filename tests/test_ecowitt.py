@@ -54,7 +54,7 @@ async def test_the_station_names_its_own_time_zone(tmp_path, caplog, zone, used)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     await eco.close()
-    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and "(AA:BB:CC:DD:EE:FF) via Ecowitt cloud" in caplog.text
+    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and "(AA:BB:CC:DD:EE:FF) via Ecowitt cloud" in eco.summary
     assert ("Ecowitt names a time zone Python doesn't know, 'Mars/Olympus'" in caplog.text) == (zone == "Mars/Olympus")
 
 
@@ -1481,7 +1481,7 @@ async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_say
                                             "end_date": f"{today} 23:59:59"})
     assert reply.startswith("Error: no history data returned")
     text = caplog.text
-    assert "History cache: " in text and str(eco.cache.path) in text
+    assert any(line.startswith("History cache: ") and str(eco.cache.path) in line for line in eco.startup_lines())
     assert "History query empty" in text and "readings held for the window {'5min': 0, '30min': 0, '1day': 0}" in text
 
 

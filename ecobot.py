@@ -231,7 +231,7 @@ async def main():
                         " (XAI_API_KEY is no longer used: the model now comes through OpenRouter)" if os.getenv("XAI_API_KEY") else "")
         state = AlertState(cfg.state_path)
         if cfg.admin_only:
-            log.info("ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
+            log.info("Telegram: ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
             if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
                 log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                             "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
@@ -264,6 +264,9 @@ async def main():
             stack.push_async_callback(source.warmer.stop)
 
         log.info("Telegram: @%s, Model: %s", app.bot.username, cfg.openrouter_model if client else "none")
+        for source in sources:   # what each is reading, in the order they are listed
+            for line in source.startup_lines():
+                log.info("%s", line)
         notify = Notifier(app.bot, state)
         await bot.publish_commands(app.bot)   # the / menu
         await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones

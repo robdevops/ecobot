@@ -17,6 +17,11 @@ class Source(ABC):
     tz: tzinfo
     tools: list[Tool]
     warmer: Warmer
+    summary: str = ""   # set by start(): the line that tells what the source is reading and from where (logged by the startup, in order)
+
+    def startup_lines(self) -> list[str]:
+        """The lines the start-up logs for this source."""
+        return [self.summary] if self.summary else []
 
     @abstractmethod
     async def start(self):

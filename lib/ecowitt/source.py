@@ -149,6 +149,7 @@ class Ecowitt(Source):
         self._polled: float = 0.0            # when the poll last had an answer
         self._poll_ok: bool | None = None
         self._recorded = 0.0
+        self.cache_line = ""
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
@@ -187,13 +188,16 @@ class Ecowitt(Source):
             pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        log.info("Weather [Ecowitt]: '%s' (%s) via %s (every %gs)%s", self.station_name, self.mac, self.via, self.warmer.interval,
-                 f", {len(devices)} devices" if len(devices) > 1 else "")
+        self.summary = (f"Ecowitt: '{self.station_name}' ({self.mac}) via {self.via} (every {self.warmer.interval:g}s)"
+                        + (f", {len(devices)} devices" if len(devices) > 1 else ""))
         try:
             size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
-            log.info("History cache: %s (%.1f MB)", self.cache.path, size / 1e6)
+            self.cache_line = f"History cache: {self.cache.path} ({size / 1e6:.1f} MB)"
         except Exception as e:   # only a log line
             log.warning("History cache not readable: %s", e)
+
+    def startup_lines(self) -> list[str]:
+        return [*([self.cache_line] if self.cache_line else []), *super().startup_lines()]
 
     @property
     def archive_pace(self) -> float | None:

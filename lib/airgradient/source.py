@@ -126,14 +126,15 @@ class AirGradient(Source):
                 self._names = {k: v for k, v in (await self._get("current")).items() if k in ("locationName", "locationType")}
                 row = {**row, **self._names}
                 self._current = (row, self._current[1])
-            log.info("Air [AirGradient]: %s", self._summary(row))
+            self.summary = f"AirGradient: {self._summary(row)}"
         except Exception as e:  # keep going: the sensor may just be briefly unreachable
             log.warning("AirGradient %s not readable yet: %s", f"location {self.loc}" if self.cloud else "sensor", e)
 
     def _summary(self, row: dict) -> str:
         """The start-up line: the sensor's name, its cloud location, where the readings come from and how often."""
         local = self.local
-        sensor = f"{local.describe()} ({local.address[0]})" if local and local.working and local.address else None
+        sensor = (local.describe() + ("" if local.describe().split(":")[0] == local.address[0] else f" ({local.address[0]})")
+                  if local and local.working and local.address else None)
         via = [sensor, "cloud fallback" if sensor else "AirGradient cloud"] if self.cloud else [sensor]
         if local and not sensor and self.cloud:
             via.append(f"{local.describe()} not answering")

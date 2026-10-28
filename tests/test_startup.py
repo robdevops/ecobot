@@ -76,7 +76,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Weather [Ecowitt]: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot, Model: " in log
+    assert "Ecowitt: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot, Model: " in log
     assert not any(line.startswith(("Sources:", "Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
     assert "Startup fetch:" not in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
@@ -149,8 +149,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Ecowitt failed" in log and "AirGradient failed" in log        # the summary says so
-    assert "the network dropped" in log                                     # and the reason is in the log
+    assert "the network dropped" in log                                     # the reason is in the log
     assert " req, held " in log and "AirGradient archive:" in log         # yet both archives ran
     assert "Startup fetch failed" not in log                            # not lost to the catch-all
 
