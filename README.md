@@ -102,7 +102,17 @@ sudo docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot
   --log-driver $(test -S /run/systemd/journal/socket && echo journald || echo local) ecobot
 ```
 
-Then send `/report` to your bot. Logs: `docker logs -f ecobot`.
+Then send `/report` to your bot. Logs, with timestamps:
+
+```
+sudo docker logs -tf ecobot
+```
+
+On a host with a journal (the `docker run` above then logs to it), the same logs are in the journal, as for the systemd service:
+
+```
+sudo journalctl -f CONTAINER_NAME=ecobot
+```
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 

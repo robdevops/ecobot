@@ -62,11 +62,36 @@ def ranges_of(states: list[tuple[float, float]], start: float, end: float) -> di
     return out
 
 
+NAME_NOT_FOUND = ("name or service not known", "nodename nor servname", "temporary failure in name resolution", "getaddrinfo failed")
+
+
+class Trouble:
+    """Home Assistant failing, said once for all the places that ask it (the live poll, the minutes, the ranges, the history), not once
+    for each; and that it is answering again, once."""
+
+    def __init__(self, url: str):
+        self.url, self.failing = url, False
+
+    def failed(self, what: str, error: object, then: str = ""):
+        if self.failing:
+            return
+        self.failing = True
+        hint = (f". The name in HOMEASSISTANT_URL ({self.url}) can't be found from here: a .local name needs mDNS, which a Docker container "
+                "lacks; use the address (http://192.168.x.x:8123) or run the container with --network host") if any(m in str(error).lower() for m in NAME_NOT_FOUND) else ""
+        log.warning("Home Assistant: the %s failed (%s)%s%s", what, error, f"; {then}" if then else "", hint)
+
+    def ok(self):
+        if self.failing:
+            self.failing = False
+            log.info("Home Assistant is answering again")
+
+
 class HomeAssistant:
     """Home Assistant's REST API: the station's entities (found by name), their states now and their history."""
 
     def __init__(self, url: str, token: str, transport=None):
         self.client = httpx.AsyncClient(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=60, transport=transport)
+        self.trouble = Trouble(url)
         self.prefix: str | None = None
         self.units: dict[str, str] = {}   # entity id -> the unit Home Assistant shows it in (read with its states)
 

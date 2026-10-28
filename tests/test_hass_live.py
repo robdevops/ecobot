@@ -54,14 +54,14 @@ async def test_a_home_assistant_that_stops_answering_is_said_once_and_the_cloud_
     home.off = True
     task = asyncio.create_task(eco.watch_live())
     await asyncio.sleep(0.3)
-    assert caplog.text.count("Home Assistant's live reading failed") == 1                  # the poll's own line, once
+    assert caplog.text.count("Home Assistant: the ") == 1                                  # every place that asks it, one line between them
     before = eco.api.second.requests
     await eco.live_rain()                                                                  # no poll to use: the fallback's request, the cloud's
     assert eco.api.second.requests == before + 1
     home.off = False
     await asyncio.sleep(0.2)
     task.cancel()
-    assert "live reading is back" in caplog.text
+    assert "Home Assistant is answering again" in caplog.text
     await eco.close()
 
 
@@ -69,4 +69,22 @@ async def test_a_cloud_only_station_does_not_poll(tmp_path, monkeypatch):
     eco = Ecowitt(config(tmp_path), ecowitt_transport()[0])
     assert eco.fast is None
     await asyncio.wait_for(eco.watch_live(), 1)                                            # returns at once
+    await eco.close()
+
+
+async def test_a_name_that_cannot_be_found_is_said_once_for_every_place_that_asks_with_a_way_out(tmp_path, monkeypatch, caplog):
+    import httpx
+    monkeypatch.setattr(source, "LIVE_POLL_SECONDS", 0.02)
+
+    def nowhere(request):
+        raise httpx.ConnectError("[Errno -2] Name or service not known")
+    kw = {"ecowitt_api_key": "", "ecowitt_app_key": "", "homeassistant_url": "http://homeassistant.local:8123", "homeassistant_token": "tok"}
+    eco = Ecowitt(config(tmp_path, **kw), None, httpx.MockTransport(nowhere))
+    caplog.set_level(logging.INFO)
+    task = asyncio.create_task(eco.watch_live())
+    await eco.import_ranges()
+    await asyncio.sleep(0.2)
+    task.cancel()
+    assert caplog.text.count("Home Assistant: the ") == 1                                  # ranges, minutes and live reading: one line
+    assert "homeassistant.local:8123" in caplog.text and "--network host" in caplog.text and "192.168" in caplog.text
     await eco.close()

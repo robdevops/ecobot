@@ -89,7 +89,7 @@ async def test_the_station_folds_home_assistants_readings_into_its_ranges_and_lo
     caplog.clear()
     await eco.import_ranges()
     await eco.import_ranges()
-    assert caplog.text.count("couldn't be read") == 1                                   # once, not every 15 minutes
+    assert caplog.text.count("Home Assistant: the history") == 1                                   # once, not every 15 minutes
     await eco.close()
 
 

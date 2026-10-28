@@ -58,13 +58,24 @@ class FallbackAPI:
             if hasattr(api, "set_timezone"):
                 api.set_timezone(tz)
 
+    def _trouble(self, which: str):
+        """Home Assistant's own account of its failing, shared with the places that ask it directly (None for the cloud)."""
+        return getattr(getattr(self.first, "ha", None), "trouble", None) if which == "first" else None
+
     def _failed(self, which: str, what: str, error: EcowittError):
+        if trouble := self._trouble(which):
+            trouble.failed(what, error, "the cloud is used where it can")
+            self._down[which] = True
+            return
         if not self._down.get(which):
             log.warning("%s: %s failed (%s); the other is used where it can", "Home Assistant" if which == "first" else "Ecowitt's cloud", what, error)
         self._down[which] = True
 
     def _fine(self, which: str):
-        if self._down.pop(which, False):
+        if trouble := self._trouble(which):
+            self._down.pop(which, None)
+            trouble.ok()
+        elif self._down.pop(which, False):
             log.info("%s is answering again", "Home Assistant" if which == "first" else "Ecowitt's cloud")
 
     async def devices(self) -> list[dict]:

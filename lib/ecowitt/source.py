@@ -264,10 +264,11 @@ class Ecowitt(Source):
             found = await self.ha.ranges(time.time() - (RANGE_KEEP_DAYS * 86400 if first else HA_RECENT_SECONDS))
             marks = await asyncio.to_thread(self.live.put, found)
         except Exception as e:
-            if self._ha_ok is not False:
-                log.warning("Home Assistant's readings couldn't be read (%s: %s); the charts' ranges come from the bot's own readings", type(e).__name__, e)
+            self.ha.trouble.failed("history for the charts' ranges", f"{type(e).__name__}: {e}",
+                                   "the ranges come from the bot's own readings")
             self._ha_ok = False
             return
+        self.ha.trouble.ok()
         if first or not self._ha_ok:
             log.info("Home Assistant: %d 5-minute ranges for %d readings%s", marks, len(found), f" (the last {RANGE_KEEP_DAYS} days at most)" if first else "")
         self._ha_ok = True
@@ -296,12 +297,10 @@ class Ecowitt(Source):
             try:
                 data = await self.fast.realtime(self.mac, ",".join(LIVE_GROUPS))
             except Exception as e:
-                if self._poll_ok is not False:
-                    log.warning("Home Assistant's live reading failed (%s); asked again every %g s", e, LIVE_POLL_SECONDS)
+                self.fast.ha.trouble.failed("live reading", e, f"asked again every {LIVE_POLL_SECONDS:g} s")
                 self._poll_ok = False
                 continue
-            if self._poll_ok is False:
-                log.info("Home Assistant's live reading is back")
+            self.fast.ha.trouble.ok()
             self._poll_ok, self._polled = True, time.time()
             if (at := newest(data)) <= self._seen:
                 continue
@@ -322,12 +321,10 @@ class Ecowitt(Source):
             data = await self.fast.history(self.mac, "1min", naive_local(since, self.tz), naive_local(now, self.tz), ",".join(self.groups))
             await asyncio.to_thread(self.minute_store.put, data, now)
         except Exception as e:
-            if self._minutes_ok is not False:
-                log.warning("Home Assistant's minute readings couldn't be taken (%s); short charts use the 5-minute readings", e)
+            self.fast.ha.trouble.failed("minute readings", e, "short charts use the 5-minute readings")
             self._minutes_ok = False
             return
-        if self._minutes_ok is False:
-            log.info("Home Assistant's minute readings are back")
+        self.fast.ha.trouble.ok()
         self._minutes_ok = True
 
     async def live_rain(self) -> tuple[int, dict] | None:
