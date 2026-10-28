@@ -107,6 +107,8 @@ Docker keeps at most 5 files of 10 MB of them, compressed, so they do not fill t
 
 To upgrade, see [Upgrading](#upgrading).
 
+Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
+
 #### Docker networking
 
 `.local` names (mDNS) can't be found from Docker's private network: use IP addresses, or share the host's network (then run the `docker compose` command again):
@@ -117,13 +119,13 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobo
 
 #### Docker logging
 
-Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`; for both options list both files after `compose.yaml`, colon-separated):
+Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`):
 
 ```
 echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee /opt/ecobot/.env
 ```
 
-Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
+To use both, set `COMPOSE_FILE=compose.yaml:compose.host-network.yaml:compose.journald.yaml`.
 
 ## Configuration
 
