@@ -85,7 +85,7 @@ sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
 ```
 
 ```
-sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/
+sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
 ```
 
 ```
@@ -179,10 +179,6 @@ cd /opt/ecobot && sudo git pull
 
 ```
 sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
-```
-
-```
-sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
 ```
 
 ```
