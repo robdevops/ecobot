@@ -125,6 +125,16 @@ sudo docker image prune -f
 sudo docker builder prune -f
 ```
 
+#### Docker networking
+
+By default the container is on a private bridge network, where `.local` names (mDNS) can't be found. Either use IP addresses in `HOMEASSISTANT_URL` and `AIRGRADIENT_LOCAL_URL` (reserve them on your router), or let the container use the host's network, where `.local` names work as they do for the systemd service. To do that, create `compose.override.yaml` next to `compose.yaml` (Compose reads it automatically, and `git pull` leaves it alone):
+
+```
+printf 'services:\n  ecobot:\n    network_mode: host\n' | sudo tee /opt/ecobot/compose.override.yaml
+```
+
+Then run the `docker compose up -d --build` command again. To go back, delete the file and run it again. (Removing the `#` from `# network_mode: host` in `compose.yaml` does the same, but the next `git pull` then has a local change to merge.)
+
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
 ## Configuration

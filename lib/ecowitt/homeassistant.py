@@ -77,7 +77,7 @@ class Trouble:
             return
         self.failing = True
         hint = (f". The name in HOMEASSISTANT_URL ({self.url}) can't be found from here: a .local name needs mDNS, which a Docker container "
-                "lacks; use the address (http://192.168.x.x:8123) or run the container with --network host") if any(m in str(error).lower() for m in NAME_NOT_FOUND) else ""
+                "lacks; use the address (http://192.168.x.x:8123) or put the container on the host network (README: Docker networking)") if any(m in str(error).lower() for m in NAME_NOT_FOUND) else ""
         log.warning("Home Assistant: the %s failed (%s)%s%s", what, error, f"; {then}" if then else "", hint)
 
     def ok(self):

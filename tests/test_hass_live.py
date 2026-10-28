@@ -86,5 +86,5 @@ async def test_a_name_that_cannot_be_found_is_said_once_for_every_place_that_ask
     await asyncio.sleep(0.2)
     task.cancel()
     assert caplog.text.count("Home Assistant: the ") == 1                                  # ranges, minutes and live reading: one line
-    assert "homeassistant.local:8123" in caplog.text and "--network host" in caplog.text and "192.168" in caplog.text
+    assert "homeassistant.local:8123" in caplog.text and "host network" in caplog.text and "192.168" in caplog.text
     await eco.close()

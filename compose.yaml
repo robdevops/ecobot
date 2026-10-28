@@ -10,6 +10,9 @@ services:
       args:
         COMMIT: ${COMMIT:-unknown}
     restart: unless-stopped
+    # Docker's default is a private bridge network, where .local names (mDNS) can't be found: use IP addresses in HOMEASSISTANT_URL and
+    # AIRGRADIENT_LOCAL_URL, or share the host's network by removing the # below (README: "Docker networking").
+    # network_mode: host
     env_file: /etc/ecobot.env
     volumes:
       - /var/lib/private/ecobot:/data
