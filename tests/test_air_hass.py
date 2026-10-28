@@ -124,3 +124,28 @@ async def test_without_home_assistant_there_is_nothing_to_import(tmp_path):
     air = AirGradient(config(tmp_path), transport=transport)
     assert air.ha is None and await air.import_ranges() is None
     await air.close()
+
+
+async def test_the_air_sensor_shares_the_weather_stations_home_assistant_and_its_ranges_are_imported_on_a_schedule(tmp_path, monkeypatch):
+    import ecobot
+    from lib.ecowitt import Ecowitt
+    from tests.fakes import ecowitt_transport, home_assistant_transport
+    cfg = config(tmp_path, homeassistant_url="http://ha", homeassistant_token="tok")
+    eco_t, _ = ecowitt_transport()
+    ha_t, _ = home_assistant_transport()
+    air_t, _ = air_transport()
+    eco_init, air_init = Ecowitt.__init__, AirGradient.__init__
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c: eco_init(self, c, eco_t, ha_t))
+    monkeypatch.setattr(ecobot.AirGradient, "__init__", lambda self, c, **kw: air_init(self, c, transport=air_t, **kw))
+    sources, _ = await ecobot.start_sources(cfg)
+    eco, air = sources
+    assert air.ha is eco.ha and air.ha is not None and not air._own_ha                   # one client, so Home Assistant failing is said once
+    for source in sources:
+        await source.close()
+
+
+async def test_without_the_weather_station_the_air_sensor_has_a_home_assistant_client_of_its_own(tmp_path):
+    transport, _ = air_transport()
+    air = AirGradient(config(tmp_path, homeassistant_url="http://ha", homeassistant_token="tok"), transport=transport)
+    assert air.ha is not None and air._own_ha
+    await air.close()
