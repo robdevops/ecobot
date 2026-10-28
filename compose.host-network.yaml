@@ -1,0 +1,3 @@
+services:
+  ecobot:
+    network_mode: host

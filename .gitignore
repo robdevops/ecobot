@@ -15,4 +15,4 @@ chart-diffs/
 !tests/data/*.sqlite
 .claude/settings.local.json
 matplotlib/
-compose.override.yaml
+.env
