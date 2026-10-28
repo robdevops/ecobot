@@ -59,11 +59,11 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     location unless one is configured."""
     sources: list[Source] = []
 
-    async def start(kind: type[Source], *args):
+    async def start(kind: type[Source], *args, **kwargs):
         """A source made and started; one that fails either way is logged and left out."""
         source = None
         try:
-            source = kind(*args)
+            source = kind(*args, **kwargs)
             await source.start()
             sources.append(source)
         except Exception as e:
@@ -81,7 +81,7 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
         log.warning("The time zone has no name, only an offset (%s), so daylight saving will put the times out: set TZ, "
                     "e.g. TZ=Australia/Melbourne", cfg.tz)
     if cfg.airgradient:
-        await start(AirGradient, cfg)
+        await start(AirGradient, cfg, **({"ha": eco.ha} if eco and eco.ha else {}))   # (one Home Assistant client for both)
     if cfg.pollen:
         await start(Pollen, cfg)
     if cfg.forecast:
@@ -162,8 +162,14 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
 
     async def air_part():
         await safely(air.warm, True)
+        tasks.start(air_history())   # even if the sensor was unreachable just now
+
+    async def air_history():
+        """The days the cache lacks, then the ranges Home Assistant kept, every HA_IMPORT_SECONDS (they need the readings they belong to)."""
         if air.cloud:
-            tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
+            await safely(air_backfill)
+        if air.ha:
+            await every(HA_IMPORT_SECONDS, air.import_ranges)
 
     async def air_backfill():
         started = time.monotonic()

@@ -83,6 +83,16 @@ class AirStore:
             self.db.execute("INSERT OR REPLACE INTO recorded VALUES (?, ?)", (self.loc, row["ts"]))
             self.db.commit()
 
+    def add_spreads(self, found: dict[str, dict[int, tuple[float, float]]]) -> int:
+        """Keep these ranges ({metric: {bucket start: (lowest, highest)}}, Home Assistant's) where the store has none for that metric and
+        bucket: the bot's own are kept. Returns how many were new."""
+        with self._lock:
+            before = self.db.total_changes
+            self.db.executemany("INSERT OR IGNORE INTO spreads VALUES (?, ?, ?, ?, ?)",
+                                [(self.loc, ts, name, lo, hi) for name, got in found.items() for ts, (lo, hi) in got.items()])
+            self.db.commit()
+            return self.db.total_changes - before
+
     def merge(self, rows: list[dict]) -> int:
         """Store these readings where the store has none at that time (what it has already, recorded or fetched, is kept). Returns how many were new."""
         with self._lock:
@@ -123,12 +133,18 @@ class AirStore:
             found = self.db.execute(
                 f"SELECT ts, {', '.join(COLUMNS)} FROM readings WHERE loc=? AND ts>=? AND ts<? ORDER BY ts",
                 (self.loc, start_ts, end_ts)).fetchall()
-            spread = self.db.execute("SELECT ts, name, lo, hi FROM spreads WHERE loc=? AND ts>=? AND ts<?", (self.loc, start_ts, end_ts)).fetchall()
-        ranges: dict[int, dict] = {}
-        for ts, name, lo, hi in spread:
-            ranges.setdefault(ts, {})[name] = (lo, hi)
+        ranges = self.spreads(start_ts, end_ts)
         return [{"ts": ts, **{c: v for c, v in zip(COLUMNS, vals) if v is not None}, **({"_range": ranges[ts]} if ts in ranges else {})}
                 for ts, *vals in found]
+
+    def spreads(self, start_ts: int, end_ts: int) -> dict[int, dict[str, tuple[float, float]]]:
+        """{bucket start: {metric: (lowest, highest)}} of the ranges kept with start_ts <= ts < end_ts."""
+        with self._lock:
+            found = self.db.execute("SELECT ts, name, lo, hi FROM spreads WHERE loc=? AND ts>=? AND ts<?", (self.loc, start_ts, end_ts)).fetchall()
+        ranges: dict[int, dict] = {}
+        for ts, name, lo, hi in found:
+            ranges.setdefault(ts, {})[name] = (lo, hi)
+        return ranges
 
     def load_day(self, day: date) -> list[dict]:
         return self.load(*day_bounds(day, self.tz))

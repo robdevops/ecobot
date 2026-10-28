@@ -26,15 +26,17 @@ from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
-from ..lines import Plotted, Sample, build_line
+from ..ecowitt.homeassistant import HomeAssistant
+from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
-from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
+from ..timeutil import day_bounds, day_text, local_date, local_epoch, naive_local, parse_local, to_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
 from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
+from .homeassistant import ANCHORS, checked, entity_ids, find_prefix, ranges as ha_ranges
 from .local import LocalSensor
 from .store import AirStore
 
@@ -47,6 +49,7 @@ MAX_INLINE_DAYS = 30              # missing days fetched while answering; more a
 HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly averages (24), not 5-minute (288)
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
 BUCKET = 300                      # the readings kept are 5-minute averages, on the clock (as AirGradient's are)
+HA_RECENT_SECONDS = 3 * 3600      # Home Assistant's ranges are read back for the last few hours each time (RANGE_KEEP_DAYS the first time)
 SAMPLE_SECONDS = 60               # with the sensor's own server: how often it is read (the keep-warm interval)
 MIN_SAMPLES = 3                   # a 5-minute average of fewer readings than this is not kept (the cloud fills that gap)
 GAP_GRACE = 120                   # a bucket is called missing only this long after it ends (its average is stored when the next one starts)
@@ -101,7 +104,9 @@ class AirGradient(Source):
 
     name = "AirGradient"
 
-    def __init__(self, cfg: Config, transport=None):
+    def __init__(self, cfg: Config, transport=None, ha: HomeAssistant | None = None):
+        """ha: the weather station's Home Assistant client, shared (so a failing Home Assistant is said once); else one of its own when
+        Home Assistant is set."""
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
         self.cloud = cfg.airgradient_cloud    # without an account only the sensor itself is asked, and the cloud never is
@@ -117,6 +122,10 @@ class AirGradient(Source):
         self.warmer = Warmer(self.warm, SAMPLE_SECONDS) if self.local else Warmer(self.warm)
         self._bucket: tuple[int, list[dict]] | None = None   # the bucket being averaged: (its start, the readings so far)
         self._gap_tried: dict[date, float] = {}               # when the cloud was last asked to fill a gap in a day
+        self.ha = ha or (HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None)   # its ranges
+        self._own_ha = ha is None and self.ha is not None
+        self._ha_ok: bool | None = None                        # Home Assistant's ranges: None until first read
+        self._ha_said: set[str] = set()                        # what was said once about them: no sensor, a metric that is another variant
         self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle, asked=asked), Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
 
     async def start(self):
@@ -140,6 +149,60 @@ class AirGradient(Source):
             via.append(f"{local.describe()} not answering")
         name = row.get("locationName") or (local and local.serial) or "sensor"
         return f"'{name}'{f' ({self.loc})' if self.cloud else ''} via {', '.join(v for v in via if v)} (every {self.warmer.interval:g}s)"
+
+    async def close(self):
+        await super().close()
+        if self._own_ha:
+            await self.ha.close()
+
+    async def import_ranges(self):
+        """Fold the ranges of the readings Home Assistant kept (homeassistant.py) into the store's: the last RANGE_KEEP_DAYS days the first
+        time (as far back as it has them), then the last few hours. Nothing when no Home Assistant is set or it has no AirGradient sensor
+        (said once). A failure is logged once, with its recovery (Home Assistant's own account of it); the bot's own ranges stay."""
+        if self.ha is None:
+            return
+        first, started, now = self._ha_ok is None, time.monotonic(), time.time()
+        start = int(now - (RANGE_KEEP_DAYS * 86400 if first else HA_RECENT_SECONDS)) // BUCKET * BUCKET
+        try:
+            states = await self.ha.states()
+            mine = {a: value_of(self._current[0], a) for a in ANCHORS} if self._current else None
+            prefix, sensors = find_prefix(states, mine)
+            if prefix is None:
+                if "none" not in self._ha_said:
+                    self._ha_said.add("none")
+                    log.info("Home Assistant has no AirGradient sensor (no entity ending in _%s): the air sensor's ranges come from the "
+                             "bot's own readings", " or _".join(ANCHORS))
+                self.ha.trouble.ok()
+                self._ha_ok = True
+                return
+            if sensors > 1 and "several" not in self._ha_said:
+                self._ha_said.add("several")
+                log.info("Home Assistant has %d AirGradient sensors; using %s*, whose reading is nearest this one's", sensors, prefix)
+            ids = entity_ids(prefix, states)
+            found: dict = {}
+            for chunk in range(start, int(now), 86400):   # a day a request
+                until = min(chunk + 86400, now)
+                history = await self.ha.history(list(ids), chunk - BUCKET, until)
+                for name, got in ha_ranges(history, ids, self.ha.units, chunk, until - 1, now).items():
+                    found.setdefault(name, {}).update(got)
+            rows, _, _ = await self.rows(naive_local(start, self.tz), naive_local(now, self.tz))
+            keep, verdict = checked(found, rows)
+            added = await asyncio.to_thread(self.store.add_spreads, keep)
+        except Exception as e:
+            self.ha.trouble.failed("history for the air sensor's ranges", f"{type(e).__name__}: {e}",
+                                   "the air sensor's ranges come from the bot's own readings")
+            self._ha_ok = False
+            return
+        self.ha.trouble.ok()
+        for name, (compared, agreed) in verdict.items():
+            if name not in keep and name not in self._ha_said:
+                self._ha_said.add(name)
+                log.info("Home Assistant's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes: perhaps the sensor's raw "
+                         "value), so its ranges aren't used", LABELS.get(name) or EXTRA_LABELS.get(name, name), agreed, compared)
+        if first or not self._ha_ok:
+            log.info("Backfill Home Assistant (AirGradient): %d ranges fetched, 0 failed, %d readings, %.0fs", added, len(keep),
+                     time.monotonic() - started)
+        self._ha_ok = True
 
     def describe(self) -> str:
         return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"
@@ -459,11 +522,17 @@ class AirGradient(Source):
         finished = [d for d in days if self._final(d)]   # all stored by now but the skipped: read in one query
         rows = (await asyncio.to_thread(self.store.load, day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1])
                 if finished else [])
-        for d in days[len(finished):]:   # today, and a day that has just ended: fetched, not stored
-            rows += await self._day_rows(d)
+        for d in days[len(finished):]:   # today, and a day that has just ended: fetched, not stored (but their ranges may be)
+            rows += await self._with_spreads(await self._day_rows(d), d)
         hourly = sum(1 for n in held.values() if n and n <= HOURLY_MAX_READINGS)
         lo, hi = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
         return [r for r in without_spikes(rows) if lo <= r["ts"] <= hi], hourly, skipped
+
+    async def _with_spreads(self, rows: list[dict], day: date) -> list[dict]:
+        """These readings of a day with the ranges the store holds for them (Home Assistant's, for a day the cloud gave): a reading's own
+        range, the bot's, wins."""
+        ranges = await asyncio.to_thread(self.store.spreads, *day_bounds(day, self.tz))
+        return [{**r, "_range": {**ranges[r["ts"]], **r.get("_range", {})}} if r["ts"] in ranges else r for r in rows]
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,
                       metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
