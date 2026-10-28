@@ -62,3 +62,13 @@ def test_daily_records_sit_at_ten_am_next_to_exact_days_and_carry_their_own_rang
 def test_too_little_gives_no_line():
     assert build_line(readings(1, 1800, 1800), TZ, 1800) is None
     assert build_line([], TZ, 1800) is None
+
+
+def test_a_band_is_drawn_wherever_there_is_a_range_even_for_a_short_part_of_the_period():
+    # the bot has only kept the readings' ranges since it began recording: the last 44 of a day's 5-minute readings
+    rs = [(T0 + i * 300, float(i % 7), (i % 7) - 2.0 if i >= 100 else None, (i % 7) + 3.0 if i >= 100 else None, 300) for i in range(144)]
+    line = build_line(rs, TZ, 143 * 300)
+    assert line.raw and line.low is not None
+    assert line.low[:100] == line.y[:100] == line.high[:100]                                       # no range before it: nothing shaded
+    assert all(lo < y < hi for lo, y, hi in zip(line.low[100:], line.y[100:], line.high[100:]))   # its range after
+    assert build_line(readings(144, 300, 300), TZ, 143 * 300).low is None                          # no range anywhere: no band

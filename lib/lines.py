@@ -159,7 +159,7 @@ def _as_they_are(rs: list[Sample]) -> Plotted | None:
     if len(rs) < 2:
         return None
     ranges = [r.bounds() for r in rs]
-    ranged = sum(1 for r in rs if r.low is not None or r.high is not None) >= len(rs) // 2
+    ranged = any(r.low is not None or r.high is not None for r in rs)   # shaded wherever a reading has a range (elsewhere it has none)
     return Plotted([r.t for r in rs], [r.value for r in rs], rs[0].seconds, True,
                 [lo for lo, _ in ranges] if ranged else None, [hi for _, hi in ranges] if ranged else None)
 
@@ -177,7 +177,7 @@ def _daily(fine: list[Sample], records: list[Sample], tz, until: date | None) ->
     xs = sorted(points)
     if len(xs) < 2:
         return None
-    ranged = sum(1 for t in xs if points[t][1] is not None) >= len(xs) // 2
+    ranged = any(points[t][1] is not None for t in xs)
     return Plotted(xs, [points[t][0] for t in xs], DAY, False,
                 [points[t][1] if points[t][1] is not None else points[t][0] for t in xs] if ranged else None,
                 [points[t][2] if points[t][2] is not None else points[t][0] for t in xs] if ranged else None)
