@@ -11,6 +11,19 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 **Outputs**
 - Tuya irrigation controllers
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+  - [systemd](#systemd)
+  - [Docker](#docker)
+    - [Docker networking](#docker-networking)
+    - [Docker logging](#docker-logging)
+- [Configuration](#configuration)
+- [Upgrading](#upgrading)
+  - [systemd](#systemd-1)
+  - [Docker](#docker-1)
+
 ## Features
 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
@@ -21,6 +34,8 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 - **Cheap to run:** most answers are worked out by the bot itself, and the AI model is only called when it's needed.
 
 ## Install
+
+Already installed? See [Upgrading](#upgrading).
 
 You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [OpenRouter API key](https://openrouter.ai/keys) for questions that need the AI model. Either way, start by putting your keys in one private file:
 
@@ -104,8 +119,6 @@ sudo docker logs -tf ecobot
 ```
 
 Docker keeps at most 5 files of 10 MB of them, compressed, so they do not fill the disk.
-
-To upgrade, see [Upgrading](#upgrading).
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
