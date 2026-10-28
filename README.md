@@ -112,7 +112,7 @@ cd /opt/ecobot
 sudo docker compose up -d --build
 ```
 
-Then message `/report` to your Telegram bot. Logs, with timestamps:
+Then message `/report` to your Telegram bot. Logs:
 
 ```
 sudo docker logs -tf ecobot
