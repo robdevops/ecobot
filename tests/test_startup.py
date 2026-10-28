@@ -76,8 +76,8 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Weather [Ecowitt]: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot" in log and "Model: " in log
-    assert not any(line.startswith(("INFO Sources:", "INFO Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
+    assert "Weather [Ecowitt]: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot, Model: " in log
+    assert not any(line.startswith(("Sources:", "Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
     assert "Startup fetch:" in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
     assert "failed" not in final and "days (5m/30m/4h/1d)" in final
@@ -369,10 +369,16 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     assert len(app.handlers) == 11 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
 
 
+def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():
+    fmt = ecobot.LogFormat("%(levelname)s %(message)s")
+    line = lambda level: fmt.format(logging.LogRecord("lib.bot", level, __file__, 1, "hello", None, None))
+    assert [line(l) for l in (logging.INFO, logging.WARNING, logging.ERROR, logging.DEBUG)] == ["hello", "WARN hello", "ERROR hello", "DEBUG hello"]
+
+
 def test_log_lines_do_not_name_their_module():
     fmt = ecobot.LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
-    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO hello"
+    assert fmt.format(record("ecobot")) == "hello" and fmt.format(record("lib.bot")) == "hello"        # and no "INFO" before an ordinary line
 
 
 def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line():
@@ -385,17 +391,17 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
             record.__dict__.update(QUOTES)
         return fmt.format(record)
     asked = "what was the hottest it got last week, and when?"
-    assert line("[@rob] %s", "how hot\nis  it") == "INFO [@rob] how hot is it"        # short enough: whole, on one line
-    assert line("[@rob] %s", asked) == "INFO [@rob] what was the hottest it got…"               # 40 characters, the ellipsis included
+    assert line("[@rob] %s", "how hot\nis  it") == "[@rob] how hot is it"        # short enough: whole, on one line
+    assert line("[@rob] %s", asked) == "[@rob] what was the hottest it got last…"               # 40 characters, the ellipsis included
     timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
-    assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
+    assert line(timings, quotes=False) == "Chart ms: data 12, calc 6, draw 112, PN…"      # a line that quotes nothing is cut too
     assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
     for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is cut too
         record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
         assert fmt.format(record) == f"{name} " + timings[:40 - len(name) - 2] + "…" and record.levelname == logging.getLevelName(level)
     fmt.width = 0
-    assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
-    assert line(timings, quotes=False) == "INFO " + timings
+    assert line("[@rob] %s", asked) == "[@rob] " + asked                           # 0 cuts none
+    assert line(timings, quotes=False) == timings
 
 
 def test_a_traceback_is_logged_whole_after_its_cut_message():
@@ -440,7 +446,7 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
     fmt = LogFormat("%(levelname)s %(message)s", width=80)
     record = logging.LogRecord("httpx2", logging.INFO, __file__, 1, 'HTTP Request: %s %s "%s %d %s"',
                                ("POST", "https://openrouter.ai/api/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
-    assert fmt.format(record) == 'INFO POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"'
+    assert fmt.format(record) == 'POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
 
 

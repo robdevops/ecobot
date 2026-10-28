@@ -132,7 +132,7 @@ class Ecowitt(Source):
                                 ha_transport) if cfg.ecowitt_home_assistant else None
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
-        self.via = "Home Assistant, Ecowitt cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
+        self.via = "Home Assistant, cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
         self.minute_store = MinuteStore(cfg.cache_path.with_name("ecowitt_minutes.sqlite")) if home else None   # (only Home Assistant has minutes)
         self._minutes_ok: bool | None = None
         self.fast = home                     # the API that can be asked every few seconds, if any

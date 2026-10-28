@@ -265,8 +265,7 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
 
-        log.info("Telegram: @%s", app.bot.username)
-        log.info("Model: %s", cfg.openrouter_model if client else "none")
+        log.info("Telegram: @%s, Model: %s", app.bot.username, cfg.openrouter_model if client else "none")
         notify = Notifier(app.bot, state)
         await bot.publish_commands(app.bot)   # the / menu
         await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones

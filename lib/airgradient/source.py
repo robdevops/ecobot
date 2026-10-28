@@ -134,7 +134,7 @@ class AirGradient(Source):
         """The start-up line: the sensor's name, its cloud location, where the readings come from and how often."""
         local = self.local
         sensor = f"{local.describe()} ({local.address[0]})" if local and local.working and local.address else None
-        via = [sensor, "AirGradient cloud fallback" if sensor else "AirGradient cloud"] if self.cloud else [sensor]
+        via = [sensor, "cloud fallback" if sensor else "AirGradient cloud"] if self.cloud else [sensor]
         if local and not sensor and self.cloud:
             via.append(f"{local.describe()} not answering")
         name = row.get("locationName") or (local and local.serial) or "sensor"
