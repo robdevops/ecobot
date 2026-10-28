@@ -16,4 +16,3 @@ chart-diffs/
 .claude/settings.local.json
 matplotlib/
 compose.override.yaml
-.env

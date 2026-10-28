@@ -4,7 +4,7 @@ For people changing the code. Tests and the GitHub checks are in [`DEVELOPMENT.m
 
 ## Docker logging
 
-The `docker compose` command in the README (`compose.yaml`) picks `--log-driver journald` when the host has a journal (`/run/systemd/journal/socket`), so `journalctl -f CONTAINER_NAME=ecobot` reads the log as well as `docker logs`. Without a journal it uses Docker's `local` driver, which rotates its own files (20 MB, 5 files by default). Docker has no setting that falls back by itself, hence the test in the command.
+The bot logs to stdout and `compose.yaml` gives the container Docker's `local` log driver, which compresses and rotates its files (5 files of 10 MB). Read the log with `docker logs -tf ecobot` (`-t` for the timestamps Docker records).
 
 ## Layout
 

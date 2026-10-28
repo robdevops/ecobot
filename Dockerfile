@@ -1,7 +1,7 @@
 # The bot as a small image: python:3.13-slim with the runtime packages in a venv that has no pip, no pip cache and no test suites,
 # and bytecode for only what the bot imports at start (bytecode for everything is 48 MB more; none adds ~2 s to every start).
 #   docker build -t ecobot .
-#   docker compose up -d --build   (compose.yaml; LOG_DRIVER from .env, as the README says)
+#   docker compose up -d --build   (compose.yaml)
 # Settings come from the environment, as under systemd (README); the state and caches are kept in /data, the folder mounted from the host.
 FROM python:3.13-slim AS base
 
