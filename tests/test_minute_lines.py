@@ -83,3 +83,20 @@ async def test_days_home_assistant_has_forgotten_keep_their_bands_in_a_chart_of_
     assert len(old) > 100 and line.low is not None and line.high is not None
     assert all(line.low[i] <= line.y[i] <= line.high[i] for i in old) and any(line.low[i] < line.high[i] for i in old)
     await eco.close()
+
+
+async def test_home_assistant_alone_is_kept_warm_and_backfilled_like_the_cloud(tmp_path):
+    from lib.ecowitt import Archive
+    eco, ha, _ = await home(tmp_path)
+    assert (await eco.warm(True)).startswith("Ecowitt ")
+    asked = len(ha.calls)
+    await eco.warm(False)
+    assert len(ha.calls) == asked                                                              # warm: the newest is in memory, nothing re-asked
+    fetched, failed = await Archive(eco, eco.archive_pace).run_once()
+    assert fetched > 10 and not failed                                                          # a day at a time, 5-minute, then the coarser
+    for cycle in ("5min", "30min", "1day"):
+        assert eco.cache.days_held(eco.mac, cycle, eco.groups) >= 8, cycle                       # (the fake has ten days)
+    again = len(ha.calls)
+    fetched, failed = await Archive(eco, 0).run_once()                                          # what is held is not asked again; the one day before
+    assert fetched <= 1 and not failed and len(ha.calls) == again                               # it began is tried (and costs no request: it has nothing)
+    await eco.close()
