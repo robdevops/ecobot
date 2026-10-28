@@ -14,6 +14,7 @@
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -48,6 +49,7 @@ class WeatherMonitor:
         self.station, self.state, self.notify = station, state, notify
         self.cooldown = cooldown_seconds
         self.quiet = quiet   # (from hour, to hour) local, no rain alerts in between; None: always on
+        self._rain_lock = asyncio.Lock()   # the minute's check and the live reading's look at the rain are one at a time
 
     def _quiet(self, ts: int) -> bool:
         if not self.quiet:
@@ -99,7 +101,20 @@ class WeatherMonitor:
         await self._cross(rows)
         self.state.save()
 
+    async def check_rain(self):
+        """Look at the rain alone, on a live reading that has just come in (the station is polled every few seconds, so this is the alert
+        within a few seconds of the gauge, not at the next minute's check)."""
+        rows = await self.station.recent(3)
+        live = await self.station.live_rain() if rows else None
+        if rows and live and live[0] > rows[-1][0]:
+            await self._rain(rows + [live])
+            self.state.save()
+
     async def _rain(self, rows: Rows):
+        async with self._rain_lock:
+            await self._rain_locked(rows)
+
+    async def _rain_locked(self, rows: Rows):
         m = self.state.monitor.setdefault("rain", {})
         m.setdefault("alerted_state", "dry")
         wet = wet_flags(rows)

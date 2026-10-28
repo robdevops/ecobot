@@ -149,8 +149,12 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
             eco.warmer.after.append(weather.check)  # checked on every fresh refresh
             running[:0] = WeatherMonitor.KINDS
             await weather.check()
+            if eco.fast is not None:   # Home Assistant: the rain alert looks at each new reading as it comes in, not only at the minute's refresh
+                eco.on_live.append(weather.check_rain)
         except Exception:
             log.exception("Weather alerts couldn't start")
+        if eco.fast is not None:
+            tasks.start(eco.watch_live())
         # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
         # need Ecowitt inline
         tasks.start(Archive(eco, eco.archive_pace).loop())

@@ -1,0 +1,72 @@
+import asyncio
+import logging
+import time
+
+from lib.ecowitt import Ecowitt, source
+from tests.fakes import config, ecowitt_transport, home_assistant_transport
+
+
+async def home_station(tmp_path, monkeypatch, both=False):
+    monkeypatch.setattr(source, "LIVE_POLL_SECONDS", 0.02)
+    transport, home = home_assistant_transport()
+    kw = {"homeassistant_url": "http://ha", "homeassistant_token": "tok"}
+    if not both:
+        kw.update(ecowitt_api_key="", ecowitt_app_key="")
+    eco = Ecowitt(config(tmp_path, **kw), ecowitt_transport()[0] if both else None, transport)
+    await eco.start()
+    return eco, home
+
+
+async def test_a_new_reading_is_found_in_seconds_and_calls_the_rain_alert_each_time(tmp_path, monkeypatch):
+    eco, home = await home_station(tmp_path, monkeypatch)
+    seen = []
+
+    async def alert():
+        seen.append(time.time())
+    eco.on_live.append(alert)
+    task = asyncio.create_task(eco.watch_live())
+    await asyncio.sleep(1.6)
+    task.cancel()
+    assert len(seen) >= 2 and eco._live and time.time() - eco._live[0] < 1               # a reading kept for "weather now" and the report
+    before = len([c for c in home.calls if c["path"] == "/api/states"])
+    ts, row = await eco.live_rain()                                                        # the alert's reading: the poll's, no request of its own
+    assert len([c for c in home.calls if c["path"] == "/api/states"]) == before and "rainfall.rain_rate" in row and ts
+    await eco.close()
+
+
+async def test_a_reading_no_newer_than_the_last_is_not_announced_again(tmp_path, monkeypatch):
+    eco, home = await home_station(tmp_path, monkeypatch)
+    original = home.__call__
+    seen = []
+    eco.on_live.append(lambda: seen.append(1) or asyncio.sleep(0))
+    first = await eco.fast.realtime(eco.mac, "outdoor")
+    eco._seen = max(int(o["time"]) for f in first.values() for o in f.values()) + 3600    # all that follow are older than it
+    task = asyncio.create_task(eco.watch_live())
+    await asyncio.sleep(0.2)
+    task.cancel()
+    assert not seen
+    await eco.close()
+
+
+async def test_a_home_assistant_that_stops_answering_is_said_once_and_the_cloud_answers_the_rain(tmp_path, monkeypatch, caplog):
+    eco, home = await home_station(tmp_path, monkeypatch, both=True)
+    caplog.set_level(logging.INFO)
+    home.off = True
+    task = asyncio.create_task(eco.watch_live())
+    await asyncio.sleep(0.3)
+    assert caplog.text.count("Home Assistant's live reading failed") == 1                  # the poll's own line, once
+    before = eco.api.second.requests
+    await eco.live_rain()                                                                  # no poll to use: the fallback's request, the cloud's
+    assert eco.api.second.requests == before + 1
+    home.off = False
+    await asyncio.sleep(0.2)
+    task.cancel()
+    assert "live reading is back" in caplog.text
+    await eco.close()
+
+
+async def test_a_cloud_only_station_does_not_poll(tmp_path, monkeypatch):
+    eco = Ecowitt(config(tmp_path), ecowitt_transport()[0])
+    assert eco.fast is None
+    await asyncio.wait_for(eco.watch_live(), 1)                                            # returns at once
+    await eco.close()

@@ -1,6 +1,8 @@
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 
+import asyncio
 import pytest
 
 from lib.airgradient import Latest
@@ -946,3 +948,14 @@ async def test_a_single_spike_never_makes_the_air_unhealthy_but_two_readings_in_
 def test_the_default_wait_before_the_rain_has_stopped_is_an_hour(tmp_path):
     from lib.alerts.weather import ALERT_COOLDOWN_SECONDS
     assert ALERT_COOLDOWN_SECONDS == 60 * 60 == WeatherMonitor(FakeStation([]), AlertState(tmp_path / "s.json"), None).cooldown
+
+
+async def test_a_live_reading_alone_starts_the_rain_alert_without_the_rest_of_the_check(tmp_path):
+    m, state, sent = monitor(tmp_path, rain(0, 0, 0))
+    await m.check()
+    m.station.live = (T0 + 3 * 300, {"rainfall.rain_rate": 1.5, "rainfall.daily": 0.9})
+    await asyncio.gather(m.check_rain(), m.check_rain())                  # two at once: one alert
+    assert len(sent) == 1 and "started raining" in sent[0]
+    m.station.live = None
+    await m.check_rain()                                                  # no live reading: nothing to add
+    assert len(sent) == 1

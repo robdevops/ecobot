@@ -14,7 +14,7 @@ from ..lines import RANGE_KEEP_DAYS
 from ..sources import Source
 from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
-from ..warm import FAST_REFRESH_SECONDS, Warmer
+from ..warm import FAST_REFRESH_SECONDS, Warmer, safely
 from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
@@ -22,7 +22,7 @@ from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS
 from .dashboard import dashboard
 from .glance import glance
 from .fetch import Fetcher, series_in
-from .fallback import FallbackAPI
+from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
 from .live import LiveRanges
@@ -95,6 +95,8 @@ REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather statio
 LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 HA_IMPORT_SECONDS = 900                # how often Home Assistant's readings are folded into the 5-minute ranges ...
 HA_RECENT_SECONDS = 3 * 3600           # ... the last few hours each time (the whole RANGE_KEEP_DAYS the first time)
+LIVE_POLL_SECONDS = 5                  # Home Assistant's live reading is asked for this often (a request to a machine on the network)
+LIVE_RECORD_SECONDS = 30               # ... and counted into the ranges this often
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
 
@@ -130,6 +132,7 @@ class Ecowitt(Source):
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
         self.via = "Home Assistant, Ecowitt's cloud as its fallback" if home and cloud else "Home Assistant" if home else "Ecowitt's cloud"
+        self.fast = home                     # the API that can be asked every few seconds, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
         self._ha_ok: bool | None = None
         self._days_memo: dict = {}   # the dashboard's figures for the days before yesterday, kept for the day (they no longer change)
@@ -138,6 +141,11 @@ class Ecowitt(Source):
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self._live_ok: bool | None = None  # the live rain reading: None until first tried
         self._live: tuple[float, dict] | None = None   # (fetched at, the real_time data) from the keep-warm's minute check
+        self.on_live: list = []             # called (no arguments) when the poll finds a reading newer than the last: the rain alert's
+        self._seen = 0                       # the time of the newest reading the poll has found
+        self._polled: float = 0.0            # when the poll last had an answer
+        self._poll_ok: bool | None = None
+        self._recorded = 0.0
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
@@ -273,14 +281,44 @@ class Ecowitt(Source):
         lows today, this month and this year; None when the station has no reading."""
         return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo, self.live)
 
+    async def watch_live(self):
+        """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather
+        now", the report and the rain alert (which is called at once, not at the next minute's refresh). A failure is logged once, with its
+        recovery; the cloud, where there is one, answers the questions meanwhile."""
+        if self.fast is None:
+            return
+        while True:
+            await asyncio.sleep(LIVE_POLL_SECONDS)
+            try:
+                data = await self.fast.realtime(self.mac, ",".join(LIVE_GROUPS))
+            except Exception as e:
+                if self._poll_ok is not False:
+                    log.warning("Home Assistant's live reading failed (%s); asked again every %g s", e, LIVE_POLL_SECONDS)
+                self._poll_ok = False
+                continue
+            if self._poll_ok is False:
+                log.info("Home Assistant's live reading is back")
+            self._poll_ok, self._polled = True, time.time()
+            if (at := newest(data)) <= self._seen:
+                continue
+            self._seen, self._live = at, (time.time(), data)
+            if time.time() - self._recorded >= LIVE_RECORD_SECONDS:
+                self._recorded = time.time()
+                await self._record_live(data)
+            for callback in self.on_live:
+                await safely(callback)
+
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags
         by up to 5 minutes, this is about a minute old. The same request keeps every live reading ready for "weather now" and the
         report (self._live), one request a minute. None when unavailable."""
         try:
-            data = await self.api.realtime(self.mac, ",".join(LIVE_GROUPS))
-            self._live = (time.time(), data)
-            await self._record_live(data)
+            if self.fast is not None and self._live and time.time() - self._polled <= LIVE_POLL_SECONDS * 3 and newest(self._live[1]):
+                data = self._live[1]    # the poll's, a few seconds old at most
+            else:
+                data = await self.api.realtime(self.mac, ",".join(LIVE_GROUPS))
+                self._live = (time.time(), data)
+                await self._record_live(data)
             group = data.get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)
