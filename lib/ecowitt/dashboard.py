@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta, tzinfo
 
 from ..specs import Dashboard, Tile
+from ..timeutil import day_bounds
 from .days import day_values
 from .store import HistoryCache
 
@@ -77,32 +78,47 @@ def live_value(live: dict, where: tuple[str, str]) -> float | None:
         return None
 
 
-def figures(gauge: Gauge, values: dict, days: list[date], now: float | None) -> tuple[float | None, ...]:
-    """A row of a gauge's table: Max, then Min or Total, over these days (the live reading counted in for today's highs and lows)."""
+def figures(gauge: Gauge, values: dict, days: list[date], now: float | None, seen: tuple[float, float] | None = None) -> tuple[float | None, ...]:
+    """A row of a gauge's table: Max, then Min or Total, over these days (the live reading counted in for today's highs and lows, and
+    `seen`, the lowest and highest the bot recorded over the stretch the row covers, which the cache's 5-minute and 30-minute figures
+    can miss between their marks)."""
     highs = [values[gauge.highest][d] for d in days if d in values.get(gauge.highest, {})]
     if gauge.total:
         return (max(highs) if len(days) > 1 and highs else None, round(sum(highs), 1) if highs else None)
-    if now is not None:
-        highs.append(now)
+    highs += [x for x in (now, seen and seen[1]) if x is not None]
     row = [max(highs) if highs else None]
     if gauge.lowest:
-        lows = [values[gauge.lowest][d] for d in days if d in values.get(gauge.lowest, {})]
-        if now is not None:
-            lows.append(now)
+        lows = [values[gauge.lowest][d] for d in days if d in values.get(gauge.lowest, {})] + [x for x in (now, seen and seen[0]) if x is not None]
         row.append(min(lows) if lows else None)
     return tuple(row)
 
 
-def sheet(live: dict, values: dict, today: date, titles=None) -> Dashboard | None:
+def live_extremes(ranges, gauges: list[Gauge], tz: tzinfo, today: date) -> dict[str, dict[str, tuple[float, float]]]:
+    """{series "group.field": {"Daily": (lowest, highest), "Monthly": ...}} the bot recorded today and this month so far (live.LiveRanges:
+    at most the last RANGE_KEEP_DAYS, which holds the month). The year's row uses the month's: it takes in the month."""
+    start, end = day_bounds(today, tz)[0], day_bounds(today, tz)[1]
+    month = day_bounds(today.replace(day=1), tz)[0]
+    out: dict = {}
+    for gauge in gauges:
+        series = ".".join(gauge.live)
+        for name, since in (("Daily", start), ("Monthly", month)):
+            if got := ranges.extremes(series, since, end):
+                out.setdefault(series, {})[name] = got
+    return out
+
+
+def sheet(live: dict, values: dict, today: date, titles=None, seen: dict | None = None) -> Dashboard | None:
     """The dashboard from a live reading and the days' figures, with the gauges of these titles only (all when None); None when the
-    station has none of the readings."""
+    station has none of the readings. seen: live_extremes()."""
     tiles = []
     days = periods_of(today)
     for gauge in gauges_of(titles):
         now = live_value(live, gauge.live)
         if now is None and not any(values.get(name) for name in (gauge.highest, gauge.lowest) if name):
             continue
-        rows = {name: figures(gauge, values, days[name], None if gauge.total else now) for name in PERIODS}
+        mine = (seen or {}).get(".".join(gauge.live), {})
+        rows = {name: figures(gauge, values, days[name], None if gauge.total else now, mine.get("Monthly" if name == "Yearly" else name))
+                for name in PERIODS}
         if gauge.total and now is not None:   # today's rain is the gauge's own reading, whatever the day's cached figure lags behind
             rows["Daily"] = (None, now)
         columns = ("Max", "Total") if gauge.total else ("Max", "Min") if gauge.lowest else ("Max",)
@@ -111,10 +127,11 @@ def sheet(live: dict, values: dict, today: date, titles=None) -> Dashboard | Non
 
 
 async def dashboard(live: dict, cache: HistoryCache, mac: str, tz: tzinfo, today: date, titles=None,
-                    memo: dict | None = None) -> Dashboard | None:
+                    memo: dict | None = None, ranges=None) -> Dashboard | None:
     """The gauges (of these titles; all when None) for a live reading ({group: {field: {value, unit}}}, as Ecowitt's real_time gives
     it), the extremes from the cache. `memo` keeps the figures of the days before yesterday between calls (they no longer change), so
-    the report's Refresh reads only yesterday's and today's again."""
+    the report's Refresh reads only yesterday's and today's again. `ranges` (live.LiveRanges): what the bot recorded between the cache's
+    marks, for today's and the month's highs and lows."""
     names = sorted({n for g in gauges_of(titles) for n in (g.highest, g.lowest) if n})
     year = periods_of(today)["Yearly"]
     settled = [d for d in year if d < today - timedelta(days=1)]
@@ -127,4 +144,5 @@ async def dashboard(live: dict, cache: HistoryCache, mac: str, tz: tzinfo, today
                 del memo[stale]
             memo[key] = old
     fresh, _ = await asyncio.to_thread(day_values, cache, mac, tz, names, [d for d in year if d not in settled])
-    return sheet(live, {n: {**old.get(n, {}), **fresh.get(n, {})} for n in names}, today, titles)
+    seen = await asyncio.to_thread(live_extremes, ranges, gauges_of(titles), tz, today) if ranges is not None else None
+    return sheet(live, {n: {**old.get(n, {}), **fresh.get(n, {})} for n in names}, today, titles, seen)

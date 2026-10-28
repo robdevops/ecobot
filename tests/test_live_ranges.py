@@ -65,9 +65,7 @@ async def test_a_chart_of_5_minute_readings_is_shaded_between_the_lows_and_highs
     bare = await chart_of_the_last_day(eco)
     assert bare.low is None                                                       # nothing was recorded: a clean line, as before
     now = int(datetime.now(eco.tz).timestamp())
-    for mark in range((now - 2 * 86400) // BUCKET * BUCKET, now, BUCKET):         # the bot has watched the whole time
-        eco.live.db.execute("INSERT INTO ranges VALUES ('outdoor.temperature', ?, 4, 10.0, 11.0)", (mark,))
-    eco.live.db.commit()
+    eco.live.put({"outdoor.temperature": {mark: (4, 10.0, 11.0) for mark in range((now - 2 * 86400) // BUCKET * BUCKET, now, BUCKET)}})   # the bot has watched the whole time
     shaded = await chart_of_the_last_day(eco)
     assert shaded.low and len(shaded.low) == len(shaded.x) == len(shaded.high)
     assert all(lo <= y <= hi for lo, y, hi in zip(shaded.low, shaded.y, shaded.high))
@@ -85,3 +83,57 @@ async def test_the_station_keeps_the_live_readings_it_is_asked_for_and_a_failure
     eco.live.add = broken
     assert (await eco._live_data(["outdoor"]))["outdoor"] and "disk full" in caplog.text
     await eco.close()
+
+
+def test_the_ranges_roll_up_into_wider_slots_and_whole_periods(tmp_path):
+    ranges = LiveRanges(tmp_path / "live.sqlite")
+    slot = T // 1800 * 1800                                                     # a half hour; its first stretch, then the next half hour's
+    stretches = [(10.0, 11.0), (9.0, 12.0), (10.5, 10.9), (8.0, 14.0), (13.0, 13.5), (9.5, 10.0), (20.0, 25.0)]   # i = 0..5: the first half hour, 6: the next
+    ranges.put({"s": {slot + 300 * i: (4, lo, hi) for i, (lo, hi) in enumerate(stretches)} | {slot + 3000: (1, -50.0, 99.0)}})   # (one reading only: no range)
+    assert ranges.rolled("s", slot, slot + 3600, 1800) == {slot: (8.0, 14.0), slot + 1800: (20.0, 25.0)}
+    assert ranges.extremes("s", slot, slot + 3600) == (8.0, 25.0) and ranges.extremes("s", slot + 4000, slot + 5000) is None
+    assert ranges.rolled("s", slot + 4000, slot + 5000, 1800) == {}
+    ranges.close()
+
+
+async def test_a_chart_of_a_week_has_the_true_extremes_of_each_half_hour_in_its_band(tmp_path, archived_cache):
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    now = datetime.now(eco.tz)
+    args = {"groups": "outdoor", "start_date": f"{(now - timedelta(days=5)):%Y-%m-%d} 00:00:00", "end_date": f"{(now - timedelta(days=2)):%Y-%m-%d} 23:59:59",
+            "chart": True}
+
+    async def line():
+        turn = Turn()
+        await eco.tools[1].handler(args, turn)
+        return turn.charts[0].panels[0].lines[0]
+    plain = await line()
+    slot = plain.x[len(plain.x) // 2]                                           # a half hour in the middle of the period
+    base = dict(zip(plain.x, zip(plain.low, plain.y, plain.high)))[slot]
+    eco.live.put({"outdoor.temperature": {slot // 1800 * 1800 + 300 * k: (5, base[0] - 4.0, base[2] + 6.0) for k in range(6)}})   # a spike and a dip between its 5-minute marks
+    widened = await line()
+    low, value, high = dict(zip(widened.x, zip(widened.low, widened.y, widened.high)))[slot]
+    assert low == base[0] - 4.0 and high == base[2] + 6.0 and value == base[1]    # the range is taken out; the line is not moved
+    other = [(a, b) for a, b in zip(plain.low, widened.low) if a != b]
+    assert len(other) <= 2                                                       # only the slot(s) the ranges fall in
+    await eco.close()
+
+
+def test_the_half_hours_are_kept_rolled_up_as_ranges_come_in_and_a_file_from_before_them_is_rolled_up_once(tmp_path):
+    path = tmp_path / "live.sqlite"
+    ranges = LiveRanges(path)
+    slot = T // 1800 * 1800
+    ranges.add(live(12.0, slot + 60), now=slot + 60)
+    ranges.add(live(15.0, slot + 120), now=slot + 120)                           # two readings in a stretch: it has a range, and the half hour has it
+    ranges.add(live(9.0, slot + 640), now=slot + 640)
+    ranges.add(live(11.0, slot + 700), now=slot + 700)                           # ... and a second stretch, lower
+    assert ranges.rolled("outdoor.temperature", slot, slot, 1800) == {slot: (9.0, 15.0)}
+    assert ranges.db.execute("SELECT COUNT(*) FROM slots").fetchone() == (1,)
+    ranges.close()
+    import sqlite3
+    db = sqlite3.connect(path)
+    db.execute("DROP TABLE slots")                                               # as a file from before this was kept
+    db.commit()
+    db.close()
+    again = LiveRanges(path)
+    assert again.rolled("outdoor.temperature", slot, slot, 1800) == {slot: (9.0, 15.0)}
+    again.close()

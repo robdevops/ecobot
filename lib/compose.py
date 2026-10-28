@@ -293,7 +293,7 @@ class Composer:
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
             values, lows, highs = reading_slots(self.eco.cache, self.eco.mac, name, *self._span(first, last))
-            line = driver_series(values, self.tz, first, last, reading.label, lows, highs, banded_short=bool(reading.band_field))
+            line = driver_series(values, self.tz, first, last, reading.label, lows, highs)
             facts = {"series": name, **self._stats(values, reading.unit)}
             return (panel_for(name, [line]) if line else None), facts
         values, lows, highs = air or ({}, {}, {})

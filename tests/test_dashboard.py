@@ -278,3 +278,21 @@ def test_a_refreshed_report_too_long_for_its_caption_keeps_its_first_sections():
     assert body.endswith("• Today: fine")                                                                  # it fits: all of it
     body, _ = report_caption("Weather station\n" + "\n".join(f"• {i} " + "y" * 60 for i in range(40)))
     assert utf16_len(body) <= CAPTION_LIMIT and body.startswith("Weather station\n• 0 ")                    # one long section: its first lines
+
+
+def test_todays_and_the_months_extremes_the_bot_recorded_widen_the_gauges_figures(tmp_path):
+    from lib.ecowitt.live import LiveRanges
+    ranges = LiveRanges(tmp_path / "live.sqlite")
+    today = date(2026, 10, 27)
+    noon = int(datetime(2026, 10, 27, 12, tzinfo=TZ).timestamp()) // 300 * 300
+    earlier = int(datetime(2026, 10, 9, 12, tzinfo=TZ).timestamp()) // 300 * 300
+    ranges.put({"outdoor.temperature": {noon: (4, 14.0, 21.5), earlier: (4, 3.5, 30.0)}})
+    seen = dash.live_extremes(ranges, dash.gauges_of(("Temperature", "Rain")), TZ, today)
+    assert seen == {"outdoor.temperature": {"Daily": (14.0, 21.5), "Monthly": (3.5, 30.0)}}              # nothing recorded of the rain: it is not a range
+    live = {"outdoor": {"temperature": reading(18.0)}}
+    values = {"temp_max": {date(2026, 10, 9): 28.0, today: 20.0}, "temp_min": {date(2026, 10, 9): 5.0, today: 15.0}}
+    tile = dash.sheet(live, values, today, ("Temperature",), seen).tiles[0]
+    assert tile.rows == {"Daily": (21.5, 14.0), "Monthly": (30.0, 3.5), "Yearly": (30.0, 3.5)}           # the recorded extremes beat the cache's; the year takes in the month
+    plain = dash.sheet(live, values, today, ("Temperature",)).tiles[0]
+    assert plain.rows == {"Daily": (20.0, 15.0), "Monthly": (28.0, 5.0), "Yearly": (28.0, 5.0)}   # without them, the cache alone
+    ranges.close()

@@ -11,7 +11,7 @@ themselves (up to about 500 points) have a band only where the source gave them 
 
 import math
 from bisect import bisect_left, bisect_right
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date, tzinfo
 from itertools import accumulate
 from statistics import fmean
@@ -23,7 +23,6 @@ from .timeutil import SLOT, at_hour, local_date
 DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
 RANGE_KEEP_DAYS = 31   # how long the ranges the bot recorded itself (ecowitt.live, airgradient.store) are kept: the 1M chart's 30 days and a day over
-SHORT_DAYS = 31   # up to this long a weather line is drawn with no shaded range (see Plotted.unbanded)
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
 WIDTHS = (300, SLOT, 3600, 7200, 14400, DAY)        # bucket sizes a chart line can be drawn at: 5 min ... a day
 WIDTH_NAMES = {300: "5-minute", 1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}
@@ -50,11 +49,6 @@ class Plotted:
     low: list[float] | None = None
     high: list[float] | None = None
     smoothed: bool = False
-
-    def unbanded(self, days: float, keep: bool = False) -> "Plotted":
-        """The line without its shaded range when the period is SHORT_DAYS or less (a short period reads best as a clean line); `keep`
-        leaves it (wind: the mean shaded up to the gusts). A new line: this one is left as it is."""
-        return self if keep or days > SHORT_DAYS else replace(self, low=None, high=None)
 
     @property
     def name(self) -> str:

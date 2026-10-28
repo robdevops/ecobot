@@ -254,7 +254,7 @@ class Ecowitt(Source):
     async def dashboard(self, titles=None):
         """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
         lows today, this month and this year; None when the station has no reading."""
-        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo)
+        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo, self.live)
 
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags

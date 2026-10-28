@@ -178,21 +178,36 @@ class HistoryQuery:
                 pts[t]["low"], pts[t]["high"] = (lows[t], str(lows[t])), (highs[t], str(highs[t]))
 
     async def _live_bands(self):
-        """5-minute readings get the lowest and highest of the live readings the bot saw in their five minutes (live.LiveRanges), so a
-        recent chart is shaded as Home Assistant's is. A reading with none (before the bot was watching, or too few readings) has no
-        range, and a series whose readings the station itself gave a range keeps it."""
-        if self.f.live is None:
+        """For a chart: the lowest and highest of the live readings the bot saw (live.LiveRanges) shade it as Home Assistant's are: a
+        5-minute reading gets those of its five minutes, a 30-minute slot those of its half hour (the ranges rolled up, so its band holds the
+        true extremes; Ecowitt's own range, or the lowest and highest of the 5-minute values, is only ever widened). A reading with none
+        (before the bot was watching, or too few readings) keeps what it has, and a series the station itself gave a 5-minute range keeps it."""
+        if self.f.live is None or not wants_chart(self.args, self.turn, self.start, self.end):   # (only a chart shows a band: no cost to the other answers)
             return
+        drawn = {field_of(chart_field(self.args, self.turn) or "temperature"), *(WEATHER[n].field for n in stack_names(self.args, self.turn))}
         lo, hi = self.f.epoch(self.start) - BUCKET, self.f.epoch(self.end) + BUCKET
         for key, series in self.store.items():
-            fine = {t: r for t, r in series["pts"].items() if r["cycle"] == "5min" and "value" in r and "low" not in r and "high" not in r}
-            if not (fine and derives_range(key.split(".", 1)[1])):
+            if key.split(".", 1)[1] not in drawn or not derives_range(key.split(".", 1)[1]):
                 continue
-            found = await self.f.read(self.f.live.between, key, lo, hi)
-            for t, r in fine.items():
-                if got := found.get(round(t / BUCKET) * BUCKET):
-                    low, high = min(got[0], r["value"][0]), max(got[1], r["value"][0])
-                    r["low"], r["high"] = (low, str(low)), (high, str(high))
+            fine = {t: r for t, r in series["pts"].items() if r["cycle"] == "5min" and "value" in r and "low" not in r and "high" not in r}
+            slots = {t: r for t, r in series["pts"].items() if r["cycle"] == "30min" and "value" in r}
+            if fine:
+                found = await self.f.read(self.f.live.between, key, lo, hi)
+                for t, r in fine.items():
+                    if got := found.get(round(t / BUCKET) * BUCKET):
+                        self._widen(r, *got)
+            if slots:
+                found = await self.f.read(self.f.live.rolled, key, lo, hi, SLOT)
+                for t, r in slots.items():
+                    if got := found.get(t // SLOT * SLOT):
+                        self._widen(r, *got)
+
+    @staticmethod
+    def _widen(rec: dict, low: float, high: float):
+        """The reading's range taken out to these (and to its own value and range, where it has them)."""
+        value = rec["value"][0]
+        low, high = min(low, value, rec["low"][0] if "low" in rec else value), max(high, value, rec["high"][0] if "high" in rec else value)
+        rec["low"], rec["high"] = (low, str(low)), (high, str(high))
 
     async def _held_locally(self) -> bool:
         """Is the whole period already in the cache at 30 minutes (bar the newest day, which is still settling), and
@@ -534,8 +549,6 @@ class HistoryQuery:
         if line is None:
             return None
         group = k.split(".", 1)[0]
-        recent = line.raw and line.width == BUCKET and line.low is not None   # 5-minute readings with the lows and highs the bot saw in each
-        line = line.unbanded(self.span.days + 1, keep=recent or self._band_key(k) is not None)   # a short period: a clean line, except these and wind's gusts
         return line.spec(group.replace("_", " ").capitalize(), indoor=group == "indoor"), line.name
 
     async def _rain_bars(self) -> Bars:

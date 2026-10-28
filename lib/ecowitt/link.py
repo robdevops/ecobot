@@ -60,17 +60,17 @@ def reading_slots(cache: HistoryCache, mac: str, name: str, start: int, end: int
 
 
 def driver_series(driver: dict[int, float], tz: tzinfo, first: date, last: date, label: str,
-                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None, banded_short: bool = True) -> Line | None:
+                  lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> Line | None:
     """The reading as a line (see lines.build_line); a day's mean has its range shaded, from the slots' lows and highs
     (reading_slots) where there are any."""
     line = build_line(slot_readings(driver, lows, highs), tz, ((last - first).days + 1) * 86400)
-    return line.unbanded((last - first).days + 1, keep=banded_short).spec(label) if line else None
+    return line.spec(label) if line else None
 
 
 def chart_spec(driver: dict[int, float], rain: dict[int, float], tz: tzinfo, first: date, last: date,
                name: str, lows: dict[int, float] | None = None, highs: dict[int, float] | None = None) -> Chart | None:
     """The reading with the rain behind it."""
-    line = driver_series(driver, tz, first, last, WEATHER[name].label, lows, highs, banded_short=bool(WEATHER[name].band_field))
+    line = driver_series(driver, tz, first, last, WEATHER[name].label, lows, highs)
     if line is None:
         return None
     return stack([panel_for(name, [line]), panel_for("rain", bars=rain_bars(rain, tz, first, last))], first, last)
