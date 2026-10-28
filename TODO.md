@@ -28,3 +28,18 @@ the interval) before deciding which to trust.
   analysis question and something that reads the caches.
 - The Docker image with `zeroconf` in it: the `image` check on a pull request builds it.
 - `ALERT_COOLDOWN_MINUTES` in the production env file: the default is now 60; a line setting it to 30 keeps 30.
+
+## Try Home Assistant as the weather station's source, then consider one table for the history
+
+Set `HOMEASSISTANT_URL` and `HOMEASSISTANT_TOKEN` (and leave `ECOWITT_SOURCE` at `auto`, or try `homeassistant` with no Ecowitt keys) and run it for a week or two.
+It has only been run against a fake Home Assistant. Check in the log and the charts:
+- the start-up line says where the readings come from, and the live poll and minute pulls don't warn (or warn once and recover);
+- a chart of a few hours is drawn a reading a minute, a day or a week looks right, and a chart past Home Assistant's 10 days still has its bands (from the cache);
+- a rain alert comes within seconds of the gauge's report; "weather now" is fresh;
+- with both set, nothing is asked of the cloud except what Home Assistant lacks.
+
+Then decide whether to simplify the storage. The Ecowitt history is spread over `ecowitt_cache.sqlite` (the cycles), `ecowitt_live.sqlite` (5-minute ranges and
+30-minute slots, for the bands) and `ecowitt_minutes.sqlite` (the last 9 hours of minutes), merged at query time (`_live_bands`, `_widen`), with resolution picked in
+several places (`HistoryQuery._fetch_period`). The idea: one `samples` table (series, resolution, time, value, low, high, count) with a retention per resolution, so a band is
+just the low and high columns, and the cloud and Home Assistant are written the same way. Write the design first, then a one-off migration that copies the old files across
+without deleting them (so it can be rolled back). Not urgent: nothing is wrong, it is only more complicated than it needs to be.
