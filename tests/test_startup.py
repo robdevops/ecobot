@@ -78,7 +78,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     log = caplog.text
     assert "Weather [Ecowitt]: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot, Model: " in log
     assert not any(line.startswith(("Sources:", "Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
-    assert "Startup fetch:" in log and " req to fetch" in log and "AirGradient archive:" in log
+    assert "Startup fetch:" not in log and " req to fetch" in log and "AirGradient archive:" in log
     final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
     assert "failed" not in final and "days (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors

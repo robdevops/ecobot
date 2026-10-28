@@ -138,12 +138,11 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
     """Fetch everything once, together, and log one summary line; then start what waited for it: the weather alerts, the
     archives (copying each source's history into its cache)."""
     eco, air = bot.by_name.get("Ecowitt"), bot.by_name.get("AirGradient")
-    started, parts = time.monotonic(), []
 
     async def ecowitt_part():
         # One request at a time (Ecowitt rate-limits): warm first, so the alerts' own look at the last 3 hours is answered
         # from what was just fetched. A failed first refresh must not stop the alerts or the archive: safely() logs it
-        parts.append(await safely(eco.warm, True) or "Ecowitt failed")
+        await safely(eco.warm, True)
         try:
             await weather.init()
             eco.warmer.after.append(weather.check)  # checked on every fresh refresh
@@ -162,7 +161,7 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
             tasks.start(every(HA_IMPORT_SECONDS, eco.import_ranges))
 
     async def air_part():
-        parts.append(await safely(air.warm, True) or "AirGradient failed")
+        await safely(air.warm, True)
         if air.cloud:
             tasks.start(safely(air_backfill))  # even if the sensor was unreachable just now
 
@@ -175,7 +174,6 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
         await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
     except Exception:
         log.exception("Startup fetch failed (the regular refreshes will catch up)")
-    log.info("Startup fetch: %s, %.1fs", ", ".join(parts) or "nothing to fetch", time.monotonic() - started)
     if missing := [LABELS[k] for k in available_kinds(bot.by_name, bot.irrigation is not None) if k not in running]:
         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
