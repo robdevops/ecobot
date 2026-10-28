@@ -41,6 +41,14 @@ CYCLES = {"5min": Cycle(300, timedelta(days=1), 90, 3600), "30min": Cycle(1800, 
 FINE_CYCLES = tuple(name for name, c in CYCLES.items() if c.seconds <= 1800)
 
 
+MINUTE = "1min"   # a cycle only Home Assistant has (api.minute_lines): the state held at the end of each minute, never cached
+
+
+def cycle_seconds(cycle: str) -> int:
+    """The time one reading of this cycle covers (the minute's too)."""
+    return 60 if cycle == MINUTE else CYCLES[cycle].seconds
+
+
 def kept_from(cycle: str, today: date) -> date:
     """The first day whose readings at this cycle Ecowitt is sure still to have: two days clear of its retention edge, so a
     request can't race the deletion."""

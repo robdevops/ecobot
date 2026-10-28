@@ -25,7 +25,7 @@ from ..tools import json_result
 from ..series import WEATHER, derives_range, field_of, find, find_name
 from ..panels import panel_for, two_axes
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
-from .api import CYCLES, daily_run, kept_from
+from .api import CYCLES, MINUTE, cycle_seconds, daily_run, kept_from
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import Ext, better, collect, daily_readings, describe_time, fold, high_of, low_of, series_extremes
 from .fetch import Fetcher, spans
@@ -33,6 +33,7 @@ from .live import BUCKET
 
 log = logging.getLogger(__name__)
 
+MINUTE_HOURS = 8                # up to this long: minute readings, where the station's source has them (Home Assistant)
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings and a breakdown by day; longer periods use daily records, by month
 DAILY_ALL_DAYS = 7              # longer periods send every day's figures only when day by day was asked for
@@ -225,7 +226,9 @@ class HistoryQuery:
         f, start, end, today = self.f, self.start, self.end, self.now.date()
         thirty_floor = datetime.combine(kept_from("30min", today), time())
         recent = datetime.combine(today - timedelta(days=6), time())
-        if self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or await f.covered(
+        if self.span <= timedelta(hours=MINUTE_HOURS) and getattr(f.api, "minute_lines", False) and (minutes := await f.minutes(start, end)):
+            collect(self.store, minutes, MINUTE)    # a short stretch: a reading a minute (Home Assistant's), straight from it
+        elif self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or await f.covered(
                 "5min", f.epoch(start), f.epoch(end))):
             collect(self.store, await f.get("5min", start, end), "5min")
         elif self.span <= timedelta(days=FINE_DAYS) and end > thirty_floor:
@@ -324,7 +327,7 @@ class HistoryQuery:
             used = {"all": 0, "month": 0}
             finer_of: dict = {}  # slots on the same bucket share an answer; a new pass looks again (data was fetched)
             for target, ext in slots.items():
-                w_end = ext.ts + CYCLES[ext.cycle].seconds - 1
+                w_end = ext.ts + cycle_seconds(ext.cycle) - 1
                 if (ext.ts, ext.cycle) not in finer_of:
                     finer_of[ext.ts, ext.cycle] = await f.finer_cycle(ext.ts, ext.cycle, w_end, self.now.date())
                 finer = finer_of[ext.ts, ext.cycle]
@@ -539,7 +542,7 @@ class HistoryQuery:
                 low, high = (r["low"][0] if "low" in r else None), (r["high"][0] if "high" in r else None)
                 if band:
                     low, high = low_of(r), max(high_of(gust[t]) if t in gust and "value" in gust[t] else high_of(r), v)
-                out.append(Sample(t, v, low, high, CYCLES[r["cycle"]].seconds))
+                out.append(Sample(t, v, low, high, cycle_seconds(r["cycle"])))
         return out
 
     def _series_entry(self, k: str) -> tuple[Line, str] | None:

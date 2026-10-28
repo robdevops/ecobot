@@ -24,8 +24,8 @@ DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
 RANGE_KEEP_DAYS = 31   # how long the ranges the bot recorded itself (ecowitt.live, airgradient.store) are kept: the 1M chart's 30 days and a day over
 POINT_BUDGET = 500                                  # about as many points as a chart can show legibly
-WIDTHS = (300, SLOT, 3600, 7200, 14400, DAY)        # bucket sizes a chart line can be drawn at: 5 min ... a day
-WIDTH_NAMES = {300: "5-minute", 1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}
+WIDTHS = (60, 300, SLOT, 3600, 7200, 14400, DAY)        # bucket sizes a chart line can be drawn at: 5 min ... a day
+WIDTH_NAMES = {60: "1-minute", 300: "5-minute", 1800: "30-minute", 3600: "hourly", 7200: "2-hour", 14400: "4-hour", 86400: "daily"}
 
 
 class Sample(NamedTuple):
@@ -145,7 +145,7 @@ def build_line(readings: list[Sample], tz, span_seconds: float, *, smooth: bool 
         xs, mean, low, high = bucketed([(r.t, r.value, *r.bounds(), r.seconds < SLOT) for r in fine], max(width, SLOT))
         return Plotted(xs, mean, max(width, SLOT), False, low, high) if len(xs) >= 2 else None
     line = _as_they_are([r for r in fine if r.seconds == source])
-    if line and smooth and source == 300:  # slow readings come in 0.1-degree steps: a light average of the real readings
+    if line and smooth and source in (60, 300):  # slow readings come in 0.1-degree steps: a light average of the real readings
         smoothed = rolling_mean(dict(zip(line.x, line.y)), SMOOTH_POINTS * source // 2)
         if len(smoothed) == len(line.x):  # every reading was a finite number
             smoothed[line.x[-1]] = line.y[-1]  # the end dot is the latest reading

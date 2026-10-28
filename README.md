@@ -90,7 +90,8 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `TELEGRAM_BOT_TOKEN` | Required. |
 | `ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
 | `XAI_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
-| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station. |
+| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
+| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
 | `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
 | `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local`<br><br>Docker note: mDNS for .local requires `--network host` in `docker run`. Alternatively use a fixed IP address e.g. `http://192.168.5.5` |
 | `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |

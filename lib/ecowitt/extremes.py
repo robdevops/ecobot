@@ -4,7 +4,7 @@ from datetime import datetime, tzinfo, UTC
 from typing import NamedTuple
 
 from ..timeutil import clock_text, day_text
-from .api import CYCLES
+from .api import MINUTE, cycle_seconds
 from .fetch import series_in
 
 
@@ -83,11 +83,11 @@ def describe_time(ts: int, cycle: str, tz: tzinfo) -> tuple[str, str, str]:
     can go before it) and empty when the window spans two days, since then the wording has both."""
     start = datetime.fromtimestamp(ts, UTC).astimezone(tz)
     raw = f"{day_text(start)} {clock_text(start)}"
-    if cycle == "5min":
+    if cycle in ("5min", MINUTE):
         return raw, f"at {_clock(start)}", day_text(start)
     if cycle == "30min":
         return raw, f"around {_clock(start)}", day_text(start)
-    end = datetime.fromtimestamp(ts + CYCLES[cycle].seconds, UTC).astimezone(tz)
+    end = datetime.fromtimestamp(ts + cycle_seconds(cycle), UTC).astimezone(tz)
     if start.date() == end.date():
         return raw, f"sometime between {_clock(start)} and {_clock(end)}", day_text(start)
     return raw, f"sometime between {_clock(start)} {day_text(start)} and {_clock(end)} {day_text(end)}", ""

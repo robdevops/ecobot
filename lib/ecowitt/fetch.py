@@ -8,7 +8,7 @@ import time
 from datetime import date, datetime, timedelta, tzinfo
 
 from ..timeutil import local_epoch, naive_local
-from .api import CYCLES, EcowittError, kept_from
+from .api import CYCLES, MINUTE, EcowittError, kept_from
 from .store import HistoryCache, HotStore, merge as merge_intervals
 
 log = logging.getLogger(__name__)
@@ -159,9 +159,17 @@ class Fetcher:
         """covered() for each of these windows, from one read of the coverage."""
         return [bool(self.groups) and not any(missing.values()) for missing in await self._missing(cycle, windows)]
 
+    @timed
+    async def minutes(self, start: datetime, end: datetime) -> dict:
+        """The minute readings of [start, end] (local time) from the API, not cached (a short, recent stretch, asked of a machine on the
+        network): {} where it cannot say, and the caller uses the 5-minute readings."""
+        return await self._fetch(MINUTE, start, end, self.groups) or {}
+
     async def finer_cycle(self, ts: int, current: str, window_end: int, today: date) -> str | None:
         """Finest cycle finer than `current` available for this window: still kept by Ecowitt,
         or already in the cache (e.g. archived 5-minute data). None if neither."""
+        if current == MINUTE:
+            return None
         day = self.local(ts).date()
         for cycle in ("5min", "30min", "4hour"):
             if cycle == current:
