@@ -399,7 +399,9 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
         record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
         assert fmt.format(record) == f"{name} " + timings[:40 - len(name) - 2] + "…" and record.levelname == logging.getLevelName(level)
     fmt.width = 0
-    assert line("[@rob] %s", asked) == "[@rob] " + asked                           # 0 cuts none
+    long = "what was the hottest and the coldest it got last week, and on which days?"
+    assert line("[@rob] %s", asked) == "[@rob] " + asked and line(timings, quotes=False) == timings   # 0 cuts no line ...
+    assert line("[@rob] %s", long) == "[@rob] " + long[:48] + "…"                      # ... but a chat message keeps 48 characters, then …
     assert line(timings, quotes=False) == timings
 
 
