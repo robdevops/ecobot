@@ -6,28 +6,54 @@ migration and a sequence of steps, each shipped on its own.
 
 ## 1. Where the time goes now
 
-What typical requests cost, measured on the fake station's archived cache (`tests/fakes.py`, 1.07 million readings: 88, 363, 548 and 546
-days at 5 minutes, 30 minutes, 4 hours and a day), all from the cache with no request to Ecowitt. The real cache (27 MB) has more fields
-per group and more old days, so its numbers will be higher; step 0 measures them.
+What typical requests cost on the bot's own caches in October 2026 (`ecowitt_cache.sqlite` 27.6 MB, 1.71 million readings, 116, 391, 755
+and 1457 days held at 5 minutes, 30 minutes, 4 hours and a day; `airgradient_cache.sqlite` 3.9 MB, 53,000 readings; the live ranges
+0.3 MB; the minutes 0.5 MB), measured by `scripts/bench_storage.py` in the container: each request run three times on a copy, the median
+shown, nothing asked of the network. A time is the data and the answer, or the chart's spec; drawing and sending come after it (the DEBUG
+`Chart ms` line has those).
 
 | Request | SQL statements | Thread hops | Time |
 |---|---|---|---|
-| Temperature chart, 1D | 5 | 5 | 7 ms |
-| Temperature chart, 7D | 15 | 12 | 14 ms |
-| Temperature chart, 1M | 29 | 21 | 73 ms |
-| Temperature chart, 3M | 31 | 25 | 183 ms |
-| Temperature chart, 1Y | 22 | 17 | 32 ms |
-| History of outdoor and indoor, 7 days, no chart | 24 | 13 | 20 ms |
-| `weather_days`: days over 20°C in the whole record | 13 | 1 | 543 ms |
-| `/dashboard`, first time in a day | 128 | 4 | 1,444 ms |
-| `/dashboard`, Refresh | 73 | 2 | 11 ms |
-| The alerts' look at the last 3 hours | 15 | 2 | 2 ms |
+| Temperature chart, 1D | 6 | 6 | 20 ms |
+| Temperature chart, 7D | 31 | 23 | 29 ms |
+| Temperature chart, 1M | 42 | 30 | 107 ms |
+| Temperature chart, 3M | 53 | 39 | 272 ms |
+| Temperature chart, 1Y | 86 | 76 | 1,205 ms |
+| Rain chart, 3M | 39 | 29 | 218 ms |
+| History of outdoor and indoor, 7 days, no chart | 51 | 24 | 46 ms |
+| `weather_days`: days over 30°C, 4 years | 13 | 1 | 725 ms |
+| `weather_days`: rain per month, a year | 9 | 1 | 609 ms |
+| `weather_link`: pressure and rain, 90 days, chart | 4 | 1 | 98 ms |
+| The alerts' last 3 hours | 16 | 3 | 6 ms |
+| `/dashboard`, first time in a day | 122 | 3 | 3,146 ms |
+| `/dashboard`, Refresh | 73 | 2 | 35 ms |
+| Air chart (PM2.5), 1D | 4 | 3 | 12 ms |
+| Air chart (PM2.5), 7D | 4 | 3 | 55 ms |
+| Air chart (PM2.5), 1M | 4 | 3 | 200 ms |
+| `air_days`: days PM2.5 over 25, 4 years | 3 | 1 | 662 ms |
 
-A profile of the three slowest shows the queries are not most of it: SQLite takes 15 to 25% of the time, and the rest is Python handling
-the rows one at a time. `HistoryCache.load_fields` turns every value from text into a float and files it in a dict of dicts, and
-`days.day_figures` works out the local date of every reading (half a million `local_date` calls for one dashboard) to find each day's
-high and low. The dashboard is slow because it works out a year of daily highs and lows from the 30-minute readings the first time each
-day.
+Each chart also asked once for its newest hour, which is still settling and which the running bot holds in memory. The minutes play no
+part here: the bot keeps only the last 9 hours of them, and only a chart of up to 8 hours reads them (the benchmark has had a 3-hour chart
+since, which reads them in two statements).
+
+Between the owner's runs, a step is measured on `tests/bench_cache.py`: a data folder shaped like this one, built from the fake station
+in 20 seconds. Its numbers are of the same size: the 1Y chart 1.9 s, the first dashboard 2.9 s, `weather_days` 0.6 s, and the rain chart
+0.45 s, because its station reports more rain counters than the owner's. A profile of the slow requests on it:
+- **The 1Y chart** is read from the 30-minute readings, now that the cache holds more than a year of them (`HistoryQuery.held`): every
+  half hour of every outdoor reading with its low and high (in the sample 18 series, 315,000 values). Each value is filed into dicts
+  (`load_fields`, `collect`), folded into its month (`_monthly_extremes`) and boiled down to a point a day for the line (`build_line`).
+  Then each month's record is looked for again in finer readings (`_refine`), a coverage check and a read at a time: most of its 76 hops.
+  A cache with less than a year of 30-minute readings answers from the daily records instead, in about 30 ms.
+- **The first `/dashboard` of a day** works out every day of the year so far for 12 readings, from the 5-minute readings (116 days) and
+  the 30-minute ones: about 800,000 readings, each turned into its local date (`days.day_figures`, `local_date`) to find its day's high
+  and low. Refresh keeps those days and reads only yesterday and today.
+- **`weather_days` and `air_days`** do the same over four years (143,000 local dates for "days over 30°C", which shows each day's
+  temperature and rain), and `air_days` runs the spike filter over every reading first (`metrics.without_spikes`).
+- **The 3M and 1M charts and the air charts** read every reading of the period, at 30 or 5 minutes, before the line is boiled down to its
+  500 points.
+
+In all of them SQLite itself, running the queries and handing back their rows, takes a fifth of the time or less. The rest is Python handling
+the rows one at a time: the text of each value turned into a float, a dict entry per value, a local date per reading.
 
 What makes the query count high is that a chart's parts live apart:
 - **Three files.** The values are in `ecowitt_cache.sqlite`, the bot's own ranges in `ecowitt_live.sqlite`, the minutes in
@@ -258,8 +284,8 @@ Left to Python on purpose:
 | The wind rose | one query: counts per compass point and speed band |
 | The alerts' last 3 hours | one query per kind at 5 minutes |
 
-Aims, to be checked against the real cache: a chart under 50 ms whatever its length, `/dashboard` and `weather_days` over the whole
-record under 50 ms, and every request one thread hop.
+Aims, against section 1: a chart under 50 ms whatever its length (the 1Y chart is 1.2 s now), `/dashboard` and `weather_days` over
+the whole record under 50 ms (3.1 s and 0.7 s now), and every request one thread hop.
 
 ## 5. Migration
 
@@ -289,9 +315,9 @@ record under 50 ms, and every request one thread hop.
 
 Each step is a commit (or a few) pushed to the dev branch with the tests and evals passing, and the benchmark run before and after.
 
-0. **Measure.** `scripts/bench_storage.py` (the table in section 1, from any cache file, the real one included:
-   `docker compose exec ecobot python scripts/bench_storage.py`), and the number of queries and thread hops in the DEBUG `Chart ms` line.
-   The baseline on the real cache is the yardstick for the rest.
+0. **Measure (done).** `scripts/bench_storage.py` (`docker compose exec ecobot python scripts/bench_storage.py`) gave the baseline in
+   section 1, the yardstick for the rest; `tests/bench_cache.py` is the stand-in for the real caches between the owner's runs; the DEBUG
+   `Chart ms` line counts each chart's queries and thread hops.
 1. **The new storage on its own.** `lib/storage/`: the catalogue, the schema and its versions, the two connections, writing (readings,
    ranges, minutes, coverage, day rows) and reading (rows, buckets, days, records). The migration, with tests on old-format files built by
    the tests themselves. Nothing uses it yet.
@@ -323,6 +349,8 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
   tables) are rewritten for the new tables: writing and reading, widening, day rows, coverage, pruning, the migration and its check.
 - **The fixture's archive** (`tests/conftest.py`, `archived_cache`) is built by the new code; one old-format fixture stays for the migration
   tests.
+- **The benchmark's data folder** (`tests/bench_cache.py`) is built by the new storage from step 2 on, with 10 days of minutes (the
+  owner's file has 9 hours), so the table shows whether the minutes in the same tables slow anything else.
 
 ## 8. Risks
 

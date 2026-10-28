@@ -85,9 +85,10 @@ def settings(folder: Path) -> Config:
                                airgradient_token=cfg.airgradient_token or ("bench" if location and location != "local" else ""))
 
 
-async def measured(work, repeat: int, before=None) -> tuple[float, counts.Count]:
-    """(the median time in ms, the count of the last run) of `work()` run `repeat` times, each in a task of its own."""
-    times, count = [], counts.Count()
+async def measured(work, repeat: int, asked, before=None) -> tuple[float, counts.Count, int]:
+    """(the median time in ms, the count of the last run, what the last run asked of the network: asked() is the total so far) of
+    `work()` run `repeat` times, each in a task of its own."""
+    times, count, ask = [], counts.Count(), 0
 
     async def once():
         nonlocal count
@@ -96,10 +97,11 @@ async def measured(work, repeat: int, before=None) -> tuple[float, counts.Count]
     for _ in range(repeat):
         if before:
             before()
-        started = time.perf_counter()
+        started, first = time.perf_counter(), asked()
         await asyncio.create_task(once())
         times.append((time.perf_counter() - started) * 1000)
-    return statistics.median(times), count
+        ask = asked() - first
+    return statistics.median(times), count, ask
 
 
 def period(days: float, now: datetime) -> dict:
@@ -110,18 +112,22 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
     from lib.airgradient import AirGradient
     from lib.ecowitt import Ecowitt
     from lib.ecowitt.archive import Archive
+    from lib.ecowitt.minutes import MinuteStore
     cfg = settings(folder)
     rows: list[tuple[str, float, counts.Count, int]] = []
     if (folder / "ecowitt_cache.sqlite").exists():
         eco = Ecowitt(cfg)
         eco.api, eco.tz = Offline(), tz
+        if (folder / "ecowitt_minutes.sqlite").exists():   # Home Assistant's minutes, which the bot draws a chart of a few hours from
+            eco.minute_store = MinuteStore(folder / "ecowitt_minutes.sqlite")
         held = eco.cache._query("SELECT s.mac, COUNT(*) FROM points p JOIN series s ON s.id = p.series GROUP BY s.mac ORDER BY 2 DESC")
         eco.mac = held[0][0] if held else ""
         print(f"Ecowitt {eco.mac}: {held[0][1] if held else 0:,} readings, {Archive(eco).held()}")
         now = eco.now()
         history, days, link = eco.tools[1].handler, eco.tools[2].handler, eco.tools[3].handler
         chart = lambda field, d, groups="outdoor": lambda: history({"groups": groups, "chart": True, "chart_field": field, **period(d, now)}, Turn())
-        work = [(f"Temperature chart, {label}", chart("temperature", d)) for label, d in (("1D", 1), ("7D", 7), ("1M", 30), ("3M", 90), ("1Y", 365))]
+        work = [(f"Temperature chart, {label}", chart("temperature", d))
+                for label, d in (("3 hours", 0.125), ("1D", 1), ("7D", 7), ("1M", 30), ("3M", 90), ("1Y", 365))]
         work += [("Rain chart, 3M", chart("rain", 90, "rainfall")),
                  ("History of outdoor and indoor, 7 days, no chart", lambda: history({"groups": "outdoor,indoor", **period(7, now)}, Turn())),
                  ("weather_days: days over 30°C, 4 years", lambda: days({"condition": "temp_max > 30", "count_only": True,
@@ -133,13 +139,9 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
                  ("weather_link: pressure and rain, 90 days, chart", lambda: link({"driver": "pressure", "chart": True}, Turn())),
                  ("The alerts' last 3 hours", lambda: eco.recent(3))]
         for label, run in work:
-            eco.api.asked = 0
-            ms, count = await measured(run, repeat)
-            rows.append((label, ms, count, eco.api.asked // repeat))
+            rows.append((label, *await measured(run, repeat, lambda: eco.api.asked)))
         for label, before in (("/dashboard, first time in a day", eco._days_memo.clear), ("/dashboard, Refresh", None)):
-            eco.api.asked = 0
-            ms, count = await measured(eco.dashboard, repeat, before)
-            rows.append((label, ms, count, eco.api.asked // repeat))
+            rows.append((label, *await measured(eco.dashboard, repeat, lambda: eco.api.asked, before)))
         await eco.close()
     if (folder / "airgradient_cache.sqlite").exists() and cfg.airgradient_location:
         asked = [0]
@@ -158,9 +160,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
             {"condition": "pm2_5_max > 25", "count_only": True, "start_date": f"{now - timedelta(days=1460):%Y-%m-%d}",
              "end_date": f"{now:%Y-%m-%d}"}, Turn())))
         for label, run in work:
-            asked[0] = 0
-            ms, count = await measured(run, repeat)
-            rows.append((label, ms, count, asked[0] // repeat))
+            rows.append((label, *await measured(run, repeat, lambda: asked[0])))
         await air.close()
     return rows
 
@@ -189,7 +189,8 @@ def main():
     for label, ms, count, asked in rows:
         print(f"| {label} | {count.sql} | {count.hops} | {asked} | {ms:,.0f} ms |")
     print("\nAsked of the network: what the copy could not answer. For a chart that is the newest hour or so, still settling, which the "
-          "running bot holds in memory; here it is asked of nothing and answered at once.")
+          "running bot holds in memory; here it is asked of nothing and answered at once. The 3-hour chart is drawn from the minutes where "
+          "ecowitt_minutes.sqlite holds them (Home Assistant), else from the 5-minute readings.")
 
 
 if __name__ == "__main__":

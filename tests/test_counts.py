@@ -59,3 +59,25 @@ async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_
     assert "Temperature chart, 1Y" in labels and "/dashboard, first time in a day" in labels and len(rows) >= 12
     assert all(r[2].sql > 0 for r in rows if not r[0].startswith("weather_link")) and all(r[3] <= 1 for r in rows)
     assert (data / "ecowitt_cache.sqlite").read_bytes() == before                       # the bot's own file is never written
+
+
+async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_is_drawn_from_the_minutes(tmp_path, monkeypatch):
+    from lib.ecowitt.api import GROUPS, UNITS
+    from lib.ecowitt.store import HistoryCache
+    from tests import bench_cache
+    from tests.fakes import MAC, TZ
+    days = {"5min": 3, "30min": 9, "4hour": 30, "1day": 60}
+    bench_cache.build(tmp_path, days=days, air_days=3, live_days=1, minute_hours=4)
+    cache = HistoryCache(tmp_path / "ecowitt_cache.sqlite", UNITS)
+    held = {cycle: cache.days_held(MAC, cycle, GROUPS) for cycle in days}
+    cache.close()
+    assert all(n - 2 <= held[cycle] <= n for cycle, n in days.items()), held   # (the newest hours are still settling)
+    for name in ("TELEGRAM_BOT_TOKEN", "ECOWITT_API_KEY", "ECOWITT_APP_KEY"):
+        monkeypatch.setenv(name, "t")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(asyncio, "to_thread", asyncio.to_thread)
+    counts.install()
+    rows = {r[0]: r for r in await bench_storage.bench(tmp_path, 1, TZ)}
+    assert rows["Temperature chart, 3 hours"][3] == 0 and rows["Temperature chart, 3 hours"][2].sql <= 3   # the minutes, in a read or two
+    assert rows["Temperature chart, 1D"][3] == 1                                                            # its newest hour is settling
+    assert "air_days: days PM2.5 over 25, 4 years" in rows
