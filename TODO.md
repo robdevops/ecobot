@@ -43,3 +43,8 @@ Then decide whether to simplify the storage. The Ecowitt history is spread over 
 several places (`HistoryQuery._fetch_period`). The idea: one `samples` table (series, resolution, time, value, low, high, count) with a retention per resolution, so a band is
 just the low and high columns, and the cloud and Home Assistant are written the same way. Write the design first, then a one-off migration that copies the old files across
 without deleting them (so it can be rolled back). Not urgent: nothing is wrong, it is only more complicated than it needs to be.
+
+The aim of the restructure is fewer queries, so a chart is quicker. Today a chart can read the coverage table, then the cycle's points, then the live ranges and slots (a
+second file), and the minutes (a third), each in its own thread hop. Measure first (the reply's timing line already splits cache, memory and Ecowitt time; add the
+number of queries and thread hops), then design for one read per chart: one table, one query over the series and window that gives value, low and high together, with the coverage
+kept in the same file and checked in the same query. Compare the same charts before and after (the golden images must not change).
