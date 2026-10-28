@@ -22,6 +22,8 @@ from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS
 from .dashboard import dashboard
 from .glance import glance
 from .fetch import Fetcher, series_in
+from .fallback import FallbackAPI
+from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
 from .live import LiveRanges
 from ..series import READING_GROUPS, WEATHER, find
@@ -116,12 +118,19 @@ def live_summary(data: dict) -> str:
 class Ecowitt(Source):
     name = "Ecowitt"
 
-    def __init__(self, cfg: Config, transport=None):
+    def __init__(self, cfg: Config, transport=None, ha_transport=None):
+        """transport: for Ecowitt's cloud, ha_transport: for Home Assistant (a test's stand-ins). Where the readings come from follows the
+        settings (config.ecowitt_source): Home Assistant, Ecowitt's cloud, or Home Assistant with the cloud to make up what it lacks."""
         self.tz = cfg.tz
-        self.api = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport)
         self.cache = HistoryCache(cfg.cache_path, UNITS)
         self.hot = HotStore()
-        self.ha = HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # the readings it kept, for the ranges
+        macs = self.cache.macs()   # the station the cache holds, so Home Assistant's readings join its history
+        home = HomeAssistantAPI(cfg.homeassistant_url, cfg.homeassistant_token, cfg.tz, macs[0] if len(macs) == 1 else "HOMEASSISTANT",
+                                ha_transport) if cfg.ecowitt_home_assistant else None
+        cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
+        self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
+        self.via = "Home Assistant, Ecowitt's cloud as its fallback" if home and cloud else "Home Assistant" if home else "Ecowitt's cloud"
+        self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
         self._ha_ok: bool | None = None
         self._days_memo: dict = {}   # the dashboard's figures for the days before yesterday, kept for the day (they no longer change)
         self.live = LiveRanges(cfg.cache_path.with_name("ecowitt_live.sqlite"))   # the live readings' lows and highs, for the recent charts' bands
@@ -151,6 +160,8 @@ class Ecowitt(Source):
                 self.tz = ZoneInfo(zone)
             except (ValueError, ZoneInfoNotFoundError):
                 log.warning("Ecowitt names a time zone Python doesn't know, %r; using %s", zone, self.tz)
+        if hasattr(self.api, "set_timezone"):   # (Home Assistant's history is cut in the station's days)
+            self.api.set_timezone(self.tz)
         try:
             self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
         except (KeyError, TypeError, ValueError):
@@ -165,13 +176,19 @@ class Ecowitt(Source):
             pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        log.info("Weather station: Ecowitt '%s' (%s), %s%s", self.station_name, self.mac, self.tz,
+        log.info("Weather station: Ecowitt '%s' (%s), %s, from %s%s", self.station_name, self.mac, self.tz, self.via,
                  f", devices found: {len(devices)}" if len(devices) > 1 else "")
         try:
             size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
             log.info("History cache: %s (%.1f MB)", self.cache.path, size / 1e6)
         except Exception as e:   # only a log line
             log.warning("History cache not readable: %s", e)
+
+    @property
+    def archive_pace(self) -> float | None:
+        """Seconds the archive waits between its requests: none when only Home Assistant answers (the pause is for the cloud's rate limit);
+        None for the archive's own."""
+        return 0.0 if isinstance(self.api, HomeAssistantAPI) else None
 
     def describe(self) -> str:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""

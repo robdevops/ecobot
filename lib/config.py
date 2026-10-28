@@ -65,6 +65,19 @@ def _url(value: str, default: str, name: str) -> str:
     return (value or default).rstrip("/")
 
 
+SOURCES = ("auto", "cloud", "homeassistant")
+
+
+def _source(value: str, default: str, name: str) -> str:
+    """Where the weather station's readings come from: auto (Home Assistant when it is set, Ecowitt's cloud as its fallback when that is set
+    too, else whichever is), cloud, or homeassistant; another value keeps the default, with a warning."""
+    if value.lower() in SOURCES:
+        return value.lower()
+    if value:
+        log.warning("%s: %r is not %s; keeping %s", name, value, ", ".join(SOURCES), default)
+    return default
+
+
 def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int, int] | None:
     """"0-6" -> (0, 6); "off" or "none" -> None; anything unreadable -> the default."""
     if value.lower() in ("off", "none", "no", "false"):
@@ -176,8 +189,9 @@ class Config:
     airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
     airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
     airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
-    homeassistant_url: str = _setting("HOMEASSISTANT_URL", "", _url)       # Home Assistant, to read the station's readings back for the charts' shaded ranges, e.g. http://192.168.1.219:8123
+    homeassistant_url: str = _setting("HOMEASSISTANT_URL", "", _url)       # Home Assistant, where the station's readings are read from (its Ecowitt integration), e.g. http://192.168.1.219:8123
     homeassistant_token: str = _setting("HOMEASSISTANT_TOKEN", "")         # a long-lived access token (your profile page in Home Assistant)
+    ecowitt_source: str = _setting("ECOWITT_SOURCE", "auto", _source)      # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
     place: str = _setting("PLACE", "Melbourne")                     # named after the Pollen & asthma and Forecast headings in the report
     pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
@@ -201,12 +215,23 @@ class Config:
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property
-    def ecowitt(self) -> bool:
-        return bool(self.ecowitt_api_key and self.ecowitt_app_key)
-
-    @property
     def homeassistant(self) -> bool:
         return bool(self.homeassistant_url and self.homeassistant_token)
+
+    @property
+    def ecowitt_cloud(self) -> bool:
+        """The station's readings are asked of Ecowitt's cloud (its keys are set, and ECOWITT_SOURCE does not say Home Assistant only)."""
+        return bool(self.ecowitt_api_key and self.ecowitt_app_key) and self.ecowitt_source != "homeassistant"
+
+    @property
+    def ecowitt_home_assistant(self) -> bool:
+        """... of Home Assistant (it is set, and ECOWITT_SOURCE does not say the cloud only)."""
+        return self.homeassistant and self.ecowitt_source != "cloud"
+
+    @property
+    def ecowitt(self) -> bool:
+        """The weather station is on: from Home Assistant, Ecowitt's cloud, or both (the cloud then making up what Home Assistant lacks)."""
+        return self.ecowitt_cloud or self.ecowitt_home_assistant
 
     @property
     def irrigation(self) -> bool:
@@ -238,5 +263,6 @@ class Config:
                   air_cache_path=data / "airgradient_cache.sqlite", conditions_cache_path=data / "conditions_cache.sqlite",
                   **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
         if not (cfg.ecowitt or cfg.airgradient):
-            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
+            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or HOMEASSISTANT_URL + HOMEASSISTANT_TOKEN and/or AIRGRADIENT_API_TOKEN + "
+                             "AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
         return cfg

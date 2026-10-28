@@ -137,6 +137,86 @@ class FakeEcowitt:
         return out
 
 
+# series -> (the entity's name after sensor.ws2900_, Home Assistant's unit, its number at a time): what a Home Assistant with the Ecowitt integration holds
+HA_PREFIX = "sensor.ws2900_"
+HA_STATES = {
+    "outdoor_temperature": ("°C", temp, 1), "humidity": ("%", humidity, 0), "dewpoint": ("°C", lambda t: temp(t) - 3, 1),
+    "feels_like_temperature": ("°C", lambda t: temp(t) - 1, 1), "indoor_temperature": ("°C", lambda t: 21.0, 1),
+    "indoor_humidity": ("%", lambda t: 55.0, 0), "relative_pressure": ("hPa", pressure, 1), "wind_speed": ("km/h", wind_speed, 1),
+    "wind_gust": ("km/h", gust, 1), "wind_direction": ("°", direction, 0), "daily_rain": ("mm", rain_day, 1), "rain_rate": ("mm/h", lambda t: 0.0, 1),
+    "solar_radiation": ("W/m²", lambda t: uv_index(t) * 80, 1), "uv_index": ("UV index", uv_index, 1),
+}
+HA_STEP = 64   # the gateway reports about once a minute
+
+
+class FakeHomeAssistant:
+    """Handles /api/config, /api/states and /api/history/period like Home Assistant with the Ecowitt integration set up, from the same weather
+    functions as FakeEcowitt. It has recorded `history_days` days; a state is recorded only when its number changes, as Home Assistant does.
+    `off`: it answers 503 (it is down); `units`: another unit for an entity (what its owner chose to see)."""
+
+    def __init__(self, history_days: float = 10, begins: float | None = None, units: dict | None = None, token: str = "tok"):
+        self.begins = begins if begins is not None else datetime.now(timezone.utc).timestamp() - history_days * 86400
+        self.units, self.token, self.off = units or {}, token, False
+        self.calls: list[dict] = []
+
+    def number(self, name: str, ts: float) -> float:
+        unit, fn, decimals = HA_STATES[name]
+        value = round(fn(int(ts)), decimals)
+        return self.convert(name, value)
+
+    def convert(self, name: str, value: float) -> float:
+        """The number in the unit its owner chose to see (Fahrenheit, mph ... as `units` says)."""
+        unit = self.units.get(name)
+        return {"°F": lambda v: round(v * 9 / 5 + 32, 1), "mph": lambda v: round(v / 1.609344, 1), "inHg": lambda v: round(v / 33.8639, 2)}[unit](value) if unit else value
+
+    def unit(self, name: str) -> str:
+        return self.units.get(name, HA_STATES[name][0])
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append({"path": request.url.path, **dict(request.url.params)})
+        if request.headers.get("authorization") != f"Bearer {self.token}":
+            return httpx.Response(401, json={"message": "401: Unauthorized"})
+        if self.off:
+            return httpx.Response(503, text="unavailable")
+        path = request.url.path
+        now = datetime.now(timezone.utc).timestamp()
+        if path == "/api/config":
+            return httpx.Response(200, json={"time_zone": "Australia/Melbourne", "latitude": -37.8, "longitude": 145.0, "location_name": "Home"})
+        if path == "/api/states":
+            at = datetime.fromtimestamp(now - 20, timezone.utc).isoformat()
+            states = [{"entity_id": HA_PREFIX + n, "state": str(self.number(n, now)), "attributes": {"unit_of_measurement": self.unit(n)},
+                       "last_changed": at, "last_updated": at} for n in HA_STATES]
+            return httpx.Response(200, json=[*states, {"entity_id": "light.kitchen", "state": "on", "attributes": {}}])
+        start = datetime.fromisoformat(path.rsplit("/", 1)[-1]).timestamp()
+        end = datetime.fromisoformat(request.url.params["end_time"]).timestamp() if "end_time" in request.url.params else start + 86400
+        out = []
+        for entity in request.url.params["filter_entity_id"].split(","):
+            name = entity.removeprefix(HA_PREFIX)
+            if name not in HA_STATES:
+                continue
+            rows, last = [], None
+            first = int(max(start, self.begins) // HA_STEP * HA_STEP)
+            if self.begins < start:   # held before the start: its state at the start is the first row
+                last = self.number(name, int(start) // HA_STEP * HA_STEP)
+                rows.append({"entity_id": entity, "state": str(last), "last_changed": datetime.fromtimestamp(start, timezone.utc).isoformat()})
+            for ts in range(first, int(min(end, now)), HA_STEP):
+                if ts < self.begins:
+                    continue
+                value = self.number(name, ts)
+                if value != last:
+                    row = {"state": str(value), "last_changed": datetime.fromtimestamp(ts + 0.25, timezone.utc).isoformat()}
+                    rows.append({"entity_id": entity, **row} if not rows else row)
+                    last = value
+            if rows:
+                out.append(rows)
+        return httpx.Response(200, json=out)
+
+
+def home_assistant_transport(fake: FakeHomeAssistant | None = None, **kw) -> tuple[httpx.MockTransport, FakeHomeAssistant]:
+    fake = fake or FakeHomeAssistant(**kw)
+    return httpx.MockTransport(fake), fake
+
+
 def ecowitt_transport(fake: FakeEcowitt | None = None, history_days: int = HISTORY_DAYS) -> tuple[httpx.MockTransport, FakeEcowitt]:
     """history_days: how old the fake station is; tests of the archive's behaviour use a young one, which is much quicker."""
     fake = fake or FakeEcowitt(history_days=history_days)

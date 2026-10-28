@@ -153,7 +153,7 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
             log.exception("Weather alerts couldn't start")
         # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
         # need Ecowitt inline
-        tasks.start(Archive(eco).loop())
+        tasks.start(Archive(eco, eco.archive_pace).loop())
         if eco.ha:   # the readings Home Assistant kept: the charts' 5-minute ranges, for the days the bot was not watching too
             tasks.start(every(HA_IMPORT_SECONDS, eco.import_ranges))
 

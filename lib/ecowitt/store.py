@@ -117,6 +117,10 @@ class HistoryCache:
         with self._lock:
             return self.db.execute(sql, args).fetchall()
 
+    def macs(self) -> list[str]:
+        """The stations the cache holds readings of."""
+        return sorted({mac for (mac,) in self._query("SELECT DISTINCT mac FROM series")})
+
     def count(self, mac: str, cycle: str, grp: str, start: int, end: int) -> int:
         """How many readings are held for this group at this resolution between two times (for diagnosing an empty answer)."""
         return self._query("SELECT COUNT(*) FROM points p JOIN series s ON s.id = p.series "

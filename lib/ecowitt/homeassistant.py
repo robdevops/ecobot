@@ -17,22 +17,18 @@ from datetime import UTC, datetime
 
 import httpx
 
+from ..series import derives_range
+from .hass_map import ANCHOR, ENTITIES, NO_RANGE, convert, entity_ids
 from .live import BUCKET
 
 log = logging.getLogger(__name__)
 
-# series ("group.field") -> (the entity's name after the station's: sensor.<station>_<this>, what to multiply its state by)
-ENTITIES = {
-    "outdoor.temperature": ("outdoor_temperature", 1.0), "outdoor.humidity": ("humidity", 1.0), "outdoor.dew_point": ("dewpoint", 1.0),
-    "outdoor.feels_like": ("feels_like_temperature", 1.0), "outdoor.vpd": ("vapour_pressure_deficit", 0.1),   # Home Assistant gives it in hPa, the bot in kPa
-    "indoor.temperature": ("indoor_temperature", 1.0), "indoor.humidity": ("indoor_humidity", 1.0), "indoor.dew_point": ("indoor_dewpoint", 1.0),
-    "pressure.relative": ("relative_pressure", 1.0), "solar_and_uvi.solar": ("solar_radiation", 1.0), "solar_and_uvi.uvi": ("uv_index", 1.0),
-}
-ANCHOR = "outdoor_temperature"   # the entity the station's name is read from
 HALF = BUCKET // 2
+RANGE_SERIES = [e.series for e in ENTITIES.values() if e.group != "rainfall" and e.series not in NO_RANGE and derives_range(e.field)]   # what a chart shades
 
 
-def _epoch(text: str) -> float:
+def parse_time(text: str) -> float:
+    """Home Assistant's ISO time ("2026-10-27T11:22:43.420827+00:00") as an epoch."""
     return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC).timestamp()
 
 
@@ -42,7 +38,7 @@ def states_of(rows: list[dict]) -> list[tuple[float, float]]:
     out = []
     for row in rows:
         try:
-            out.append((_epoch(row.get("last_changed") or row["last_updated"]), float(row["state"])))
+            out.append((parse_time(row.get("last_changed") or row["last_updated"]), float(row["state"])))
         except (KeyError, TypeError, ValueError):
             continue
     return sorted(out)
@@ -67,47 +63,73 @@ def ranges_of(states: list[tuple[float, float]], start: float, end: float) -> di
 
 
 class HomeAssistant:
+    """Home Assistant's REST API: the station's entities (found by name), their states now and their history."""
+
     def __init__(self, url: str, token: str, transport=None):
         self.client = httpx.AsyncClient(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=60, transport=transport)
         self.prefix: str | None = None
+        self.units: dict[str, str] = {}   # entity id -> the unit Home Assistant shows it in (read with its states)
 
     async def close(self):
         await self.client.aclose()
 
-    async def find_prefix(self) -> str | None:
-        """The start of the Ecowitt entities' names ("sensor.ws2900_"), found from the one called ...outdoor_temperature; None when there is none."""
-        res = await self.client.get("/api/states")
+    async def _get(self, path: str, **params):
+        res = await self.client.get(path, params=params or None)
         res.raise_for_status()
-        found = sorted(s["entity_id"] for s in res.json() if str(s.get("entity_id", "")).startswith("sensor.") and s["entity_id"].endswith("_" + ANCHOR))
+        return res.json()
+
+    async def states(self) -> list[dict]:
+        """Every entity's state now ({"entity_id", "state", "attributes", "last_changed", "last_updated" ...}); the units of the station's
+        are kept for converting what its history says."""
+        found = await self._get("/api/states")
+        for s in found:
+            if isinstance(s, dict) and (unit := (s.get("attributes") or {}).get("unit_of_measurement")):
+                self.units[s.get("entity_id", "")] = unit
+        return found
+
+    async def config(self) -> dict:
+        """Home Assistant's own settings: its time zone, its location and name."""
+        return await self._get("/api/config")
+
+    async def find_prefix(self, states: list[dict] | None = None) -> str | None:
+        """The start of the Ecowitt entities' names ("sensor.ws2900_"), found from the one called ...outdoor_temperature; None when there is none."""
+        found = sorted(s["entity_id"] for s in (states if states is not None else await self.states())
+                       if str(s.get("entity_id", "")).startswith("sensor.") and s["entity_id"].endswith("_" + ANCHOR))
         if not found:
             return None
         if len(found) > 1:
             log.warning("Home Assistant has %d stations' outdoor temperatures (%s); using %s", len(found), ", ".join(found), found[0])
         return found[0][: -len(ANCHOR)]
 
-    async def ranges(self, start: float, end: float | None = None) -> dict[str, dict[int, tuple[int, float, float]]]:
-        """{series: {5-minute mark: (readings, lowest, highest)}} for the readings Home Assistant kept from `start` to `end` (epoch seconds;
-        now by default). A series it has no entity or no states for is left out."""
-        end = time.time() if end is None else end
+    async def station(self) -> str:
+        """The station's entity prefix, found once. LookupError when Home Assistant has no Ecowitt sensors."""
         if self.prefix is None:
             self.prefix = await self.find_prefix()
             if self.prefix is None:
                 raise LookupError("Home Assistant has no sensor ending in _" + ANCHOR + " (is the Ecowitt integration set up?)")
-        names = {self.prefix + name: (series, scale) for series, (name, scale) in ENTITIES.items()}
-        when = datetime.fromtimestamp(start - BUCKET, UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-        res = await self.client.get(f"/api/history/period/{when}", params={
-            "end_time": datetime.fromtimestamp(end, UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00"), "filter_entity_id": ",".join(names),
-            "minimal_response": "", "no_attributes": ""})
-        res.raise_for_status()
+        return self.prefix
+
+    async def history(self, ids: list[str], start: float, end: float) -> dict[str, list[tuple[float, float]]]:
+        """{entity id: [(when, value)]} for these entities between two epochs, each oldest first, as Home Assistant recorded them: a state
+        only when it changed, the one held at `start` first. An entity it has no numbers for is left out."""
+        when = lambda t: datetime.fromtimestamp(t, UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        found = await self._get(f"/api/history/period/{when(start)}", end_time=when(end), filter_entity_id=",".join(ids),
+                                minimal_response="", no_attributes="")
         out = {}
-        for rows in res.json():
-            if not rows:
-                continue
-            entity = rows[0].get("entity_id")   # (minimal_response names the entity on the first state only)
-            if entity not in names:
-                continue
-            series, scale = names[entity]
-            states = [(t, round(v * scale, 6)) for t, v in states_of(rows)]
-            if found := ranges_of(states, start, end):
-                out[series] = {m: (n, lo, hi) for m, (n, lo, hi) in found.items()}
+        for rows in found:
+            if rows and (entity := rows[0].get("entity_id")) in ids and (states := states_of(rows)):
+                out[entity] = states
+        return out
+
+    async def ranges(self, start: float, end: float | None = None) -> dict[str, dict[int, tuple[int, float, float]]]:
+        """{series: {5-minute mark: (readings, lowest, highest)}} for the readings Home Assistant kept from `start` to `end` (epoch seconds;
+        now by default). A series it has no entity or no states for is left out."""
+        end = time.time() if end is None else end
+        names = entity_ids(await self.station(), RANGE_SERIES)
+        out = {}
+        for entity, states in (await self.history(list(names), start - BUCKET, end)).items():
+            e = names[entity]
+            converted = [(t, round(convert(v, e.kind, self.units.get(entity), e.scale), 6)) for t, v in states]
+            if found := ranges_of(converted, start, end):
+                out[e.series] = {m: (n, lo, hi) for m, (n, lo, hi) in found.items()}
         return out

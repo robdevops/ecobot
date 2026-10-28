@@ -110,8 +110,8 @@ class Fetcher:
                 return None
             for a, b in spans(cycle, self.local(gap_start), self.local(gap_end)):   # one request each, within Ecowitt's limit
                 data = await self._fetch(cycle, a, b, need)
-                if data is None:
-                    continue  # failed: not recorded as fetched, so it's retried next time
+                if data is None or not data and not getattr(self.api, "empty_is_final", True):
+                    continue  # failed, or told nothing by an API that only has what it recorded: not recorded as fetched, so it's tried again
                 piece = (self.epoch(a), self.epoch(b))
                 await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, *piece)
                 for g in need:
