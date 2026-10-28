@@ -164,7 +164,7 @@ async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_star
     sources, _ = await ecobot.start_sources(config(tmp_path))
     for s in sources:
         await s.close()
-    assert [s.name for s in sources] == ["Ecowitt"] and "AirGradient couldn't start - continuing without it" in caplog.text
+    assert [s.name for s in sources] == ["Ecowitt"] and "AirGradient couldn't start (OSError: the cache folder is read-only) - continuing without it" in caplog.text
 
 
 async def test_a_failure_part_way_through_starting_closes_everything_already_open(tmp_path, monkeypatch, caplog):

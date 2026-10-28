@@ -4,6 +4,9 @@ line) also has the quote put on one line first and cut to QUOTE_WIDTH, whatever 
 
 import logging
 
+# Errors that point at the code are logged with their traceback; any other failure (an outage, a refusal, a full disk) is one line
+BUGS = (AssertionError, AttributeError, IndexError, KeyError, NameError, TypeError, ValueError, ZeroDivisionError)
+
 QUOTE_WIDTH = 48          # a quoted request or chat message keeps this many characters, then an ellipsis if it was longer (LOG_WIDTH cuts the whole line, if set)
 QUOTES = {"quotes": True}   # extra= for a line whose last argument is a request or a chat message
 

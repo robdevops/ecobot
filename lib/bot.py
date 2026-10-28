@@ -37,7 +37,7 @@ from .sources import Source
 from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .topicmemory import TopicMemory
-from .logs import QUOTES, fit
+from .logs import BUGS, QUOTES, fit
 
 log = logging.getLogger(__name__)
 
@@ -270,8 +270,8 @@ async def _photos(msg: Message, photos: list[bytes], titles: list[str], buttons,
         if len(photos) == 1:
             return True, await msg.reply_photo(photos[0], caption=caption(0), **({"reply_markup": buttons} if buttons else {}))
         await msg.reply_media_group([InputMediaPhoto(p, caption=caption(i)) for i, p in enumerate(photos)])
-    except TelegramError:
-        log.exception("Couldn't send the chart")
+    except TelegramError as e:
+        log.error("Couldn't send the chart: %s: %s", type(e).__name__, e)
         if alone:
             await msg.reply_text("Sorry, I couldn't send that chart. Please try again in a moment.")
     return False, None
@@ -296,8 +296,8 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
             sent = await msg.reply_photo(photos[0], caption=body, caption_entities=ents or None,
                                          **({"reply_markup": buttons} if buttons else {}))
             return Delivered(bool(markup) and not period_row, sent)
-        except TelegramError:
-            log.exception("Couldn't send the chart with its answer; sending them apart")
+        except TelegramError as e:
+            log.error("Couldn't send the chart with its answer (%s: %s); sending them apart", type(e).__name__, e)
     sent = None
     if photos and photos_first:
         _, sent = await _photos(msg, photos, titles, None, not text)
@@ -819,7 +819,7 @@ class Bot:
         if connection_problem(err):
             log.warning("Telegram connection problem while handling a message (%s: %s)", type(err).__name__, err)
         else:
-            log.error("Unhandled error while handling a message", exc_info=err)
+            log.error("Unhandled error while handling a message: %s: %s", type(err).__name__, err, exc_info=isinstance(err, BUGS))
 
     # ---------- messages ----------
     async def on_other(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -894,8 +894,8 @@ class Bot:
         try:
             sheet = await station.dashboard(STATUS)
             return await asyncio.to_thread(gauges.render, sheet) if sheet else None
-        except Exception:
-            log.exception("The report's gauges failed; sending it without them")
+        except Exception as e:
+            log.error("The report's gauges failed (%s: %s); sending it without them", type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return None
 
     async def _warn(self, msg: Message, tokens: int):
@@ -1067,13 +1067,13 @@ class Bot:
                     try:
                         answer.photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz, turn.times))
                         answer.titles.append(spec.caption(now.date()))
-                    except Exception:
-                        log.exception("Chart failed; sending the answer without it")
+                    except Exception as e:
+                        log.error("Chart failed (%s: %s); sending the answer without it", type(e).__name__, e, exc_info=isinstance(e, BUGS))
             except TimeoutError:
                 log.error("Gave up after %ds on: %s", TURN_SECONDS, text, extra=QUOTES)
                 answer = Answer("Sorry, that took too long. Please try again in a moment.", ok=False)
             except Exception as e:
-                log.exception("Agent error")
+                log.error("Agent error: %s: %s", type(e).__name__, e, exc_info=isinstance(e, BUGS))
                 # The details (which can include provider error bodies) go to the log, not the chat
                 answer = Answer(f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment.", ok=False)
             finally:
@@ -1167,5 +1167,5 @@ class Bot:
                 self.state.set_keyboard(msg.chat_id, self.keyboard_version)
             elif markup and not row:
                 log.info("Buttons: this reply couldn't carry the keyboard (several charts); will try the next one")
-        except TelegramError:
-            log.exception("Failed to deliver reply")
+        except TelegramError as e:
+            log.error("Failed to deliver reply: %s: %s", type(e).__name__, e)

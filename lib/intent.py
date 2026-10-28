@@ -14,6 +14,7 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
+from .logs import BUGS
 from .daytable import GROUPING
 from .series import AIR as AIR_TABLE, INDOOR_READINGS, PRESSURE_WORDS, READING_GROUPS, SPECIFIC, TEMP_WORDS, WEATHER as WEATHER_READINGS
 
@@ -889,8 +890,8 @@ def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGr
     calls = report_calls(sources) if report else []
     try:
         fast = (*calls[0], "report") if calls else fast_call(text, now, sources)
-    except Exception:
-        log.exception("Fast path failed; using the normal path")
+    except Exception as e:
+        log.error("Fast path failed (%s: %s); using the normal path", type(e).__name__, e, exc_info=isinstance(e, BUGS))
         fast = None
     in_code = bool(fast and fast[0] in ("weather_history", "air_quality") and fast[1].get("chart")
                    and not _judgement(text))

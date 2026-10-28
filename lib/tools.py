@@ -84,7 +84,7 @@ class Tools:
         try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
             out = await tool.handler(args, turn or Turn())
         except Exception as e:
-            log.exception("Tool %s failed", name)
+            log.error("Tool %s failed: %s: %s", name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return f"Error calling tool: {e}"
         out = out or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:

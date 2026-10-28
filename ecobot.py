@@ -20,7 +20,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
 from openai import AsyncOpenAI, Timeout
 from telegram import Update
-from telegram.error import InvalidToken
+from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
 from lib import intent
@@ -36,7 +36,7 @@ from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
-from lib.logs import LogFormat
+from lib.logs import BUGS, LogFormat
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.sources import Source
@@ -66,8 +66,8 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
             source = kind(*args)
             await source.start()
             sources.append(source)
-        except Exception:
-            log.exception("%s couldn't start - continuing without it", kind.name)
+        except Exception as e:
+            log.error("%s couldn't start (%s: %s) - continuing without it", kind.name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             if source is not None:
                 await safely(source.close)
     if cfg.ecowitt:
@@ -104,7 +104,7 @@ class Tasks:
     def _ended(self, task: asyncio.Task):
         self.running.discard(task)
         if not task.cancelled() and (error := task.exception()):
-            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error)
+            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error if isinstance(error, BUGS) else None)
 
     async def close(self):
         for task in self.running:
@@ -150,8 +150,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
             await weather.check()
             if eco.fast is not None:   # Home Assistant: the rain alert looks at each new reading as it comes in, not only at the minute's refresh
                 eco.on_live.append(weather.check_rain)
-        except Exception:
-            log.exception("Weather alerts couldn't start")
+        except Exception as e:
+            log.error("Weather alerts couldn't start (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
         if eco.fast is not None:
             tasks.start(eco.watch_live())
         # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
@@ -172,8 +172,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
 
     try:
         await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
-    except Exception:
-        log.exception("Startup fetch failed (the regular refreshes will catch up)")
+    except Exception as e:
+        log.error("Startup fetch failed (%s: %s); the regular refreshes will catch up", type(e).__name__, e, exc_info=isinstance(e, BUGS))
     if missing := [LABELS[k] for k in available_kinds(bot.by_name, bot.irrigation is not None) if k not in running]:
         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
 
@@ -253,6 +253,8 @@ async def main():
             await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
         except InvalidToken:   # (its message names the token, so it is not shown)
             raise SystemExit("TELEGRAM_BOT_TOKEN was rejected by Telegram: check it is the token @BotFather gave for this bot") from None
+        except NetworkError as e:   # (the host's network or DNS, most often): one line, not the library's pages of stack
+            raise SystemExit(f"Can't reach Telegram ({type(e).__name__}: {e}): check the network and DNS of the machine or container") from None
         await app.start()
         stack.push_async_callback(app.stop)
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
