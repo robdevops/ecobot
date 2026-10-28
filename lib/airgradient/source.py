@@ -482,7 +482,7 @@ class AirGradient(Source):
         before, started = self.requests, time.perf_counter()
         rows, hourly, skipped = await self.rows(t0, t1)
         turn.times["data"] = turn.times.get("data", 0.0) + time.perf_counter() - started   # for the reply's timing line
-        log.log(logging.DEBUG if turn.ahead else logging.INFO, "AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}",
+        log.debug("AirGradient %s to %s: %d readings, %d req", f"{t0:%Y-%m-%d}",
                 f"{t1:%m-%d %H:%M}", len(rows), self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{day_text(t0)} - {day_text(t1)}",
                "readings": len(rows)}

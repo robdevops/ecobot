@@ -97,7 +97,7 @@ class Agent:
             if key not in cache:
                 cache[key] = asyncio.ensure_future(self.tools.call(name, args, turn))
                 return await cache[key]
-            log.info("Tool call %s served from cache (repeat)", name)
+            log.debug("Tool call %s served from cache (repeat)", name)
             return ("[You already made this exact call - same result as before. Don't repeat it; "
                     "change the request or answer now.]\n" + await cache[key])
 

@@ -372,7 +372,7 @@ class HistoryQuery:
                       if key.split(".", 1)[-1] not in DERIVED or key.split(".", 1)[-1] in wanted}  # the rest: cached, not sent
         series_out.update(self.direction)
         shown = {k: v for k, v in series_out.items() if self._in_focus(k)}   # what the model is sent (charts use all of series_out)
-        log.log(logging.DEBUG if self.turn.ahead else logging.INFO, "%s..%s: %d reads (%d cache, %d mem), %d req%s, %d refined",
+        log.debug("%s..%s: %d reads (%d cache, %d mem), %d req%s, %d refined",
                 f"{self.start:%m-%d}", f"{self.end:%m-%d}", f.ranges, f.from_cache, f.from_memory, f.calls,
                 f", {len(f.errors)} failed" if f.errors else "", refined)
         out = {"period": f"{day_text(self.start)} - {day_text(self.end)}", "series": shown if shown else series_out}

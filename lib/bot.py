@@ -703,7 +703,7 @@ class Bot:
             return
         await answer_query(query, f"Drawing {periods.NAMES[days]}...")
         asked = intent.with_period(question, days, now)
-        log.info("Period button %s: %s", periods.NAMES[days], question, extra=QUOTES)
+        log.debug("Period button %s: %s", periods.NAMES[days], question, extra=QUOTES)
         key = self.images.key(asked, days, now)
         if cached := self.images.get(key):   # drawn lately: no new question
             photo, title = cached
@@ -1039,7 +1039,7 @@ class Bot:
             if source.wants(text) and not read.chart_in_code:   # a chart made in code reads just what it needs, first in line
                 source.poke()
         if read.fast:
-            log.info("Fast path: %s", read.fast[2])
+            log.debug("Fast path: %s", read.fast[2])
 
         chat = self.chats[self._key(msg)]
         started = time.monotonic()
