@@ -17,8 +17,8 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 - [Install](#install)
   - [systemd](#systemd)
   - [Docker](#docker)
-    - [Docker networking](#docker-networking)
     - [Docker logging](#docker-logging)
+    - [Docker networking](#docker-networking)
 - [Upgrading](#upgrading)
   - [systemd](#systemd-1)
   - [Docker](#docker-1)
@@ -128,14 +128,6 @@ Then message `/report` to your Telegram bot.
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
-#### Docker networking
-
-`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or reconfigure the container for host network (then run the `docker compose` command again):
-
-```
-echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobot/.env
-```
-
 #### Docker logging
 
 Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`):
@@ -144,7 +136,15 @@ Logs go to Docker's own rotated log; to send them to the journal instead (kept a
 echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee /opt/ecobot/.env
 ```
 
-To use both this and Docker host network, set `COMPOSE_FILE=compose.yaml:compose.host-network.yaml:compose.journald.yaml`.
+To use both this and [Docker host network](#docker-networking), set `COMPOSE_FILE=compose.yaml:compose.host-network.yaml:compose.journald.yaml`.
+
+#### Docker networking
+
+`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or reconfigure the container for host network (then run the `docker compose` command again):
+
+```
+echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobot/.env
+```
 
 ## Upgrading
 

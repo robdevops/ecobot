@@ -4,7 +4,7 @@ For people changing the code. Tests and the GitHub checks are in [`DEVELOPMENT.m
 
 ## Docker logging
 
-The bot logs to stdout and `compose.yaml` gives the container Docker's `local` log driver, which compresses and rotates its files (5 files of 10 MB). Read the log with `docker logs -tf ecobot` (`-t` for the timestamps Docker records).
+The bot logs DEBUG and INFO lines to stdout and WARN and ERROR lines to stderr (`lib/logs.py`), so Docker, and its journald driver, can tell them apart; under systemd, where both go to the journal, each line starts with its syslog priority (`<4>` ...), which the journal takes as its level and strips, so `journalctl` colours warnings and errors. `compose.yaml` gives the container Docker's `local` log driver, which compresses and rotates its files (5 files of 10 MB). Read the log with `docker logs -tf ecobot` (`-t` for the timestamps Docker records).
 
 ## Layout
 

@@ -36,7 +36,7 @@ from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
-from lib.logs import BUGS, LogFormat
+from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.sources import Source
@@ -44,9 +44,8 @@ from lib.tools import Tools
 from lib.warm import every, safely
 
 
-_handler = logging.StreamHandler()
-_handler.setFormatter(LogFormat("%(levelname)s %(message)s"))
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
+_format = LogFormat("%(levelname)s %(message)s", priority=on_journal())   # DEBUG and INFO to stdout, WARN and ERROR to stderr
+logging.basicConfig(level=logging.INFO, handlers=stream_handlers(_format))
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")
@@ -209,7 +208,7 @@ def commit_in(git_dir) -> str:
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
-    _handler.formatter.width = cfg.log_width   # a chat message in the log is cut to it from here on
+    _format.width = cfg.log_width   # a chat message in the log is cut to it from here on
     for name in ("ecobot", "lib"):   # the bot's own lines: the libraries keep theirs
         logging.getLogger(name).setLevel(cfg.log_level)
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive

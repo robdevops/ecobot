@@ -78,6 +78,8 @@ async def test_a_name_that_cannot_be_found_is_said_once_for_every_place_that_ask
 
     def nowhere(request):
         raise httpx.ConnectError("[Errno -2] Name or service not known")
+    from lib import netenv
+    monkeypatch.setattr(netenv, "docker_private_network", lambda: True)   # in a container on Docker's own network
     kw = {"ecowitt_api_key": "", "ecowitt_app_key": "", "homeassistant_url": "http://homeassistant.local:8123", "homeassistant_token": "tok"}
     eco = Ecowitt(config(tmp_path, **kw), None, httpx.MockTransport(nowhere))
     caplog.set_level(logging.INFO)
@@ -86,5 +88,15 @@ async def test_a_name_that_cannot_be_found_is_said_once_for_every_place_that_ask
     await asyncio.sleep(0.2)
     task.cancel()
     assert caplog.text.count("Home Assistant: the ") == 1                                  # ranges, minutes and live reading: one line
-    assert "homeassistant.local:8123" in caplog.text and "host network" in caplog.text and "192.168" in caplog.text
+    assert "can't find .local names: put the IP address in HOMEASSISTANT_URL" in caplog.text and "host network" in caplog.text
     await eco.close()
+
+
+def test_outside_docker_a_name_that_cannot_be_found_is_to_be_checked_or_given_as_an_address(monkeypatch, caplog):
+    from lib import netenv
+    from lib.ecowitt.homeassistant import Trouble
+    monkeypatch.setattr(netenv, "docker_private_network", lambda: False)
+    caplog.set_level(logging.INFO)
+    Trouble("http://homeassistant.local:8123").failed("live reading", "[Errno -2] Name or service not known")
+    assert "The name in HOMEASSISTANT_URL (http://homeassistant.local:8123) can't be found from here: check it, or use the address" in caplog.text
+    assert "Docker" not in caplog.text

@@ -16,7 +16,9 @@ from bisect import bisect_left, bisect_right
 from datetime import UTC, datetime
 
 import httpx
+from urllib.parse import urlsplit
 
+from ..netenv import local_name_hint
 from ..series import derives_range
 from .hass_map import ANCHOR, ENTITIES, NO_RANGE, convert, entity_ids
 from .live import BUCKET
@@ -76,8 +78,10 @@ class Trouble:
         if self.failing:
             return
         self.failing = True
-        hint = (f". The name in HOMEASSISTANT_URL ({self.url}) can't be found from here: a .local name needs mDNS, which a Docker container "
-                "lacks; use the address (http://192.168.x.x:8123) or put the container on the host network (README: Docker networking)") if any(m in str(error).lower() for m in NAME_NOT_FOUND) else ""
+        hint = ""
+        if any(m in str(error).lower() for m in NAME_NOT_FOUND):
+            hint = local_name_hint(urlsplit(self.url).hostname or "", "HOMEASSISTANT_URL") or (
+                f". The name in HOMEASSISTANT_URL ({self.url}) can't be found from here: check it, or use the address (http://192.168.x.x:8123)")
         log.warning("Home Assistant: the %s failed (%s)%s%s", what, error, f"; {then}" if then else "", hint)
 
     def ok(self):

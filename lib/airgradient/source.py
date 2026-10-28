@@ -112,7 +112,7 @@ class AirGradient(Source):
         self.cloud = cfg.airgradient_cloud    # without an account only the sensor itself is asked, and the cloud never is
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
-        self.local = LocalSensor(cfg.airgradient_local_url) if cfg.airgradient_local_url else None   # the live reading from the sensor itself
+        self.local = LocalSensor(cfg.airgradient_local_url, cloud=cfg.airgradient_cloud) if cfg.airgradient_local_url else None   # the live reading from the sensor itself
         self.store = AirStore(cfg.air_cache_path, self.loc, self.tz)
         self._current: tuple[dict, float] | None = None       # (raw row, fetched at)
         self._names: dict = {}                                # the sensor's name and type, from the last cloud reading

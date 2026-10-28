@@ -16,6 +16,9 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
+
+from ..netenv import local_name_hint
+
 log = logging.getLogger(__name__)
 
 TIMEOUT = 3.0           # seconds for the lookup and for the device to answer: a sensor that is off must not slow the answers
@@ -70,13 +73,14 @@ def cloud_shaped(data: dict, now: datetime) -> dict | None:
 
 
 class LocalSensor:
-    def __init__(self, url: str, transport=None, resolve=address_of, clock=time.time):
+    def __init__(self, url: str, transport=None, resolve=address_of, clock=time.time, cloud: bool = True):
+        """cloud: there is a cloud account to read instead while the sensor does not answer (the warning says so)."""
         url = url.strip().rstrip("/")
         self.base = url if "//" in url else f"http://{url}"
         parts = urlsplit(self.base)
         self.host, self.port = parts.hostname or "", parts.port
         self.client = httpx.AsyncClient(timeout=TIMEOUT, transport=transport)
-        self.resolve, self.clock = resolve, clock
+        self.resolve, self.clock, self.cloud = resolve, clock, cloud
         self.address: tuple[str, float] | None = None   # (IP, when looked up)
         self.retry_at = 0.0
         self.working: bool | None = None                # for the log: say so when it changes
@@ -112,8 +116,8 @@ class LocalSensor:
         except Exception as e:
             self.address, self.retry_at = None, self.clock() + RETRY_SECONDS
             if self.working is not False:
-                log.warning("AirGradient: the sensor's own server (%s) did not answer (%s: %s); using the cloud, trying again in %d min",
-                            self.describe(), type(e).__name__, e, RETRY_SECONDS // 60)
+                log.warning("AirGradient: (%s) did not answer (%s: %s); %strying again in %d min%s", self.describe(), type(e).__name__, e,
+                            "using the cloud, " if self.cloud else "", RETRY_SECONDS // 60, local_name_hint(self.host, "AIRGRADIENT_LOCAL_URL"))
             self.working = False
             return None
         self.working = True

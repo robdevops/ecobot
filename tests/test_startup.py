@@ -54,7 +54,7 @@ class FakeBuilder:
 async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
     caplog.set_level("INFO")
     cfg = config(tmp_path, log_width=120)
-    monkeypatch.setattr(ecobot._handler.formatter, "width", 0)   # put back after the test
+    monkeypatch.setattr(ecobot._format, "width", 0)   # put back after the test
     eco_t, _ = ecowitt_transport(history_days=45)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
@@ -83,7 +83,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert " 0 failed, " in final and "days held (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
     assert "Alerts NOT running" not in log
-    assert ecobot._handler.formatter.width == 120                   # LOG_WIDTH reaches the bot's own log lines
+    assert ecobot._format.width == 120                   # LOG_WIDTH reaches the bot's own log lines
 
 
 async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(tmp_path, monkeypatch, caplog):
