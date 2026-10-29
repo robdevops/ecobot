@@ -508,15 +508,15 @@ async def test_high_pollen_and_asthma_alert_once_per_metric_and_day(tmp_path):
     pollen.grass = "High"
     await mon.check()
     await mon.check()                                                  # unchanged: nothing more
-    assert sent == ["🔴 Grass pollen is High."]
+    assert sent == ["🔴 Grass pollen forecast is High."]
     pollen.asthma = "High"
     await mon.check()
-    assert sent[1:] == ["🔴 Thunderstorm asthma risk is High. Check your asthma action plan."]
+    assert sent[1:] == ["🔴 Thunderstorm asthma forecast is High. Check your asthma action plan."]
     pollen.grass, pollen.asthma = "Low", "Moderate"                    # dropped below High: ready to warn again
     await mon.check()
     pollen.grass = "High"
     await mon.check()
-    assert len(sent) == 3 and sent[-1] == "🔴 Grass pollen is High."
+    assert len(sent) == 3 and sent[-1] == "🔴 Grass pollen forecast is High."
     pollen.today += timedelta(days=1)                                  # a new day, still High
     pollen.fetched_at = time.time()
     await mon.check()

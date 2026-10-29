@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 WARN_FROM = LEVELS.index("High")
 STALE_SECONDS = 2 * 3600       # a page not fetched for this long (it is only fetched in the day) is not news
 ADVICE = {"grass": "", "asthma": " Check your asthma action plan."}
-LABELS = {"grass": "Grass pollen", "asthma": "Thunderstorm asthma risk"}
+LABELS = {"grass": "Grass pollen forecast", "asthma": "Thunderstorm asthma forecast"}
 LINK = ("melbournepollen.com.au", "https://www.melbournepollen.com.au/")
 
 
