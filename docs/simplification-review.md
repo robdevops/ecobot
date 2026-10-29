@@ -54,7 +54,7 @@ the contracts.
 | FEELS_LIKE_IN_ALL / VPD_IN_ALL | ~10 | intent.py:362-368, config.py:214-215, ecobot.py:232-233 | runtime flags for which panels "weather all week" draws |
 | Several AirGradients in Home Assistant | ~12 | airgradient/homeassistant.py:38-57; source.py:217,225-227 | the nearest-reading tie-break; one monitor in practice |
 | `/alerts on|off` text form | 8 | bot.py:472-479 | pre-menu; the menu does it |
-| watchdog stack dump, `on_other` draft diagnostic, heavy-question warning | 44 | bot.py:57,101-109,1092,1122; 865-871,358; 941-946 and llm.py:17-20,104-113,124 | diagnostics from recent debugging; drop when no longer chased |
+| watchdog stack dump, `on_other` draft diagnostic, heavy-question warning | 44 | bot.py:57,101-109,1092,1122; 865-871,358; 941-946 and llm.py:17-20,104-113,124 | diagnostics from recent debugging; drop when no longer chased. The watchdog stack dump went on 29 October 2026; the other two stay |
 | trace-rain footnote in weather_days | 22 | ecowitt/days.py:128-149 | "days that would rank higher with a trace of rain" |
 | pollen ETag/304 conditional request | ~10 | pollen/source.py:54,84,90,114-121 | polite to a scraped site; cheap |
 | irrigation menu text re-parse | 10 | irrigation/menu.py:38-47, bot.py:637-638 | saves one Tuya request per open/close press |

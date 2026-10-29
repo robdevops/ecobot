@@ -28,7 +28,7 @@ lib/charts.py           the one renderer: panels on a shared time axis, rain beh
 lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
 lib/ecowitt/            api, fetch (what a job reads, from the storage or Ecowitt), reads and period (what a question reads of the storage:
                         its period's days, readings, lines), extremes, query (one history question), link (weather_link), days (rank/count
-                        days), rain (rain times and amounts for the alerts), station, nightly archive
+                        days), rain (rain times and amounts for the alerts), source (the station itself), archive (nightly)
 lib/airgradient/        metrics, readings (its readings in the bot's file), local (the monitor's own server), homeassistant (its states and
                         history of the monitor), days (air_days), source
 lib/storage/            the bot's one file, ecobot.sqlite (docs/storage-plan.md): both sensors' readings, their day rows, the pollen page and
