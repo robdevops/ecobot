@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, UTC
-from pathlib import Path
+
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
@@ -31,14 +31,13 @@ from .minutes import KEEP_HOURS
 from ..series import READING_GROUPS, WEATHER, find
 from ..storage import Storage
 from ..storage.catalogue import AIR
-from ..storage.migrate import open_storage
+from ..storage.migrate import history_files, open_storage
 from .query import HistoryQuery, chart_field, stack_names
 from .reads import newest_minute_on
 
 log = logging.getLogger(__name__)
 
 DEFAULT_GROUPS = "outdoor,indoor"
-
 
 def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
     """'outdoor, indoor' or ['outdoor', 'indoor'] -> ['outdoor', 'indoor'] (plain group names only). A reading named instead of
@@ -48,7 +47,6 @@ def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
     named = (p.split(".")[0].strip().lower() for p in parts if p.strip())
     groups = (g if g in GROUPS else (r.group if (r := find(g)) else None) for g in named)
     return list(dict.fromkeys(g for g in groups if g)) or default.split(",")
-
 
 HISTORY_PARAMS = {
     "type": "object",
@@ -84,19 +82,12 @@ REALTIME_PARAMS = {
 }
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
-
 LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 HA_IMPORT_SECONDS = 900                # how often Home Assistant's readings are folded into the 5-minute ranges ...
 HA_RECENT_SECONDS = 3 * 3600           # ... the last few hours each time (the whole RANGE_KEEP_DAYS the first time)
 LIVE_POLL_SECONDS = 5                  # Home Assistant's live reading is asked for this often (a request to a machine on the network)
 LIVE_RECORD_SECONDS = 30               # ... and counted into the ranges this often
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
-
-
-def history_files(cfg: Config) -> dict[str, tuple[Path, ...]]:
-    """The station's files from before ecobot.sqlite, moved into it once (docs/storage-plan.md, section 5)."""
-    return {"station": (cfg.cache_path, cfg.cache_path.with_name("ecowitt_live.sqlite"), cfg.cache_path.with_name("ecowitt_minutes.sqlite"))}
-
 
 class LiveMarks:
     """The live readings of the newest 5-minute marks, each counted in the mark nearest it (as the old live ranges were): once a mark has two
@@ -124,7 +115,6 @@ class LiveMarks:
                 del marks[mark]
         return found
 
-
 def live_summary(data: dict) -> str:
     """A live reading in a few words for the log: rain first, then outdoor temperature and humidity, wind and pressure. A reading the
     response lacks is left out."""
@@ -140,7 +130,6 @@ def live_summary(data: dict) -> str:
              get("outdoor", "temperature"), get("outdoor", "humidity"),
              f"wind {wind}" if wind else None, get("pressure", "relative")]
     return ", ".join(p for p in parts if p) or "no readings"
-
 
 class Ecowitt(Source):
     name = "Ecowitt"

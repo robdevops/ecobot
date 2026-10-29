@@ -132,16 +132,16 @@ async def test_a_refill_fetches_every_day_again_and_fills_in_what_the_stored_rea
     transport, calls = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=10))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.backfill(pace=0, empty_stop=3)
-    held = air.store.lacking()
+    held = await air.store.lacking()
     assert held["all"] > 100 and held["air_humidity"] == held["air_temperature"] == 0
-    air.store.db.execute("UPDATE readings SET air_humidity = NULL, air_temperature = NULL")      # as stored before those columns
-    assert air.store.lacking()["air_humidity"] == held["all"]
+    await air.store.storage.write(lambda w: w.db.execute("UPDATE air SET air_humidity = NULL, air_temperature = NULL"))   # as kept before those columns
+    assert (await air.store.lacking())["air_humidity"] == held["all"]
     assert await air.backfill(pace=0, empty_stop=3) == (0, 0, (await air.backfill(pace=0, empty_stop=3))[2])   # not fetched again by itself
     n = len(calls)
-    air.store.forget_days()
+    await air.store.forget_days()
     fetched, failed, _ = await air.backfill(pace=0, empty_stop=3)
     assert failed == 0 and fetched >= 10 and len(calls) > n
-    assert air.store.lacking() == held
+    assert await air.store.lacking() == held
     await air.close()
 
 
@@ -191,10 +191,10 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
     await air.close()
 
 
-def await_days(air, days_ago):
+async def await_days(air, days_ago):
     """Readings stored for the local day this many days ago (0 if none or not fetched)."""
     day = datetime.now(TZ).date() - timedelta(days=days_ago)
-    return air.store.counts([day])[day] or 0
+    return (await air.store.counts([day]))[day] or 0
 
 
 # ---------- what the API's docs promise ----------
@@ -248,7 +248,7 @@ async def test_a_recent_outage_does_not_hide_older_history(tmp_path):
     air = AirGradient(config(tmp_path), transport=transport)
     fetched, failed, total = await air.backfill(pace=0, empty_stop=10, empty_before_data=80)
     assert failed == 0
-    with_data = [d for d in range(1, 110) if (await_days(air, d)) > 0]
+    with_data = [d for d in range(1, 110) if (await await_days(air, d)) > 0]
     assert len(with_data) >= 50 and max(with_data) >= 95      # the days before the outage were found and cached
     await air.close()
 
@@ -258,7 +258,7 @@ async def test_a_gap_in_the_middle_shorter_than_the_limit_does_not_stop_the_back
     transport, _ = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=50), now - timedelta(days=15)))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.backfill(pace=0, empty_stop=40, empty_before_data=80)      # a 35-day gap, under the limit
-    with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
+    with_data = [d for d in range(1, 110) if await await_days(air, d) > 0]
     assert max(with_data) >= 95
     await air.close()
 
@@ -268,7 +268,7 @@ async def test_a_gap_after_data_longer_than_the_limit_is_taken_as_the_start(tmp_
     transport, _ = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=50), now - timedelta(days=15)))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.backfill(pace=0, empty_stop=20, empty_before_data=80)      # a 35-day gap, over the limit
-    with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
+    with_data = [d for d in range(1, 110) if await await_days(air, d) > 0]
     assert max(with_data) < 20                                            # stopped at the gap
     await air.close()
 
@@ -347,24 +347,59 @@ async def test_without_a_recent_previous_reading_the_latest_is_rated_alone_and_p
 
 
 # ---------- air_days ----------
-def _air_store(tmp_path):
-    from lib.airgradient.store import AirStore
+async def _air_store(tmp_path):
+    from lib.airgradient.readings import AirReadings
+    from lib.storage import Storage
     from tests.fakes import TZ
-    store = AirStore(tmp_path / "air.sqlite", "42", TZ)
+    store = AirReadings(Storage(tmp_path / "ecobot.sqlite", TZ), "42", TZ, owned=True)
     start = datetime.now(TZ).date() - timedelta(days=40)
     for k in range(40):
         day = start + timedelta(days=k)
         lo = int(datetime.combine(day, datetime.min.time()).replace(tzinfo=TZ).timestamp())
         spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³ (for three readings: the air, not a glitch)
-        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if 100 <= i <= 102 else 5.0, "co2": 420.0 + i} for i in range(288)])
+        await store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if 100 <= i <= 102 else 5.0, "co2": 420.0 + i} for i in range(288)])
     return store, start
+
+
+async def test_every_air_day_row_is_what_the_glitch_rule_in_python_gives(tmp_path):
+    """The day rows (lib/storage/days.py: the glitch rule in SQL) against metrics.without_spikes over the stand-in's readings, a glitch
+    now and then: each day's highest, lowest and mean of each metric."""
+    from statistics import fmean
+
+    from lib.airgradient.metrics import without_spikes
+    from lib.airgradient.readings import AirReadings
+    from lib.storage import Storage
+    from lib.timeutil import local_date
+    from tests.bench_cache import air_days
+    from tests.fakes import TZ
+    store = AirReadings(Storage(tmp_path / "ecobot.sqlite", TZ), "42", TZ, owned=True)
+    done, _ = air_days(30, datetime.now(TZ).timestamp())
+    for day, rows in done.items():
+        await store.save_day(day, rows)
+    rows = [r for day_rows in done.values() for r in day_rows]
+    by_day: dict = {}
+    for r in without_spikes(rows):
+        by_day.setdefault(local_date(r["ts"], TZ), []).append(r)
+    fields = [f"{m}_{k}" for m in ("pm2_5", "pm10", "co2") for k in ("max", "min", "avg")]
+    figures = await store.day_figures(min(done), max(done), fields)
+    compared = 0
+    for name in fields:
+        metric, kind = name.rsplit("_", 1)
+        for day, day_rows in by_day.items():
+            values = [r[metric] for r in day_rows if metric in r]
+            expected = {"max": max, "min": min, "avg": fmean}[kind](values)
+            # (a day's mean is the mean of its half hours' means: a half hour a glitch was taken out of weighs as the others)
+            assert figures.values[name][day] == pytest.approx(expected, rel=0.01 if kind == "avg" else 0), (name, day)
+            compared += 1
+    assert compared == 9 * 30 and sum(1 for r in rows if r.get("pm2_5", 0) > 30) > 0 > -sum(1 for r in without_spikes(rows) if "pm2_5" in r)
+    store.close()
 
 
 async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp_path):
     from lib.airgradient.days import air_days_tool
     from lib.tools import Turn
     from tests.fakes import TZ
-    store, start = _air_store(tmp_path)
+    store, start = await _air_store(tmp_path)
     end = datetime.now(TZ).date() - timedelta(days=1)
     turn = Turn()
     out = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end),
@@ -377,6 +412,7 @@ async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp
     assert [r["pm2_5_max"] for r in worst["days"]] == [40.0, 40.0]
     bad = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
     assert "unusable condition" in bad["error"]
+    store.close()
 
 
 def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_lasting_rise_is_not():
@@ -400,7 +436,6 @@ def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_la
 
 async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path):
     from datetime import timedelta
-    from lib.airgradient.days import daily_values
     from lib.timeutil import local_date
     from tests.fakes import TZ
     air, _ = await make(tmp_path)
@@ -415,7 +450,10 @@ async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path)
     out = await air.history(start.strftime("%Y-%m-%d %H:%M:%S"), None)
     assert out["pm10"]["high"] == 10 and out["pm2_5"]["high"] == 8 and out["pm1"]["high"] == 3      # not 28.7, 14.2 and 15.3
     assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
-    assert daily_values(rows, ["pm10_max", "pm2_5_max"], TZ)["pm10_max"][local_date(t0, TZ)] == 10
+    day = local_date(t0, TZ)
+    await air.store.save_day(day, [r for r in rows if local_date(r["ts"], TZ) == day])   # the day rows take the same spikes out
+    figures = await air.store.day_figures(day, day, ["pm10_max", "pm2_5_max", "pm10_avg"])
+    assert figures.values["pm10_max"][day] == 10 and figures.values["pm2_5_max"][day] == 8
     await air.close()
 
 
@@ -464,7 +502,7 @@ async def test_a_reply_that_is_not_readings_is_an_error_and_never_stored_as_a_da
     day = datetime.now(TZ).date() - timedelta(days=3)
     with pytest.raises(RuntimeError):
         await air._fetch_days([day])
-    assert air.store.counts([day])[day] is None                                             # not stored: asked again next time
+    assert (await air.store.counts([day]))[day] is None                                     # not stored: asked again next time
     await air.close()
 
 
@@ -531,25 +569,3 @@ async def test_the_sensors_own_temperature_and_humidity_are_kept_but_given_only_
     assert turn.charts[0].title == "AirGradient temperature and AirGradient humidity" and len(turn.charts[0].panels) == 2
     assert [p.unit for p in turn.charts[0].panels] == ["°C", "%"]
     await air.close()
-
-
-def test_a_cache_from_before_the_sensors_own_readings_gains_their_columns_and_is_fetched_again(tmp_path):
-    import sqlite3
-
-    from lib.airgradient.store import AirStore
-    path = tmp_path / "old.sqlite"
-    db = sqlite3.connect(path)
-    db.executescript("CREATE TABLE readings (loc TEXT, ts INTEGER, pm2_5 REAL, pm10 REAL, pm1 REAL, co2 REAL, voc_index REAL, nox_index REAL,"
-                     " PRIMARY KEY (loc, ts)) WITHOUT ROWID; CREATE TABLE days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;"
-                     "INSERT INTO readings VALUES ('1', 1000, 5.0, 8.0, 3.0, 450.0, 100.0, 1.0); INSERT INTO days VALUES ('1', '2026-01-01', 1);")
-    db.commit()
-    db.close()
-    store = AirStore(path, "1", TZ)
-    assert store.load(0, 2000) == [{"ts": 1000, "pm2_5": 5.0, "pm10": 8.0, "pm1": 3.0, "co2": 450.0, "voc_index": 100.0, "nox_index": 1.0}]   # kept
-    assert store.counts([local_date(1000, TZ)]) == {local_date(1000, TZ): None}                     # the day is to be fetched again
-    store.save_day(local_date(1000, TZ), [{"ts": 1000, "pm2_5": 5.0, "air_humidity": 61.0}])
-    assert store.load(0, 2000)[0]["air_humidity"] == 61.0
-    store.close()
-    again = AirStore(path, "1", TZ)                                                                  # and not again on the next start
-    assert again.counts([local_date(1000, TZ)]) == {local_date(1000, TZ): 1}
-    again.close()

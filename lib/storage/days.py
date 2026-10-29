@@ -13,6 +13,12 @@ out from what there is (the newest readings, still settling, too), marked incomp
 A day from a daily record takes the times of its lowest and highest from the 4-hour readings, where those are held ("sometime between 2pm
 and 6pm"); its figures stay the record's, as day_values has them.
 
+The AirGradient's days come from its 5-minute readings where the whole day is held at 5 minutes, else its hourly ones (the cloud's older
+history), with the sensor's glitches taken out first: a stretch of particle readings far above the readings either side of it
+(airgradient.metrics.without_spikes, the same rule, in SQL: LAG and LEAD over the readings that have the particle). Its lowest and highest
+are of the readings' values alone, not their bands (the band's lowest and highest are single samples inside a bucket, which the glitch
+rule does not see).
+
 Done in SQL: Python only chooses each day's resolution and window (it knows the coverage and the time zone) and puts them in a temporary
 table, and one INSERT ... SELECT per kind of sensor works out all of them.
 """
@@ -28,11 +34,65 @@ from .schema import day_columns, q, some_value
 DAY = 86400
 ANY = "*"   # what is held changed: a day may come from another resolution now
 FINER = "'1min', '5min'"   # readings finer than a half hour, several to each
+FINE = {"air": ("5min", "1hour")}          # the resolutions a kind's days are worked out from, finest first ...
+DEFAULT_FINE = ("5min", "30min")          # ... Ecowitt's, with its daily records after them (utc_days)
+NEIGHBOUR = 900                           # (airgradient.metrics.SPIKE_NEIGHBOUR)
+
+
+def fine_of(kind: str) -> tuple[str, str]:
+    return FINE.get(kind, DEFAULT_FINE)
+
+
+def _spike_rule() -> tuple[int, float, float]:
+    """(the readings in a row a rise needs to be the air, the ratio and the rise a glitch is above its neighbours), as the AirGradient code
+    has them (set at start)."""
+    from ..airgradient import metrics   # (lazy: lib.airgradient imports the storage)
+    return metrics.REQUIRE_CONSECUTIVE, metrics.SPIKE_RATIO, metrics.SPIKE_RISE
+
+
+def _spike(require: int, ratio: float, rise: float) -> str:
+    """The SQL of without_spikes for one reading of a particle (v, ts, with LAG and LEAD over the readings that have it, window `w`): true
+    when it is in a stretch of fewer than `require` readings in a row each at least `ratio` times, and `rise` above, the readings either
+    side of the stretch, those within NEIGHBOUR seconds of it."""
+    lag = lambda col, k: col if k == 0 else f"LAG({col}, {k}) OVER w"
+    lead = lambda col, k: col if k == 0 else f"LEAD({col}, {k}) OVER w"
+    cases = []
+    for length in range(1, require):
+        for p in range(length):   # the reading's place in the stretch: p before it, length - 1 - p after
+            before, after = lag("v", p + 1), lead("v", length - p)
+            near = f"MAX({before}, {after})"
+            stretch = [lag("v", j) for j in range(p, 0, -1)] + ["v"] + [lead("v", j) for j in range(1, length - p)]
+            cases.append(f"({before} IS NOT NULL AND {after} IS NOT NULL AND {lag('ts', p)} - {lag('ts', p + 1)} <= {NEIGHBOUR} "
+                         f"AND {lead('ts', length - p)} - {lead('ts', length - 1 - p)} <= {NEIGHBOUR} AND "
+                         + " AND ".join(f"{s} >= {ratio} * {near} AND {s} - {near} >= {rise}" for s in stretch) + ")")
+    return " OR ".join(cases) if cases else "0"
 WANT = ('CREATE TEMP TABLE IF NOT EXISTS want (sensor INTEGER, day TEXT, "start" INTEGER, "end" INTEGER, res TEXT, complete INTEGER, '
         "PRIMARY KEY (sensor, day))")
 MISSING = "SELECT w.sensor, w.day FROM temp.want w LEFT JOIN {kind}_day d ON d.sensor = w.sensor AND d.day = w.day WHERE d.sensor IS NULL"
 
 type Held = Callable[[int, str, int, int], bool]
+
+
+def _source(kind: str, want: str, columns: str, some: str) -> str:
+    """The `src` rows of a kind's day windows: the AirGradient's with its glitches taken out (the particles of a spiking reading made
+    null), the readings either side of a window read with it for the comparison and left out after."""
+    if kind != "air":
+        return (f"src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 1 AS own, {columns} FROM {want} w CROSS JOIN {kind} r "
+                f'ON r.sensor = w.sensor AND r.res = w.res AND r.ts BETWEEN w."start" AND w."end" WHERE {some} '
+                f"AND (r.final OR w.res IN ('1min', '5min', '30min'))")   # (a daily record, or its 4 hours, once final)
+    from ..airgradient.metrics import PARTICLES   # (lazy: lib.airgradient imports the storage)
+    require, ratio, rise = _spike_rule()
+    names = [c.name for c in KINDS[kind]]
+    particles = [c for c in names if c in PARTICLES]
+    flags = " UNION ".join(
+        f"SELECT sensor, day, ts FROM (SELECT sensor, day, ts, {_spike(require, ratio, rise)} AS spike FROM (SELECT w.sensor, w.day, r.ts, "
+        f"r.{q(c)} AS v FROM {want} w CROSS JOIN {kind} r ON r.sensor = w.sensor AND r.res = w.res AND r.ts BETWEEN w.\"start\" - {NEIGHBOUR} "
+        f"AND w.\"end\" + {NEIGHBOUR} WHERE r.{q(c)} IS NOT NULL) WINDOW w AS (PARTITION BY sensor, day ORDER BY ts)) WHERE spike" for c in particles)
+    cleaned = ", ".join(f"CASE WHEN s.ts IS NULL THEN r.{q(c)} END AS {q(c)}" if c in particles else f"r.{q(c)}" for c in names)
+    return (f"spikes AS MATERIALIZED ({flags}), cleaned AS (SELECT w.sensor, w.day, r.ts, {cleaned} FROM {want} w CROSS JOIN {kind} r "
+            f'ON r.sensor = w.sensor AND r.res = w.res AND r.ts BETWEEN w."start" AND w."end" '
+            f"LEFT JOIN spikes s ON s.sensor = w.sensor AND s.day = w.day AND s.ts = r.ts), "
+            f"src AS (SELECT sensor, day, ts, ts / {SLOT} AS slot, 1 AS own, {columns} FROM cleaned r WHERE {some}")   # (closed by _with)
 
 
 def _with(kind: str, want: str = "temp.want") -> str:
@@ -42,9 +102,11 @@ def _with(kind: str, want: str = "temp.want") -> str:
     mean; a part of a day takes no half hour that runs past it). Worked out by half hours: their mean, lowest and highest, and when the
     day's lowest and highest happened, the first half hour that holds them (a window over the day's half hours, not its readings)."""
     names = [c.name for c in KINDS[kind]]
-    ranged = [c.name for c in KINDS[kind] if c.ranged]
-    columns = ", ".join(f"r.{q(c)} AS {q(c + '~v')}, CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_lo')}, r.{q(c)}) END AS {q(c + '~l')}, "
-                        f"CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_hi')}, r.{q(c)}) END AS {q(c + '~h')}" for c in names)
+    ranged = [c.name for c in KINDS[kind] if c.ranged and kind != "air"]
+    columns = ", ".join(f"r.{q(c)} AS {q(c + '~v')}, " + (
+        f"r.{q(c)} AS {q(c + '~l')}, r.{q(c)} AS {q(c + '~h')}" if kind == "air" else   # (the AirGradient's extremes are its readings' values)
+        f"CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_lo')}, r.{q(c)}) END AS {q(c + '~l')}, "
+        f"CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_hi')}, r.{q(c)}) END AS {q(c + '~h')}") for c in names)
     bands = ", ".join(f"NULL AS {q(c + '~v')}, " + (f"r.{q(c + '_lo')} AS {q(c + '~l')}, r.{q(c + '_hi')} AS {q(c + '~h')}" if c in ranged
                       else f"NULL AS {q(c + '~l')}, NULL AS {q(c + '~h')}") for c in names)
     within = 'r.sensor = w.sensor AND r.res = {} AND r.ts BETWEEN w."start" AND w."end"{}'   # (want first: a few rows, the readings many)
@@ -57,9 +119,7 @@ def _with(kind: str, want: str = "temp.want") -> str:
     figures = ", ".join(f"AVG({q(c + '~m')}) AS {q(c + '~m')}, MIN({q(c + '~lo')}) AS {q(c + '~lo')}, "
                         f"MIN(CASE WHEN {q(c + '~lo')} = {q(c + '~dl')} THEN t END) AS {q(c + '~lt')}, MAX({q(c + '~hi')}) AS {q(c + '~hi')}, "
                         f"MIN(CASE WHEN {q(c + '~hi')} = {q(c + '~dh')} THEN t END) AS {q(c + '~ht')}" for c in names)
-    return (f"src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 1 AS own, {columns} FROM {want} w CROSS JOIN {kind} r "
-            f"ON {within.format('w.res', '')} WHERE {some_value(names, 'r.')} "
-            f"AND (r.final OR w.res IN ('1min', '5min', '30min')) {halves}), "   # (a daily record, or its 4 hours, once final)
+    return (f"{_source(kind, want, columns, some_value(names, 'r.'))} {halves}), "
             f"slots AS (SELECT sensor, day, slot, SUM(own) AS n, MIN(ts) AS t, {slots} FROM src GROUP BY sensor, day, slot), "
             f"marked AS (SELECT *, {window} FROM slots WINDOW whole AS (PARTITION BY sensor, day)), "
             f"figures AS (SELECT m.sensor, m.day, w.res, w.complete, w.\"start\", w.\"end\", SUM(m.n) AS n, {figures} FROM marked m JOIN {want} w "
@@ -87,7 +147,12 @@ _SQL: dict[tuple[str, str], str] = {}
 
 
 def statements(kind: str) -> tuple[str, str]:
-    """(the INSERT of the day rows of temp.want's windows, the SELECT of their figures, for reading back): generated once per kind."""
+    """(the INSERT of the day rows of temp.want's windows, the SELECT of their figures, for reading back): generated once per kind (and
+    again for the AirGradient's when its glitch rule is set at start)."""
+    if kind == "air" and _SQL.get((kind, "rule")) != _spike_rule():
+        _SQL[kind, "rule"] = _spike_rule()
+        for key in [k for k in _SQL if k[0] == kind and k[1] != "rule"]:
+            del _SQL[key]
     if (kind, "insert") not in _SQL:
         names = ", ".join(q(n) for n, _ in day_columns(kind))
         _SQL[kind, "insert"] = (f"WITH {_with(kind)}INSERT INTO {kind}_day (sensor, day, source, timing, complete, n, {names}) "
@@ -120,18 +185,19 @@ def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, dict[date, set
     held: a day of 5-minute readings takes in its 30-minute readings' bands too (the archive fetches the 5-minute days before the coarser
     cycles, so those arrive after it), a day of 30-minute readings has nothing to take from the daily ones."""
     insert, select = statements(kind)
+    fine = fine_of(kind)
     db.execute(WANT)
     complete, records, rest, again = [], [], set(), []
     for sensor, days in wanted.items():
         for d, changed in days.items():
             start, end = day_bounds(d, tz, True)
-            res = next((r for r in ("5min", "30min") if held(sensor, r, start, end)), None)
-            if res and not changed & {"5min", "30min", ANY} - ({"5min"} if res == "30min" else set()):
+            res = next((r for r in fine if held(sensor, r, start, end)), None)
+            if res and not changed & {*fine, ANY} - ({fine[0]} if res == fine[1] else set()):
                 continue
             again.append((sensor, d.isoformat()))
             if res:   # held whole: that resolution, even if it has no readings (the station was off), as day_values does
                 complete.append((sensor, d.isoformat(), start, end, res, 1))
-            elif (utc := utc_days(d, tz)) is not None:
+            elif kind != "air" and (utc := utc_days(d, tz)) is not None:
                 records.append((sensor, d.isoformat(), *utc, "1day", 0))
             else:
                 rest.add((sensor, d))
@@ -141,7 +207,7 @@ def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, dict[date, set
         _insert(db, insert, records)
         rest |= {(s, date.fromisoformat(d)) for s, d in db.execute(MISSING.format(kind=kind)).fetchall()}
         _time_from_four_hours(db, kind, select, records, held)
-    for res in ("5min", "30min"):   # neither held whole nor in a daily record: what there is, marked incomplete
+    for res in fine:   # neither held whole nor in a daily record: what there is, marked incomplete
         if not rest:
             break
         _insert(db, insert, [(s, d.isoformat(), *day_bounds(d, tz, True), res, 0) for s, d in sorted(rest)])
@@ -186,4 +252,4 @@ def days_of(start: int, end: int, tz: tzinfo, utc: bool = True) -> set[date]:
     return {first + timedelta(days=n) for n in range((last - first).days + 1)}
 
 
-__all__ = ["ANY", "days_of", "statements", "utc_days", "windows_select", "work_out"]
+__all__ = ["ANY", "days_of", "fine_of", "statements", "utc_days", "windows_select", "work_out"]

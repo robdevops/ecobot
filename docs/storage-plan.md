@@ -202,7 +202,11 @@ CREATE TABLE climate_day (
   statistics on it, scanned every reading of the kind for each work-out). One day of every sensor, as one fetch's write, takes about
   13 ms on the fake station's archive (it took 170 ms with the scan), all its 3,300 day rows 3 s (123 s). A new time zone (the station
   moved) works them all out again.
-- **The AirGradient's days** wait for its step (3), since they need the spike filter.
+- **The AirGradient's days** (step 3) come from its 5-minute readings where the whole day is held at 5 minutes, else its hourly ones
+  (the cloud's older history), with the glitches taken out in the SQL first (3.11: `LAG`/`LEAD` over the readings that have each
+  particle, the same rule as `metrics.without_spikes`, with the same setting). Its lowest and highest are of the readings' values alone,
+  not their bands: a band's extremes are single samples inside a bucket, which the glitch rule does not see (6.1). `air_days` reads them
+  (`AirReadings.day_figures`); a day's mean is the mean of its half hours' means, as the station's.
 - **Months and years** are a `GROUP BY substr(day, 1, 7)` or `substr(day, 1, 4)` on the day rows: a year is 365 rows, not 17,520.
 
 ### 3.6 Bands
@@ -483,8 +487,15 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    need are written with SQL of their own (`tests/fakes.py`). On the stand-in (section 1's requests): the 1Y temperature chart 27 ms
    (was 910 ms before this step, 1,205 at the start), 3M 10 ms (212), 1M 30 ms (91), 7D 12 ms (32). Next (2f): the old stores' tests
    on the new tables, the benchmark's stand-in built by the new storage, the docs, and the comparison test removed.
-3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
-   `AirStore` goes.
+3. **The AirGradient on it (done).** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air`
+   tables (`airgradient/readings.py`: what the source keeps and reads, through the storage, the old `AirStore`'s surface; the file is
+   the station's, opened once by the bot for both, or the sensor's own without a station); the old file moved in at start (part
+   `airgradient`); `AirStore` gone, and `air_days` on the day rows. A day the cloud gives as hourly averages is held at `1hour` (told
+   by its readings' spacing, where the old store counted them: 30 or fewer); a finished day of the bot's own readings with gaps the
+   cloud fills is `5min`. The day rows are checked against `metrics.without_spikes` over the stand-in's readings
+   (`test_every_air_day_row_is_what_the_glitch_rule_in_python_gives`). On the stand-in: `air_days` over 4 years 15 ms (was 584 ms,
+   662 at the start), one statement; the air charts still load every reading of their period and filter it in Python (1M: 314 ms),
+   the lines bucketed by the database, as the station's are, being step 4's, with its rewrite of what the source reads.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live
    reading from the monitor itself, Home Assistant filling what the bot did not read and the cloud what neither has, each metric checked
    against the source ranked above it before it fills a gap; the settings table and the start-up line. After step 3, since it writes the
@@ -509,6 +520,9 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
   Assistant's ranges, so a day's figures from them are the extremes the bot saw, as the dashboard already counts them; `weather_days` and a
   history answer's records took the 5-minute values alone. Where the bot has no ranges (before it ran, or a day from 30-minute readings) the
   figures are the old ones, as the test against `day_values` shows.
+- **The AirGradient's day extremes are its readings' values**, not their bands (step 3): the glitch rule sees 5-minute readings, not the
+  samples inside a bucket, so a one-sample peak in a band would become a day's highest. The chart still shades the band.
+- **The AirGradient's bands are kept for good** too (the old store dropped its spreads after 31 days): two numbers in a row kept anyway.
 - **A daily record's day keeps its own figures**, and takes only the times from the 4-hour readings. Refining took the more extreme of the
   two as well; on Ecowitt's data the two agree (a 4-hour high is inside its UTC day's), and `day_values` uses the record's.
 

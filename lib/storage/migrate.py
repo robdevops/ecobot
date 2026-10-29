@@ -91,6 +91,12 @@ def old_files(folder: Path) -> dict[str, tuple[Path, ...]]:
     return {part: tuple(Path(folder) / name for name in names) for part, names in PARTS.items()}
 
 
+def history_files(cfg) -> dict[str, tuple[Path, ...]]:
+    """Each part's old files as the settings name them (the files from before ecobot.sqlite, moved into it once)."""
+    return {"station": (cfg.cache_path, cfg.cache_path.with_name("ecowitt_live.sqlite"), cfg.cache_path.with_name("ecowitt_minutes.sqlite")),
+            "airgradient": (cfg.air_cache_path,), "snapshots": (cfg.conditions_cache_path,)}
+
+
 def moved(target: Path) -> set[str]:
     """The parts already moved into the file (none when there is no file)."""
     if not target.exists():

@@ -342,3 +342,30 @@ def old_minutes_file(path, data: dict):
                     for t, v in obj["list"].items()])
     db.commit()
     db.close()
+
+
+def old_air_file(path, loc: str, days: dict, recorded: list[dict] = (), spreads: dict | None = None, done: dict | None = None):
+    """An airgradient_cache.sqlite of the bot from before ecobot.sqlite, as airgradient.store.AirStore wrote it: {day: its readings} each
+    a finished day (noted in `days` with its count, unless `done` says otherwise), the bot's own readings (`recorded`, with their
+    `_range`), and Home Assistant's `spreads` ({metric: {bucket: (lowest, highest)}})."""
+    from lib.airgradient.metrics import STORED
+    columns = list(STORED)
+    db = sqlite3.connect(path)
+    db.executescript(f"""
+        CREATE TABLE IF NOT EXISTS readings (loc TEXT, ts INTEGER, {", ".join(f"{c} REAL" for c in columns)}, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS recorded (loc TEXT, ts INTEGER, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS spreads (loc TEXT, ts INTEGER, name TEXT, lo REAL, hi REAL, PRIMARY KEY (loc, ts, name)) WITHOUT ROWID;
+    """)
+    insert = f"INSERT OR REPLACE INTO readings VALUES (?, ?, {', '.join('?' * len(columns))})"
+    for day, rows in days.items():
+        db.executemany(insert, [(loc, r["ts"], *(r.get(c) for c in columns)) for r in rows])
+        db.execute("INSERT OR REPLACE INTO days VALUES (?, ?, ?)", (loc, day.isoformat(), (done or {}).get(day, len(rows))))
+    for r in recorded:
+        db.execute(insert, (loc, r["ts"], *(r.get(c) for c in columns)))
+        db.execute("INSERT OR REPLACE INTO recorded VALUES (?, ?)", (loc, r["ts"]))
+        db.executemany("INSERT OR REPLACE INTO spreads VALUES (?, ?, ?, ?, ?)", [(loc, r["ts"], n, lo, hi) for n, (lo, hi) in (r.get("_range") or {}).items()])
+    db.executemany("INSERT OR IGNORE INTO spreads VALUES (?, ?, ?, ?, ?)",
+                   [(loc, ts, name, lo, hi) for name, got in (spreads or {}).items() for ts, (lo, hi) in got.items()])
+    db.commit()
+    db.close()

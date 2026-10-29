@@ -76,7 +76,12 @@ def settings(folder: Path) -> Config:
     cfg = Config.from_env()
     location = None
     air = folder / "airgradient_cache.sqlite"
-    if air.exists():
+    if cfg.storage_path.exists():   # the air sensor the bot's file holds
+        db = sqlite3.connect(f"file:{cfg.storage_path}?mode=ro", uri=True)
+        found = db.execute("SELECT device FROM sensors WHERE kind = 'air' ORDER BY id LIMIT 1").fetchone()
+        db.close()
+        location = found[0] if found else None
+    if location is None and air.exists():
         db = sqlite3.connect(air)
         found = db.execute("SELECT loc, COUNT(*) FROM readings GROUP BY loc ORDER BY 2 DESC LIMIT 1").fetchone()
         db.close()
@@ -159,7 +164,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
             rows.append((label, *await measured(run, repeat, lambda: eco.api.asked)))
         rows.append(("/dashboard", *await measured(eco.dashboard, repeat, lambda: eco.api.asked)))
         await eco.close()
-    if (folder / "airgradient_cache.sqlite").exists() and cfg.airgradient_location:
+    if cfg.airgradient_location and ((folder / "airgradient_cache.sqlite").exists() or cfg.storage_path.exists()):
         asked = [0]
 
         def cloud(request):   # what the cache lacks is counted, and there is none of it
@@ -167,7 +172,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
             return httpx.Response(200, json=[]) if request.url.path.endswith("/past") else httpx.Response(503)
         air = AirGradient(cfg, transport=httpx.MockTransport(cloud))
         air.tz = tz
-        n = air.store.db.execute("SELECT COUNT(*) FROM readings WHERE loc=?", (air.loc,)).fetchone()[0]
+        n = (await air.store.lacking())["all"]
         print(f"AirGradient {air.loc}: {n:,} readings")
         now = datetime.now(tz).replace(tzinfo=None)
         work = [(f"Air chart (PM2.5), {label}", lambda d=d: air.handle({"chart": True, "metrics": ["pm2_5"], **period(d, now)}, Turn()))

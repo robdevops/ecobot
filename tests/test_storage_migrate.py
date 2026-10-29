@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from lib.airgradient.store import AirStore
 from lib.ecowitt.api import UNITS
 from lib.ecowitt.api import FINE_CYCLES
 from lib.ecowitt.days import FIELDS
@@ -21,7 +20,7 @@ from lib.storage import FILE, Storage
 from lib.storage import migrate as migration
 from lib.storage.catalogue import BOT, CLOUD
 from lib.timeutil import day_bounds, local_date
-from tests.fakes import MAC, TZ, old_live_file, old_minutes_file
+from tests.fakes import MAC, TZ, old_air_file, old_live_file, old_minutes_file
 
 DAY = 86400
 
@@ -49,14 +48,12 @@ def old_files(folder: Path, now: int) -> dict:
     cache.close()
     old_live_file(folder / "ecowitt_live.sqlite", {"outdoor.temperature": {start + 600: (3, 9.0, 13.0), start + 900: (1, 11.0, 11.0)}})
     old_minutes_file(folder / "ecowitt_minutes.sqlite", {"outdoor": {"temperature": {"unit": "℃", "list": {str(t): "12.5" for t in range(now - 3600, now, 60)}}}})
-    air = AirStore(folder / "airgradient_cache.sqlite", "42", TZ)
-    air.save_day(d, [{"ts": t, "pm2_5": 5.0, "co2": 420.0} for t in range(start, end + 1, 300)])
     hourly = d - timedelta(days=200)
     h_start = day_bounds(hourly, TZ)[0]
-    air.save_day(hourly, [{"ts": h_start + 3600 * h, "pm2_5": 7.0} for h in range(24)])
-    air.add_recorded({"ts": now - 900, "pm2_5": 9.0, "_range": {"pm2_5": (8.0, 12.0)}}, now)
-    air.add_spreads({"pm2_5": {start: (4.0, 6.0)}})
-    air.close()
+    old_air_file(folder / "airgradient_cache.sqlite", "42",
+                 {d: [{"ts": t, "pm2_5": 5.0, "co2": 420.0} for t in range(start, end + 1, 300)],
+                  hourly: [{"ts": h_start + 3600 * h, "pm2_5": 7.0} for h in range(24)]},
+                 recorded=[{"ts": now - 900, "pm2_5": 9.0, "_range": {"pm2_5": (8.0, 12.0)}}], spreads={"pm2_5": {start: (4.0, 6.0)}})
     snaps = Snapshots(folder / "conditions_cache.sqlite")
     snaps.save("pollen", {"level": "Low"}, now=100)
     snaps.save("pollen", {"level": "High"}, now=200)

@@ -6,7 +6,7 @@ AirGradient's documented API:
   current: GET /public/api/v1/locations/{id}/measures/current?token=...
   history: GET /public/api/v1/locations/{id}/measures/past?from=...&to=...&token=...
 
-Finished days are stored on disk (store.py), so questions are answered without asking
+Finished days are kept in the bot's file (readings.py, lib/storage), so questions are answered without asking
 AirGradient unless a day is missing. Reports AirGradient's corrected (calibrated) values
 where available, plus a US EPA AQI and band for PM2.5.
 """
@@ -30,6 +30,8 @@ from ..ecowitt.homeassistant import HomeAssistant
 from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
+from ..storage import Storage
+from ..storage.migrate import history_files, open_storage
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, naive_local, parse_local, to_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
@@ -38,7 +40,7 @@ from . import metrics
 from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
 from .homeassistant import ANCHORS, checked, entity_ids, find_prefix, ranges as ha_ranges
 from .local import LocalSensor
-from .store import AirStore
+from .readings import AirReadings
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +48,6 @@ API = "https://api.airgradient.com/public/api/v1/locations/{loc}/measures/{kind}
 MAX_DAYS = 400                    # longest history period per question
 MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of margin for clock changes
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
-HOURLY_MAX_READINGS = 30          # a day with this few readings holds hourly averages (24), not 5-minute (288)
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
 BUCKET = 300                      # the readings kept are 5-minute averages, on the clock (as AirGradient's are)
 HA_RECENT_SECONDS = 3 * 3600      # Home Assistant's ranges are read back for the last few hours each time (RANGE_KEEP_DAYS the first time)
@@ -104,16 +105,20 @@ class AirGradient(Source):
 
     name = "AirGradient"
 
-    def __init__(self, cfg: Config, transport=None, ha: HomeAssistant | None = None):
+    def __init__(self, cfg: Config, transport=None, ha: HomeAssistant | None = None, storage: Storage | None = None,
+                 owned: bool | None = None):
         """ha: the weather station's Home Assistant client, shared (so a failing Home Assistant is said once); else one of its own when
-        Home Assistant is set."""
+        Home Assistant is set. storage: the bot's file (lib/storage), the station's, shared; without one the source opens it itself (the
+        old air file moved in first, once). owned: the file is this source's to close (so when it opened it, or no station has it)."""
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
         self.cloud = cfg.airgradient_cloud    # without an account only the sensor itself is asked, and the cloud never is
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
         self.local = LocalSensor(cfg.airgradient_local_url, cloud=cfg.airgradient_cloud) if cfg.airgradient_local_url else None   # the live reading from the sensor itself
-        self.store = AirStore(cfg.air_cache_path, self.loc, self.tz)
+        owned = (storage is None) if owned is None else owned
+        storage = storage or open_storage(cfg.storage_path, cfg.tz, history_files(cfg), parts=("airgradient",))
+        self.store = AirReadings(storage, self.loc, self.tz, owned)
         self._current: tuple[dict, float] | None = None       # (raw row, fetched at)
         self._names: dict = {}                                # the sensor's name and type, from the last cloud reading
         self._recent: dict[date, tuple[list[dict], float]] = {}  # today / just-finished days, refreshed
@@ -187,7 +192,7 @@ class AirGradient(Source):
                     found.setdefault(name, {}).update(got)
             rows, _, _ = await self.rows(naive_local(start, self.tz), naive_local(now, self.tz))
             keep, verdict = checked(found, rows)
-            added = await asyncio.to_thread(self.store.add_spreads, keep)
+            added = await self.store.add_spreads(keep)
         except Exception as e:
             self.ha.trouble.failed("history for the air sensor's ranges", f"{type(e).__name__}: {e}",
                                    "the air sensor's ranges come from the bot's own readings")
@@ -260,7 +265,7 @@ class AirGradient(Source):
 
     async def _held(self, days: list[date]) -> dict[date, int | None]:
         """Readings stored per finished day, in one query (None: not fetched yet, or not finished)."""
-        stored = await asyncio.to_thread(self.store.counts, days)
+        stored = await self.store.counts(days)
         return {d: stored[d] if self._final(d) else None for d in days}
 
     def _unstored(self, held: dict[date, int | None]) -> list[date]:
@@ -279,7 +284,7 @@ class AirGradient(Source):
         """Fetch finished days and store them, in as few requests as the API allows (it takes up to 10 days at a time; we use 9).
         Returns how many readings each day has stored."""
         days, stored = sorted(days), {}
-        for d in [d for d in days if await asyncio.to_thread(self.store.has_recorded, d)]:   # the bot's own readings: only the gaps are fetched
+        for d in [d for d in days if await self.store.has_recorded(d)]:   # the bot's own readings: only the gaps are fetched
             stored[d] = await self._complete_day(d)
             days.remove(d)
         while days and self.cloud:
@@ -289,7 +294,7 @@ class AirGradient(Source):
             for r in await self._past(day_bounds(window[0], self.tz)[0], day_bounds(window[-1], self.tz)[1]):
                 by_day.get(local_date(r["ts"], self.tz), []).append(r)
             for d, day_rows in by_day.items():
-                stored[d] = await asyncio.to_thread(self.store.save_day, d, day_rows)
+                stored[d] = await self.store.save_day(d, day_rows)
                 self._recent.pop(d, None)
         return stored
 
@@ -302,7 +307,7 @@ class AirGradient(Source):
             if final:
                 if self._unstored(await self._held([day])):
                     await self._fetch_days([day])
-                return await asyncio.to_thread(self.store.load_day, day)
+                return await self.store.load_day(day)
             if self.local and (self.local.working or not self.cloud):
                 return await self._recorded_day_rows(day)
             cached = self._recent.get(day)
@@ -344,7 +349,7 @@ class AirGradient(Source):
         bucket, samples = self._bucket
         self._bucket = None
         if len(samples) >= MIN_SAMPLES:
-            await asyncio.to_thread(self.store.add_recorded, self._average(bucket, samples))
+            await self.store.add_recorded(self._average(bucket, samples))
 
     def _missing(self, day: date, rows: list[dict], until: float) -> list[int]:
         """The start of each 5-minute bucket of this day, over by `until`, that has no reading."""
@@ -357,17 +362,17 @@ class AirGradient(Source):
         lo, hi = day_bounds(day, self.tz)
         got = await self._past(missing[0], missing[-1] + BUCKET)
         wanted = set(missing)
-        await asyncio.to_thread(self.store.merge, [r for r in got if lo <= r["ts"] < hi and r["ts"] // BUCKET * BUCKET in wanted])
+        await self.store.merge([r for r in got if lo <= r["ts"] < hi and r["ts"] // BUCKET * BUCKET in wanted], self._final(day))
 
     async def _recorded_day_rows(self, day: date) -> list[dict]:
         """An unfinished day (today, or one that has just ended) while the sensor answers: the stored readings, the bucket being averaged
         as the last one, and the cloud asked, at most every GAP_RETRY_SECONDS, only for buckets that are missing."""
-        rows = await asyncio.to_thread(self.store.load_day, day)
+        rows = await self.store.load_day(day)
         if self.cloud and time.time() - self._gap_tried.get(day, 0) > GAP_RETRY_SECONDS and (missing := self._missing(day, rows, time.time() - GAP_GRACE)):
             self._gap_tried[day] = time.time()
             try:
                 await self._fill(day, missing)
-                rows = await asyncio.to_thread(self.store.load_day, day)
+                rows = await self.store.load_day(day)
             except Exception as e:   # the stored readings still stand
                 log.warning("AirGradient: couldn't fill the gaps of %s from the cloud: %s", day, e)
         if self._bucket and self._bucket[1] and local_date(self._bucket[0], self.tz) == day and self._bucket[0] not in {r["ts"] for r in rows}:
@@ -376,13 +381,13 @@ class AirGradient(Source):
 
     async def _complete_day(self, day: date) -> int:
         """A finished day the bot recorded readings of: the cloud is asked only for the buckets it lacks (once), and the day is noted as done."""
-        rows = await asyncio.to_thread(self.store.load_day, day)
+        rows = await self.store.load_day(day)
         if missing := self._missing(day, rows, day_bounds(day, self.tz)[1]):
             if not self.cloud:   # nothing to fill it with: the day is left open, in case an account is added later
                 return len(rows)
             await self._fill(day, missing)
-            rows = await asyncio.to_thread(self.store.load_day, day)
-        await asyncio.to_thread(self.store.mark_day, day, len(rows))
+            rows = await self.store.load_day(day)
+        await self.store.mark_day(day)
         self._recent.pop(day, None)
         return len(rows)
 
@@ -520,18 +525,17 @@ class AirGradient(Source):
         skipped = missing[:-MAX_INLINE_DAYS] if self.cloud and len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
         held.update(await self._fetch_days([d for d in missing if d not in skipped]))
         finished = [d for d in days if self._final(d)]   # all stored by now but the skipped: read in one query
-        rows = (await asyncio.to_thread(self.store.load, day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1])
-                if finished else [])
+        rows = await self.store.load(day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1]) if finished else []
         for d in days[len(finished):]:   # today, and a day that has just ended: fetched, not stored (but their ranges may be)
             rows += await self._with_spreads(await self._day_rows(d), d)
-        hourly = sum(1 for n in held.values() if n and n <= HOURLY_MAX_READINGS)
+        hourly = len(await self.store.hourly_days([d for d, n in held.items() if n]))
         lo, hi = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
         return [r for r in without_spikes(rows) if lo <= r["ts"] <= hi], hourly, skipped
 
     async def _with_spreads(self, rows: list[dict], day: date) -> list[dict]:
         """These readings of a day with the ranges the store holds for them (Home Assistant's, for a day the cloud gave): a reading's own
         range, the bot's, wins."""
-        ranges = await asyncio.to_thread(self.store.spreads, *day_bounds(day, self.tz))
+        ranges = await self.store.spreads(*day_bounds(day, self.tz))
         return [{**r, "_range": {**ranges[r["ts"]], **r.get("_range", {})}} if r["ts"] in ranges else r for r in rows]
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,

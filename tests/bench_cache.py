@@ -11,20 +11,22 @@ own check), the AirGradient's its old file until step 3; from the fake station's
 """
 
 import math
+import sqlite3
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from lib.airgradient.store import AirStore
+from lib.airgradient.readings import storage_rows
 from lib.ecowitt.api import GROUPS, UNITS, fix_units
 from lib.ecowitt.fetch import spans
 from lib.ecowitt.store import HistoryCache
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD, KINDS
 from lib.storage.write import horizon, pivot
-from lib.timeutil import local_epoch, local_date, naive_local
-from tests.fakes import MAC, STEP, TZ, direction, gust, humidity, old_live_file, old_minutes_file, pressure, rain_day, temp, uv_index, wind_speed
+from lib.timeutil import day_bounds, local_epoch, local_date, naive_local
+from tests.fakes import (MAC, STEP, TZ, direction, gust, humidity, old_air_file, old_live_file, old_minutes_file, pressure, rain_day, temp, uv_index,
+                         wind_speed)
 
 DAYS = {"5min": 116, "30min": 391, "4hour": 755, "1day": 1457}   # days held at each resolution
 AIR_DAYS = 184
@@ -103,10 +105,9 @@ def minutes(hours: float, now: float) -> dict:
             for group, fields in FIELDS.items()}
 
 
-def station(path: Path, days: dict[str, int], live_days: float, minute_hours: float, now: float):
-    """The station's ecobot.sqlite: each resolution held for its days, the live readings' bands and the minutes, written in one
-    transaction as the migration writes them (the rows as they are, the 30-minute bands rolled up and every day worked out once)."""
-    storage = Storage(path, TZ, bulk=True)
+def station(storage: Storage, days: dict[str, int], live_days: float, minute_hours: float, now: float):
+    """The station's readings into ecobot.sqlite: each resolution held for its days, the live readings' bands and the minutes, written in
+    one transaction as the migration writes them (the rows as they are, the 30-minute bands rolled up and every day worked out once)."""
     with storage.writer.transaction() as w:
         for cycle, s, e in requests(days, now):
             data, limit = history(cycle, s, e), horizon(cycle, now)
@@ -124,14 +125,12 @@ def station(path: Path, days: dict[str, int], live_days: float, minute_hours: fl
         for sensor in w.all_sensors():
             if sensor.kind in KINDS:
                 w.roll_up(sensor, 0, 2 ** 40)
-    storage.close()
 
 
-def air(path: Path, days: int, now: float, spreads_days: int = 10):
-    """The AirGradient's 5-minute readings for these days (each finished day marked fetched), a glitch now and then, and the ranges Home
-    Assistant gave for the last days."""
-    store = AirStore(path, AIR_LOCATION, TZ)
+def air_days(days: int, now: float) -> tuple[dict, list[dict]]:
+    """({finished day: its 5-minute readings}, today's so far) of the AirGradient, a glitch now and then."""
     today = local_date(int(now), TZ)
+    done, rest = {}, []
     for n in range(days, -1, -1):
         day = today - timedelta(days=n)
         lo, hi = (local_epoch(datetime.combine(d, datetime.min.time()), TZ) for d in (day, day + timedelta(days=1)))
@@ -142,12 +141,40 @@ def air(path: Path, days: int, now: float, spreads_days: int = 10):
                          "pm10": 7 + hour % 12, "pm1": 2 + hour % 6, "co2": 420 + 3 * hour, "voc_index": 100 + hour, "nox_index": 1,
                          "air_temperature": temp(ts - ts % 300), "air_humidity": humidity(ts - ts % 300)})
         if day < today:
-            store.save_day(day, rows)
+            done[day] = rows
         else:
-            store.merge(rows)
+            rest = rows
+    return done, rest
+
+
+def air_spreads(now: float, spreads_days: int = 10) -> dict:
+    """The ranges Home Assistant gave for the last days."""
     marks = range(int(now - now % 300 - spreads_days * 86400), int(now) - 600, 300)
-    store.add_spreads({name: {ts: (1.0, 30.0) for ts in marks} for name in ("pm2_5", "pm10", "pm1", "co2")})
-    store.close()
+    return {name: {ts: (1.0, 30.0) for ts in marks} for name in ("pm2_5", "pm10", "pm1", "co2")}
+
+
+def air(storage: Storage, days: int, now: float):
+    """The AirGradient's readings into ecobot.sqlite: each finished day held, today's so far, and Home Assistant's ranges."""
+    done, today = air_days(days, now)
+    with storage.writer.transaction() as w:
+        sensor = w.air_sensor(AIR_LOCATION)
+        for day, rows in done.items():
+            w.put(sensor, "5min", storage_rows(rows, True), CLOUD, exact=True)
+            w.cover(sensor, "5min", *day_bounds(day, TZ, True))
+        w.put(sensor, "5min", storage_rows(today, False), CLOUD, exact=True)
+        w.widen(sensor, "5min", air_spreads(now))
+
+
+def old_air(path: Path, days: int, now: float):
+    """The AirGradient's old file: the same, as AirStore wrote it (today's readings merged in, not noted as a day)."""
+    done, today = air_days(days, now)
+    old_air_file(path, AIR_LOCATION, done, spreads=air_spreads(now))
+    db = sqlite3.connect(path)
+    columns = [row[1] for row in db.execute("PRAGMA table_info(readings)")][2:]
+    db.executemany(f"INSERT OR IGNORE INTO readings VALUES (?, ?, {', '.join('?' * len(columns))})",
+                   [(AIR_LOCATION, r["ts"], *(r.get(c) for c in columns)) for r in today])
+    db.commit()
+    db.close()
 
 
 def build(folder: Path, days: dict[str, int] = DAYS, air_days: int = AIR_DAYS, live_days: float = 4, minute_hours: float = 240,
@@ -160,9 +187,12 @@ def build(folder: Path, days: dict[str, int] = DAYS, air_days: int = AIR_DAYS, l
         old_station(folder / "ecowitt_cache.sqlite", days, now)
         old_live_file(folder / "ecowitt_live.sqlite", live_ranges(live_days, now))
         old_minutes_file(folder / "ecowitt_minutes.sqlite", minutes(minute_hours, now))
+        old_air(folder / "airgradient_cache.sqlite", air_days, now)
     else:
-        station(folder / "ecobot.sqlite", days, live_days, minute_hours, now)
-    air(folder / "airgradient_cache.sqlite", air_days, now)
+        storage = Storage(folder / "ecobot.sqlite", TZ, bulk=True)
+        station(storage, days, live_days, minute_hours, now)
+        air(storage, air_days, now)
+        storage.close()
 
 
 if __name__ == "__main__":

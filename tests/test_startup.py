@@ -158,7 +158,7 @@ async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_star
     eco_t, _ = ecowitt_transport(history_days=45)
     monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, orig=ecobot.Ecowitt.__init__, **kw: orig(self, c, eco_t, **kw))
 
-    def broken(self, cfg, transport=None):
+    def broken(self, cfg, transport=None, **kw):
         raise OSError("the cache folder is read-only")
     monkeypatch.setattr(ecobot.AirGradient, "__init__", broken)
     sources, _ = await ecobot.start_sources(config(tmp_path))

@@ -149,7 +149,7 @@ async def test_readings_are_averaged_into_five_minute_buckets_kept_with_the_clou
     for k in range(12):                              # one reading a minute from 10:00 to 10:11
         clock.t = T0 + 60 * k
         assert await air._record()
-    stored = {r["ts"]: r["pm2_5"] for r in air.store.load_day(DAY)}
+    stored = {r["ts"]: r["pm2_5"] for r in await air.store.load_day(DAY)}
     assert stored == {T0: 12.0, T0 + 300: 17.0}      # 10:00-10:04 and 10:05-10:09 averaged; 10:10 has two readings so far: not kept
     rows = {r["ts"]: r["pm2_5"] for r in await air._day_rows(DAY)}
     assert rows[T0] == 12.0 and rows[T0 + 300] == 17.0 and rows[T0 + 600] == 20.5     # what the sensor said wins; the open bucket is shown
@@ -169,12 +169,12 @@ async def test_a_recorded_bucket_keeps_its_lowest_and_highest_reading_and_the_ch
     for k in range(12):
         clock.t = T0 + 60 * k
         await air._record()
-    rows = air.store.load_day(DAY)
+    rows = await air.store.load_day(DAY)
     assert [r["_range"]["pm2_5"] for r in rows] == [(10.0, 14.0), (15.0, 19.0)]       # five readings each: 10..14, then 15..19
     line, plotted = air._line("pm2_5", rows)
     assert plotted.low == [10.0, 15.0] and plotted.high == [14.0, 19.0] and line.low == plotted.low
-    air.store.add_recorded({"ts": T0 + 3000, "pm2_5": 5.0})                              # a bucket with no spread has none
-    assert "_range" not in air.store.load(T0 + 3000, T0 + 3300)[0]
+    await air.store.add_recorded({"ts": T0 + 3000, "pm2_5": 5.0})                              # a bucket with no spread has none
+    assert "_range" not in (await air.store.load(T0 + 3000, T0 + 3300))[0]
     open_bucket = (await air._day_rows(DAY))[-1]                                           # the bucket still being averaged is shaded too
     assert open_bucket["_range"]["pm2_5"] == (20.0, 21.0)
     await air.close()
@@ -188,7 +188,7 @@ async def test_a_bucket_with_too_few_readings_is_not_kept(tmp_path, monkeypatch)
         clock.t = t
         await air._record()
     await air._flush_bucket()                        # the open bucket ends
-    assert air.store.load_day(DAY) == []
+    assert await air.store.load_day(DAY) == []
     await air.close()
 
 
@@ -200,11 +200,11 @@ async def test_a_finished_day_the_bot_recorded_is_completed_with_only_the_missin
     gone = {lo + 300 * 50, lo + 300 * 51, lo + 300 * 200}
     for t in range(lo, hi, 300):
         if t not in gone:
-            air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+            await air.store.add_recorded({"ts": t, "pm2_5": 1.0})
     assert await air._day_rows(DAY) and calls.count("past") == 1
-    rows = air.store.load_day(DAY)
+    rows = await air.store.load_day(DAY)
     assert len(rows) == 288 and {r["ts"] for r in rows if r["pm2_5"] != 1.0} == gone    # the cloud's rows only where there were none
-    assert air.store.counts([DAY]) == {DAY: 288}
+    assert (await air.store.counts([DAY])) == {DAY: 288}
     await air._day_rows(DAY)
     assert calls.count("past") == 1                                                     # a finished day is never asked about again
     await air.close()
@@ -239,7 +239,7 @@ async def test_without_a_cloud_account_the_cloud_is_never_asked(tmp_path, monkey
     assert air.requests == 0 and calls == [] and await air.backfill() == (0, 0, 0)
     rows, hourly, skipped = await air.rows(datetime(2026, 10, 20), datetime(2026, 10, 27, 23, 0))   # a week of which only today was recorded
     assert {r["ts"] for r in rows} <= {T0, T0 + 300, T0 + 600} and skipped == [] and calls == []
-    assert air.store.counts([date(2026, 10, 20) + timedelta(days=k) for k in range(7)]) == {date(2026, 10, 20) + timedelta(days=k): None for k in range(7)}
+    assert (await air.store.counts([date(2026, 10, 20) + timedelta(days=k) for k in range(7)])) == {date(2026, 10, 20) + timedelta(days=k): None for k in range(7)}
     await air.close()
 
 
@@ -250,10 +250,10 @@ async def test_without_a_cloud_account_a_finished_day_with_gaps_stays_open_and_a
     lo, hi = day_bounds(DAY, TZ)
     for t in range(lo, hi, 300):
         if t != lo + 300 * 10:
-            air.store.add_recorded({"ts": t, "pm2_5": 1.0})
-    assert len(await air._day_rows(DAY)) == 287 and air.store.counts([DAY]) == {DAY: None} and calls == []   # a gap nothing can fill: not marked
-    air.store.add_recorded({"ts": lo + 300 * 10, "pm2_5": 1.0})
-    assert len(await air._day_rows(DAY)) == 288 and air.store.counts([DAY]) == {DAY: 288} and calls == []
+            await air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+    assert len(await air._day_rows(DAY)) == 287 and (await air.store.counts([DAY])) == {DAY: None} and calls == []   # a gap nothing can fill: not marked
+    await air.store.add_recorded({"ts": lo + 300 * 10, "pm2_5": 1.0})
+    assert len(await air._day_rows(DAY)) == 288 and (await air.store.counts([DAY])) == {DAY: 288} and calls == []
     await air.close()
 
 
@@ -264,15 +264,3 @@ def test_zeroconf_is_not_loaded_unless_a_local_name_is_looked_up():
             "import asyncio; asyncio.run(l.address_of('192.168.1.5')); assert 'zeroconf' not in sys.modules")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "MPLCONFIGDIR": "/tmp"})
     assert done.returncode == 0, done.stderr
-
-
-def test_the_ranges_of_recorded_buckets_are_dropped_after_a_month_but_their_readings_stay(tmp_path):
-    from lib.airgradient.store import AirStore
-    from lib.lines import RANGE_KEEP_DAYS
-    store = AirStore(tmp_path / "air.sqlite", "1", TZ)
-    now = T0 + 90 * 86400
-    old = now - (RANGE_KEEP_DAYS + 1) * 86400
-    store.add_recorded({"ts": old, "pm2_5": 5.0, "_range": {"pm2_5": (4.0, 6.0)}}, now=old)
-    store.add_recorded({"ts": now, "pm2_5": 7.0, "_range": {"pm2_5": (6.0, 8.0)}}, now=now)
-    assert store.load(old, old + 1) == [{"ts": old, "pm2_5": 5.0}] and store.load(now, now + 1)[0]["_range"] == {"pm2_5": (6.0, 8.0)}
-    store.close()

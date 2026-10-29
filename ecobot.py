@@ -31,7 +31,7 @@ from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor,
 from lib.alerts.menu import LABELS, available_kinds
 from lib.bot import TURN_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
-from lib.ecowitt.source import HA_IMPORT_SECONDS, history_files
+from lib.ecowitt.source import HA_IMPORT_SECONDS
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
@@ -41,7 +41,7 @@ from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.sources import Source
-from lib.storage.migrate import open_storage
+from lib.storage.migrate import history_files, open_storage
 from lib.tools import Tools
 from lib.warm import every, safely
 
@@ -71,16 +71,16 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
             log.error("%s couldn't start (%s: %s) - continuing without it", kind.name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             if source is not None:
                 await safely(source.close)
-    if cfg.ecowitt:
+    storage = None
+    parts = tuple(part for part, wanted in (("station", cfg.ecowitt), ("airgradient", cfg.airgradient)) if wanted)
+    if parts:
         try:   # (the first time, the old files' history is moved into it: a few seconds, in a thread)
-            storage = await asyncio.to_thread(open_storage, cfg.storage_path, cfg.tz, history_files(cfg))
+            storage = await asyncio.to_thread(open_storage, cfg.storage_path, cfg.tz, history_files(cfg), parts)
         except Exception as e:
-            log.error("Ecowitt couldn't start: its history file %s (%s: %s) - continuing without it", cfg.storage_path, type(e).__name__, e,
-                      exc_info=isinstance(e, BUGS))
-        else:
-            await start(Ecowitt, cfg, storage=storage)
-            if not sources:   # (the station could not be made: the file is its to close otherwise)
-                storage.close()
+            log.error("The history file %s couldn't be opened (%s: %s) - continuing without the weather station and the air sensor",
+                      cfg.storage_path, type(e).__name__, e, exc_info=isinstance(e, BUGS))
+    if cfg.ecowitt and storage is not None:
+        await start(Ecowitt, cfg, storage=storage)
     eco = sources[0] if sources else None
     if eco and str(eco.tz) != str(cfg.tz):
         if os.getenv("TZ"):
@@ -89,8 +89,10 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     if not getattr(cfg.tz, "key", None):
         log.warning("The time zone has no name, only an offset (%s), so daylight saving will put the times out: set TZ, "
                     "e.g. TZ=Australia/Melbourne", cfg.tz)
-    if cfg.airgradient:
-        await start(AirGradient, cfg, **({"ha": eco.ha} if eco and eco.ha else {}))   # (one Home Assistant client for both)
+    if cfg.airgradient and storage is not None:   # (one file and one Home Assistant client for both; the file is the station's to close, else the sensor's)
+        await start(AirGradient, cfg, storage=storage, owned=eco is None, **({"ha": eco.ha} if eco and eco.ha else {}))
+    if storage is not None and not sources:
+        storage.close()
     if cfg.pollen:
         await start(Pollen, cfg)
     if cfg.forecast:

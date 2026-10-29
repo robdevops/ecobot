@@ -25,8 +25,8 @@ log = logging.getLogger(__name__)
 
 GAP_FINAL_SECONDS = 2 * 86400   # readings missing for longer than this are missing for good (the station was off): their time counts as fetched
 MINUTES_KEPT = 10 * 86400       # Home Assistant's minutes are kept this long (only a chart of a few hours draws them; docs/storage-plan.md 3.9)
-DAY_RESOLUTIONS = ("5min", "30min", "4hour", "1day")   # what the day rows are worked out from
-DAY_KINDS = tuple(k for k in KINDS if k != "air")      # the AirGradient's days need its spike filter first (docs/storage-plan.md, step 3)
+DAY_RESOLUTIONS = ("5min", "30min", "1hour", "4hour", "1day")   # what the day rows are worked out from
+DAY_KINDS = tuple(KINDS)
 MIN_READINGS = 2                # a 5 minutes of live readings with fewer than this has no band (as live.MIN_READINGS)
 
 
@@ -288,6 +288,11 @@ class Writer:
         for start, end in self.coverage_of(sensor.id, res):
             self.touch(sensor, ANY, start, end)   # (a day's figures may come from another resolution now)
         self._set_coverage(sensor, res, [])
+
+    def uncover_span(self, sensor: Sensor, res: str, start: int, end: int):
+        """[start, end] is no longer held at this resolution (its readings came again at another)."""
+        self._set_coverage(sensor, res, [piece for s, e in self.coverage_of(sensor.id, res) for piece in subtract((s, e), [(start, end)])])
+        self.touch(sensor, ANY, start, end)
 
     def _set_coverage(self, sensor: Sensor, res: str, spans: list):
         self.db.execute("DELETE FROM coverage WHERE sensor = ? AND res = ?", (sensor.id, res))

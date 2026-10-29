@@ -25,11 +25,11 @@ async def main(days: int, pace: float):
         raise SystemExit("Set AIRGRADIENT_API_TOKEN and AIRGRADIENT_LOCATION_ID: the history comes from the cloud")
     air = AirGradient(cfg)
     try:
-        before = air.store.lacking()
-        air.store.forget_days()
+        before = await air.store.lacking()
+        await air.store.forget_days()
         started = time.monotonic()
         fetched, failed, total = await air.backfill(pace=pace, max_days=days)
-        after = air.store.lacking()
+        after = await air.store.lacking()
         print(f"{fetched} days fetched, {failed} failed, {total} held, {time.monotonic() - started:.0f}s; "
               f"{after['all']:,} readings stored (was {before['all']:,})")
         for column, n in after.items():

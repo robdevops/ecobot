@@ -1,13 +1,15 @@
 """What must not change however the code behind it is rebuilt: the shapes the model receives from every tool, and that
 caches written by earlier versions (tests/data, generated once by the pre-recode code) still open and read the same."""
 
+import asyncio
 import json
 import shutil
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from lib.airgradient.store import AirStore
+from lib.airgradient.readings import AirReadings
+from lib.storage import Storage, migrate as migration
 from lib.tools import Turn
 from lib.ecowitt import api
 from lib.ecowitt.store import HistoryCache
@@ -46,11 +48,13 @@ def test_a_recorded_cache_still_opens_and_reads(tmp_path):
         temperature, = cache.slots(MAC, cycle, "outdoor", ["temperature"], now - 5 * 86400, now)
         assert len(temperature) >= at_least, cycle
     assert cache.days_held(MAC, "30min", ["outdoor"]) >= 3
-    store = AirStore(tmp_path / "air.sqlite", "42", TZ)
-    newest = store.db.execute("SELECT MAX(ts) FROM readings").fetchone()[0]
-    rows = store.load(newest - 5 * 86400, newest)
-    assert len(rows) > 20 and {"ts", "pm2_5"} <= set(rows[0])
     cache.close()
+    report = migration.migrate(tmp_path, TZ, tmp_path / "ecobot.sqlite", ("airgradient",), {"airgradient": (tmp_path / "air.sqlite",)})
+    assert report.ok, report.problem
+    store = AirReadings(Storage(tmp_path / "ecobot.sqlite", TZ), "42", TZ, owned=True)
+    newest = store.storage.read_now(lambda r: r.db.execute("SELECT MAX(ts) FROM air").fetchone()[0])
+    rows = asyncio.run(store.load(newest - 5 * 86400, newest))
+    assert len(rows) > 20 and {"ts", "pm2_5"} <= set(rows[0])
     store.close()
 
 
