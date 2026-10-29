@@ -164,11 +164,17 @@ def strip_chart_talk(text: str) -> str:
     return "\n".join(lines).strip() or text
 
 
+def chat_tag(chat_id: int) -> str:
+    """"[Telegram 5467329077]": what every log line about a chat starts with, so a request and its reply are found together."""
+    return f"[Telegram {chat_id}]"
+
+
 def describe_source(update: Update) -> str:
-    """e.g. "[@rob]" in a private chat, "[@rob, group 'Weather']" in a group."""
-    chat, user = update.effective_chat, update.effective_user
+    """The chat and who wrote: "[Telegram 5467329077]: @rob" in a private chat, "[Telegram -1001234]: @rob, group 'Weather'" in a group."""
+    chat, user, msg = update.effective_chat, update.effective_user, update.effective_message
     who = (f"@{user.username}" if user.username else user.full_name) if user else "unknown"
-    return f"[{who}]" if chat.type == ChatType.PRIVATE else f"[{who}, group '{chat.title}']"
+    tag = chat_tag(msg.chat_id if msg is not None else chat.id)   # (the reply's line takes it from the message too)
+    return f"{tag}: {who}" + ("" if chat.type == ChatType.PRIVATE else f", group '{chat.title}'")
 
 
 def connection_problem(err) -> bool:
@@ -373,7 +379,7 @@ class Bot:
             self.remember_chat(update)
         if not self.admin_only or await self.admins.allowed(context.bot, self._sender_ids(update)):
             return True
-        log.info("Refused %s: not a known group admin", describe_source(update))
+        log.info("%s: refused, not a known group admin", describe_source(update))
         with contextlib.suppress(TelegramError):
             if update.callback_query is not None:
                 await answer_query(update.callback_query, NOT_ADMIN_TOAST)
@@ -470,7 +476,7 @@ class Bot:
                 await msg.reply_text("Only group admins can change alerts")   # the menu below is still shown
             else:
                 self.state.set_alerts(chat.id, arg == "on")
-                log.info("/alerts %s in %s", arg, describe_source(update))
+                log.info("%s: /alerts %s", describe_source(update), arg)
         muted, kinds = self.state.muted(chat.id), self._alert_kinds()
         loud = self.state.loud(chat.id) if chat.type == ChatType.PRIVATE else None   # sound settings: private chats only
         await msg.reply_text(menu.title(muted, kinds), reply_markup=menu.keyboard(muted, kinds, loud=loud))
@@ -756,14 +762,14 @@ class Bot:
             return
         msg = update.effective_message
         self.chats.pop(self._key(msg), None)
-        log.info("/reset in %s", describe_source(update))
+        log.info("%s: /reset", describe_source(update))
         await msg.reply_text("Conversation memory cleared.")
 
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._allowed(update, context):
             return
         self.remember_chat(update)
-        log.info("/start in %s", describe_source(update))
+        log.info("%s: /start", describe_source(update))
         private = update.effective_chat.type == ChatType.PRIVATE
         await update.effective_message.reply_text(
             HELP.format(user=update.effective_user.id, chat=update.effective_chat.id),
@@ -830,7 +836,7 @@ class Bot:
         msg = update.effective_message
         extra = getattr(msg, "api_kwargs", None) or {}
         if stopped := [k for k in extra if "generation" in k.lower()]:
-            log.info("Message generation stopped in %s (fields: %s)", describe_source(update), ", ".join(stopped))
+            log.info("%s: message generation stopped (fields: %s)", describe_source(update), ", ".join(stopped))
 
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.effective_message
@@ -838,7 +844,7 @@ class Bot:
             return
         waited = (datetime.now(UTC) - msg.date).total_seconds() if getattr(msg, "date", None) else 0
         if waited > PENDING_MAX_SECONDS:
-            log.info("Ignored a message %d minutes old from %s: %s", waited // 60, describe_source(update), msg.text, extra=QUOTES)
+            log.info("%s: ignored a message %d minutes old: %s", describe_source(update), waited // 60, msg.text, extra=QUOTES)
             return
         private = msg.chat.type == ChatType.PRIVATE
         if private and not await self._allowed(update, context):   # before remember_chat: a stranger never becomes an alert chat
@@ -1037,7 +1043,7 @@ class Bot:
         await asyncio.sleep(0)
         now = now_local(self.cfg.tz)
         read = intent.read(text, now, self.by_name)
-        log.info("%s %s%s", describe_source(update), f"(reasoning: {read.effort}) " if read.effort != intent.EFFORT_DEFAULT else "",
+        log.info("%s%s: %s", describe_source(update), f" (reasoning: {read.effort})" if read.effort != intent.EFFORT_DEFAULT else "",
                  text, extra=QUOTES)
         for source in self.sources:  # fetch recent readings while the model thinks
             if source.wants(text) and not read.chart_in_code:   # a chart made in code reads just what it needs, first in line
@@ -1074,10 +1080,10 @@ class Bot:
                     except Exception as e:
                         log.error("Chart failed (%s: %s); sending the answer without it", type(e).__name__, e, exc_info=isinstance(e, BUGS))
             except TimeoutError:
-                log.error("Gave up after %ds on: %s", TURN_SECONDS, text, extra=QUOTES)
+                log.error("%s: gave up after %ds on: %s", chat_tag(msg.chat_id), TURN_SECONDS, text, extra=QUOTES)
                 answer = Answer("Sorry, that took too long. Please try again in a moment.", ok=False)
             except Exception as e:
-                log.error("Agent error: %s: %s", type(e).__name__, e, exc_info=isinstance(e, BUGS))
+                log.error("%s: agent error: %s: %s", chat_tag(msg.chat_id), type(e).__name__, e, exc_info=isinstance(e, BUGS))
                 # The details (which can include provider error bodies) go to the log, not the chat
                 answer = Answer(f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment.", ok=False)
             finally:
@@ -1135,7 +1141,7 @@ class Bot:
         if answer.ok and not reply.strip() and not photos:   # a chart with no text that could not be drawn
             reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in added if m["role"] == "tool"]
-        log.info("%s %s in %.1fs, tools %d, charts %d, %d chars: %s", "Replied" if answer.ok else "Error reply", msg.chat_id,
+        log.info("%s: %s in %.1fs, tools %d, charts %d, %d chars: %s", chat_tag(msg.chat_id), "Replied" if answer.ok else "Error reply",
                  time.monotonic() - started, len(used), len(photos), len(reply), reply, extra=QUOTES)
         used_air = any(tc["function"]["name"] == "air_quality" for m in added for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")

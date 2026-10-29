@@ -94,7 +94,7 @@ async def test_a_hung_question_is_given_up_on_so_the_next_one_in_the_chat_is_ans
     with caplog.at_level("WARNING"):
         replies = await ask(alert_state, Hanging())
     assert len(replies) == 1 and "took too long" in replies[0]
-    assert "Still working" in caplog.text and "Gave up" in caplog.text
+    assert "Still working" in caplog.text and "[Telegram 1]: gave up after 0s on: how hot is it" in caplog.text
 
 
 async def test_charts_are_drawn_one_at_a_time_from_any_thread():
@@ -513,7 +513,15 @@ async def test_a_message_sent_while_the_bot_was_starting_is_answered(alert_state
 async def test_a_message_that_waited_hours_is_ignored_and_logged(alert_state, caplog):
     with caplog.at_level("INFO", logger="lib.bot"):
         assert await _message_aged(alert_state, 2 * 3600) == []
-    assert "Ignored a message 120 minutes old" in caplog.text
+    assert "[Telegram 1]: @rob: ignored a message 120 minutes old: how hot is it" in caplog.text
+
+
+async def test_a_request_and_its_reply_are_logged_under_the_chat_they_came_from(alert_state, caplog):
+    with caplog.at_level("INFO", logger="lib.bot"):
+        assert await _message_aged(alert_state, 5) == ["ok"]
+    lines = [r.getMessage() for r in caplog.records if r.name == "lib.bot"]
+    assert "[Telegram 1]: @rob: how hot is it" in lines
+    assert any(line.startswith("[Telegram 1]: Replied in ") and line.endswith(", tools 0, charts 0, 2 chars: ok") for line in lines)
 
 
 async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_and_the_answer_still_comes(alert_state):
