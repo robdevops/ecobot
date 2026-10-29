@@ -8,11 +8,10 @@ import math
 
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
 
-from .charts import _DRAWING, _png
+from .charts import _DRAWING, _blend, _png
 from .specs import Dashboard, Tile
 
 BG = "#14191D"
@@ -40,12 +39,6 @@ ROWS = ("Daily", "Monthly", "Yearly")
 def _pt(px: float) -> float:
     """A size in pixels as the points matplotlib's fonts are set in."""
     return px * 72 / DPI
-
-
-def _mix(colour: str, keep: float) -> tuple:
-    """The colour with only `keep` of itself over the card's background: how a tile with no reading is dimmed."""
-    r, g, b = (keep * c + (1 - keep) * k for c, k in zip(to_rgb(colour), to_rgb(BG)))
-    return r, g, b
 
 
 def _text(ax, x, y, text, size, colour=INK, ha="center", va="center", weight="normal"):
@@ -172,7 +165,7 @@ DRAW = {"thermometer": _thermometer, "dial": _dial, "beaker": _beaker}
 
 def _tile(ax, tile: Tile, ox: float, oy: float):
     keep = 1.0 if tile.value is not None or any(any(f is not None for f in figures) for figures in tile.rows.values()) else FADE
-    ink = (lambda colour: _mix(colour, keep)) if keep < 1 else (lambda colour: colour)
+    ink = (lambda colour: _blend(colour, 1 - keep, BG)) if keep < 1 else (lambda colour: colour)   # dimmed towards the card
     _text(ax, ox + CELL_W / 2, oy + 38, tile.title, 38, ink(INK))
     DRAW[tile.kind](ax, tile, ox, oy, ink)
     _table(ax, tile, ox, oy, ink)

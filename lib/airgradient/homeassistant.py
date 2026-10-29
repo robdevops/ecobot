@@ -19,9 +19,9 @@ from datetime import UTC, datetime
 from ..ecowitt.hass_history import rollup
 from ..ecowitt.hass_map import convert
 from ..ecowitt.homeassistant import parse_time
+from ..ecowitt.live import BUCKET
 from .metrics import STORED
 
-BUCKET = 300
 # The bot's metric -> the end of its entity's name in Home Assistant (sensor.<device>_<suffix>) and what it measures, for its unit
 ENTITIES = {"pm1": ("pm1", ""), "pm2_5": ("pm2_5", ""), "pm10": ("pm10", ""), "co2": ("carbon_dioxide", ""),
             "voc_index": ("voc_index", ""), "nox_index": ("nox_index", ""),
@@ -136,33 +136,27 @@ def same_reading(verdict: tuple[int, int]) -> bool:
 
 
 def checked(found: dict[str, dict[int, tuple[float, float, float]]], rows: list[dict]) -> tuple[dict[str, dict[int, tuple[float, float]]],
-                                                                                             dict[str, tuple[int, int]]]:
-    """(the ranges to keep, the verdicts): the ranges of the buckets that hold a reading of the metric (a bucket without one has no line
-    to shade) and whose mean agrees with it, of the metrics that agree in most of them. A bucket the bot recorded itself has its own range
-    already: it only counts in the comparison."""
+                                                                                             list[dict], dict[str, tuple[int, int]]]:
+    """(the ranges to keep, the readings to fill the bot's gaps with, the verdicts), of the metrics that agree in most of the five minutes
+    compared (`rows`: the readings the bot holds): the ranges of the buckets that hold a reading of the metric (a bucket without one has
+    no line to shade) and whose mean agrees with it (a bucket the bot recorded itself has its own range already: it only counts in the
+    comparison), and where the bot holds no reading of the metric, each five minutes' mean with its lowest and highest as the band."""
     readings = {r["ts"]: r for r in rows}
     verdict = verdicts({name: {b: mean for b, (mean, _, _) in buckets.items()} for name, buckets in found.items()}, rows)
-    keep = {}
+    keep: dict[str, dict[int, tuple[float, float]]] = {}
+    fill: dict[int, dict] = {}
     for name, buckets in found.items():
-        if same_reading(verdict[name]):
-            keep[name] = {b: (lo, hi) for b, (mean, lo, hi) in buckets.items()
-                          if (row := readings.get(b)) is not None and name in row and agrees(name, mean, row[name]) and name not in row.get("_range", {})}
-    return keep, verdict
-
-
-def gaps(found: dict[str, dict[int, tuple[float, float, float]]], rows: list[dict], verdict: dict[str, tuple[int, int]]) -> list[dict]:
-    """The readings to fill the bot's gaps with: each five minutes' mean, with its lowest and highest as the band, of the metrics the
-    verdicts say are the readings the bot keeps, where the bot holds no reading of that metric."""
-    readings = {r["ts"]: r for r in rows}
-    out: dict[int, dict] = {}
-    for name, buckets in found.items():
-        if not same_reading(verdict.get(name, (0, 0))):
+        if not same_reading(verdict[name]):
             continue
+        keep[name] = {}
         for b, (mean, lo, hi) in buckets.items():
-            if name not in readings.get(b, {}):
-                row = out.setdefault(b, {"ts": b, "_range": {}})
-                row[name], row["_range"][name] = mean, (lo, hi)
-    return [out[b] for b in sorted(out)]
+            row = readings.get(b)
+            if row is None or name not in row:
+                gap = fill.setdefault(b, {"ts": b, "_range": {}})
+                gap[name], gap["_range"][name] = mean, (lo, hi)
+            elif agrees(name, mean, row[name]) and name not in row.get("_range", {}):
+                keep[name][b] = (lo, hi)
+    return keep, [fill[b] for b in sorted(fill)], verdict
 
 
-__all__ = ["ENTITIES", "checked", "entity_ids", "find_prefix", "gaps", "live", "minutes", "ranges", "same_reading", "verdicts"]
+__all__ = ["ENTITIES", "checked", "entity_ids", "find_prefix", "live", "minutes", "ranges", "same_reading", "verdicts"]

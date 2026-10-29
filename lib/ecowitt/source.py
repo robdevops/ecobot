@@ -26,12 +26,12 @@ from .fetch import Fetcher, Recent
 from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
-from .live import BUCKET, MIN_READINGS, readings_in
-from .minutes import KEEP_HOURS
+from .live import BUCKET, readings_in
 from ..series import READING_GROUPS, WEATHER, find
 from ..storage import Storage
 from ..storage.catalogue import AIR
-from .query import HistoryQuery, chart_field, stack_names
+from ..storage.write import MIN_READINGS
+from .query import HistoryQuery, KEEP_HOURS, chart_field, stack_names
 from .reads import newest_minute_on
 
 log = logging.getLogger(__name__)
@@ -185,18 +185,12 @@ class Ecowitt(Source):
         if hasattr(self.api, "set_timezone"):   # (Home Assistant's history is cut in the station's days)
             self.api.set_timezone(self.tz)
         await self.storage.set_timezone(self.tz)   # (so are the day rows)
-        try:
-            self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
-        except (KeyError, TypeError, ValueError):
-            pass
-        try:
-            self.longitude = float(device["longitude"])
-        except (KeyError, TypeError, ValueError):
-            pass
-        try:
-            self.latitude = float(device["latitude"])
-        except (KeyError, TypeError, ValueError):
-            pass
+        for name, key, read in (("created", "createtime", lambda v: datetime.fromtimestamp(int(v), UTC).astimezone(self.tz)),
+                                ("longitude", "longitude", float), ("latitude", "latitude", float)):
+            try:
+                setattr(self, name, read(device[key]))
+            except (KeyError, TypeError, ValueError):
+                pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
         self.summary = (f"Ecowitt: '{self.station_name}' ({self.mac}) via {self.via} (every {self.warmer.interval:g}s)"
@@ -263,8 +257,13 @@ class Ecowitt(Source):
         else a request of its own, ahead of the background refreshes (someone is waiting)."""
         if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
             return {g: self._live[1][g] for g in groups if g in self._live[1]}
-        data = await self.api.realtime(self.mac, ",".join(groups), urgent=True)
-        if set(groups) >= set(LIVE_GROUPS):   # every group: as good as the minute's own reading, for the next to ask (the report's gauges)
+        return await self._fetch_live(groups, urgent=True)
+
+    async def _fetch_live(self, groups: list[str], urgent: bool = False) -> dict:
+        """A real_time request for these groups, counted into the 5-minute bands; with every group in it, kept as the minute's own reading
+        for the next to ask (the report's gauges)."""
+        data = await self.api.realtime(self.mac, ",".join(groups), urgent=urgent)
+        if set(groups) >= set(LIVE_GROUPS):
             self._live = (time.time(), data)
         await self._record_live(data)
         return data
@@ -291,7 +290,7 @@ class Ecowitt(Source):
             return
         self.ha.trouble.ok()
         if first or not self._ha_ok:
-            log.info("Home Assistant (Ecowitt): %d five-minute bands widened across %d series, %.0fs", marks, len(found), time.monotonic() - started)
+            log.info("Backfill Home Assistant (Ecowitt): %d 5-min bands widened across %d series, %.0fs", marks, len(found), time.monotonic() - started)
         self._ha_ok = True
 
     async def _record_live(self, data: dict):
@@ -355,9 +354,7 @@ class Ecowitt(Source):
             if self.fast is not None and self._live and time.time() - self._polled <= LIVE_POLL_SECONDS * 3 and newest(self._live[1]):
                 data = self._live[1]    # the poll's, a few seconds old at most
             else:
-                data = await self.api.realtime(self.mac, ",".join(LIVE_GROUPS))
-                self._live = (time.time(), data)
-                await self._record_live(data)
+                data = await self._fetch_live(LIVE_GROUPS)
             group = data.get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)

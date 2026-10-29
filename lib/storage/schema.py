@@ -100,7 +100,6 @@ def create(db: sqlite3.Connection) -> list[str]:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN {q(name)} {type_}")
                     added.append(f"{table}.{name}")
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
     return added
 
 

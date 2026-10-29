@@ -35,13 +35,32 @@ def newest(data: dict) -> int:
     return out
 
 
+class Outage:
+    """An API failing, said once for as long as it lasts, and that it is answering again (as homeassistant.Trouble, for an API without one)."""
+
+    def __init__(self, name: str):
+        self.name, self.failing = name, False
+
+    def failed(self, what: str, error: object, then: str):
+        if not self.failing:
+            log.warning("%s: %s failed (%s); %s", self.name, what, error, then)
+        self.failing = True
+
+    def ok(self):
+        if self.failing:
+            self.failing = False
+            log.info("%s is answering again", self.name)
+
+
 class FallbackAPI:
     empty_is_final = True    # what neither has is not there
 
     def __init__(self, first, second, tz, clock=time.time):
         """first: the API that answers (Home Assistant's); second: the one that makes up what it lacks (Ecowitt's cloud)."""
         self.first, self.second, self.tz, self.clock = first, second, tz, clock
-        self._down: dict[str, bool] = {}   # which of "first" / "second" is failing now, so each outage is said once
+        # each API's failing, said once for as long as it lasts: Home Assistant's own account of it, shared with the places that ask it directly
+        self.trouble = {"first": getattr(getattr(first, "ha", None), "trouble", None) or Outage("Home Assistant"),
+                        "second": Outage("Ecowitt's cloud")}
 
     @property
     def requests(self) -> int:
@@ -57,25 +76,11 @@ class FallbackAPI:
             if hasattr(api, "set_timezone"):
                 api.set_timezone(tz)
 
-    def _trouble(self, which: str):
-        """Home Assistant's own account of its failing, shared with the places that ask it directly (None for the cloud)."""
-        return getattr(getattr(self.first, "ha", None), "trouble", None) if which == "first" else None
-
     def _failed(self, which: str, what: str, error: EcowittError):
-        if trouble := self._trouble(which):
-            trouble.failed(what, error, "the cloud is used where it can")
-            self._down[which] = True
-            return
-        if not self._down.get(which):
-            log.warning("%s: %s failed (%s); the other is used where it can", "Home Assistant" if which == "first" else "Ecowitt's cloud", what, error)
-        self._down[which] = True
+        self.trouble[which].failed(what, error, "the cloud is used where it can" if which == "first" else "the other is used where it can")
 
     def _fine(self, which: str):
-        if trouble := self._trouble(which):
-            self._down.pop(which, None)
-            trouble.ok()
-        elif self._down.pop(which, False):
-            log.info("%s is answering again", "Home Assistant" if which == "first" else "Ecowitt's cloud")
+        self.trouble[which].ok()
 
     async def devices(self) -> list[dict]:
         cloud, ours, failure = [], [], None

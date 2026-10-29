@@ -11,7 +11,7 @@ import pytest
 @pytest.fixture
 def alert_state(tmp_path):
     """The bot's chats and settings (an AlertState) in a file of the test's own: what a Bot is given, as in the running bot."""
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     return AlertState(tmp_path / "state.json")
 
 

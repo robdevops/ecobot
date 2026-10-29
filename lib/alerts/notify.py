@@ -191,15 +191,12 @@ class AlertState:
     def forecast_chats(self) -> list[int]:
         return [int(c) for c in self.monitor.get("forecast_sent", {})]
 
-    def subscribed(self, chat_id: int, kind: str | None = None) -> bool:
-        """Does this chat get this alert type (or, with no kind, any at all)?"""
-        if chat_id not in self.chats or self.chats[chat_id].get("gone"):
-            return False
-        muted = self.muted(chat_id)
-        return kind not in muted if kind else bool(set(LABELS) - muted)
+    def subscribed(self, chat_id: int, kind: str) -> bool:
+        """Does this chat get this alert type?"""
+        return chat_id in self.chats and not self.chats[chat_id].get("gone") and kind not in self.muted(chat_id)
 
-    def alert_chats(self, kind: str | None = None) -> list[int]:
-        """The chats that get alerts of this type (any type, if none is given)."""
+    def alert_chats(self, kind: str) -> list[int]:
+        """The chats that get alerts of this type."""
         return [c for c in self.chats if self.subscribed(c, kind)]
 
 
@@ -207,10 +204,10 @@ class Notifier:
     def __init__(self, bot, state: AlertState):
         self.bot, self.state = bot, state
 
-    async def __call__(self, text: str, link: tuple[str, str] | None = None, kind: str | None = None,
+    async def __call__(self, text: str, kind: str, link: tuple[str, str] | None = None,
                        chart: Callable[[], Awaitable[bytes | None]] | None = None, chats: list[int] | None = None) -> int:
-        """Send an alert (silently) to the chats subscribed to its type: of `chats` (say, the one sent something that has since
-        changed), else of every chat. Chats the bot can no longer post to are marked gone. Returns how many it was sent to.
+        """Send an alert (silently) to the chats subscribed to its type (`kind`, one of menu.TYPES): of `chats` (say, the one sent
+        something that has since changed), else of every chat. Chats the bot can no longer post to are marked gone. Returns how many it was sent to.
         link = (label, url) adds a clickable label to the footer; each carries the settings buttons. chart draws the alert's
         picture (None: the text alone), and is called only when some chat gets the alert. The text is the picture's caption
         (the text alone if Telegram refuses it); it is uploaded once and the chats after the first are sent Telegram's copy."""
@@ -226,13 +223,12 @@ class Notifier:
         log.info("Alert sent to %d chat(s) in %.1fs: %s", sent, time.monotonic() - started, text, extra=QUOTES)
         return sent
 
-    async def _post(self, chat_id: int, text: str, entities, kind: str | None, photo: bytes | str | None):
+    async def _post(self, chat_id: int, text: str, entities, kind: str, photo: bytes | str | None):
         """The message itself (returned): silent unless the chat turned sound on for this type, with the alert type's settings button (the
         bell). With a photo it is the picture with the text as its caption, and a Refresh that draws the chart again; a picture Telegram
         refuses falls back to the text alone."""
         quiet = kind not in self.state.loud(chat_id)
-        markup = lambda refresh: alert_keyboard(kind, self.state.muted(chat_id), self.state.loud(chat_id) if chat_id > 0 else None,
-                                                refresh=refresh) if kind else None
+        markup = lambda refresh: alert_keyboard(kind, self.state.muted(chat_id), self.state.loud(chat_id) if chat_id > 0 else None, refresh=refresh)
         if photo:
             try:
                 return await self.bot.send_photo(chat_id, photo, caption=text, caption_entities=entities, disable_notification=quiet,
@@ -244,8 +240,7 @@ class Notifier:
         return await self.bot.send_message(chat_id, text, entities=entities, disable_web_page_preview=True, disable_notification=quiet,
                                            reply_markup=markup(False))
 
-    async def _send(self, chat_id: int, text: str, entities, kind: str | None = None, photo: bytes | str | None = None,
-                    again: bool = True) -> tuple[bool, object]:
+    async def _send(self, chat_id: int, text: str, entities, kind: str, photo: bytes | str | None = None, again: bool = True) -> tuple[bool, object]:
         """Send an alert (see _post) to one chat; a chat the bot can no longer post to is marked gone. Telegram's flood limit (when it asks
         for a short wait) and a dropped connection get one more try; a timeout doesn't, as the message may have arrived. Whatever
         fails for one chat is logged, so the others still get the alert. (whether it was sent, the message sent)"""

@@ -1,3 +1,3 @@
-from .source import Forecast, decorate, forecast_emoji
+from .source import Forecast
 
-__all__ = ["Forecast", "decorate", "forecast_emoji"]
+__all__ = ["Forecast"]

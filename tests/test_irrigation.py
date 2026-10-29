@@ -13,9 +13,10 @@ from telegram.error import BadRequest
 
 import lib.bot as bot_module
 from lib import templates
-from lib.alerts import AlertState, IrrigationMonitor
 from lib.alerts import irrigation as monitor_module
+from lib.alerts.irrigation import IrrigationMonitor
 from lib.alerts.menu import available_kinds
+from lib.alerts.notify import AlertState
 from lib.bot import Bot
 from lib.buttons import struck as strike
 from lib.config import Config
@@ -766,7 +767,7 @@ async def test_a_pause_that_fails_and_is_retried_is_told_exactly_once(tmp_path):
 
 
 async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu(tmp_path):
-    from lib.alerts import Notifier
+    from lib.alerts.notify import Notifier
     state, delivered = AlertState(tmp_path / "s.json"), []
     for chat in (1, 2, 3, -7):
         state.add_chat(chat, str(chat))

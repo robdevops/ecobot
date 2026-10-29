@@ -10,7 +10,8 @@ from telegram.ext import CallbackQueryHandler
 
 from lib import periods, report_menu, templates
 from lib.admins import Admins
-from lib.alerts import AlertState, menu
+from lib.alerts import menu
+from lib.alerts.notify import AlertState
 from lib.bot import MAX_CALLBACK_BYTES, NOT_ADMIN, NOT_ADMIN_TOAST, STALE_BUTTON, Bot
 from lib.config import Config, _ids
 from lib.irrigation import menu as irrigation_menu

@@ -3,8 +3,8 @@ from types import SimpleNamespace as NS
 import pytest
 from telegram.error import BadRequest
 
-from lib.alerts import AlertState, Notifier
-from lib.alerts.menu import ALL, LABELS, TITLE, Press, alert_keyboard, available_kinds, keyboard, parse, title
+from lib.alerts.notify import AlertState, Notifier
+from lib.alerts.menu import ALL, LABELS, TITLE, alert_keyboard, available_kinds, keyboard, title
 from lib.bot import Bot
 from lib.buttons import struck as strike
 from tests.fakes import TZ
@@ -28,7 +28,12 @@ def test_the_bell_toggles_are_blue_when_on_and_struck_through_when_off():
     assert styles(alert_keyboard("uv", {"uv"}, {"uv"}, "bell")) == {"🔔 ▾": None, strike("Alert"): None}
 
 
-def test_every_button_of_every_keyboard_parses_and_builds_back_to_the_same_data():
+def test_every_button_of_every_keyboard_has_the_data_of_one_shape_of_the_grammar():
+    """The shapes in menu.py's docstring, which bot.on_alert_button reads; an old message's buttons must keep working, so they are pinned."""
+    import re
+    shapes = {"open": r"al:open:(alerts|sound)", "close": r"al:close", "alert": r"al:(on|off):(\w+):alerts", "sound": r"al:snd:(\w+):(on|off)",
+              "bell": r"al:open:bell:(\w+)", "shut": r"al:close:(\w+)", "alert under": r"al:(on|off):(\w+):bell:\2",
+              "sound under": r"al:snd:(\w+):(on|off):\1", "refresh": r"al:refresh:(\w+)"}
     muted_sets = [set(), {"rain"}, {"rain", "uv", "particulates"}, set(LABELS)]
     seen = set()
     for muted in muted_sets:
@@ -38,15 +43,10 @@ def test_every_button_of_every_keyboard_parses_and_builds_back_to_the_same_data(
             for board in boards:
                 for row in board.inline_keyboard:
                     for b in row:
-                        press = parse(b.callback_data)
-                        assert press is not None and press.data() == b.callback_data, b.callback_data
-                        seen.add(press.action)
-    assert seen == {"open", "close", "alert", "sound", "refresh"}
-    assert parse("al:snd:uv:on:uv") == Press("sound", "uv", "bell", "uv", True) and parse("al:snd:uv:off") == Press("sound", "uv", "sound", None, False)
-    assert parse("al:refresh:gusts") == Press("refresh", "gusts")
-    for junk in (None, "", "al", "al:", "al:noop", "al:open", "al:on:rain", "al:snd:rain:maybe", "al:off:a:b:c:d", "ir:water:5", "garbage",
-                 "al:refresh", "al:refresh:gusts:x"):
-        assert parse(junk) is None, junk
+                        shape = [name for name, pattern in shapes.items() if re.fullmatch(pattern, b.callback_data)]
+                        assert len(shape) == 1, b.callback_data
+                        seen.add(shape[0])
+    assert seen == set(shapes)
 
 
 def test_a_type_that_is_on_is_a_blue_button_and_one_that_is_off_is_struck_through_and_plain():
@@ -90,15 +90,15 @@ def test_state_mutes_one_type_or_all(tmp_path):
     state.add_chat(2, "b")
     state.set_kind(1, "rain", False)
     state.set_kind(1, "bogus", False)
-    assert state.muted(1) == {"rain"} and state.alert_chats("rain") == [2] and state.alert_chats("uv") == [1, 2] and state.subscribed(1)
+    assert state.muted(1) == {"rain"} and state.alert_chats("rain") == [2] and state.alert_chats("uv") == [1, 2] and state.subscribed(1, "uv")
     state.set_kind(1, ALL, False)
-    assert state.muted(1) == set(LABELS) and not state.subscribed(1) and state.alert_chats() == [2]
+    assert state.muted(1) == set(LABELS) and not state.subscribed(1, "uv") and state.alert_chats("uv") == [2]
     state.set_kind(1, ALL, True)
     assert state.muted(1) == set() and "muted" not in state.chats[1]
     state.set_kind(2, "gusts", False)
     assert AlertState(tmp_path / "s.json").muted(2) == {"gusts"}                       # saved
     state.set_alerts(1, False)                                                      # the /alerts off shortcut
-    assert not state.subscribed(1)
+    assert not state.subscribed(1, "rain")
 
 
 class Sent:
@@ -211,7 +211,8 @@ async def test_noop_unknown_kinds_and_unchanged_markup_are_harmless(tmp_path):
     q = Query("al:noop")
     await press(bot, q)
     assert q.edits == [] and q.toast is None
-    for data in ("al:off:pollen:alerts", "al:off:bogus:alerts", "al:weird", "garbage"):          # pollen is not a type here
+    for data in ("al:off:pollen:alerts", "al:off:bogus:alerts", "al:weird", "garbage", "", "al", "al:", "al:open", "al:on:rain",   # pollen is not a type here
+                 "al:off:a:b:c:d", "al:refresh", "al:refresh:gusts:x"):                              # the rest: no shape of the grammar
         q = Query(data)
         await press(bot, q)
         assert q.edits == [] and state.muted(1) == set(), data
@@ -248,13 +249,16 @@ async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path)
     assert replies[0][0].startswith(TITLE) and "On: rain, gusts, UV, temperature crossing, particulates, pollen & asthma, forecast changes" in replies[0][0]
     assert rows(replies[0][1]["reply_markup"])[0] == [("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]
     await bot.on_alerts(update, NS(args=["off"]))
-    assert not state.subscribed(1) and "On: nothing" in replies[1][0]
+    assert state.muted(1) == set(LABELS) and "On: nothing" in replies[1][0]
     await bot.on_alerts(update, NS(args=["on"]))
-    assert state.subscribed(1) and "🔕 Off: nothing" in replies[2][0]
+    assert state.muted(1) == set() and "🔕 Off: nothing" in replies[2][0]
 
 
 async def test_every_monitors_alert_names_its_type(tmp_path):
-    from lib.alerts import ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, WeatherMonitor
+    from lib.alerts.forecast import ForecastMonitor
+    from lib.alerts.particulates import ParticulatesMonitor
+    from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
+    from lib.alerts.weather import WeatherMonitor
     from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, gusts, rain, uv
     from tests.test_forecast_alert import TODAY, FakeForecast, day
     state = AlertState(tmp_path / "s.json")
@@ -424,8 +428,12 @@ async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path)
 def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_sends():
     import re
     from pathlib import Path
-    from lib import alerts
-    monitors = [alerts.WeatherMonitor, alerts.ParticulatesMonitor, alerts.ForecastMonitor, alerts.PollenAndAsthmaMonitor, alerts.IrrigationMonitor]
+    from lib.alerts.forecast import ForecastMonitor
+    from lib.alerts.irrigation import IrrigationMonitor
+    from lib.alerts.particulates import ParticulatesMonitor
+    from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
+    from lib.alerts.weather import WeatherMonitor
+    monitors = [WeatherMonitor, ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, IrrigationMonitor]
     assert sorted(k for m in monitors for k in m.KINDS) == sorted(LABELS)       # every type has exactly one monitor
     for m in monitors:
         sent = set(re.findall(r'kind="(\w+)"', Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()))
@@ -474,7 +482,7 @@ async def test_a_picture_telegram_refuses_falls_back_to_the_text_but_a_missing_c
     assert rows(bot.sent[0][2]["reply_markup"]) == [[("🔔 ▸", "al:open:bell:temps")]]           # the text alone has no chart to refresh
     gone = SentWithPhotos(refuse=BadRequest("Chat not found"))
     await Notifier(gone, state)("again", kind="temps", chart=png)
-    assert gone.sent == [] and state.chats[1]["gone"] and state.alert_chats() == []
+    assert gone.sent == [] and state.chats[1]["gone"] and state.alert_chats("temps") == []
 
 
 class ChartQuery(Query):

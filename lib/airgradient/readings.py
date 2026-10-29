@@ -13,13 +13,23 @@ from ..storage.catalogue import BOT, CLOUD
 from ..storage.read import Reader, Rows
 from ..storage.schema import q, some_value
 from ..storage.write import MINUTES_KEPT
+from ..ecowitt.query import SLACK_SECONDS
 from ..timeutil import day_bounds
 from .metrics import STORED
 
 RESOLUTIONS = ("5min", "1hour")   # the cloud's recent history, and its older one
 COLUMNS = list(STORED)
 HOURLY_GAP = 3600
-SLACK_SECONDS = 300               # the first minute held may be this much after a chart's start (as ecowitt.minutes)
+
+
+class Held(NamedTuple):
+    """What is held of a day: how many readings (None: not fetched; 0: fetched and empty), and whether they are hourly averages only (the
+    cloud's older history: their highs and lows are hourly averages)."""
+    n: int | None
+    hourly: bool
+
+
+NOT_HELD = Held(None, False)
 
 
 class DayFigures(NamedTuple):
@@ -82,35 +92,31 @@ class AirReadings:
             self.storage.close()
 
     # ---------- what is held ----------
-    async def counts(self, days: list[date]) -> dict[date, int | None]:
-        """Readings held for each of these days, in one read: None for a day not fetched (0 for one fetched and empty)."""
+    async def held(self, days: list[date]) -> dict[date, Held]:
+        """What is held of each of these days (Held), in one read."""
         if not days:
             return {}
-        return await self.storage.read(self._counts_on, sorted(days))
+        return await self.storage.read(self._held_on, sorted(days))
 
-    def _counts_on(self, r: Reader, days: list[date]) -> dict[date, int | None]:
+    def _held_on(self, r: Reader, days: list[date]) -> dict[date, Held]:
         sensor = self.sensor
         if sensor is None:
-            return {d: None for d in days}
-        got = r.days("air", [sensor.id], days[0], days[-1]).get(sensor.id)
+            return {d: NOT_HELD for d in days}
+        return self._held_of(r, sensor.id, days, r.days("air", [sensor.id], days[0], days[-1]).get(sensor.id))
+
+    def _held_of(self, r: Reader, sensor: int, days: list[date], got) -> dict[date, Held]:
+        """Each day's Held, from its day row (`got`: the sensor's day rows (read.Days) over these days, or None) and the coverage."""
         n_of = dict(zip(got.day, got.n)) if got else {}
         out = {}
         for d in days:
             start, end = day_bounds(d, self.tz, True)
-            out[d] = n_of.get(d, 0) if any(r.held(sensor.id, res, start, end) for res in RESOLUTIONS) else None
+            held = {res for res in RESOLUTIONS if r.held(sensor, res, start, end)}
+            out[d] = Held(n_of.get(d, 0), held == {"1hour"}) if held else NOT_HELD
         return out
 
-    async def hourly_days(self, days: list[date]) -> set[date]:
-        """The days held as hourly averages only (the cloud's older history): their highs and lows are hourly averages."""
-        sensor = self.sensor
-        if sensor is None or not days:
-            return set()
-        found = set()
-        for d in days:
-            start, end = day_bounds(d, self.tz, True)
-            if self.storage.coverage.held(sensor.id, "1hour", start, end) and not self.storage.coverage.held(sensor.id, "5min", start, end):
-                found.add(d)
-        return found
+    async def counts(self, days: list[date]) -> dict[date, int | None]:
+        """Readings held for each of these days, in one read: None for a day not fetched (0 for one fetched and empty)."""
+        return {d: h.n for d, h in (await self.held(days)).items()}
 
     async def has_own(self, day: date) -> bool:
         """Does the bot hold any of this day's readings from the monitor itself or Home Assistant? (Such a day is completed by the cloud
@@ -132,10 +138,11 @@ class AirReadings:
     # ---------- writing ----------
     async def save_day(self, day: date, rows: list[dict]) -> int:
         """Keep one finished day's readings from the cloud, in place of those it had from there (the bot's own stay, and the bands only
-        widen), at the resolution they are at; the day is held. Returns how many it holds."""
+        widen), at the resolution they are at; the day is held. Returns what it holds (Held)."""
         lo, hi = day_bounds(day, self.tz)
         rows = sorted((r for r in rows if lo <= r["ts"] < hi), key=lambda r: r["ts"])
         res = resolution_of(rows)
+        held = Held(len(rows), res == "1hour")
 
         def write(w):
             sensor = w.air_sensor(self.loc)
@@ -147,7 +154,7 @@ class AirReadings:
             w.put(sensor, res, storage_rows(rows, True), CLOUD)
             w.cover(sensor, res, lo, hi - 1)
         await self.storage.write(write)
-        return len(rows)
+        return held
 
     async def add_recorded(self, row: dict, src: int = BOT) -> None:
         """Keep a reading the bot took itself (a 5-minute average of the monitor's readings, or of Home Assistant's states of it: `src`;
@@ -247,16 +254,9 @@ class AirReadings:
                     figures = {"max": got.hi, "min": got.lo, "avg": got.mean}[kind].get(metric)
                     if figures:
                         values[name] = {d: v for d, v in zip(got.day, figures) if v is not None}
-            n_of = dict(zip(got.day, got.n)) if got else {}
-            counts, hourly = {}, set()
-            for d in days:
-                start, end = day_bounds(d, self.tz, True)
-                held = {res for res in RESOLUTIONS if r.held(sensor.id, res, start, end)}
-                counts[d] = n_of.get(d, 0) if held else None
-                if held == {"1hour"}:
-                    hourly.add(d)
-            return DayFigures(values, counts, hourly)
+            held = self._held_of(r, sensor.id, days, got)
+            return DayFigures(values, {d: h.n for d, h in held.items()}, {d for d, h in held.items() if h.hourly})
         return await self.storage.read(read)
 
 
-__all__ = ["AirReadings", "DayFigures", "readings", "resolution_of", "storage_rows"]
+__all__ = ["AirReadings", "DayFigures", "Held", "NOT_HELD", "readings", "resolution_of", "storage_rows"]

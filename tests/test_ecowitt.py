@@ -1324,7 +1324,7 @@ async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers
     good = {"rainfall": {"rain_rate": {"time": "100", "value": "1.5"}, "daily": {"time": "100", "value": "2.0"}}}
     answers = [{}, {}, good, good]
 
-    async def realtime(mac, groups):
+    async def realtime(mac, groups, urgent=False):
         return answers.pop(0)
     monkeypatch.setattr(station.api, "realtime", realtime)
     with caplog.at_level("INFO", logger="lib.ecowitt.source"):

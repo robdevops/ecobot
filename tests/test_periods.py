@@ -40,7 +40,7 @@ def test_only_the_newest_questions_are_remembered():
 
 
 def test_the_questions_behind_charts_survive_a_restart(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     Bot(NS(tz=TZ), None, [], state).charted.remember(1, 101, "Temperature chart 7d")
     again = Bot(NS(tz=TZ), None, [], AlertState(tmp_path / "s.json"))

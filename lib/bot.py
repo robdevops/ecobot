@@ -25,7 +25,7 @@ from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler
 from . import intent, periods, prompt, report, report_menu, templates
 from .admins import Admins
 from .alerts import menu, pictures
-from .alerts import AlertState
+from .alerts.notify import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
 from . import gauges
@@ -542,12 +542,22 @@ class Bot:
         """A press on the alert settings buttons (under an alert or the /alerts message): open or close a menu, or turn a type's alerts or
         its sound on or off. In a group only admins may change them. Refresh, under an alert's chart, changes nothing: anyone may press it."""
         query = update.callback_query
-        press = menu.parse(query.data)
-        if press is None:
-            await answer_query(query)
+        action, *rest = (query.data or "").split(":")[1:] or [""]   # the grammar is in alerts/menu.py
+        kind = parent = opened = None
+        if action == "refresh" and len(rest) == 1:
+            await self._redraw_alert(query, rest[0])
             return
-        if press.action == "refresh":
-            await self._redraw_alert(query, press.kind)
+        if action == "open" and len(rest) in (1, 2):              # al:open:<menu>[:<parent>]
+            opened, parent = rest[0], rest[1] if len(rest) == 2 else None
+        elif action == "close" and len(rest) <= 1:                # al:close[:<parent>]
+            parent = rest[0] if rest else None
+        elif action in ("on", "off") and len(rest) in (2, 3):     # al:on|off:<kind>:<menu>[:<parent>]: the type's alerts
+            action, on, kind, opened, parent = "alert", action == "on", rest[0], rest[1], rest[2] if len(rest) == 3 else None
+        elif action == "snd" and len(rest) in (2, 3) and rest[1] in ("on", "off"):   # al:snd:<kind>:on|off[:<parent>]: its sound
+            action, on, kind, parent = "sound", rest[1] == "on", rest[0], rest[2] if len(rest) == 3 else None
+            opened = menu.BELL if parent else menu.SOUND
+        else:
+            await answer_query(query)
             return
         message = query.message
         chat = message.chat
@@ -555,19 +565,18 @@ class Bot:
             await answer_query(query, "Only group admins can change alerts")
             return
         kinds = self._alert_kinds()
-        parent = press.parent   # set: the buttons under an alert of that type; None: the /alerts message
-        if parent and parent not in kinds:   # an alert of a type the bot no longer sends
+        if parent and parent not in kinds:   # parent: the buttons under an alert of that type (None: the /alerts message) the bot no longer sends
             await answer_query(query, STALE_BUTTON)
             return
         private = chat.type == ChatType.PRIVATE
-        toast, opened = None, press.section if press.action != "close" else None
-        if press.action == "sound" and private and press.kind in kinds and chat.id in self.state.chats:
-            self.state.set_sound(chat.id, press.kind, press.on)
-            toast = f"{self._alerts_named(press.kind)} {'now make' if press.on else 'no longer make'} a sound"
-        elif press.action == "alert" and press.kind in kinds and chat.id in self.state.chats:
-            self.state.set_kind(chat.id, press.kind, press.on, kinds)
-            toast = f"{self._alerts_named(press.kind)} {'on' if press.on else 'off'} in this chat"
-        elif press.action not in ("open", "close"):
+        toast = None
+        if action == "sound" and private and kind in kinds and chat.id in self.state.chats:
+            self.state.set_sound(chat.id, kind, on)
+            toast = f"{self._alerts_named(kind)} {'now make' if on else 'no longer make'} a sound"
+        elif action == "alert" and kind in kinds and chat.id in self.state.chats:
+            self.state.set_kind(chat.id, kind, on, kinds)
+            toast = f"{self._alerts_named(kind)} {'on' if on else 'off'} in this chat"
+        elif action not in ("open", "close"):
             await answer_query(query)
             return
         muted = self.state.muted(chat.id)
@@ -1077,7 +1086,7 @@ class Bot:
             if skipped:
                 log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take %d of the charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
             if done:
-                log.info("Preloaded %s of %r to chat %s in %.1fs", ", ".join(periods.NAMES[days] for days in periods.PERIODS if days in done), question,
+                log.info("[Telegram] Preloaded %s of %r to chat %s in %.1fs", ", ".join(periods.NAMES[days] for days in periods.PERIODS if days in done), question,
                          chat, time.monotonic() - started, extra=QUOTES)
         finally:
             self.preloading.discard(question)

@@ -81,7 +81,7 @@ async def test_the_station_folds_home_assistants_readings_into_its_ranges_and_lo
     await eco.import_ranges()
     marks = bands_of(eco.storage, eco.mac, "outdoor.temperature", int(t0), int(now))
     assert len(marks) > 15 and any(lo < hi for lo, hi in marks.values())      # (a stretch where it did not change has no width)
-    assert "Home Assistant (Ecowitt): " in caplog.text and eco.ranges_from_ha
+    assert "Backfill Home Assistant (Ecowitt): " in caplog.text and " 5-min bands widened across " in caplog.text and eco.ranges_from_ha
 
     def down(request):
         raise httpx.ConnectError("no route")

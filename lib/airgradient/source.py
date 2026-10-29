@@ -35,7 +35,8 @@ from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
 from ..ecowitt.homeassistant import HomeAssistant
-from ..ecowitt.minutes import KEEP_HOURS, MINUTE_HOURS
+from ..ecowitt.live import BUCKET
+from ..ecowitt.query import KEEP_HOURS, MINUTE_HOURS
 from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line
 from ..panels import panel_for
 from ..specs import Chart, Line
@@ -47,10 +48,10 @@ from ..warm import Warmer
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
 from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
-from .homeassistant import (ANCHORS, MIN_COMPARED, checked, entity_ids, find_prefix, gaps as ha_gaps, live as ha_live, minutes as ha_minutes,
-                            ranges as ha_ranges, same_reading, verdicts)
+from .homeassistant import (ANCHORS, MIN_COMPARED, checked, entity_ids, find_prefix, live as ha_live, minutes as ha_minutes, ranges as ha_ranges,
+                            same_reading, verdicts)
 from .local import LocalSensor
-from .readings import AirReadings
+from .readings import NOT_HELD, AirReadings, Held
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +60,6 @@ MAX_DAYS = 400                    # longest history period per question
 MAX_REQUEST_DAYS = 9              # the API allows 10 days per request; a day of margin for clock changes
 MAX_INLINE_DAYS = 30              # missing days fetched while answering; more are left to the backfill
 FRESH_SECONDS = 300               # the current reading and today's history are reused this long
-BUCKET = 300                      # the readings kept are 5-minute averages, on the clock (as AirGradient's are)
 HA_RECENT_SECONDS = 3 * 3600      # Home Assistant's ranges are read back for the last few hours each time (RANGE_KEEP_DAYS the first time)
 SAMPLE_SECONDS = 60               # with the monitor's own server, or Home Assistant's states of it: how often it is read (the keep-warm interval)
 MIN_SAMPLES = 3                   # a 5-minute average of fewer readings than this is not kept (the cloud fills that gap)
@@ -258,10 +258,10 @@ class AirGradient(Source):
                 if until > minutes_from:
                     minutes += ha_minutes(history, ids, self.ha.units, max(chunk, minutes_from), until - 1, now)
             own = await self.store.load(start, int(now), srcs=(BOT,))   # what the bot read from the monitor itself: the check, and the rest is filled
-            keep, verdict = checked(found, own)
+            keep, fill, verdict = checked(found, own)
             self._verdict[HOME_ASSISTANT].update({n: v for n, v in verdict.items() if v[0] >= MIN_COMPARED})
             added = await self.store.add_spreads(keep)
-            filled = await self.store.merge(ha_gaps(found, own, verdict), True, HOME_ASSISTANT)
+            filled = await self.store.merge(fill, True, HOME_ASSISTANT)
             kept = await self.store.add_minutes([self._allowed(m, HOME_ASSISTANT) for m in minutes], HOME_ASSISTANT, now)
         except Exception as e:
             self.ha.trouble.failed("history of the air monitor", f"{type(e).__name__}: {e}", "the air's readings come from the bot's own and the cloud's")
@@ -275,8 +275,8 @@ class AirGradient(Source):
                             "value), so it fills no gaps and its ranges aren't used: %s", LABELS.get(name) or EXTRA_LABELS.get(name, name),
                             agreed, compared, FIX.get(name, "check the correction each applies"))
         if first or not self._ha_ok:
-            log.info("Home Assistant (AirGradient): %d five-minute bands widened, %d five minutes filled, %d minutes kept, %.0fs", added, filled,
-                     kept, time.monotonic() - started)
+            log.info("Backfill Home Assistant (AirGradient): %d 5-min bands widened, %d filled, %d kept, %.0fs", added, filled, kept,
+                     time.monotonic() - started)
         self._ha_ok = True
 
     def _allowed(self, row: dict, src: int) -> dict:
@@ -380,14 +380,12 @@ class AirGradient(Source):
         """Over for more than an hour, so its data won't change."""
         return self.now() > datetime.combine(day, datetime.min.time()) + timedelta(days=1, hours=1)
 
-    async def _held(self, days: list[date]) -> dict[date, int | None]:
-        """Readings stored per finished day, in one query (None: not fetched yet, or not finished)."""
-        stored = await self.store.counts(days)
-        return {d: stored[d] if self._final(d) else None for d in days}
-
-    def _unstored(self, held: dict[date, int | None]) -> list[date]:
-        """The finished days in `held` (see _held) that aren't stored yet."""
-        return [d for d, n in held.items() if n is None and self._final(d)]
+    async def _held(self, days: list[date]) -> tuple[dict[date, Held], list[date]]:
+        """(what is stored of each finished day, in one query: NOT_HELD for one not fetched yet, or not finished; the finished days that
+        aren't stored yet)."""
+        stored = await self.store.held(days)
+        held = {d: stored[d] if self._final(d) else NOT_HELD for d in days}
+        return held, [d for d, h in held.items() if h.n is None and self._final(d)]
 
     async def _past(self, start: int, end: int) -> list[dict]:
         """Readings between two epochs (never past now), normalised and oldest first. Without a cloud account there are none to ask for."""
@@ -397,9 +395,9 @@ class AirGradient(Source):
         raw = await self._get("past", **{"from": utc(start), "to": utc(min(end, time.time()))})
         return sorted((normalise(r) for r in raw if isinstance(r, dict) and r.get("timestamp")), key=lambda r: r["ts"])
 
-    async def _fetch_days(self, days: list[date]) -> dict[date, int]:
+    async def _fetch_days(self, days: list[date]) -> dict[date, Held]:
         """Fetch finished days and store them, in as few requests as the API allows (it takes up to 10 days at a time; we use 9).
-        Returns how many readings each day has stored."""
+        Returns what each day has stored."""
         days, stored = sorted(days), {}
         for d in [d for d in days if await self.store.has_own(d)]:   # the bot's own readings, or Home Assistant's: only the gaps are fetched
             stored[d] = await self._complete_day(d)
@@ -422,7 +420,7 @@ class AirGradient(Source):
         final = self._final(day)
         async with self._lock(day):
             if final:
-                if self._unstored(await self._held([day])):
+                if (await self._held([day]))[1]:
                     await self._fetch_days([day])
                 return await self.store.load_day(day)
             if self._sampled or (not self.cloud and (self.local or self._ha_ids)):   # the bot's own readings are the day's
@@ -505,7 +503,7 @@ class AirGradient(Source):
             rows = [*rows, self._average(*self._bucket)]
         return rows
 
-    async def _complete_day(self, day: date) -> int:
+    async def _complete_day(self, day: date) -> Held:
         """A finished day the bot holds readings of from the monitor or Home Assistant: the cloud is asked for the whole day once (one
         request: the day's check of each metric against the bot's, and its readings fill only what the bot lacks), and the day is noted
         as done. Without the cloud, a day with gaps is left open, in case an account is added later."""
@@ -515,10 +513,10 @@ class AirGradient(Source):
             await self._fill(day, lo, hi)
             rows = await self.store.load_day(day)
         elif self._missing(day, rows, hi):
-            return len(rows)
+            return Held(len(rows), False)
         await self.store.mark_day(day)
         self._recent.pop(day, None)
-        return len(rows)
+        return Held(len(rows), False)
 
     async def warm(self, fresh: bool = True) -> str:
         """Current reading, today, and the last week of finished days."""
@@ -527,7 +525,7 @@ class AirGradient(Source):
             await self._current_row(fresh)
         await self._day_rows(today, fresh)
         week = [today - timedelta(days=n) for n in range(1, WARM_DAYS + 1)]
-        await self._fetch_days(self._unstored(await self._held(week)))  # one request for all of them
+        await self._fetch_days((await self._held(week))[1])  # one request for all of them
         for day in week:
             if not self._final(day):  # a day that just ended is still refetched for a while; finished ones are stored
                 await self._day_rows(day)
@@ -550,8 +548,8 @@ class AirGradient(Source):
         while n <= max_days:
             days = [today - timedelta(days=k) for k in range(n, min(n + MAX_REQUEST_DAYS, max_days + 1))]
             n += MAX_REQUEST_DAYS
-            counts = await self._held(days)
-            if missing := self._unstored(counts):
+            counts, missing = await self._held(days)
+            if missing:
                 try:
                     counts.update(await self._fetch_days(missing))
                     fetched, failed_run = fetched + len(missing), 0
@@ -566,11 +564,11 @@ class AirGradient(Source):
                 finally:
                     await asyncio.sleep(pace)
             for d in days:  # newest first
-                if counts[d] is None:
+                if (count := counts[d].n) is None:
                     continue
                 total += 1
-                seen_data = seen_data or counts[d] > 0
-                empty_run = empty_run + 1 if counts[d] == 0 else 0
+                seen_data = seen_data or count > 0
+                empty_run = empty_run + 1 if count == 0 else 0
                 # A gap after data means the sensor's history starts before it; a gap before any data is
                 # most likely a recent outage, so look much further back before giving up
                 if empty_run >= (empty_stop if seen_data else empty_before_data):
@@ -649,15 +647,14 @@ class AirGradient(Source):
         the backfill and left out). Finished days not yet stored are fetched first, up to MAX_INLINE_DAYS. A single-reading spike
         of the particles is a glitch of the sensor: it is taken out here, once, so no figure or chart has it."""
         days = [t0.date() + timedelta(days=k) for k in range((t1.date() - t0.date()).days + 1)]
-        held = await self._held(days)
-        missing = self._unstored(held)
+        held, missing = await self._held(days)
         skipped = missing[:-MAX_INLINE_DAYS] if self.cloud and len(missing) > MAX_INLINE_DAYS else []  # the oldest wait for the backfill
         held.update(await self._fetch_days([d for d in missing if d not in skipped]))
         finished = [d for d in days if self._final(d)]   # all stored by now but the skipped: read in one query
         rows = await self.store.load(day_bounds(finished[0], self.tz)[0], day_bounds(finished[-1], self.tz)[1]) if finished else []
         for d in days[len(finished):]:   # today, and a day that has just ended: fetched, not stored (but their ranges may be)
             rows += await self._with_spreads(await self._day_rows(d), d)
-        hourly = len(await self.store.hourly_days([d for d, n in held.items() if n]))
+        hourly = sum(1 for h in held.values() if h.n and h.hourly)
         lo, hi = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
         if hi - lo <= MINUTE_HOURS * 3600 and (minutes := await self.store.load_minutes(lo, hi + 1)):   # a short period: a reading a minute
             have = {m["ts"] // BUCKET * BUCKET for m in minutes}
@@ -691,24 +688,11 @@ class AirGradient(Source):
                 f"{t1:%m-%d %H:%M}", len(rows), self.requests - before)
         out = {"sensor_type": "outdoor", "period": f"{day_text(t0)} - {day_text(t1)}",
                "readings": len(rows)}
-        for name, (_, unit) in METRICS.items():
-            pts = [(r["ts"], r[name]) for r in rows if name in r]
-            if not pts:
-                continue
-            lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-            entry = {"unit": unit, "low": lo[1], "low_time": when(lo[0], self.tz),
-                     "high": hi[1], "high_time": when(hi[0], self.tz),
-                     "average": round(statistics.fmean(v for _, v in pts), 1)}
-            entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
-            if name == "pm2_5":
-                entry["high_aqi_us"], entry["high_band"] = pm25_aqi(hi[1])
-                entry["average_aqi_us"], entry["average_band"] = pm25_aqi(entry["average"])
-            out[name] = entry
-        for name in [m for m in metrics or [] if m in EXTRA]:   # the sensor's own temperature and humidity, only when asked for
+        units = {**{name: unit for name, (_, unit) in METRICS.items()},
+                 **{name: EXTRA_UNITS[name] for name in metrics or [] if name in EXTRA}}   # the sensor's own temperature and humidity, only when asked for
+        for name, unit in units.items():
             if pts := [(r["ts"], r[name]) for r in rows if name in r]:
-                lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
-                out[name] = {"unit": EXTRA_UNITS[name], "low": lo[1], "low_time": when(lo[0], self.tz), "high": hi[1],
-                             "high_time": when(hi[0], self.tz), "average": round(statistics.fmean(v for _, v in pts), 1)}
+                out[name] = self._entry(name, pts, unit)
         if trimmed:
             out["note_period"] = f"Only the last {MAX_DAYS} days can be covered per question; this covers {out['period']}."
         if hourly:
@@ -727,6 +711,19 @@ class AirGradient(Source):
                 turn.charts.append(chart_spec)
                 out["chart"] = CHART_HINT
         return out
+
+    def _entry(self, name: str, pts: list[tuple[int, float]], unit: str) -> dict:
+        """A metric's lowest, highest and average over these readings ((ts, value)), with when the extremes happened; a rated metric
+        (METRICS) with the ratings of its high and average, and PM2.5 with their AQI and band too."""
+        lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
+        entry = {"unit": unit, "low": lo[1], "low_time": when(lo[0], self.tz), "high": hi[1], "high_time": when(hi[0], self.tz),
+                 "average": round(statistics.fmean(v for _, v in pts), 1)}
+        if name in METRICS:
+            entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
+            if name == "pm2_5":
+                entry["high_aqi_us"], entry["high_band"] = pm25_aqi(hi[1])
+                entry["average_aqi_us"], entry["average_band"] = pm25_aqi(entry["average"])
+        return entry
 
     def _line(self, name: str, rows: list[dict]) -> tuple[Line, Plotted] | None:
         """One metric as a chart line, in its own units, and how it was drawn. The record high/low are the true readings.

@@ -34,13 +34,7 @@ from .schema import day_columns, q, some_value
 DAY = 86400
 ANY = "*"   # what is held changed: a day may come from another resolution now
 FINER = "'1min', '5min'"   # readings finer than a half hour, several to each
-FINE = {"air": ("5min", "1hour")}          # the resolutions a kind's days are worked out from, finest first ...
-DEFAULT_FINE = ("5min", "30min")          # ... Ecowitt's, with its daily records after them (utc_days)
 NEIGHBOUR = 900                           # (airgradient.metrics.SPIKE_NEIGHBOUR)
-
-
-def fine_of(kind: str) -> tuple[str, str]:
-    return FINE.get(kind, DEFAULT_FINE)
 
 
 def _spike_rule() -> tuple[int, float, float]:
@@ -185,7 +179,7 @@ def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, dict[date, set
     held: a day of 5-minute readings takes in its 30-minute readings' bands too (the archive fetches the 5-minute days before the coarser
     cycles, so those arrive after it), a day of 30-minute readings has nothing to take from the daily ones."""
     insert, select = statements(kind)
-    fine = fine_of(kind)
+    fine = ("5min", "1hour") if kind == "air" else ("5min", "30min")   # what the days are worked out from, finest first (Ecowitt's daily records after: utc_days)
     db.execute(WANT)
     complete, records, rest, again = [], [], set(), []
     for sensor, days in wanted.items():
@@ -252,4 +246,4 @@ def days_of(start: int, end: int, tz: tzinfo, utc: bool = True) -> set[date]:
     return {first + timedelta(days=n) for n in range((last - first).days + 1)}
 
 
-__all__ = ["ANY", "days_of", "fine_of", "statements", "utc_days", "windows_select", "work_out"]
+__all__ = ["ANY", "days_of", "statements", "utc_days", "windows_select", "work_out"]

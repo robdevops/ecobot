@@ -7,10 +7,9 @@ readings: a day row's times already come from the finest readings its day has (t
 from datetime import date, timedelta
 from typing import NamedTuple
 
-from ..storage.catalogue import BY_NAME, Column, field_of, text
+from ..storage.catalogue import BY_NAME, KINDS, Column, field_of, text
 from ..storage.days import utc_days
 from ..storage.read import DAY_PARTS, Days, Reader
-from ..storage.write import DAY_KINDS
 from ..timeutil import day_bounds, local_date
 from .api import MINUTE
 from .extremes import Ext
@@ -74,7 +73,7 @@ def period_on(r: Reader, mac: str, groups: list[str], start: int, end: int, reac
             parts[d] = (max(a, start), min(b, end))
         else:
             whole.append(d)
-    sensors = {g: s for g in groups if (s := r.sensor(mac, g)) is not None and s.kind in DAY_KINDS}
+    sensors = {g: s for g in groups if (s := r.sensor(mac, g)) is not None and s.kind in KINDS}
     out = {}
     for kind in dict.fromkeys(s.kind for s in sensors.values()):
         ids = [s.id for s in sensors.values() if s.kind == kind]

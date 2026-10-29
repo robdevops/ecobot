@@ -18,7 +18,7 @@ import httpx
 
 from ..timeutil import local_epoch
 from .api import EcowittError
-from .hass_history import SECONDS, Series, converted, history
+from .hass_history import SECONDS, Series, converted, history, merged
 from .hass_map import ENTITIES, convert, written
 from .homeassistant import HomeAssistant, parse_time
 
@@ -128,17 +128,8 @@ class HomeAssistantAPI:
         for chunk in range(int(lo // width) * width, int(hi // width) * width + 1, CHUNK):
             found = await self._asked(self.ha.history(list(ids), chunk, min(chunk + CHUNK, stop, now)))
             series = [Series(ids[i], converted(states, ids[i], self.ha.units.get(i))) for i, states in found.items()]
-            for group, fields in history(series, cycle, chunk, min(chunk + CHUNK, stop) - 1, now).items():
-                out.setdefault(group, {}).update(_joined(out.get(group, {}), fields))
+            merged(out, history(series, cycle, chunk, min(chunk + CHUNK, stop) - 1, now))   # (a day's chunk tells buckets the last did not)
         return out
-
-
-def _joined(have: dict, fields: dict) -> dict:
-    """`have`'s fields with the buckets of `fields` added to them (two chunks of one history)."""
-    joined = {name: {"unit": obj["unit"], "list": dict(obj["list"])} for name, obj in have.items()}
-    for name, obj in fields.items():
-        joined.setdefault(name, {"unit": obj["unit"], "list": {}})["list"].update(obj["list"])
-    return joined
 
 
 __all__ = ["HomeAssistantAPI", "live_data"]

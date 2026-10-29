@@ -215,8 +215,6 @@ class Tile:
     def __post_init__(self):
         if self.kind not in ("thermometer", "dial", "beaker"):
             raise ValueError(f"tile {self.title!r}: kind is 'thermometer', 'dial' or 'beaker'")
-        if self.high <= self.low:
-            raise ValueError(f"tile {self.title!r}: the scale needs a high end above its low end")
         if any(len(figures) != len(self.columns) for figures in self.rows.values()):
             raise ValueError(f"tile {self.title!r}: each row needs a figure per column")
 
@@ -226,7 +224,3 @@ class Dashboard:
     """The gauges of the weather station, left to right and top to bottom, three to a row."""
     tiles: list[Tile]
     per_row: int = 3
-
-    def __post_init__(self):
-        if not self.tiles:
-            raise ValueError("a dashboard needs a tile")

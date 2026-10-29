@@ -135,7 +135,7 @@ async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tm
 
 
 async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_next_reply_once(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     bot = Bot(NS(tz=TZ), None, [], state)
@@ -151,7 +151,7 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
 
 
 async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     bot = Bot(NS(tz=TZ), None, [], state)
@@ -168,7 +168,7 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
 
 
 async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
 
     class Agent:
         async def run(self, *a, **k):
@@ -190,7 +190,7 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
 
 async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_others_left_alone(tmp_path):
     from telegram.error import Forbidden
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     for chat_id in (10, 11, 12, 13, -20):                     # -20 is a group
         state.add_chat(chat_id, str(chat_id))

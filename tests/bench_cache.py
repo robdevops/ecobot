@@ -70,6 +70,8 @@ def requests(days: dict[str, int], now: float):
     today = naive_local(int(now), TZ).date()
     for cycle, n in days.items():
         first = datetime.combine(today - timedelta(days=n), datetime.min.time())
+        if cycle == "1day":   # daily readings are UTC days: start on one, so the days held don't lose an hour to a clock change in between
+            first = naive_local(local_epoch(first, TZ) // 86400 * 86400, TZ)
         for a, b in spans(cycle, first, naive_local(int(now), TZ)):
             yield cycle, local_epoch(a, TZ), local_epoch(b, TZ)
 

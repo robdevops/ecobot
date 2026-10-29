@@ -45,10 +45,11 @@ def test_only_agreeing_buckets_of_agreeing_metrics_are_kept_and_the_bots_own_ran
     found = {"voc_index": {t * 300: (100.0 + (30 if t == 5 else 2), 90.0, 115.0) for t in range(20)},   # one five minutes is off
              "pm2_5": {t * 300: (11.0, 9.0, 13.0) for t in range(20)},                                 # raw PM2.5: twice the reading
              "co2": {t * 300: (450.0, 440.0, 460.0) for t in range(20)}}                              # no reading to compare: no line
-    keep, verdict = checked(found, rows)
+    keep, fill, verdict = checked(found, rows)
     assert set(keep["voc_index"]) == {t * 300 for t in range(20)} - {0, 1500}         # the bot's own and the one that is off are not
     assert "pm2_5" not in keep and verdict["pm2_5"] == (20, 0) and verdict["voc_index"] == (20, 19)
     assert keep["co2"] == {} and verdict["co2"] == (0, 0)
+    assert fill == [{"ts": t * 300, "co2": 450.0, "_range": {"co2": (440.0, 460.0)}} for t in range(20)]   # what the bot lacks of an agreeing metric
 
 
 class FakeHA:
@@ -95,7 +96,7 @@ async def test_the_voc_index_gets_home_assistants_ranges_and_the_raw_pm25_none_s
     assert len(with_range) > 50 and all(r["_range"]["voc_index"] == (80.0, 120.0) for r in with_range)
     line = air._chart(["voc_index"], rows, "today").panels[0].lines[0]
     assert line.low is not None and min(line.low) == 80.0 and max(line.high) == 120.0                 # the chart is shaded from them
-    assert "Home Assistant (AirGradient): " in caplog.text
+    assert "Backfill Home Assistant (AirGradient): " in caplog.text
     # Home Assistant is the first source here, so its raw PM2.5 is the one kept for its days, and the cloud's (twice as different) fills no
     # gaps of it: said once, with the fix. Its other metrics (CO2 ...) fill the cells Home Assistant has nothing for
     raw = lambda ts: 2 * (5 + datetime.fromtimestamp(ts, timezone.utc).hour % 12)
@@ -106,7 +107,7 @@ async def test_the_voc_index_gets_home_assistants_ranges_and_the_raw_pm25_none_s
     assert all(r["pm2_5"] == raw(r["ts"]) for r in short)
     await air.import_history()                                                         # the next time: the last hours, nothing said again
     await air.rows(*(naive_local(t, air.tz) for t in (now - 60 * 3600, now - 600)))   # (another day checked against the cloud)
-    assert caplog.text.count("isn't the reading the bot keeps") == 1 and caplog.text.count("Home Assistant (AirGradient)") == 1
+    assert caplog.text.count("isn't the reading the bot keeps") == 1 and caplog.text.count("Backfill Home Assistant (AirGradient)") == 1
     await air.close()
 
 

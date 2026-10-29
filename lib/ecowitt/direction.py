@@ -14,8 +14,13 @@ TOP = 3  # compass points listed, most common first
 MIN_SHARE = 0.05  # and only those that blew at least this often
 
 
+def sector(degrees: float) -> int:
+    """0-15, N is 0 and covers 348.75 to 11.25 degrees: 359 and 1 are in the same one."""
+    return int((degrees % 360 + 11.25) // 22.5) % 16
+
+
 def point(degrees: float) -> str:
-    return POINTS[int((degrees % 360 + 11.25) // 22.5) % 16]
+    return POINTS[sector(degrees)]
 
 
 SPEED_STEPS = (10, 20)  # km/h: the rose's light, middle and strong wind (under 10, 10 to 20, 20 and over)
@@ -67,11 +72,6 @@ def summarise(readings: list[tuple[int, float, bool]], tz: tzinfo, by_day: bool,
                                                     f"({_share(Counter(point(d) for d in ds).most_common(1)[0][1], len(ds))})"
                         for day, ds in sorted(days.items())}
     return out
-
-
-def sector(degrees: float) -> int:
-    """0-15, N is 0 and covers 348.75 to 11.25 degrees: 359 and 1 are in the same one."""
-    return int((degrees % 360 + 11.25) // 22.5) % 16
 
 
 def rose(readings: list[tuple[int, float, bool, float | None]]) -> list[list[int]]:

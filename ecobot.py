@@ -25,9 +25,13 @@ from telegram.ext import Application, Defaults
 from lib import intent
 from lib.airgradient import AirGradient
 from lib.airgradient import metrics as air_metrics
-from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
-                        PollenAndAsthmaMonitor, WeatherMonitor)
+from lib.alerts.forecast import ForecastMonitor
+from lib.alerts.irrigation import IrrigationMonitor
 from lib.alerts.menu import LABELS, available_kinds
+from lib.alerts.notify import AlertState, Notifier
+from lib.alerts.particulates import CHECK_SECONDS as PARTICULATES_CHECK_SECONDS, ParticulatesMonitor
+from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
+from lib.alerts.weather import WeatherMonitor
 from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.ecowitt.source import HA_IMPORT_SECONDS

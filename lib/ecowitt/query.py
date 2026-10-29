@@ -22,7 +22,6 @@ from ..tools import json_result
 from ..series import WEATHER, field_of, find, find_name
 from ..panels import panel_for, two_axes
 from ..specs import Bars, Chart, Compass, Line, Panel, period_text, stack
-from .minutes import MINUTE_HOURS, SLACK_SECONDS
 from .api import CYCLES, MINUTE, cycle_seconds, daily_run, kept_from
 from .direction import SPEED_STEPS, rose as direction_rose, summarise as summarise_direction
 from .extremes import describe_time
@@ -32,6 +31,12 @@ from .reads import Held, Store, counts_on, first_minute_on, history_on
 
 log = logging.getLogger(__name__)
 
+# A chart of up to MINUTE_HOURS is drawn a reading a minute (Home Assistant's "1min"; Ecowitt's cloud has no such cycle). Rather than ask
+# Home Assistant for them at every chart, the bot takes them as they come (at start for the last KEEP_HOURS, then at each new live reading:
+# source.pull_minutes) into the storage's 1min rows, where they are kept ten days (storage.write.MINUTES_KEPT).
+MINUTE_HOURS = 8                # a chart of up to this long is drawn from minutes
+KEEP_HOURS = MINUTE_HOURS + 1   # ... and may end an hour ago: what is older is no use
+SLACK_SECONDS = 300             # the first minute held may be this much after a chart's start (the chart's first point is then a little late)
 INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where archived
 FINE_DAYS = 31                  # up to this many: 30-minute readings and a breakdown by day; longer periods use daily records, by month
 DAILY_ALL_DAYS = 7              # longer periods send every day's figures only when day by day was asked for

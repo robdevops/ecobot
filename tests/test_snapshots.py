@@ -82,7 +82,7 @@ async def test_the_forecast_survives_a_restart_and_a_night_start_needs_no_reques
     again = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(22, 0))
     await again.start()
-    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and rows(again.store, "forecast") == 1
+    assert calls == [] and again.lines(3) == lines and rows(again.store, "forecast") == 1
     await again.close()
 
 
@@ -117,6 +117,7 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
 
 
 async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
+    """Its summary has no emoji until the first fetch (the Open-Meteo table carries them); its source and tag are ignored."""
     from lib.snapshots import Snapshots
     store = Snapshots(config(tmp_path).storage_path)
     today = datetime.now(TZ).date()
@@ -125,6 +126,6 @@ async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([]))
     forecast.now = lambda: datetime.combine(today, dtime(22, 0))
     await forecast.start()
-    assert forecast.lines() == ["Today: 🌧️ Rain. 11–17°C, 90% chance of rain"]
+    assert forecast.lines() == ["Today: Rain. 11–17°C, 90% chance of rain"]
     await forecast.close()
     store.close()

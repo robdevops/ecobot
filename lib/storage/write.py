@@ -25,8 +25,7 @@ log = logging.getLogger(__name__)
 GAP_FINAL_SECONDS = 2 * 86400   # readings missing for longer than this are missing for good (the station was off): their time counts as fetched
 MINUTES_KEPT = 10 * 86400       # Home Assistant's minutes are kept this long (only a chart of a few hours draws them; docs/storage-plan.md 3.9)
 DAY_RESOLUTIONS = ("5min", "30min", "1hour", "4hour", "1day")   # what the day rows are worked out from
-DAY_KINDS = tuple(KINDS)
-MIN_READINGS = 2                # a 5 minutes of live readings with fewer than this has no band (as live.MIN_READINGS)
+MIN_READINGS = 2                # a 5 minutes of live readings with fewer than this has no band (the station counts them: ecowitt.source.LiveMarks)
 
 
 def cycle_of(name: str):
@@ -79,6 +78,13 @@ _SQL: dict[tuple, str] = {}
 REPLACE = "(excluded.final >= final AND excluded.src >= src)"
 
 
+def band_sql(fn: str, value: str, *bands: str) -> str:
+    """SQL for the lowest (fn MIN) or highest (MAX) of these band expressions, those that are not null, and of the value where there is
+    one: null only when there is no band at all (a value alone makes none)."""
+    firsts = [", ".join([b, *(o for o in bands if o != b)]) for b in bands]   # each band first: COALESCE picks it where it is not null
+    return f"{fn}({', '.join(f'COALESCE({f})' for f in firsts)}, COALESCE({value}, {', '.join(bands)}))"
+
+
 def upsert_sql(kind: str) -> str:
     """A reading written (every column of its kind, null for what it lacks) by the rules above."""
     if (kind, "put") not in _SQL:
@@ -88,9 +94,7 @@ def upsert_sql(kind: str) -> str:
         for c in names:
             v, lo, hi = q(c), q(c + "_lo"), q(c + "_hi")
             new = f"(CASE WHEN {REPLACE} THEN COALESCE(excluded.{v}, {v}) ELSE COALESCE({v}, excluded.{v}) END)"
-            sets += [f"{v} = {new}",
-                     f"{lo} = MIN(COALESCE({lo}, excluded.{lo}), COALESCE(excluded.{lo}, {lo}), COALESCE({new}, {lo}, excluded.{lo}))",
-                     f"{hi} = MAX(COALESCE({hi}, excluded.{hi}), COALESCE(excluded.{hi}, {hi}), COALESCE({new}, {hi}, excluded.{hi}))"]
+            sets += [f"{v} = {new}", f"{lo} = {band_sql('MIN', new, lo, f'excluded.{lo}')}", f"{hi} = {band_sql('MAX', new, hi, f'excluded.{hi}')}"]
         _SQL[kind, "put"] = (f"INSERT INTO {kind} ({', '.join(map(q, cols))}) VALUES ({', '.join('?' * len(cols))}) "
                              f"ON CONFLICT (sensor, res, ts) DO UPDATE SET {', '.join(sets)}")
     return _SQL[kind, "put"]
@@ -103,8 +107,7 @@ def widen_sql(kind: str, column: str) -> str:
         v, lo, hi = q(column), q(column + "_lo"), q(column + "_hi")
         _SQL[kind, "widen", column] = (
             f"INSERT INTO {kind} (sensor, res, ts, src, final, {lo}, {hi}) VALUES (?, ?, ?, {CLOUD}, 0, ?, ?) ON CONFLICT (sensor, res, ts) DO UPDATE "
-            f"SET {lo} = MIN(COALESCE({lo}, excluded.{lo}), excluded.{lo}, COALESCE({v}, excluded.{lo})), "
-            f"{hi} = MAX(COALESCE({hi}, excluded.{hi}), excluded.{hi}, COALESCE({v}, excluded.{hi}))")
+            f"SET {lo} = {band_sql('MIN', v, lo, f'excluded.{lo}')}, {hi} = {band_sql('MAX', v, hi, f'excluded.{hi}')}")
     return _SQL[kind, "widen", column]
 
 
@@ -120,9 +123,7 @@ def rollup_sql(kind: str) -> str:
             v, own_lo, own_hi = f"{kind}.{q(c)}", f"{kind}.{q(c + '_lo')}", f"{kind}.{q(c + '_hi')}"
             v_lo, v_hi = f"(CASE WHEN f.{q(c + '~n')} >= 2 THEN f.{q(c + '~min')} END)", f"(CASE WHEN f.{q(c + '~n')} >= 2 THEN f.{q(c + '~max')} END)"
             b_lo, b_hi = f"f.{q(c + '~lo')}", f"f.{q(c + '~hi')}"
-            lo = f"MIN(COALESCE({own_lo}, {v_lo}, {b_lo}), COALESCE({v_lo}, {own_lo}, {b_lo}), COALESCE({b_lo}, {own_lo}, {v_lo}))"
-            hi = f"MAX(COALESCE({own_hi}, {v_hi}, {b_hi}), COALESCE({v_hi}, {own_hi}, {b_hi}), COALESCE({b_hi}, {own_hi}, {v_hi}))"
-            sets += [f"{q(c + '_lo')} = MIN({lo}, COALESCE({v}, {lo}))", f"{q(c + '_hi')} = MAX({hi}, COALESCE({v}, {hi}))"]
+            sets += [f"{q(c + '_lo')} = {band_sql('MIN', v, own_lo, v_lo, b_lo)}", f"{q(c + '_hi')} = {band_sql('MAX', v, own_hi, v_hi, b_hi)}"]
         _SQL[kind, "rollup"] = (
             f"WITH f AS (SELECT ts / {SLOT} * {SLOT} AS slot, {found} FROM {kind} WHERE sensor = :sensor AND res = '5min' "
             f"AND ts BETWEEN :start AND :end + {SLOT - 1} GROUP BY slot) "
@@ -292,7 +293,7 @@ class Writer:
     def touch(self, sensor: Sensor, res: str, start: int, end: int):
         """Note that readings of [start, end] at this resolution changed (ANY: what is held there changed): their days are worked out again
         when the transaction is committed, those that can come out otherwise (days.work_out)."""
-        if sensor.kind in DAY_KINDS and (res in DAY_RESOLUTIONS or res == ANY):
+        if sensor.kind in KINDS and (res in DAY_RESOLUTIONS or res == ANY):
             days = self._days.setdefault(sensor.kind, {}).setdefault(sensor.id, {})
             for d in days_of(start, end, self.tz, utc=res in ("4hour", "1day", ANY)):
                 days.setdefault(d, set()).add(res)
@@ -308,7 +309,7 @@ class Writer:
     def all_days(self):
         """Work out every day of every sensor again (a new time zone)."""
         for s in self.all_sensors():
-            if s.kind in DAY_KINDS:
+            if s.kind in KINDS:
                 first, last = self.db.execute(f"SELECT MIN(ts), MAX(ts) FROM {s.kind} WHERE sensor = ?", (s.id,)).fetchone()
                 if first is not None:
                     self.touch(s, ANY, first, last)
@@ -379,4 +380,4 @@ class Writer:
         return widened
 
 
-__all__ = ["DAY_KINDS", "GAP_FINAL_SECONDS", "MINUTES_KEPT", "Writer", "horizon", "pivot"]
+__all__ = ["GAP_FINAL_SECONDS", "MINUTES_KEPT", "MIN_READINGS", "Writer", "horizon", "pivot"]

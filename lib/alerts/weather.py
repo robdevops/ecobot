@@ -6,11 +6,11 @@
     those are kept quiet and one summary of the rain that fell in them is sent after they end.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
-  - Strong sun: one alert when the UV index is 10 or more in two readings in a row (confirm.py), and no more until it has stayed
+  - Strong sun: one alert when the UV index is 10 or more in two readings in a row (rules.py), and no more until it has stayed
     below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); it has to differ by more than 1 degree, which stops
     sensor noise flip-flopping.
-  Rain and crossing share one back-off rule (backoff.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
+  Rain and crossing share one back-off rule (rules.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
 
@@ -19,9 +19,9 @@ import logging
 from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
-from . import confirm, pictures
+from . import pictures, rules
 from .menu import kinds_of
-from .backoff import due, remember
+from .rules import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
 from ..timeutil import at_hour, clock_text, to_local
 
@@ -180,7 +180,7 @@ class WeatherMonitor:
         latest_ts = rows[-1][0]
         seen, m["checked"] = m.get("checked", latest_ts), latest_ts
         over = [(g, ts) for ts, r in rows if ts > seen and (g := r.get("wind.wind_gust")) is not None and g > GUST_ALERT_KMH]
-        confirm.rearm(m, bool(over), latest_ts, GUST_REARM_SECONDS)
+        rules.rearm(m, bool(over), latest_ts, GUST_REARM_SECONDS)
         if over and not m["active"]:
             m["active"] = True
             gust, ts = max(over)
@@ -188,23 +188,23 @@ class WeatherMonitor:
                               f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", chart=lambda: self._picture(pictures.CHARTS["gusts"]))
 
     async def _uv(self, rows: Rows):
-        """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (confirm.py); only readings newer than the last
+        """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (rules.py); only readings newer than the last
         one counted are looked at, so a restart doesn't re-announce an old spell."""
         m = self.state.monitor.setdefault("uv", {"active": False, "calm_since": None})
         latest_ts = rows[-1][0]
         m.setdefault("stamp", latest_ts)   # the first look only sets the mark
         high = False
         for ts, r in rows:
-            if not confirm.new_reading(m, ts):
+            if not rules.new_reading(m, ts):
                 continue
             u = r.get("solar_and_uvi.uvi")
             hit = None if u is None else u >= UVI_ALERT
-            streak = confirm.run(m, "streak", hit)
+            streak = rules.run(m, "streak", hit)
             if hit and (streak == 1 or u > m["peak"][0]):    # the run's highest reading is the one told
                 m["peak"] = [u, ts]
             high = high or bool(hit)
-        confirm.rearm(m, high, latest_ts, UV_REARM_SECONDS)
-        if m.get("streak", 0) >= confirm.CONFIRM_READINGS and not m["active"]:
+        rules.rearm(m, high, latest_ts, UV_REARM_SECONDS)
+        if m.get("streak", 0) >= rules.CONFIRM_READINGS and not m["active"]:
             m["active"] = True
             uv, ts = m["peak"]
             await self.notify(f"\U0001f9f4 UV index {uv:g} at {clock_text(to_local(ts, self.tz))}"

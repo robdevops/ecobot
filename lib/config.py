@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field, fields
 from datetime import datetime, tzinfo
+from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -69,24 +70,19 @@ SOURCES = ("auto", "cloud", "homeassistant")
 AIR_SOURCES = ("auto", "local", "homeassistant", "cloud")
 
 
-def _source(value: str, default: str, name: str) -> str:
-    """Where the weather station's readings come from: auto (Home Assistant when it is set, Ecowitt's cloud as its fallback when that is set
-    too, else whichever is), cloud, or homeassistant; another value keeps the default, with a warning."""
-    return _one_of(SOURCES, value, default, name)
-
-
-def _air_source(value: str, default: str, name: str) -> str:
-    """Where the air monitor's readings come from: auto (each source that is set, the monitor itself first, then Home Assistant, then
-    AirGradient's cloud), or one of local, homeassistant, cloud alone; another value keeps the default, with a warning."""
-    return _one_of(AIR_SOURCES, value, default, name)
-
-
 def _one_of(choices: tuple[str, ...], value: str, default: str, name: str) -> str:
+    """One of `choices`, whatever its case; another value keeps the default, with a warning."""
     if value.lower() in choices:
         return value.lower()
     if value:
         log.warning("%s: %r is not %s; keeping %s", name, value, ", ".join(choices), default)
     return default
+
+
+# Where the readings come from. The weather station's: auto (Home Assistant when it is set, Ecowitt's cloud as its fallback when that is set
+# too, else whichever is), cloud, or homeassistant. The air monitor's: auto (each source that is set, the monitor itself first, then Home
+# Assistant, then AirGradient's cloud), or one of local, homeassistant, cloud alone.
+_source, _air_source = partial(_one_of, SOURCES), partial(_one_of, AIR_SOURCES)
 
 
 def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int, int] | None:
@@ -98,12 +94,6 @@ def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int,
     except ValueError:
         return default
     return (start, end) if 0 <= start <= 23 and 0 <= end <= 24 and start != end else default
-
-
-def _hour(value: str, default: int, name: str) -> int:
-    """"18" -> 18; anything unreadable or outside 0 to 23 -> the default."""
-    number = _number(value)
-    return int(number) if number is not None and 0 <= number <= 23 else default
 
 
 def _ids(value: str, default: frozenset[int], name: str) -> frozenset[int]:
@@ -124,12 +114,18 @@ def _whole(value: str, default: int, name: str) -> int:
     return int(value) if value.isdecimal() else default
 
 
-def _between(low: int, high: int):
-    """A reader of a whole number kept from `low` to `high` ("0" is `low`, like any number under it); unreadable -> the default."""
+def _between(low: int, high: int, clamp: bool = True):
+    """A reader of a whole number from `low` to `high`; one outside is kept to them when `clamp` ("0" is `low`, like any number under it),
+    else it is the default, as anything unreadable is."""
     def read(value: str, default: int, name: str) -> int:
         number = _number(value)
-        return default if number is None else int(min(high, max(low, number)))
+        if number is None or not clamp and not low <= number <= high:
+            return default
+        return int(min(high, max(low, number)))
     return read
+
+
+_hour = _between(0, 23, clamp=False)   # "18" -> 18; anything unreadable or outside 0 to 23 -> the default
 
 
 def _readings_in_a_row(value: str, default: int, name: str) -> int:
@@ -150,15 +146,12 @@ def _chat_id(value: str, default: int | None, name: str) -> int | None:
         return None
 
 
-def _number(value: str) -> float | None:
+def _number(value: str, default: float | None = None, name: str = "") -> float | None:
+    """"6.5" -> 6.5; unset or blank -> the default; unreadable -> None."""
     try:
-        return float(value)
+        return float(value) if value else default
     except ValueError:
         return None
-
-
-def _decimal(value: str, default: float | None, name: str) -> float | None:
-    return _number(value) if value else default
 
 
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -206,8 +199,8 @@ class Config:
     pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
     forecast: bool = _setting("FORECAST", False, _flag)             # the daily forecast from Open-Meteo
-    forecast_lat: float | None = _setting("FORECAST_LAT", None, _decimal)   # the weather station's own location when unset
-    forecast_lon: float | None = _setting("FORECAST_LON", None, _decimal)
+    forecast_lat: float | None = _setting("FORECAST_LAT", None, _number)   # the weather station's own location when unset
+    forecast_lon: float | None = _setting("FORECAST_LON", None, _number)
     rain_quiet_hours: tuple[int, int] | None = _setting("RAIN_QUIET_HOURS", (0, 6), _hours)   # "0-6", local hours ("off" for none): no rain alerts, a summary after
     chart_all_feels_like: bool = _setting("CHART_ALL_FEELS_LIKE", False, _flag)   # "weather all week" also draws the feels-like panel (off: it nearly repeats temperature)
     chart_all_vpd: bool = _setting("CHART_ALL_VPD", False, _flag)   # "weather all week" also draws the vapour pressure deficit panel (off: it is temperature and humidity combined)

@@ -5,7 +5,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from lib.airgradient import Latest
-from lib.alerts import ParticulatesMonitor, AlertState, Notifier, WeatherMonitor
+from lib.alerts.notify import AlertState, Notifier
+from lib.alerts.particulates import ParticulatesMonitor
+from lib.alerts.weather import WeatherMonitor
 from lib.entities import with_link
 from tests.fakes import TZ
 
@@ -279,7 +281,7 @@ def test_alert_state_survives_restarts_and_opt_out(tmp_path):
     state.monitor["rain"] = {"alerted_state": "raining", "alerted_time": 5, "since": 5}
     state.save()
     again = AlertState(path)
-    assert again.alert_chats() == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.subscribed(2)
+    assert again.alert_chats("rain") == [1] and again.monitor["rain"]["alerted_state"] == "raining" and not again.subscribed(2, "rain")
 
 
 def test_the_footer_is_the_links_label_in_italic_placed_in_utf16_units():
@@ -302,8 +304,8 @@ async def test_alerts_are_silent_and_a_chat_that_blocked_the_bot_is_marked_gone(
             calls.append((chat_id, kw))
             if chat_id == 2:
                 raise Forbidden("bot was blocked")
-    await Notifier(Bot(), state)("hi")
-    assert all(kw["disable_notification"] for _, kw in calls) and state.chats[2]["gone"] and state.alert_chats() == [1]
+    await Notifier(Bot(), state)("hi", kind="rain")
+    assert all(kw["disable_notification"] for _, kw in calls) and state.chats[2]["gone"] and state.alert_chats("rain") == [1]
 
 
 async def test_an_alerts_chart_is_drawn_once_and_only_when_some_chat_gets_the_alert(tmp_path):
@@ -395,7 +397,7 @@ async def test_one_chat_failing_never_stops_the_alert_reaching_the_others(tmp_pa
     def full():
         raise OSError(28, "No space left on device")
     monkeypatch.setattr(state, "save", full)                       # forgetting chat 1 can't be saved
-    await Notifier(Bot(), state)("hi")
+    await Notifier(Bot(), state)("hi", kind="rain")
     assert got == [2, 3]
 
 
@@ -427,7 +429,7 @@ async def test_a_short_flood_wait_or_a_dropped_connection_is_tried_once_more_and
     for errors, sent, tries, waited in cases:
         waits.clear()
         bot = Bot(*errors)
-        assert (bool(await Notifier(bot, state)("hi", chats=[1])), bot.tries, waits) == (sent, tries, waited), errors
+        assert (bool(await Notifier(bot, state)("hi", kind="rain", chats=[1])), bot.tries, waits) == (sent, tries, waited), errors
 
 
 def uv(*values, start=T0):
@@ -488,7 +490,7 @@ class FakePollen:
 
 
 def pollen_monitor(tmp_path):
-    from lib.alerts import PollenAndAsthmaMonitor
+    from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
     state, sent = AlertState(tmp_path / "s.json"), []
 
     async def notify(text, link=None, **kw):
@@ -522,7 +524,7 @@ async def test_high_pollen_and_asthma_alert_once_per_metric_and_day(tmp_path):
 
 
 async def test_a_restart_does_not_repeat_an_alert_and_a_missing_forecast_or_stale_page_is_ignored(tmp_path):
-    from lib.alerts import PollenAndAsthmaMonitor
+    from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
     mon, pollen, sent = pollen_monitor(tmp_path)
     pollen.grass = "High"
     await mon.check()
@@ -668,7 +670,7 @@ def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tm
     monkeypatch.setitem(menu.LABELS, "newer", "newer")
     assert state.subscribed(1, "uv") and not state.subscribed(1, "rain") and not state.subscribed(1, "newer") and state.alert_chats("uv") == [1, 2, 3]
     state.set_kind(1, "uv", False)
-    assert not state.subscribed(1)                        # nothing on at all
+    assert state.muted(1) == set(menu.LABELS)             # nothing on at all
     state.set_kind(1, "all", True)                        # subscribe to all: new types come on again
     assert state.subscribed(1, "newer") and state.subscribed(1, "rain")
     offered = ["rain", "gusts", "uv", "temps"]            # a bot with the weather station alone
@@ -678,7 +680,7 @@ def test_unsubscribing_from_all_keeps_future_alert_types_off_until_subscribed(tm
     assert state.subscribed(3, "newest") and state.subscribed(3, "temps")   # some still on: the normal mode
     state.set_kind(3, "temps", False, offered)            # every type the bot sends, off one by one: "unsubscribe from all"
     monkeypatch.setitem(menu.LABELS, "newer still", "newer still")
-    assert not state.subscribed(3) and not state.subscribed(3, "newer still")
+    assert state.muted(3) == set(menu.LABELS) and not state.subscribed(3, "newer still")
     state.set_kind(3, "rain", True, offered)
     again = notify.AlertState(state.path)                 # and it survives a restart
     assert again.subscribed(3, "rain") and not again.subscribed(3, "uv") and not again.subscribed(3, "newer still")
@@ -844,26 +846,26 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
 
 
 def test_an_alert_rearms_only_once_its_condition_has_stopped_for_the_whole_wait():
-    from lib.alerts import confirm
+    from lib.alerts import rules
     m = {"active": True, "calm_since": None}             # it has fired
     for now in (T0, T0 + 60):
-        confirm.rearm(m, False, now, 100)
+        rules.rearm(m, False, now, 100)
     assert m["active"] and m["calm_since"] == T0
-    confirm.rearm(m, True, T0 + 90, 100)                 # the condition again: the calm starts over
+    rules.rearm(m, True, T0 + 90, 100)                 # the condition again: the calm starts over
     for now in (T0 + 120, T0 + 200):
-        confirm.rearm(m, False, now, 100)
+        rules.rearm(m, False, now, 100)
     assert m["active"]                                   # only 80 s of calm since T0 + 120
-    confirm.rearm(m, False, T0 + 220, 100)
+    rules.rearm(m, False, T0 + 220, 100)
     assert not m["active"] and m["calm_since"] is None   # it can fire again
 
 
 def test_the_confirmation_rule_counts_distinct_readings_in_a_row():
-    from lib.alerts import confirm
+    from lib.alerts import rules
     saved = {}
-    assert confirm.new_reading(saved, 100) and not confirm.new_reading(saved, 100) and not confirm.new_reading(saved, 50) and confirm.new_reading(saved, 101)
-    assert confirm.run(saved, "n", True) == 1 and confirm.run(saved, "n", True) == 2
-    assert confirm.run(saved, "n", None) == 2                      # a reading with no value changes nothing
-    assert confirm.run(saved, "n", False) == 0 and confirm.run(saved, "n", True) == 1
+    assert rules.new_reading(saved, 100) and not rules.new_reading(saved, 100) and not rules.new_reading(saved, 50) and rules.new_reading(saved, 101)
+    assert rules.run(saved, "n", True) == 1 and rules.run(saved, "n", True) == 2
+    assert rules.run(saved, "n", None) == 2                      # a reading with no value changes nothing
+    assert rules.run(saved, "n", False) == 0 and rules.run(saved, "n", True) == 1
 
 
 async def test_uv_needs_two_distinct_readings_even_across_checks_and_a_restart(tmp_path):

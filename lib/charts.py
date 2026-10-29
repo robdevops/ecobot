@@ -116,21 +116,19 @@ def _look_for(chart: Chart) -> Look:
     return BIG if chart.single else SMALL
 
 
+FONT_DIRS = ("/usr/share/fonts", "/usr/local/share/fonts")
+
+
 def _setup_fonts() -> str:
-    """Use a modern sans font if one is installed (Inter, Roboto, Helvetica, Arial).
-    Font files are registered directly, in case they were installed after
-    matplotlib built its font list."""
-    for pattern in ("/usr/share/fonts/**/Inter-*.[ot]tf", "/usr/share/fonts/**/Roboto-*.ttf",
-                    "/usr/local/share/fonts/**/*.[ot]tf"):
-        for path in glob.glob(pattern, recursive=True):
-            if "Italic" not in path:
-                try:
-                    font_manager.fontManager.addfont(path)
-                except Exception:
-                    pass
+    """Use Inter, else Roboto, if installed; matplotlib's own DejaVu Sans otherwise. The font files are registered directly, in case
+    they were installed after matplotlib built its font list."""
+    for path in (p for d in FONT_DIRS for p in glob.glob(f"{d}/**/*.[ot]tf", recursive=True)):
+        try:
+            font_manager.fontManager.addfont(path)
+        except Exception:
+            pass
     installed = {f.name for f in font_manager.fontManager.ttflist}
-    family = next((n for n in ("Inter", "Roboto", "Helvetica Neue", "Arial", "Liberation Sans") if n in installed),
-                  "DejaVu Sans")
+    family = next((n for n in ("Inter", "Roboto") if n in installed), "DejaVu Sans")
     matplotlib.rcParams.update({"font.family": family, "axes.unicode_minus": False})
     return family
 
@@ -145,13 +143,13 @@ def _colour(line: Line, i: int, reading: str = "") -> str:
     """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback."""
     reading = line.reading or reading
     if base := READING_COLOURS.get(reading):
-        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if line.indoor else base
+        return (INDOOR_COLOURS.get(reading) or _blend(base, 0.4)) if line.indoor else base
     return FALLBACK[i % len(FALLBACK)]
 
 
-def _mix(colour: str, share: float) -> str:
-    """The colour with this share of white blended in."""
-    return "#" + "".join(f"{round(255 * share + c * 255 * (1 - share)):02X}" for c in to_rgb(colour))
+def _blend(colour: str, share: float, towards: str = "#FFFFFF") -> str:
+    """The colour with this share of `towards` (white, unless given) blended in; gauges dims a tile towards its card with it."""
+    return "#" + "".join(f"{round(255 * t * share + c * 255 * (1 - share)):02X}" for c, t in zip(to_rgb(colour), to_rgb(towards)))
 
 
 def _deg(unit: str) -> str:
@@ -259,7 +257,7 @@ def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: fl
     """Rain bars: a pale body (RAIN blended with white by `alpha`, so solid and nothing behind it shows through) with a
     brighter cap, so each reads as a little column. `kw` goes to both (for rain behind a line, the transform)."""
     ys = np.asarray(ys, dtype=float)
-    _columns(ax, bx, ys, width, facecolors=_mix(RAIN, 1 - alpha), zorder=zorder, **kw)
+    _columns(ax, bx, ys, width, facecolors=_blend(RAIN, 1 - alpha), zorder=zorder, **kw)
     cap = np.sign(ys) * np.minimum(axis_top * 0.014, np.abs(ys))   # at the bar's far end, below zero as above it
     _columns(ax, bx, cap, width, ys - cap, facecolors=RAIN, alpha=0.95, zorder=zorder, **kw)
 
@@ -302,30 +300,23 @@ def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     fig.text(AX_RECT[0], 1 - SUBTITLE_IN / height, subtitle, fontsize=8.5, color=MUTED, va="center")
 
 
+TIME_TICKS = (   # a period of up to this many days: its tick locator (for the span and time zone) and the labels' strftime format
+    (1.1, lambda days, tz: mdates.HourLocator(byhour=range(0, 24, 3), tz=tz), "%-I%p"),
+    (4, lambda days, tz: mdates.HourLocator(byhour=[0, 12], tz=tz), "%a %-I%p"),
+    (45, lambda days, tz: mdates.DayLocator(interval=max(1, math.ceil(days / 8)), tz=tz), "%a\n%-d %b"),
+    (400, lambda days, tz: mdates.MonthLocator(tz=tz), "%b\n'%y"),
+    (math.inf, lambda days, tz: mdates.MonthLocator(bymonth=[1, 4, 7, 10], tz=tz), "%b\n'%y"),
+)
+
+
 def _time_axis(ax, span_days: float, tz: tzinfo, bars=None):
     """Tick positions and labels for a date axis, chosen by the length of the period. Bars of whole months or years (a count per
     month or year) are labelled under the middle of each bar instead. The ticks fall on local hours, days and months."""
     if bars and bars.per in ("year", "month") and bars.x and (bars.per == "year" or len(bars.x) <= 14):
-        centres = _nums(bars.x) + _bar_width(bars.width) / 2
-        fmt = "%Y" if bars.per == "year" else "%b\n'%y"
-        ax.xaxis.set_major_locator(FixedLocator(list(centres)))
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: mdates.num2date(v, tz).strftime(fmt)))
-        return
-    if span_days <= 1.1:
-        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 3), tz=tz))
-        fmt = "%-I%p"
-    elif span_days <= 4:
-        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 12], tz=tz))
-        fmt = "%a %-I%p"
-    elif span_days <= 45:
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, math.ceil(span_days / 8)), tz=tz))
-        fmt = "%a\n%-d %b"
-    elif span_days <= 400:
-        ax.xaxis.set_major_locator(mdates.MonthLocator(tz=tz))
-        fmt = "%b\n'%y"
+        locator, fmt = FixedLocator(list(_nums(bars.x) + _bar_width(bars.width) / 2)), "%Y" if bars.per == "year" else "%b\n'%y"
     else:
-        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10], tz=tz))
-        fmt = "%b\n'%y"
+        locator, fmt = next((make(span_days, tz), fmt) for limit, make, fmt in TIME_TICKS if span_days <= limit)
+    ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(FuncFormatter(
         lambda v, _: mdates.num2date(v, tz).strftime(fmt).replace("AM", "am").replace("PM", "pm")))
 

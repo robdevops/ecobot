@@ -63,6 +63,8 @@ About 450 lines if all were dropped; realistically the owner keeps most.
 
 ## 4. Duplication and simplification (no behaviour change)
 
+*Done on 29 October 2026, except: the Help text and the prompt's capabilities list stay two hand-written lists (they say different things); the cloud-only AirGradient day stays on its in-memory cache (routing it through the store would change how often the cloud is asked); two Tile checks a dashboard test pins; and `live_rain` keeps its own freshness window (a test pins that the rain alert asks for the newest minute).*
+
 | where | lines saved | what | recommendation |
 |---|---|---|---|
 | lib/intent.py:336-452 | ~35 | three fast-path deciders (`weather_chart`, `weather_average`, `weather_period`) repeat the same guard chain; `weather_groups` re-implements `_sides`; `EXTREMES` and `HILO` near-identical; six overlapping "not simple" word lists | one `_simple_weather(text, now)` with one guard chain and one base blacklist plus per-path extras; the 17 fast-path tests still apply |
