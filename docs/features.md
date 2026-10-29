@@ -26,7 +26,7 @@ Alerts go to every chat the bot is in, silently unless you turn sound on:
 - a forecast day you were told about changing substantially (optional)
 - irrigation battery low, and the bot pausing watering for rain (optional)
 
-Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off in this chat) and, in a private chat while that is on, **Sound**. An alert with a chart also has **🔄 Refresh**, which draws the chart again with the latest readings, in the same message, the alert's text as it was (anyone in the chat can press it). Every toggle in the bot is a blue button while on and a plain one with its name struck through while off.
+Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off in this chat) and, in a private chat while that is on, **Sound**. An alert with a chart also has **🔄 Refresh**, which puts the chart with the latest readings in the same message, the alert's text as it was (anyone in the chat can press it): for six hours after an alert its chart is kept drawn ahead with the keyboard's, so the press is answered at once. Every toggle in the bot is a blue button while on and a plain one with its name struck through while off.
 
 `/alerts` opens a menu with 🔔 Alerts and (in a private chat) 🔊 Sound. Each lists the alert types as toggles; while one is open only its own button shows (press it to close the list). `/alerts on` or `/alerts off` switches every type. A chat that blocks or removes the bot keeps its settings, which apply again when it comes back. In a group anyone can open `/alerts`, but only admins can change anything.
 

@@ -6,6 +6,7 @@ import pytest
 
 from lib.airgradient import Latest
 from lib.alerts.notify import AlertState, Notifier
+from lib.alerts.pictures import Picture
 from lib.alerts.particulates import ParticulatesMonitor
 from lib.alerts.weather import WeatherMonitor
 from lib.entities import with_link
@@ -317,7 +318,7 @@ async def test_an_alerts_chart_is_drawn_once_and_only_when_some_chat_gets_the_al
 
     async def chart():
         drawn.append(1)
-        return b"png"
+        return Picture(b"png", "Wind, today", None)
 
     class Bot:
         async def send_photo(self, chat_id, photo, **kw):
@@ -791,14 +792,15 @@ async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sou
     from tests.fakes import air_transport, archived_station, config
     eco, _ = await archived_station(tmp_path, archived_cache)
     for text in ("Temperature chart 1d", "Wind chart 1d", "UV chart 1d"):
-        png = await pictures.chart(eco, text, TZ)
-        assert png and png[:4] == b"\x89PNG", text
+        picture = await pictures.chart(eco, text, TZ)
+        assert picture and picture.png[:4] == b"\x89PNG", text
+        assert picture.title.startswith(text.split()[0]) and picture.newest and abs(picture.newest - eco.now().timestamp()) < 3600, text
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     (tmp_path / "air").mkdir()
     air = AirGradient(config(tmp_path / "air"), transport=transport)
     await air.start()
-    png = await pictures.chart(air, "Particulates chart 1d", TZ)
-    assert png and png[:4] == b"\x89PNG"
+    picture = await pictures.chart(air, "Particulates chart 1d", TZ)
+    assert picture and picture.png[:4] == b"\x89PNG" and picture.title.startswith("Air quality") and picture.newest
     assert await pictures.chart(FakeStation(), "Wind chart 1d", TZ) is None        # a source without the tool: no chart, no error
     await eco.close()
     await air.close()

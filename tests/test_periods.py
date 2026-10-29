@@ -266,8 +266,8 @@ def preloading_bot(alert_state, monkeypatch, refuse=None, clock=None):
     draw = bot._draw_ahead
 
     async def draw_ahead(text, now):
-        key, _, title, caption = await draw(text, now)
-        return key, text.encode(), title, caption
+        key, _, title, caption, newest = await draw(text, now)
+        return key, text.encode(), title, caption, newest
     bot._draw_ahead = draw_ahead
 
     async def send_photo(chat, photo, caption=None, disable_notification=False):
@@ -481,3 +481,38 @@ async def test_the_keyboards_charts_are_uploaded_ahead_only_while_the_bot_is_in_
     bot.last_used = time.monotonic() - USED_SECONDS - 1                                     # an hour without a message or a press
     await bot.draw_buttons_ahead(context.bot)
     assert uploads == []
+
+
+def test_a_chart_knows_the_time_of_its_newest_reading():
+    from lib.specs import Bars
+    assert Chart("Temperature", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0]), Line("Indoor", [1, 5], [1.0, 2.0])])]).newest == 5
+    assert Chart("Rain", "", [Panel("Rain", "mm", [], bars=Bars("Rain", "mm", [0, 3600], [0.0, 1.0], 3600))]).newest == 3600
+
+
+async def test_the_chart_of_an_alert_sent_lately_is_drawn_ahead_with_the_keyboards(alert_state, monkeypatch):
+    from lib.alerts.pictures import AlertCharts
+    clock = [0.0]
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
+    bot.alert_charts.clock = lambda: clock[0]
+    drawn = []
+
+    async def counting(text, now):   # draws any request (the stand-in's tools draw only temperature)
+        drawn.append(text)
+        return bot.images.canonical(text, now), text.encode(), text, "caption", 0
+    bot._draw_ahead = counting
+    await bot.draw_buttons_ahead(context.bot)
+    assert "UV chart 1d" not in drawn and "Temperature chart 1d" in drawn               # UV is no button: not drawn until an alert
+    bot.alert_charts.sent("uv", NS(photo=(NS(file_id="large"),)))
+    bot.alert_charts.sent("temps", NS(photo=(NS(file_id="large"),)))
+    drawn.clear()
+    clock[0] += 300
+    await bot.draw_buttons_ahead(context.bot)
+    assert drawn.count("UV chart 1d") == 1 and drawn.count("Temperature chart 1d") == 1   # the alert's chart too, the button's once
+    bot.noticed()
+    clock[0] += 300
+    await bot.draw_buttons_ahead(context.bot)
+    assert (-1001, b"UV chart 1d", True) in uploads                                      # uploaded ahead with the keyboard's
+    drawn.clear()
+    clock[0] += AlertCharts.WARM_SECONDS
+    await bot.draw_buttons_ahead(context.bot)
+    assert "UV chart 1d" not in drawn                                                    # six hours on: no longer kept warm

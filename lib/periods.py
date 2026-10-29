@@ -63,6 +63,7 @@ class Drawn:
     file_id: str | None = None   # Telegram's copy, once the chart has been sent: it is sent again by this, not uploaded
     caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
     ttl: float = 10 * 60         # how long it is kept (ImageCache.CHART_TTL; PRELOAD_TTL for one uploaded ahead)
+    newest: int | None = None    # the time of the newest reading it draws (epoch), when known: an alert about that reading can send it
 
     @property
     def photo(self) -> bytes | str:
@@ -114,6 +115,11 @@ class ImageCache:
         entry = self.items.get(key)
         return self.age(entry) if self._kept(entry) else None
 
+    def held(self, key: str | None) -> Drawn | None:
+        """The chart kept under `key`, while it is within its time to live."""
+        entry = self.items.get(key)
+        return entry if self._kept(entry) else None
+
     def has_copy(self, key: str) -> bool:
         """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
         entry = self.items.get(key)
@@ -132,9 +138,10 @@ class ImageCache:
     def age(self, entry: Drawn) -> float:
         return self.clock() - entry.at
 
-    def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None):
-        """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready)."""
-        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL)
+    def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None, newest: int | None = None):
+        """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready).
+        newest: the time of the newest reading drawn, when known."""
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL, newest=newest)
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)
