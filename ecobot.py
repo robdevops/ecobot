@@ -57,21 +57,25 @@ log = logging.getLogger("ecobot")
 async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     """Every configured data source that starts, and the settings in the time zone they run in. The weather station starts
     first: it names its own time zone, which wins over TZ, so the air sensor and the optional website sources (pollen,
-    forecast, off unless switched on), and everything built after, use the station's. The forecast uses the station's
-    location unless one is configured."""
+    forecast, off unless switched on), and everything built after, use the station's; those three start side by side (each
+    waits on its own server). The forecast uses the station's location unless one is configured."""
     sources: list[Source] = []
+    took: dict[str, float] = {}
 
-    async def start(kind: type[Source], *args, **kwargs):
-        """A source made and started; one that fails either way is logged and left out."""
-        source = None
+    async def start(kind: type[Source], *args, **kwargs) -> Source | None:
+        """A source made and started; one that fails either way is logged and left out (None)."""
+        source, started = None, time.monotonic()
         try:
             source = kind(*args, **kwargs)
             await source.start()
-            sources.append(source)
+            return source
         except Exception as e:
             log.error("%s couldn't start (%s: %s) - continuing without it", kind.name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             if source is not None:
                 await safely(source.close)
+            return None
+        finally:
+            took[kind.name] = time.monotonic() - started
     storage = None
     if cfg.ecowitt or cfg.airgradient:
         try:   # (in a thread: opening makes or upgrades its tables)
@@ -79,8 +83,8 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
         except Exception as e:
             log.error("The history file %s couldn't be opened (%s: %s) - continuing without the weather station and the air sensor",
                       cfg.storage_path, type(e).__name__, e, exc_info=isinstance(e, BUGS))
-    if cfg.ecowitt and storage is not None:
-        await start(Ecowitt, cfg, storage=storage)
+    if cfg.ecowitt and storage is not None and (eco := await start(Ecowitt, cfg, storage=storage)):
+        sources.append(eco)
     eco = sources[0] if sources else None
     if eco and str(eco.tz) != str(cfg.tz):
         if os.getenv("TZ"):
@@ -89,14 +93,18 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     if not getattr(cfg.tz, "key", None):
         log.warning("The time zone has no name, only an offset (%s), so daylight saving will put the times out: set TZ, "
                     "e.g. TZ=Australia/Melbourne", cfg.tz)
+    starts = []
     if cfg.airgradient and storage is not None:   # (one file and one Home Assistant client for both; the file is the station's to close, else the sensor's)
-        await start(AirGradient, cfg, storage=storage, owned=eco is None, **({"ha": eco.ha} if eco and eco.ha else {}))
+        starts.append(start(AirGradient, cfg, storage=storage, owned=eco is None, **({"ha": eco.ha} if eco and eco.ha else {})))
+    if cfg.pollen:
+        starts.append(start(Pollen, cfg))
+    if cfg.forecast:
+        starts.append(start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and None not in (eco.latitude, eco.longitude) else None))
+    sources += [s for s in await asyncio.gather(*starts) if s is not None]   # (in this order, whichever answers first)
     if storage is not None and not sources:
         storage.close()
-    if cfg.pollen:
-        await start(Pollen, cfg)
-    if cfg.forecast:
-        await start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and None not in (eco.latitude, eco.longitude) else None)
+    if took:
+        log.debug("Sources started in %.1fs: %s", sum(took.values()), ", ".join(f"{name} {seconds:.1f}" for name, seconds in took.items()))
     return sources, cfg
 
 
@@ -223,10 +231,20 @@ async def main():
     intent.VPD_IN_ALL = cfg.chart_all_vpd
     # Whatever starts is closed on the way out, the last started first, however the bot stops (a failure part-way included)
     async with contextlib.AsyncExitStack() as stack:
-        sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
+        app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
+               .defaults(Defaults(disable_notification=True))  # silent messages
+               .connect_timeout(10).read_timeout(15).write_timeout(15)  # default 5s is tight
+               .build())
+        handshake = asyncio.create_task(app.initialize())   # Telegram is asked who the bot is while the sources start
+        try:
+            sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
+        except BaseException:
+            handshake.cancel()
+            raise
         for source in sources:
             stack.push_async_callback(safely, source.close)
         if not sources:
+            handshake.cancel()
             raise SystemExit("No data source is working - nothing to talk about")
         by_name = {s.name: s for s in sources}
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
@@ -247,16 +265,13 @@ async def main():
         tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
         bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation, tasks)
 
-        app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
-               .defaults(Defaults(disable_notification=True))  # silent messages
-               .connect_timeout(10).read_timeout(15).write_timeout(15)  # default 5s is tight
-               .build())
         bot.register(app)
         stop = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_running_loop().add_signal_handler(sig, stop.set)
         try:
-            await stack.enter_async_context(app)  # one task runs everything, so connections open and close cleanly
+            await handshake
+            stack.push_async_callback(app.shutdown)   # one task runs everything, so connections open and close cleanly
         except InvalidToken:   # (its message names the token, so it is not shown)
             raise SystemExit("TELEGRAM_BOT_TOKEN was rejected by Telegram: check it is the token @BotFather gave for this bot") from None
         except NetworkError as e:   # (the host's network or DNS, most often): one line, not the library's pages of stack

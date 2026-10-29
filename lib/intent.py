@@ -312,12 +312,17 @@ def _has_days(text: str, days: int, now: datetime | None = None) -> bool:
     return bool(spans_in(text, now)) and period_days(text, now) >= days
 
 
+def without_period(text: str, now: datetime) -> str:
+    """The question with its period taken out: "temperature chart 30d" -> "temperature chart"."""
+    for said, _ in _periods(text, now).values():
+        text = re.sub(rf"(?:\b(?:for|over|in|during|the|past)\s+)*\b{re.escape(said)}\b", "", text, flags=I)
+    return " ".join(text.split())
+
+
 def with_period(text: str, days: int, now: datetime) -> str:
     """The question with its period swapped for the last `days` days: "temperature chart 30d" -> "temperature chart 90d"; a question
     that names no period gets one added."""
-    for said, _ in _periods(text, now).values():
-        text = re.sub(rf"(?:\b(?:for|over|in|during|the|past)\s+)*\b{re.escape(said)}\b", "", text, flags=I)
-    return f"{' '.join(text.split())} {days}d"
+    return f"{without_period(text, now)} {days}d"
 
 
 def period_hints(text: str, now: datetime) -> list[str]:
