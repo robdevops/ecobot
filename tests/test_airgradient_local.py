@@ -132,6 +132,13 @@ class Now:
         return self.t
 
 
+async def recorded(air, rows: list[dict]):
+    """The bot's own readings (add_recorded), written in one transaction rather than one each: a day of them in a moment."""
+    from lib.airgradient.readings import storage_rows
+    from lib.storage.catalogue import BOT
+    await air.store.storage.write(lambda w: w.put(w.air_sensor(air.store.loc), "5min", storage_rows(rows, True), BOT))
+
+
 async def recording_air(tmp_path, clock, values):
     """An AirGradient whose sensor says values[n] for PM2.5 at its n-th reading, and whose clock (also the cloud's) is `clock`."""
     transport, calls = air_transport(rows_per_day=288)
@@ -203,9 +210,7 @@ async def test_a_finished_day_the_bot_recorded_is_completed_with_only_what_it_la
     air, calls = await recording_air(tmp_path, clock, [])
     lo, hi = day_bounds(DAY, TZ)
     gone = {lo + 300 * 50, lo + 300 * 51, lo + 300 * 200}
-    for t in range(lo, hi, 300):
-        if t not in gone:
-            await air.store.add_recorded({"ts": t, "pm2_5": clouds(t) + 0.5})     # (near enough the cloud's to be the same reading)
+    await recorded(air, [{"ts": t, "pm2_5": clouds(t) + 0.5} for t in range(lo, hi, 300) if t not in gone])   # (near enough the cloud's to be the same reading)
     assert await air._day_rows(DAY) and calls.count("past") == 1                  # the whole day, in one request
     rows = await air.store.load_day(DAY)
     assert len(rows) == 288 and {r["ts"] for r in rows if r["pm2_5"] == clouds(r["ts"])} == gone   # the cloud's PM2.5 only where there was none
@@ -222,17 +227,14 @@ async def test_a_metric_the_cloud_gives_differently_fills_no_gaps_and_is_said_on
     air, calls = await recording_air(tmp_path, clock, [])
     lo, hi = day_bounds(DAY, TZ)
     gone = {lo + 300 * 50, lo + 300 * 51}
-    for t in range(lo, hi, 300):
-        if t not in gone:
-            await air.store.add_recorded({"ts": t, "pm2_5": 1.0, "pm10": 8.0})        # the monitor's raw PM2.5, and the cloud's PM10
+    await recorded(air, [{"ts": t, "pm2_5": 1.0, "pm10": 8.0} for t in range(lo, hi, 300) if t not in gone])   # the monitor's raw PM2.5, and the cloud's PM10
     rows = {r["ts"]: r for r in await air._day_rows(DAY)}
     assert len(rows) == 288 and all("pm2_5" not in rows[t] for t in gone)             # the cloud's PM2.5 (5 to 16) is another reading: a gap stays
     assert all(rows[t]["pm10"] == 8.0 and rows[t]["co2"] == 450 for t in gone)         # the rest of its readings fill it
     assert caplog.text.count("the cloud's PM2.5 isn't the reading the bot keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
     assert "PM2.5 differs between the cloud and what the bot keeps" in air._summary({})
     day2 = DAY - timedelta(days=1)
-    for t in range(*day_bounds(day2, TZ), 300):
-        await air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+    await recorded(air, [{"ts": t, "pm2_5": 1.0} for t in range(*day_bounds(day2, TZ), 300)])
     await air._day_rows(day2)
     assert caplog.text.count("isn't the reading the bot keeps") == 1                   # (said once)
     await air.close()
@@ -276,9 +278,7 @@ async def test_without_a_cloud_account_a_finished_day_with_gaps_stays_open_and_a
     monkeypatch.setattr(source, "time", NS(time=clock))
     cfg, air, calls = only_the_sensor(tmp_path, clock)
     lo, hi = day_bounds(DAY, TZ)
-    for t in range(lo, hi, 300):
-        if t != lo + 300 * 10:
-            await air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+    await recorded(air, [{"ts": t, "pm2_5": 1.0} for t in range(lo, hi, 300) if t != lo + 300 * 10])
     assert len(await air._day_rows(DAY)) == 287 and (await air.store.counts([DAY])) == {DAY: None} and calls == []   # a gap nothing can fill: not marked
     await air.store.add_recorded({"ts": lo + 300 * 10, "pm2_5": 1.0})
     assert len(await air._day_rows(DAY)) == 288 and (await air.store.counts([DAY])) == {DAY: 288} and calls == []
@@ -288,7 +288,7 @@ async def test_without_a_cloud_account_a_finished_day_with_gaps_stays_open_and_a
 def test_zeroconf_is_not_loaded_unless_a_local_name_is_looked_up():
     import subprocess
     import sys
-    code = ("import sys, lib.bot, lib.airgradient.local as l; assert 'zeroconf' not in sys.modules; "
+    code = ("import sys, lib.airgradient, lib.airgradient.local as l; assert 'zeroconf' not in sys.modules; "
             "import asyncio; asyncio.run(l.address_of('192.168.1.5')); assert 'zeroconf' not in sys.modules")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "MPLCONFIGDIR": "/tmp"})
     assert done.returncode == 0, done.stderr

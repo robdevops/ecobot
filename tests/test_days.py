@@ -98,7 +98,7 @@ async def test_old_days_come_from_daily_buckets_and_say_so(station):
 async def test_a_longer_archive_makes_more_of_the_record_exact_without_code_changes(tmp_path, archived_cache):
     """The exact range follows what the cache holds, not a fixed cutoff."""
     eco, _ = await archived_station(tmp_path, archived_cache)
-    first, last = dates(eco, 500, 300)   # 300-500 days ago: daily buckets only, for now
+    first, last = dates(eco, 500, 440)   # 440-500 days ago: daily buckets only, for now
     args = dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], limit=1)
     assert (await ask(eco, **args))["days"][0]["source"] == "daily"
     # later, the archive has kept 30-minute data for that period too (stored the way the archive stores it)

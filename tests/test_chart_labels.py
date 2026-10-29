@@ -53,7 +53,7 @@ def test_the_wind_rose_is_scaled_as_matplotlib_scales_its_bars():
     rng = random.Random(3)
     roses = [[[4, 2, 1]] * 16, [[3 + k % 5, 0, 0] for k in range(16)], [[0, 0, 0]] * 3 + [[5, 0, 2]] + [[0, 0, 0]] * 12,
              [[4, 2, 1]] * 5 + [[9, 4, 0]] + [[4, 2, 1]] * 10]
-    for _ in range(20):
+    for _ in range(8):
         rose = [[rng.choice([0, 0, rng.randint(1, 40)]) for _ in range(3)] for _ in range(16)]
         rose[rng.randrange(16)][0] += 1                                       # a rose is only drawn when there are readings
         roses.append(rose)

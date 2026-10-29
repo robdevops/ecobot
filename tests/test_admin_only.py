@@ -477,7 +477,9 @@ async def test_a_prefix_nobody_handles_is_refused_even_when_the_message_really_h
     assert press.toast == STALE_BUTTON
 
 
-async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path):
+async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path, monkeypatch):
+    from lib import bot as bot_module
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)   # (the controller's pause after an action is not what is tested)
     bot, state, tg = make(tmp_path, irrigation=Remote())
     state.add_chat(ADMIN, "Rob")
     for data, markup in (("ir:refresh", irrigation_menu.keyboard(True, True)), ("al:off:rain:alerts", alert_keyboard()),

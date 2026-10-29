@@ -262,18 +262,23 @@ async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypat
 
 
 # ---------- the whole history is cached ----------
-async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp_path, monkeypatch):
+async def test_archive_caches_every_cycle_so_long_questions_need_no_requests_and_reports_how_much_is_held(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport(history_days=60)
+    transport, fake = ecowitt_transport(history_days=25)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    fetched, failed = await Archive(eco).run_once()
-    assert failed == 0 and fetched > 40
+    arch = Archive(eco)
+    assert arch.held() == "0/0/0/0 days held (5m/30m/4h/1d)"
+    fetched, failed = await arch.run_once()
+    assert failed == 0 and fetched > 25
+    held = {c: eco.fetcher(arch.groups).days_held(c) for c in ("5min", "30min", "4hour", "1day")}
+    assert all(20 <= held[c] <= 27 for c in ("5min", "30min", "4hour", "1day"))
+    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
     assert {c["cycle_type"] for c in fake.calls if "cycle_type" in c} == {"5min", "30min", "4hour", "1day"}
     fake.calls.clear()
     today = datetime.now(eco.tz).date()
-    for days in (10, 30, 58):  # up to all of the fake station's 60 days
+    for days in (5, 12, 23):  # up to all of the fake station's 25 days
         out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                           "end_date": f"{today - timedelta(days=2)} 23:59:59"})
         assert "Error" not in out[:20], out[:200]
@@ -284,7 +289,7 @@ async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp
 async def test_archive_only_refetches_the_newest_ranges_next_time(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport(history_days=60)
+    transport, fake = ecowitt_transport(history_days=10)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
@@ -298,21 +303,19 @@ async def test_archive_only_refetches_the_newest_ranges_next_time(tmp_path, monk
 async def test_archive_skips_time_before_the_station_existed(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
+    transport, fake = ecowitt_transport(history_days=30)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    eco.created = datetime.now(eco.tz) - timedelta(days=20)
+    eco.created = datetime.now(eco.tz) - timedelta(days=12)
     await Archive(eco).run_once()
     starts = [c["start_date"][:10] for c in fake.calls if "start_date" in c]
-    assert min(starts) >= str((eco.created - timedelta(days=1)).date())
+    assert starts and min(starts) >= str((eco.created - timedelta(days=1)).date())
     assert not any(c["cycle_type"] == "5min" and c["start_date"][:10] < str(eco.created.date() - timedelta(days=1))
                    for c in fake.calls if "cycle_type" in c)
     await eco.close()
 
 
-async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is_cached(tmp_path, monkeypatch):
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is_cached(tmp_path, archived_cache):
     transport, fake = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
@@ -327,9 +330,10 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
 
     before = monthly(await eco.tools[1].handler(args))          # nothing cached: daily figures, values only
     assert all("low_when" not in m for m in before.values())
+    await eco.close()
 
-    await Archive(eco).run_once()
-    fake.calls.clear()
+    (tmp_path / "archived").mkdir()
+    eco, fake = await archived_station(tmp_path / "archived", archived_cache)   # the whole history archived
     turn = Turn()
     out = await eco.tools[1].handler({**args, "chart": True}, turn)
     spec = turn.charts[0]
@@ -348,7 +352,7 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     import asyncio as aio
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0.005)
-    transport, fake = ecowitt_transport()
+    transport, fake = ecowitt_transport(history_days=12)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     fake.calls.clear()
@@ -367,41 +371,22 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     await eco.close()
 
 
-async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport(history_days=60)
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    arch = Archive(eco)
-    assert arch.held() == "0/0/0/0 days held (5m/30m/4h/1d)"
-    await arch.run_once()
-    held = {c: eco.fetcher(arch.groups).days_held(c) for c in ("5min", "30min", "4hour", "1day")}
-    assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
-    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
-    await eco.close()
-
-
 async def test_archive_estimates_its_duration_from_the_pace(tmp_path, monkeypatch, caplog):
     from lib.ecowitt import Archive, archive as archive_mod
     caplog.set_level("INFO")
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    monkeypatch.setattr(archive_mod, "MIN_GAP_SECONDS", 2.0)  # as in production: 2s per range plus about 1s
-    transport, _ = ecowitt_transport(history_days=60)
+    monkeypatch.setattr(archive_mod, "MIN_GAP_SECONDS", 5.0)  # (production's is 2 s) a range takes the gap plus about a second
+    transport, _ = ecowitt_transport(history_days=15)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    await Archive(eco).run_once()
+    await Archive(eco).run_once()   # a fresh file has everything to fetch: about 6s each, shown in minutes once it is over 90s
     assert not any("readings stored" in r.message for r in caplog.records)
+    line = next(r.message for r in caplog.records if "to fetch" in r.message)
+    n = int(line.split(": ")[1].split(" ")[0])
+    assert n >= 15 and f"{n} requests to fetch (about {n * 6 / 60:.0f} min)" in line
     caplog.clear()
     await Archive(eco).run_once()
     assert not any("to fetch" in r.message for r in caplog.records)  # nothing left: no estimate to give
-    # a fresh cache has everything to fetch: about 3s each, shown in minutes once it is over 90s
-    await eco.storage.write(lambda w: [w.uncover(sensor, res) for sensor in w.all_sensors() for res in ("5min", "30min", "4hour", "1day")])
-    caplog.clear()
-    await Archive(eco).run_once()
-    line = next(r.message for r in caplog.records if "to fetch" in r.message)
-    n = int(line.split(": ")[1].split(" ")[0])
-    assert f"{n} requests to fetch (about {n * 3 / 60:.0f} min)" in line
     await eco.close()
 
 
@@ -409,7 +394,7 @@ async def test_a_group_the_station_lacks_is_dropped_for_the_warm_up_too(tmp_path
     import httpx
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    real = ecowitt_transport()[1]
+    real = ecowitt_transport(history_days=12)[1]
 
     def handler(request):  # this station has no piezo rain gauge
         if "rainfall_piezo" in request.url.params.get("call_back", ""):
@@ -419,7 +404,7 @@ async def test_a_group_the_station_lacks_is_dropped_for_the_warm_up_too(tmp_path
     await eco.start()
     assert "rainfall_piezo" in eco.groups
     fetched, failed = await Archive(eco).run_once()
-    assert failed == 0 and fetched > 100 and "rainfall_piezo" not in eco.groups
+    assert failed == 0 and fetched > 8 and "rainfall_piezo" not in eco.groups
     real.calls.clear()
     await eco.warm(True)  # would fail on the missing group if it still asked for it
     assert real.calls and all("rainfall_piezo" not in c["call_back"] for c in real.calls if "call_back" in c)

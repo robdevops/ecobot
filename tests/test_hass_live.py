@@ -25,7 +25,7 @@ async def test_a_new_reading_is_found_in_seconds_and_calls_the_rain_alert_each_t
         seen.append(time.time())
     eco.on_live.append(alert)
     task = asyncio.create_task(eco.watch_live())
-    await asyncio.sleep(1.6)
+    await asyncio.sleep(1.1)                                                                  # the fake's readings are a second apart: two of them
     task.cancel()
     assert len(seen) >= 2 and eco._live and time.time() - eco._live[0] < 1               # a reading kept for "weather now" and the report
     before = len([c for c in home.calls if c["path"] == "/api/states"])

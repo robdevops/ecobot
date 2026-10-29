@@ -169,6 +169,7 @@ class FakeHomeAssistant:
         self.begins = begins if begins is not None else datetime.now(timezone.utc).timestamp() - history_days * 86400
         self.units, self.token, self.off = units or {}, token, False
         self.calls: list[dict] = []
+        self._answered: dict[tuple, bytes] = {}   # the history of a finished span, once made (the archive asks for each day once a cycle)
 
     def number(self, name: str, ts: float) -> float:
         unit, fn, decimals = HA_STATES[name]
@@ -200,6 +201,9 @@ class FakeHomeAssistant:
             return httpx.Response(200, json=[*states, {"entity_id": "light.kitchen", "state": "on", "attributes": {}}])
         start = datetime.fromisoformat(path.rsplit("/", 1)[-1]).timestamp()
         end = datetime.fromisoformat(request.url.params["end_time"]).timestamp() if "end_time" in request.url.params else start + 86400
+        key = (start, end, request.url.params["filter_entity_id"])
+        if end < now and key in self._answered:
+            return httpx.Response(200, content=self._answered[key], headers={"content-type": "application/json"})
         out = []
         for entity in request.url.params["filter_entity_id"].split(","):
             name = entity.removeprefix(HA_PREFIX)
@@ -220,7 +224,10 @@ class FakeHomeAssistant:
                     last = value
             if rows:
                 out.append(rows)
-        return httpx.Response(200, json=out)
+        reply = httpx.Response(200, json=out)
+        if end < now:
+            self._answered[key] = reply.content
+        return reply
 
 
 def home_assistant_transport(fake: FakeHomeAssistant | None = None, **kw) -> tuple[httpx.MockTransport, FakeHomeAssistant]:

@@ -164,7 +164,7 @@ async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monk
 
 async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     air, _ = await make(tmp_path)
-    ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))  # 40 days at 1-minute readings
+    ts = list(range(1_780_000_000, 1_780_000_000 + 10 * 86400, 60))  # 10 days at 1-minute readings
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]
     assert len(line.x) <= 500
@@ -177,9 +177,9 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
 async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_top(tmp_path):
     from lib.charts import _extreme
     air, _ = await make(tmp_path)
-    ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))
+    ts = list(range(1_780_000_000, 1_780_000_000 + 10 * 86400, 60))
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
-    line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 40 days: 4-hour buckets
+    line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 10 days of minutes: 30-minute buckets
     assert line.low is not None and max(line.y) < 305.0 and max(line.high) == 305.0
     assert _extreme(line, "high", range(len(line.x)))[1] == 305.0   # the label is the true peak, at the band's top
     five = [{"ts": ts[0] + i * 300, "pm2_5": 5.0 + i % 7, "co2": 450.0 + i % 11} for i in range(288)]   # a day of 5-minute readings

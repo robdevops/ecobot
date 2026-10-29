@@ -158,7 +158,8 @@ async def test_a_stale_home_assistant_reading_gives_way_to_a_fresher_cloud_one(t
     eco = Ecowitt(config(tmp_path, homeassistant_url="http://ha", homeassistant_token="tok"), cloud_transport, home_transport)
     await eco.start()
     fresh = await eco.api.realtime(eco.mac, "outdoor")
-    assert fresh["outdoor"]["temperature"]["value"] != "12.3"                                                            # Home Assistant's, it is young
+    import time
+    assert abs(float(fresh["outdoor"]["temperature"]["value"]) - home.number("outdoor_temperature", time.time())) < 0.2   # Home Assistant's, it is young
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     original = home.__call__
 

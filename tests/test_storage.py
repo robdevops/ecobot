@@ -76,7 +76,7 @@ def test_a_file_from_a_newer_bot_is_left_alone(tmp_path):
 
 
 # ---------- the threads ----------
-async def test_a_request_reads_in_one_hop_on_the_readers_thread_and_its_queries_are_counted(storage, monkeypatch):
+async def test_a_request_reads_in_one_hop_on_the_readers_thread_and_its_queries_are_counted(storage, monkeypatch, threaded_storage):
     monkeypatch.setattr(asyncio, "to_thread", asyncio.to_thread)
     t = old_day()
     await storage.write(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], data(values={t: "10.0", t + 300: "11.0"}), t, t + 300))
@@ -407,7 +407,7 @@ def test_buckets_are_worked_out_as_lines_bucket_summary_does(storage, width):
 
 
 
-async def test_the_writers_own_thread_writes(storage):
+async def test_the_writers_own_thread_writes(storage, threaded_storage):
     seen = {}
 
     def write(w):

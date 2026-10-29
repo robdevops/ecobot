@@ -15,12 +15,12 @@ async def chart(eco, hours, groups="outdoor"):
     return out, turn
 
 
-async def home(tmp_path, cloud=False):
+async def home(tmp_path, cloud=False, **fake):
     kw = {"homeassistant_url": "http://ha", "homeassistant_token": "tok"}
     if not cloud:
         kw.update(ecowitt_api_key="", ecowitt_app_key="")
     ct, cloud_fake = ecowitt_transport()
-    ht, ha = home_assistant_transport()
+    ht, ha = home_assistant_transport(**fake)
     eco = Ecowitt(config(tmp_path, **kw), ct if cloud else None, ht)
     await eco.start()
     return eco, ha, cloud_fake

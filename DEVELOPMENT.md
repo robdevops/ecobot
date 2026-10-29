@@ -8,6 +8,12 @@ pip install -r requirements-dev.txt
 python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process
 python scripts/eval_prompts.py         # the saved questions: decisions made in code, no key needed
 ```
+The suite takes about 25 s on four cores. The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
+is built once an hour and shared by the workers and by later runs: it lives under pytest's own temp folder (`/tmp/pytest-of-<user>/ecobot-archive-*.sqlite`),
+named for the hour and for the code that shapes it, so a change to `lib/storage`, `lib/ecowitt` or `tests/fakes.py` rebuilds it. The first run after
+that pays about 15 s more. Tests of the archive itself use a station a few weeks old (`ecowitt_transport(history_days=...)`); the storage's reader
+and writer threads, and `asyncio.to_thread`, run inline in tests (the `threaded_storage` fixture puts the threads back for the tests of them).
+
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
 ## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)

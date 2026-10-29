@@ -25,8 +25,17 @@ class StubAir:
         return [r for r in self.readings if lo <= r["ts"] <= hi], 0, []
 
 
-async def composer(tmp_path, archived_cache):
+async def composer(tmp_path, archived_cache, shuffles: int = 20):
+    """A Composer over the archived station. Its scans run `shuffles` permutations, not the real 300: the shape of its answers is what is
+    tested here (the statistics have tests of their own, test_scan.py's `world`)."""
+    from functools import partial
+    from unittest import mock
+
+    from lib.analysis import scan
     eco, _ = await archived_station(tmp_path, archived_cache)
+    patch = mock.patch.object(scan, "scan", partial(scan.scan, shuffles=shuffles))
+    patch.start()
+    eco.close = (lambda close: lambda: (patch.stop(), close())[1])(eco.close)   # until the station is closed
     return Composer(eco, StubAir()), eco
 
 
