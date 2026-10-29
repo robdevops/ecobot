@@ -119,7 +119,26 @@ async def test_history_gives_extremes_with_times_and_days(station):
     assert list(s["daily"]) == [f"{d:%a} {d.day} {d:%b}" for d in (start, start + timedelta(days=1), end)]   # "Sat 3 Oct", never "Sat 03 Oct"
     assert result["period"] == f"{start:%a} {start.day} {start:%b %Y} - {end:%a} {end.day} {end:%b %Y}"
     assert float(s["high"]) > float(s["low"])
-    assert s["high_when"].startswith(("at ", "around "))  # refined to a 5-minute or 30-minute reading
+    assert s["high_when"].startswith(("at ", "around "))  # timed from its day's row: a 5-minute or 30-minute reading
+
+
+async def test_every_record_has_its_days_time_and_a_tie_goes_to_the_first_day(tmp_path, archived_cache):
+    """Each record is timed from its day's row (at the 5 minutes, for days held at 5 minutes), not only the first four as refining narrowed
+    them; of the days that reach it, the first (the fake's temperature peaks alike every 5 days)."""
+    from lib.timeutil import day_text
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    start, end = today - timedelta(days=13), today - timedelta(days=2)
+    out = json.loads(await eco.tools[1].handler({"groups": "outdoor,indoor,pressure,wind,solar_and_uvi", "start_date": f"{start} 00:00:00",
+                                                 "end_date": f"{end} 23:59:59"}))
+    records = [s for s in out["series"].values() if "low_when" in s]
+    assert len(records) >= 6 and all(s[f"{w}_when"].startswith("at ") for s in records for w in ("low", "high"))
+    sensor = eco.storage.sensors.find(eco.mac, "outdoor")
+    days = eco.storage.read_now(lambda r: r.days("climate", [sensor.id], start, end, ["temperature"]))[sensor.id]
+    top = max(days.hi["temperature"])
+    assert days.hi["temperature"].count(top) >= 2
+    assert out["series"]["outdoor.temperature"]["high_date"] == day_text(days.day[days.hi["temperature"].index(top)])
+    await eco.close()
 
 
 async def test_second_question_is_served_from_the_cache(station):
@@ -317,7 +336,7 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     spec = turn.charts[0]
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
-    assert all(float(m["low"]) < float(m["high"]) for m in after.values())                 # each month's records refined in place
+    assert all(float(m["low"]) < float(m["high"]) for m in after.values())                 # each month's records, from its days' rows
     assert all(f"{datetime.strptime(month, '%b %Y'):%b %Y}" == month for month in after)  # a row per month: "Oct 2026"
     assert "monthly_note" not in json.loads(out) and fake.calls == []
     assert "daily averages, range shaded" in spec.subtitle      # 200 days: a point a day from the cached 30-minute data
@@ -901,7 +920,7 @@ async def test_resolution_follows_the_length_of_the_period(tmp_path):
         assert not long_five                                           # 5-minute data only ever a day at a time
         await eco.close()
     assert set(seen[20]) <= {"30min", "5min"} and "1day" not in seen[20]  # a month or less: 30-minute weeks
-    assert "1day" in seen[60] and seen[60].get("30min", 0) <= 3        # longer: daily records (+ the newest days, + refinements)
+    assert "1day" in seen[60] and seen[60].get("30min", 0) <= 3        # longer: daily records (+ the newest days)
     assert seen[300]["1day"] >= 1 and seen[300].get("30min", 0) <= 6   # not a year of 30-minute weeks
 
 
@@ -1265,31 +1284,6 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
         panel = turn.charts[0].panels[0]
         assert panel.reading == reading and _colour(panel.lines[0], 0, panel.reading) == READING_COLOURS[reading]
     await eco.close()
-
-
-async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings(tmp_path):
-    import time as _time
-    from lib.ecowitt.query import HistoryQuery
-    from tests.fakes import fetcher_on, storage_with
-    base = int(_time.time()) - 10 * 86400
-    base -= base % 1800
-    five = {"solar_and_uvi": {"solar": {"unit": "W/m2", "list": {str(base + 300 * i): str(10.0 + i) for i in range(12)}}}}   # two slots of six
-    cache = storage_with(tmp_path, ("5min", ["solar_and_uvi"], five, base, base + 3600))
-    start, end = datetime(2026, 1, 1), datetime(2026, 1, 2)
-    fetcher = fetcher_on(cache)
-    fetcher.epoch = lambda d: base if d == start else base + 7200
-    q = HistoryQuery(fetcher, {}, Turn())
-    q.start, q.end = start, end
-    q.store = {"solar_and_uvi.solar": {"unit": "W/m²", "pts": {base: {"cycle": "30min", "value": (12.0, "12")},
-                                                               base + 1800: {"cycle": "30min", "value": (18.0, "18")}}},
-               "outdoor.temperature": {"unit": "C", "pts": {base: {"cycle": "30min", "value": (12.0, "12"), "low": (9.0, "9"), "high": (16.0, "16")}}},
-               "wind.wind_speed": {"unit": "km/h", "pts": {base: {"cycle": "30min", "value": (12.0, "12")}}}}
-    await q._fine_ranges()
-    first = q.store["solar_and_uvi.solar"]["pts"][base]
-    assert (first["low"][0], first["high"][0]) == (10.0, 15.0) and q.store["solar_and_uvi.solar"]["pts"][base + 1800]["high"][0] == 21.0
-    assert q.store["outdoor.temperature"]["pts"][base]["low"][0] == 9.0      # its own range is kept
-    assert "low" not in q.store["wind.wind_speed"]["pts"][base]              # wind has its own band
-    cache.close()
 
 
 async def test_a_chart_field_may_be_a_readings_name_or_its_field_however_it_is_written(tmp_path):

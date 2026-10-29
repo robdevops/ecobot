@@ -5,12 +5,12 @@ import asyncio
 import functools
 import logging
 import time
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import datetime, timedelta, tzinfo
 
 from ..storage import Storage
 from ..storage.coverage import merge as merge_intervals
 from ..timeutil import local_epoch, naive_local
-from .api import CYCLES, MINUTE, EcowittError, kept_from
+from .api import CYCLES, EcowittError
 from .stored import StoredHistory, load_on, minutes_on
 
 log = logging.getLogger(__name__)
@@ -90,7 +90,6 @@ class Fetcher:
         station's minute readings are kept (Home Assistant's)."""
         self.api, self.storage, self.recent, self.tz, self.urgent, self.has_minutes = api, storage, recent, tz, urgent, minutes
         self.cache = StoredHistory(storage)   # (TEMPORARY: what the readers not moved to the storage yet read)
-        self.live = None                      # (the bands are in the readings now: HistoryQuery's own shading has nothing to add)
         self.mac = mac.strip().upper()
         self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
         self.ranges = self.from_cache = self.from_memory = self.calls = 0
@@ -165,6 +164,11 @@ class Fetcher:
         """fn(*args), a read of the storage made as the old cache's (slots, slot ranges), in a thread."""
         return await asyncio.to_thread(fn, *args)
 
+    @timed
+    async def stored(self, fn, *args):
+        """fn(reader, *args) on the storage's reader thread: one hop, its queries in one read transaction."""
+        return await self.storage.read(fn, *args)
+
     def _missing(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
         """For each window (epoch seconds), the parts of it the storage lacks, by group (the coverage is in memory)."""
         return self.cache.uncovered(self.mac, self.groups, [(cycle, s, e) for s, e in windows])
@@ -189,16 +193,3 @@ class Fetcher:
         if not self.has_minutes:
             return {}
         return await self.storage.read(minutes_on, self.mac, self.groups, self.epoch(start), self.epoch(end))
-
-    async def finer_cycle(self, ts: int, current: str, window_end: int, today: date) -> str | None:
-        """Finest cycle finer than `current` available for this window: still kept by Ecowitt,
-        or already in the cache (e.g. archived 5-minute data). None if neither."""
-        if current == MINUTE:
-            return None
-        day = self.local(ts).date()
-        for cycle in ("5min", "30min", "4hour"):
-            if cycle == current:
-                return None
-            if day >= kept_from(cycle, today) or await self.covered(cycle, ts, window_end):
-                return cycle
-        return None

@@ -9,9 +9,9 @@ out from what there is (the newest readings, still settling, too), marked incomp
   - its lowest and highest: of each reading's own range where it has one (Ecowitt's lows and highs, the bands of the bot's and Home
     Assistant's readings), else of its value; and when they first happened. A day of 5-minute readings takes in its 30-minute readings'
     bands too (Ecowitt's lows and highs from its finer readings, which its 5-minute ones miss), timed by the 5-minute reading lowest or
-    highest in that half hour (where refining an extreme found it); its mean stays the 5-minute readings'.
+    highest in that half hour; its mean stays the 5-minute readings'.
 A day from a daily record takes the times of its lowest and highest from the 4-hour readings, where those are held ("sometime between 2pm
-and 6pm", as refining an extreme finds it); its figures stay the record's, as day_values has them.
+and 6pm"); its figures stay the record's, as day_values has them.
 
 Done in SQL: Python only chooses each day's resolution and window (it knows the coverage and the time zone) and puts them in a temporary
 table, and one INSERT ... SELECT per kind of sensor works out all of them.
@@ -27,6 +27,7 @@ from .schema import day_columns, q, some_value
 
 DAY = 86400
 ANY = "*"   # what is held changed: a day may come from another resolution now
+FINER = "'1min', '5min'"   # readings finer than a half hour, several to each
 WANT = ('CREATE TEMP TABLE IF NOT EXISTS want (sensor INTEGER, day TEXT, "start" INTEGER, "end" INTEGER, res TEXT, complete INTEGER, '
         "PRIMARY KEY (sensor, day))")
 MISSING = "SELECT w.sensor, w.day FROM temp.want w LEFT JOIN {kind}_day d ON d.sensor = w.sensor AND d.day = w.day WHERE d.sensor IS NULL"
@@ -34,21 +35,21 @@ MISSING = "SELECT w.sensor, w.day FROM temp.want w LEFT JOIN {kind}_day d ON d.s
 type Held = Callable[[int, str, int, int], bool]
 
 
-def _with(kind: str) -> str:
-    """The figures of temp.want's days (`figures`), from the rows of their windows (only those with a value: a row holding only a band,
-    for a reading not yet fetched, is no reading) and, for a day of 5-minute readings, the bands of its 30-minute ones (Ecowitt's own lows
-    and highs, from readings finer than its 5 minutes: they count in the day's lowest and highest, never in its mean). Worked out by half
-    hours: their mean, lowest and highest, and when the day's lowest and highest happened, the first half hour that holds them (a window
-    over the day's half hours, not its readings)."""
+def _with(kind: str, want: str = "temp.want") -> str:
+    """The figures of the days in `want` (`figures`), from the rows of their windows (only those with a value: a row holding only a band,
+    for a reading not yet fetched, is no reading) and, for a day of 5-minute readings, the bands of its 30-minute ones the window holds all
+    of (Ecowitt's own lows and highs, from readings finer than its 5 minutes: they count in the day's lowest and highest, never in its
+    mean; a part of a day takes no half hour that runs past it). Worked out by half hours: their mean, lowest and highest, and when the
+    day's lowest and highest happened, the first half hour that holds them (a window over the day's half hours, not its readings)."""
     names = [c.name for c in KINDS[kind]]
     ranged = [c.name for c in KINDS[kind] if c.ranged]
     columns = ", ".join(f"r.{q(c)} AS {q(c + '~v')}, CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_lo')}, r.{q(c)}) END AS {q(c + '~l')}, "
                         f"CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_hi')}, r.{q(c)}) END AS {q(c + '~h')}" for c in names)
     bands = ", ".join(f"NULL AS {q(c + '~v')}, " + (f"r.{q(c + '_lo')} AS {q(c + '~l')}, r.{q(c + '_hi')} AS {q(c + '~h')}" if c in ranged
                       else f"NULL AS {q(c + '~l')}, NULL AS {q(c + '~h')}") for c in names)
-    within = 'r.sensor = w.sensor AND r.res = {} AND r.ts BETWEEN w."start" AND w."end"'   # (want first: it is a few rows, the readings many)
-    halves = (f"UNION ALL SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 0 AS own, {bands} FROM temp.want w CROSS JOIN {kind} r "
-              f"ON {within.format(repr('30min'))} WHERE w.res = '5min' "
+    within = 'r.sensor = w.sensor AND r.res = {} AND r.ts BETWEEN w."start" AND w."end"{}'   # (want first: a few rows, the readings many)
+    halves = (f"UNION ALL SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 0 AS own, {bands} FROM {want} w CROSS JOIN {kind} r "
+              f"ON {within.format(repr('30min'), f' - {SLOT - 1}')} WHERE w.res = '5min' "   # (a half hour the window holds all of)
               f"AND {some_value([c + part for c in ranged for part in ('_lo', '_hi')], 'r.')}") if ranged else ""
     slots = ", ".join(f"AVG({q(c + '~v')}) AS {q(c + '~m')}, MIN({q(c + '~l')}) AS {q(c + '~lo')}, MAX({q(c + '~h')}) AS {q(c + '~hi')}"
                       for c in names)
@@ -56,43 +57,53 @@ def _with(kind: str) -> str:
     figures = ", ".join(f"AVG({q(c + '~m')}) AS {q(c + '~m')}, MIN({q(c + '~lo')}) AS {q(c + '~lo')}, "
                         f"MIN(CASE WHEN {q(c + '~lo')} = {q(c + '~dl')} THEN t END) AS {q(c + '~lt')}, MAX({q(c + '~hi')}) AS {q(c + '~hi')}, "
                         f"MIN(CASE WHEN {q(c + '~hi')} = {q(c + '~dh')} THEN t END) AS {q(c + '~ht')}" for c in names)
-    return (f"WITH src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 1 AS own, {columns} FROM temp.want w CROSS JOIN {kind} r "
-            f"ON {within.format('w.res')} WHERE {some_value(names, 'r.')} "
+    return (f"src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 1 AS own, {columns} FROM {want} w CROSS JOIN {kind} r "
+            f"ON {within.format('w.res', '')} WHERE {some_value(names, 'r.')} "
             f"AND (r.final OR w.res IN ('1min', '5min', '30min')) {halves}), "   # (a daily record, or its 4 hours, once final)
             f"slots AS (SELECT sensor, day, slot, SUM(own) AS n, MIN(ts) AS t, {slots} FROM src GROUP BY sensor, day, slot), "
             f"marked AS (SELECT *, {window} FROM slots WINDOW whole AS (PARTITION BY sensor, day)), "
-            f"figures AS (SELECT m.sensor, m.day, w.res, w.complete, SUM(m.n) AS n, {figures} FROM marked m JOIN temp.want w "
+            f"figures AS (SELECT m.sensor, m.day, w.res, w.complete, w.\"start\", w.\"end\", SUM(m.n) AS n, {figures} FROM marked m JOIN {want} w "
             f"ON w.sensor = m.sensor AND w.day = m.day GROUP BY m.sensor, m.day HAVING SUM(m.n) > 0) ")
 
 
 def _figures(kind: str) -> str:
-    """Each reading's figures over the day, in the day table's order: mean, lowest, its time, highest, its time. In a day of 5-minute
-    readings, the time is the first of the half hour's own readings that is lowest or highest in it (where refining an extreme found it;
-    the half hour's, where it has none of its own): a look at a few rows, for the one half hour."""
+    """Each reading's figures over the day, in the day table's order: mean, lowest, its time, highest, its time. In readings finer than a
+    half hour (a day's 5-minute ones, a part-day's minutes), the time is the first of the half hour's own readings that is lowest or
+    highest in it (the half hour's own time, where it has none of its own): a look at a few rows, for the one
+    half hour."""
     out = []
     for c in KINDS[kind]:
         v, lo, hi = q(c.name), q(c.name + "_lo"), q(c.name + "_hi")
         lt, ht = q(c.name + "~lt"), q(c.name + "~ht")
-        first = (f"(SELECT r.ts FROM {kind} r WHERE r.sensor = f.sensor AND r.res = '5min' AND r.ts BETWEEN f.{{0}} - f.{{0}} % {SLOT} "
-                 f"AND f.{{0}} - f.{{0}} % {SLOT} + {SLOT - 1} AND r.{v} IS NOT NULL ORDER BY {{1}}, r.ts LIMIT 1)")
-        when = lambda t, order: f"CASE WHEN f.res = '5min' THEN COALESCE({first.format(t, order)}, f.{t}) ELSE f.{t} END"
+        first = (f"(SELECT r.ts FROM {kind} r WHERE r.sensor = f.sensor AND r.res = f.res AND r.ts BETWEEN MAX(f.{{0}} - f.{{0}} % {SLOT}, "
+                 f'f."start") AND MIN(f.{{0}} - f.{{0}} % {SLOT} + {SLOT - 1}, f."end") AND r.{v} IS NOT NULL ORDER BY {{1}}, r.ts LIMIT 1)')
+        when = lambda t, order: f"CASE WHEN f.res IN ({FINER}) THEN COALESCE({first.format(t, order)}, f.{t}) ELSE f.{t} END"
         out.append(f"f.{q(c.name + '~m')}, f.{q(c.name + '~lo')}, {when(lt, f'COALESCE(r.{lo}, r.{v})')}, f.{q(c.name + '~hi')}, "
                    f"{when(ht, f'COALESCE(r.{hi}, r.{v}) DESC')}")
     return ", ".join(out)
 
 
-_SQL: dict[str, tuple[str, str]] = {}
+_SQL: dict[tuple[str, str], str] = {}
 
 
 def statements(kind: str) -> tuple[str, str]:
     """(the INSERT of the day rows of temp.want's windows, the SELECT of their figures, for reading back): generated once per kind."""
-    if kind not in _SQL:
+    if (kind, "insert") not in _SQL:
         names = ", ".join(q(n) for n, _ in day_columns(kind))
-        insert = (f"{_with(kind)}INSERT INTO {kind}_day (sensor, day, source, timing, complete, n, {names}) "
-                  f"SELECT f.sensor, f.day, f.res, f.res, f.complete, f.n, {_figures(kind)} FROM figures f")
-        select = f"{_with(kind)}SELECT f.sensor, f.day, f.n, {_figures(kind)} FROM figures f"
-        _SQL[kind] = insert, select
-    return _SQL[kind]
+        _SQL[kind, "insert"] = (f"WITH {_with(kind)}INSERT INTO {kind}_day (sensor, day, source, timing, complete, n, {names}) "
+                                f"SELECT f.sensor, f.day, f.res, f.res, f.complete, f.n, {_figures(kind)} FROM figures f")
+        _SQL[kind, "select"] = f"WITH {_with(kind)}SELECT f.sensor, f.day, f.n, {_figures(kind)} FROM figures f"
+    return _SQL[kind, "insert"], _SQL[kind, "select"]
+
+
+def windows_select(kind: str, n: int) -> str:
+    """The SELECT of statements(kind) over n windows given as its parameters (sensor, day, start, end, resolution: five each) rather than
+    in temp.want: for the reader, so a question's part-days are one statement and the reader writes nothing."""
+    if (kind, "windows") not in _SQL:
+        _SQL[kind, "windows"] = f"{_with(kind, 'want')}SELECT f.sensor, f.day, f.n, {_figures(kind)} FROM figures f ORDER BY f.sensor, f.day"
+    values = ", ".join(["(?, ?, ?, ?, ?, 0)"] * n)
+    return f'WITH want (sensor, day, "start", "end", res, complete) AS (VALUES {values}), {_SQL[kind, "windows"]}'
+
 
 
 def utc_days(day: date, tz: tzinfo) -> tuple[int, int] | None:
@@ -174,4 +185,4 @@ def days_of(start: int, end: int, tz: tzinfo, utc: bool = True) -> set[date]:
     return {first + timedelta(days=n) for n in range((last - first).days + 1)}
 
 
-__all__ = ["ANY", "days_of", "statements", "utc_days", "work_out"]
+__all__ = ["ANY", "days_of", "statements", "utc_days", "windows_select", "work_out"]

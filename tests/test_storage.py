@@ -249,6 +249,38 @@ def test_a_day_is_worked_out_from_the_finest_readings_that_hold_it_whole(storage
     assert got.hi["temperature"] == [13.0] and got.hi_ts["temperature"] == [start + 23 * 3600 + 600]   # its 5-minute readings' own, when higher
 
 
+def test_a_part_of_a_day_is_worked_out_from_its_own_readings_as_a_day_is_with_only_the_half_hours_it_holds_whole(storage):
+    d = local_date(old_day(20), TZ)
+    start, end = day_bounds(d, TZ, True)
+    hour = lambda t: f"{10 + (t - start) // 3600 / 10:.1f}"   # 10.0 at midnight, up a tenth each hour
+    thirty = data(values={t: hour(t) for t in range(start, end + 1, 1800)})
+    thirty["outdoor"] |= {"temperature_high": {"unit": "℃", "list": {str(start + 14 * 3600 + 1800): "12.9", str(start + 16 * 3600): "13.4"}}}
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "30min", ["outdoor"], thirty, start, end), ())
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], data(values={t: hour(t) for t in range(start, end + 1, 300)}),
+                                               start, end), ())
+    a, b = start + 14 * 3600, start + 16 * 3600 + 600   # 2pm to 4:10pm: the half hour at 2:30 whole, the one at 4 not
+    got = read(storage, lambda r: r.part_days("climate", [(1, d, a, b, "5min")]))[1]
+    assert (got.day, got.source, got.complete, got.n) == ([d], ["5min"], [False], [27])
+    assert got.hi["temperature"] == [12.9] and got.hi_ts["temperature"] == [start + 14 * 3600 + 1800]   # not 4 o'clock's 13.4
+    assert got.lo["temperature"] == [11.4] and got.lo_ts["temperature"] == [a]
+    assert got.mean["temperature"] == [pytest.approx((11.4 * 2 + 11.5 * 2 + 11.6) / 5)]               # the mean of its half hours
+    whole = read(storage, lambda r: r.part_days("climate", [(1, d, start, end, "5min")]))[1]
+    day = read(storage, lambda r: r.days("climate", [1], d, d))[1]
+    assert (whole.mean, whole.lo, whole.lo_ts, whole.hi, whole.hi_ts) == (day.mean, day.lo, day.lo_ts, day.hi, day.hi_ts)   # as its row
+    assert read(storage, lambda r: r.part_days("climate", [(1, d, start, end, "1min")])) == {}                # none at that resolution
+
+
+def test_a_part_of_a_day_read_by_the_minute_has_its_records_at_their_minute(storage):
+    now = int(time.time())
+    a = now - now % 1800 - 3 * 3600
+    minutes = {a + 60 * i: "11.0" for i in range(180)} | {a + 47 * 60: "12.7", a + 101 * 60: "9.1", a + 130 * 60: "12.7"}
+    storage.writer.run(lambda w: w.put_minutes(MAC, data(values=minutes), now), ())
+    got = read(storage, lambda r: r.part_days("climate", [(1, local_date(a, TZ), a, a + 3 * 3600 - 1, "1min")]))[1]
+    assert (got.hi["temperature"], got.hi_ts["temperature"]) == ([12.7], [a + 47 * 60])   # the first of the two
+    assert (got.lo["temperature"], got.lo_ts["temperature"]) == ([9.1], [a + 101 * 60])
+    assert got.n == [180]
+
+
 def test_a_day_not_held_whole_comes_from_its_daily_record_with_the_times_from_the_four_hour_readings(storage):
     d = local_date(old_day(500), TZ)
     first, last = utc_days(d, TZ)

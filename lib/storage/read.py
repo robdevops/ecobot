@@ -10,6 +10,7 @@ from typing import NamedTuple
 from ..counts import uncounted
 from ..rain import MAX_GAP
 from .catalogue import KINDS, SLOT
+from .days import windows_select
 from .schema import q, some_value
 
 FINE = ("1min", "5min")   # readings finer than a half hour: in a half hour that has them they make its mean (lines._summarise)
@@ -64,6 +65,25 @@ def _names(kind: str, columns: list[str] | None) -> list[str]:
 
 def _marks(n: int) -> str:
     return ", ".join("?" * n)
+
+
+DAY_PARTS = ("mean", "lo", "lo_ts", "hi", "hi_ts")   # a reading's figures in a day row, in its order
+
+
+def _add_day(out: dict[int, "Days"], names: list[str], sensor: int, day: str, source: str, timing: str, complete: bool, n: int,
+             figures: list, at: list[int]):
+    """One day's row into its sensor's Days: each reading's figures from figures[5 * at[i]:] (its place in the row)."""
+    got = out.get(sensor)
+    if got is None:
+        got = out[sensor] = Days(**{a: {c: [] for c in names} for a in DAY_PARTS})
+    got.day.append(date.fromisoformat(day))
+    got.source.append(source)
+    got.timing.append(timing)
+    got.complete.append(complete)
+    got.n.append(n)
+    for c, i in zip(names, at):
+        for j, a in enumerate(DAY_PARTS):
+            getattr(got, a)[c].append(figures[5 * i + j])
 
 
 def _drop_empty(*tables: dict[str, list], keep: list[str] | None = None) -> None:
@@ -196,26 +216,38 @@ class Reader:
         names = _names(kind, columns)
         if not sensors or not names:
             return {}
-        parts = ("_mean", "_lo", "_lo_ts", "_hi", "_hi_ts")
-        cols = ", ".join(q(c + p) for c in names for p in parts)
+        cols = ", ".join(q(f"{c}_{p}") for c in names for p in DAY_PARTS)
         found = self.db.execute(f"SELECT sensor, day, source, timing, complete, n, {cols} FROM {kind}_day WHERE sensor IN ({_marks(len(sensors))}) "
                                 "AND day BETWEEN ? AND ? ORDER BY sensor, day", (*sensors, first.isoformat(), last.isoformat()))
         out: dict[int, Days] = {}
         for sensor, day, source, timing, complete, n, *figures in found:
-            got = out.get(sensor)
-            if got is None:
-                got = out[sensor] = Days(**{a: {c: [] for c in names} for a in ("mean", "lo", "lo_ts", "hi", "hi_ts")})
-            got.day.append(date.fromisoformat(day))
-            got.source.append(source)
-            got.timing.append(timing)
-            got.complete.append(bool(complete))
-            got.n.append(n)
-            for i, c in enumerate(names):
-                for j, a in enumerate((got.mean, got.lo, got.lo_ts, got.hi, got.hi_ts)):
-                    a[c].append(figures[5 * i + j])
+            _add_day(out, names, sensor, day, source, timing, bool(complete), n, figures, list(range(len(names))))
         for got in out.values():
             _drop_empty(got.mean, got.lo, got.lo_ts, got.hi, got.hi_ts, keep=columns)
         return out
+
+    def part_days(self, kind: str, windows: list[tuple[int, date, int, int, str]], columns: list[str] | None = None) -> dict[int, Days]:
+        """{sensor: the figures of these parts of days, each (sensor, its day, start, end, the resolution to read), worked out from those
+        readings as a day row is from a whole day's (days.py): one query, whatever the windows. A part with no readings is left out; one
+        a day per sensor."""
+        names = _names(kind, columns)
+        if not windows or not names:
+            return {}
+        res_of = {(s, d.isoformat()): res for s, d, _, _, res in windows}
+        at = [[c.name for c in KINDS[kind]].index(c) for c in names]
+        out: dict[int, Days] = {}
+        found = self.db.execute(windows_select(kind, len(windows)), [x for s, d, a, b, res in windows for x in (s, d.isoformat(), a, b, res)])
+        for sensor, day, n, *figures in found:
+            _add_day(out, names, sensor, day, res_of[sensor, day], res_of[sensor, day], False, n, figures, at)
+        for got in out.values():
+            _drop_empty(got.mean, got.lo, got.lo_ts, got.hi, got.hi_ts, keep=columns)
+        return out
+
+    def banded(self, kind: str, sensor: int, column: str, want: str, res: str, start: int, end: int) -> bool:
+        """Does a reading of this resolution from start to end carry its own lowest ("lo") or highest ("hi") of the column: a figure from
+        it is a true extreme, not an average."""
+        return self.db.execute(f"SELECT 1 FROM {kind} WHERE sensor = ? AND res = ? AND ts BETWEEN ? AND ? AND {q(f'{column}_{want}')} "
+                               "IS NOT NULL LIMIT 1", (sensor, res, start, end)).fetchone() is not None
 
     def records(self, kind: str, sensor: int, column: str, first: date, last: date, want: str = "hi", per: str | None = None) -> list[Record]:
         """The day with the highest ("hi") or lowest ("lo") of a reading from first to last, with when it happened (the first time, if it

@@ -188,12 +188,13 @@ CREATE TABLE climate_day (
   takes in its 30-minute readings' lows and highs too (Ecowitt's, from readings finer than its 5 minutes, which its 5-minute ones miss:
   what refining a period's records kept), never in its mean. The tests check every day of the fake station's archive against
   `day_values` (over 5,000 figures, all equal: the fake's half hours hold nothing its 5 minutes miss).
-- **When the low and high happened.** A day row keeps the time of its low and high, so a period's records come from one query on the day
-  rows (`ORDER BY temperature_hi DESC, temperature_hi_ts LIMIT 1`: the first time, as refining has it). In a day of 5-minute readings it
-  is the first half hour that holds the day's high, at its own highest 5-minute reading (where refining found a half hour's high). A daily
-  record's day takes the times from the 4-hour readings of its UTC day where they are held ("sometime between 2pm and 6pm", as refining
-  found them), its figures staying the record's. That replaces the refining. The part-days at either end of a period are read from the
-  fine rows.
+- **When the low and high happened.** A day row keeps the time of its low and high, so a period's records come from its day rows (the
+  first time, where one is reached on several days or several times in a day). In a day of 5-minute readings it is the first half hour
+  that holds the day's high, at its own highest 5-minute reading. A daily record's day takes the times from the 4-hour readings of its UTC
+  day where they are held ("sometime between 2pm and 6pm"), its figures staying the record's. The part-days at either end of a period are
+  worked out from the finest readings held for them by the same SQL (`Reader.part_days`, its windows given as `VALUES`: one statement).
+  This replaced refining (step 2d): a record found in coarse readings was looked for again in finer ones, a window at a time and only the
+  first four, where now every record has its day's time (`ecowitt/period.py`).
 - **Kept up to date as readings arrive.** A write notes the local days it touched, and their rows are worked out again in the same
   transaction: Python chooses each day's resolution and window and puts them in a temporary table, and one `INSERT ... SELECT` per kind
   works them out (a `GROUP BY` each half hour, a window over each day's half hours for its lowest and highest, and a look at the few
@@ -440,7 +441,10 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    and compares the answers, so any difference is seen and judged (`tests/test_old_against_new.py`: the old code is taken from git).
    In progress: the station writes and reads `ecobot.sqlite` (moved in at start), the readers not moved yet reading it through
    `ecowitt/stored.py` as they read the old cache. `weather_days` and the dashboard read the day rows (one read each; the dashboard's
-   Daily row is today's day row, its readings so far with their bands). Next, `HistoryQuery`.
+   Daily row is today's day row, its readings so far with their bands). A history answer's records, its rows by day or by month and its
+   averages come from the period's days (`ecowitt/period.py`: the day rows, and the part-days at either end from their own readings),
+   and refining is gone; a day of 5-minute readings takes in its half hours' own lows and highs, as refining kept them. Next, the
+   history answer's readings and charts read natively (rows, and buckets or day rows for long charts).
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live
@@ -487,7 +491,7 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 | Risk | What is done about it |
 |---|---|
 | A number written differently in an answer ("12.30" against "12.3") | values written with the catalogue's decimals; the migration counts, per field, the values whose text would come back otherwise (`scripts/migrate_storage.py` on the real cache, before step 2); the evals and the step 2 comparison show any change |
-| A record's time differs from what refining found | the day rows' times come from the finest readings the day has, as refining does; compared in step 2, and any difference judged before it ships |
+| A record's time differs from what refining found | the day rows' times come from the finest readings the day has, as refining's did; compared in step 2 and each difference judged (`tests/test_old_against_new.py`): ties now go to the first day, and every record has its day's time, where refining narrowed four |
 | Ecowitt sends a field or group the catalogue does not know | `extra` keeps the readings; the catalogue adds a column for them later |
 | The migration fails part-way or runs out of disk | one transaction, the count and sum check, the old files untouched, and the free space checked first |
 | The 5-minute marks: the live ranges are counted around each mark, Home Assistant's from each mark | kept as they are in step 2, so nothing moves on a chart; one rule for both is a later choice |

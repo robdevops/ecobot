@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -29,8 +30,26 @@ HA_HISTORY_DAYS = 60   # the Home Assistant station is younger: its archive is q
 USED = ("ecowitt", "ecowitt.api", "ecowitt.archive", "intent", "tools", "timeutil", "compose")
 
 # The differences judged, and why: {question: [(where in the answer it is (a pattern its line starts with), why)]}. Any other fails.
-REFINING = ("refining narrows only the first four records to finer readings, and which come first follows the order the fields come in, "
-            "the catalogue's now; step 2d replaces refining with the times the day rows keep")
+REFINING = ("every record is timed from its day's row now, as finely as that day's readings allow; refining narrowed only the first four "
+            "records (the temperatures'), so the rest kept the half hour")
+TIES = ("the fake station's readings repeat from day to day, so a long period's highest and lowest are reached on many days: the record is "
+        "now the first of them, as a day row keeps it, where the old answer took the newest week's (it read the last week's 30-minute "
+        "readings before the daily records, so they came first); its time is as fine as that day's readings, around the half hour a year "
+        "ago, the 4 hours of a daily record before that")
+MONTHS_LOCAL = ("a month's figures come from its local days where they are held at 30 minutes or finer: the old long answers read "
+                "Ecowitt's daily records for all but the last week, 10am to 10am, so the night of the 1st counted in the month before "
+                "(October 2025's lowest pressure and gust were the morning of 1 November's)")
+MONTH_TIMES = ("each month's records are timed from its days' rows, as finely as their readings allow, at the 5 minutes where its days are "
+               "held at 5 minutes (refining narrowed only the temperature's months, so the others said around the half hour)")
+DAY_MEANS = ("a day's mean is its day row's, from its 5-minute readings: the old answer took the 30-minute ones it read for the period (one "
+             "that ends now is not held at 5 minutes to its end), the fake's value at the start of each half hour")
+MINUTES = ("a minute's reading is a reading, as a 5-minute one is: the old answer counted only 5-minute values as true ones, so a stretch "
+           "read by the minute said its records were from averaged data")
+RECORD = r"\.(result\.series\.\w+\.\w+\.(low|high)_(date|time|when)|charts\[0\]\.panels\[0\]\.lines\[\d\]\.records\.(low|high)):"
+MONTH = r"\.result\.series\.\w+\.\w+\.monthly\.\w+ \d{4}\."
+LONG = ["temperature last 12 months", "temperature chart 1y", "pressure chart 1y", "wind chart 1y", "rain chart 1y", "history, the whole record",
+        "history, the whole record, chart", "history, a year of humidity"]
+MONTHLY = ["humidity chart 3m", "pressure chart 3m", "rain this year", "history, 90 days of rain", "history, 5 months by month"]
 BANDS = ("a 5-minute reading's band now takes in both of Home Assistant's ranges of it, the lowest and highest of its own bucket and those "
          "around its 5-minute mark (a reading with a range of its own kept only that), and what it read while its bucket was still filling: "
          "up to a step wider (0.1 °C, 1 %), all of them readings Home Assistant had")
@@ -41,10 +60,13 @@ DASHBOARD = ("the dashboard's Daily row is today's day row: its readings so far,
              "on Home Assistant the 25 km/h the wind still read at midnight)")
 LOWS_HIGHS = r"\[\d+\]\[1\]\.\w+\.\w+_(low|high): "   # a reading's low or high in the alerts' readings (the alerts read only the values)
 JUDGED: dict[str, list[tuple[str, str]]] = {
-    "weather all week": [(r"\.result\.series\.wind\.", REFINING)],
-    "history, a week of everything": [(r"\.result\.series\.wind\.", REFINING)],
-    "temperature last 3 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER)],
-    "temperature last 6 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER)],
+    "weather all week": [(r"\.result\.series\.(?!\w+\.temperature\.)\w+\.\w+\.(low|high)_(date|time|when):", REFINING)],
+    "history, a week of everything": [(r"\.result\.series\.(?!\w+\.temperature\.)\w+\.\w+\.(low|high)_(date|time|when):", REFINING)],
+    "temperature last 3 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER), (r"\.result\.series\.\w+\.\w+\.(low|high)_note: only before", MINUTES)],
+    "temperature last 6 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER), (r"\.result\.series\.\w+\.\w+\.(low|high)_note: only before", MINUTES)],
+    **{name: [(RECORD, TIES), (MONTH + "(low|high):", MONTHS_LOCAL), (MONTH + "(low|high)_(when|date):", MONTH_TIMES)] for name in LONG},
+    **{name: [(MONTH + "(low|high)_(when|date):", MONTH_TIMES)] for name in MONTHLY},
+    "history, 3 days derived, average": [(r"\.result\.series\.\w+\.\w+\.(daily\.\w+ \d+ \w+\.avg|average):", DAY_MEANS)],
     "temperature chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
     "humidity chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
     "dashboard": [(r"\.tiles\[\d+\]\.rows\.Daily:", DASHBOARD)],
@@ -233,12 +255,16 @@ def questions(pkg, eco, texts: list[str], with_calls: bool) -> list[tuple[str, o
     async def dashboard():
         return plain(dataclasses.asdict(d)) if (d := await eco.dashboard()) else None
 
+    def settled(readings, seconds: int) -> list:
+        """The readings but the newest, still filling: what a read of it gives depends on the instant it is made (old, then new)."""
+        return [r for r in readings if r[0] <= time.time() - seconds]
+
     async def recent():
-        return plain(await eco.recent(3))
+        return plain(settled(await eco.recent(3), 300))
 
     async def week():
         at = pkg.timeutil.now_local(TZ).replace(tzinfo=None)
-        return plain(await eco.readings("30min", at - timedelta(days=6, hours=23), at, ["outdoor", "indoor"]))
+        return plain(settled(await eco.readings("30min", at - timedelta(days=6, hours=23), at, ["outdoor", "indoor"]), 1800))
 
     out = [(name, tool_call(tool, args, make_turn)) for name, tool, args, make_turn in asked]
     out += [("dashboard", dashboard), ("alerts, the last 3 hours", recent), ("alerts, the last week at 30 minutes", week)]
