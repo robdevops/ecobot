@@ -50,13 +50,7 @@ class FakeApp:
     async def send_message(self, chat_id, text, **kw):
         self.sent.append((chat_id, text, kw))
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        pass
-
-    start = stop = _noop
+    initialize = shutdown = start = stop = _noop
 
     def add_handler(self, h, group=0):
         self.handlers.append(h)
@@ -476,7 +470,7 @@ async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_
     from telegram.error import InvalidToken
 
     class Rejecting(FakeApp):
-        async def __aenter__(self):
+        async def initialize(self):
             raise InvalidToken("The token `SECRET-TOKEN-123` was rejected by the server.")
     cfg = config(tmp_path)
     eco_t, _ = ecowitt_transport(history_days=3)
