@@ -16,15 +16,6 @@ from .reads import rows_on
 log = logging.getLogger(__name__)
 
 
-def series_in(data: dict):
-    """(group, field, obj) for every time series in an Ecowitt 'data' object; obj["list"] is {ts: value}."""
-    for group, fields in data.items():
-        if isinstance(fields, dict):
-            for field, obj in fields.items():
-                if isinstance(obj, dict) and isinstance(obj.get("list"), dict):
-                    yield group, field, obj
-
-
 def spans(cycle: str, t: datetime, until: datetime):
     """(start, end) pieces of [t, until) that each fit Ecowitt's per-request limit for this cycle."""
     while t < until:
@@ -157,11 +148,6 @@ class Fetcher:
             self.errors.append(f"{label}: {e}")
             self.rejected += not e.transient
             return None
-
-    @timed
-    async def read(self, fn, *args):
-        """fn(*args), a read of the storage made as the old cache's (slots, slot ranges), in a thread."""
-        return await asyncio.to_thread(fn, *args)
 
     @timed
     async def stored(self, fn, *args):

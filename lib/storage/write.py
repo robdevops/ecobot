@@ -14,7 +14,6 @@ import time
 from contextlib import contextmanager
 from datetime import date
 
-from ..counts import uncounted
 from . import Sensor
 from .catalogue import AIR, AIR_EXTERNAL, BY_NAME, CLOUD, HOME_ASSISTANT, KINDS, SLOT, column_of, kind_of, label_of
 from .coverage import merge, subtract
@@ -136,7 +135,6 @@ class Writer:
         self.storage = storage
         self.db = storage.write_db
         self.tz = storage.tz
-        self._depth = 0
         self._coverage: dict[tuple[int, str], list] = {}   # this transaction's coverage, by (sensor, res)
         self._sensors: list[Sensor] = []                    # ... its new sensors
         self._days: dict[str, dict[int, dict[date, set[str]]]] = {}   # ... and the days to work out again, by kind and sensor, with what
@@ -149,27 +147,18 @@ class Writer:
 
     @contextmanager
     def transaction(self):
-        """One transaction (a transaction inside one is part of it): the day rows of the days it touched are worked out before it is
-        committed, and its coverage and sensors are seen by the readers once it is."""
-        if self._depth:
-            self._depth += 1
-            try:
-                yield self
-            finally:
-                self._depth -= 1
-            return
-        uncounted(self.db, "BEGIN IMMEDIATE")
-        self._depth = 1
+        """One transaction: the day rows of the days it touched are worked out before it is committed, and its coverage and sensors are
+        seen by the readers once it is."""
+        self.db.execute("BEGIN IMMEDIATE")
         try:
             yield self
             for kind, wanted in self._days.items():
                 work_out(self.db, kind, wanted, self.held, self.tz)
-            uncounted(self.db, "COMMIT")
+            self.db.execute("COMMIT")
         except BaseException:
-            uncounted(self.db, "ROLLBACK")
+            self.db.execute("ROLLBACK")
             raise
         finally:
-            self._depth = 0
             coverage, sensors = self._coverage, self._sensors
             self._coverage, self._sensors, self._days = {}, [], {}
         self.storage.coverage.publish(coverage)

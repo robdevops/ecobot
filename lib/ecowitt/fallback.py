@@ -41,7 +41,6 @@ class FallbackAPI:
     def __init__(self, first, second, tz, clock=time.time):
         """first: the API that answers (Home Assistant's); second: the one that makes up what it lacks (Ecowitt's cloud)."""
         self.first, self.second, self.tz, self.clock = first, second, tz, clock
-        self.fast_live, self.minute_lines = first.fast_live, first.minute_lines
         self._down: dict[str, bool] = {}   # which of "first" / "second" is failing now, so each outage is said once
 
     @property

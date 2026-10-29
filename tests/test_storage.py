@@ -10,9 +10,8 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-from lib import counts
 from lib.lines import bucket_summary
-from lib.rain import MAX_GAP, rain_slots
+
 from lib.storage import Storage, catalogue, schema
 from lib.storage.catalogue import BOT, CLOUD, HOME_ASSISTANT, Column, column_of, field_of, text
 from lib.storage.days import utc_days
@@ -87,10 +86,8 @@ async def test_a_request_reads_in_one_hop_on_the_readers_thread_and_its_queries_
         seen["thread"] = threading.current_thread().name
         sensor = r.sensor(MAC, "outdoor")
         return r.rows("climate", [sensor.id], "5min", t, t + 300), r.days("climate", [sensor.id], local_date(t, TZ), local_date(t, TZ))
-    count = counts.start()
     rows, days = await storage.read(request)
-    counts.detach()
-    assert seen["thread"].startswith("storage-read") and (count.hops, count.sql) == (1, 2)   # BEGIN and COMMIT are not queries
+    assert seen["thread"].startswith("storage-read")
     assert rows[1].values["temperature"] == [10.0, 11.0] and days[1].n == [2]
 
 
@@ -219,7 +216,8 @@ def test_a_field_the_catalogue_lacks_and_a_value_that_is_not_a_number_are_kept_a
     response = {"outdoor": {"temperature": {"unit": "℃", "list": {str(t): "12.3", str(t + 300): "--"}},
                             "brightness": {"unit": "lux", "list": {str(t): "4000"}}}}
     storage.writer.run(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], response, t, t + 300), ())
-    assert read(storage, lambda r: r.extra(1, "5min", 0, 2 ** 40)) == {"brightness": {t: "4000"}, "temperature": {t + 300: "--"}}
+    kept = storage.write_db.execute("SELECT field, ts, value FROM extra WHERE sensor = 1 ORDER BY field, ts").fetchall()
+    assert kept == [("brightness", t, "4000"), ("temperature", t + 300, "--")]
     assert read(storage, lambda r: r.fields(1)) == {"temperature": "℃", "brightness": "lux"}
 
 
@@ -374,10 +372,8 @@ def test_rows_are_columns_of_one_query_and_leave_out_a_reading_the_sensor_never_
         out, ind = w.ecowitt_sensor(MAC, "outdoor"), w.ecowitt_sensor(MAC, "indoor")
         w.put(out, "30min", [{"ts": t, "temperature": 10.0, "temperature_lo": 9.0, "temperature_hi": 11.0}, {"ts": t + 1800, "temperature": 12.0}])
         w.put(ind, "30min", [{"ts": t, "temperature": 20.0, "app_temp": 21.0}])
-    count = counts.start()
     got = read(storage, lambda r: r.rows("climate", [out.id, ind.id], "30min", t, t + 1800))
-    counts.detach()
-    assert count.sql == 1 and set(got[out.id].values) == {"temperature"} and set(got[ind.id].values) == {"temperature", "app_temp"}
+    assert set(got[out.id].values) == {"temperature"} and set(got[ind.id].values) == {"temperature", "app_temp"}
     assert got[out.id].lo["temperature"] == [9.0, None] and got[out.id].hi["temperature"] == [11.0, None]
 
 
@@ -409,37 +405,6 @@ def test_buckets_are_worked_out_as_lines_bucket_summary_does(storage, width):
         assert (got.mean["temperature"][i], got.lo["temperature"][i], got.hi["temperature"][i]) == pytest.approx(want[b])
 
 
-def test_records_are_the_first_time_of_the_highest_and_lowest_and_each_months_own(storage):
-    first = local_date(old_day(80), TZ).replace(day=1)
-    days = [first + timedelta(days=n) for n in range(62)]
-    with storage.writer.transaction() as w:
-        s = w.ecowitt_sensor(MAC, "outdoor")
-        for i, d in enumerate(days):
-            start, end = day_bounds(d, TZ, True)
-            w.put(s, "30min", [{"ts": start + 3600, "temperature": 30.0 if i in (5, 40) else 20.0 + i % 3}, {"ts": start + 7200, "temperature": 1.0}])
-            w.cover(s, "30min", start, end)
-    hottest = read(storage, lambda r: r.records("climate", s.id, "temperature", days[0], days[-1], "hi"))
-    assert [(r.day, r.value, r.timing) for r in hottest] == [(days[5], 30.0, "30min")]   # the first of the two
-    monthly = read(storage, lambda r: r.records("climate", s.id, "temperature", days[0], days[-1], "hi", "month"))
-    assert [r.value for r in monthly][:2] == [30.0, 30.0] and all(r.day.day >= 1 for r in monthly)
-    coldest = read(storage, lambda r: r.records("climate", s.id, "temperature", days[0], days[-1], "lo"))
-    assert coldest[0].day == days[0] and coldest[0].ts == day_bounds(days[0], TZ)[0] + 7200
-
-
-def test_rain_per_reading_is_worked_out_as_rain_rain_slots_does(storage):
-    t0 = old_day(30)
-    rng = random.Random(3)
-    daily, total, t = {}, 0.0, t0
-    while t < t0 + 3 * DAY:
-        if t % DAY == 14 * 3600:   # a reset
-            total = 0.0
-        total = round(total + (rng.choice([0, 0, 0, 0.2, 0.5])), 1)
-        daily[t] = total
-        t += 1800 if rng.random() < 0.9 else MAX_GAP + 1800   # now and then a hole
-    with storage.writer.transaction() as w:
-        s = w.ecowitt_sensor(MAC, "rainfall")
-        w.put(s, "30min", [{"ts": t, "daily": v} for t, v in daily.items()])
-    assert read(storage, lambda r: r.rain_slots(s.id, "30min", t0, t0 + 3 * DAY)) == rain_slots(daily)
 
 
 async def test_the_writers_own_thread_writes(storage):

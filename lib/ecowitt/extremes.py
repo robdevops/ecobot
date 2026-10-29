@@ -15,14 +15,6 @@ class Ext(NamedTuple):
     exact: bool     # a real reading or a bucket's true low/high, not an average
 
 
-def low_of(rec: dict) -> float:
-    return rec["low"][0] if "low" in rec else rec["value"][0]
-
-
-def high_of(rec: dict) -> float:
-    return rec["high"][0] if "high" in rec else rec["value"][0]
-
-
 _clock = lambda dt: clock_text(dt, whole_hours=True)   # "7:05am", "3:30pm", "10am"
 
 

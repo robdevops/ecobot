@@ -7,12 +7,10 @@ WAL mode a read never waits for a write. A request runs all its queries in one h
     rows, days = await storage.read(lambda r: (r.rows("climate", [s.id], "30min", start, end), r.days("climate", [s.id], first, last)))
 
 and a write is one transaction on the writer's thread (`await storage.write(lambda w: w.put_ecowitt(...))`). The sensors and the coverage
-are kept in memory as well, so neither is ever a query. Each hop is counted for the DEBUG timing line (lib/counts.py), and so is each
-statement.
+are kept in memory as well, so neither is ever a query.
 """
 
 import asyncio
-import contextvars
 import logging
 import sqlite3
 import threading
@@ -22,7 +20,6 @@ from pathlib import Path
 from typing import NamedTuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .. import counts
 from . import schema
 from .catalogue import AIR, AIR_EXTERNAL, KINDS
 from .coverage import Coverage
@@ -51,10 +48,6 @@ class Sensors:
         self._lock = threading.Lock()
         self.publish([Sensor(*row) for row in rows])
 
-    def get(self, sensor_id: int) -> Sensor:
-        with self._lock:
-            return self._by_id[sensor_id]
-
     def find(self, device: str, external: str) -> Sensor | None:
         with self._lock:
             return self._by_key.get((device, external))
@@ -80,9 +73,9 @@ def zone_named(name: str, default: tzinfo) -> tzinfo:
 
 
 def connect(path: Path, bulk: bool = False) -> sqlite3.Connection:
-    """A connection to the file, its statements counted. bulk (the migration, into a file of its own): no WAL and no syncing, as fast as it
-    goes, since a failure deletes the file."""
-    db = counts.connect(path, check_same_thread=False, isolation_level=None)
+    """A connection to the file. bulk (the migration, into a file of its own): no WAL and no syncing, as fast as it goes, since a failure
+    deletes the file."""
+    db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     db.execute("PRAGMA busy_timeout = 5000")
     db.execute("PRAGMA temp_store = MEMORY")
     if bulk:
@@ -137,16 +130,11 @@ class Storage:
 
     def read_now(self, fn, *args):
         """read() for code that is not async: the calling thread waits for the reader's (never call it on the reader's own thread)."""
-        if (count := counts.CURRENT.get()) is not None:
-            count.hops += 1
-        return self._read_pool.submit(contextvars.copy_context().run, self.reader.run, fn, args).result()
+        return self._read_pool.submit(self.reader.run, fn, args).result()
 
     @staticmethod
     async def _hop(pool: ThreadPoolExecutor, run, fn, args):
-        if (count := counts.CURRENT.get()) is not None:
-            count.hops += 1
-        context = contextvars.copy_context()   # (so the statements count towards the request that made the hop)
-        return await asyncio.get_running_loop().run_in_executor(pool, context.run, run, fn, args)
+        return await asyncio.get_running_loop().run_in_executor(pool, run, fn, args)
 
     # ---------- the sensors ----------
     def air_sensor(self, location: str) -> Sensor | None:

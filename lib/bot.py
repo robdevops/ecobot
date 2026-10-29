@@ -21,7 +21,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import counts, intent, periods, prompt, report, report_menu, templates
+from . import intent, periods, prompt, report, report_menu, templates
 from .admins import Admins
 from .alerts import menu, pictures
 from .alerts import AlertState
@@ -114,14 +114,12 @@ def _short(text: str, limit: int) -> str:
     return fit(" ".join(text.split()), limit)
 
 
-def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float, count=None) -> str:
-    """A reply's chart timings for the log: "data 12, 22 sql, 17 hops, calc 3, draw 98, PNG 41 (23 KB), send 812" (ms). times is
-    the question's Turn.times; made is how long the tool took when the chart was made in code (the calculation is that less its
-    data), else None; count (counts.Count) the question's SQL statements and thread hops. A step that wasn't timed is left out."""
+def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float) -> str:
+    """A reply's chart timings for the log: "data 12, calc 3, draw 98, PNG 41 (23 KB), send 812" (ms). times is the question's Turn.times;
+    made is how long the tool took when the chart was made in code (the calculation is that less its data), else None. A step that
+    wasn't timed is left out."""
     ms = lambda seconds: f"{seconds * 1000:.0f}"
     parts = [f"data {ms(times['data'])}"] if "data" in times else []
-    if count is not None:
-        parts.append(str(count))
     if made is not None:
         parts.append(f"calc {ms(max(0.0, made - times.get('data', 0.0)))}")
     if "draw" in times:
@@ -1022,7 +1020,6 @@ class Bot:
         """Upload (silently, to `chat`) the chart for each other period of `question`, so a press of a period button edits the message by
         Telegram's copy and uploads nothing. Nothing holds it back: each period is drawn and uploaded on its own, the moment it can be,
         whatever else is being answered."""
-        counts.detach()   # not the question's work
         started, done, skipped = time.monotonic(), set(), []
         try:
             now = now_local(self.cfg.tz)
@@ -1068,7 +1065,6 @@ class Bot:
         text = text.strip()
         if not text:
             return
-        counts.start()   # its SQL statements and thread hops, for the timing line
         stop_typing = asyncio.Event()   # "typing..." from the first moment, even while this question waits its turn
         typing = None if redraw is not None else asyncio.create_task(   # a chart redrawn in place from a button shows no "typing..."
             keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
@@ -1196,7 +1192,7 @@ class Bot:
                 log.debug("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(answer.ready), (time.monotonic() - began) * 1000,
                           " (Telegram's copy)" if isinstance(drawn[0], str) else "")
             elif drawn:
-                log.debug("Chart ms: %s", chart_times(turn.times, answer.made, drawn, time.monotonic() - began, counts.CURRENT.get()))
+                log.debug("Chart ms: %s", chart_times(turn.times, answer.made, drawn, time.monotonic() - began))
             if sent.photo and row is not None:
                 self.charted.remember(msg.chat_id, sent.photo.message_id, text)
                 self.images.sent(kept, sent.photo)

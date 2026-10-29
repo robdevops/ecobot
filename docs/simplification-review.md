@@ -9,7 +9,7 @@ Where the lines are (code lines, not counting docstrings and blanks): bot/Telegr
 storage and AirGradient 2,700; alerts, pollen, forecast, irrigation 1,500. Prose constants (the system prompt, caption hints) are ~160 of
 them.
 
-## 1. Dead code (remove; high confidence, verified twice)
+## 1. Dead code (removed in the commit after this review, except `Bars.values` and `Compass.speed_steps`, which tests and a golden sample use)
 
 | where | lines | what |
 |---|---|---|
@@ -30,7 +30,7 @@ source (only `warm()`'s unread return string uses them), the six `getattr`/`hasa
 let test fakes lack attributes. Replacing the shims with plain attribute access and giving the fakes the attributes is small but tightens
 the contracts.
 
-## 2. One-off and measurement code that can retire (owner's timing)
+## 2. One-off and measurement code that can retire (owner's timing; the counts instrumentation went with the dead code)
 
 | where | lines | what | recommendation |
 |---|---|---|---|

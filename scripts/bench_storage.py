@@ -27,7 +27,6 @@ import httpx
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 
-from lib import counts  # noqa: E402
 from lib.config import Config, data_dir, local_tz  # noqa: E402
 from lib.tools import Turn  # noqa: E402
 
@@ -37,7 +36,6 @@ FILES = ("ecobot.sqlite", "ecowitt_cache.sqlite", "ecowitt_live.sqlite", "ecowit
 class Offline:
     """Ecowitt's API with no network: it has nothing to give, and counts what it was asked (what the request would have fetched)."""
     empty_is_final = False   # (so nothing is recorded as fetched)
-    fast_live = minute_lines = False
 
     def __init__(self):
         self.asked = 0
@@ -91,23 +89,18 @@ def settings(folder: Path) -> Config:
                                airgradient_token=cfg.airgradient_token or ("bench" if location and location != "local" else ""))
 
 
-async def measured(work, repeat: int, asked, before=None) -> tuple[float, counts.Count, int]:
-    """(the median time in ms, the count of the last run, what the last run asked of the network: asked() is the total so far) of
-    `work()` run `repeat` times, each in a task of its own."""
-    times, count, ask = [], counts.Count(), 0
-
-    async def once():
-        nonlocal count
-        count = counts.start()
-        await work()
+async def measured(work, repeat: int, asked, before=None) -> tuple[float, int]:
+    """(the median time in ms, what the last run asked of the network: asked() is the total so far) of `work()` run `repeat` times, each
+    in a task of its own."""
+    times, ask = [], 0
     for _ in range(repeat):
         if before:
             before()
         started, first = time.perf_counter(), asked()
-        await asyncio.create_task(once())
+        await asyncio.create_task(work())
         times.append((time.perf_counter() - started) * 1000)
         ask = asked() - first
-    return statistics.median(times), count, ask
+    return statistics.median(times), ask
 
 
 def stations(storage) -> list[tuple[str, int, int]]:
@@ -129,12 +122,12 @@ def period(days: float, now: datetime) -> dict:
     return {"start_date": f"{now - timedelta(days=days):%Y-%m-%d %H:%M:%S}", "end_date": f"{now:%Y-%m-%d %H:%M:%S}"}
 
 
-async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.Count, int]]:
+async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
     from lib.airgradient import AirGradient
     from lib.ecowitt import Ecowitt
     from lib.ecowitt.archive import Archive
     cfg = settings(folder)
-    rows: list[tuple[str, float, counts.Count, int]] = []
+    rows: list[tuple[str, float, int]] = []
     if (folder / "ecowitt_cache.sqlite").exists() or cfg.storage_path.exists():
         started = time.monotonic()
         eco = Ecowitt(cfg)   # (the old caches moved into ecobot.sqlite first, if the copy has none)
@@ -197,7 +190,6 @@ def main():
     if not found:
         sys.exit(f"No history files in {args.data}: give the bot's data folder with --data")
     tz = ZoneInfo(args.tz) if args.tz else local_tz()
-    counts.install()
     with tempfile.TemporaryDirectory(prefix="ecobot-bench-") as tmp:
         folder = Path(tmp)
         for name in found:
@@ -205,10 +197,10 @@ def main():
         print(f"Files in {args.data}: " + ", ".join(f"{name} {(args.data / name).stat().st_size / 1e6:.1f} MB" for name in found))
         print(f"Time zone {tz}, each request run {args.repeat} times (the median shown)\n")
         rows = asyncio.run(bench(folder, args.repeat, tz))
-    print("| Request | SQL statements | Thread hops | Asked of the network | Time |")
-    print("|---|---|---|---|---|")
-    for label, ms, count, asked in rows:
-        print(f"| {label} | {count.sql} | {count.hops} | {asked} | {ms:,.0f} ms |")
+    print("| Request | Asked of the network | Time |")
+    print("|---|---|---|")
+    for label, ms, asked in rows:
+        print(f"| {label} | {asked} | {ms:,.0f} ms |")
     print("\nAsked of the network: what the copy could not answer. For a chart that is the newest hour or so, still settling, which the "
           "running bot has fetched lately; here it is asked of nothing and answered at once. The 3-hour chart is drawn from the minutes where "
           "the file holds them (Home Assistant's), else from the 5-minute readings.")

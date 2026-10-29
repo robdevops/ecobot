@@ -11,10 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from lib.ecowitt.api import UNITS
 from lib.ecowitt.api import FINE_CYCLES
 from lib.ecowitt.days import FIELDS
-from tests.old_cache import HistoryCache
+from tests.old_cache import UNITS, HistoryCache
 from lib.storage import FILE, Storage
 from lib.storage import migrate as migration
 from lib.storage.catalogue import BOT, CLOUD
@@ -235,7 +234,7 @@ def test_the_script_moves_a_copy_and_times_the_reads(tmp_path, monkeypatch, caps
     monkeypatch.setattr(asyncio, "to_thread", asyncio.to_thread)
     migrate_storage.main()
     out = capsys.readouterr().out
-    assert "Moved the history to ecobot.sqlite" in out and "| Temperature line, 1Y (day rows) | 1 | 1 |" in out
+    assert "Moved the history to ecobot.sqlite" in out and "| Temperature line, 1Y (day rows) | " in out
     assert (tmp_path / "kept.sqlite").exists() and not (tmp_path / "data" / FILE).exists()
     assert {p.name: p.read_bytes() for p in (tmp_path / "data").glob("*.sqlite")} == before
 

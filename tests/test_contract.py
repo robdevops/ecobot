@@ -11,8 +11,7 @@ from pathlib import Path
 from lib.airgradient.readings import AirReadings
 from lib.storage import Storage, migrate as migration
 from lib.tools import Turn
-from lib.ecowitt import api
-from tests.old_cache import HistoryCache
+from tests.old_cache import UNITS, HistoryCache
 from tests.fakes import MAC, TZ, archived_station
 from tests.test_compose import composer
 
@@ -32,7 +31,7 @@ def test_the_cache_schemas_are_unchanged(tmp_path):
         "points": ["series", "ts", "value"],
         "series": ["id", "mac", "cycle", "grp", "field", "unit"]}
     assert tables(DATA / "ecowitt_cache.sqlite") == layout
-    HistoryCache(tmp_path / "fresh.sqlite", api.UNITS).close()                      # a new file gets the same tables
+    HistoryCache(tmp_path / "fresh.sqlite", UNITS).close()                      # a new file gets the same tables
     assert tables(tmp_path / "fresh.sqlite") == layout
     assert tables(DATA / "airgradient_cache.sqlite") == {
         "days": ["loc", "day", "n"],
@@ -42,7 +41,7 @@ def test_the_cache_schemas_are_unchanged(tmp_path):
 def test_a_recorded_cache_still_opens_and_reads(tmp_path):
     shutil.copy(DATA / "ecowitt_cache.sqlite", tmp_path / "eco.sqlite")
     shutil.copy(DATA / "airgradient_cache.sqlite", tmp_path / "air.sqlite")
-    cache = HistoryCache(tmp_path / "eco.sqlite", api.UNITS)                       # the same units: nothing is cleared
+    cache = HistoryCache(tmp_path / "eco.sqlite", UNITS)                           # the same units: nothing is cleared
     now = cache._query("SELECT MAX(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.cycle = '30min'")[0][0]    # the fixture's own newest reading, so the test does not age
     for cycle, at_least in (("5min", 100), ("30min", 100), ("1day", 1)):
         temperature, = cache.slots(MAC, cycle, "outdoor", ["temperature"], now - 5 * 86400, now)

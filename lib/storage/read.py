@@ -5,10 +5,6 @@ long line, picking the records; Python is left the time zones and what is drawn 
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import NamedTuple
-
-from ..counts import uncounted
-from ..rain import MAX_GAP
 from .catalogue import KINDS, SLOT
 from .days import windows_select
 from .schema import q, some_value
@@ -49,13 +45,6 @@ class Days:
     lo_ts: dict[str, list] = field(default_factory=dict)
     hi: dict[str, list] = field(default_factory=dict)
     hi_ts: dict[str, list] = field(default_factory=dict)
-
-
-class Record(NamedTuple):
-    day: date
-    value: float
-    ts: int          # when it happened, as closely as `timing` says
-    timing: str      # the resolution its time comes from: 5min ("at 3:05pm"), 30min ("around"), 4hour, 1day ("sometime between")
 
 
 def _names(kind: str, columns: list[str] | None) -> list[str]:
@@ -101,11 +90,11 @@ class Reader:
 
     def run(self, fn, args):
         """fn(self, *args) in one read transaction: all its queries see the file as it was when the first one ran."""
-        uncounted(self.db, "BEGIN")
+        self.db.execute("BEGIN")
         try:
             return fn(self, *args)
         finally:
-            uncounted(self.db, "COMMIT")
+            self.db.execute("COMMIT")
 
     # ---------- what is there ----------
     def sensors(self, device: str | None = None, kind: str | None = None):
@@ -118,9 +107,6 @@ class Reader:
         """{field: unit} the sensor has sent (at this resolution, or any), as the source names them ("temperature_low")."""
         rows = self.db.execute("SELECT name, unit FROM fields WHERE sensor = ?" + (" AND res = ?" if res else ""), (sensor, res) if res else (sensor,))
         return dict(rows.fetchall())
-
-    def gaps(self, sensor: int, res: str, start: int, end: int) -> list[tuple[int, int]]:
-        return self.storage.coverage.gaps(sensor, res, start, end)
 
     def held(self, sensor: int, res: str, start: int, end: int) -> bool:
         return self.storage.coverage.held(sensor, res, start, end)
@@ -193,26 +179,6 @@ class Reader:
             _drop_empty(got.mean, got.lo, got.hi, keep=columns)
         return out
 
-    def extra(self, sensor: int, res: str, start: int, end: int) -> dict[str, dict[int, str]]:
-        """{field: {ts: text}} kept for the fields the catalogue has no column for."""
-        out: dict[str, dict[int, str]] = {}
-        for name, ts, value in self.db.execute("SELECT field, ts, value FROM extra WHERE sensor = ? AND res = ? AND ts BETWEEN ? AND ? "
-                                               "ORDER BY field, ts", (sensor, res, start, end)):
-            out.setdefault(name, {})[ts] = value
-        return out
-
-    def rain_slots(self, sensor: int, res: str, start: int, end: int, column: str = "daily") -> dict[int, float]:
-        """Rain per reading from a running total (the day's counter): the rise since the reading before, or the whole total after its
-        midnight reset, and nothing after a hole in the readings longer than rain.MAX_GAP (as rain.rain_slots). The database pairs each
-        reading with the one before it."""
-        out = {}
-        for ts, value, prev_ts, prev in self.db.execute(
-                f"SELECT ts, v, LAG(ts) OVER w, LAG(v) OVER w FROM (SELECT ts, {q(column)} AS v FROM rain WHERE sensor = ? AND res = ? "
-                f"AND ts BETWEEN ? AND ? AND {q(column)} IS NOT NULL) WINDOW w AS (ORDER BY ts)", (sensor, res, start, end)):
-            if prev is not None and ts - prev_ts <= MAX_GAP:
-                out[ts] = round(value - prev if value >= prev else value, 3)
-        return out
-
     # ---------- days ----------
     def days(self, kind: str, sensors: list[int], first: date, last: date, columns: list[str] | None = None) -> dict[int, Days]:
         """{sensor: its day rows from first to last}: one query, whatever the sensors."""
@@ -252,20 +218,6 @@ class Reader:
         return self.db.execute(f"SELECT 1 FROM {kind} WHERE sensor = ? AND res = ? AND ts BETWEEN ? AND ? AND {q(f'{column}_{want}')} "
                                "IS NOT NULL LIMIT 1", (sensor, res, start, end)).fetchone() is not None
 
-    def records(self, kind: str, sensor: int, column: str, first: date, last: date, want: str = "hi", per: str | None = None) -> list[Record]:
-        """The day with the highest ("hi") or lowest ("lo") of a reading from first to last, with when it happened (the first time, if it
-        happened more than once); per "month" or "year": that of each."""
-        value, ts = q(f"{column}_{want}"), q(f"{column}_{want}_ts")
-        order = f"{value} {'DESC' if want == 'hi' else 'ASC'}, {ts}"
-        where = f"FROM {kind}_day WHERE sensor = ? AND day BETWEEN ? AND ? AND {value} IS NOT NULL"
-        args = (sensor, first.isoformat(), last.isoformat())
-        if per is None:
-            rows = self.db.execute(f"SELECT day, {value}, {ts}, timing {where} ORDER BY {order} LIMIT 1", args).fetchall()
-        else:
-            group = {"month": "substr(day, 1, 7)", "year": "substr(day, 1, 4)"}[per]
-            rows = self.db.execute(f"SELECT day, v, t, timing FROM (SELECT day, {value} AS v, {ts} AS t, timing, ROW_NUMBER() OVER "
-                                   f"(PARTITION BY {group} ORDER BY {order}) AS k {where}) WHERE k = 1 ORDER BY day", args).fetchall()
-        return [Record(date.fromisoformat(day), v, t, timing) for day, v, t, timing in rows]
 
 
-__all__ = ["Buckets", "Days", "Reader", "Record", "Rows"]
+__all__ = ["Buckets", "Days", "Reader", "Rows"]

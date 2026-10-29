@@ -54,7 +54,6 @@ AIR = ("air", "air", "AirGradient")   # the AirGradient as a sensor: (kind, role
 AIR_EXTERNAL = "air"
 
 # Resolutions: the seconds a reading covers. 1hour is the AirGradient's older history; 4hour and 1day are Ecowitt's, cut on UTC hours.
-RES = {"1min": 60, "5min": 300, "30min": 1800, "1hour": 3600, "4hour": 14400, "1day": 86400}
 SLOT = 1800
 # Where a row's values came from: a write replaces those of a row from a source ranked as high or lower (and fills what one ranked higher lacks)
 CLOUD, HOME_ASSISTANT, BOT = 0, 1, 2
@@ -97,5 +96,5 @@ def text(value: float, decimals: int, whole: bool = False) -> str:
     return written.lstrip("-") if float(written) == 0 else written
 
 
-__all__ = ["AIR", "AIR_EXTERNAL", "BOT", "BY_NAME", "CLOUD", "Column", "ECOWITT", "Group", "HOME_ASSISTANT", "KINDS", "OTHER", "RES",
+__all__ = ["AIR", "AIR_EXTERNAL", "BOT", "BY_NAME", "CLOUD", "Column", "ECOWITT", "Group", "HOME_ASSISTANT", "KINDS", "OTHER",
            "SLOT", "column_of", "field_of", "kind_of", "label_of", "text"]

@@ -397,7 +397,7 @@ async def test_a_chart_reply_logs_how_long_each_step_took(alert_state, tmp_path,
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
     assert len(sent) == 1 and len(lines) == 1, lines
     kb = round(len(sent[0]) / 1024)
-    assert re.fullmatch(rf"Chart ms: data \d+, \d+ sql, \d+ hops, calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
+    assert re.fullmatch(rf"Chart ms: data \d+, calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
 
 
 async def _ask_with(alert_state, tool_result, text, monkeypatch=None):

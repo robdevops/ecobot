@@ -85,7 +85,6 @@ class HistoryQuery:
         self.units: dict[str, str] = {}                    # "group.field" -> its unit: the series of the period
         self.period: dict[str, Period] = {}                # "group.field" -> its days in the period and its records over them
         self.store: Store = {}      # "group.field" -> {"unit", "pts": {epoch: Sample}}: its readings, where a line or a count needs them
-        self.by_minute = False      # ... the minutes (Home Assistant's), for a short stretch
         self.drawing = ("none", 0)  # how the chart's lines are drawn (_drawing)
         self.lines: dict[str, Plotted] = {}                # the lines the database bucketed
         self.start = self.end = self.span = None          # the period, set by run()
@@ -181,7 +180,6 @@ class HistoryQuery:
         if self.span <= timedelta(hours=MINUTE_HOURS) and f.has_minutes and (
                 first := await f.stored(first_minute_on, f.mac, f.groups, f.epoch(start), f.epoch(end))) is not None \
                 and first <= f.epoch(start) + SLACK_SECONDS:
-            self.by_minute = True
             return [(MINUTE, start, end)]   # (kept by the bot: nothing to ask for)
         if self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or await f.covered(
                 "5min", f.epoch(start), f.epoch(end))):

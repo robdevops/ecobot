@@ -149,7 +149,6 @@ class Ecowitt(Source):
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
         self.via = "Home Assistant, cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
         self.has_minutes = home is not None   # (only Home Assistant has minutes)
-        self._minutes_ok: bool | None = None
         self.fast = home                     # the API that can be asked every few seconds, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
         self._ha_ok: bool | None = None
@@ -161,7 +160,6 @@ class Ecowitt(Source):
         self.on_live: list = []             # called (no arguments) when the poll finds a reading newer than the last: the rain alert's
         self._seen = 0                       # the time of the newest reading the poll has found
         self._polled: float = 0.0            # when the poll last had an answer
-        self._poll_ok: bool | None = None
         self._recorded = 0.0
         self.cache_line = ""
         self.mac = ""
@@ -319,10 +317,9 @@ class Ecowitt(Source):
                 data = await self.fast.realtime(self.mac, ",".join(LIVE_GROUPS))
             except Exception as e:
                 self.fast.ha.trouble.failed("live reading", e, f"asked again every {LIVE_POLL_SECONDS:g} s")
-                self._poll_ok = False
                 continue
             self.fast.ha.trouble.ok()
-            self._poll_ok, self._polled = True, time.time()
+            self._polled = time.time()
             if (at := newest(data)) <= self._seen:
                 continue
             self._seen, self._live = at, (time.time(), data)
@@ -343,10 +340,8 @@ class Ecowitt(Source):
             await self.storage.write(lambda w: w.put_minutes(self.mac, data, now))
         except Exception as e:
             self.fast.ha.trouble.failed("minute readings", e, "short charts use the 5-minute readings")
-            self._minutes_ok = False
             return
         self.fast.ha.trouble.ok()
-        self._minutes_ok = True
 
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags

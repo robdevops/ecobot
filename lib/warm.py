@@ -10,7 +10,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
-from . import counts
 from .logs import BUGS
 
 log = logging.getLogger(__name__)
@@ -24,8 +23,6 @@ SYNC_HOURS = (6, 18)  # the sources that are websites are only fetched from 6 am
 
 def in_sync_hours(now: datetime) -> bool:
     return SYNC_HOURS[0] <= now.hour < SYNC_HOURS[1]
-
-
 
 
 async def safely(fn: Callable[..., Awaitable], *args):
@@ -51,7 +48,6 @@ class Warmer:
         self._lock = asyncio.Lock()   # one refresh at a time: a timed one waits for a question's
 
     async def _refresh(self, fresh: bool):
-        counts.detach()   # a refresh a question started is not the question's work
         async with self._lock:
             await safely(self.refresh, fresh)
 

@@ -284,7 +284,7 @@ the rare write that meets another. `PRAGMA optimize` runs at close.
 
 As built (`lib/storage/__init__.py`): `await storage.read(fn)` runs `fn(reader)` on the reader's thread in one read transaction, so its
 queries see one moment of the file, and `await storage.write(fn)` runs `fn(writer)` on the writer's in one transaction; each is one hop,
-and its statements count towards the request that made it (the DEBUG `Chart ms` line). The sensors and the coverage are in memory; a
+and each is one thread hop. The sensors and the coverage are in memory; a
 write's changes to them are seen once it is committed, so a reader never sees coverage for readings that were rolled back.
 
 ### 3.11 What the database does, and what is left to Python
@@ -460,13 +460,14 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 
 0. **Measure (done).** `scripts/bench_storage.py` (`docker compose exec ecobot python scripts/bench_storage.py`) gave the baseline in
    section 1, the yardstick for the rest; `tests/bench_cache.py` is the stand-in for the real caches between the owner's runs; the DEBUG
-   `Chart ms` line counts each chart's queries and thread hops.
+   `Chart ms` line counted each chart's queries and thread hops (`lib/counts.py`, retired with the redesign done: the tables below keep
+   its numbers).
 1. **The new storage on its own (done).** `lib/storage/`: the catalogue, the schema and its versions, the two connections, writing
    (readings, ranges, minutes, coverage, day rows, Ecowitt's responses by the old cache's rules) and reading (rows, buckets, days, records,
    rain per reading). The migration, with tests on old-format files built by the tests themselves and on the fake station's whole archive
    (`tests/test_storage.py`, `tests/test_storage_migrate.py`), and `scripts/migrate_storage.py` to check it on a copy of the real cache.
    Nothing uses it yet. On the way: the statement count of step 0 used SQLite's trace hook, for which Python writes out every row of an
-   `executemany` with its values, six times the cost of the insert; it now counts at the connection's own calls (`counts.Counted`).
+   `executemany` with its values, six times the cost of the insert; it was then counted at the connection's own calls.
 2. **The station on it.** `Fetcher`, `HistoryQuery`, `days`, `link`, `dashboard`, `compose`, the alerts, the archive, the live readings, the
    minutes and Home Assistant's ranges read and write the new tables; `HotStore`, `LiveRanges`, `MinuteStore` and the refining go. The bot
    migrates at start. While this is built, a temporary test runs the same questions on the same fixture through the old code and the new

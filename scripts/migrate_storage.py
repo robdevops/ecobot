@@ -21,7 +21,6 @@ from zoneinfo import ZoneInfo
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 
-from lib import counts  # noqa: E402
 from lib.config import data_dir, local_tz  # noqa: E402
 from lib.storage import Storage  # noqa: E402
 from lib.timeutil import local_date  # noqa: E402
@@ -45,15 +44,11 @@ def reads(storage: Storage, tz) -> list[tuple[str, object]]:
                 ("Temperature line, 1M (2-hour buckets)", lambda r: r.buckets("climate", o, ("30min",), now - 30 * 86400, now, 7200,
                                                                                ["temperature"])),
                 ("Temperature line, 3M (day rows)", lambda r: r.days("climate", o, today - timedelta(days=90), today, ["temperature"])),
-                ("Temperature line, 1Y (day rows)", lambda r: r.days("climate", o, today - timedelta(days=365), today, ["temperature"])),
-                ("Records: each month's hottest day, a year", lambda r: r.records("climate", outdoor.id, "temperature",
-                                                                                 today - timedelta(days=365), today, "hi", "month"))]
+                ("Temperature line, 1Y (day rows)", lambda r: r.days("climate", o, today - timedelta(days=365), today, ["temperature"]))]
     if outdoor and rain:
         out.append(("weather_days: 4 years of temperature and rain (day rows)", lambda r: (
             r.days("climate", [outdoor.id], today - timedelta(days=1460), today, ["temperature"]),
             r.days("rain", [rain.id], today - timedelta(days=1460), today, ["daily"]))))
-    if rain:
-        out.append(("Rain per half hour, 3M", lambda r: r.rain_slots(rain.id, "30min", now - 90 * 86400, now)))
     if station:
         jan = today.replace(month=1, day=1)
         out.append(("/dashboard: the year's day rows of every sensor", lambda r: [
@@ -65,26 +60,20 @@ def reads(storage: Storage, tz) -> list[tuple[str, object]]:
     return out
 
 
-async def timed(storage: Storage, fn, repeat: int = 3) -> tuple[float, counts.Count]:
-    times, count = [], counts.Count()
-
-    async def once():
-        nonlocal count
-        count = counts.start()
-        await storage.read(fn)
+async def timed(storage: Storage, fn, repeat: int = 3) -> float:
+    times = []
     for _ in range(repeat):
         started = time.perf_counter()
-        await asyncio.create_task(once())
+        await asyncio.create_task(storage.read(fn))
         times.append((time.perf_counter() - started) * 1000)
-    return statistics.median(times), count
+    return statistics.median(times)
 
 
 async def time_reads(storage: Storage, tz):
-    print("\n| Read on the new file | SQL statements | Thread hops | Time |")
-    print("|---|---|---|---|")
+    print("\n| Read on the new file | Time |")
+    print("|---|---|")
     for label, fn in reads(storage, tz):
-        ms, count = await timed(storage, fn)
-        print(f"| {label} | {count.sql} | {count.hops} | {ms:,.1f} ms |")
+        print(f"| {label} | {await timed(storage, fn):,.1f} ms |")
     print("\nThe data a request needs, in one hop; the answers and charts are built on it in step 2.")
 
 
@@ -107,7 +96,6 @@ def main():
         print("\n".join(report.lines()))
         if not report.ok:
             sys.exit(1)
-        counts.install()
         storage = Storage(folder / "ecobot.sqlite", tz)
         try:
             asyncio.run(time_reads(storage, tz))

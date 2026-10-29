@@ -5,10 +5,10 @@ One row per distinct result: a fetch that finds the same content only moves the 
 adds a handful of rows, not hundreds. Rows older than a year are dropped."""
 
 import json
+import sqlite3
 import threading
 import time
 
-from .counts import connect
 from .storage.schema import SNAPSHOT_TABLES
 
 KEEP_SECONDS = 400 * 86400
@@ -21,7 +21,7 @@ class Snapshots:
 
     def __init__(self, path):
         self._lock = threading.Lock()
-        self.db = connect(path, check_same_thread=False, timeout=30)
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SNAPSHOT_TABLES)
         self.db.commit()

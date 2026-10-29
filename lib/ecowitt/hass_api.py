@@ -1,11 +1,10 @@
 """Home Assistant as an Ecowitt API: the three calls the bot makes of Ecowitt's cloud (devices, realtime, history), answered from Home Assistant.
 
 The rest of the bot never knows the difference: the cache, the archive, the charts and the alerts all take what `EcowittAPI` gives, in the
-shapes it gives them (api.py; hass_history.py tells how the history is cut). What differs is what it can do:
-  - fast_live: its live reading is a request to a machine on the network, so it can be asked for every few seconds, not once a minute;
-  - minute_lines: it has a "1min" history cycle (Ecowitt has none);
-  - empty_is_final: False. Home Assistant only has what it recorded, so an answer with nothing in it does not prove there was nothing to
-    know (the cloud may have it): the cache does not remember such a range as fetched, and a fallback asks the cloud for it.
+shapes it gives them (api.py; hass_history.py tells how the history is cut). What differs: its live reading is a request to a machine
+on the network, so it is asked for every few seconds, not once a minute (source.watch_live); it has a "1min" history cycle (Ecowitt has
+none); and empty_is_final is False, since Home Assistant only has what it recorded, so an answer with nothing in it does not prove there
+was nothing to know (the cloud may have it): the storage does not remember such a range as fetched, and a fallback asks the cloud for it.
 It is up as long as Home Assistant is: a failure is an EcowittError, as the cloud's are, passing (a network error, a restart) or not (a
 refused token).
 """
@@ -27,7 +26,6 @@ log = logging.getLogger(__name__)
 
 CHUNK = 86400                     # a request to Home Assistant covers at most this long (a day, so a response stays a few MB)
 LOOKBACK_DAYS = 3650              # how far back its first state is looked for
-STALE_SECONDS = 600               # a live reading older than this is said to be stale (a fallback may have a fresher one)
 
 
 def live_data(states: list[dict], prefix: str, groups: set[str], units: dict[str, str] | None = None) -> dict:
@@ -52,8 +50,6 @@ def live_data(states: list[dict], prefix: str, groups: set[str], units: dict[str
 
 
 class HomeAssistantAPI:
-    fast_live = True
-    minute_lines = True
     empty_is_final = False
 
     def __init__(self, url: str, token: str, tz: tzinfo, mac: str = "HOMEASSISTANT", transport=None, clock=time.time):

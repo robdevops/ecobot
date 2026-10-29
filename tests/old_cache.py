@@ -8,18 +8,19 @@ may still change (late uploads), so only buckets older than a per-cycle horizon 
 """
 
 import json
+import sqlite3
 import logging
 import threading
 import time
 from bisect import bisect_left
 
-from lib.counts import connect
 from lib.ecowitt.api import CYCLES, UNIT_FIXES
 from lib.timeutil import SLOT
 
 log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1"
+UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh", "rainfall_unitid": "mm"}   # as the old cache remembered them
 # Missing readings older than this are accepted as genuinely missing (station offline,
 # before it existed). Newer gaps may just be Ecowitt running late, so they're re-asked.
 GAP_FINAL_SECONDS = 2 * 86400
@@ -67,7 +68,7 @@ class HistoryCache:
     def __init__(self, path, units: dict):
         self._lock = threading.Lock()
         self.path = path
-        self.db = connect(path, check_same_thread=False)
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);

@@ -44,9 +44,9 @@ def old_archived_cache(tmp_path_factory):
     station's answers, its settled readings only."""
     from datetime import datetime, time, timedelta
 
-    from lib.ecowitt.api import CYCLES, GROUPS, UNITS, kept_from
+    from lib.ecowitt.api import CYCLES, GROUPS, kept_from
     from lib.ecowitt.fetch import spans
-    from tests.old_cache import HistoryCache
+    from tests.old_cache import UNITS, HistoryCache
     from lib.timeutil import local_epoch
     from tests.fakes import HISTORY_DAYS, MAC, TZ, FakeEcowitt
     path = tmp_path_factory.mktemp("old-archive") / "ecowitt_cache.sqlite"
