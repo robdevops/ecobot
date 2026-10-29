@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from .logs import QUOTES
+from .logs import BUGS, QUOTES
 
 log = logging.getLogger(__name__)
 

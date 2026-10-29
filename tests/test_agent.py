@@ -386,3 +386,20 @@ async def test_a_question_that_asks_for_the_air_sensors_own_readings_is_sent_the
     assert plain.requests[0]["tools"] == t.schemas and "air_humidity" not in json.dumps(plain.requests[0]["tools"])
     names = [s["function"]["name"] for s in asked.requests[0]["tools"]]
     assert names == ["plot_chart", "weather_now"] and "air_humidity" in json.dumps(asked.requests[0]["tools"])
+
+
+async def test_a_tool_that_fails_answers_the_model_with_the_error_and_only_a_bug_logs_its_traceback(caplog):
+    import logging
+
+    async def broken(args, turn=None):
+        raise RuntimeError("Ecowitt is down")
+
+    async def buggy(args, turn=None):
+        return {}["missing"]
+    t = Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, broken),
+               Tool("weather_history", "d", {"type": "object", "properties": {}}, buggy)])
+    with caplog.at_level(logging.ERROR, logger="lib.tools"):
+        assert await t.call("weather_now", "{}") == "Error calling tool: Ecowitt is down"
+        assert await t.call("weather_history", "{}") == "Error calling tool: 'missing'"
+    down, bug = caplog.records
+    assert not down.exc_info and bug.exc_info                        # a failure is a line; a bug in the code keeps its traceback
