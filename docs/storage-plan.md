@@ -88,11 +88,12 @@ damages the file, and a commit no longer waits for the disk). Its tables:
 |---|---|
 | `meta` | the schema version (`PRAGMA user_version` too), the station's time zone, what was migrated from where |
 | `sensors` | one row per sensor: what it is and where its readings come from |
+| `fields` | the fields each sensor has sent at each resolution and their units, as the source writes them (the old `series` table without its ids) |
 | `coverage` | which times are held, per sensor and resolution |
 | `climate`, `pressure`, `wind`, `rain`, `light`, `air` | the readings, one table per kind of sensor (3.3) |
 | `climate_day` ... `air_day` | each sensor's local days: mean, lowest and highest and when (3.5) |
 | `extra` | anything a source sends that the catalogue does not know yet (3.3) |
-| `snapshots` | the pollen page and the forecast, as now (`lib/snapshots.py`), moved in unchanged |
+| `snapshots`, `snapshot_meta` | the pollen page and the forecast, as now (`lib/snapshots.py`), moved in unchanged |
 
 `bot_state.json` stays as it is: it is the chats' settings, not readings.
 
@@ -125,24 +126,26 @@ pages in time order, and a new reading goes on the end of its run:
 ```sql
 CREATE TABLE climate (
     sensor INTEGER NOT NULL, res TEXT NOT NULL, ts INTEGER NOT NULL,
-    temperature REAL, temperature_lo REAL, temperature_hi REAL,
-    humidity    REAL, humidity_lo    REAL, humidity_hi    REAL,
-    dew_point   REAL, dew_point_lo   REAL, dew_point_hi   REAL,
-    feels_like  REAL, feels_like_lo  REAL, feels_like_hi  REAL,
-    vpd         REAL, vpd_lo         REAL, vpd_hi         REAL,
     src  INTEGER NOT NULL,   -- where the values came from: the cloud, Home Assistant, the bot's own readings (which win)
     final INTEGER NOT NULL,  -- 0 while the readings may still change (newer than the cycle's settle horizon)
+    "temperature" REAL, "temperature_lo" REAL, "temperature_hi" REAL,
+    "humidity"    REAL, "humidity_lo"    REAL, "humidity_hi"    REAL,
+    "dew_point"   REAL, ..., "feels_like" ..., "app_temp" ..., "vpd" ...,
     PRIMARY KEY (sensor, res, ts)) WITHOUT ROWID;
 ```
 
-- **The catalogue.** The columns come from one table in code, which grows out of `lib/series.py` and `lib/ecowitt/hass_map.py`: each
-  reading's kind, column, unit, decimals and how a stretch of it is told as one (mean, highest, last). The DDL is generated from it, and a
-  reading added to it later is an `ALTER TABLE ... ADD COLUMN`, which SQLite does at once.
-- **Kinds.** climate (temperature, humidity, dew point, feels like, VPD), pressure (relative, absolute), wind (speed, gust, direction), rain
-  (rate, daily, event, hourly, weekly, monthly, yearly), light (solar, UV), air (PM1, PM2.5, PM10, CO₂, VOC, NOx, the sensor's own
-  temperature and humidity). Ecowitt's own air sensors (WH45 and the like) would be air sensors too.
-- **Values are REAL**, rounded on write to the reading's decimals (`hass_map.written` does this now for Home Assistant), and written back
-  out with them, so an answer shows "12.3" as it does now. No text to parse on reading.
+- **The catalogue** (`lib/storage/catalogue.py`). The columns come from one table in code: each reading's kind, column, decimals, how a
+  stretch of it is told as one (mean, highest, last) and whether it takes a band. The DDL is generated from it, and a reading added to it
+  later is an `ALTER TABLE ... ADD COLUMN` at the next start, which SQLite does at once. A column is named as the source names the field
+  (`temperature`, `1_hour`: quoted in the SQL), so the code keeps naming a series `outdoor.temperature`; indoor's `app_tempin` shares the
+  `app_temp` column.
+- **Kinds.** climate (temperature, humidity, dew point, feels like, apparent temperature, VPD), pressure (relative, absolute), wind (speed,
+  gust, direction), rain (rate, daily, event, 1_hour, weekly, monthly, yearly), light (solar, UV), air (PM1, PM2.5, PM10, CO₂, VOC, NOx,
+  the sensor's own temperature and humidity). Ecowitt's own air sensors (WH45 and the like) would be air sensors too. A group the catalogue
+  does not know (a channel sensor) is a sensor of kind `other`, all its readings in `extra` until it has columns.
+- **Values are REAL**, written back out with the reading's decimals (as the owner's station writes them: humidity and UV as whole
+  numbers), so an answer shows "12.3" as it does now. No text to parse on reading. The migration counts the values whose text would come
+  back otherwise, per field, so the catalogue's decimals are checked against the real cache before anything uses them.
 - **A reading's low and high are in its row** (`_lo`, `_hi`), not series of their own: Ecowitt's 30-minute and coarser lows and highs, and
   the bands the bot and Home Assistant add (3.6). A null costs a byte, so a row without a range costs almost nothing.
 - **`res`** is the resolution: `1min`, `5min`, `30min`, `4hour`, `1day` (Ecowitt's UTC days) and `1hour` (AirGradient's older history).
@@ -168,21 +171,30 @@ history answer, and the records of a period. So each sensor's local days are kep
 ```sql
 CREATE TABLE climate_day (
     sensor INTEGER NOT NULL, day TEXT NOT NULL,   -- the local date, 2026-10-29
-    source TEXT NOT NULL,                         -- the resolution it was worked out from: 1min, 5min, 30min, or 1day (approximate)
+    source TEXT NOT NULL,      -- the resolution the figures come from: 5min, 30min, or 1day (Ecowitt's daily record: approximate)
+    timing TEXT NOT NULL,      -- the resolution the times of the lowest and highest come from (4hour for most daily records)
+    complete INTEGER NOT NULL, -- the source holds the whole local day (not so today, or at the edge of what was fetched)
+    n INTEGER NOT NULL,        -- the readings counted
     temperature_mean REAL, temperature_lo REAL, temperature_lo_ts INTEGER, temperature_hi REAL, temperature_hi_ts INTEGER,
     humidity_mean REAL, ...,
     PRIMARY KEY (sensor, day)) WITHOUT ROWID;
 ```
 
-- **Exactly what is done now, once.** The figures follow `days.day_values` and `days.day_figures` (5- or 30-minute readings where the
-  whole local day is held, else Ecowitt's daily record, labelled approximate), and each reading's mode decides what its figure is (the
-  rain counter's highest is the day's total).
+- **What is done now, once** (`lib/storage/days.py`). The source follows `days.day_values`: the 5-minute readings where the whole local
+  day is held at 5 minutes (even if the station sent none: that day has no row), else the 30-minute ones, else Ecowitt's daily record
+  labelled with the local date its 10am start falls on. A day none of those hold (today) is worked out from what there is and marked
+  incomplete. A day's highest is the highest of each reading's own range where it has one, else of its value (the rain counter's highest
+  is the day's total); its mean is the mean of its half hours' means, as the charts' daily points have it. The tests check every day of the
+  fake station's archive against `day_values` (over 5,000 figures, all equal).
 - **When the low and high happened.** A day row keeps the time of its low and high, so a period's records come from one query on the
-  day rows (`ORDER BY temperature_hi DESC LIMIT 1`), with their times. That replaces most of the refining. The part-days at either
-  end of a period are read from the fine rows.
+  day rows (`ORDER BY temperature_hi DESC, temperature_hi_ts LIMIT 1`: the first time, as refining has it). A daily record's day takes the
+  times from the 4-hour readings of its UTC day where they are held ("sometime between 2pm and 6pm", as refining found them), its figures
+  staying the record's. That replaces the refining. The part-days at either end of a period are read from the fine rows.
 - **Kept up to date as readings arrive.** A write notes the local days it touched, and their rows are worked out again in the same
-  transaction, by one `INSERT ... SELECT` with `GROUP BY` per kind, a millisecond for a day of 5-minute readings. A new time zone (the
-  station moved) works them all out again.
+  transaction: Python chooses each day's resolution and window and puts them in a temporary table, and one `INSERT ... SELECT` per kind
+  works them out (a window over each day finds its lowest and highest, a `GROUP BY` each half hour). A day of every climate sensor takes
+  about 10 ms, the whole migration's 10,000 days about 4 s. A new time zone (the station moved) works them all out again.
+- **The AirGradient's days** wait for its step (3), since they need the spike filter.
 - **Months and years** are a `GROUP BY substr(day, 1, 7)` or `substr(day, 1, 4)` on the day rows: a year is 365 rows, not 17,520.
 
 ### 3.6 Bands
@@ -193,12 +205,14 @@ Every band is in the rows, so a chart's band comes with its line:
   memory, as the AirGradient's are now (`AirGradient._average`), and each 5 minutes with two or more readings widens that 5-minute
   row's range when the bucket closes. This replaces `LiveRanges.add` and its `ranges` table.
 - **Home Assistant's ranges**, the station's and the AirGradient's, widen the same 5-minute rows.
-- **The 30-minute rows' ranges** are widened as the 5-minute rows inside them are written: by those rows' own ranges (the bot's and
-  Home Assistant's), for every reading, which replaces the `slots` table; and, for the readings Ecowitt gives no 30-minute range for
-  (dew point, feels like, VPD, pressure, solar, UV), by the 5-minute values themselves where there are two or more, which replaces
-  `HistoryCache.slot_ranges` (worked out at read time now).
+- **The 30-minute rows' ranges** are widened whenever 5-minute or 30-minute rows are written (`Writer.roll_up`, one `UPDATE ... FROM`):
+  by the ranges of the 5-minute rows inside them (the bot's and Home Assistant's), which replaces the `slots` table, and by the 5-minute
+  values themselves where a half hour has two or more, which replaces `HistoryCache.slot_ranges` (worked out at read time now). For a
+  reading Ecowitt gives its own 30-minute range for, the 5-minute values lie inside it, so that changes nothing; a compass point and the
+  rain counters take no band.
 - **Widening is an upsert:** `_lo = MIN(_lo, new)`, `_hi = MAX(_hi, new)`, with the row's value always inside its range. A range is never
-  narrowed, and doing it twice changes nothing, as now.
+  narrowed, and doing it twice changes nothing, as now. A band that comes before its reading (the latest 5 minutes, not fetched yet) is a
+  row with only the band, provisional, which no read counts as a reading; the reading fills it in when it comes.
 
 Retention: the bot's ranges are kept for 31 days now (`RANGE_KEEP_DAYS`). In the rows they cost a null when absent and two numbers when
 present, so they are kept for good, with no table to prune (6.1).
@@ -223,6 +237,12 @@ next fetch, so every request reads the file alone. `HotStore` goes, and so does 
 only for the final part, so the archive asks for the rest again once it has settled. The one-fetch-at-a-time lock per station and cycle
 stays (`HotStore.lock`), as a dict of locks of its own.
 
+What replaces what, a write's rules (`Writer.put`): a reading replaces the one held for the same sensor, resolution and time when it is as
+final (a provisional one never replaces a final one) and from a source ranked as high (the bot's own over Home Assistant's over the
+cloud's); otherwise it only fills in what the row lacks. `Writer.put_ecowitt` stores a response by `HistoryCache.store`'s rules (what
+counts as fetched, an old empty stretch, a group the station lacks, a field Ecowitt adds later); the tests are `test_store.py`'s, on the
+new storage.
+
 ### 3.9 The minute readings
 
 The minutes go in the same tables, at `res = '1min'`, so a chart of a few hours is the same query as any other. They are pruned hourly by
@@ -244,6 +264,11 @@ Two connections to the one file: one that writes (the archive, the refreshes, th
 questions, the reports, the alerts), each on a single thread of its own. In WAL mode a read never waits for a write, a request makes one hop
 to the reader's thread for all its queries, and the default thread pool (which also draws the charts) is left alone. `busy_timeout` covers
 the rare write that meets another. `PRAGMA optimize` runs at close.
+
+As built (`lib/storage/__init__.py`): `await storage.read(fn)` runs `fn(reader)` on the reader's thread in one read transaction, so its
+queries see one moment of the file, and `await storage.write(fn)` runs `fn(writer)` on the writer's in one transaction; each is one hop,
+and its statements count towards the request that made it (the DEBUG `Chart ms` line). The sensors and the coverage are in memory; a
+write's changes to them are seen once it is committed, so a reader never sees coverage for readings that were rolled back.
 
 ### 3.11 What the database does, and what is left to Python
 
@@ -287,29 +312,53 @@ Left to Python on purpose:
 Aims, against section 1: a chart under 50 ms whatever its length (the 1Y chart is 1.2 s now), `/dashboard` and `weather_days` over
 the whole record under 50 ms (3.1 s and 0.7 s now), and every request one thread hop.
 
+The reads themselves, on the stand-in moved into the new storage (`scripts/migrate_storage.py`, which prints this table for the real
+cache): the data a request needs, before step 2 builds its answer and chart on it.
+
+| Read on the new file | SQL statements | Thread hops | Time |
+|---|---|---|---|
+| Temperature line, 1D (5-minute rows) | 1 | 1 | 1.3 ms |
+| Temperature line, 7D (30-minute rows) | 1 | 1 | 1.1 ms |
+| Temperature line, 1M (2-hour buckets) | 1 | 1 | 8.5 ms |
+| Temperature line, 3M (day rows) | 1 | 1 | 0.9 ms |
+| Temperature line, 1Y (day rows) | 1 | 1 | 3.3 ms |
+| Records: each month's hottest day, a year | 1 | 1 | 1.8 ms |
+| `weather_days`: 4 years of temperature and rain (day rows) | 2 | 1 | 14 ms |
+| Rain per half hour, 3M | 1 | 1 | 23 ms |
+| `/dashboard`: the year's day rows of every sensor | 5 | 1 | 21 ms |
+| Air line (PM2.5), 1M (2-hour buckets) | 1 | 1 | 22 ms |
+
 ## 5. Migration
 
-- **Automatic, at start.** When `ecobot.sqlite` does not exist and the old files do, the bot copies them across before anything else starts,
-  logging "Moving the history to ecobot.sqlite (once)". Nothing is fetched: Ecowitt's cloud keeps only 90 days of 5-minute readings, so
-  the history is the bot's to keep. `scripts/migrate_storage.py` does the same by hand, and checks a copy without the bot.
+- **Automatic, at start** (from step 2). When `ecobot.sqlite` does not exist and the old files do, the bot copies them across before
+  anything else starts, logging "Moving the history to ecobot.sqlite (once)". Nothing is fetched: Ecowitt's cloud keeps only 90 days of
+  5-minute readings, so the history is the bot's to keep. `scripts/migrate_storage.py` does the same by hand on a copy of the files, with
+  the bot running, and times the new storage's reads (section 4). `lib/storage/migrate.py` does it.
 - **What goes where.**
   - Ecowitt `series` and `points`: each `(mac, cycle, group)` becomes a sensor and a resolution; `field`, `field_low` and `field_high`
-    become one row's value, low and high; the text becomes REAL at the reading's decimals; a field the catalogue does not know goes in
-    `extra`.
+    become one row's value, low and high; the text becomes REAL; a field the catalogue does not know, or a value that is not a number,
+    goes in `extra` as it came (both counted in the report). A VPD still in inHg (a cache from before the unit fix) is converted as
+    `HistoryCache` does.
   - Ecowitt `coverage` becomes `coverage` for that sensor and resolution.
   - `ecowitt_live.sqlite`: the `ranges` with two or more readings widen the 5-minute rows; `slots` widen the 30-minute rows.
   - `ecowitt_minutes.sqlite` becomes `1min` rows.
-  - `airgradient_cache.sqlite`: `readings` become air rows (`src` the bot's where `recorded` says so), `spreads` their lows and highs,
-    and `days` the coverage.
+  - `airgradient_cache.sqlite`: `readings` become air rows (`src` the bot's where `recorded` says so) at `5min`, or `1hour` on a
+    finished day of 30 readings or fewer (as the AirGradient code tells them), `spreads` their lows and highs, and `days` the coverage.
   - `conditions_cache.sqlite`: `snapshots` and `meta`, as they are.
-  - Then every day row is worked out once.
-- **Checked before it counts.** One transaction; then for every sensor and resolution the number of readings and their sum are compared
-  with the old files'. Any difference and the new file is deleted, the bot carries on with the old ones, and the log says why.
+  - Then the 30-minute bands are widened from the 5-minute readings, and every day row is worked out once.
+- **Checked before it counts.** It is built as `ecobot.sqlite.part`, in one transaction; for every sensor, resolution and cell (a value,
+  a low, a high) the number of values and their sum are compared with the old files' before the bands are widened, and so are the
+  coverage, that every range is inside its row's band, the minutes, the AirGradient's readings and its own, and the snapshots. Any
+  difference and the new file is deleted, the bot carries on with the old ones, and the log says why. Only then is the file renamed
+  `ecobot.sqlite`. It needs twice the old files' size free on the disk, and says so if there is not.
+- **What it says.** "Moved the history to ecobot.sqlite in 15.6s: 2,372,502 station readings, 20,938 bands, 11,880 minutes, 424,936
+  AirGradient readings; 45.8 MB of old files, 27.2 MB now" (the stand-in), then the fields kept as they came and the values written back
+  with other digits, each with an example, if any.
 - **The old files are not touched.** They stay where they are, so going back is the previous commit. That version fetches again whatever
   its files lack (the cloud still has the last 90 days at 5 minutes), so a few days on the new storage cost nothing but the live bands of
   those days. Deleting them is left to a later release, after a few weeks.
-- **Size.** The new file should be no bigger than the old ones together (about 30 MB now), likely smaller: a reading's key is written once
-  per row, not once per value. Both are on disk until the old ones go.
+- **Size.** Smaller than the old ones together: a reading's key is written once per row, not once per value (the stand-in's 45.8 MB of old
+  files are 27.2 MB). Both are on disk until the old ones go.
 
 ## 6. Steps
 
@@ -318,9 +367,12 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 0. **Measure (done).** `scripts/bench_storage.py` (`docker compose exec ecobot python scripts/bench_storage.py`) gave the baseline in
    section 1, the yardstick for the rest; `tests/bench_cache.py` is the stand-in for the real caches between the owner's runs; the DEBUG
    `Chart ms` line counts each chart's queries and thread hops.
-1. **The new storage on its own.** `lib/storage/`: the catalogue, the schema and its versions, the two connections, writing (readings,
-   ranges, minutes, coverage, day rows) and reading (rows, buckets, days, records). The migration, with tests on old-format files built by
-   the tests themselves. Nothing uses it yet.
+1. **The new storage on its own (done).** `lib/storage/`: the catalogue, the schema and its versions, the two connections, writing
+   (readings, ranges, minutes, coverage, day rows, Ecowitt's responses by the old cache's rules) and reading (rows, buckets, days, records,
+   rain per reading). The migration, with tests on old-format files built by the tests themselves and on the fake station's whole archive
+   (`tests/test_storage.py`, `tests/test_storage_migrate.py`), and `scripts/migrate_storage.py` to check it on a copy of the real cache.
+   Nothing uses it yet. On the way: the statement count of step 0 used SQLite's trace hook, for which Python writes out every row of an
+   `executemany` with its values, six times the cost of the insert; it now counts at the connection's own calls (`counts.Counted`).
 2. **The station on it.** `Fetcher`, `HistoryQuery`, `days`, `link`, `dashboard`, `compose`, the alerts, the archive, the live readings, the
    minutes and Home Assistant's ranges read and write the new tables; `HotStore`, `LiveRanges`, `MinuteStore` and the refining go. The bot
    migrates at start. While this is built, a temporary test runs the same questions on the same fixture through the old code and the new
@@ -340,11 +392,18 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 - **The bot's own bands are kept for good.** They are two numbers in a row that is kept anyway, and a 1D chart of any past day keeps
   its band (3.6).
 - **Several sensors: the schema now, step 5 later**, when there is a second sensor.
+- **A day's highest and lowest include the bands** (step 1, to be judged in step 2's comparison). The 5-minute rows carry the bot's and Home
+  Assistant's ranges, so a day's figures from them are the extremes the bot saw, as the dashboard already counts them; `weather_days` and a
+  history answer's records took the 5-minute values alone. Where the bot has no ranges (before it ran, or a day from 30-minute readings) the
+  figures are the old ones, as the test against `day_values` shows.
+- **A daily record's day keeps its own figures**, and takes only the times from the 4-hour readings. Refining took the more extreme of the
+  two as well; on Ecowitt's data the two agree (a 4-hour high is inside its UTC day's), and `day_values` uses the record's.
 
 ## 7. Testing
 
 - **The answers do not change:** the golden chart images and the evals unchanged; the old-against-new comparison of step 2; the
-  dashboard's and `weather_days`' figures compared day by day on the fixture.
+  dashboard's and `weather_days`' figures compared day by day on the fixture (step 1 does it for the day rows against `day_values`, and
+  the buckets against `lines.bucket_summary`, rain per reading against `rain.rain_slots`).
 - **The stores' own tests** (`test_store.py`, `test_live_ranges.py`, `test_migrate_cache.py`, and the dozen tests that write SQL into the old
   tables) are rewritten for the new tables: writing and reading, widening, day rows, coverage, pruning, the migration and its check.
 - **The fixture's archive** (`tests/conftest.py`, `archived_cache`) is built by the new code; one old-format fixture stays for the migration
@@ -356,9 +415,9 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 
 | Risk | What is done about it |
 |---|---|
-| A number written differently in an answer ("12.30" against "12.3") | values written with the catalogue's decimals; the evals and the step 2 comparison show any change |
+| A number written differently in an answer ("12.30" against "12.3") | values written with the catalogue's decimals; the migration counts, per field, the values whose text would come back otherwise (`scripts/migrate_storage.py` on the real cache, before step 2); the evals and the step 2 comparison show any change |
 | A record's time differs from what refining found | the day rows' times come from the finest readings the day has, as refining does; compared in step 2, and any difference judged before it ships |
 | Ecowitt sends a field or group the catalogue does not know | `extra` keeps the readings; the catalogue adds a column for them later |
 | The migration fails part-way or runs out of disk | one transaction, the count and sum check, the old files untouched, and the free space checked first |
 | The 5-minute marks: the live ranges are counted around each mark, Home Assistant's from each mark | kept as they are in step 2, so nothing moves on a chart; one rule for both is a later choice |
-| Day rows out of date | worked out in the same transaction as the readings that change them; a test writes readings out of order and checks the days |
+| Day rows out of date | worked out in the same transaction as the readings that change them; the tests write a day's 30-minute readings, then its 5-minute ones, and check the day follows |

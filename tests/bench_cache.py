@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from lib.airgradient.store import AirStore
-from lib.ecowitt.api import CYCLES, GROUPS, UNITS, fix_units
+from lib.ecowitt.api import GROUPS, UNITS, fix_units
 from lib.ecowitt.fetch import spans
 from lib.ecowitt.live import LiveRanges
 from lib.ecowitt.minutes import MinuteStore
@@ -35,11 +35,14 @@ FIELDS = {
     "pressure": [("relative", pressure, "hPa"), ("absolute", lambda t: pressure(t) - 9, "hPa")],
     "wind": [("wind_speed", wind_speed, "km/h"), ("wind_gust", gust, "km/h"), ("wind_direction", direction, "º")],
     "rainfall": [("rain_rate", lambda t: 1.2 if rain_day(t) > rain_day(t - 300) else 0.0, "mm/hr"), ("daily", rain_day, "mm"),
-                 ("event", rain_day, "mm"), ("hourly", lambda t: min(rain_day(t), 1.0), "mm"),
+                 ("event", rain_day, "mm"), ("1_hour", lambda t: min(rain_day(t), 1.0), "mm"),
                  ("weekly", lambda t: rain_day(t) + t // 86400 % 7, "mm"), ("monthly", lambda t: rain_day(t) + t // 86400 % 30, "mm"),
                  ("yearly", lambda t: rain_day(t) + t // 86400 % 365, "mm")],
     "solar_and_uvi": [("solar", lambda t: uv_index(t) * 80, "W/m²"), ("uvi", uv_index, "")],
 }
+
+
+DECIMALS = {"humidity": 0, "uvi": 0, "wind_direction": 0}   # as the owner's station writes them ("94", "0", "131"); the rest with one
 
 
 def history(cycle: str, start: int, end: int) -> dict:
@@ -49,12 +52,13 @@ def history(cycle: str, start: int, end: int) -> dict:
     out: dict = {}
     for group, fields in FIELDS.items():
         for name, fn, unit in fields:
+            places = DECIMALS.get(name, 1)
             for ts in range(first, end + 1, step):
                 samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                out.setdefault(group, {}).setdefault(name, {"unit": unit, "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
+                out.setdefault(group, {}).setdefault(name, {"unit": unit, "list": {}})["list"][str(ts)] = f"{samples[0]:.{places}f}"
                 if cycle != "5min":
                     for suffix, value in (("_low", min(samples)), ("_high", max(samples))):
-                        out[group].setdefault(name + suffix, {"unit": unit, "list": {}})["list"][str(ts)] = f"{value:.1f}"
+                        out[group].setdefault(name + suffix, {"unit": unit, "list": {}})["list"][str(ts)] = f"{value:.{places}f}"
     return fix_units(out)
 
 

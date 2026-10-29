@@ -29,11 +29,12 @@ lib/captions.py         when a chart is drawn, and the hint that makes the model
 lib/ecowitt/            api, store (SQLite + memory), fetch, extremes, query (one history question), link (weather_link),
                         days (rank/count days), rain (rain times and amounts for the alerts), station, nightly archive
 lib/airgradient/        metrics, store (SQLite), source
+lib/storage/            the new storage, one file (ecobot.sqlite; docs/storage-plan.md), not used yet: catalogue, schema, write, days, read, migrate
 lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation (battery and rain delay)
 lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)
 lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images
-scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), bench_storage.py (how long typical requests take on a copy of the caches, with their SQL statements and thread hops; in the Docker image too; tests/bench_cache.py builds a data folder like a real one for it), refill_airgradient.py (one-off: fetch the whole AirGradient history again), eval_prompts.py, show_request.py (exactly what is
+scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), bench_storage.py (how long typical requests take on a copy of the caches, with their SQL statements and thread hops; in the Docker image too; tests/bench_cache.py builds a data folder like a real one for it), migrate_storage.py (moves a copy of the caches into the new storage, checks it, and times its reads), refill_airgradient.py (one-off: fetch the whole AirGradient history again), eval_prompts.py, show_request.py (exactly what is
                         sent to the model for a question), check_rain.py (are rain totals trustworthy?), migrate_cache.py (one-off: converts an Ecowitt cache from before the series layout),
                         dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
 ```
