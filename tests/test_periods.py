@@ -15,11 +15,16 @@ def labels(markup):
     return [[(b.text, b.callback_data) for b in row] for row in markup.inline_keyboard]
 
 
+def shaded(markup):
+    """The texts of the shaded buttons (the blue ones)."""
+    return [b.text for row in markup.inline_keyboard for b in row if b.style == "primary"]
+
+
 def test_the_row_is_always_week_month_quarter_and_year():
     assert labels(periods.keyboard()) == [[("1D", "pd:1"), ("7D", "pd:7"), ("1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
-    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["1D", "7D", "\u25cf 1M", "3M", "1Y"]          # the chart's own period is marked
-    assert [t for t, _ in labels(periods.keyboard(61))[0]] == ["1D", "7D", "1M", "3M", "1Y"]
-    assert [t for t, _ in labels(periods.keyboard(365))[0]][-1] == "\u25cf 1Y"
+    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["1D", "7D", "1M", "3M", "1Y"] and shaded(periods.keyboard(30)) == ["1M"]   # the chart's own period is shaded
+    assert shaded(periods.keyboard(61)) == [] and shaded(periods.keyboard()) == []
+    assert shaded(periods.keyboard(365)) == ["1Y"]
     assert periods.days_in("pd:1") == 1 and periods.days_in("pd:90") == 90 and periods.days_in("pd:365") == 365 and periods.days_in("pd:30000") is None and periods.days_in("al:on:x") is None
 
 
@@ -101,7 +106,7 @@ async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
-    assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("\u25cf 1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
+    assert caption == "Temperature" and labels(markup) == [[("1D", "pd:1"), ("7D", "pd:7"), ("1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
     assert bot.charted.get(1, 101) == "Temperature chart 30d"
 
 
@@ -119,7 +124,7 @@ async def test_pressing_a_period_redraws_the_chart_in_place_with_that_period_lef
     name, args = bot.agent.tools.calls[0]
     assert name == "weather_history" and args["start_date"].startswith("2026-") and answers == ["Drawing 3M..."]
     caption, markup = edits[0]
-    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "\u25cf 3M", "1Y"]
+    assert caption == "Temperature" and [t for t, _ in labels(markup)[0]] == ["1D", "7D", "1M", "3M", "1Y"] and shaded(markup) == ["3M"]
     assert bot.charted.get(1, 50) == "Temperature chart 90d"
 
 
@@ -266,8 +271,8 @@ def preloading_bot(alert_state, monkeypatch, refuse=None, clock=None):
     draw = bot._draw_ahead
 
     async def draw_ahead(text, now):
-        key, _, title, caption = await draw(text, now)
-        return key, text.encode(), title, caption
+        key, _, title, caption, newest = await draw(text, now)
+        return key, text.encode(), title, caption, newest
     bot._draw_ahead = draw_ahead
 
     async def send_photo(chat, photo, caption=None, disable_notification=False):
@@ -481,3 +486,38 @@ async def test_the_keyboards_charts_are_uploaded_ahead_only_while_the_bot_is_in_
     bot.last_used = time.monotonic() - USED_SECONDS - 1                                     # an hour without a message or a press
     await bot.draw_buttons_ahead(context.bot)
     assert uploads == []
+
+
+def test_a_chart_knows_the_time_of_its_newest_reading():
+    from lib.specs import Bars
+    assert Chart("Temperature", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0]), Line("Indoor", [1, 5], [1.0, 2.0])])]).newest == 5
+    assert Chart("Rain", "", [Panel("Rain", "mm", [], bars=Bars("Rain", "mm", [0, 3600], [0.0, 1.0], 3600))]).newest == 3600
+
+
+async def test_the_chart_of_an_alert_sent_lately_is_drawn_ahead_with_the_keyboards(alert_state, monkeypatch):
+    from lib.alerts.pictures import AlertCharts
+    clock = [0.0]
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
+    bot.alert_charts.clock = lambda: clock[0]
+    drawn = []
+
+    async def counting(text, now):   # draws any request (the stand-in's tools draw only temperature)
+        drawn.append(text)
+        return bot.images.canonical(text, now), text.encode(), text, "caption", 0
+    bot._draw_ahead = counting
+    await bot.draw_buttons_ahead(context.bot)
+    assert "UV chart 1d" not in drawn and "Temperature chart 1d" in drawn               # UV is no button: not drawn until an alert
+    bot.alert_charts.sent("uv", NS(photo=(NS(file_id="large"),)))
+    bot.alert_charts.sent("temps", NS(photo=(NS(file_id="large"),)))
+    drawn.clear()
+    clock[0] += 300
+    await bot.draw_buttons_ahead(context.bot)
+    assert drawn.count("UV chart 1d") == 1 and drawn.count("Temperature chart 1d") == 1   # the alert's chart too, the button's once
+    bot.noticed()
+    clock[0] += 300
+    await bot.draw_buttons_ahead(context.bot)
+    assert (-1001, b"UV chart 1d", True) in uploads                                      # uploaded ahead with the keyboard's
+    drawn.clear()
+    clock[0] += AlertCharts.WARM_SECONDS
+    await bot.draw_buttons_ahead(context.bot)
+    assert "UV chart 1d" not in drawn                                                    # six hours on: no longer kept warm

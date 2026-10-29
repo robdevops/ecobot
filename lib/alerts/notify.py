@@ -20,7 +20,7 @@ from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, Re
 from ..entities import with_link
 from ..logs import QUOTES
 from .menu import ALL, LABELS, alert_keyboard
-from .pictures import CHARTS
+from .pictures import CHARTS, AlertCharts, Picture
 
 log = logging.getLogger(__name__)
 
@@ -201,25 +201,36 @@ class AlertState:
 
 
 class Notifier:
-    def __init__(self, bot, state: AlertState):
-        self.bot, self.state = bot, state
+    def __init__(self, bot, state: AlertState, charts: AlertCharts | None = None):
+        """charts: the bot's alert charts (AlertCharts), when the alerts' pictures are to be shared with its other charts."""
+        self.bot, self.state, self.charts = bot, state, charts
 
     async def __call__(self, text: str, kind: str, link: tuple[str, str] | None = None,
-                       chart: Callable[[], Awaitable[bytes | None]] | None = None, chats: list[int] | None = None) -> int:
+                       chart: Callable[[], Awaitable[Picture | None]] | None = None, chats: list[int] | None = None,
+                       since: int | None = None) -> int:
         """Send an alert (silently) to the chats subscribed to its type (`kind`, one of menu.TYPES): of `chats` (say, the one sent
         something that has since changed), else of every chat. Chats the bot can no longer post to are marked gone. Returns how many it was sent to.
         link = (label, url) adds a clickable label to the footer; each carries the settings buttons. chart draws the alert's
-        picture (None: the text alone), and is called only when some chat gets the alert. The text is the picture's caption
-        (the text alone if Telegram refuses it); it is uploaded once and the chats after the first are sent Telegram's copy."""
+        picture (None: the text alone), and is called only when some chat gets the alert and the bot doesn't hold the chart with the
+        alert's data already (`since`: the time of the newest reading the alert is about; AlertCharts.held). The text is the picture's
+        caption (the text alone if Telegram refuses it); it is uploaded once and the chats after the first are sent Telegram's copy."""
         targets = self.state.alert_chats(kind) if chats is None else [c for c in chats if self.state.subscribed(c, kind)]
         text, entities = with_link(text, link)
-        photo = await chart() if chart and targets else None
+        photo = None
+        if chart and targets:
+            photo = self.charts.held(kind, since) if self.charts else None
+            if photo is None and (picture := await chart()):
+                photo = picture.png
+                if self.charts:
+                    self.charts.keep(kind, picture, since)
         started, sent = time.monotonic(), 0
         for chat_id in targets:
             ok, message = await self._send(chat_id, text, entities, kind, photo)
             sent += ok
             if photo and (sizes := getattr(message, "photo", None)):
                 photo = sizes[-1].file_id   # the largest size: the picture as sent
+                if self.charts:
+                    self.charts.sent(kind, message)
         log.info("Alert sent to %d chat(s) in %.1fs: %s", sent, time.monotonic() - started, text, extra=QUOTES)
         return sent
 

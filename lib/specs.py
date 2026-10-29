@@ -142,6 +142,12 @@ class Chart:
         """One panel of lines: drawn big, with the room for a compass beside it."""
         return len(self.panels) == 1 and bool(self.panels[0].lines)
 
+    @property
+    def newest(self) -> int:
+        """The time of the newest reading drawn (epoch seconds): a line's last point, or the start of the last bar."""
+        return max([line.x[-1] for p in self.panels for line in p.lines] +
+                   [b.x[-1] for p in self.panels for b in (p.bars, p.shares) if b and b.x])
+
     def __post_init__(self):
         if not self.panels:
             raise ValueError("a chart needs a panel")

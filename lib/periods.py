@@ -1,4 +1,4 @@
-"""The period buttons under a chart: 1D, 7D, 1M, 3M and 1Y (1, 7, 30, 90 and 365 days), always all five, the chart's own marked with ●. Pressing one redraws the chart
+"""The period buttons under a chart: 1D, 7D, 1M, 3M and 1Y (1, 7, 30, 90 and 365 days), always all five, the chart's own shaded (the blue of an alert toggle that is on). Pressing one redraws the chart
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 import time
@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardMarkup
 
 from . import intent
+from telegram.constants import KeyboardButtonStyle
+
 from .buttons import button
 
 NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # each period, in days, and what its button says
@@ -17,8 +19,9 @@ REMEMBERED = 300   # charts whose question is kept, newest first to stay
 
 
 def keyboard(current: int | None = None) -> InlineKeyboardMarkup:
-    """The one row of period buttons; the one for the chart's own period (`current`, in days) is marked with ●."""
-    return InlineKeyboardMarkup([[button(f"\u25cf {NAMES[days]}" if days == current else NAMES[days], f"{PREFIX}{days}") for days in PERIODS]])
+    """The one row of period buttons; the one for the chart's own period (`current`, in days) is shaded."""
+    return InlineKeyboardMarkup([[button(NAMES[days], f"{PREFIX}{days}", KeyboardButtonStyle.PRIMARY if days == current else None)
+                                  for days in PERIODS]])
 
 
 def days_in(data: str | None) -> int | None:
@@ -63,6 +66,7 @@ class Drawn:
     file_id: str | None = None   # Telegram's copy, once the chart has been sent: it is sent again by this, not uploaded
     caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
     ttl: float = 10 * 60         # how long it is kept (ImageCache.CHART_TTL; PRELOAD_TTL for one uploaded ahead)
+    newest: int | None = None    # the time of the newest reading it draws (epoch), when known: an alert about that reading can send it
 
     @property
     def photo(self) -> bytes | str:
@@ -114,6 +118,11 @@ class ImageCache:
         entry = self.items.get(key)
         return self.age(entry) if self._kept(entry) else None
 
+    def held(self, key: str | None) -> Drawn | None:
+        """The chart kept under `key`, while it is within its time to live."""
+        entry = self.items.get(key)
+        return entry if self._kept(entry) else None
+
     def has_copy(self, key: str) -> bool:
         """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
         entry = self.items.get(key)
@@ -132,9 +141,10 @@ class ImageCache:
     def age(self, entry: Drawn) -> float:
         return self.clock() - entry.at
 
-    def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None):
-        """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready)."""
-        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL)
+    def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None, newest: int | None = None):
+        """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready).
+        newest: the time of the newest reading drawn, when known."""
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL, newest=newest)
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)

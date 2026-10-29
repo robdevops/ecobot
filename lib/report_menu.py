@@ -10,4 +10,4 @@ REFRESH = f"{PREFIX}refresh"
 
 
 def keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[button("🔄 Refresh", REFRESH)]])
+    return InlineKeyboardMarkup([[button("🔄", REFRESH)]])

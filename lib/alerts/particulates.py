@@ -47,17 +47,18 @@ class ParticulatesMonitor:
         good = (pm25 is None or pm25 <= SAFE_PM25) and (pm10 is None or pm10 <= SAFE_PM10)
         rules.run(m, "above", bad)
         rules.run(m, "below", good)
+        since = int(when.timestamp()) if when is not None else None   # the reading the alert is about: a chart drawn with it is sent as it is
         if not m["unsafe"] and m["above"] >= rules.CONFIRM_READINGS:
             m["unsafe"] = True
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
-                              link=self.air.link, kind="particulates", chart=self._picture)
+                              link=self.air.link, kind="particulates", chart=self._picture, since=since)
         elif m["unsafe"] and m["below"] >= rules.CONFIRM_READINGS:
             m["unsafe"] = False
             await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates",
-                              chart=self._picture)
+                              chart=self._picture, since=since)
         self.state.save()
 
-    async def _picture(self) -> bytes | None:
+    async def _picture(self) -> pictures.Picture | None:
         """The 1-day particulates chart (what the Particulates button gives), for the alert; None when it cannot be made."""
         return await pictures.chart(self.air, pictures.CHARTS["particulates"], self.air.tz)
 

@@ -369,6 +369,7 @@ class Bot:
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
+        self.alert_charts = pictures.AlertCharts(self.images, lambda: now_local(self.cfg.tz))   # the alerts' charts, kept with them
         self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
         self.last_used = 0.0                     # when a message or a press last came in (monotonic; 0: never)
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
@@ -606,24 +607,31 @@ class Bot:
         return kind in pictures.CHARTS and bool(getattr(message, "photo", None))
 
     async def _redraw_alert(self, query, kind: str):
-        """A press on Refresh under an alert's chart: the chart drawn again with the latest readings, in the same message. The alert's text
-        (what happened, as it was sent) and its buttons stay as they are."""
+        """A press on Refresh under an alert's chart: the chart with the latest readings, in the same message: the one drawn ahead since the
+        message was last changed (AlertCharts.newer_than; Telegram's copy when it was uploaded ahead), else drawn now and kept. The alert's
+        text (what happened, as it was sent) and its buttons stay as they are."""
         message = query.message
         source = self.by_name.get(menu.TYPES[kind][1]) if kind in menu.TYPES else None
         if source is None or not self._redrawable(message, kind):   # an alert of a type, or from a source, the bot no longer has
             await answer_query(query, STALE_BUTTON)
             return
-        try:
-            photo = await asyncio.wait_for(pictures.chart(source, pictures.CHARTS[kind], source.tz), TURN_SECONDS)
-        except TimeoutError:
-            photo = None
-        if photo is None:   # (pictures.chart has said why) the message stays as it was
-            await answer_query(query, "Couldn't draw the chart, please try again", show_alert=True)
-            return
+        photo, drawn = self.alert_charts.newer_than(kind, message), False
+        if photo is None:
+            try:
+                picture = await asyncio.wait_for(pictures.chart(source, pictures.CHARTS[kind], source.tz), TURN_SECONDS)
+            except TimeoutError:
+                picture = None
+            if picture is None:   # (pictures.chart has said why) the message stays as it was
+                await answer_query(query, "Couldn't draw the chart, please try again", show_alert=True)
+                return
+            photo, drawn = picture.png, True
+            self.alert_charts.keep(kind, picture)
         await answer_query(query)   # no toast: the chart is the answer
-        await _edit_quietly(query.edit_message_media(InputMediaPhoto(photo, caption=message.caption, caption_entities=message.caption_entities or None),
-                                                     reply_markup=message.reply_markup))
-        log.debug("%s: the %s alert's chart drawn again", chat_tag(message.chat.id), kind)
+        edited = await _edit_quietly(query.edit_message_media(InputMediaPhoto(photo, caption=message.caption, caption_entities=message.caption_entities or None),
+                                                              reply_markup=message.reply_markup))
+        if drawn:
+            self.alert_charts.sent(kind, edited, alerted=False)
+        log.debug("%s: the %s alert's chart %s", chat_tag(message.chat.id), kind, "drawn again" if drawn else "sent from the one drawn ahead")
 
     # ---------- irrigation ----------
     def _irrigation_alerts(self, chat_id: int) -> tuple[bool, bool]:
@@ -1023,9 +1031,10 @@ class Bot:
                 working[:] = before          # the unfinished attempt's turns are dropped
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
-    async def _draw_ahead(self, text: str, now) -> tuple[str, bytes, str, str] | None:
-        """(image key, PNG, title, write-up) of the chart `text` asks for when it is one made in code with its own words as its key;
-        None otherwise. Raises when it can't be drawn. Nobody is waiting: its requests are not urgent and its logs are quiet."""
+    async def _draw_ahead(self, text: str, now) -> tuple[str, bytes, str, str, int] | None:
+        """(image key, PNG, title, write-up, the time of the newest reading drawn) of the chart `text` asks for when it is one made in code
+        with its own words as its key; None otherwise. Raises when it can't be drawn. Nobody is waiting: its requests are not urgent and its
+        logs are quiet."""
         read = intent.read(text, now, self.by_name)
         key = self.images.canonical(text, now)
         if not (read.chart_in_code and key):   # not a chart made in code ("Report"), or a source that isn't there
@@ -1035,7 +1044,7 @@ class Bot:
         if caption is None or len(turn.charts) != 1:
             raise ValueError("no chart came of it")
         png = await asyncio.to_thread(render_chart, turn.charts[0], self.cfg.tz)
-        return key, png, turn.charts[0].caption(now.date()), caption
+        return key, png, turn.charts[0].caption(now.date()), caption, turn.charts[0].newest
 
     def preload_soon(self, bot, question: str):
         """With TELEGRAM_PRELOAD_CHAT set, upload the other periods of this chart's question in the background."""
@@ -1064,8 +1073,8 @@ class Bot:
                     return
                 if drawn is None:
                     return
-                key, png, title, caption = drawn
-                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL)
+                key, png, title, caption, newest = drawn
+                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL, newest=newest)
                 if self.preload_off:   # an upload was refused meanwhile
                     return
                 if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
@@ -1096,14 +1105,16 @@ class Bot:
         return None
 
     async def draw_buttons_ahead(self, bot):
-        """The chart of each keyboard button, drawn afresh (every AHEAD_SECONDS, from ecobot.warm_up), so a press is answered with a chart
-        already drawn (images.ready) instead of drawing one then; with TELEGRAM_PRELOAD_CHAT set and the bot used in the last hour,
-        uploaded too, so the press sends Telegram's copy and uploads nothing. A chart drawn for a question in the last minute is left.
+        """The chart of each keyboard button, and of each alert type sent in the last hours (alert_charts.warm), drawn afresh (every
+        AHEAD_SECONDS, from ecobot.warm_up), so a press, or the Refresh under the alert, is answered with a chart already drawn
+        (images.ready, AlertCharts.newer_than) instead of drawing one then; with TELEGRAM_PRELOAD_CHAT set and the bot used in the last
+        hour, uploaded too, so the press sends Telegram's copy and uploads nothing. A chart drawn for a question in the last minute is left.
         Nobody is waiting: the requests are not urgent, and the logs are quiet."""
         started, now = time.monotonic(), now_local(self.cfg.tz)
         chat = getattr(self.cfg, "telegram_preload_chat", None) if self.used_lately else None
         drawn, uploaded, skipped = 0, 0, []
-        for text in templates.chart_sentences(self.irrigation is not None):
+        texts = templates.chart_sentences(self.irrigation is not None)
+        for text in texts + [text for text in self.alert_charts.warm() if text not in texts]:
             key = self.images.canonical(text, now)
             if key is None or (age := self.images.age_of(key)) is not None and age < AHEAD_KEEP_SECONDS:
                 continue
@@ -1114,8 +1125,8 @@ class Bot:
                 continue
             if made is None:   # not a chart made in code, or its source is not there
                 continue
-            key, png, title, caption = made
-            self.images.put(key, png, title, caption)
+            key, png, title, caption, newest = made
+            self.images.put(key, png, title, caption, newest=newest)
             drawn += 1
             if chat is not None and not self.preload_off:
                 if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:

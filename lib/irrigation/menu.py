@@ -1,6 +1,6 @@
 """The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
 
-Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄 Refresh]. While the valve is on, a [Water off ❌] row follows. While the timer is paused,
+Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄]. While the valve is on, a [Water off ❌] row follows. While the timer is paused,
 Pause is [▶️ Unpause] (one press ends the pause) and Water is hidden. A press on Water, Pause or Alerts opens its options under the
 rows (▸ after the text marks a menu, ▾ the open one; pressing it again closes them). Water lists 5, 10, 20 and 30 minutes (a run is always timed). Alerts has
 one toggle per alert type, blue while this chat gets it, struck through and uncoloured while it does not; pressing it flips it.
@@ -92,7 +92,7 @@ def keyboard(battery: bool, pause: bool, open: str | None = None, paused: bool =
             rows.append([toggle_button(f"{name} alerts", on, lambda turn_on, word=word: f"ir:{word}:{'on' if turn_on else 'off'}")])
     else:
         rows = [[delay] if paused else [head("water", "💧 Water"), delay],
-                [head("alerts", "🔔 Alerts"), button("🔄 Refresh", "ir:refresh")]]
+                [head("alerts", "🔔 Alerts"), button("🔄", "ir:refresh")]]
     if running:   # the valve is open: off is one press away, whatever else is open
         rows.insert(1 if rows[0][0].text.endswith(("▾",)) else len(rows), [button("Water off ❌", "ir:sw:off")])
     return InlineKeyboardMarkup(rows)

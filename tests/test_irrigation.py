@@ -187,7 +187,7 @@ def test_the_status_always_shows_mode_state_pause_time_and_battery_in_that_order
 
 
 def test_the_buttons_open_one_section_at_a_time_and_every_callback_is_short():
-    collapsed = [[("💧 Water ▸", "ir:open:water"), ("⏸ Pause ▸", "ir:open:delay")], [("🔔 Alerts ▸", "ir:open:alerts"), ("🔄 Refresh", "ir:refresh")]]
+    collapsed = [[("💧 Water ▸", "ir:open:water"), ("⏸ Pause ▸", "ir:open:delay")], [("🔔 Alerts ▸", "ir:open:alerts"), ("🔄", "ir:refresh")]]
     assert rows(menu.keyboard(False, False)) == collapsed == rows(menu.keyboard(True, True))              # the alert states show only once Alerts is open
     water = rows(menu.keyboard(True, True, "water"))
     assert water[0][0] == ("💧 Water ▾", "ir:close") and water[-1] == [(f"{m} min", f"ir:water:{m}") for m in (5, 10, 20, 30)]
@@ -803,7 +803,7 @@ async def test_refresh_reads_the_controller_again_and_redraws_without_sending_an
     q = await press(bot, "ir:refresh")
     assert q.toast == "Refreshed" and device.commands == [] and slept == []
     assert q.edits[0][0] == "text" and "mode: auto\nstate: on ✅ (5 mins until off)" in q.edits[0][1] and "(alerts: on)" in q.edits[0][1]
-    assert rows(q.edits[0][2])[1][1] == ("🔄 Refresh", "ir:refresh")                       # the buttons come back collapsed
+    assert rows(q.edits[0][2])[1][1] == ("🔄", "ir:refresh")                       # the buttons come back collapsed
     device.down = True
     q = await press(bot, "ir:refresh")
     assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []

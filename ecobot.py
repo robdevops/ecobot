@@ -289,7 +289,7 @@ async def main():
         for source in sources:   # what each is reading, in the order they are listed
             for line in source.startup_lines():
                 log.info("%s", line)
-        notify = Notifier(app.bot, state)
+        notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
         await bot.publish_commands(app.bot)   # the / menu
         running, weather = start_alerts(cfg, bot, notify, tasks)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive

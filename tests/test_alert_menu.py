@@ -4,6 +4,7 @@ import pytest
 from telegram.error import BadRequest
 
 from lib.alerts.notify import AlertState, Notifier
+from lib.alerts.pictures import Picture
 from lib.alerts.menu import ALL, LABELS, TITLE, alert_keyboard, available_kinds, keyboard, title
 from lib.bot import Bot
 from lib.buttons import struck as strike
@@ -127,7 +128,7 @@ async def test_an_alert_goes_to_the_chats_subscribed_to_its_type_and_carries_the
 
 async def png():
     """An alert's chart, drawn."""
-    return b"png"
+    return Picture(b"png", "Wind, today", None)
 
 
 class Query:
@@ -313,9 +314,9 @@ def test_under_an_alert_one_bell_opens_the_alert_toggle_and_then_the_sound_toggl
 
 
 def test_under_an_alert_with_a_chart_refresh_sits_beside_the_bell_open_or_shut():
-    assert rows(alert_keyboard("gusts", set(), set(), refresh=True)) == [[("🔔 ▸", "al:open:bell:gusts"), ("🔄 Refresh", "al:refresh:gusts")]]
+    assert rows(alert_keyboard("gusts", set(), set(), refresh=True)) == [[("🔔 ▸", "al:open:bell:gusts"), ("🔄", "al:refresh:gusts")]]
     opened = rows(alert_keyboard("gusts", set(), None, "bell", refresh=True))
-    assert opened == [[("🔔 ▾", "al:close:gusts"), ("🔄 Refresh", "al:refresh:gusts")], [("Alert", "al:off:gusts:bell:gusts")]]
+    assert opened == [[("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts")], [("Alert", "al:off:gusts:bell:gusts")]]
 
 
 async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays_open(tmp_path):
@@ -458,7 +459,7 @@ async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_capti
     assert bot.sent == [] and len(bot.photos) == 1
     chat, photo, kw = bot.photos[0]
     assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
-    assert rows(kw["reply_markup"]) == [[("🔔 ▸", "al:open:bell:temps"), ("🔄 Refresh", "al:refresh:temps")]]   # its own buttons ride along
+    assert rows(kw["reply_markup"]) == [[("🔔 ▸", "al:open:bell:temps"), ("🔄", "al:refresh:temps")]]   # its own buttons ride along
 
 
 async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_telegrams_copy(tmp_path):
@@ -507,7 +508,7 @@ def drawing(monkeypatch, photo=b"new png"):
 
     async def chart(source, text, tz):
         drawn.append((source.name, text))
-        return photo
+        return Picture(photo, "Wind, today", None) if photo else None
     monkeypatch.setattr(pictures, "chart", chart)
     return drawn
 
@@ -547,7 +548,124 @@ async def test_the_bell_under_an_alerts_chart_keeps_its_refresh(tmp_path):
     bot, _ = make_bot(tmp_path)
     q = ChartQuery("al:open:bell:gusts")
     await press(bot, q)
-    assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts"), ("🔄 Refresh", "al:refresh:gusts")]
+    assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts")]
     q = Query("al:open:bell:gusts", text="💨 Strong gusts")                     # an alert that went out as text has none
     await press(bot, q)
     assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts")]
+
+
+# ---------- the alerts' charts kept with the bot's (AlertCharts) ----------
+
+def alert_charts(clock):
+    """An AlertCharts on an image cache that runs on `clock` (a one-element list of seconds)."""
+    from datetime import datetime
+    from lib import periods
+    from lib.alerts.pictures import AlertCharts
+    images = periods.ImageCache(lambda: clock[0])
+    return AlertCharts(images, lambda: datetime(2026, 10, 2, 12, 0, tzinfo=TZ), clock=lambda: clock[0]), images
+
+
+def test_every_alert_chart_has_the_key_of_the_same_typed_request():
+    from lib.alerts.pictures import CHARTS
+    charts, images = alert_charts([0.0])
+    assert {kind: charts.key(kind) for kind in CHARTS} == {"gusts": "wind chart 1d", "uv": "uv chart 1d", "temps": "temperature chart 1d",
+                                                           "particulates": "particulates chart 1d"}
+    assert charts.key("rain") is None                                                     # an alert without a chart
+
+
+def test_an_alert_sends_the_held_chart_only_when_it_draws_the_alerts_reading_and_as_telegrams_copy_once_sent():
+    clock = [0.0]
+    charts, images = alert_charts(clock)
+    assert charts.held("gusts", 1000) is None                                             # nothing held
+    charts.keep("gusts", Picture(b"png", "Wind, today", 900), since=1000)                # drawn for the alert about the reading at 1000
+    assert images.held("wind chart 1d").newest == 1000 and charts.held("gusts", 1000) == b"png"   # (it draws that reading, whatever its last point says)
+    assert charts.held("gusts", 1300) is None and charts.held("gusts", None) is None      # a newer reading, or one not known: drawn again
+    charts.sent("gusts", NS(photo=(NS(file_id="small"), NS(file_id="large"))))
+    assert charts.held("gusts", 1000) == "large" and charts.held("gusts", 700) == "large"  # the same data again: Telegram's copy
+    clock[0] += images.CHART_TTL + 1
+    assert charts.held("gusts", 1000) is None                                             # out of its time to live
+
+
+def test_an_alerts_chart_is_kept_warm_for_six_hours_from_the_alert_not_from_a_refresh():
+    from lib.alerts.pictures import AlertCharts
+    clock = [0.0]
+    charts, _ = alert_charts(clock)
+    assert charts.warm() == []
+    charts.sent("uv", NS(photo=(NS(file_id="large"),)), alerted=False)                   # a Refresh: not an alert
+    assert charts.warm() == []
+    charts.sent("uv", NS(photo=(NS(file_id="large"),)))
+    charts.sent("temps", None)                                                            # an alert whose picture Telegram refused still counts
+    assert charts.warm() == ["UV chart 1d", "Temperature chart 1d"]
+    clock[0] += AlertCharts.WARM_SECONDS - 1
+    assert charts.warm() == ["UV chart 1d", "Temperature chart 1d"]
+    charts.sent("uv", NS(photo=(NS(file_id="large"),)))                                  # alerted again: six more hours
+    clock[0] += 2
+    assert charts.warm() == ["UV chart 1d"]
+
+
+def test_refresh_sends_the_chart_drawn_ahead_since_the_message_was_last_changed_when_it_is_fresh():
+    from datetime import datetime, timedelta, timezone
+    clock = [0.0]
+    charts, images = alert_charts(clock)
+    shown = NS(date=datetime.now(timezone.utc) - timedelta(seconds=120), edit_date=None)
+    assert charts.newer_than("gusts", shown) is None                                      # nothing held
+    images.put("wind chart 1d", b"ahead", "Wind, today")
+    clock[0] += 60                                                                        # drawn a minute ago: since the message was sent
+    assert charts.newer_than("gusts", shown) == b"ahead"
+    images.sent("wind chart 1d", NS(photo=(NS(file_id="large"),)))
+    assert charts.newer_than("gusts", shown) == "large"                                   # uploaded ahead: Telegram's copy
+    edited = NS(date=shown.date, edit_date=datetime.now(timezone.utc) - timedelta(seconds=10))
+    assert charts.newer_than("gusts", edited) is None                                     # the message changed after it was drawn
+    assert charts.newer_than("gusts", NS(date=None, edit_date=None)) is None             # a message whose time is not known
+    clock[0] += images.FRESH                                                              # too old to pass for the latest readings
+    assert charts.newer_than("gusts", shown) is None
+
+
+async def test_the_same_alert_again_sends_the_chart_kept_from_the_first_and_a_newer_reading_draws_it_afresh(tmp_path):
+    class Keeps(SentWithPhotos):
+        async def send_photo(self, chat_id, photo, **kw):
+            await super().send_photo(chat_id, photo, **kw)
+            return NS(photo=(NS(file_id="small"), NS(file_id=f"copy {len(self.photos)}")))
+    drawn = []
+
+    async def chart():
+        drawn.append(1)
+        return Picture(b"png", "Wind, today", None)
+    clock = [0.0]
+    charts, images = alert_charts(clock)
+    state, bot = AlertState(tmp_path / "s.json"), Keeps()
+    state.add_chat(1, "one")
+    notifier = Notifier(bot, state, charts)
+    await notifier("Strong gusts", kind="gusts", chart=chart, since=1000)
+    await notifier("Strong gusts", kind="gusts", chart=chart, since=1000)                 # the same reading: the chart kept, Telegram's copy
+    assert drawn == [1] and [p for _, p, _ in bot.photos] == [b"png", "copy 1"]
+    assert images.held("wind chart 1d").file_id == "copy 2" and charts.warm() == ["Wind chart 1d"]   # (the copy last sent)
+    await notifier("Strong gusts", kind="gusts", chart=chart, since=1300)                 # a newer reading: drawn again
+    assert drawn == [1, 1] and bot.photos[-1][1] == b"png" and images.held("wind chart 1d").newest == 1300
+    await notifier("Strong gusts", kind="gusts", chart=chart)                             # the reading not said: drawn
+    assert drawn == [1, 1, 1]
+
+
+async def test_refresh_sends_the_chart_drawn_ahead_and_otherwise_keeps_the_one_it_draws(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    bot, _ = make_bot(tmp_path)
+    for source in bot.sources:
+        source.tz = TZ
+    drawn = drawing(monkeypatch)
+    q = ChartQuery("al:refresh:gusts")
+    q.message.date, q.message.edit_date = datetime.now(timezone.utc) - timedelta(seconds=90), None
+    bot.images.put("wind chart 1d", b"ahead", "Wind, today")                              # drawn ahead since the alert went out
+    bot.images.sent("wind chart 1d", NS(photo=(NS(file_id="ahead copy"),)))
+    await press(bot, q)
+    (media, _), = q.media
+    assert drawn == [] and media.media == "ahead copy" and q.toast is None                # Telegram's copy, nothing drawn
+    q = ChartQuery("al:refresh:gusts")                                                    # a message changed since: drawn, and kept
+    q.message.date = datetime.now(timezone.utc)
+
+    async def edit_message_media(media, reply_markup=None):
+        q.media.append((media, reply_markup))
+        return NS(photo=(NS(file_id="small"), NS(file_id="new copy")))
+    q.edit_message_media = edit_message_media
+    await press(bot, q)
+    assert drawn == [("Ecowitt", "Wind chart 1d")] and q.media[0][0].media.input_file_content == b"new png"
+    assert bot.images.held("wind chart 1d").file_id == "new copy" and bot.alert_charts.warm() == []   # (a Refresh starts no warm period)
