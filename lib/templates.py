@@ -35,6 +35,11 @@ def rows(irrigation: bool = False) -> list[list[tuple[str, str]]]:
     return [*ROWS[:-1], [*ROWS[-1][:-1], (IRRIGATION, "")]] if irrigation else ROWS
 
 
+def chart_sentences(irrigation: bool = False) -> list[str]:
+    """The questions of the buttons that are charts (every one but Help & Alerts, Status and Irrigation), in keyboard order."""
+    return [sentence for row in rows(irrigation) for _, sentence in row if sentence.endswith(" 1d")]
+
+
 def version(irrigation: bool = False) -> str:
     return hashlib.md5("|".join(label for row in rows(irrigation) for label, _ in row).encode()).hexdigest()[:8]
 

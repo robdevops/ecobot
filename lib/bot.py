@@ -50,6 +50,9 @@ PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
+AHEAD_SECONDS = 300          # the keyboard's charts are drawn ahead this often (draw_buttons_ahead), so a press sends one already drawn
+AHEAD_KEEP_SECONDS = 60      # ... unless the chart was drawn for a question this lately
+USED_SECONDS = 3600          # the bot counts as in use this long after a message or a press: the charts drawn ahead are then uploaded ahead too
 IRRIGATION_SETTLE_SECONDS = 3   # after any irrigation action, the controller is given this long to report its new state before it is read and the message redrawn
 NOT_ADMIN = "Sorry, only group admins can use this bot."
 NOT_ADMIN_TOAST = "Only group admins can use this bot"
@@ -367,6 +370,7 @@ class Bot:
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
+        self.last_used = 0.0                     # when a message or a press last came in (monotonic; 0: never)
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
         self.charted = periods.Charted(state.charts, state.save)   # the question behind each chart sent (kept across restarts)
 
@@ -445,6 +449,14 @@ class Bot:
             await toast_quietly(query, STALE_BUTTON)
         return believed
 
+    def noticed(self):
+        """A message or a press came in: the bot is in use (used_lately)."""
+        self.last_used = time.monotonic()
+
+    @property
+    def used_lately(self) -> bool:
+        return bool(self.last_used) and time.monotonic() - self.last_used <= USED_SECONDS
+
     def buttons(self) -> dict:
         """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button."""
         return {"al:": self.on_alert_button, **({"ir:": self.on_irrigation_button} if self.irrigation else {}),
@@ -456,6 +468,7 @@ class Bot:
         query = update.callback_query
         if query is None or not await self._press(query):
             return
+        self.noticed()
         handler = next((h for prefix, h in self.buttons().items() if query.data.startswith(prefix)), None)
         if handler is None:
             await toast_quietly(query, STALE_BUTTON)
@@ -889,6 +902,7 @@ class Bot:
         private = msg.chat.type == ChatType.PRIVATE
         if private and not await self._allowed(update, context):   # before remember_chat: a stranger never becomes an alert chat
             return
+        self.noticed()
         self.remember_chat(update)
         if private:
             if self.irrigation and (msg.text.strip() == templates.IRRIGATION or irrigation_menu.asked(msg.text)):   # the controller's status and buttons (no model needed)
@@ -1054,15 +1068,9 @@ class Bot:
                 self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL)
                 if self.preload_off:   # an upload was refused meanwhile
                     return
-                try:
-                    self.images.sent(key, await bot.send_photo(chat, png, caption=title or None, disable_notification=True))
-                except (RetryAfter, TimedOut) as e:   # Telegram's flood limit or a slow upload: a press uploads this one instead, and the next chart tries again
-                    skipped.append(e)
-                except TelegramError as e:
-                    if not self.preload_off:   # said once, though every period's upload is refused
-                        self.preload_off = True
-                        log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
-                else:
+                if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
+                    skipped.append(why)
+                elif not self.preload_off:
                     done.add(days)
 
             await asyncio.gather(*(upload(days, text) for days, text in asked.items()))
@@ -1072,6 +1080,52 @@ class Bot:
                 log.info("[Telegram] Preloaded %r to %s in %.1fs", question, chat, time.monotonic() - started, extra=QUOTES)
         finally:
             self.preloading.discard(question)
+
+    async def _upload_ahead(self, bot, chat: int, key: str, png: bytes, title: str) -> Exception | None:
+        """Upload a chart drawn ahead to the preload chat, silently, and keep Telegram's copy under its key. Returns the flood limit or
+        the timeout that stopped it (a press uploads the chart instead); None when it went, or when an upload was refused (said once,
+        and no more are tried: preload_off)."""
+        try:
+            self.images.sent(key, await bot.send_photo(chat, png, caption=title or None, disable_notification=True))
+        except (RetryAfter, TimedOut) as e:
+            return e
+        except TelegramError as e:
+            if not self.preload_off:
+                self.preload_off = True
+                log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
+        return None
+
+    async def draw_buttons_ahead(self, bot):
+        """The chart of each keyboard button, drawn afresh (every AHEAD_SECONDS, from ecobot.warm_up), so a press is answered with a chart
+        already drawn (images.ready) instead of drawing one then; with TELEGRAM_PRELOAD_CHAT set and the bot used in the last hour,
+        uploaded too, so the press sends Telegram's copy and uploads nothing. A chart drawn for a question in the last minute is left.
+        Nobody is waiting: the requests are not urgent, and the logs are quiet."""
+        started, now = time.monotonic(), now_local(self.cfg.tz)
+        chat = getattr(self.cfg, "telegram_preload_chat", None) if self.used_lately else None
+        drawn, uploaded, skipped = 0, 0, []
+        for text in templates.chart_sentences(self.irrigation is not None):
+            key = self.images.canonical(text, now)
+            if key is None or (age := self.images.age_of(key)) is not None and age < AHEAD_KEEP_SECONDS:
+                continue
+            try:
+                made = await self._draw_ahead(text, now)
+            except Exception as e:
+                log.debug("Couldn't draw %r ahead: %s: %s", text, type(e).__name__, e)
+                continue
+            if made is None:   # not a chart made in code, or its source is not there
+                continue
+            key, png, title, caption = made
+            self.images.put(key, png, title, caption)
+            drawn += 1
+            if chat is not None and not self.preload_off:
+                if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
+                    skipped.append(why)
+                elif not self.preload_off:
+                    uploaded += 1
+        if drawn:
+            log.debug("Drew %d button charts ahead%s in %.1fs", drawn, f", uploaded {uploaded} to {chat}" if uploaded else "", time.monotonic() - started)
+        if skipped:
+            log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take %d of the button charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
 
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, redraw: Message | None = None):
         """Answer `text` (redraw: a chart's message, when a period button asks for that chart again in place)."""

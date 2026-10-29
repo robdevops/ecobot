@@ -434,3 +434,50 @@ async def test_pressing_a_period_under_a_chart_the_model_drew_keeps_its_answer_i
                 effective_user=NS(username="rob", full_name="Rob"))
     await bot.on_period_button(update, CONTEXT)
     assert replies == [] and edits and "Humidity: Ecowitt 72.1% avg." in edits[0][0]
+
+
+async def test_the_keyboards_charts_are_drawn_ahead_and_a_press_is_answered_from_them(alert_state, monkeypatch):
+    from lib.timeutil import now_local
+    clock = [0.0]
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
+    bot.cfg = NS(tz=TZ)                                                                     # no preload chat: drawn, not uploaded
+    await bot.draw_buttons_ahead(context.bot)
+    now = now_local(TZ)
+    assert uploads == [] and bot.images.ready("Temperature chart 1d", now)                   # (the stand-in's tools only have temperature)
+    assert bot.images.ready("Air quality all metrics 1d", now) is None                       # no air sensor here: nothing to draw
+    calls, sent = len(bot.agent.tools.calls), []
+    await bot.respond(pressed(bot, sent), context, "Temperature chart 1d")
+    assert len(bot.agent.tools.calls) == calls and sent[0][0] == b"Temperature chart 1d"     # the one drawn ahead: no new question
+    clock[0] += 400                                                                          # too old to answer with: the press draws afresh
+    await bot.respond(pressed(bot, sent), context, "Temperature chart 1d")
+    assert len(bot.agent.tools.calls) == calls + 1
+    drawn, draw = [], bot._draw_ahead
+
+    async def counting(text, now):
+        drawn.append(text)
+        return await draw(text, now)
+    bot._draw_ahead = counting
+    await bot.draw_buttons_ahead(context.bot)
+    assert "Humidity chart 1d" in drawn and "Temperature chart 1d" not in drawn             # just drawn for the press: left alone this time
+
+
+async def test_the_keyboards_charts_are_uploaded_ahead_only_while_the_bot_is_in_use(alert_state, monkeypatch):
+    import time
+    from lib.bot import USED_SECONDS
+    clock = [0.0]
+    bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
+    await bot.draw_buttons_ahead(context.bot)
+    assert uploads == [] and not bot.used_lately                                             # nobody has used the bot: drawn, not uploaded
+    bot.noticed()
+    clock[0] += 120
+    await bot.draw_buttons_ahead(context.bot)
+    assert (-1001, b"Temperature chart 1d", True) in uploads
+    sent = []
+    await bot.respond(pressed(bot, sent), context, "Temperature chart 1d")
+    assert sent[0][0] == "file Temperature chart 1d"                                         # a press sends Telegram's copy
+    await settle(bot)                                                                        # (the press's other periods, uploaded ahead)
+    uploads.clear()
+    clock[0] += 120
+    bot.last_used = time.monotonic() - USED_SECONDS - 1                                     # an hour without a message or a press
+    await bot.draw_buttons_ahead(context.bot)
+    assert uploads == []

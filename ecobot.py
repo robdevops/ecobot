@@ -31,7 +31,7 @@ from lib.alerts.notify import AlertState, Notifier
 from lib.alerts.particulates import CHECK_SECONDS as PARTICULATES_CHECK_SECONDS, ParticulatesMonitor
 from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
 from lib.alerts.weather import WeatherMonitor
-from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
+from lib.bot import AHEAD_SECONDS, TURN_SECONDS, Bot, Tasks, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.ecowitt.source import HA_IMPORT_SECONDS
 from lib.forecast import Forecast
@@ -122,9 +122,9 @@ def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks) -> tuple
     return running, weather
 
 
-async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], tasks: Tasks):
+async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], tasks: Tasks, tg_bot=None):
     """Fetch everything once, together, and log one summary line; then start what waited for it: the weather alerts, the
-    archives (copying each source's history into its cache)."""
+    archives (copying each source's history into its cache), the keyboard's charts drawn ahead every few minutes."""
     eco, air = bot.by_name.get("Ecowitt"), bot.by_name.get("AirGradient")
 
     async def ecowitt_part():
@@ -173,6 +173,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
         log.error("Startup fetch failed (%s: %s); the regular refreshes will catch up", type(e).__name__, e, exc_info=isinstance(e, BUGS))
     if missing := [LABELS[k] for k in available_kinds(bot.by_name, bot.irrigation is not None) if k not in running]:
         log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
+    if tg_bot is not None:
+        tasks.start(every(AHEAD_SECONDS, lambda: bot.draw_buttons_ahead(tg_bot)))
 
 
 def version() -> str:
@@ -277,7 +279,7 @@ async def main():
         running, weather = start_alerts(cfg, bot, notify, tasks)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
             tasks.start(source.warmer.run())
-        tasks.start(warm_up(bot, weather, running, tasks))
+        tasks.start(warm_up(bot, weather, running, tasks, app.bot))
         await stop.wait()
 
 

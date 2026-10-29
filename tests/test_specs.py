@@ -98,7 +98,7 @@ def test_a_taller_chart_for_more_panels():
     for n in (1, 2, 3, 4):
         chart = Chart("t", "s", [Panel(f"P{i}", "", [line(f"L{i}")]) for i in range(n)])
         sizes.append(Image.open(io.BytesIO(render(chart, TZ))).size)
-    assert sizes[0] == sizes[1] == (1280, 720) and sizes[2][1] > 720 and sizes[3][1] > sizes[2][1]
+    assert sizes[0] == sizes[1] == (864, 486) and sizes[2][1] > 486 and sizes[3][1] > sizes[2][1]
 
 
 def test_a_chart_is_a_png_of_at_most_256_colours_and_its_own_colours_are_exact():

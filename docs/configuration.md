@@ -69,7 +69,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 |---|---|---|
 | `CHART_ALL_FEELS_LIKE` | `off` | Add feels-like panel to "weather all week" |
 | `CHART_ALL_VPD` | `off` | Add VPD panel to "weather all week" |
-| `TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload the other periods of each chart to. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
+| `TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload charts to: the other periods of each chart asked for, and, while the bot has been used in the last hour, the keyboard's charts every 5 minutes. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
 
 ### Storage and logging
 

@@ -27,6 +27,17 @@ def the_log_as_it_was():
     ecobot._format.width = width
 
 
+@pytest.fixture(autouse=True)
+def buttons_not_drawn_ahead(monkeypatch):
+    """The keyboard's charts are not drawn ahead here (seven charts a start; test_periods.py tests the drawing): only noted."""
+    drawn = []
+
+    async def note(self, tg_bot):
+        drawn.append(tg_bot)
+    monkeypatch.setattr(ecobot.Bot, "draw_buttons_ahead", note)
+    return drawn
+
+
 class FakeApp:
     def __init__(self):
         self.sent, self.handlers = [], []
@@ -62,7 +73,7 @@ class FakeBuilder:
         return lambda *a, **k: self if name != "build" else self.app
 
 
-async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
+async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog, buttons_not_drawn_ahead):
     caplog.set_level("INFO")
     cfg = config(tmp_path, log_width=120)
     monkeypatch.setattr(ecobot._format, "width", 0)   # put back after the test
@@ -95,6 +106,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
     assert "Alerts NOT running" not in log
     assert ecobot._format.width == 120                   # LOG_WIDTH reaches the bot's own log lines
+    assert buttons_not_drawn_ahead == [app.bot]          # the keyboard's charts are drawn ahead once the sources are warm
 
 
 async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(tmp_path, monkeypatch, caplog):

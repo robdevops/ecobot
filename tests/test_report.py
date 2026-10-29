@@ -24,7 +24,7 @@ FORECAST = ('{"lines": ["Today: 🌦️ Showers. 11–16°C, 97% chance of rain"
 TODAY = date(2026, 10, 2)   # the day the results above are from
 
 WEATHER = """\
-• Outdoor: 🧥 12.3 °C, 💦 94 %, dew point 11.3 °C, VPD 0.085 kPa
+• Outdoor: 🧥 12.3 °C, 💦 94 %
 • Indoor: 🧥 18.3 °C, 63 %
 • Pressure: 🗜️ 1025.0 hPa
 • Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"""   # night and calm: no Sun or Wind line
@@ -100,7 +100,7 @@ def test_every_emoji_threshold_the_station_reports_shows_in_the_report_at_its_re
                      if (e := glance(g, f, float(v.split()[0])))}
     got = report.weather_now(json.dumps(data))
     assert got.splitlines() == [
-        "• Outdoor: 🔥 36.0 °C, 💦 90 %, dew point 18.0 °C, 🧽 VPD 1.300 kPa",
+        "• Outdoor: 🔥 36.0 °C, 💦 90 %",
         "• Indoor: 🥵 29.0 °C, 🏜️ 20 %",
         "• Pressure: 🗜️ 1030.0 hPa",
         "• Rain today: ☔ 3.0 mm (month total 9.0 mm); 🌧️ raining (2.0 mm/h)",

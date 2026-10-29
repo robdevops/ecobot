@@ -109,6 +109,11 @@ class ImageCache:
         self.items.move_to_end(key)
         return entry.photo, entry.title
 
+    def age_of(self, key: str) -> float | None:
+        """How long ago this chart was drawn, if it is held."""
+        entry = self.items.get(key)
+        return self.age(entry) if self._kept(entry) else None
+
     def has_copy(self, key: str) -> bool:
         """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
         entry = self.items.get(key)
