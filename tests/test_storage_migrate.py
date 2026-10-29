@@ -285,6 +285,7 @@ def test_a_move_tried_again_after_one_that_failed_keeps_what_the_bot_wrote_meanw
     outdoor = s.writer.run(lambda w: w.ecowitt_sensor(MAC, "outdoor"), ())
     mine = [{"ts": start, "temperature": 50.0}, {"ts": start + 300, "humidity": 1.0, "temperature_lo": -5.0, "temperature_hi": 99.0}]
     s.writer.run(lambda w: w.put(outdoor, "5min", mine), ())   # what the bot fetched meanwhile (no temperature at start + 300)
+    s.writer.run(lambda w: w.widen(outdoor, "5min", {"temperature": {start + 600: (9.0, 11.0)}}), ())   # a band of a reading not fetched yet
     s.writer.run(lambda w: w.cover(outdoor, "5min", start - DAY, start - 1), ())
     s.close()
     monkeypatch.undo()
@@ -296,6 +297,7 @@ def test_a_move_tried_again_after_one_that_failed_keeps_what_the_bot_wrote_meanw
         five = s.reader.rows("climate", [outdoor.id], "5min", start, start + 600)[outdoor.id]
         assert five.values["temperature"][:3] == [50.0, 10.1, 10.2]               # its own reading stays; the old ones fill in the rest
         assert five.values["humidity"][:2] == [80.0, 1.0] and (five.lo["temperature"][1], five.hi["temperature"][1]) == (-5.0, 99.0)
+        assert five.final[:3] == [1, 1, 1] and (five.lo["temperature"][2], five.hi["temperature"][2]) == (9.0, 13.0)   # settled by the old reading, the band of both
         assert s.coverage.held(outdoor.id, "5min", start - DAY, held["end"])          # the coverage of both
         day = s.reader.days("climate", [outdoor.id], d, d)[outdoor.id]
         assert day.hi["temperature"] == [99.0] and day.lo["temperature"] == [-5.0]       # its days worked out again

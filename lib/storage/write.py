@@ -3,8 +3,9 @@ days a write touches (worked out in the same transaction, so they are never behi
 
 A reading replaces the one held for the same sensor, resolution and time when it is as final as that one (a provisional reading, newer than
 its cycle's settle horizon, never replaces a final one) and from a source ranked as high (the bot's own over Home Assistant's over the
-cloud's); otherwise it only fills in what the row lacks. A band is only ever widened: the lowest and highest of what was held and what is
-written, with the value always inside it.
+cloud's); otherwise it only fills in what the row lacks. Either way the row is final once a final reading of it has arrived (a reading
+Home Assistant gave while it was settling is kept over the cloud's, and the row is settled by the cloud's). A band is only ever widened:
+the lowest and highest of what was held and what is written, with the value always inside it.
 """
 
 import logging
@@ -76,7 +77,7 @@ def pivot(group: str, fields: dict, start: int, end: int) -> tuple[list[dict], l
 # ---------- the statements, generated once per kind ----------
 _SQL: dict[tuple, str] = {}
 
-REPLACE = "(excluded.final > final OR (excluded.final = final AND excluded.src >= src))"
+REPLACE = "(excluded.final >= final AND excluded.src >= src)"
 
 
 def upsert_sql(kind: str) -> str:
@@ -84,7 +85,7 @@ def upsert_sql(kind: str) -> str:
     if (kind, "put") not in _SQL:
         names = [c.name for c in KINDS[kind]]
         cols = ["sensor", "res", "ts", "src", "final"] + [f"{c}{part}" for c in names for part in ("", "_lo", "_hi")]
-        sets = [f"src = CASE WHEN {REPLACE} THEN excluded.src ELSE src END", f"final = CASE WHEN {REPLACE} THEN excluded.final ELSE final END"]
+        sets = [f"src = CASE WHEN {REPLACE} THEN excluded.src ELSE src END", "final = MAX(final, excluded.final)"]
         for c in names:
             v, lo, hi = q(c), q(c + "_lo"), q(c + "_hi")
             new = f"(CASE WHEN {REPLACE} THEN COALESCE(excluded.{v}, {v}) ELSE COALESCE({v}, excluded.{v}) END)"
@@ -306,7 +307,7 @@ class Writer:
         """Work out every day in this zone from now on (and every day held, again)."""
         zone = str(getattr(tz, "key", tz))
         log.info("Storage: the time zone is now %s (was %s): working out every day again", zone, getattr(self.tz, "key", self.tz))
-        self.tz = self.storage.tz = tz
+        self.tz = tz   # (the storage's follows once this is committed: Storage.set_timezone)
         self.all_days()
         self.set_meta("tz", zone)
 

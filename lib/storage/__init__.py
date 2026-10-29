@@ -119,7 +119,12 @@ class Storage:
     async def set_timezone(self, tz: tzinfo):
         """The station's days are local to it: a zone other than the file's works them all out again."""
         if str(getattr(tz, "key", tz)) != str(getattr(self.tz, "key", self.tz)):
-            await self.write(lambda w: w.set_timezone(tz))
+            try:
+                await self.write(lambda w: w.set_timezone(tz))
+            except BaseException:   # (rolled back: the file and its days are still in the old zone)
+                self.writer.tz = self.tz
+                raise
+            self.tz = tz
 
     # ---------- the hops ----------
     async def read(self, fn, *args):

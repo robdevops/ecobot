@@ -134,7 +134,7 @@ def migrate(folder: Path, tz: tzinfo, target: Path | None = None, parts=tuple(PA
         return report
     log.info("Moving the history to %s (once): %s", target.name, ", ".join(p.name for p in old))
     part = target.with_name(target.name + ".part")
-    for leftover in (part, Path(f"{part}-journal")):
+    for leftover in (part, Path(f"{part}-journal"), Path(f"{part}-wal"), Path(f"{part}-shm")):
         leftover.unlink(missing_ok=True)   # a run that was cut short
     started = time.monotonic()
     storage = Storage(part, tz, bulk=True)
@@ -202,10 +202,12 @@ def _merge(part: Path, target: Path, tz: tzinfo):
             for kind in KINDS:
                 names = [c.name for c in KINDS[kind]]
                 cells = [f"{c}{part}" for c in names for part in ("", "_lo", "_hi")]
-                sets = []
+                # (the file's own rows win, by the writer's rule: a final reading settles a provisional one, a row with only a band takes
+                # the reading; a row is final once a final reading of it is in)
+                sets = ["src = CASE WHEN excluded.final > final THEN excluded.src ELSE src END", "final = MAX(final, excluded.final)"]
                 for c in names:
                     v, lo, hi = q(c), q(c + "_lo"), q(c + "_hi")
-                    value = f"COALESCE({v}, excluded.{v})"
+                    value = f"(CASE WHEN excluded.final > final THEN COALESCE(excluded.{v}, {v}) ELSE COALESCE({v}, excluded.{v}) END)"
                     sets += [f"{v} = {value}",
                              f"{lo} = MIN(COALESCE({lo}, excluded.{lo}), COALESCE(excluded.{lo}, {lo}), COALESCE({value}, {lo}, excluded.{lo}))",
                              f"{hi} = MAX(COALESCE({hi}, excluded.{hi}), COALESCE(excluded.{hi}, {hi}), COALESCE({value}, {hi}, excluded.{hi}))"]

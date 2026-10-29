@@ -248,7 +248,10 @@ the file instead of asking again, and one fetch at a time per station and cycle 
 
 What replaces what, a write's rules (`Writer.put`): a reading replaces the one held for the same sensor, resolution and time when it is as
 final (a provisional one never replaces a final one) and from a source ranked as high (the bot's own over Home Assistant's over the
-cloud's); otherwise it only fills in what the row lacks. `Writer.put_ecowitt` stores a response by `HistoryCache.store`'s rules (what
+cloud's); otherwise it only fills in what the row lacks. Either way the row is final once a final reading of it has arrived: a reading
+Home Assistant gave while it was settling is kept over the cloud's, and the row is settled by the cloud's. A merge of an old file into
+one the bot has been writing (section 5) follows the same rule, so a row that held only a band takes the old reading and settles.
+`Writer.put_ecowitt` stores a response by `HistoryCache.store`'s rules (what
 counts as fetched, an old empty stretch, a group the station lacks, a field Ecowitt adds later); the tests are `test_store.py`'s, on the
 new storage.
 
@@ -264,8 +267,9 @@ What uses them: by the charts' rule (`lines.bucket_width`: the finest readings t
 drawn only for a stretch of up to about 8 hours, so no period button ever draws them (1D is 288 five-minute readings). They are drawn for
 a question about a short stretch ("the last 3 hours", "yesterday from 2 to 6"), and they give a day's records their time to the minute.
 The bands do not need them kept: each 5 minutes' range is written into its 5-minute row as the minutes come in. Ten days is as long as
-Home Assistant keeps its own (so after the bot was down the gap can always be read back from it), and covers nearly every question about
-a few hours.
+Home Assistant keeps its own (so after the bot was down the gap could be read back from it: the bot reads back `KEEP_HOURS`, 9 hours,
+at start, as before; a longer gap stays, and a chart of it draws the 5-minute readings), and covers nearly every question about a few
+hours.
 
 ### 3.10 Connections and threads
 
@@ -429,7 +433,8 @@ one read. The 1Y chart's line is 365 day rows, the 3M chart's 90, the 1M chart's
   a low, a high) the number of values and their sum are compared with the old files' before the bands are widened, and so are the
   coverage, that every range is inside its row's band, the minutes, the AirGradient's readings and its own, and the snapshots. Any
   difference and the built file is deleted and the log says why; the bot starts with what its sources still have (a new `ecobot.sqlite`,
-  filled by the archive from what Ecowitt's cloud still keeps), and the move is tried again at the next start, into that file. Only a
+  filled by the archive from what Ecowitt's cloud still keeps), and the move is tried again at the next start, into that file (at every
+  start, while it fails: a difference that is in the old files themselves would be logged at each). Only a
   move that adds up is renamed `ecobot.sqlite` (or merged into it). It needs twice the old files' size free on the disk, and says so if
   there is not.
 - **What it says.** On the owner's cache: "Moved the history to ecobot.sqlite in 15.5s: 1,713,215 station readings, 16,589 bands,

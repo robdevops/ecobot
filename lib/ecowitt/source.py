@@ -415,7 +415,9 @@ class Ecowitt(Source):
         return await self.readings("5min", naive_local(local_epoch(now, self.tz) - hours * 3600, self.tz), now)
 
     async def close(self):
-        await self.api.close()
-        self.storage.close()
-        if self.ha:
-            await self.ha.close()
+        try:
+            await self.api.close()
+        finally:
+            self.storage.close()
+            if self.ha:
+                await self.ha.close()

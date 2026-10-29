@@ -124,6 +124,10 @@ def test_a_reading_replaces_one_as_final_and_from_a_source_ranked_as_high_and_ot
         w.put(s, "5min", [{"ts": t, "temperature": 14.0, "humidity": 60.0, "dew_point": 5.0}], CLOUD)   # ranked lower: only fills in
     row = storage.write_db.execute("SELECT temperature, humidity, dew_point, src, final FROM climate").fetchone()
     assert row == (13.0, 50.0, 5.0, HOME_ASSISTANT, 1)
+    with storage.writer.transaction() as w:   # a row Home Assistant gave while settling is settled by the cloud's final reading, kept
+        w.put(s, "5min", [{"ts": t + 300, "temperature": 20.0, "final": 0}], HOME_ASSISTANT)
+        w.put(s, "5min", [{"ts": t + 300, "temperature": 21.0}], CLOUD)
+    assert storage.write_db.execute("SELECT temperature, src, final FROM climate WHERE ts = ?", (t + 300,)).fetchone() == (20.0, HOME_ASSISTANT, 1)
 
 
 def test_a_band_is_only_ever_widened_keeps_the_value_inside_and_waits_for_a_reading_not_written_yet(storage):
@@ -247,6 +251,24 @@ def test_a_day_is_worked_out_from_the_finest_readings_that_hold_it_whole(storage
     storage.writer.run(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], data(values=five), start, end), ())
     got = read(storage, lambda r: r.days("climate", [1], d, d))[1]
     assert got.hi["temperature"] == [13.0] and got.hi_ts["temperature"] == [start + 23 * 3600 + 600]   # its 5-minute readings' own, when higher
+
+
+def test_a_day_of_5_minute_readings_takes_in_the_30_minute_bands_that_arrive_after_it(storage):
+    """The archive fetches the 5-minute days before the coarser cycles: a day held whole at 5 minutes is worked out again when its
+    30-minute readings come, for Ecowitt's lows and highs between the 5-minute readings."""
+    d = local_date(old_day(20), TZ)
+    start, end = day_bounds(d, TZ, True)
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], data(values={t: "10.0" for t in range(start, end + 1, 300)}), start, end), ())
+    assert read(storage, lambda r: r.days("climate", [1], d, d))[1].hi["temperature"] == [10.0]
+    thirty = data(values={t: "10.0" for t in range(start, end + 1, 1800)})
+    thirty["outdoor"] |= {"temperature_high": {"unit": "℃", "list": {str(start + 3 * 3600): "12.9"}},
+                          "temperature_low": {"unit": "℃", "list": {str(start + 5 * 3600): "7.5"}}}
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "30min", ["outdoor"], thirty, start, end), ())
+    got = read(storage, lambda r: r.days("climate", [1], d, d))[1]
+    assert (got.source, got.hi["temperature"], got.lo["temperature"]) == (["5min"], [12.9], [7.5])
+    assert (got.hi_ts["temperature"], got.lo_ts["temperature"]) == ([start + 3 * 3600], [start + 5 * 3600])
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "1day", ["outdoor"], data(values={start - start % 86400: "10.0"}), start - 86400, end), ())
+    assert read(storage, lambda r: r.days("climate", [1], d, d))[1].hi["temperature"] == [12.9]   # (a daily record changes nothing in it)
 
 
 def test_a_part_of_a_day_is_worked_out_from_its_own_readings_as_a_day_is_with_only_the_half_hours_it_holds_whole(storage):

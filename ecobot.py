@@ -79,6 +79,8 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
                       exc_info=isinstance(e, BUGS))
         else:
             await start(Ecowitt, cfg, storage=storage)
+            if not sources:   # (the station could not be made: the file is its to close otherwise)
+                storage.close()
     eco = sources[0] if sources else None
     if eco and str(eco.tz) != str(cfg.tz):
         if os.getenv("TZ"):

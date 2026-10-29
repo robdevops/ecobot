@@ -116,8 +116,9 @@ def utc_days(day: date, tz: tzinfo) -> tuple[int, int] | None:
 
 def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, dict[date, set[str]]], held: Held, tz: tzinfo):
     """Work out these sensors' days again ({sensor: {day: the resolutions written that day, or ANY}}): their rows replaced, or gone when no
-    readings are left for them. A day held whole at a resolution is left as it is when nothing of that resolution, nor what is held, changed
-    (a day of 5-minute readings has nothing to take from its 30-minute or daily ones: the archive writes every day at each resolution)."""
+    readings are left for them. A day held whole at a resolution is left as it is when nothing it is worked out from changed, nor what is
+    held: a day of 5-minute readings takes in its 30-minute readings' bands too (the archive fetches the 5-minute days before the coarser
+    cycles, so those arrive after it), a day of 30-minute readings has nothing to take from the daily ones."""
     insert, select = statements(kind)
     db.execute(WANT)
     complete, records, rest, again = [], [], set(), []
@@ -125,7 +126,7 @@ def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, dict[date, set
         for d, changed in days.items():
             start, end = day_bounds(d, tz, True)
             res = next((r for r in ("5min", "30min") if held(sensor, r, start, end)), None)
-            if res and not changed & {res, ANY}:
+            if res and not changed & {"5min", "30min", ANY} - ({"5min"} if res == "30min" else set()):
                 continue
             again.append((sensor, d.isoformat()))
             if res:   # held whole: that resolution, even if it has no readings (the station was off), as day_values does
