@@ -13,12 +13,11 @@ that unsettled tail is fetched by the keep-warm refresh rather than by each ques
 import asyncio
 import json
 import logging
-import sqlite3
 import threading
 import time
 from bisect import bisect_left
 
-from ..counts import watch
+from ..counts import connect
 from ..timeutil import SLOT
 from .api import CYCLES, UNIT_FIXES
 
@@ -74,7 +73,7 @@ class HistoryCache:
     def __init__(self, path, units: dict):
         self._lock = threading.Lock()
         self.path = path
-        self.db = watch(sqlite3.connect(path, check_same_thread=False))
+        self.db = connect(path, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);

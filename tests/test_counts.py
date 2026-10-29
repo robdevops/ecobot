@@ -16,7 +16,7 @@ async def test_a_request_counts_its_own_statements_and_hops_and_a_task_it_detach
     monkeypatch.setattr(asyncio, "to_thread", asyncio.to_thread)   # (put back after the test: install wraps it)
     counts.install()
     counts.install()                                                 # once, however often it is called
-    db = counts.watch(sqlite3.connect(":memory:"))
+    db = counts.connect(":memory:")
 
     async def request():
         count = counts.start()

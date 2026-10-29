@@ -8,6 +8,7 @@ scripts/bench_storage.py.
 
 import asyncio
 import contextvars
+import sqlite3
 from dataclasses import dataclass
 
 
@@ -35,15 +36,36 @@ def detach():
     CURRENT.set(None)
 
 
-def _statement(_sql: str):
+def _statement():
     if (count := CURRENT.get()) is not None:
         count.sql += 1
 
 
-def watch(db):
-    """Count the statements this SQLite connection runs (each run of one: an executemany counts a run per row)."""
-    db.set_trace_callback(_statement)
-    return db
+class Counted(sqlite3.Connection):
+    """A connection that counts its statements: each execute, and each executemany or executescript once. (SQLite's trace hook would count
+    each row of an executemany, but to call it Python writes out every row's statement with its values: six times the cost of the insert.)"""
+
+    def execute(self, sql, parameters=(), /):
+        _statement()
+        return super().execute(sql, parameters)
+
+    def executemany(self, sql, parameters, /):
+        _statement()
+        return super().executemany(sql, parameters)
+
+    def executescript(self, script, /):
+        _statement()
+        return super().executescript(script)
+
+
+def connect(*args, **kwargs) -> sqlite3.Connection:
+    """sqlite3.connect, the connection's statements counted."""
+    return sqlite3.connect(*args, factory=Counted, **kwargs)
+
+
+def uncounted(db: sqlite3.Connection, sql: str):
+    """A statement that is not a query (BEGIN, COMMIT), run without counting it."""
+    return sqlite3.Connection.execute(db, sql)
 
 
 def install():
