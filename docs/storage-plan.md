@@ -443,8 +443,12 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    `ecowitt/stored.py` as they read the old cache. `weather_days` and the dashboard read the day rows (one read each; the dashboard's
    Daily row is today's day row, its readings so far with their bands). A history answer's records, its rows by day or by month and its
    averages come from the period's days (`ecowitt/period.py`: the day rows, and the part-days at either end from their own readings),
-   and refining is gone; a day of 5-minute readings takes in its half hours' own lows and highs, as refining kept them. Next, the
-   history answer's readings and charts read natively (rows, and buckets or day rows for long charts).
+   and refining is gone; a day of 5-minute readings takes in its half hours' own lows and highs, as refining kept them. A history
+   answer makes one read (`ecowitt/reads.py`, on the reader's thread, after what it lacks is fetched): the period's days and series,
+   and for a chart its readings as `lines.Sample`s where they are drawn as they are, the lines bucketed by the database (2-hour and
+   4-hour buckets: `Reader.buckets`) where they are too many, or a point a day from the period's days (so a year's line is 365 day rows,
+   not 17,520 readings, and a day held finer than Ecowitt's daily record is its local day); the wind's 5-minute readings for the rose
+   and the rain counter for the bars come in the same read. Next, `link`, `compose`, the alerts and the archive (2e).
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live

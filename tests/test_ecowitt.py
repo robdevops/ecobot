@@ -832,12 +832,13 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
 async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
     from lib.ecowitt import query as history
     seen = []
-    real = history.HistoryQuery._read
+    real = history.HistoryQuery._hold_period
 
-    async def spy(self, cycle, t, until):
-        seen.append(cycle)
-        await real(self, cycle, t, until)
-    monkeypatch.setattr(history.HistoryQuery, "_read", spy)
+    async def spy(self):
+        plan = await real(self)
+        seen.extend(cycle for cycle, _, _ in plan)
+        return plan
+    monkeypatch.setattr(history.HistoryQuery, "_hold_period", spy)
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 00:00:00"}
@@ -1429,6 +1430,7 @@ def test_naming_one_of_temperature_and_humidity_leaves_the_other_out_of_what_the
 
 async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_records_and_by_month_when_asked(tmp_path):
     from lib.ecowitt.query import HistoryQuery
+    from lib.ecowitt.reads import history_on
     from lib.tools import Turn
     from tests.fakes import TZ, fetcher_on, storage_with
     today = datetime.now(TZ).date()
@@ -1444,10 +1446,11 @@ async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_re
     q.start, q.end = datetime.combine(days[0], datetime.min.time()), datetime.combine(days[-1], datetime.max.time())
     q.span = q.end - q.start
     q.rain_from_daily, q.store = False, {}
-    daily = await q._rain_bars()
+    held = storage.read_now(history_on, f.mac, ["rainfall"], [], f.epoch(q.start), f.epoch(q.end), False, [], True)
+    daily = q._rain_bars(held)
     assert q.rain_from_daily and len(daily.x) >= 59 and round(sum(daily.y), 1) == 120.0 and daily.per == "day"
     q.turn = Turn(text="rain by month for 2 months")
-    monthly = await q._rain_bars()
+    monthly = q._rain_bars(held)
     assert monthly.per == "month" and monthly.values and round(sum(monthly.y), 1) == 120.0 and len(monthly.x) in (2, 3)
     storage.close()
 
@@ -1506,6 +1509,8 @@ async def test_the_newest_rain_is_in_the_bars_though_the_cache_has_not_got_it_ye
     """The cache holds 30-minute readings only up to the settle horizon (now less 2.5 hours); the newer ones are the query's own
     (from memory or Ecowitt) and their rain must be in the bars and the total, not left out."""
     from lib.ecowitt.query import HistoryQuery
+    from lib.ecowitt.reads import history_on
+    from lib.lines import Sample
     from tests.fakes import TZ, fetcher_on, storage_with
     day = datetime.now(TZ).date() - timedelta(days=3)
     t0 = int(datetime.combine(day, time()).replace(tzinfo=TZ).timestamp())
@@ -1516,9 +1521,9 @@ async def test_the_newest_rain_is_in_the_bars_though_the_cache_has_not_got_it_ye
     q.f, q.tz, q.turn, q.rain_from_daily = f, TZ, Turn(), False
     q.start, q.end = datetime.combine(day, time()), datetime.combine(day, time(3))
     q.span = q.end - q.start
-    q.store = {"rainfall.daily": {"unit": "mm", "pts": {t0 + 7200 + i * 300: {"cycle": "5min", "value": (0.5 * i, f"{0.5 * i}")}
+    q.store = {"rainfall.daily": {"unit": "mm", "pts": {t0 + 7200 + i * 300: Sample(t0 + 7200 + i * 300, 0.5 * i, None, None, 300)
                                                          for i in range(11)}}}   # 2am to 2:50am, 5 mm
-    bars = await q._rain_bars()
+    bars = q._rain_bars(storage.read_now(history_on, f.mac, ["rainfall"], [], f.epoch(q.start), f.epoch(q.end), False, [], True))
     assert round(sum(bars.y), 1) == 5.0 and bars.y[2] == 5.0   # all of it in the 2am bar
     storage.close()
 
@@ -1551,8 +1556,8 @@ async def test_the_wind_rose_s_failed_requests_are_reported_with_the_rest(tmp_pa
     eco, _ = await archived_station(tmp_path, archived_cache)
     counted = query.HistoryQuery._summarise_direction
 
-    async def with_a_failure(self):
-        await counted(self)
+    def with_a_failure(self, *args):
+        counted(self, *args)
         self.wind = SimpleNamespace(errors=["5min 16 Oct 2026 - 16 Oct 2026: HTTP 502"], seconds=0.0)
     monkeypatch.setattr(query.HistoryQuery, "_summarise_direction", with_a_failure)
     today = datetime.now(eco.tz).date()

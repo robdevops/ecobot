@@ -45,11 +45,19 @@ DAY_MEANS = ("a day's mean is its day row's, from its 5-minute readings: the old
              "that ends now is not held at 5 minutes to its end), the fake's value at the start of each half hour")
 MINUTES = ("a minute's reading is a reading, as a 5-minute one is: the old answer counted only 5-minute values as true ones, so a stretch "
            "read by the minute said its records were from averaged data")
+LINE_DAYS = ("a line of days is drawn from the period's days: a day the storage holds at 30 minutes or finer gives its own mean, lowest and "
+             "highest over the local day (at 10am, where the records sit), where the old line drew Ecowitt's daily record as it came (10am to "
+             "10am, its one value and its own low and high) for a period not held whole at 30 minutes (a year and a day: Ecowitt keeps a year)")
+LINE_MEANS = ("a day's point is its day row's mean, of its 5-minute readings where the day is held at 5 minutes; the old line averaged the "
+              "30-minute readings the period was drawn from (each a half hour's first reading): within 0.004 °C, 0.1 %, 0.07 hPa")
+LINE = r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\."
 RECORD = r"\.(result\.series\.\w+\.\w+\.(low|high)_(date|time|when)|charts\[0\]\.panels\[0\]\.lines\[\d\]\.records\.(low|high)):"
 MONTH = r"\.result\.series\.\w+\.\w+\.monthly\.\w+ \d{4}\."
 LONG = ["temperature last 12 months", "temperature chart 1y", "pressure chart 1y", "wind chart 1y", "rain chart 1y", "history, the whole record",
         "history, the whole record, chart", "history, a year of humidity"]
 MONTHLY = ["humidity chart 3m", "pressure chart 3m", "rain this year", "history, 90 days of rain", "history, 5 months by month"]
+DAILY_LINES = ["temperature last 3 months", "temperature chart 3m", "pressure chart 3m", "humidity chart 3m", "history, 5 months by month",
+               "average temperature last 30 days"]
 BANDS = ("a 5-minute reading's band now takes in both of Home Assistant's ranges of it, the lowest and highest of its own bucket and those "
          "around its 5-minute mark (a reading with a range of its own kept only that), and what it read while its bucket was still filling: "
          "up to a step wider (0.1 °C, 1 %), all of them readings Home Assistant had")
@@ -64,8 +72,10 @@ JUDGED: dict[str, list[tuple[str, str]]] = {
     "history, a week of everything": [(r"\.result\.series\.(?!\w+\.temperature\.)\w+\.\w+\.(low|high)_(date|time|when):", REFINING)],
     "temperature last 3 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER), (r"\.result\.series\.\w+\.\w+\.(low|high)_note: only before", MINUTES)],
     "temperature last 6 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER), (r"\.result\.series\.\w+\.\w+\.(low|high)_note: only before", MINUTES)],
-    **{name: [(RECORD, TIES), (MONTH + "(low|high):", MONTHS_LOCAL), (MONTH + "(low|high)_(when|date):", MONTH_TIMES)] for name in LONG},
-    **{name: [(MONTH + "(low|high)_(when|date):", MONTH_TIMES)] for name in MONTHLY},
+    **{name: [(RECORD, TIES), (MONTH + "(low|high):", MONTHS_LOCAL), (MONTH + "(low|high)_(when|date):", MONTH_TIMES),
+              (LINE + "(x|y|low|high):", LINE_DAYS)] for name in LONG},
+    **{name: [(MONTH + "(low|high)_(when|date):", MONTH_TIMES)] + [(LINE + "y:", LINE_MEANS)] * (name in DAILY_LINES) for name in MONTHLY},
+    **{name: [(LINE + "y:", LINE_MEANS)] for name in DAILY_LINES if name not in MONTHLY},
     "history, 3 days derived, average": [(r"\.result\.series\.\w+\.\w+\.(daily\.\w+ \d+ \w+\.avg|average):", DAY_MEANS)],
     "temperature chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
     "humidity chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],

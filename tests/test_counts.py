@@ -78,6 +78,7 @@ async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_
     monkeypatch.setattr(asyncio, "to_thread", asyncio.to_thread)
     counts.install()
     rows = {r[0]: r for r in await bench_storage.bench(tmp_path, 1, TZ)}
-    assert rows["Temperature chart, 3 hours"][3] == 0 and rows["Temperature chart, 3 hours"][2].sql <= 3   # the minutes, in a read or two
+    short = rows["Temperature chart, 3 hours"]
+    assert short[3] == 0 and short[2].hops == 2 and short[2].sql <= 4   # whether the minutes reach back, then them and the stretch's records
     assert rows["Temperature chart, 1D"][3] == 1                                                            # its newest hour is settling
     assert "air_days: days PM2.5 over 25, 4 years" in rows
