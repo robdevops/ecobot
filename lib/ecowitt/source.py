@@ -145,7 +145,7 @@ class Ecowitt(Source):
                                 ha_transport) if cfg.ecowitt_home_assistant else None
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
-        self.via = "Home Assistant, cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
+        self.via = "HA/cloud" if home and cloud else "HA" if home else "cloud"
         self.has_minutes = home is not None   # (only Home Assistant has minutes)
         self.fast = home                     # the API that can be asked every few seconds, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # (shared with the air sensor)
@@ -193,7 +193,7 @@ class Ecowitt(Source):
                 pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        self.summary = (f"Ecowitt: '{self.station_name}' ({self.mac}) via {self.via} (every {self.warmer.interval:g}s)"
+        self.summary = (f"Ecowitt: '{self.station_name}' ({self.mac}): {self.via} ({self.warmer.interval:g}s)"
                         + (f", {len(devices)} devices" if len(devices) > 1 else ""))
         try:
             size = os.path.getsize(self.storage.path) if os.path.exists(self.storage.path) else 0
@@ -292,7 +292,7 @@ class Ecowitt(Source):
             return
         self.ha.trouble.ok()
         if first or not self._ha_ok:
-            log.info("Backfill Home Assistant (Ecowitt): %d 5-min bands widened across %d series, %.0fs", marks, len(found), time.monotonic() - started)
+            log.info("Backfill HA (Ecowitt): %d 5-min bands widened across %d series, %.0fs", marks, len(found), time.monotonic() - started)
         self._ha_ok = True
 
     async def _record_live(self, data: dict):

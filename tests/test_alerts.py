@@ -968,12 +968,12 @@ async def test_a_live_reading_alone_starts_the_rain_alert_without_the_rest_of_th
     assert len(sent) == 1
 
 
-async def test_the_pollen_alert_waits_for_7_am(tmp_path):
+async def test_the_pollen_alert_waits_for_7_30_am(tmp_path):
     mon, pollen, sent = pollen_monitor(tmp_path)
     pollen.grass = "Extreme"
-    pollen.today = datetime(2026, 10, 30, 6, 40)
+    pollen.today = datetime(2026, 10, 30, 7, 20)
     await mon.check()
     assert sent == []                                                  # the page is read from 6 am: not yet
-    pollen.today = datetime(2026, 10, 30, 7, 0)
+    pollen.today = datetime(2026, 10, 30, 7, 30)
     await mon.check()
     assert sent == ["🟣 Grass pollen forecast is Extreme."]

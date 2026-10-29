@@ -76,7 +76,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Ecowitt: 'Fairleigh' (" in log and ") via Ecowitt cloud (every " in log and "Telegram: @testbot, Model: " in log
+    assert "Ecowitt: 'Fairleigh' (" in log and "): cloud (" in log and "Telegram: @testbot, Model: " in log
     assert not any(line.startswith(("Sources:", "Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
     assert "Startup fetch:" not in log and " requests to fetch" in log and "Backfill AirGradient:" in log
     final = next(line for line in log.splitlines() if "Backfill Ecowitt: " in line and " fetched, " in line)
@@ -418,13 +418,13 @@ def test_a_traceback_is_logged_whole_after_its_message():
     assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
 
 
-def test_the_log_width_is_48_unless_set_and_0_keeps_whole_messages(monkeypatch):
+def test_the_log_width_is_24_unless_set_and_0_keeps_whole_messages(monkeypatch):
     from lib.config import Config
     for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_WIDTH", raising=False)
-    assert Config.from_env().log_width == 48
-    for value, want in (("120", 120), ("0", 0), ("junk", 48), ("-5", 48), ("7.5", 48), ("²", 48)):
+    assert Config.from_env().log_width == 24
+    for value, want in (("120", 120), ("0", 0), ("junk", 24), ("-5", 24), ("7.5", 24), ("²", 24)):
         monkeypatch.setenv("LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
 

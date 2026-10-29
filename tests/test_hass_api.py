@@ -116,7 +116,7 @@ async def test_the_cloud_makes_up_what_home_assistant_lacks_and_home_assistants_
     cloud_transport, cloud, home_transport, home = await cloud_and_home(tmp_path)
     eco = Ecowitt(config(tmp_path, homeassistant_url="http://ha", homeassistant_token="tok"), cloud_transport, home_transport)
     await eco.start()
-    assert isinstance(eco.api, FallbackAPI) and "cloud fallback" in eco.via and eco.mac == MAC                  # the cloud names the station
+    assert isinstance(eco.api, FallbackAPI) and "HA/cloud" == eco.via and eco.mac == MAC                  # the cloud names the station
     now = local_now()
     cloud.calls.clear()
     data = await eco.api.history(eco.mac, "30min", now - timedelta(days=20), now - timedelta(days=1), "outdoor")

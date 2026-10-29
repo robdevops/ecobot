@@ -54,7 +54,7 @@ async def test_the_station_names_its_own_time_zone(tmp_path, caplog, zone, used)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     await eco.close()
-    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and "(AA:BB:CC:DD:EE:FF) via Ecowitt cloud" in eco.summary
+    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and "(AA:BB:CC:DD:EE:FF): cloud (" in eco.summary
     assert ("Ecowitt names a time zone Python doesn't know, 'Mars/Olympus'" in caplog.text) == (zone == "Mars/Olympus")
 
 

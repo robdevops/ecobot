@@ -97,7 +97,7 @@ class Archive:
             if i % 20 == 0 and i < len(todo):
                 log.info("Backfill Ecowitt: %d of %d requests done", i, len(todo))
             await asyncio.sleep(self.pace)
-        log.info("Backfill Ecowitt: %d requests fetched, %d failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
+        log.info("Backfill Ecowitt: %d fetched, %d failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
         return fetched, failed
 
     async def _drop_unsupported_groups(self, cycle: str, start: datetime, end: datetime) -> bool:

@@ -26,7 +26,7 @@ class LogFormat(logging.Formatter):
     """"INFO message": the level (WARNING is shown as WARN) and the message, with no module name. Cuts a quoted chat message to
     the width; a traceback (or stack) follows whole."""
 
-    def __init__(self, fmt: str, width: int = 48, priority: bool = False):
+    def __init__(self, fmt: str, width: int = 24, priority: bool = False):
         """width: the most characters of a chat message kept in the log, then an ellipsis; 0 keeps all. priority: each line starts
         with its syslog priority, for systemd's journal (on_journal)."""
         super().__init__(fmt)

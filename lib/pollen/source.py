@@ -64,7 +64,7 @@ class Pollen(Source):
             return
         try:
             await self.warm(True)
-            self.summary = f"Melbourne Pollen: {'; '.join(self.lines()) or 'no levels on the page'} (every {self.warmer.interval:g}s)"
+            self.summary = f"Melbourne Pollen: {'/'.join(l.split(' forecast')[0] for l in self.lines()) or 'no levels on the page'} ({self.warmer.interval:g}s)"
         except Exception as e:  # the site may just be briefly unreachable
             log.warning("Pollen not readable yet: %s", e)
 

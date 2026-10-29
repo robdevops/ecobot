@@ -96,7 +96,7 @@ async def test_the_voc_index_gets_home_assistants_ranges_and_the_raw_pm25_none_s
     assert len(with_range) > 50 and all(r["_range"]["voc_index"] == (80.0, 120.0) for r in with_range)
     line = air._chart(["voc_index"], rows, "today").panels[0].lines[0]
     assert line.low is not None and min(line.low) == 80.0 and max(line.high) == 120.0                 # the chart is shaded from them
-    assert "Backfill Home Assistant (AirGradient): " in caplog.text
+    assert "Backfill HA (AirGradient): " in caplog.text
     # Home Assistant is the first source here, so its raw PM2.5 is the one kept for its days, and the cloud's (twice as different) fills no
     # gaps of it: said once, with the fix. Its other metrics (CO2 ...) fill the cells Home Assistant has nothing for
     raw = lambda ts: 2 * (5 + datetime.fromtimestamp(ts, timezone.utc).hour % 12)
@@ -107,7 +107,7 @@ async def test_the_voc_index_gets_home_assistants_ranges_and_the_raw_pm25_none_s
     assert all(r["pm2_5"] == raw(r["ts"]) for r in short)
     await air.import_history()                                                         # the next time: the last hours, nothing said again
     await air.rows(*(naive_local(t, air.tz) for t in (now - 60 * 3600, now - 600)))   # (another day checked against the cloud)
-    assert caplog.text.count("isn't the reading the bot keeps") == 1 and caplog.text.count("Backfill Home Assistant (AirGradient)") == 1
+    assert caplog.text.count("isn't the reading the bot keeps") == 1 and caplog.text.count("Backfill HA (AirGradient)") == 1
     await air.close()
 
 

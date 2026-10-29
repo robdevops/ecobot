@@ -191,11 +191,11 @@ class AirGradient(Source):
                   if local and local.working and local.address else None)
         via = [sensor] if sensor else [f"{local.describe()} not answering"] if local else []
         if self._ha_ids:
-            via.append("Home Assistant")
+            via.append("HA")
         if self.cloud:
-            via.append("cloud fallback" if sensor or self._ha_ids else "AirGradient cloud")
+            via.append("cloud")
         name = row.get("locationName") or (local and local.serial) or "sensor"
-        line = f"'{name}'{f' ({self.loc})' if self.cloud else ''} via {', '.join(via)} (every {self.warmer.interval:g}s)"
+        line = f"'{name}'{f' ({self.loc})' if self.cloud else ''}: {'/'.join(via)} ({self.warmer.interval:g}s)"
         notes = [f"{LABELS.get(name) or EXTRA_LABELS.get(name, name)} differs between {SOURCE_NAMES[src]} and what the bot keeps ({FIX.get(name, 'check the correction each applies')})"
                  for src, found in self._verdict.items() for name, v in found.items() if not same_reading(v)]
         if self._correction:
@@ -275,7 +275,7 @@ class AirGradient(Source):
                             "value), so it fills no gaps and its ranges aren't used: %s", LABELS.get(name) or EXTRA_LABELS.get(name, name),
                             agreed, compared, FIX.get(name, "check the correction each applies"))
         if first or not self._ha_ok:
-            log.info("Backfill Home Assistant (AirGradient): %d 5-min bands widened, %d filled, %d kept, %.0fs", added, filled, kept,
+            log.info("Backfill HA (AirGradient): %d 5-min bands widened, %d filled, %d kept, %.0fs", added, filled, kept,
                      time.monotonic() - started)
         self._ha_ok = True
 
