@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field, fields
 from datetime import datetime, tzinfo
+from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -44,7 +45,7 @@ ON, OFF = ("on", "yes", "true", "1"), ("off", "no", "false", "0")
 # Each reader takes a setting's text (stripped; empty when unset or blank), its default and the variable's name.
 def _flag(value: str, default: bool, name: str) -> bool:
     """An on/off setting: on, yes, true or 1; off, no, false or 0; unset or empty is the default. Any other value keeps the
-    default too, with a warning, so a typo can't switch a safeguard such as ADMIN_ONLY off."""
+    default too, with a warning, so a typo changes nothing."""
     if value.lower() in ON:
         return True
     if value.lower() in OFF:
@@ -65,6 +66,25 @@ def _url(value: str, default: str, name: str) -> str:
     return (value or default).rstrip("/")
 
 
+SOURCES = ("auto", "cloud", "homeassistant")
+AIR_SOURCES = ("auto", "local", "homeassistant", "cloud")
+
+
+def _one_of(choices: tuple[str, ...], value: str, default: str, name: str) -> str:
+    """One of `choices`, whatever its case; another value keeps the default, with a warning."""
+    if value.lower() in choices:
+        return value.lower()
+    if value:
+        log.warning("%s: %r is not %s; keeping %s", name, value, ", ".join(choices), default)
+    return default
+
+
+# Where the readings come from. The weather station's: auto (Home Assistant when it is set, Ecowitt's cloud as its fallback when that is set
+# too, else whichever is), cloud, or homeassistant. The air monitor's: auto (each source that is set, the monitor itself first, then Home
+# Assistant, then AirGradient's cloud), or one of local, homeassistant, cloud alone.
+_source, _air_source = partial(_one_of, SOURCES), partial(_one_of, AIR_SOURCES)
+
+
 def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int, int] | None:
     """"0-6" -> (0, 6); "off" or "none" -> None; anything unreadable -> the default."""
     if value.lower() in ("off", "none", "no", "false"):
@@ -74,12 +94,6 @@ def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int,
     except ValueError:
         return default
     return (start, end) if 0 <= start <= 23 and 0 <= end <= 24 and start != end else default
-
-
-def _hour(value: str, default: int, name: str) -> int:
-    """"18" -> 18; anything unreadable or outside 0 to 23 -> the default."""
-    number = _number(value)
-    return int(number) if number is not None and 0 <= number <= 23 else default
 
 
 def _ids(value: str, default: frozenset[int], name: str) -> frozenset[int]:
@@ -100,12 +114,18 @@ def _whole(value: str, default: int, name: str) -> int:
     return int(value) if value.isdecimal() else default
 
 
-def _between(low: int, high: int):
-    """A reader of a whole number kept from `low` to `high` ("0" is `low`, like any number under it); unreadable -> the default."""
+def _between(low: int, high: int, clamp: bool = True):
+    """A reader of a whole number from `low` to `high`; one outside is kept to them when `clamp` ("0" is `low`, like any number under it),
+    else it is the default, as anything unreadable is."""
     def read(value: str, default: int, name: str) -> int:
         number = _number(value)
-        return default if number is None else int(min(high, max(low, number)))
+        if number is None or not clamp and not low <= number <= high:
+            return default
+        return int(min(high, max(low, number)))
     return read
+
+
+_hour = _between(0, 23, clamp=False)   # "18" -> 18; anything unreadable or outside 0 to 23 -> the default
 
 
 def _readings_in_a_row(value: str, default: int, name: str) -> int:
@@ -126,15 +146,12 @@ def _chat_id(value: str, default: int | None, name: str) -> int | None:
         return None
 
 
-def _number(value: str) -> float | None:
+def _number(value: str, default: float | None = None, name: str = "") -> float | None:
+    """"6.5" -> 6.5; unset or blank -> the default; unreadable -> None."""
     try:
-        return float(value)
+        return float(value) if value else default
     except ValueError:
         return None
-
-
-def _decimal(value: str, default: float | None, name: str) -> float | None:
-    return _number(value) if value else default
 
 
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -163,25 +180,27 @@ def _from_env(f) -> object:
 class Config:
     tz: tzinfo
     state_path: Path
-    cache_path: Path
-    air_cache_path: Path
-    conditions_cache_path: Path                                    # the last pollen page and forecast, kept across restarts
+    storage_path: Path                                             # the bot's one file of readings, the pollen page and the forecast (lib/storage)
     telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
-    xai_api_key: str = _setting("XAI_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
-    xai_base_url: str = _setting("XAI_BASE_URL", "https://api.x.ai/v1")
-    xai_model: str = _setting("XAI_MODEL", "grok-4.3")
+    openrouter_api_key: str = _setting("OPENROUTER_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
+    openrouter_base_url: str = _setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    openrouter_model: str = _setting("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     ecowitt_api_key: str = _setting("ECOWITT_API_KEY", "")
     ecowitt_app_key: str = _setting("ECOWITT_APP_KEY", "")
     airgradient_token: str = _setting("AIRGRADIENT_API_TOKEN", "")
     airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
     airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
     airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
+    airgradient_source: str = _setting("AIRGRADIENT_SOURCE", "auto", _air_source)   # auto: the monitor itself, then Home Assistant, then the cloud, each that is set; or one alone
+    homeassistant_url: str = _setting("HOMEASSISTANT_URL", "", _url)       # Home Assistant, where the station's readings are read from (its Ecowitt integration), e.g. http://192.168.1.219:8123
+    homeassistant_token: str = _setting("HOMEASSISTANT_TOKEN", "")         # a long-lived access token (your profile page in Home Assistant)
+    ecowitt_source: str = _setting("ECOWITT_SOURCE", "auto", _source)      # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
     place: str = _setting("PLACE", "Melbourne")                     # named after the Pollen & asthma and Forecast headings in the report
     pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
     pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
     forecast: bool = _setting("FORECAST", False, _flag)             # the daily forecast from Open-Meteo
-    forecast_lat: float | None = _setting("FORECAST_LAT", None, _decimal)   # the weather station's own location when unset
-    forecast_lon: float | None = _setting("FORECAST_LON", None, _decimal)
+    forecast_lat: float | None = _setting("FORECAST_LAT", None, _number)   # the weather station's own location when unset
+    forecast_lon: float | None = _setting("FORECAST_LON", None, _number)
     rain_quiet_hours: tuple[int, int] | None = _setting("RAIN_QUIET_HOURS", (0, 6), _hours)   # "0-6", local hours ("off" for none): no rain alerts, a summary after
     chart_all_feels_like: bool = _setting("CHART_ALL_FEELS_LIKE", False, _flag)   # "weather all week" also draws the feels-like panel (off: it nearly repeats temperature)
     chart_all_vpd: bool = _setting("CHART_ALL_VPD", False, _flag)   # "weather all week" also draws the vapour pressure deficit panel (off: it is temperature and humidity combined)
@@ -190,17 +209,32 @@ class Config:
     tuya_client_secret: str = _setting("TUYA_CLIENT_SECRET", "")
     tuya_base_url: str = _setting("TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url)   # the data centre's address (EU by default)
     irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
-    admin_only: bool = _setting("ADMIN_ONLY", True, _flag)          # the bot answers nobody but the admins of the groups it is in
+    admin_only: bool = _setting("ADMIN_ONLY", False, _flag)         # on: the bot answers nobody but the admins of the groups it is in (and ADMIN_CHAT_IDS)
     admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # the rain and temperature-crossing alerts: dry this long before "the rain has stopped", and this long between alerts
     telegram_preload_chat: int | None = _setting("TELEGRAM_PRELOAD_CHAT", None, _chat_id)   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
     antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
-    log_width: int = _setting("LOG_WIDTH", 0, _whole)              # the most characters of a long log line (a request, a chat message), cut with an ellipsis (…); 0 cuts none
+    log_width: int = _setting("LOG_WIDTH", 24, _whole)             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property
+    def homeassistant(self) -> bool:
+        return bool(self.homeassistant_url and self.homeassistant_token)
+
+    @property
+    def ecowitt_cloud(self) -> bool:
+        """The station's readings are asked of Ecowitt's cloud (its keys are set, and ECOWITT_SOURCE does not say Home Assistant only)."""
+        return bool(self.ecowitt_api_key and self.ecowitt_app_key) and self.ecowitt_source != "homeassistant"
+
+    @property
+    def ecowitt_home_assistant(self) -> bool:
+        """... of Home Assistant (it is set, and ECOWITT_SOURCE does not say the cloud only)."""
+        return self.homeassistant and self.ecowitt_source != "cloud"
+
+    @property
     def ecowitt(self) -> bool:
-        return bool(self.ecowitt_api_key and self.ecowitt_app_key)
+        """The weather station is on: from Home Assistant, Ecowitt's cloud, or both (the cloud then making up what Home Assistant lacks)."""
+        return self.ecowitt_cloud or self.ecowitt_home_assistant
 
     @property
     def irrigation(self) -> bool:
@@ -208,12 +242,23 @@ class Config:
 
     @property
     def airgradient_cloud(self) -> bool:
-        return bool(self.airgradient_token and self.airgradient_location)
+        """The air monitor's readings are asked of AirGradient's cloud (its token and location are set, and AIRGRADIENT_SOURCE allows)."""
+        return bool(self.airgradient_token and self.airgradient_location) and self.airgradient_source in ("auto", "cloud")
+
+    @property
+    def airgradient_local(self) -> bool:
+        """... of the monitor itself (its address is set, and AIRGRADIENT_SOURCE allows)."""
+        return bool(self.airgradient_local_url) and self.airgradient_source in ("auto", "local")
+
+    @property
+    def airgradient_homeassistant(self) -> bool:
+        """... of Home Assistant (it is set, and AIRGRADIENT_SOURCE allows; whether it has the monitor is found at start)."""
+        return self.homeassistant and self.airgradient_source in ("auto", "homeassistant")
 
     @property
     def airgradient(self) -> bool:
-        """AirGradient is on with its cloud account, or with only the sensor's own server (then nothing is ever asked of the cloud)."""
-        return self.airgradient_cloud or bool(self.airgradient_local_url)
+        """AirGradient is on with any of its sources: the monitor's own server, Home Assistant, or its cloud account."""
+        return self.airgradient_cloud or self.airgradient_local or self.airgradient_homeassistant
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -228,9 +273,9 @@ class Config:
         if not writable:
             raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
-        cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", cache_path=data / "ecowitt_cache.sqlite",
-                  air_cache_path=data / "airgradient_cache.sqlite", conditions_cache_path=data / "conditions_cache.sqlite",
+        cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", storage_path=data / "ecobot.sqlite",
                   **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
         if not (cfg.ecowitt or cfg.airgradient):
-            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or AIRGRADIENT_API_TOKEN + AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
+            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or HOMEASSISTANT_URL + HOMEASSISTANT_TOKEN and/or AIRGRADIENT_API_TOKEN + "
+                             "AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
         return cfg

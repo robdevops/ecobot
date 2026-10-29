@@ -17,14 +17,14 @@ AIR = ('{"sensor": "Fairleigh", "sensor_type": "outdoor", "time": "Fri 2 Oct 202
        '"unit": "µg/m³", "rating": "🟢 good"}, "co2": {"value": 433.0, "unit": "ppm", "rating": "🟢 good"}, "voc_index": {"value": 88.0, '
        '"unit": "relative index (100 = this sensor\'s recent average)", "rating": "🟢 good"}, "nox_index": {"value": 1.0, '
        '"unit": "relative index (1 = baseline)", "rating": "🟢 good"}}')
-POLLEN = '{"lines": ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 Low"], "place": "Melbourne", "source": "melbournepollen.com.au", "time": "Fri 2 Oct 2026 6:00pm"}'
+POLLEN = '{"lines": ["Grass pollen forecast: 🟢 Low", "Thunderstorm asthma forecast: 🟢 Low"], "place": "Melbourne", "source": "melbournepollen.com.au", "time": "Fri 2 Oct 2026 6:00pm"}'
 FORECAST = ('{"lines": ["Today: 🌦️ Showers. 11–16°C, 97% chance of rain", "Saturday: ⛈️ Thunderstorm. 12–20°C, 95% chance of rain"], '
             '"place": "Melbourne", "source": "Open-Meteo", "time": "Fri 2 Oct 2026 6:05pm"}')
 
 TODAY = date(2026, 10, 2)   # the day the results above are from
 
 WEATHER = """\
-• Outdoor: 🧥 12.3 °C, 💦 94 %, dew point 11.3 °C, VPD 0.085 kPa
+• Outdoor: 🧥 12.3 °C, 💦 94 %
 • Indoor: 🧥 18.3 °C, 63 %
 • Pressure: 🗜️ 1025.0 hPa
 • Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"""   # night and calm: no Sun or Wind line
@@ -44,8 +44,8 @@ Air quality (2:22am)
 • NOx index: 1.0 🟢 good
 
 Pollen & asthma (Melbourne, 6:00pm)
-• Grass pollen: 🟢 Low
-• Thunderstorm asthma risk: 🟢 Low
+• Grass pollen forecast: 🟢 Low
+• Thunderstorm asthma forecast: 🟢 Low
 
 Forecast (Melbourne, 6:05pm)
 • Today: 🌦️ Showers. 11–16°C, 97% chance of rain
@@ -100,7 +100,7 @@ def test_every_emoji_threshold_the_station_reports_shows_in_the_report_at_its_re
                      if (e := glance(g, f, float(v.split()[0])))}
     got = report.weather_now(json.dumps(data))
     assert got.splitlines() == [
-        "• Outdoor: 🔥 36.0 °C, 💦 90 %, dew point 18.0 °C, 🧽 VPD 1.300 kPa",
+        "• Outdoor: 🔥 36.0 °C, 💦 90 %",
         "• Indoor: 🥵 29.0 °C, 🏜️ 20 %",
         "• Pressure: 🗜️ 1030.0 hPa",
         "• Rain today: ☔ 3.0 mm (month total 9.0 mm); 🌧️ raining (2.0 mm/h)",
@@ -197,7 +197,7 @@ def test_a_reading_lookup_prints_only_what_was_asked():
 def test_air_pollen_and_forecast_lookups_print_the_tools_own_lines():
     assert report.lookup("air", AIR, ["pm10"], [], TODAY) == "• PM10: 3.0 µg/m³ 🟢 good"
     assert report.lookup("air", AIR, [], [], TODAY).splitlines()[0] == "• PM2.5: 1.4 µg/m³ 🟢 good (AQI 8)"
-    assert report.lookup("pollen", POLLEN, [], [], TODAY) == "Pollen & asthma (Melbourne, 6:00pm)\n• Grass pollen: 🟢 Low\n• Thunderstorm asthma risk: 🟢 Low"
+    assert report.lookup("pollen", POLLEN, [], [], TODAY) == "Pollen & asthma (Melbourne, 6:00pm)\n• Grass pollen forecast: 🟢 Low\n• Thunderstorm asthma forecast: 🟢 Low"
     assert report.lookup("forecast", FORECAST, [], [], TODAY).startswith("Forecast (Melbourne, 6:05pm)\n• Today: ")
     assert report.lookup("pollen", json.dumps({"error": "off season"}), [], [], TODAY) is None
 

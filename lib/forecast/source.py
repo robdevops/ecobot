@@ -34,23 +34,11 @@ DESCRIPTION = ("The weather forecast for the owner's location: today and the day
                "\"place\" in parentheses after the forecast heading, e.g. (Melbourne).")
 PARAMETERS = {"type": "object", "properties": {"days": {"type": "integer", "description": "Days from today (default 7, at most 7)."}}}
 
-# The first match wins; each sentence of a summary gets its own emoji ("Showers. Possible storm." -> "🌦️ Showers. ⛈️ Possible storm.")
-EMOJI = ((r"thunder|storm", "⛈️"), (r"shower", "🌦️"), (r"rain|drizzle", "🌧️"), (r"snow|hail", "🌨️"), (r"fog|mist", "🌫️"),
-         (r"partly cloudy", "⛅"), (r"mostly (sunny|clear)", "🌤️"), (r"cloud|overcast", "☁️"), (r"sunny|clear", "☀️"),
-         (r"wind", "🌬️"), (r"frost", "🥶"), (r"hot", "🥵"))
-WMO = {0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fog", 48: "Fog", 51: "Light drizzle", 53: "Drizzle",
-       55: "Heavy drizzle", 61: "Light rain", 63: "Rain", 65: "Heavy rain", 71: "Snow", 73: "Snow", 75: "Heavy snow",
-       80: "Showers", 81: "Showers", 82: "Heavy showers", 95: "Thunderstorm", 96: "Thunderstorm and hail", 99: "Thunderstorm and hail"}
-
-
-def forecast_emoji(sentence: str) -> str:
-    return next((emoji for pattern, emoji in EMOJI if re.search(pattern, sentence, re.I)), "")
-
-
-def decorate(summary: str) -> str:
-    """The summary with an emoji before each sentence that has one, ending in a full stop: "Showers. ⛈️ Possible storm."."""
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", (summary or "").strip()) if s.strip(". ")]
-    return ". ".join(f"{e} {s}" if (e := forecast_emoji(s)) else s for s in (s.rstrip(".") for s in sentences)) + ("." if sentences else "")
+SOURCE = "Open-Meteo"
+WMO = {0: "☀️ Clear.", 1: "🌤️ Mostly clear.", 2: "⛅ Partly cloudy.", 3: "☁️ Overcast.", 45: "🌫️ Fog.", 48: "🌫️ Fog.", 51: "🌧️ Light drizzle.",
+       53: "🌧️ Drizzle.", 55: "🌧️ Heavy drizzle.", 61: "🌧️ Light rain.", 63: "🌧️ Rain.", 65: "🌧️ Heavy rain.", 71: "🌨️ Snow.", 73: "🌨️ Snow.",
+       75: "🌨️ Heavy snow.", 80: "🌦️ Showers.", 81: "🌦️ Showers.", 82: "🌦️ Heavy showers.", 95: "⛈️ Thunderstorm.",
+       96: "⛈️ Thunderstorm and hail.", 99: "⛈️ Thunderstorm and hail."}   # weather code -> the day's summary, emoji included
 
 
 def whole(x: float) -> int:
@@ -75,7 +63,7 @@ def describe_day(d: dict) -> str:
         chance = f"{d['rain_chance_pct']}% chance of rain" if d.get("rain_chance_pct") is not None else None
     details = [temps(d)] + ([chance] if chance else [])
     rest = ", ".join(x for x in details if x)
-    return " ".join(x for x in (decorate(d.get("summary") or ""), rest) if x) or "no data"
+    return " ".join(x for x in (d.get("summary") or "", rest) if x) or "no data"
 
 
 def day_label(day: date, today: date) -> str:
@@ -95,10 +83,9 @@ class Forecast(Source):
         self.location = configured if None not in configured else location if location and None not in location else None
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
-        self.source = ""
         self.fetched_at = 0.0
         self.requests = 0
-        self.store = Snapshots(cfg.conditions_cache_path)
+        self.store = Snapshots(cfg.storage_path)
         self._load()
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
         self.tools = [Tool("weather_forecast", DESCRIPTION, PARAMETERS, self.handle)]
@@ -108,7 +95,7 @@ class Forecast(Source):
             raise RuntimeError("no location: set FORECAST_LAT and FORECAST_LON (or the weather station supplies one)")
         try:
             await self.warm(True)
-            log.info("Forecast: %s, %d days", self.source, len(self.days or []))
+            self.summary = f"{SOURCE}: {len(self.days or [])} days (every {self.warmer.interval:g}s)"
         except Exception as e:
             log.warning("Forecast not readable yet: %s", e)
 
@@ -123,14 +110,11 @@ class Forecast(Source):
     def _load(self):
         """Start from the last forecast fetched (before the restart), so a night-time start needs no fetch."""
         if last := self.store.latest("forecast"):
-            self.fetched_at, saved = last
-            self.source = saved.get("source", "Open-Meteo")
+            self.fetched_at, saved = last   # (a row saved by an older version names its source too, and has its summaries without the emoji)
             self.days = [{**d, "date": date.fromisoformat(d["date"])} for d in saved["days"]]
 
     def _save(self):
-        self.store.save("forecast", {"source": self.source,
-                                     "days": [{**d, "date": d["date"].isoformat()} for d in self.days]},
-                        now=self.fetched_at)
+        self.store.save("forecast", {"days": [{**d, "date": d["date"].isoformat()} for d in self.days]}, now=self.fetched_at)
 
     # ---------- fetching ----------
     async def _json(self, url: str, **params) -> dict:
@@ -139,12 +123,12 @@ class Forecast(Source):
         res.raise_for_status()
         return res.json()
 
-    async def _open_meteo(self) -> tuple[str, list[dict]]:
+    async def _open_meteo(self) -> list[dict]:
         lat, lon = self.location
         d = await self._json(OPEN_METEO, latitude=lat, longitude=lon, timezone=str(self.tz),
                              daily="temperature_2m_min,temperature_2m_max,precipitation_probability_max,weather_code")
         dd = d["daily"]
-        return "Open-Meteo", [
+        return [
             {"date": date.fromisoformat(dd["time"][i]), "min_c": dd["temperature_2m_min"][i], "max_c": dd["temperature_2m_max"][i],
              "summary": WMO.get(dd["weather_code"][i], ""), "rain_chance_pct": dd["precipitation_probability_max"][i]}
             for i in range(len(dd["time"]))]
@@ -186,7 +170,7 @@ class Forecast(Source):
         if self.days is not None and (not in_sync_hours(self.now()) or age < FRESH_SECONDS and not fresh):
             return "Forecast cached"
         before = self.requests
-        self.source, self.days = await self._open_meteo()   # a failure raises: the warmer logs it
+        self.days = await self._open_meteo()   # a failure raises: the warmer logs it
         self.days = await self._with_chance(self.days)
         self.fetched_at = time.time()
         self._save()
@@ -218,4 +202,4 @@ class Forecast(Source):
         if turn:
             turn.forecast_shown.extend(self.upcoming(count))   # remembered for the chat once the answer is sent
         stamped = {"time": when(int(self.fetched_at), self.tz)} if self.fetched_at else {}   # when it was last fetched
-        return json_result({"lines": lines, "place": self.place, "source": self.source, **stamped})
+        return json_result({"lines": lines, "place": self.place, "source": SOURCE, **stamped})

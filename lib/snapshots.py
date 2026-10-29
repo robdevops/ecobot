@@ -1,5 +1,5 @@
-"""The pollen page and the forecast kept on disk, so a restart (even at night, when nothing is fetched) starts with the last
-fetch, and what the sites said is kept as a history.
+"""The pollen page and the forecast kept in the bot's file (ecobot.sqlite: the `snapshots` and `snapshot_meta` tables, lib/storage), so a
+restart (even at night, when nothing is fetched) starts with the last fetch, and what the sites said is kept as a history.
 
 One row per distinct result: a fetch that finds the same content only moves the row's last_seen forward, so a day of polling
 adds a handful of rows, not hundreds. Rows older than a year are dropped."""
@@ -9,23 +9,21 @@ import sqlite3
 import threading
 import time
 
+from .storage.schema import SNAPSHOT_TABLES
+
 KEEP_SECONDS = 400 * 86400
 
 
 class Snapshots:
-    """One source's connection to the file: the pollen and forecast sources each open their own (the file is in WAL mode,
-    so two connections take turns to write) and close it when they stop."""
+    """One source's connection to the file: the pollen and forecast sources each open their own, beside the storage's (the file is in WAL
+    mode, so the connections take turns to write) and close it when they stop. The file is made, with these two tables, when there is
+    none yet (the storage adds the rest when it opens it)."""
 
     def __init__(self, path):
         self._lock = threading.Lock()
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS snapshots (
-                id INTEGER PRIMARY KEY, kind TEXT, first_seen REAL, last_seen REAL, payload TEXT);
-            CREATE INDEX IF NOT EXISTS snapshots_kind ON snapshots (kind, id);
-            CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID;
-        """)
+        self.db.executescript(SNAPSHOT_TABLES)
         self.db.commit()
 
     def close(self):
@@ -56,10 +54,10 @@ class Snapshots:
 
     def get(self, key: str) -> str | None:
         with self._lock:
-            row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            row = self.db.execute("SELECT value FROM snapshot_meta WHERE key=?", (key,)).fetchone()
         return row[0] if row else None
 
     def put(self, key: str, value: str):
         with self._lock:
-            self.db.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
+            self.db.execute("INSERT OR REPLACE INTO snapshot_meta VALUES (?, ?)", (key, value))
             self.db.commit()

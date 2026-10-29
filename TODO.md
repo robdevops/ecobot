@@ -28,3 +28,17 @@ the interval) before deciding which to trust.
   analysis question and something that reads the caches.
 - The Docker image with `zeroconf` in it: the `image` check on a pull request builds it.
 - `ALERT_COOLDOWN_MINUTES` in the production env file: the default is now 60; a line setting it to 30 keeps 30.
+
+## Try Home Assistant as the weather station's source, then redesign the storage
+
+Set `HOMEASSISTANT_URL` and `HOMEASSISTANT_TOKEN` (and leave `ECOWITT_SOURCE` at `auto`, or try `homeassistant` with no Ecowitt keys) and run it for a week or two.
+It has only been run against a fake Home Assistant. Check in the log and the charts:
+- the start-up line says where the readings come from, and the live poll and minute pulls don't warn (or warn once and recover);
+- a chart of a few hours is drawn a reading a minute, a day or a week looks right, and a chart past Home Assistant's 10 days still has its bands (from the cache);
+- a rain alert comes within seconds of the gauge's report; "weather now" is fresh;
+- with both set, nothing is asked of the cloud except what Home Assistant lacks.
+
+Then the storage redesign: [docs/storage-plan.md](docs/storage-plan.md) has the measurements, the design, the migration and the steps (the
+requirements that were here are its section 2, the decisions its section 6.1). Steps 0 and 1 are done (the measurements, and the new storage
+checked on the real cache); next is step 2, the station on it. Its step 4 takes the AirGradient's readings from the monitor itself first,
+Home Assistant as the fallback and the cloud last (`AIRGRADIENT_SOURCE`; section 3.12 has how each source's PM2.5 is checked).

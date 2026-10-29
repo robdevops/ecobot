@@ -1,4 +1,4 @@
-from lib.alerts.backoff import due, remember
+from lib.alerts.rules import due, remember
 
 COOLDOWN = 1800
 

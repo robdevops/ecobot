@@ -7,27 +7,36 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, UTC
+
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
+from ..lines import RANGE_KEEP_DAYS
 from ..sources import Source
 from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
-from ..warm import FAST_REFRESH_SECONDS, Warmer
-from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS, unit_text
+from ..warm import FAST_REFRESH_SECONDS, Warmer, safely
+from .api import FINE_CYCLES, EcowittAPI, GROUPS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
+from .dashboard import dashboard
 from .glance import glance
-from .fetch import Fetcher, series_in
+from .fetch import Fetcher, Recent
+from .fallback import FallbackAPI, newest
+from .hass_api import HomeAssistantAPI
+from .homeassistant import HomeAssistant
+from .live import BUCKET, readings_in
 from ..series import READING_GROUPS, WEATHER, find
-from .query import HistoryQuery, chart_field, stack_names
-from .store import HistoryCache, HotStore
+from ..storage import Storage
+from ..storage.catalogue import AIR
+from ..storage.write import MIN_READINGS
+from .query import HistoryQuery, KEEP_HOURS, chart_field, stack_names
+from .reads import newest_minute_on
 
 log = logging.getLogger(__name__)
 
 DEFAULT_GROUPS = "outdoor,indoor"
-
 
 def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
     """'outdoor, indoor' or ['outdoor', 'indoor'] -> ['outdoor', 'indoor'] (plain group names only). A reading named instead of
@@ -37,19 +46,6 @@ def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
     named = (p.split(".")[0].strip().lower() for p in parts if p.strip())
     groups = (g if g in GROUPS else (r.group if (r := find(g)) else None) for g in named)
     return list(dict.fromkeys(g for g in groups if g)) or default.split(",")
-
-
-def readings(data: dict) -> list[tuple[int, dict]]:
-    """Ecowitt 'data' -> [(epoch, {"group.field": value})] sorted by time."""
-    rows: dict[int, dict] = {}
-    for group, field, obj in series_in(data):
-        for ts, v in obj["list"].items():
-            try:
-                rows.setdefault(int(ts), {})[f"{group}.{field}"] = float(v)
-            except (TypeError, ValueError):
-                pass
-    return sorted(rows.items())
-
 
 HISTORY_PARAMS = {
     "type": "object",
@@ -61,7 +57,7 @@ HISTORY_PARAMS = {
         "chart_fields": {"type": "array", "items": {"type": "string", "enum": list(WEATHER)},
                          "description": "To plot SEVERAL readings together ('plot temperature and rain'): which, in order, "
                                         "one panel each on a shared time axis. The groups they need are fetched for you."},
-        "two_axes": {"type": "boolean", "description": "With exactly two chart_fields: set true to draw them as ONE panel with a scale each "
+        "two_axes": {"type": "boolean", "description": "Set true to draw the chart_fields as ONE panel with a scale each "
                                                        "(left and right axis) when the question says 'on two axes', 'dual axis' or 'overlay'."},
         "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
                                                       "period's average (and per day or month). Highs and lows are the default."},
@@ -85,10 +81,38 @@ REALTIME_PARAMS = {
 }
 REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
-
 LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
+HA_IMPORT_SECONDS = 900                # how often Home Assistant's readings are folded into the 5-minute ranges ...
+HA_RECENT_SECONDS = 3 * 3600           # ... the last few hours each time (the whole RANGE_KEEP_DAYS the first time)
+LIVE_POLL_SECONDS = 5                  # Home Assistant's live reading is asked for this often (a request to a machine on the network)
+LIVE_RECORD_SECONDS = 30               # ... and counted into the ranges this often
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
+class LiveMarks:
+    """The live readings of the newest 5-minute marks, each counted in the mark nearest it (as the old live ranges were): once a mark has two
+    readings or more of a reading, its lowest and highest are a band, written to that 5-minute reading."""
+
+    def __init__(self):
+        self.marks: dict[str, dict[int, list]] = {}   # series -> mark -> [readings, lowest, highest]
+        self.seen: dict[str, int] = {}                # series -> the reading time last counted (the same reading asked for again is not another)
+
+    def add(self, data: dict, now: float) -> dict[str, dict[int, tuple[int, float, float]]]:
+        """Count a real_time response in; returns the bands it made or widened ({series: {mark: (readings, lowest, highest)}})."""
+        found: dict = {}
+        for series, at, value in readings_in(data):
+            at = at or int(now)
+            if self.seen.get(series) == at:
+                continue
+            self.seen[series] = at
+            mark = round(at / BUCKET) * BUCKET
+            got = self.marks.setdefault(series, {}).setdefault(mark, [0, value, value])
+            got[0], got[1], got[2] = got[0] + 1, min(got[1], value), max(got[2], value)
+            if got[0] >= MIN_READINGS:
+                found.setdefault(series, {})[mark] = tuple(got)
+        for marks in self.marks.values():   # only the newest marks are still being counted
+            for mark in [m for m in marks if m < now - 2 * BUCKET]:
+                del marks[mark]
+        return found
 
 def live_summary(data: dict) -> str:
     """A live reading in a few words for the log: rain first, then outdoor temperature and humidity, wind and pressure. A reading the
@@ -106,19 +130,36 @@ def live_summary(data: dict) -> str:
              f"wind {wind}" if wind else None, get("pressure", "relative")]
     return ", ".join(p for p in parts if p) or "no readings"
 
-
 class Ecowitt(Source):
     name = "Ecowitt"
 
-    def __init__(self, cfg: Config, transport=None):
+    def __init__(self, cfg: Config, transport=None, ha_transport=None, storage: Storage | None = None):
+        """transport: for Ecowitt's cloud, ha_transport: for Home Assistant (a test's stand-ins). Where the readings come from follows the
+        settings (config.ecowitt_source): Home Assistant, Ecowitt's cloud, or Home Assistant with the cloud to make up what it lacks.
+        storage: the bot's file (lib/storage), opened at start; without one the station opens it itself. Either way the station closes it."""
         self.tz = cfg.tz
-        self.api = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport)
-        self.cache = HistoryCache(cfg.cache_path, UNITS)
-        self.hot = HotStore()
+        self.storage = storage or Storage(cfg.storage_path, cfg.tz)
+        self.fetches = Recent()   # the newest fetches, read from the storage while fresh
+        macs = sorted({s.device for s in self.storage.sensors.all() if s.kind != AIR[0]})   # the station the file holds, so Home Assistant's readings join its history
+        home = HomeAssistantAPI(cfg.homeassistant_url, cfg.homeassistant_token, cfg.tz, macs[0] if len(macs) == 1 else "HOMEASSISTANT",
+                                ha_transport) if cfg.ecowitt_home_assistant else None
+        cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
+        self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
+        self.via = "HA/cloud" if home and cloud else "HA" if home else "cloud"
+        self.has_minutes = home is not None   # (only Home Assistant has minutes)
+        self.fast = home                     # the API that can be asked every few seconds, if any
+        self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # (shared with the air sensor)
+        self._ha_ok: bool | None = None
+        self.live_marks = LiveMarks()   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self._live_ok: bool | None = None  # the live rain reading: None until first tried
         self._live: tuple[float, dict] | None = None   # (fetched at, the real_time data) from the keep-warm's minute check
+        self.on_live: list = []             # called (no arguments) when the poll finds a reading newer than the last: the rain alert's
+        self._seen = 0                       # the time of the newest reading the poll has found
+        self._polled: float = 0.0            # when the poll last had an answer
+        self._recorded = 0.0
+        self.cache_line = ""
         self.mac = ""
         self.station_name = ""
         self.created: datetime | None = None
@@ -141,27 +182,33 @@ class Ecowitt(Source):
                 self.tz = ZoneInfo(zone)
             except (ValueError, ZoneInfoNotFoundError):
                 log.warning("Ecowitt names a time zone Python doesn't know, %r; using %s", zone, self.tz)
-        try:
-            self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
-        except (KeyError, TypeError, ValueError):
-            pass
-        try:
-            self.longitude = float(device["longitude"])
-        except (KeyError, TypeError, ValueError):
-            pass
-        try:
-            self.latitude = float(device["latitude"])
-        except (KeyError, TypeError, ValueError):
-            pass
+        if hasattr(self.api, "set_timezone"):   # (Home Assistant's history is cut in the station's days)
+            self.api.set_timezone(self.tz)
+        await self.storage.set_timezone(self.tz)   # (so are the day rows)
+        for name, key, read in (("created", "createtime", lambda v: datetime.fromtimestamp(int(v), UTC).astimezone(self.tz)),
+                                ("longitude", "longitude", float), ("latitude", "latitude", float)):
+            try:
+                setattr(self, name, read(device[key]))
+            except (KeyError, TypeError, ValueError):
+                pass
         if (problem := PublicHolidays(self.tz).problem()) and "package" in problem:
             log.warning("Public holiday questions won't work: pip install holidays (then restart)")
-        log.info("Weather station: Ecowitt '%s' (%s), %s%s", self.station_name, self.mac, self.tz,
-                 f", devices found: {len(devices)}" if len(devices) > 1 else "")
+        self.summary = (f"Ecowitt: '{self.station_name}' ({self.mac}): {self.via} ({self.warmer.interval:g}s)"
+                        + (f", {len(devices)} devices" if len(devices) > 1 else ""))
         try:
-            size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
-            log.info("History cache: %s (%.1f MB)", self.cache.path, size / 1e6)
+            size = os.path.getsize(self.storage.path) if os.path.exists(self.storage.path) else 0
+            self.cache_line = f"History: {self.storage.path} ({size / 1e6:.1f} MB)"
         except Exception as e:   # only a log line
-            log.warning("History cache not readable: %s", e)
+            log.warning("History file not readable: %s", e)
+
+    def startup_lines(self) -> list[str]:
+        return [*([self.cache_line] if self.cache_line else []), *super().startup_lines()]
+
+    @property
+    def archive_pace(self) -> float | None:
+        """Seconds the archive waits between its requests: none when only Home Assistant answers (the pause is for the cloud's rate limit);
+        None for the archive's own."""
+        return 0.0 if isinstance(self.api, HomeAssistantAPI) else None
 
     def describe(self) -> str:
         created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""
@@ -169,7 +216,7 @@ class Ecowitt(Source):
 
     def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
         """urgent: for a question (its requests go before the background ones)."""
-        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent)
+        return Fetcher(self.api, self.storage, self.fetches, self.mac, groups, self.tz, urgent, self.has_minutes)
 
     # ---------- tools ----------
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
@@ -181,10 +228,10 @@ class Ecowitt(Source):
         return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
-        return await days_tool(self.cache, self.mac, self.tz, args, turn)
+        return await days_tool(self.storage, self.mac, self.tz, args, turn)
 
     async def _link(self, args: dict, turn: Turn | None = None) -> str:
-        return await link_tool(self.cache, self.mac, self.tz, args, turn or Turn())
+        return await link_tool(self.storage, self.mac, self.tz, args, turn or Turn())
 
     async def _realtime(self, args: dict, turn: Turn | None = None) -> str:
         groups = parse_groups(args.get("groups"))
@@ -205,20 +252,108 @@ class Ecowitt(Source):
                         pass
         return json_result({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})})
 
-    async def _live_data(self, groups: list[str]) -> dict:
-        """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and asked for them,
-        else a request of its own, ahead of the background refreshes (someone is waiting)."""
-        if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
+    async def _live_data(self, groups: list[str], max_age: float = LIVE_FRESH_SECONDS, urgent: bool = True) -> dict:
+        """The real_time data for these groups: the kept reading when it is under `max_age` old (a minute and a half for a question) and
+        asked for them, or when Home Assistant's poll has just confirmed it is the newest; else a request of its own, ahead of the background
+        refreshes when someone is waiting (urgent)."""
+        fresh = self._live and (time.time() - self._live[0] <= max_age or time.time() - self._polled <= LIVE_POLL_SECONDS * 3)
+        if fresh and set(groups) <= set(LIVE_GROUPS):
             return {g: self._live[1][g] for g in groups if g in self._live[1]}
-        return await self.api.realtime(self.mac, ",".join(groups), urgent=True)
+        return await self._fetch_live(groups, urgent=urgent)
+
+    async def _fetch_live(self, groups: list[str], urgent: bool = False) -> dict:
+        """A real_time request for these groups, counted into the 5-minute bands; with every group in it, kept as the minute's own reading
+        for the next to ask (the report's gauges)."""
+        data = await self.api.realtime(self.mac, ",".join(groups), urgent=urgent)
+        if set(groups) >= set(LIVE_GROUPS):
+            self._live = (time.time(), data)
+        await self._record_live(data)
+        return data
+
+    @property
+    def ranges_from_ha(self) -> bool:
+        """Are the charts' 5-minute bands read back from Home Assistant's history (import_ranges)? Only when the station's readings come
+        from the cloud and Home Assistant is set: as the station's source, Home Assistant's history carries the bands with the readings."""
+        return self.ha is not None and self.fast is None
+
+    async def import_ranges(self):
+        """Fold Home Assistant's readings into the 5-minute ranges: the last RANGE_KEEP_DAYS days the first time, then the last few hours.
+        Nothing unless ranges_from_ha. A failure is logged once, then again when it recovers; the next try is a while off."""
+        if not self.ranges_from_ha:
+            return
+        first, started = self._ha_ok is None, time.monotonic()
+        try:
+            found = await self.ha.ranges(time.time() - (RANGE_KEEP_DAYS * 86400 if first else HA_RECENT_SECONDS))
+            marks = await self.storage.write(lambda w: w.put_ranges(self.mac, found))
+        except Exception as e:
+            self.ha.trouble.failed("history for the charts' ranges", f"{type(e).__name__}: {e}",
+                                   "the ranges come from the bot's own readings")
+            self._ha_ok = False
+            return
+        self.ha.trouble.ok()
+        if first or not self._ha_ok:
+            log.info("Backfill HA (Ecowitt): %d 5-min bands widened across %d series, %.0fs", marks, len(found), time.monotonic() - started)
+        self._ha_ok = True
+
+    async def _record_live(self, data: dict):
+        """Count a live reading into the 5-minute bands (LiveMarks). Only a chart's shading depends on it, so a failure is logged and goes no
+        further."""
+        try:
+            if found := self.live_marks.add(data, time.time()):
+                await self.storage.write(lambda w: w.put_ranges(self.mac, found))
+        except Exception as e:
+            log.warning("Couldn't keep the live readings' ranges: %s", e)
+
+    async def dashboard(self, titles=None):
+        """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
+        lows today, this month and this year; None when the station has no reading."""
+        return await dashboard(await self._live_data(LIVE_GROUPS), self.storage, self.mac, self.now().date(), titles)
+
+    async def watch_live(self):
+        """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather
+        now", the report and the rain alert (which is called at once, not at the next minute's refresh). A failure is logged once, with its
+        recovery; the cloud, where there is one, answers the questions meanwhile."""
+        if self.fast is None:
+            return
+        await self.pull_minutes()
+        while True:
+            await asyncio.sleep(LIVE_POLL_SECONDS)
+            try:
+                data = await self.fast.realtime(self.mac, ",".join(LIVE_GROUPS))
+            except Exception as e:
+                self.fast.ha.trouble.failed("live reading", e, f"asked again every {LIVE_POLL_SECONDS:g} s")
+                continue
+            self.fast.ha.trouble.ok()
+            self._polled = time.time()
+            if (at := newest(data)) <= self._seen:
+                continue
+            self._seen, self._live = at, (time.time(), data)
+            if time.time() - self._recorded >= LIVE_RECORD_SECONDS:
+                self._recorded = time.time()
+                await self._record_live(data)
+            await self.pull_minutes()
+            for callback in self.on_live:
+                await safely(callback)
+
+    async def pull_minutes(self):
+        """Take Home Assistant's minute readings since the newest held (the last KEEP_HOURS at first, or after the bot was down) into the
+        minute store, for the short charts. A failure is logged once; the charts then use the 5-minute readings."""
+        now = time.time()
+        since = max(await self.storage.read(newest_minute_on, self.mac) or 0, now - KEEP_HOURS * 3600)
+        try:
+            data = await self.fast.history(self.mac, "1min", naive_local(since, self.tz), naive_local(now, self.tz), ",".join(self.groups))
+            await self.storage.write(lambda w: w.put_minutes(self.mac, data, now))
+        except Exception as e:
+            self.fast.ha.trouble.failed("minute readings", e, "short charts use the 5-minute readings")
+            return
+        self.fast.ha.trouble.ok()
 
     async def live_rain(self) -> tuple[int, dict] | None:
         """The gauge's latest rate and daily total as a history-shaped row, for the rain alert: the 5-minute history lags
         by up to 5 minutes, this is about a minute old. The same request keeps every live reading ready for "weather now" and the
         report (self._live), one request a minute. None when unavailable."""
         try:
-            data = await self.api.realtime(self.mac, ",".join(LIVE_GROUPS))
-            self._live = (time.time(), data)
+            data = await self._live_data(LIVE_GROUPS, max_age=0, urgent=False)   # the newest minute: the poll's, else a request
             group = data.get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)
@@ -229,9 +364,7 @@ class Ecowitt(Source):
                 log.warning("Live readings failed: %s; rain alert uses history", e)
             self._live_ok = False
             return None
-        if self._live_ok is None:
-            log.info("%s", live_summary(data))
-        elif not self._live_ok:
+        if self._live_ok is False:
             log.info("Recovered: %s", live_summary(data))
         self._live_ok = True
         return ts, row
@@ -257,8 +390,8 @@ class Ecowitt(Source):
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
                        groups: list[str] | None = None) -> list[tuple[int, dict]]:
-        """Readings for the alert monitors, straight from the warm data."""
-        return readings(await self.fetcher(groups or self.groups).get(cycle, start, end))
+        """Readings for the alert monitors ([(epoch, {"group.field": value, ...})]), from the storage (the newest fetched first)."""
+        return await self.fetcher(groups or self.groups).get(cycle, start, end)
 
     async def recent(self, hours: float) -> list[tuple[int, dict]]:
         """The last `hours` of 5-minute readings: real hours, so the night the clocks change is no longer or shorter."""
@@ -266,5 +399,9 @@ class Ecowitt(Source):
         return await self.readings("5min", naive_local(local_epoch(now, self.tz) - hours * 3600, self.tz), now)
 
     async def close(self):
-        await self.api.close()
-        self.cache.close()
+        try:
+            await self.api.close()
+        finally:
+            self.storage.close()
+            if self.ha:
+                await self.ha.close()

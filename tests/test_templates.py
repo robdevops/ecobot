@@ -123,7 +123,10 @@ async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tm
     assert (await deliver(msg, "", [b"p"], markup=markup, titles=["T"])).carried is True and msg.sent == [("photo", msg.sent[0][1])]
     assert msg.sent[0][1]["reply_markup"] is markup and msg.sent[0][1]["caption"] == "T"
     msg = Replies()
-    assert (await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"])).carried is True       # text first, the photo carries it
+    assert (await deliver(msg, "answer", [b"p"], markup=markup, titles=["T"])).carried is True       # one message: the photo carries the answer and the keyboard
+    assert [k for k, _ in msg.sent] == ["photo"] and msg.sent[0][1]["reply_markup"] is markup and msg.sent[0][1]["caption"] == "T\n\nanswer"
+    msg = Replies()
+    assert (await deliver(msg, "x" * 1100, [b"p"], markup=markup, titles=["T"])).carried is True    # too long for a caption: text first, the photo carries it
     assert [k for k, _ in msg.sent] == ["text", "photo"] and msg.sent[1][1]["reply_markup"] is markup and "reply_markup" not in msg.sent[0][1]
     msg = Replies()
     assert (await deliver(msg, "", [b"p", b"q"], markup=markup, titles=["T", "U"])).carried is False       # a group of photos can't carry it
@@ -132,7 +135,7 @@ async def test_deliver_puts_the_keyboard_on_the_last_text_or_the_single_photo(tm
 
 
 async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_next_reply_once(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     bot = Bot(NS(tz=TZ), None, [], state)
@@ -148,7 +151,7 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
 
 
 async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     bot = Bot(NS(tz=TZ), None, [], state)
@@ -165,7 +168,7 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
 
 
 async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
-    from lib.alerts import AlertState
+    from lib.alerts.notify import AlertState
 
     class Agent:
         async def run(self, *a, **k):
@@ -183,31 +186,6 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
     first, second = await ask(), await ask()
     assert first[0][1].get("reply_markup") is not None and second[0][1].get("reply_markup") is None
     assert state.keyboard(1) == templates.version()
-
-
-async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_others_left_alone(tmp_path):
-    from telegram.error import Forbidden
-    from lib.alerts import AlertState
-    state = AlertState(tmp_path / "s.json")
-    for chat_id in (10, 11, 12, 13, -20):                     # -20 is a group
-        state.add_chat(chat_id, str(chat_id))
-    state.set_keyboard(10, "old1234")
-    state.set_keyboard(11, templates.version())
-    state.set_keyboard(12, templates.HIDDEN)                  # 13 and the group have no record
-    sent, tried = [], []
-
-    class TG:
-        async def send_message(self, chat_id, text, **kw):
-            tried.append(chat_id)
-            if chat_id == 13:
-                raise Forbidden("bot was blocked by the user")
-            sent.append((chat_id, text, kw["reply_markup"].is_persistent))
-    bot = Bot(NS(tz=TZ), None, [], state)
-    assert await bot.refresh_keyboards(TG()) == 1
-    assert sent == [(10, "Buttons updated.", True)]
-    assert state.keyboard(10) == templates.version() and state.chats[13]["gone"] and state.keyboard(-20) is None
-    tried.clear()
-    assert await bot.refresh_keyboards(TG()) == 0 and tried == []   # nothing more on the next start: 13 blocked the bot
 
 
 def test_the_capabilities_list_is_the_users_bullets():
@@ -230,7 +208,7 @@ def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
 
 
 def test_every_chart_and_report_button_has_a_command_of_the_same_name():
-    assert templates.COMMANDS == {"report": "Report", "status": "Report", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
+    assert templates.COMMANDS == {"report": "Report", "dashboard": "Dashboard", "status": "Report", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
                                   "temperature": "Temperature chart 1d", "humidity": "Humidity chart 1d",
                                   "air_quality": "Air quality all metrics 1d", "particulates": "Particulates chart 1d",
                                   "wind": "Wind chart 1d"}

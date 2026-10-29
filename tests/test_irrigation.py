@@ -13,9 +13,10 @@ from telegram.error import BadRequest
 
 import lib.bot as bot_module
 from lib import templates
-from lib.alerts import AlertState, IrrigationMonitor
 from lib.alerts import irrigation as monitor_module
+from lib.alerts.irrigation import IrrigationMonitor
 from lib.alerts.menu import available_kinds
+from lib.alerts.notify import AlertState
 from lib.bot import Bot
 from lib.buttons import struck as strike
 from lib.config import Config
@@ -149,7 +150,7 @@ async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
 
 def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely(monkeypatch, tmp_path):
     assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
-    env = {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}
+    env = {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     for value, hour in (("", 18), ("6", 6), ("0", 0), ("23", 23), ("24", 18), ("noon", 18), ("-1", 18)):
@@ -679,13 +680,16 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
             return "ok"
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
+    async def quiet(*a, **k):
+        pass
+    ctx = NS(bot=NS(username="testbot", id=99, send_chat_action=quiet, send_message_draft=quiet))   # the model is asked: "typing..." and a draft go first
     bot = Bot(NS(tz=TZ), Agent(), [], state, Remote())
     update, sent = private_message("how much water did the rain add this week")
-    await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    await bot.on_message(update, ctx)
     assert asked == ["how much water did the rain add this week"]
     plain = Bot(NS(tz=TZ), Agent(), [], AlertState(tmp_path / "t.json"))
     update, sent = private_message("irrigation")
-    await plain.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    await plain.on_message(update, ctx)
     assert asked[-1] == "irrigation"                                                       # nothing to show: the model answers as before
 
 
@@ -763,7 +767,7 @@ async def test_a_pause_that_fails_and_is_retried_is_told_exactly_once(tmp_path):
 
 
 async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu(tmp_path):
-    from lib.alerts import Notifier
+    from lib.alerts.notify import Notifier
     state, delivered = AlertState(tmp_path / "s.json"), []
     for chat in (1, 2, 3, -7):
         state.add_chat(chat, str(chat))

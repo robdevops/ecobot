@@ -6,17 +6,19 @@ drawing code, so a chart the bot has never drawn before is still made from check
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
 import asyncio
+import copy
 import logging
 from datetime import date, datetime, time, timedelta, tzinfo
 from statistics import fmean
 
-from .airgradient.metrics import ALL_METRICS, CHART_UNITS, LABELS, RATINGS, ZONES, zone
+from .airgradient.metrics import ALL_METRICS, CHART_UNITS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, LABELS, RATINGS, ZONES, zone
 from .analysis import scan
 from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series, reading_slots
+from .ecowitt.reads import slot_values_on
 from .series import WEATHER
-from .panels import panel_for, two_axes
+from .panels import panel_for, same_axis, two_axes
 from .specs import Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
@@ -28,6 +30,7 @@ MAX_PANELS = 4
 DEFAULT_DAYS = 30
 # Weather station series: name -> (group, field, label, unit); the composer draws the wind as its average speed
 SERIES = [*WEATHER, *ALL_METRICS]
+SERIES_ASKED = [*SERIES, *EXTRA]   # what a question that asks for the air sensor's own temperature or humidity is offered
 STYLES = ("line", "bars", "rating")
 
 PLOT_DESCRIPTION = (
@@ -44,13 +47,25 @@ PLOT_PARAMETERS = {
                    "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
                                                               "style": {"type": "string", "enum": list(STYLES)}},
                              "required": ["series"]}},
-        "two_axes": {"type": "boolean", "description": "Set true for exactly two line series on ONE panel, each with its own scale (left and "
-                                                       "right axis): 'on two axes', 'dual axis', 'overlay', 'combine them on one chart'. "
-                                                       "Not for rain or ratings."},
+        "two_axes": {"type": "boolean", "description": "Set true to draw the series on ONE panel with a left and a right axis: "
+                                                       "'on two axes', 'dual axis', 'overlay', 'combine them on one chart'."},
+        "invert_second_axis": {"type": "boolean", "description": "With two_axes: the right-hand axis runs top to bottom, so its lines fall as the "
+                                                                 "reading rises ('invert the second Y axis')."},
         **period_parameters(DEFAULT_DAYS),
     },
     "required": ["panels"],
 }
+
+
+def plot_asked() -> tuple[str, dict]:
+    """plot_chart as a question about the air sensor's own temperature or humidity is offered it: those two series too, and same_axis."""
+    parameters = copy.deepcopy(PLOT_PARAMETERS)
+    parameters["properties"]["panels"]["items"]["properties"]["series"]["enum"] = SERIES_ASKED
+    parameters["properties"]["same_axis"] = {
+        "type": "boolean", "description": "Set true to draw the series as ONE panel on one axis, the lines over each other: "
+                                          "'plot airgradient humidity over ecowitt humidity'."}
+    return (PLOT_DESCRIPTION + " Also air_temperature and air_humidity: the AirGradient sensor's own temperature and humidity (ask for "
+            "them only by those names: plain temperature and humidity are the weather station's).", parameters)
 
 
 SCAN_DAYS = 90
@@ -113,7 +128,7 @@ class Composer:
 
     def __init__(self, eco, air):
         self.eco, self.air, self.tz = eco, air, eco.tz
-        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart),
+        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart, asked=plot_asked),
                       Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link),
                       Tool("air_scan", SCAN_DESCRIPTION, SCAN_PARAMETERS, self.air_scan)]
 
@@ -124,9 +139,9 @@ class Composer:
     def _span(self, first: date, last: date) -> tuple[int, int]:
         return day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
 
-    def weather(self, group: str, field: str, first: date, last: date) -> dict[int, float]:
-        """One reading per 30-minute slot from the weather station's cache."""
-        return self.eco.cache.slots(self.eco.mac, "30min", group, [field], *self._span(first, last))[0]
+    async def weather(self, group: str, field: str, first: date, last: date) -> dict[int, float]:
+        """One reading per 30-minute slot of the station's, from the storage."""
+        return (await self.eco.storage.read(slot_values_on, self.eco.mac, group, field, "30min", *self._span(first, last)))[0]
 
     async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:
         """({metric: (values, lows, highs)}, notes): the sensor's readings averaged into 30-minute slots, with each slot's
@@ -137,11 +152,14 @@ class Composer:
         out = {}
         for metric in metrics:
             slots: dict[int, list[float]] = {}
+            extremes: dict[int, list[float]] = {}   # the readings, and the lowest and highest the bot saw within a bucket it recorded
             for r in rows:
                 if metric in r:
-                    slots.setdefault(r["ts"] // SLOT * SLOT, []).append(r[metric])
-            out[metric] = ({t: fmean(v) for t, v in slots.items()}, {t: min(v) for t, v in slots.items()},
-                           {t: max(v) for t, v in slots.items()})
+                    slot = r["ts"] // SLOT * SLOT
+                    slots.setdefault(slot, []).append(r[metric])
+                    extremes.setdefault(slot, []).extend(r.get("_range", {}).get(metric) or (r[metric],))
+            out[metric] = ({t: fmean(v) for t, v in slots.items()}, {t: min(v) for t, v in extremes.items()},
+                           {t: max(v) for t, v in extremes.items()})
         notes = {}
         if skipped:
             notes["missing"] = f"{len(skipped)} older day(s) aren't in the bot's cache yet and were left out"
@@ -159,21 +177,34 @@ class Composer:
         first, last = period
         asked = [(p.get("series"), p.get("style") or ("bars" if p.get("series") == "rain" else "line")) for p in panels]
         for name, style in asked:
-            if name not in SERIES or style not in STYLES:
+            if name not in SERIES_ASKED or style not in STYLES:
                 return _error(f"series must be one of {', '.join(SERIES)} and style one of {', '.join(STYLES)}")
             if (style == "bars") != (name == "rain") or (style == "rating" and name not in ALL_METRICS):
                 return _error("'bars' is for rain only, and 'rating' for the air-quality series only; use 'line' otherwise")
-        air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS], first, last)
+        air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS or name in EXTRA], first, last)
         built, summary = [], []
         for name, style in asked:
-            panel, facts = self._panel(name, style, first, last, air.get(name))
+            panel, facts = await self._panel(name, style, first, last, air.get(name))
             if panel is None:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
+        turn.air_extra_used = turn.air_extra_used or any(name in EXTRA for name, _ in asked)
+        if (args.get("two_axes") or args.get("same_axis")) and any(name in EXTRA for name, _ in asked):
+            for (name, _), panel in zip(asked, built):   # the station's readings next to the air sensor's own: say whose each is
+                if name in WEATHER and name != "rain":
+                    panel.label = f"Ecowitt {panel.label.lower()}"
+        if args.get("invert_second_axis") and not args.get("two_axes"):
+            return _error("invert_second_axis needs two_axes: it turns the right-hand axis upside down")
+        if args.get("two_axes") and args.get("same_axis"):
+            return _error("two_axes (a scale each) and same_axis (one scale) can't both be set")
         if args.get("two_axes"):
-            if (merged := two_axes(built)) is None:
-                return _error("two_axes needs exactly two line series (not rain bars or ratings)")
+            if (merged := two_axes(built, bool(args.get("invert_second_axis")))) is None:
+                return _error("two_axes needs line series (not rain bars or ratings): two, or more in exactly two units (one axis each); use same_axis for one unit, or separate panels")
+            built = [merged]
+        elif args.get("same_axis"):
+            if (merged := same_axis(built)) is None:
+                return _error("same_axis needs two or more line series in the same unit (not rain bars or ratings); use two_axes for different units")
             built = [merged]
         out = {"period": f"{first} to {last}", "panels": summary, **({"notes": notes} if notes else {})}
         self._add_chart(out, built, first, last, turn)
@@ -194,8 +225,8 @@ class Composer:
             return _error(period)
         first, last = period
         series, notes = await self.air_series([metric], first, last)
-        air_panel, _ = self._panel(metric, "line", first, last, series[metric])
-        rain = rain_slots(self.weather("rainfall", "daily", first, last))
+        air_panel, _ = await self._panel(metric, "line", first, last, series[metric])
+        rain = rain_slots(await self.weather("rainfall", "daily", first, last))
         result = analyse_air(series[metric][0], rain, RATINGS[metric], self.tz, LABELS[metric])
         out = {"period": f"{first} to {last}", "metric": f"{LABELS[metric]} ({CHART_UNITS[metric]})",
                "resolution": "30-minute slots (air readings averaged, rain from the weather station's cache)",
@@ -224,15 +255,15 @@ class Composer:
             notes["period"] = f"Only the last {SCAN_MAX_DAYS} days can be scanned per question; this covers {first} to {last}"
         weather = {}
         for name, (group, field, _, _) in SCAN_WEATHER.items():
-            if values := self.weather(group, field, first, last):
+            if values := await self.weather(group, field, first, last):
                 weather[name] = values
         if "pressure" in weather:  # falling pressure often comes with stagnant or changing air
             weather["pressure_change"] = {t: v - weather["pressure"][t - 6 * SLOT] for t, v in weather["pressure"].items()
                                           if t - 6 * SLOT in weather["pressure"]}
-        rain = rain_slots(self.weather("rainfall", "daily", first, last))
+        rain = rain_slots(await self.weather("rainfall", "daily", first, last))
         if rain:
             weather["rain"] = rain
-        direction, speed = self.weather("wind", "wind_direction", first, last), weather.get("wind_speed")
+        direction, speed = await self.weather("wind", "wind_direction", first, last), weather.get("wind_speed")
         air_names = {m: (LABELS[m], CHART_UNITS[m]) for m in air}
         weather_names = {**{k: (v[2], v[3]) for k, v in SCAN_WEATHER.items()}, "pressure_change": ("3-hour pressure change", "hPa"),
                          "rain": ("rain", "mm")}
@@ -247,23 +278,23 @@ class Composer:
         if strongest and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             drawn = [n for n in (strongest["air"], {"wind_speed": "wind"}.get(strongest["weather"], strongest["weather"])) if n in SERIES]
             if len(drawn) == 2:
-                panels = [self._panel(n, "bars" if n == "rain" else "line", first, last, air.get(n))[0] for n in drawn]
+                panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, air.get(n)))[0] for n in drawn]
                 if all(panels):
                     self._add_chart(out, panels, first, last, turn)
         return json_result(out)
 
-    def _panel(self, name: str, style: str, first: date, last: date,
-               air: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
+    async def _panel(self, name: str, style: str, first: date, last: date,
+                     air: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
         """(the panel, its figures for the caption); the panel is None when there is nothing to draw. A weather reading comes from
-        the station's cache, an air metric's readings in `air` (values, lows, highs: see air_series)."""
+        the station's storage, an air metric's readings in `air` (values, lows, highs: see air_series)."""
         if name in WEATHER:
             reading = WEATHER[name]
             if name == "rain":
-                bars = rain_bars(rain_slots(self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
+                bars = rain_bars(rain_slots(await self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
-            values, lows, highs = reading_slots(self.eco.cache, self.eco.mac, name, *self._span(first, last))
-            line = driver_series(values, self.tz, first, last, reading.label, lows, highs, banded_short=bool(reading.band_field))
+            values, lows, highs = await self.eco.storage.read(reading_slots, self.eco.mac, name, *self._span(first, last))
+            line = driver_series(values, self.tz, first, last, reading.label, lows, highs)
             facts = {"series": name, **self._stats(values, reading.unit)}
             return (panel_for(name, [line]) if line else None), facts
         values, lows, highs = air or ({}, {}, {})
@@ -277,10 +308,10 @@ class Composer:
             overall = {k: round(100 * n / len(values), 1) for k, n in zip(ZONES, totals)}
             return (Panel(shares.label, "%", shares=shares),
                     {"series": name, "style": "rating", "share_of_time_percent": overall})
-        line = driver_series(values, self.tz, first, last, LABELS[name], lows, highs)
+        line = driver_series(values, self.tz, first, last, LABELS.get(name) or EXTRA_LABELS[name], lows, highs)
         if line is None:
             return None, {}
-        return panel_for(name, [line]), {"series": name, **self._stats(values, CHART_UNITS[name])}
+        return panel_for(name, [line]), {"series": name, **self._stats(values, CHART_UNITS.get(name) or EXTRA_UNITS[name])}
 
     @staticmethod
     def _stats(values: dict, unit: str) -> dict:

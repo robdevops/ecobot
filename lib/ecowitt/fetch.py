@@ -1,26 +1,19 @@
-"""Ecowitt history fetching: what one job (a question, a refresh, an alert check) reads from the disk cache, from memory
-or from Ecowitt, within Ecowitt's per-request limits."""
+"""Ecowitt history fetching: what one job (a question, a refresh, an alert check) reads from the storage, or asks of Ecowitt first (and
+writes there), within Ecowitt's per-request limits."""
 
 import asyncio
 import functools
 import logging
 import time
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import datetime, timedelta, tzinfo
 
+from ..storage import Storage
+from ..storage.coverage import merge as merge_intervals
 from ..timeutil import local_epoch, naive_local
-from .api import CYCLES, EcowittError, kept_from
-from .store import HistoryCache, HotStore, merge as merge_intervals
+from .api import CYCLES, EcowittError
+from .reads import rows_on
 
 log = logging.getLogger(__name__)
-
-
-def series_in(data: dict):
-    """(group, field, obj) for every time series in an Ecowitt 'data' object; obj["list"] is {ts: value}."""
-    for group, fields in data.items():
-        if isinstance(fields, dict):
-            for field, obj in fields.items():
-                if isinstance(obj, dict) and isinstance(obj.get("list"), dict):
-                    yield group, field, obj
 
 
 def spans(cycle: str, t: datetime, until: datetime):
@@ -31,16 +24,39 @@ def spans(cycle: str, t: datetime, until: datetime):
         t = e + timedelta(seconds=1)
 
 
-def merge_data(into: dict, new: dict, window: tuple[int, int] | None = None):
-    """Merge one Ecowitt 'data' object into another, optionally only timestamps in window."""
-    for grp, field, obj in series_in(new):
-        entry = into.setdefault(grp, {}).setdefault(field, {"unit": obj.get("unit", ""), "list": {}})
-        for ts, value in obj["list"].items():
-            if window is None or window[0] <= int(ts) <= window[1]:
-                entry["list"][ts] = value
-
-
 REJECTIONS_STOP = 2             # requests Ecowitt refuses in one job before the rest are not sent
+FRESH_SECONDS = 300             # the newest readings fetched are read from the storage this long, rather than asked for again ...
+FRESH_SLACK_SECONDS = 60        # ... and a fetch ending within this of when it was made "reaches the present"
+
+
+class Recent:
+    """The newest fetch of each station, cycle and group: the time it covered and when it was made. What it brought is in the storage (what
+    is newer than the cycle's settle horizon as provisional readings, which the next fetch replaces), so for FRESH_SECONDS a question reads
+    it there instead of asking Ecowitt again (the keep-warm refreshes it). And one fetch at a time per station and cycle, so a question
+    waits for one in flight instead of asking for the same thing."""
+
+    def __init__(self):
+        self._fetched: dict[tuple[str, str, str], tuple[int, int, float]] = {}
+        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def lock(self, mac: str, cycle: str) -> asyncio.Lock:
+        return self._locks.setdefault((mac, cycle), asyncio.Lock())
+
+    def covers(self, mac: str, cycle: str, group: str, start: int, end: int) -> bool:
+        """Did a fresh enough fetch cover the whole of [start, end]? One that reached the present covers anything up to now (what is newer
+        is at most FRESH_SECONDS late, by design)."""
+        entry = self._fetched.get((mac, cycle, group))
+        if not entry or time.time() - entry[2] > FRESH_SECONDS or entry[0] > start:
+            return False
+        return end <= entry[1] or entry[1] >= entry[2] - FRESH_SLACK_SECONDS
+
+    def note(self, mac: str, cycle: str, group: str, start: int, end: int):
+        """A fetch of [start, end] was made, unless a fresh one that reaches later is noted: an old range (the archive's) must not push out
+        the newest hours that questions are answered from."""
+        held = self._fetched.get((mac, cycle, group))
+        if held and time.time() - held[2] <= FRESH_SECONDS and held[1] > end:
+            return
+        self._fetched[mac, cycle, group] = (start, end, time.time())
 
 
 def timed(method):
@@ -56,12 +72,14 @@ def timed(method):
 
 
 class Fetcher:
-    """History for one job (a question, a refresh, an alert check): from the disk cache where
-    possible, recent readings from memory if fresh, the rest from Ecowitt."""
+    """History for one job (a question, a refresh, an alert check): from the storage where it holds it (the newest readings included, while
+    Recent says they are fresh), the rest from Ecowitt, written to the storage first."""
 
-    def __init__(self, api, cache: HistoryCache, hot: HotStore, mac: str, groups: list[str], tz: tzinfo, urgent: bool = False):
-        """urgent: someone is waiting for the answer, so its requests go before the background ones queued for Ecowitt."""
-        self.api, self.cache, self.hot, self.tz, self.urgent = api, cache, hot, tz, urgent
+    def __init__(self, api, storage: Storage, recent: Recent, mac: str, groups: list[str], tz: tzinfo, urgent: bool = False,
+                 minutes: bool = False):
+        """urgent: someone is waiting for the answer, so its requests go before the background ones queued for Ecowitt. minutes: the
+        station's minute readings are kept (Home Assistant's)."""
+        self.api, self.storage, self.recent, self.tz, self.urgent, self.has_minutes = api, storage, recent, tz, urgent, minutes
         self.mac = mac.strip().upper()
         self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
         self.ranges = self.from_cache = self.from_memory = self.calls = 0
@@ -76,54 +94,46 @@ class Fetcher:
         return naive_local(epoch, self.tz)
 
     @timed
-    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
-        """Readings for [start, end] (local time), however long: what Ecowitt is asked for is split to its per-request limit.
-        refresh=True ignores the in-memory copy (used by
-        the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
-        skips building the result nobody will read (the refresh and the archive).
-        When the cache and memory hold it all (the usual case) it is read at once, even while a refresh is fetching; otherwise
-        it waits for any fetch of this cycle in flight (which may bring it), so the same thing isn't asked of Ecowitt twice."""
+    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> list[tuple[int, dict]]:
+        """The readings of [start, end] (local time) at this resolution, as rows ([(epoch, {"group.field": value, ...})], reads.rows_on),
+        however long: what the storage lacks is asked of Ecowitt, split to its per-request limit, and written there first. refresh=True
+        asks again for what a fresh fetch brought (the keep-warm refresh). load=False only makes sure the range is held, and reads nothing
+        (the refresh, the archive, a question that reads in its own way). When the storage holds it all (the usual case) it is read at
+        once, even while a refresh is fetching; otherwise it waits for any fetch of this cycle in flight (which may bring it), so the same
+        thing isn't asked of Ecowitt twice."""
         self.ranges += 1
         s, e = self.epoch(start), self.epoch(end)
         if not refresh and (held := await self._read(cycle, s, e, load, fetch=False)) is not None:
             return held
-        async with self.hot.lock(self.mac, cycle):
+        async with self.recent.lock(self.mac, cycle):
             return await self._read(cycle, s, e, load, fetch=True, refresh=refresh)
 
-    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> dict | None:
-        """[s, e] (epoch seconds) from the cache, its newest readings from memory, and (fetch) what neither holds from Ecowitt, which
-        is then cached and kept in memory. None, with nothing counted, when fetch is False and the cache and memory lack some of it."""
-        (missing,) = await self._missing(cycle, [(s, e)])
+    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> list | None:
+        """[s, e] (epoch seconds) from the storage, and (fetch) what it does not hold, nor a fresh fetch brought, from Ecowitt (written to
+        the storage first). None, with nothing counted, when fetch is False and some of it is neither held nor fresh."""
+        (missing,) = self.uncovered(cycle, [(s, e)])
         gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
-        fresh: dict = {}
         from_memory = 0
         for gap_start, gap_end in gaps:
             need = [g for g in self.groups if any(a <= gap_end and b >= gap_start for a, b in missing[g])]
-            hot = {} if refresh else {g: self.hot.get(self.mac, cycle, g, gap_start, gap_end) for g in need}
-            if hot and all(v is not None for v in hot.values()):
-                from_memory += 1
-                if load:
-                    merge_data(fresh, hot, (gap_start, gap_end))
+            if not refresh and need and all(self.recent.covers(self.mac, cycle, g, gap_start, gap_end) for g in need):
+                from_memory += 1   # (its readings are in the storage, provisional)
                 continue
             if not fetch:
                 return None
             for a, b in spans(cycle, self.local(gap_start), self.local(gap_end)):   # one request each, within Ecowitt's limit
                 data = await self._fetch(cycle, a, b, need)
-                if data is None:
-                    continue  # failed: not recorded as fetched, so it's retried next time
+                if data is None or not data and not getattr(self.api, "empty_is_final", True):
+                    continue  # failed, or told nothing by an API that only has what it recorded: not recorded as fetched, so it's tried again
                 piece = (self.epoch(a), self.epoch(b))
-                await asyncio.to_thread(self.cache.store, self.mac, cycle, need, data, *piece)
+                await self.storage.write(lambda w, data=data, piece=piece: w.put_ecowitt(self.mac, cycle, need, data, *piece))
                 for g in need:
-                    self.hot.put(self.mac, cycle, g, *piece, data.get(g) or {})
-                if load:
-                    merge_data(fresh, data)
+                    self.recent.note(self.mac, cycle, g, *piece)
         self.from_cache += not gaps
         self.from_memory += from_memory
         if not load:
-            return {}
-        result = await asyncio.to_thread(self.cache.load, self.mac, cycle, self.groups, s, e)
-        merge_data(result, fresh, (s, e))  # recent readings aren't on disk; use the fresh ones
-        return result
+            return []
+        return await self.storage.read(rows_on, self.mac, self.groups, cycle, s, e)
 
     async def _fetch(self, cycle: str, start: datetime, end: datetime, groups: list[str]) -> dict | None:
         """One Ecowitt request: its data ({} if none), or None if it failed."""
@@ -140,31 +150,26 @@ class Fetcher:
             return None
 
     @timed
-    async def read(self, fn, *args):
-        """fn(*args), a read of the cache's own (slots, slot ranges), in a thread."""
-        return await asyncio.to_thread(fn, *args)
+    async def stored(self, fn, *args):
+        """fn(reader, *args) on the storage's reader thread: one hop, its queries in one read transaction."""
+        return await self.storage.read(fn, *args)
 
-    async def _missing(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
-        """For each window (epoch seconds), the parts of it the cache lacks, by group: one read of the coverage in one thread hop
-        (the hop costs more than the query, and far more while a chart is being drawn)."""
-        return await asyncio.to_thread(self.cache.uncovered, self.mac, self.groups, [(cycle, s, e) for s, e in windows])
+    def uncovered(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
+        """For each window (epoch seconds), the parts of it the storage lacks at this resolution, by group (the coverage is in memory; a
+        group the storage has no sensor for lacks all of it)."""
+        sensors = {g: self.storage.sensors.find(self.mac, g) for g in self.groups}
+        return [{g: self.storage.coverage.gaps(s.id, cycle, a, b) if s else [(a, b)] for g, s in sensors.items()} for a, b in windows]
 
-    async def covered(self, cycle: str, start: int, end: int) -> bool:
-        """True if the cache holds every group for [start, end] (epoch seconds)."""
-        return (await self.covered_each(cycle, [(start, end)]))[0]
+    def days_held(self, cycle: str) -> int:
+        """How many days of readings the storage holds at this resolution, of the group it holds the fewest of."""
+        return min((self.storage.coverage.days(s.id, cycle) if (s := self.storage.sensors.find(self.mac, g)) else 0 for g in self.groups),
+                   default=0)
+
+    def sibling(self, groups: list[str]) -> "Fetcher":
+        """A fetcher of other groups for the same job."""
+        return Fetcher(self.api, self.storage, self.recent, self.mac, groups, self.tz, self.urgent, self.has_minutes)
 
     @timed
     async def covered_each(self, cycle: str, windows: list[tuple[int, int]]) -> list[bool]:
-        """covered() for each of these windows, from one read of the coverage."""
-        return [bool(self.groups) and not any(missing.values()) for missing in await self._missing(cycle, windows)]
-
-    async def finer_cycle(self, ts: int, current: str, window_end: int, today: date) -> str | None:
-        """Finest cycle finer than `current` available for this window: still kept by Ecowitt,
-        or already in the cache (e.g. archived 5-minute data). None if neither."""
-        day = self.local(ts).date()
-        for cycle in ("5min", "30min", "4hour"):
-            if cycle == current:
-                return None
-            if day >= kept_from(cycle, today) or await self.covered(cycle, ts, window_end):
-                return cycle
-        return None
+        """For each of these windows ((start, end) epoch seconds), does the cache hold every group of it? One read of the coverage."""
+        return [bool(self.groups) and not any(missing.values()) for missing in self.uncovered(cycle, windows)]

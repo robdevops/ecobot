@@ -29,7 +29,7 @@ async def main():
     ap.add_argument("--raw", action="store_true")
     args = ap.parse_args()
     cfg = SimpleNamespace(tz=local_tz(), pollen_district=args.district, forecast_lat=args.lat, forecast_lon=args.lon,
-                         place=os.getenv("PLACE", "Melbourne"), conditions_cache_path=os.path.join(tempfile.mkdtemp(), "conditions.sqlite"))   # a scratch cache: the bot's is left alone
+                         place=os.getenv("PLACE", "Melbourne"), storage_path=os.path.join(tempfile.mkdtemp(), "ecobot.sqlite"))   # a scratch file: the bot's is left alone
 
     pollen = Pollen(cfg)
     try:

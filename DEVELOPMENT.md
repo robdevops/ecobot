@@ -8,6 +8,12 @@ pip install -r requirements-dev.txt
 python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process
 python scripts/eval_prompts.py         # the saved questions: decisions made in code, no key needed
 ```
+The suite takes about 25 s on four cores. The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
+is built once an hour and shared by the workers and by later runs: it lives under pytest's own temp folder (`/tmp/pytest-of-<user>/ecobot-archive-*.sqlite`),
+named for the hour and for the code that shapes it, so a change to `lib/storage`, `lib/ecowitt` or `tests/fakes.py` rebuilds it. The first run after
+that pays about 15 s more. Tests of the archive itself use a station a few weeks old (`ecowitt_transport(history_days=...)`); the storage's reader
+and writer threads, and `asyncio.to_thread`, run inline in tests (the `threaded_storage` fixture puts the threads back for the tests of them).
+
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
 ## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)
@@ -19,7 +25,7 @@ The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build t
 | `image` | pushes that change `Dockerfile`, `.dockerignore` or `requirements.txt` (any branch), or the Run workflow button | builds the Docker image, checks the bot starts in it and names the commit, draws the sample charts in it (they must be in Inter and match `tests/charts`); the image's size goes in the run's summary. |
 
 Repository secrets (Settings, Secrets and variables, Actions, New repository secret):
-- `XAI_API_KEY`: for `live-evals`. `XAI_MODEL` is optional (default `grok-4.3`): add it only if production runs another model.
+- `OPENROUTER_API_KEY`: for `live-evals`. `OPENROUTER_MODEL` is optional (default `deepseek/deepseek-v4.1-flash-1017`): add it only if production runs another model.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: optional; failures of `newest` and `live-evals`, and of `test` on `main`, are then sent to Telegram.
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the Python packages and the actions. `matplotlib`, `numpy` and `Pillow` come as one pull request, because the chart pictures depend on them.

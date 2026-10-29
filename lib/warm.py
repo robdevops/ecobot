@@ -10,6 +10,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
+from .logs import BUGS
+
 log = logging.getLogger(__name__)
 
 REFRESH_SECONDS = 240  # under the 5 minute freshness window both sources use
@@ -21,10 +23,6 @@ SYNC_HOURS = (6, 18)  # the sources that are websites are only fetched from 6 am
 
 def in_sync_hours(now: datetime) -> bool:
     return SYNC_HOURS[0] <= now.hour < SYNC_HOURS[1]
-
-
-# Errors that point at the code, logged with their traceback; any other failure (an outage, a refusal) is one line
-BUGS = (AssertionError, AttributeError, IndexError, KeyError, NameError, TypeError, ValueError, ZeroDivisionError)
 
 
 async def safely(fn: Callable[..., Awaitable], *args):

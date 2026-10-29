@@ -1,7 +1,5 @@
 import json
-from datetime import datetime, time as dtime, timedelta
-
-import httpx
+from datetime import datetime, time as dtime
 
 from lib import intent
 from lib.forecast import Forecast
@@ -51,12 +49,12 @@ async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_withou
     await first.close()
     again, more = make_pollen(tmp_path, lambda: page(grass="Low"), hour=22)
     await again.start()
-    assert more == [] and again.lines() == ["Grass pollen: 🔴 High", "Thunderstorm asthma risk: 🔴 High"]
+    assert more == [] and again.lines() == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🔴 High"]
     assert again.current()["fetched_at"] == first.fetched_at
     again.now = lambda: datetime.combine(SEASON_DAY, dtime(9, 0))
     await again.warm(True)                                   # next morning: asks with the saved validator
     assert len(more) == 1 and more[0].headers["if-none-match"] == "v1"
-    assert again.lines()[0].startswith("Grass pollen: 🔴 High")      # a 304: the saved page still stands
+    assert again.lines()[0].startswith("Grass pollen forecast: 🔴 High")      # a 304: the saved page still stands
     await again.close()
 
 
@@ -84,7 +82,7 @@ async def test_the_forecast_survives_a_restart_and_a_night_start_needs_no_reques
     again = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
     again.now = lambda: datetime.combine(datetime.now(TZ).date(), dtime(22, 0))
     await again.start()
-    assert calls == [] and again.lines(3) == lines and again.source == "Open-Meteo" and rows(again.store, "forecast") == 1
+    assert calls == [] and again.lines(3) == lines and rows(again.store, "forecast") == 1
     await again.close()
 
 
@@ -119,14 +117,15 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
 
 
 async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
+    """Its summary has no emoji until the first fetch (the Open-Meteo table carries them); its source and tag are ignored."""
     from lib.snapshots import Snapshots
-    store = Snapshots(tmp_path / "conditions.sqlite")
+    store = Snapshots(config(tmp_path).storage_path)
     today = datetime.now(TZ).date()
     store.save("forecast", {"source": "Bureau of Meteorology, Testville", "tag": "BOM",
                             "days": [{"date": str(today), "min_c": 11, "max_c": 17, "summary": "Rain.", "rain_chance_pct": 90}]})
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport([]))
     forecast.now = lambda: datetime.combine(today, dtime(22, 0))
     await forecast.start()
-    assert forecast.lines() == ["Today: 🌧️ Rain. 11–17°C, 90% chance of rain"]
+    assert forecast.lines() == ["Today: Rain. 11–17°C, 90% chance of rain"]
     await forecast.close()
     store.close()

@@ -1,14 +1,16 @@
-"""Tool-calling loop against an OpenAI-compatible API (xAI Grok)."""
+"""Tool-calling loop against an OpenAI-compatible API (OpenRouter)."""
 
 import asyncio
 import json
 import logging
 import time
-
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING
 
 from .lines import POINT_BUDGET
 from .tools import Tools, Turn
+
+if TYPE_CHECKING:   # openai is imported where the client is made (ecobot.py): its import takes half a second, more than all of lib
+    from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
@@ -16,8 +18,7 @@ MAX_STEPS = 10
 MAX_HISTORY = 16  # messages kept per chat (a follow-up needs the last few, every call resends them)
 TOKENS_PER_POINT = 10   # a dated low/high row is about 10 tokens as the model reads it
 CHARS_PER_TOKEN = 4
-# Tool results past twice a full query's data (10,000 tokens) get the chat a heads-up: about $0.0125 of input at Grok 4.3's
-# $1.25 per million, and it rides on every later step
+# Tool results past twice a full query's data (10,000 tokens) get the chat a heads-up: that much input rides on every later step
 WARN_TOKENS = 2 * POINT_BUDGET * TOKENS_PER_POINT
 
 LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data already fetched, "
@@ -25,8 +26,8 @@ LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data alr
 
 
 class Agent:
-    def __init__(self, client: AsyncOpenAI | None, model: str, tools: Tools):
-        self.client, self.model, self.tools = client, model, tools   # no client (no XAI_API_KEY): the tools are still called, the model never is
+    def __init__(self, client: "AsyncOpenAI | None", model: str, tools: Tools):
+        self.client, self.model, self.tools = client, model, tools   # no client (no OPENROUTER_API_KEY): the tools are still called, the model never is
 
     @property
     def ready(self) -> bool:
@@ -53,7 +54,7 @@ class Agent:
             share = "" if not cached or not usage.prompt_tokens else f", {100 * cached // usage.prompt_tokens}%"
             detail = (f"in {usage.prompt_tokens} ({'?' if cached is None else cached} cached{share}), "
                       f"out {usage.completion_tokens} ({'?' if thought is None else thought} thinking)")
-        log.info("LLM %d (%s%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning_effort"],
+        log.info("LLM %d (%s%s) %.1fs: %s, %d tools, %d chars", call_no, kwargs["extra_body"]["reasoning"]["effort"],
                  ", streamed" if on_text else "", elapsed, detail, len(calls), len(content))
         return content, calls, elapsed
 
@@ -79,7 +80,7 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str, *,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, tool_choice: str = "required",
-                  turn: Turn | None = None, on_text=None, on_heavy=None, conv_id: str | None = None) -> str:
+                  turn: Turn | None = None, on_text=None, on_heavy=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
@@ -87,8 +88,8 @@ class Agent:
         straight away, together, and the model is only invoked once the data is in. tool_choice is what the model's first
         step may do with the tools: "required" makes it fetch fresh data first (weather questions), "auto" lets it just
         reply (chat), "none" gives it no tools at all (a question about the bot itself). Every later step is "auto".
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft). conv_id names the
-        conversation for the provider's prompt cache; on_heavy(tokens) is called once, before the model is sent a lot of
+        on_text(text so far) is called as each answer streams in (private chats show it as a draft).
+        on_heavy(tokens) is called once, before the model is sent a lot of
         data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
         first. The work carries on; nothing waits for a reply."""
         cache: dict = {}  # identical tool calls within one question are only made once
@@ -98,7 +99,7 @@ class Agent:
             if key not in cache:
                 cache[key] = asyncio.ensure_future(self.tools.call(name, args, turn))
                 return await cache[key]
-            log.info("Tool call %s served from cache (repeat)", name)
+            log.debug("Tool call %s served from cache (repeat)", name)
             return ("[You already made this exact call - same result as before. Don't repeat it; "
                     "change the request or answer now.]\n" + await cache[key])
 
@@ -136,11 +137,9 @@ class Agent:
                 final = step == MAX_STEPS  # out of steps: force an answer from what we have
                 kwargs = {"model": self.model,
                           "messages": [{"role": "system", "content": system_prompt}, *messages],
-                          "extra_body": {"reasoning_effort": effort}}  # Grok 4.3: none / low / medium / high
-                if conv_id:   # the same id for every call of a chat sends them to the server holding its cached prompt
-                    kwargs["extra_headers"] = {"x-grok-conv-id": conv_id}
+                          "extra_body": {"reasoning": {"effort": effort}}}  # OpenRouter's setting for every model that reasons: none / low / medium / high
                 if self.tools.schemas:   # every tool, every time: the same list keeps the provider's cached prompt valid
-                    kwargs["tools"] = self.tools.schemas
+                    kwargs["tools"] = self.tools.schemas_for(turn)
                     kwargs["tool_choice"] = "none" if final or tool_choice == "none" else tool_choice if step == 0 else "auto"
                 if final:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)

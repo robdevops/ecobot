@@ -92,13 +92,13 @@ jobs:
 
   live-evals:
     # Advisory, never blocks: asks the real model the few questions in tests/evals/weekly.txt and checks which tool it calls. Needs the
-    # repository secret XAI_API_KEY (skipped without it); XAI_MODEL is optional, for when production runs another model than grok-4.3. A failure is run once more before it is reported.
+    # repository secret OPENROUTER_API_KEY (skipped without it); OPENROUTER_MODEL is optional, for when production runs another model than deepseek/deepseek-v4.1-flash-1017. A failure is run once more before it is reported.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      XAI_MODEL: ${{ secrets.XAI_MODEL || 'grok-4.3' }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL || 'deepseek/deepseek-v4.1-flash-1017' }}
       ALL_CASES: ${{ inputs.all_cases }}
     steps:
       - uses: actions/checkout@v7
@@ -109,7 +109,7 @@ jobs:
           cache-dependency-path: requirements*.txt
       - run: pip install -r requirements-dev.txt
       - name: Ask the model
-        if: env.XAI_API_KEY != ''
+        if: env.OPENROUTER_API_KEY != ''
         run: |
           ids=()
           if [ "$ALL_CASES" != "true" ]; then ids=(--ids "$(paste -sd, tests/evals/weekly.txt)"); fi

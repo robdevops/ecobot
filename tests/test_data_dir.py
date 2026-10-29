@@ -7,17 +7,17 @@ import pytest
 
 from lib.config import ROOT, Config, data_dir
 
-NAMES = ("bot_state.json", "ecowitt_cache.sqlite", "airgradient_cache.sqlite", "conditions_cache.sqlite")
+NAMES = ("bot_state.json", "ecobot.sqlite")
 
 
 def configured(monkeypatch, **env):
-    for key, value in {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "x", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", **env}.items():
+    for key, value in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "x", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", **env}.items():
         monkeypatch.setenv(key, value)
     return Config.from_env()
 
 
 def paths(cfg):
-    return (cfg.state_path, cfg.cache_path, cfg.air_cache_path, cfg.conditions_cache_path)
+    return (cfg.state_path, cfg.storage_path)
 
 
 def test_without_data_dir_the_files_stay_where_they_have_always_been(monkeypatch):
@@ -29,7 +29,7 @@ def test_without_data_dir_the_files_stay_where_they_have_always_been(monkeypatch
     assert data_dir() == ROOT                                                     # blank is the same as unset
 
 
-def test_data_dir_moves_the_state_and_all_three_caches_and_is_created(monkeypatch, tmp_path):
+def test_data_dir_moves_the_state_and_the_file_and_is_created(monkeypatch, tmp_path):
     target = tmp_path / "a" / "data"
     cfg = configured(monkeypatch, DATA_DIR=str(target))
     assert paths(cfg) == tuple(target / n for n in NAMES) and target.is_dir()
@@ -71,11 +71,12 @@ def test_a_folder_that_cannot_be_made_stops_the_start_with_a_plain_message(monke
 def test_matplotlib_keeps_its_cache_in_the_data_folder_unless_told_otherwise(tmp_path):
     code = "import os, ecobot; print(os.environ['MPLCONFIGDIR'])"
     env = {k: v for k, v in os.environ.items() if k != "MPLCONFIGDIR"}
-    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, env={**env, "DATA_DIR": str(tmp_path)})
-    assert out.stdout.strip() == str(tmp_path / "matplotlib"), out.stderr[-500:]
-    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
-                         env={**env, "DATA_DIR": str(tmp_path), "MPLCONFIGDIR": str(tmp_path / "mine")})
-    assert out.stdout.strip() == str(tmp_path / "mine")
+    run = lambda **extra: subprocess.Popen([sys.executable, "-c", code], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                           env={**env, "DATA_DIR": str(tmp_path), **extra})
+    told, mine = run(), run(MPLCONFIGDIR=str(tmp_path / "mine"))   # (side by side: each is an import of the bot)
+    out, err = told.communicate()
+    assert out.strip() == str(tmp_path / "matplotlib"), err[-500:]
+    assert mine.communicate()[0].strip() == str(tmp_path / "mine")
 
 
 def test_the_running_commit_is_read_without_running_git(tmp_path):

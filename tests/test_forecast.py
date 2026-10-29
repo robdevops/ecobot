@@ -4,8 +4,8 @@ from datetime import datetime, time as dtime, timedelta
 import httpx
 import pytest
 
-from lib.forecast import Forecast, decorate, forecast_emoji
-from lib.forecast.source import day_label, describe_day, temps
+from lib.forecast import Forecast
+from lib.forecast.source import WMO, day_label, describe_day, temps
 from tests.fakes import TZ, config
 
 
@@ -52,19 +52,17 @@ def make(tmp_path, ok=True, hour=12, ensemble=ENSEMBLE_DAYS, **over):
     return forecast, calls
 
 
-def test_each_sentence_gets_its_own_emoji_and_a_full_stop():
-    assert decorate("Showers. Possible storm.") == "🌦️ Showers. ⛈️ Possible storm."
-    assert decorate("Rain") == "🌧️ Rain." and decorate("Partly cloudy.") == "⛅ Partly cloudy." and decorate("") == ""
-    assert decorate("Windy. Frost.") == "🌬️ Windy. 🥶 Frost." and decorate("Cool change") == "Cool change."
-    assert [forecast_emoji(s) for s in ("Mostly sunny", "Sunny", "Fog", "Overcast", "Hail", "Possible thunderstorm")] == \
-        ["🌤️", "☀️", "🌫️", "☁️", "🌨️", "⛈️"]
+def test_every_summary_is_an_emoji_and_a_phrase_ending_in_a_full_stop():
+    import re
+    assert all(re.fullmatch(r"\S+ [A-Z][a-z ]+\.", summary) for summary in WMO.values()), WMO
+    assert WMO[0] == "☀️ Clear." and WMO[63] == "🌧️ Rain." and WMO[80] == "🌦️ Showers." and WMO[95] == "⛈️ Thunderstorm."
 
 
 def test_a_day_reads_like_the_report_line():
-    assert describe_day({"summary": "Rain.", "min_c": 11, "max_c": 17, "rain_chance_pct": 90}) == "🌧️ Rain. 11–17°C, 90% chance of rain"
-    assert describe_day({"summary": "Showers. Possible storm.", "min_c": 11, "max_c": 18, "rain_chance_pct": 95}) == \
-        "🌦️ Showers. ⛈️ Possible storm. 11–18°C, 95% chance of rain"
-    assert describe_day({"summary": "Sunny.", "min_c": 9.5, "max_c": None, "rain_chance_pct": None}) == "☀️ Sunny. min 10°C"
+    assert describe_day({"summary": "🌧️ Rain.", "min_c": 11, "max_c": 17, "rain_chance_pct": 90}) == "🌧️ Rain. 11–17°C, 90% chance of rain"
+    assert describe_day({"summary": "⛈️ Thunderstorm and hail.", "min_c": 11, "max_c": 18, "rain_chance_pct": 95}) == \
+        "⛈️ Thunderstorm and hail. 11–18°C, 95% chance of rain"
+    assert describe_day({"summary": "☀️ Clear.", "min_c": 9.5, "max_c": None, "rain_chance_pct": None}) == "☀️ Clear. min 10°C"
     assert describe_day({}) == "no data"
 
 

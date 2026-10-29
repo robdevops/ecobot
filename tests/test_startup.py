@@ -16,6 +16,28 @@ from lib.airgradient import source as air_source
 from tests.fakes import air_transport, config, ecowitt_transport
 
 
+@pytest.fixture(autouse=True)
+def the_log_as_it_was():
+    """main() sets the bot's log levels and width from the settings: put back after each test here, for the tests that come after."""
+    levels = {name: logging.getLogger(name).level for name in ("ecobot", "lib")}
+    width = ecobot._format.width
+    yield
+    for name, level in levels.items():
+        logging.getLogger(name).setLevel(level)
+    ecobot._format.width = width
+
+
+@pytest.fixture(autouse=True)
+def buttons_not_drawn_ahead(monkeypatch):
+    """The keyboard's charts are not drawn ahead here (seven charts a start; test_periods.py tests the drawing): only noted."""
+    drawn = []
+
+    async def note(self, tg_bot):
+        drawn.append(tg_bot)
+    monkeypatch.setattr(ecobot.Bot, "draw_buttons_ahead", note)
+    return drawn
+
+
 class FakeApp:
     def __init__(self):
         self.sent, self.handlers = [], []
@@ -51,16 +73,16 @@ class FakeBuilder:
         return lambda *a, **k: self if name != "build" else self.app
 
 
-async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
+async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog, buttons_not_drawn_ahead):
     caplog.set_level("INFO")
     cfg = config(tmp_path, log_width=120)
-    monkeypatch.setattr(ecobot._handler.formatter, "width", 0)   # put back after the test
-    eco_t, _ = ecowitt_transport(history_days=45)
+    monkeypatch.setattr(ecobot._format, "width", 0)   # put back after the test
+    eco_t, _ = ecowitt_transport(history_days=30)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
     monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
@@ -68,7 +90,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
 
     async def stop_when_archived():  # the background archives finish, then we shut down
         for _ in range(300):
-            if " req, held " in caplog.text and "days cached" in caplog.text:
+            if any("Backfill Ecowitt: " in l and " fetched/failed, " in l for l in caplog.text.splitlines()) and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -76,24 +98,26 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Weather station: Ecowitt 'Fairleigh'" in log and "@testbot + " in log
-    assert "Startup warm-up:" in log and " req to fetch" in log and "AirGradient archive:" in log
-    final = next(line for line in log.splitlines() if "Ecowitt: " in line and " req, held " in line)
-    assert "failed" not in final and "days (5m/30m/4h/1d)" in final
+    assert "Ecowitt: 'Fairleigh' (" in log and "): cloud (" in log and "Telegram: @testbot, Model: " in log
+    assert not any(line.startswith(("Sources:", "Refreshing every")) or "Alerts: " in line and " chats" in line for line in log.splitlines())
+    assert "Startup fetch:" not in log and " requests to fetch" in log and "Backfill AirGradient:" in log
+    final = next(line for line in log.splitlines() if "Backfill Ecowitt: " in line and " fetched/failed, " in line)
+    assert "/0 fetched/failed, " in final and "d held (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
-    assert "Alerts: rain, gusts, UV, temperature crossing, particulates: 0 chats" in log and "Alerts NOT running" not in log
-    assert ecobot._handler.formatter.width == 120                   # LOG_WIDTH reaches the bot's own log lines
+    assert "Alerts NOT running" not in log
+    assert ecobot._format.width == 120                   # LOG_WIDTH reaches the bot's own log lines
+    assert buttons_not_drawn_ahead == [app.bot]          # the keyboard's charts are drawn ahead once the sources are warm
 
 
-async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not_start(tmp_path, monkeypatch, caplog):
+async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(tmp_path, monkeypatch, caplog):
     caplog.set_level("INFO")
     cfg = config(tmp_path)
-    eco_t, _ = ecowitt_transport(history_days=45)
+    eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
     monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
@@ -105,7 +129,7 @@ async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "days cached" in caplog.text:
+            if any("Backfill Ecowitt: " in l and " fetched/failed, " in l for l in caplog.text.splitlines()) and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -113,7 +137,7 @@ async def test_the_alerts_line_leaves_out_the_weather_alerts_when_they_could_not
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Weather alerts couldn't start" in log and "Alerts: particulates: 0 chats" in log
+    assert "Weather alerts couldn't start" in log
     assert "Alerts NOT running: rain, gusts, UV, temperature crossing (see the error above)" in log
 
 
@@ -122,12 +146,12 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     monitor) must still start: the regular refreshes then catch up."""
     caplog.set_level("INFO")
     cfg = config(tmp_path)
-    eco_t, _ = ecowitt_transport(history_days=45)
+    eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
     monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
@@ -140,7 +164,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "AirGradient archive:" in caplog.text:
+            if any("Backfill Ecowitt: " in l and " fetched/failed, " in l for l in caplog.text.splitlines()) and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -148,36 +172,35 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     await ecobot.main()
     await stopper
     log = caplog.text
-    assert "Ecowitt failed" in log and "AirGradient failed" in log        # the summary says so
-    assert "the network dropped" in log                                     # and the reason is in the log
-    assert " req, held " in log and "AirGradient archive:" in log         # yet both archives ran
-    assert "Startup warm-up failed" not in log                            # not lost to the catch-all
+    assert "the network dropped" in log                                     # the reason is in the log
+    assert "Backfill Ecowitt: " in log and "Backfill AirGradient:" in log         # yet both archives ran
+    assert "Startup fetch failed" not in log                            # not lost to the catch-all
 
 
 async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_start(tmp_path, monkeypatch, caplog):
-    eco_t, _ = ecowitt_transport(history_days=45)
-    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, orig=ecobot.Ecowitt.__init__: orig(self, c, eco_t))
+    eco_t, _ = ecowitt_transport(history_days=10)
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, orig=ecobot.Ecowitt.__init__, **kw: orig(self, c, eco_t, **kw))
 
-    def broken(self, cfg, transport=None):
+    def broken(self, cfg, transport=None, **kw):
         raise OSError("the cache folder is read-only")
     monkeypatch.setattr(ecobot.AirGradient, "__init__", broken)
     sources, _ = await ecobot.start_sources(config(tmp_path))
     for s in sources:
         await s.close()
-    assert [s.name for s in sources] == ["Ecowitt"] and "AirGradient couldn't start - continuing without it" in caplog.text
+    assert [s.name for s in sources] == ["Ecowitt"] and "AirGradient couldn't start (OSError: the cache folder is read-only) - continuing without it" in caplog.text
 
 
 async def test_a_failure_part_way_through_starting_closes_everything_already_open(tmp_path, monkeypatch, caplog):
     """Telegram fails once the sources, the model's client and the connection are up: each is closed, the last opened first,
     and a close that fails doesn't stop the rest. The bot stops with the error that stopped it."""
     cfg = config(tmp_path)
-    eco_t, _ = ecowitt_transport(history_days=45)
+    eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     app, closed = FakeApp(), []
     app.stop = lambda: closed.append("telegram") or app._noop()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
 
     async def stuck_disk(self):
@@ -196,7 +219,7 @@ async def test_a_failure_part_way_through_starting_closes_everything_already_ope
 
     async def down(self, bot):
         raise RuntimeError("Telegram is down")
-    monkeypatch.setattr(ecobot.Bot, "refresh_keyboards", down)
+    monkeypatch.setattr(ecobot.Bot, "publish_commands", down)
     with pytest.raises(RuntimeError, match="Telegram is down"):
         await ecobot.main()
     assert closed == ["telegram", "model", "AirGradient", "Ecowitt"] and "disk I/O error" in caplog.text
@@ -205,10 +228,10 @@ async def test_a_failure_part_way_through_starting_closes_everything_already_ope
 async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_uses_the_stations_location(tmp_path, monkeypatch):
     from tests.test_forecast import transport as forecast_transport
     from tests.test_pollen import page, transport as pollen_transport
-    eco_t, _ = ecowitt_transport(history_days=45)
+    eco_t, _ = ecowitt_transport(history_days=10)
     calls = []
     eco_init, pollen_init, forecast_init = ecobot.Ecowitt.__init__, ecobot.Pollen.__init__, ecobot.Forecast.__init__
-    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c: eco_init(self, c, eco_t))
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, **kw: eco_init(self, c, eco_t, **kw))
     monkeypatch.setattr(ecobot.Pollen, "__init__", lambda self, c: pollen_init(self, c, pollen_transport(page, calls)))
     monkeypatch.setattr(ecobot.Forecast, "__init__", lambda self, c, place=None: forecast_init(self, c, place, forecast_transport(calls)))
     monkeypatch.setattr(ecobot.Pollen, "now", lambda self: datetime(2026, 11, 10, 12, 0))     # in the pollen season, whatever day the test runs
@@ -225,10 +248,10 @@ async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_
 
 async def test_the_other_sources_run_in_the_weather_station_s_time_zone(tmp_path, monkeypatch, caplog):
     from zoneinfo import ZoneInfo
-    eco_t, _ = ecowitt_transport(history_days=45)
+    eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setenv("TZ", "UTC")
     sources, cfg = await ecobot.start_sources(config(tmp_path, tz=ZoneInfo("UTC")))   # TZ says UTC; the station is in Melbourne
     for s in sources:
@@ -261,7 +284,7 @@ def test_the_time_zone_without_a_station_is_tz_else_the_one_etc_localtime_links_
 def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatch):
     from lib.config import Config
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("XAI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ECOWITT_API_KEY", "a")
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("ALERT_COOLDOWN_MINUTES", raising=False)
@@ -273,7 +296,7 @@ def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatc
 
 def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     assert Config.from_env().log_level == "INFO"
@@ -286,17 +309,17 @@ def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeyp
 
 def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", " t "), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", " t "), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    for k in ("XAI_MODEL", "XAI_BASE_URL", "PLACE", "POLLEN_DISTRICT", "TUYA_BASE_URL"):
+    for k in ("OPENROUTER_MODEL", "OPENROUTER_BASE_URL", "PLACE", "POLLEN_DISTRICT", "TUYA_BASE_URL"):
         monkeypatch.setenv(k, "  ")
     monkeypatch.setenv("POLLEN", "enabled")
     cfg = Config.from_env()
-    assert (cfg.telegram_token, cfg.xai_model, cfg.xai_base_url, cfg.place, cfg.pollen_district, cfg.tuya_base_url) == (
-        "t", "grok-4.3", "https://api.x.ai/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
+    assert (cfg.telegram_token, cfg.openrouter_model, cfg.openrouter_base_url, cfg.place, cfg.pollen_district, cfg.tuya_base_url) == (
+        "t", "deepseek/deepseek-v4.1-flash-1017", "https://openrouter.ai/api/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert cfg.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
-    monkeypatch.setenv("XAI_API_KEY", " ")
-    assert Config.from_env().xai_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
+    monkeypatch.setenv("OPENROUTER_API_KEY", " ")
+    assert Config.from_env().openrouter_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", " ")
     with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
         Config.from_env()
@@ -312,7 +335,7 @@ def test_the_rain_quiet_hours_are_configurable():
 def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("XAI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("ECOWITT_API_KEY", "a")
     monkeypatch.setenv("ECOWITT_APP_KEY", "b")
     monkeypatch.delenv("CHART_ALL_FEELS_LIKE", raising=False)
@@ -323,7 +346,7 @@ def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_
 
 def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("CHART_ALL_VPD", raising=False)
     assert Config.from_env().chart_all_vpd is False
@@ -336,7 +359,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     from lib.irrigation import tuya as tuya_module
     caplog.set_level("INFO")
     cfg = config(tmp_path, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret="s")
-    eco_t, _ = ecowitt_transport(history_days=45)
+    eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     closed = []
 
@@ -347,7 +370,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(tuya_module.Tuya, "__init__", lambda self, c, transport=None, orig=tuya_module.Tuya.__init__: orig(self, c, httpx.MockTransport(tuya)))
     monkeypatch.setattr(tuya_module.Tuya, "close", lambda self, orig=tuya_module.Tuya.close: closed.append(1) or orig(self))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
@@ -357,26 +380,32 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
 
     async def stop_when_archived():
         for _ in range(300):
-            if " req, held " in caplog.text and "days cached" in caplog.text:
+            if any("Backfill Ecowitt: " in l and " fetched/failed, " in l for l in caplog.text.splitlines()) and "Backfill AirGradient:" in caplog.text:
                 break
             await asyncio.sleep(0.1)
         os.kill(os.getpid(), signal.SIGTERM)
     stopper = asyncio.create_task(stop_when_archived())
     await ecobot.main()
     await stopper
-    assert "irrigation battery" in caplog.text                       # in the list of alert types
+    assert "Alerts NOT running" not in caplog.text                   # the irrigation alerts started with the rest
     assert len(app.handlers) == 11 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
+
+
+def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():
+    fmt = ecobot.LogFormat("%(levelname)s %(message)s")
+    line = lambda level: fmt.format(logging.LogRecord("lib.bot", level, __file__, 1, "hello", None, None))
+    assert [line(l) for l in (logging.INFO, logging.WARNING, logging.ERROR, logging.DEBUG)] == ["hello", "WARN hello", "ERROR hello", "DEBUG hello"]
 
 
 def test_log_lines_do_not_name_their_module():
     fmt = ecobot.LogFormat("%(levelname)s %(message)s")
     record = lambda name: logging.LogRecord(name, logging.INFO, __file__, 1, "hello", None, None)
-    assert fmt.format(record("ecobot")) == "INFO hello" and fmt.format(record("lib.bot")) == "INFO hello"
+    assert fmt.format(record("ecobot")) == "hello" and fmt.format(record("lib.bot")) == "hello"        # and no "INFO" before an ordinary line
 
 
-def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line():
+def test_only_a_chat_message_is_cut_to_the_log_width_and_it_is_put_on_one_line():
     from lib.logs import QUOTES, LogFormat
-    fmt = LogFormat("%(levelname)s %(message)s", width=40)
+    fmt = LogFormat("%(levelname)s %(message)s", width=20)
 
     def line(msg, *args, quotes=True):
         record = logging.LogRecord("lib.bot", logging.INFO, __file__, 1, msg, args, None)
@@ -384,20 +413,20 @@ def test_every_log_line_is_cut_to_the_log_width_and_a_quote_is_put_on_one_line()
             record.__dict__.update(QUOTES)
         return fmt.format(record)
     asked = "what was the hottest it got last week, and when?"
-    assert line("[@rob] %s", "how hot\nis  it") == "INFO [@rob] how hot is it"        # short enough: whole, on one line
-    assert line("[@rob] %s", asked) == "INFO [@rob] what was the hottest it got…"               # 40 characters, the ellipsis included
+    assert line("[@rob] %s", "how hot\nis  it") == "[@rob] how hot is it"        # short enough: whole, on one line
+    assert line("[@rob] %s", asked) == "[@rob] " + asked[:20] + "…"                # 20 characters kept, then the ellipsis
     timings = "Chart ms: data 12, calc 6, draw 112, PNG 41, send 9, more words"
-    assert line(timings, quotes=False) == "INFO Chart ms: data 12, calc 6, draw 11…"      # a line that quotes nothing is cut too
-    assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 33 + "…"   # each line of a long message
-    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # a warning or an error is cut too
+    assert line(timings, quotes=False) == timings                                  # a line that quotes nothing is never cut
+    assert line("a\n    b " + "x" * 50, quotes=False).split("\n")[1] == "    b " + "x" * 50
+    for level, name in ((logging.WARNING, "WARN"), (logging.ERROR, "ERROR")):   # nor is a warning or an error
         record = logging.LogRecord("lib.bot", level, __file__, 1, timings, None, None)
-        assert fmt.format(record) == f"{name} " + timings[:40 - len(name) - 2] + "…" and record.levelname == logging.getLevelName(level)
+        assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
     fmt.width = 0
-    assert line("[@rob] %s", asked) == "INFO [@rob] " + asked                           # 0 cuts none
-    assert line(timings, quotes=False) == "INFO " + timings
+    assert line("[@rob] %s", asked) == "[@rob] " + asked                           # 0 keeps the whole message
+    assert LogFormat("%(message)s").width == 24                                     # and the default is 24
 
 
-def test_a_traceback_is_logged_whole_after_its_cut_message():
+def test_a_traceback_is_logged_whole_after_its_message():
     import sys
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s", width=40)
@@ -407,25 +436,25 @@ def test_a_traceback_is_logged_whole_after_its_cut_message():
         record = logging.LogRecord("lib.bot", logging.ERROR, __file__, 1, "Failed to deliver reply to chat 12345678 in the group", None,
                                    sys.exc_info())
     lines = fmt.format(record).split("\n")
-    assert lines[0] == "ERROR Failed to deliver reply to chat 1…" and lines[1] == "Traceback (most recent call last):"
+    assert lines[0] == "ERROR Failed to deliver reply to chat 12345678 in the group" and lines[1] == "Traceback (most recent call last):"
     assert lines[-1] == "KeyError: 'a key whose name is far longer than the forty characters of the log width'"
     assert any(len(line) > 40 for line in lines[2:-1])                  # the frames too, whole
 
 
-def test_the_log_width_is_0_unless_set_and_0_cuts_none(monkeypatch):
+def test_the_log_width_is_24_unless_set_and_0_keeps_whole_messages(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_WIDTH", raising=False)
-    assert Config.from_env().log_width == 0
-    for value, want in (("120", 120), ("71", 71), ("junk", 0), ("-5", 0), ("7.5", 0), ("²", 0)):
+    assert Config.from_env().log_width == 24
+    for value, want in (("120", 120), ("0", 0), ("junk", 24), ("-5", 24), ("7.5", 24), ("²", 24)):
         monkeypatch.setenv("LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
 
 
 def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("TELEGRAM_PRELOAD_CHAT", raising=False)
     assert Config.from_env().telegram_preload_chat is None
@@ -438,8 +467,8 @@ def test_the_http_clients_lines_do_not_start_with_http_request():
     from lib.logs import LogFormat
     fmt = LogFormat("%(levelname)s %(message)s", width=80)
     record = logging.LogRecord("httpx2", logging.INFO, __file__, 1, 'HTTP Request: %s %s "%s %d %s"',
-                               ("POST", "https://api.x.ai/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
-    assert fmt.format(record) == 'INFO POST https://api.x.ai/v1/chat/completions "HTTP/1.1 200 OK"'
+                               ("POST", "https://openrouter.ai/api/v1/chat/completions", "HTTP/1.1", 200, "OK"), None)
+    assert fmt.format(record) == 'POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"'
     assert record.msg.startswith("HTTP Request: ")                    # the record itself is left as it was
 
 
@@ -454,7 +483,7 @@ async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_
     air_t, _ = air_transport()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(Rejecting())))
     with pytest.raises(SystemExit) as stopped:
         await ecobot.main()

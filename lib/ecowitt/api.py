@@ -41,6 +41,14 @@ CYCLES = {"5min": Cycle(300, timedelta(days=1), 90, 3600), "30min": Cycle(1800, 
 FINE_CYCLES = tuple(name for name, c in CYCLES.items() if c.seconds <= 1800)
 
 
+MINUTE = "1min"   # a cycle only Home Assistant has (hass_api): the state held at the end of each minute
+
+
+def cycle_seconds(cycle: str) -> int:
+    """The time one reading of this cycle covers (the minute's too)."""
+    return 60 if cycle == MINUTE else CYCLES[cycle].seconds
+
+
 def kept_from(cycle: str, today: date) -> date:
     """The first day whose readings at this cycle Ecowitt is sure still to have: two days clear of its retention edge, so a
     request can't race the deletion."""
@@ -51,9 +59,7 @@ def kept_from(cycle: str, today: date) -> date:
 # warm-up and the archive fetch the same thing and can reuse each other's data.
 GROUPS = ["outdoor", "indoor", "pressure", "wind", "rainfall", "rainfall_piezo", "solar_and_uvi"]
 
-# Metric units. The names are what the cache remembers (it is cleared if they change);
-# UNIT_IDS are Ecowitt's numeric ids for them.
-UNITS = {"temp_unitid": "C", "pressure_unitid": "hPa", "wind_speed_unitid": "kmh", "rainfall_unitid": "mm"}
+# The metric units every request asks for, by Ecowitt's numeric ids.
 UNIT_IDS = {"temp_unitid": 1, "pressure_unitid": 3, "wind_speed_unitid": 7, "rainfall_unitid": 12}
 
 

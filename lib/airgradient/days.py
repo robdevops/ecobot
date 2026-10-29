@@ -1,21 +1,19 @@
-"""air_days: find, rank, count and total days by the air-quality sensor's readings, from the stored readings alone (it never asks
-AirGradient). The same fields as a day's highest (_max), lowest (_min) or mean (_avg) of each metric, e.g. pm2_5_max > 25 for the
-days particles passed 25 µg/m³. The counting, ranking, grouping and bar charts are shared with weather_days (lib/daytable.py)."""
+"""air_days: find, rank, count and total days by the air-quality sensor's readings, from the day rows alone (it never asks
+AirGradient; storage.days works each day out as its readings are written, the sensor's glitches taken out). The same fields as a day's
+highest (_max), lowest (_min) or mean (_avg) of each metric, e.g. pm2_5_max > 25 for the days particles passed 25 µg/m³. The counting,
+ranking, grouping and bar charts are shared with weather_days (lib/daytable.py)."""
 
-import asyncio
 import logging
-from datetime import date, datetime, tzinfo
-from statistics import fmean
+from datetime import datetime, tzinfo
 
 from ..daytable import analyse, grouped_as_asked, parameters, prepare
-from ..timeutil import day_bounds, local_date, now_local
+from ..timeutil import now_local
 from ..tools import json_result
-from .metrics import ALL_METRICS, CHART_UNITS, without_spikes
+from .metrics import ALL_METRICS, CHART_UNITS
 
 log = logging.getLogger(__name__)
 
-HOURLY_MAX_READINGS = 30   # a day with this few readings holds hourly averages (24), not 5-minute ones (288)
-SUFFIX_KIND = {"max": max, "min": min, "avg": fmean}
+SUFFIX_KIND = ("max", "min", "avg")
 FIELDS = {f"{m}_{kind}": CHART_UNITS[m] for m in ALL_METRICS for kind in SUFFIX_KIND}
 ALWAYS_SHOWN = ("pm2_5_max",)   # every listed day shows it; days rank by it when nothing else is named
 
@@ -29,33 +27,18 @@ DESCRIPTION = ("Find, rank or count DAYS by the air-quality sensor's readings, f
                "total of matching days and the top ones.")
 
 
-def daily_values(rows: list[dict], shown: list[str], tz: tzinfo) -> dict[str, dict[date, float]]:
-    """{field: {local day: that day's highest, lowest or mean}} from the stored readings."""
-    by_day: dict[date, list[dict]] = {}
-    for r in without_spikes(rows):   # a single-reading spike of the particles is a glitch of the sensor, not a day's highest
-        by_day.setdefault(local_date(r["ts"], tz), []).append(r)
-    values: dict[str, dict[date, float]] = {n: {} for n in shown}
-    for name in shown:
-        metric, kind = name.rsplit("_", 1)
-        for day, day_rows in by_day.items():
-            numbers = [r[metric] for r in day_rows if metric in r]
-            if numbers:
-                values[name][day] = SUFFIX_KIND[kind](numbers)
-    return values
-
-
-def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
+async def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
+    """The answer, from one read of the day rows (readings.AirReadings.day_figures)."""
     asked = prepare(args, FIELDS, ALWAYS_SHOWN, now.date())
     if isinstance(asked, str):
         return {"error": asked}
     days, shown = asked.days, asked.shown
-    rows = store.load(day_bounds(asked.first, tz)[0], day_bounds(asked.last, tz)[1])
-    counts = store.counts(days)
-    values = daily_values(rows, shown, tz)
+    figures = await store.day_figures(asked.first, asked.last, shown)
+    values, counts = figures.values, figures.counts
     checked = [d for d in days if any(d in values[n] for n in shown)]
     got = analyse(values, asked, checked, tz, turn)
     out = got.out
-    hourly = [d for d in checked if (counts.get(d) or 0) <= HOURLY_MAX_READINGS]
+    hourly = [d for d in checked if d in figures.hourly]
     if hourly and any(n.endswith(("_max", "_min")) for n in shown):
         out["note_hourly"] = (f"{len(hourly)} of these days only exist as hourly averages, so their highs and lows are hourly "
                               "averages and a short spike is smoothed. Say so briefly if it matters.")
@@ -69,5 +52,4 @@ def find_air_days(store, tz: tzinfo, args: dict, now: datetime, turn=None) -> di
 
 
 async def air_days_tool(store, tz: tzinfo, args: dict, turn=None) -> str:
-    result = await asyncio.to_thread(find_air_days, store, tz, grouped_as_asked(args, turn), now_local(tz), turn)
-    return json_result(result)
+    return json_result(await find_air_days(store, tz, grouped_as_asked(args, turn), now_local(tz), turn))

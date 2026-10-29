@@ -23,11 +23,10 @@ class StandInTools:
 
 
 def config(tmp_path, **over) -> Config:
-    base = dict(telegram_token="1:x", xai_api_key="k", xai_base_url="http://x", xai_model="m", tz=TZ,
+    base = dict(telegram_token="1:x", openrouter_api_key="k", openrouter_base_url="http://x", openrouter_model="m", tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite",
-                conditions_cache_path=tmp_path / "conditions.sqlite", admin_only=False)   # tests that are about ADMIN_ONLY switch it on
+                storage_path=tmp_path / "ecobot.sqlite", admin_only=False)   # tests that are about ADMIN_ONLY switch it on
     return Config(**{**base, **over})
 
 
@@ -36,6 +35,12 @@ def temp(ts: int) -> float:
     """Outdoor temperature: daily cycle peaking ~3pm local, slowly warming over the days."""
     local = datetime.fromtimestamp(ts, timezone.utc).astimezone(TZ)
     return 14 + 6 * math.sin((local.hour + local.minute / 60 - 9) / 24 * 2 * math.pi) + ts / 86400 % 5 * 0.1
+
+
+@lru_cache(maxsize=None)  # pure and called for every sample of every request
+def humidity(ts: int) -> float:
+    """Outdoor humidity: the mirror of the temperature, so it is highest at night."""
+    return 70 - (temp(ts) - 14) * 2.5
 
 
 @lru_cache(maxsize=None)  # pure and called for every sample of every request
@@ -80,6 +85,18 @@ def uv_index(ts: int) -> float:
     return 0.0 if hours < 7 or hours > 19 else round(11 * (1 - ((hours - 13) / 6) ** 2), 1)
 
 
+WHOLE = ("humidity", "wind_direction")   # what the station writes as whole numbers ("62", "350"); its UV too when it is whole ("3", "10.5")
+
+
+def written(name: str, value: float) -> str:
+    """A reading as the station writes it: one decimal, but none for the WHOLE readings, nor for a UV index that is whole."""
+    base = name.removesuffix("_low").removesuffix("_high")
+    if base in WHOLE:
+        return f"{value:.0f}"
+    out = f"{value:.1f}"
+    return out[:-2] if base == "uvi" and out.endswith(".0") else out
+
+
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
@@ -115,20 +132,107 @@ class FakeEcowitt:
         step = STEP[p["cycle_type"]]
         parse = lambda s: int(datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ).timestamp())
         start, end = parse(p["start_date"]), parse(p["end_date"])
-        first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
+        first = start - start % step if p["cycle_type"] == "1day" else start + -start % step  # on the clock; 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
-            named = {"outdoor": [("temperature", temp), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
+            named = {"outdoor": [("temperature", temp), ("humidity", humidity), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
-            for name, fn in named.get(group, [("temperature", temp)]):
+            for name, fn in named.get(group, [("temperature", temp)] if group == "indoor" else []):   # (no piezo gauge)
                 for ts in range(first, end + 1, step):
                     samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                    fields.setdefault(name, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
+                    fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, samples[0])
                     if p["cycle_type"] != "5min":
                         for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
-                            fields.setdefault(name + suffix, {"unit": "℃", "list": {}})["list"][str(ts)] = f"{val:.1f}"
+                            fields.setdefault(name + suffix, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, val)
             out[group] = fields
         return out
+
+
+# series -> (the entity's name after sensor.ws2900_, Home Assistant's unit, its number at a time): what a Home Assistant with the Ecowitt integration holds
+HA_PREFIX = "sensor.ws2900_"
+HA_STATES = {
+    "outdoor_temperature": ("°C", temp, 1), "humidity": ("%", humidity, 0), "dewpoint": ("°C", lambda t: temp(t) - 3, 1),
+    "feels_like_temperature": ("°C", lambda t: temp(t) - 1, 1), "indoor_temperature": ("°C", lambda t: 21.0, 1),
+    "indoor_humidity": ("%", lambda t: 55.0, 0), "relative_pressure": ("hPa", pressure, 1), "wind_speed": ("km/h", wind_speed, 1),
+    "wind_gust": ("km/h", gust, 1), "wind_direction": ("°", direction, 0), "daily_rain": ("mm", rain_day, 1), "rain_rate": ("mm/h", lambda t: 0.0, 1),
+    "solar_radiation": ("W/m²", lambda t: uv_index(t) * 80, 1), "uv_index": ("UV index", uv_index, 1),
+}
+HA_STEP = 64   # the gateway reports about once a minute
+
+
+class FakeHomeAssistant:
+    """Handles /api/config, /api/states and /api/history/period like Home Assistant with the Ecowitt integration set up, from the same weather
+    functions as FakeEcowitt. It has recorded `history_days` days; a state is recorded only when its number changes, as Home Assistant does.
+    `off`: it answers 503 (it is down); `units`: another unit for an entity (what its owner chose to see)."""
+
+    def __init__(self, history_days: float = 10, begins: float | None = None, units: dict | None = None, token: str = "tok"):
+        self.begins = begins if begins is not None else datetime.now(timezone.utc).timestamp() - history_days * 86400
+        self.units, self.token, self.off = units or {}, token, False
+        self.calls: list[dict] = []
+        self._answered: dict[tuple, bytes] = {}   # the history of a finished span, once made (the archive asks for each day once a cycle)
+
+    def number(self, name: str, ts: float) -> float:
+        unit, fn, decimals = HA_STATES[name]
+        value = round(fn(int(ts)), decimals)
+        return self.convert(name, value)
+
+    def convert(self, name: str, value: float) -> float:
+        """The number in the unit its owner chose to see (Fahrenheit, mph ... as `units` says)."""
+        unit = self.units.get(name)
+        return {"°F": lambda v: round(v * 9 / 5 + 32, 1), "mph": lambda v: round(v / 1.609344, 1), "inHg": lambda v: round(v / 33.8639, 2)}[unit](value) if unit else value
+
+    def unit(self, name: str) -> str:
+        return self.units.get(name, HA_STATES[name][0])
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append({"path": request.url.path, **dict(request.url.params)})
+        if request.headers.get("authorization") != f"Bearer {self.token}":
+            return httpx.Response(401, json={"message": "401: Unauthorized"})
+        if self.off:
+            return httpx.Response(503, text="unavailable")
+        path = request.url.path
+        now = datetime.now(timezone.utc).timestamp()
+        if path == "/api/config":
+            return httpx.Response(200, json={"time_zone": "Australia/Melbourne", "latitude": -37.8, "longitude": 145.0, "location_name": "Home"})
+        if path == "/api/states":
+            at = datetime.fromtimestamp(now - 20, timezone.utc).isoformat()
+            states = [{"entity_id": HA_PREFIX + n, "state": str(self.number(n, now)), "attributes": {"unit_of_measurement": self.unit(n)},
+                       "last_changed": at, "last_updated": at} for n in HA_STATES]
+            return httpx.Response(200, json=[*states, {"entity_id": "light.kitchen", "state": "on", "attributes": {}}])
+        start = datetime.fromisoformat(path.rsplit("/", 1)[-1]).timestamp()
+        end = datetime.fromisoformat(request.url.params["end_time"]).timestamp() if "end_time" in request.url.params else start + 86400
+        key = (start, end, request.url.params["filter_entity_id"])
+        if end < now and key in self._answered:
+            return httpx.Response(200, content=self._answered[key], headers={"content-type": "application/json"})
+        out = []
+        for entity in request.url.params["filter_entity_id"].split(","):
+            name = entity.removeprefix(HA_PREFIX)
+            if name not in HA_STATES:
+                continue
+            rows, last = [], None
+            first = int(max(start, self.begins) // HA_STEP * HA_STEP)
+            if self.begins < start:   # held before the start: its state at the start is the first row
+                last = self.number(name, int(start) // HA_STEP * HA_STEP)
+                rows.append({"entity_id": entity, "state": str(last), "last_changed": datetime.fromtimestamp(start, timezone.utc).isoformat()})
+            for ts in range(first, int(min(end, now)), HA_STEP):
+                if ts < self.begins:
+                    continue
+                value = self.number(name, ts)
+                if value != last:
+                    row = {"state": str(value), "last_changed": datetime.fromtimestamp(ts + 0.25, timezone.utc).isoformat()}
+                    rows.append({"entity_id": entity, **row} if not rows else row)
+                    last = value
+            if rows:
+                out.append(rows)
+        reply = httpx.Response(200, json=out)
+        if end < now:
+            self._answered[key] = reply.content
+        return reply
+
+
+def home_assistant_transport(fake: FakeHomeAssistant | None = None, **kw) -> tuple[httpx.MockTransport, FakeHomeAssistant]:
+    fake = fake or FakeHomeAssistant(**kw)
+    return httpx.MockTransport(fake), fake
 
 
 def ecowitt_transport(fake: FakeEcowitt | None = None, history_days: int = HISTORY_DAYS) -> tuple[httpx.MockTransport, FakeEcowitt]:
@@ -140,7 +244,7 @@ def ecowitt_transport(fake: FakeEcowitt | None = None, history_days: int = HISTO
 def air_row(ts: datetime, pm25: float = 5.0, pm10: float = 8.0, pm1: float = 3.0) -> dict:
     return {"timestamp": ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "locationName": "Outdoor",
             "locationType": "outdoor", "pm02_corrected": pm25, "pm10_corrected": pm10, "pm01_corrected": pm1, "rco2_corrected": 450,
-            "tvocIndex": 100, "noxIndex": 1}
+            "tvocIndex": 100, "noxIndex": 1, "atmp_corrected": 18.0 + ts.hour / 4, "rhum_corrected": 60.0 - ts.hour}
 
 
 def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly_before: datetime | None = None,
@@ -174,16 +278,44 @@ def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly
     return transport, calls
 
 
+# ---------- the bot's file, holding what a test puts in it ----------
+def storage_with(tmp_path, *responses, mac: str = "M", now: float | None = None):
+    """A new storage (lib/storage) holding these Ecowitt responses, written as a fetch writes them: (cycle, groups, data, start, end)
+    each, data in the cloud's shape ({group: {field: {"unit", "list"}}})."""
+    from lib.storage import Storage
+    storage = Storage(tmp_path / "ecobot.sqlite", TZ)
+    for cycle, groups, data, start, end in responses:
+        storage.writer.run(lambda w: w.put_ecowitt(mac, cycle, groups, data, start, end, now), ())
+    return storage
+
+
+def bands_of(storage, mac: str, series: str, start: int, end: int) -> dict[int, tuple[float, float]]:
+    """{5-minute mark: (lowest, highest)} of a reading's bands in the storage (those of the newest 5 minutes too, which may have no reading
+    yet)."""
+    from lib.storage.catalogue import column_of
+    group, field = series.split(".", 1)
+    sensor, (column, _) = storage.sensors.find(mac, group), column_of(group, field)
+    rows = storage.read_now(lambda r: r.db.execute(f'SELECT ts, "{column}_lo", "{column}_hi" FROM {sensor.kind} WHERE sensor = ? AND res = '
+                                                   f"'5min' AND ts BETWEEN ? AND ? AND \"{column}_lo\" IS NOT NULL", (sensor.id, start, end)).fetchall())
+    return {ts: (lo, hi) for ts, lo, hi in rows}
+
+
+def fetcher_on(storage, api=None, groups=(), mac: str = "M"):
+    """A fetcher of the station's history from `storage` (asking `api` for what it lacks)."""
+    from lib.ecowitt.fetch import Fetcher, Recent
+    return Fetcher(api, storage, Recent(), mac, list(groups), TZ)
+
+
 # ---------- a station whose whole history is already archived (built once per test session) ----------
 async def archived_station(tmp_path, cache_file):
-    """(Ecowitt, fake) with a copy of the session's archived cache: what `await Archive(eco).run_once()` would
-    leave, without paying for it in every test. fake.calls is empty."""
+    """(Ecowitt, fake) with a copy of the session's archive (its ecobot.sqlite): what `await Archive(eco).run_once()` would leave,
+    without paying for it in every test. fake.calls is empty."""
     import shutil
 
     from lib.ecowitt import Ecowitt
     transport, fake = ecowitt_transport()
     cfg = config(tmp_path)
-    shutil.copy(cache_file, cfg.cache_path)
+    shutil.copy(cache_file, cfg.storage_path)
     eco = Ecowitt(cfg, transport=transport)
     await eco.start()
     fake.calls.clear()

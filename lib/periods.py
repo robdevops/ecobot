@@ -72,13 +72,13 @@ class Drawn:
 class ImageCache:
     """The charts drawn lately, by question: toggling between the period buttons brings a chart back at once instead of drawing it
     again, and once it has been sent, as Telegram's copy instead of an upload. A chart is kept CHART_TTL seconds (the readings move
-    slowly) and the newest CHART_IMAGES stay. The button charts are also drawn ahead (Bot.predraw): one drawn in the last FRESH
+    slowly) and the newest CHART_IMAGES stay. A chart drawn in the last FRESH
     seconds is the answer to its question (ready)."""
 
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
     PRELOAD_TTL = 30 * 60   # a chart uploaded ahead (TELEGRAM_PRELOAD_CHAT) is used for this long, then drawn afresh
-    FRESH = 330   # a little over the time between two rounds of drawing ahead, so a press always finds one
+    FRESH = 330   # a chart made in code this lately answers the same words again as it is (the readings move slowly)
 
     def __init__(self, clock=None):
         self.clock = clock or time.monotonic
@@ -109,14 +109,19 @@ class ImageCache:
         self.items.move_to_end(key)
         return entry.photo, entry.title
 
+    def age_of(self, key: str) -> float | None:
+        """How long ago this chart was drawn, if it is held."""
+        entry = self.items.get(key)
+        return self.age(entry) if self._kept(entry) else None
+
     def has_copy(self, key: str) -> bool:
         """Does Telegram hold this chart (drawn lately and already sent, so it has a file id)?"""
         entry = self.items.get(key)
         return self._kept(entry) and entry.file_id is not None
 
     def ready(self, question: str, now) -> Drawn | None:
-        """The chart made in code for exactly these words in the last FRESH seconds (drawn ahead, or for someone's question),
-        with the text that went with it; None if there is none."""
+        """The chart made in code for exactly these words in the last FRESH seconds (for someone's question, or uploaded ahead to
+        TELEGRAM_PRELOAD_CHAT), with the text that went with it; None if there is none."""
         key = self.canonical(question, now)
         entry = self.items.get(key) if key else None
         if entry is None or entry.caption is None or self.age(entry) > self.FRESH:

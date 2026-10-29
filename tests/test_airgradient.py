@@ -95,7 +95,6 @@ async def test_history_is_capped_at_14_days(tmp_path):
 from datetime import timezone  # noqa: E402
 
 from lib.airgradient import source  # noqa: E402
-import httpx  # noqa: E402
 
 
 async def test_finished_days_survive_a_restart_and_need_no_requests(tmp_path):
@@ -128,6 +127,23 @@ async def test_backfill_walks_back_to_the_start_of_the_sensors_data(tmp_path):
     await air.close()
 
 
+async def test_a_refill_fetches_every_day_again_and_fills_in_what_the_stored_readings_lack(tmp_path):
+    transport, calls = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=10))
+    air = AirGradient(config(tmp_path), transport=transport)
+    await air.backfill(pace=0, empty_stop=3)
+    held = await air.store.lacking()
+    assert held["all"] > 100 and held["air_humidity"] == held["air_temperature"] == 0
+    await air.store.storage.write(lambda w: w.db.execute("UPDATE air SET air_humidity = NULL, air_temperature = NULL"))   # as kept before those columns
+    assert (await air.store.lacking())["air_humidity"] == held["all"]
+    assert await air.backfill(pace=0, empty_stop=3) == (0, 0, (await air.backfill(pace=0, empty_stop=3))[2])   # not fetched again by itself
+    n = len(calls)
+    await air.store.forget_days()
+    fetched, failed, _ = await air.backfill(pace=0, empty_stop=3)
+    assert failed == 0 and fetched >= 10 and len(calls) > n
+    assert await air.store.lacking() == held
+    await air.close()
+
+
 async def test_backfill_stops_after_repeated_failures(tmp_path):
     air = AirGradient(config(tmp_path), transport=httpx.MockTransport(lambda r: httpx.Response(429)))
     fetched, failed, total = await air.backfill(pace=0)
@@ -148,7 +164,7 @@ async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monk
 
 async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
     air, _ = await make(tmp_path)
-    ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))  # 40 days at 1-minute readings
+    ts = list(range(1_780_000_000, 1_780_000_000 + 10 * 86400, 60))  # 10 days at 1-minute readings
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
     line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]
     assert len(line.x) <= 500
@@ -161,9 +177,9 @@ async def test_long_charts_are_averaged_but_keep_the_true_peak(tmp_path):
 async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_top(tmp_path):
     from lib.charts import _extreme
     air, _ = await make(tmp_path)
-    ts = list(range(1_780_000_000, 1_780_000_000 + 40 * 86400, 60))
+    ts = list(range(1_780_000_000, 1_780_000_000 + 10 * 86400, 60))
     rows = [{"ts": t, "pm2_5": 5.0 + (300.0 if ts[5000] <= t <= ts[5002] else 0.0)} for t in ts]   # three readings: the air, not a glitch
-    line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 40 days: 4-hour buckets
+    line = air._chart(["pm2_5"], rows, "period").panels[0].lines[0]          # 10 days of minutes: 30-minute buckets
     assert line.low is not None and max(line.y) < 305.0 and max(line.high) == 305.0
     assert _extreme(line, "high", range(len(line.x)))[1] == 305.0   # the label is the true peak, at the band's top
     five = [{"ts": ts[0] + i * 300, "pm2_5": 5.0 + i % 7, "co2": 450.0 + i % 11} for i in range(288)]   # a day of 5-minute readings
@@ -171,13 +187,17 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
     rows = [dict(r, co2=450.0 + (t - ts[7000]) // 60 % 97) for r, t in zip(rows, ts)]
     co2 = air._chart(["co2"], rows, "period").panels[0].lines[0]
     assert co2.low is not None and _extreme(co2, "low", range(len(co2.x)))[1] == min(co2.low)
+    # a day of readings with a band from what the monitor saw inside each 5 minutes: the label is the highest reading, not the shading's top
+    spiky = [{"ts": r["ts"], "pm2_5": r["pm2_5"], "_range": {"pm2_5": (r["pm2_5"], r["pm2_5"] + (50.0 if i == 100 else 1.0))}} for i, r in enumerate(five)]
+    raw = air._chart(["pm2_5"], spiky, "period").panels[0].lines[0]
+    assert raw.high is not None and max(raw.high) > 50 and _extreme(raw, "high", range(len(raw.x)))[1] == max(raw.y) < 20
     await air.close()
 
 
-def await_days(air, days_ago):
+async def await_days(air, days_ago):
     """Readings stored for the local day this many days ago (0 if none or not fetched)."""
     day = datetime.now(TZ).date() - timedelta(days=days_ago)
-    return air.store.counts([day])[day] or 0
+    return (await air.store.counts([day]))[day] or 0
 
 
 # ---------- what the API's docs promise ----------
@@ -231,7 +251,7 @@ async def test_a_recent_outage_does_not_hide_older_history(tmp_path):
     air = AirGradient(config(tmp_path), transport=transport)
     fetched, failed, total = await air.backfill(pace=0, empty_stop=10, empty_before_data=80)
     assert failed == 0
-    with_data = [d for d in range(1, 110) if (await_days(air, d)) > 0]
+    with_data = [d for d in range(1, 110) if (await await_days(air, d)) > 0]
     assert len(with_data) >= 50 and max(with_data) >= 95      # the days before the outage were found and cached
     await air.close()
 
@@ -241,7 +261,7 @@ async def test_a_gap_in_the_middle_shorter_than_the_limit_does_not_stop_the_back
     transport, _ = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=50), now - timedelta(days=15)))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.backfill(pace=0, empty_stop=40, empty_before_data=80)      # a 35-day gap, under the limit
-    with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
+    with_data = [d for d in range(1, 110) if await await_days(air, d) > 0]
     assert max(with_data) >= 95
     await air.close()
 
@@ -251,7 +271,7 @@ async def test_a_gap_after_data_longer_than_the_limit_is_taken_as_the_start(tmp_
     transport, _ = air_transport(oldest=now - timedelta(days=100), outage=(now - timedelta(days=50), now - timedelta(days=15)))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.backfill(pace=0, empty_stop=20, empty_before_data=80)      # a 35-day gap, over the limit
-    with_data = [d for d in range(1, 110) if await_days(air, d) > 0]
+    with_data = [d for d in range(1, 110) if await await_days(air, d) > 0]
     assert max(with_data) < 20                                            # stopped at the gap
     await air.close()
 
@@ -330,24 +350,59 @@ async def test_without_a_recent_previous_reading_the_latest_is_rated_alone_and_p
 
 
 # ---------- air_days ----------
-def _air_store(tmp_path):
-    from lib.airgradient.store import AirStore
+async def _air_store(tmp_path):
+    from lib.airgradient.readings import AirReadings
+    from lib.storage import Storage
     from tests.fakes import TZ
-    store = AirStore(tmp_path / "air.sqlite", "42", TZ)
+    store = AirReadings(Storage(tmp_path / "ecobot.sqlite", TZ), "42", TZ, owned=True)
     start = datetime.now(TZ).date() - timedelta(days=40)
     for k in range(40):
         day = start + timedelta(days=k)
         lo = int(datetime.combine(day, datetime.min.time()).replace(tzinfo=TZ).timestamp())
         spike = 40.0 if k % 10 == 0 else 8.0             # every tenth day particles reach 40 µg/m³ (for three readings: the air, not a glitch)
-        store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if 100 <= i <= 102 else 5.0, "co2": 420.0 + i} for i in range(288)])
+        await store.save_day(day, [{"ts": lo + 300 * i, "pm2_5": spike if 100 <= i <= 102 else 5.0, "co2": 420.0 + i} for i in range(288)])
     return store, start
+
+
+async def test_every_air_day_row_is_what_the_glitch_rule_in_python_gives(tmp_path):
+    """The day rows (lib/storage/days.py: the glitch rule in SQL) against metrics.without_spikes over the stand-in's readings, a glitch
+    now and then: each day's highest, lowest and mean of each metric."""
+    from statistics import fmean
+
+    from lib.airgradient.metrics import without_spikes
+    from lib.airgradient.readings import AirReadings
+    from lib.storage import Storage
+    from lib.timeutil import local_date
+    from tests.bench_cache import air_days
+    from tests.fakes import TZ
+    store = AirReadings(Storage(tmp_path / "ecobot.sqlite", TZ), "42", TZ, owned=True)
+    done, _ = air_days(30, datetime.now(TZ).timestamp())
+    for day, rows in done.items():
+        await store.save_day(day, rows)
+    rows = [r for day_rows in done.values() for r in day_rows]
+    by_day: dict = {}
+    for r in without_spikes(rows):
+        by_day.setdefault(local_date(r["ts"], TZ), []).append(r)
+    fields = [f"{m}_{k}" for m in ("pm2_5", "pm10", "co2") for k in ("max", "min", "avg")]
+    figures = await store.day_figures(min(done), max(done), fields)
+    compared = 0
+    for name in fields:
+        metric, kind = name.rsplit("_", 1)
+        for day, day_rows in by_day.items():
+            values = [r[metric] for r in day_rows if metric in r]
+            expected = {"max": max, "min": min, "avg": fmean}[kind](values)
+            # (a day's mean is the mean of its half hours' means: a half hour a glitch was taken out of weighs as the others)
+            assert figures.values[name][day] == pytest.approx(expected, rel=0.01 if kind == "avg" else 0), (name, day)
+            compared += 1
+    assert compared == 9 * 30 and sum(1 for r in rows if r.get("pm2_5", 0) > 30) > 0 > -sum(1 for r in without_spikes(rows) if "pm2_5" in r)
+    store.close()
 
 
 async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp_path):
     from lib.airgradient.days import air_days_tool
     from lib.tools import Turn
     from tests.fakes import TZ
-    store, start = _air_store(tmp_path)
+    store, start = await _air_store(tmp_path)
     end = datetime.now(TZ).date() - timedelta(days=1)
     turn = Turn()
     out = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end),
@@ -360,6 +415,7 @@ async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp
     assert [r["pm2_5_max"] for r in worst["days"]] == [40.0, 40.0]
     bad = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
     assert "unusable condition" in bad["error"]
+    store.close()
 
 
 def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_lasting_rise_is_not():
@@ -383,7 +439,6 @@ def test_a_single_reading_spike_of_the_particles_is_left_out_of_a_chart_and_a_la
 
 async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path):
     from datetime import timedelta
-    from lib.airgradient.days import daily_values
     from lib.timeutil import local_date
     from tests.fakes import TZ
     air, _ = await make(tmp_path)
@@ -398,7 +453,10 @@ async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path)
     out = await air.history(start.strftime("%Y-%m-%d %H:%M:%S"), None)
     assert out["pm10"]["high"] == 10 and out["pm2_5"]["high"] == 8 and out["pm1"]["high"] == 3      # not 28.7, 14.2 and 15.3
     assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
-    assert daily_values(rows, ["pm10_max", "pm2_5_max"], TZ)["pm10_max"][local_date(t0, TZ)] == 10
+    day = local_date(t0, TZ)
+    await air.store.save_day(day, [r for r in rows if local_date(r["ts"], TZ) == day])   # the day rows take the same spikes out
+    figures = await air.store.day_figures(day, day, ["pm10_max", "pm2_5_max", "pm10_avg"])
+    assert figures.values["pm10_max"][day] == 10 and figures.values["pm2_5_max"][day] == 8
     await air.close()
 
 
@@ -447,7 +505,7 @@ async def test_a_reply_that_is_not_readings_is_an_error_and_never_stored_as_a_da
     day = datetime.now(TZ).date() - timedelta(days=3)
     with pytest.raises(RuntimeError):
         await air._fetch_days([day])
-    assert air.store.counts([day])[day] is None                                             # not stored: asked again next time
+    assert (await air.store.counts([day]))[day] is None                                     # not stored: asked again next time
     await air.close()
 
 
@@ -469,7 +527,7 @@ async def test_a_chart_and_its_figures_take_out_the_same_spikes(tmp_path):
 
 def test_the_antispike_setting_is_a_number_of_readings_default_2_and_off_is_1(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("XAI_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("ANTISPIKE_REQUIRE_CONSECUTIVE", raising=False)
     assert Config.from_env().antispike_require_consecutive == 2
@@ -496,4 +554,21 @@ async def test_an_air_chart_up_to_now_is_captioned_since_its_first_day_as_a_weat
     turn = Turn()
     await air.history(f"{now - timedelta(days=3):%Y-%m-%d %H:%M:%S}", None, chart=True, turn=turn)
     assert turn.charts[0].caption(now.date()) == f"PM2.5, since {first:%a} {first.day} {first:%b %Y}"   # not "... - ..." as one day
+    await air.close()
+
+
+async def test_the_sensors_own_temperature_and_humidity_are_kept_but_given_only_when_asked_for(tmp_path):
+    air, _ = await make(tmp_path)
+    day = local_date(datetime.now(TZ).timestamp() - 86400, TZ)
+    span = {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
+    assert "air_humidity" not in json.loads(await air.handle({})) and "air_humidity" not in json.loads(await air.handle(span))
+    now = json.loads(await air.handle({"metrics": ["air_humidity", "air_temperature"]}))
+    assert now["air_humidity"]["unit"] == "%" and now["air_temperature"]["unit"] == "°C" and "rating" not in now["air_humidity"]
+    assert "pm2_5" in now                                                              # the air itself is still there
+    out = json.loads(await air.handle({**span, "metrics": ["air_humidity"]}))
+    assert out["air_humidity"]["unit"] == "%" and {"low", "high", "average"} <= set(out["air_humidity"]) and "air_temperature" not in out
+    turn = Turn()
+    out = json.loads(await air.handle({**span, "chart": True, "metrics": ["air_temperature", "air_humidity"]}, turn))
+    assert turn.charts[0].title == "AirGradient temperature and AirGradient humidity" and len(turn.charts[0].panels) == 2
+    assert [p.unit for p in turn.charts[0].panels] == ["°C", "%"]
     await air.close()

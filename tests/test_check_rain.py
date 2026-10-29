@@ -1,27 +1,31 @@
 """scripts/check_rain.py: reports honestly on healthy data, and catches rain totals that are averages."""
 
+import shutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 import pytest
 
-from tests.fakes import archived_station
+from lib.storage import Storage
+from tests.fakes import MAC, TZ
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import check_rain  # noqa: E402
 
 
 @pytest.fixture
-async def station(tmp_path, archived_cache):
-    eco, _ = await archived_station(tmp_path, archived_cache)
-    yield eco
-    await eco.close()
+def station(tmp_path, archived_cache):
+    shutil.copy(archived_cache, tmp_path / "ecobot.sqlite")
+    storage = Storage(tmp_path / "ecobot.sqlite", TZ)
+    yield NS(storage=storage, mac=MAC, tz=TZ)
+    storage.close()
 
 
 def run(eco):
-    # counts back from yesterday: in the small hours yesterday is not settled, so it isn't in the cache yet
-    return check_rain.compare_rain(eco.cache, eco.mac, eco.tz, datetime.now(eco.tz).date() - timedelta(days=1), 60)
+    # counts back from yesterday: in the small hours yesterday is not settled, so it isn't in the file yet
+    return check_rain.compare_rain(eco.storage, eco.mac, eco.tz, datetime.now(eco.tz).date() - timedelta(days=1), 60)
 
 
 async def test_healthy_data_is_reported_as_matching(station, capsys):
@@ -35,12 +39,10 @@ async def test_healthy_data_is_reported_as_matching(station, capsys):
 
 
 def average_the_thirty_minute_rain(eco, factor):
-    """What averages look like: no daily_high field, and values a fraction of the real total."""
-    with eco.cache._lock:
-        ids = "(SELECT id FROM series WHERE cycle='30min' AND grp='rainfall' AND field {})"
-        eco.cache.db.execute("DELETE FROM points WHERE series IN " + ids.format("IN ('daily_high','daily_low')"))
-        eco.cache.db.execute("UPDATE points SET value = CAST(value AS REAL) * ? WHERE series IN " + ids.format("= 'daily'"), (factor,))
-        eco.cache.db.commit()
+    """What averages look like: no high of the half hour, and values a fraction of the real total."""
+    sensor = eco.storage.station(eco.mac)["rainfall"]
+    eco.storage.write_db.execute("UPDATE rain SET daily = daily * ?, daily_lo = NULL, daily_hi = NULL WHERE sensor = ? AND res = '30min'",
+                                 (factor, sensor.id))
 
 
 async def test_thirty_minute_totals_that_are_averages_are_caught(station, capsys):

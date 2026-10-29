@@ -30,6 +30,7 @@ class Line:
     reading: str = ""                                  # which reading it is ("pm2_5", ...), for its colour; else its panel's
     indoor: bool = False                               # the indoor sensor's line: the reading's complementary colour
     right: bool = False                                # drawn against the panel's second axis, on the right (see panels.two_axes)
+    on_line: bool = False                              # its peak is marked on the line itself, not on the top of its band (the band's high may be one glitch)
 
     def __post_init__(self):
         if len(self.x) != len(self.y) or len(self.x) < 2:
@@ -92,6 +93,7 @@ class Panel:
     shares: Shares | None = None
     zones: tuple[float, float] | None = None           # good and poor limits, shaded behind a single rated reading
     reading: str = ""                                  # which reading this is ("humidity", "pressure" ...), for the rain rule
+    flip_right: bool = False                           # the second axis runs top to bottom (a line on it falls as its reading rises)
     peaks: str = "pills"                               # how peaks are labelled: "pills" on the lines, "aside" in empty space, "none"
 
     def __post_init__(self):
@@ -194,3 +196,26 @@ def stack(panels: list[Panel], first: date, last: date) -> Chart:
     return Chart(", ".join(p.label for p in panels),
                  "  ·  ".join(filter(None, [period_text(first, last), per, "range shaded" if shaded else ""])), rain_behind(panels),
                  period=(first, last))
+
+
+@dataclass
+class Tile:
+    """One gauge of the dashboard: a reading drawn as a thermometer, a dial or a rain beaker, with its extremes below."""
+    title: str
+    unit: str
+    value: float | None                    # now; None draws the gauge empty and dimmed
+    kind: str                              # "thermometer", "dial" or "beaker"
+    low: float                             # the scale's ends
+    high: float
+    colours: tuple[str, ...]               # the scale's bands, from the low end to the high one
+    columns: tuple[str, ...] = ()          # what the table under the gauge lists: "Max", "Min" or "Total"
+    rows: dict[str, tuple[float | None, ...]] = field(default_factory=dict)   # "Daily" / "Monthly" / "Yearly" -> a figure per column
+    ticks: tuple[float, ...] = ()          # the scale's labels
+    decimals: int = 1
+
+
+@dataclass
+class Dashboard:
+    """The gauges of the weather station, left to right and top to bottom, three to a row."""
+    tiles: list[Tile]
+    per_row: int = 3

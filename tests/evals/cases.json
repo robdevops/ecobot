@@ -771,6 +771,18 @@
     ]
   },
   {
+    "id": "dashboard",
+    "ask": "dashboard",
+    "note": "the station's gauges, drawn in code with no model; it used to mean the report",
+    "expect": {
+      "dashboard": true,
+      "report": false
+    },
+    "covers": [
+      "q:dashboard"
+    ]
+  },
+  {
     "id": "weather-report-for-a-day",
     "ask": "weather report for Tuesday",
     "expect": {
@@ -1473,5 +1485,15 @@
     "covers": [
       "c:two-axes"
     ]
+  },
+  {
+    "id": "airgradient-humidity-over-ecowitt",
+    "ask": "plot airgradient humidity over ecowitt outdoor humidity",
+    "note": "the air sensor's own humidity is offered to the model only when the AirGradient is named with it; the chart is the model's (plot_chart)",
+    "expect": {
+      "air_extra": true,
+      "fast": null
+    },
+    "covers": []
   }
 ]

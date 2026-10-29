@@ -1,8 +1,8 @@
 import json
 from datetime import date, datetime, time as dtime, timedelta
 
-from lib.alerts import AlertState, ForecastMonitor, Notifier
-from lib.alerts.forecast import revised
+from lib.alerts.forecast import ForecastMonitor, revised
+from lib.alerts.notify import AlertState, Notifier
 from lib.forecast import Forecast
 from lib.tools import Turn
 from tests.fakes import TZ, config
@@ -11,7 +11,7 @@ from tests.test_forecast import make
 TODAY = date(2026, 10, 3)
 
 
-def day(offset, max_c=20.0, pct=10, summary="Sunny.", min_c=10.0):
+def day(offset, max_c=20.0, pct=10, summary="☀️ Clear.", min_c=10.0):
     return {"date": TODAY + timedelta(days=offset), "min_c": min_c, "max_c": max_c, "rain_chance_pct": pct, "summary": summary}
 
 
@@ -51,27 +51,27 @@ def test_substantial_means_rain_flips_or_a_max_temperature_over_2_degrees_differ
 
 
 async def test_a_day_sent_as_rainy_that_turns_dry_is_told_once_to_that_chat(tmp_path):
-    mon, forecast, state, bot = setup(tmp_path, [day(0, pct=95, summary="Thunderstorm."), day(1)])
-    state.record_forecast(1, [day(0, pct=95, summary="Thunderstorm."), day(1)], TODAY)
+    mon, forecast, state, bot = setup(tmp_path, [day(0, pct=95, summary="⛈️ Thunderstorm."), day(1)])
+    state.record_forecast(1, [day(0, pct=95, summary="⛈️ Thunderstorm."), day(1)], TODAY)
     await mon.check()
     assert bot.sent == []                                            # unchanged
-    forecast.days = [day(0, pct=10, summary="Sunny."), day(1)]
+    forecast.days = [day(0, pct=10, summary="☀️ Clear."), day(1)]
     await mon.check()
     await mon.check()                                                # the same revision does not repeat
     assert len(bot.sent) == 1 and bot.sent[0][0] == 1
     text = bot.sent[0][1]
-    assert text.startswith("🔄 The forecast has changed since I sent it:\n• Today: was ⛈️ Thunderstorm. 10–20°C, 95% chance of rain\n  now ☀️ Sunny. 10–20°C, 10% chance of rain")
+    assert text.startswith("🔄 The forecast has changed since I sent it:\n• Today: was ⛈️ Thunderstorm. 10–20°C, 95% chance of rain\n  now ☀️ Clear. 10–20°C, 10% chance of rain")
     assert state.forecast_sent(1)[TODAY]["rain_chance_pct"] == 10    # the new baseline
 
 
 async def test_dry_to_rain_and_max_temperature_changes_alert_and_a_further_change_alerts_again(tmp_path):
     mon, forecast, state, bot = setup(tmp_path, [day(0), day(1, max_c=20.0)])
     state.record_forecast(1, [day(0), day(1, max_c=20.0)], TODAY)
-    forecast.days = [day(0, pct=80, summary="Showers."), day(1, max_c=22.1)]
+    forecast.days = [day(0, pct=80, summary="🌦️ Showers."), day(1, max_c=22.1)]
     await mon.check()
     assert len(bot.sent) == 1                                        # two changed days: one message
     assert "• Today: was" in bot.sent[0][1] and "• Sunday: was" in bot.sent[0][1]
-    forecast.days = [day(0, pct=80, summary="Showers."), day(1, max_c=24.3)]    # 2.2 from the new baseline
+    forecast.days = [day(0, pct=80, summary="🌦️ Showers."), day(1, max_c=24.3)]    # 2.2 from the new baseline
     await mon.check()
     assert len(bot.sent) == 2 and bot.sent[1][1].count("• ") == 1
 
@@ -189,8 +189,8 @@ async def test_an_alert_for_one_chat_goes_to_it_alone_and_a_blocked_one_is_marke
                 raise Forbidden("bot was blocked by the user")
             sent.append((chat_id, text))
     notifier = Notifier(Bot(), state)
-    assert await notifier("hello", chats=[1]) == 1 and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
-    assert await notifier("hello", chats=[2]) == 0 and state.chats[2]["gone"]
+    assert await notifier("hello", kind="forecast", chats=[1]) == 1 and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
+    assert await notifier("hello", kind="forecast", chats=[2]) == 0 and state.chats[2]["gone"]
 
 
 def test_a_revision_compares_the_one_millimetre_chance_when_both_days_have_it_and_the_older_figure_otherwise():

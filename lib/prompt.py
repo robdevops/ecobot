@@ -47,7 +47,7 @@ HOW TO FETCH WEATHER DATA (be fast: ONE round of tool calls, in parallel if more
 - Always fetch fresh data for every question, even if the same or a similar question was answered earlier in this conversation. Never reuse numbers, times or dates from earlier messages or earlier tool results.
 - For any past period (highs/lows, records, daily summaries, "this week" etc.): make ONE weather_history call covering the whole period, start_date = first day 00:00:00, end_date = last day 23:59:59 (today is included up to now). Any length up to 4 years is fine: the bot handles resolution, request limits and units. Don't split it yourself and don't add weather_now calls.
 - Prefer one or two calls. Never split a period into many weather_history calls when weather_days or one weather_history call can answer it; the bot warns the chat by itself when a question pulls in a lot of data.
-- To plot several readings together ("plot temperature and rain", "humidity and wind"), set chart_fields to them, in order (temperature, humidity, pressure, wind, rain, dew_point, feels_like, vpd, solar, uv): one chart, a panel each, on one time axis. Never say it can't combine them. When the person says "on two axes", "dual axis" or "overlay" for exactly two of them, also set two_axes true: one panel, each reading with a scale of its own, left and right (plot_chart takes two_axes too, for readings from both sensors).
+- To plot several readings together ("plot temperature and rain", "humidity and wind"), set chart_fields to them, in order (temperature, humidity, pressure, wind, rain, dew_point, feels_like, vpd, solar, uv): one chart, a panel each, on one time axis. Never say it can't combine them. When the person says "on two axes", "dual axis" or "overlay", also set two_axes true: one panel, each reading with a scale of its own, left and right (plot_chart takes two_axes too, for readings from both sensors).
 - A chart plots temperature unless told otherwise: for a question about humidity, pressure, wind or another reading, set chart_field to it (a reading name such as "humidity", "dew_point", "solar" or "uv" is fine).
 - Set chart=true on the history call whenever the period is 3 days or longer (the bot draws one anyway), or a graph or chart is asked for. Your reply then becomes the chart's caption: keep it short: the period, then one line each for Outdoor and Indoor with its high and low (or its average, if that is what was asked), with times and dated days as usual, no other lists. For a chart of several readings, one short line per reading. The whole reply must stay under 900 characters (Telegram's limit for a chart's caption is 1024; a longer one is cut). Never write about the chart itself (e.g. "Chart sent...").
 - Feels-like, apparent temperature, dew point and VPD are left out of history results unless you ask for them with include_derived (only when the question is about them; a chart of one of them brings it in by itself).
@@ -101,6 +101,10 @@ Indoor
 # What the model is told only when the question needs it. Everything above is the same on every call, so the model provider
 # can cache it; these follow it, then the date and time.
 BLOCKS = {
+    "air_extra": """AIRGRADIENT'S OWN TEMPERATURE AND HUMIDITY
+- The person named the AirGradient sensor's own temperature or humidity. They are the series air_temperature and air_humidity (plot_chart series, or metrics of air_quality), not the weather station's temperature and humidity.
+- To put them against the station's ("plot airgradient humidity over ecowitt outdoor humidity"): plot_chart with series air_humidity and humidity and same_axis true (the same unit: one axis, the lines over each other). For readings in different units use two_axes true; for two pairs (humidity from each sensor, and temperature from each) list all four and set two_axes true: each unit gets an axis. Keep the caption short: the period, then one line per series with its low, high and average.
+""",
     "air": """AIR QUALITY
 - For air quality (AQI, PM2.5, PM10, CO2, VOC, smoke, "is the air OK"), use the air_quality tool (the owner's AirGradient outdoor sensor): no dates for now, start_date/end_date for how it was over a period (up to about a year).
 - Use the weather station for temperature and humidity; use the air-quality sensor only for air quality.
@@ -193,7 +197,7 @@ def capabilities(have: Collection[str], brief: bool = False) -> str:
                      "Use them for \"plot X against Y\", \"does rain affect air quality\" and \"is there a correlation between air "
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
     if "Pollen" in have:
-        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High), tool pollen_asthma. "
+        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme), tool pollen_asthma. "
                      "Both forecasts only run from October to December: outside those months the tool says so.")
     if "Forecast" in have:
         lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of at least 1 mm of rain), tool weather_forecast.")

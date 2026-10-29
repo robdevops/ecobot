@@ -11,6 +11,9 @@ from ..tools import Turn
 
 log = logging.getLogger(__name__)
 
+# The alert types that carry a chart, and the request it answers: what the alert is sent with, and what its Refresh draws again
+CHARTS = {"gusts": "Wind chart 1d", "uv": "UV chart 1d", "temps": "Temperature chart 1d", "particulates": "Particulates chart 1d"}
+
 
 async def chart(source, text: str, tz) -> bytes | None:
     """The PNG for the request `text`, made from `source`'s tool the way the bot would answer it; None when it cannot be made (the alert then

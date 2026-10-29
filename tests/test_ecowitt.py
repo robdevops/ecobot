@@ -54,7 +54,7 @@ async def test_the_station_names_its_own_time_zone(tmp_path, caplog, zone, used)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     await eco.close()
-    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and f"(AA:BB:CC:DD:EE:FF), {used}" in caplog.text
+    assert str(eco.tz) == used and str(eco.created.tzinfo) == used and "(AA:BB:CC:DD:EE:FF): cloud (" in eco.summary
     assert ("Ecowitt names a time zone Python doesn't know, 'Mars/Olympus'" in caplog.text) == (zone == "Mars/Olympus")
 
 
@@ -119,7 +119,26 @@ async def test_history_gives_extremes_with_times_and_days(station):
     assert list(s["daily"]) == [f"{d:%a} {d.day} {d:%b}" for d in (start, start + timedelta(days=1), end)]   # "Sat 3 Oct", never "Sat 03 Oct"
     assert result["period"] == f"{start:%a} {start.day} {start:%b %Y} - {end:%a} {end.day} {end:%b %Y}"
     assert float(s["high"]) > float(s["low"])
-    assert s["high_when"].startswith(("at ", "around "))  # refined to a 5-minute or 30-minute reading
+    assert s["high_when"].startswith(("at ", "around "))  # timed from its day's row: a 5-minute or 30-minute reading
+
+
+async def test_every_record_has_its_days_time_and_a_tie_goes_to_the_first_day(tmp_path, archived_cache):
+    """Each record is timed from its day's row (at the 5 minutes, for days held at 5 minutes), not only the first four as refining narrowed
+    them; of the days that reach it, the first (the fake's temperature peaks alike every 5 days)."""
+    from lib.timeutil import day_text
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    today = datetime.now(eco.tz).date()
+    start, end = today - timedelta(days=13), today - timedelta(days=2)
+    out = json.loads(await eco.tools[1].handler({"groups": "outdoor,indoor,pressure,wind,solar_and_uvi", "start_date": f"{start} 00:00:00",
+                                                 "end_date": f"{end} 23:59:59"}))
+    records = [s for s in out["series"].values() if "low_when" in s]
+    assert len(records) >= 6 and all(s[f"{w}_when"].startswith("at ") for s in records for w in ("low", "high"))
+    sensor = eco.storage.sensors.find(eco.mac, "outdoor")
+    days = eco.storage.read_now(lambda r: r.days("climate", [sensor.id], start, end, ["temperature"]))[sensor.id]
+    top = max(days.hi["temperature"])
+    assert days.hi["temperature"].count(top) >= 2
+    assert out["series"]["outdoor.temperature"]["high_date"] == day_text(days.day[days.hi["temperature"].index(top)])
+    await eco.close()
 
 
 async def test_second_question_is_served_from_the_cache(station):
@@ -164,7 +183,6 @@ async def test_derived_readings_hidden_unless_asked(tmp_path):
 async def test_chart_request_adds_a_spec(station):
     eco, _ = station
     day = datetime.now(eco.tz).date() - timedelta(days=2)
-    holder = []
     turn = Turn()
     out = json.loads(await eco.tools[1].handler(
         {"groups": "outdoor,indoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, turn))
@@ -203,8 +221,8 @@ async def test_a_question_the_cache_and_memory_can_answer_does_not_wait_for_a_re
     now = eco.now()
     since = max(now - timedelta(hours=3), datetime.combine(now.date(), time()))   # (memory holds today: not the evening before, in the first hours of the day)
     question = eco.fetcher(["outdoor"], urgent=True)
-    data = await asyncio.wait_for(question.get("5min", since, now), 2)
-    assert data["outdoor"]["temperature"]["list"] and question.calls == 0 and question.from_memory == 1
+    rows = await asyncio.wait_for(question.get("5min", since, now), 2)
+    assert rows and "outdoor.temperature" in rows[-1][1] and question.calls == 0 and question.from_memory == 1
     assert not refresh.done()
     answering.set()
     await refresh
@@ -237,25 +255,30 @@ async def test_a_questions_requests_go_before_the_background_ones_and_the_refres
 async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypatch):
     from lib.ecowitt import fetch
     eco, fake = station
-    merged = []
-    monkeypatch.setattr(fetch, "merge_data", lambda *a, **k: merged.append(a))
+    built = []
+    monkeypatch.setattr(fetch, "rows_on", lambda *a, **k: built.append(a))
     await eco.warm(True)
-    assert any(c["path"] == "history" for c in fake.calls) and merged == []
+    assert any(c["path"] == "history" for c in fake.calls) and built == []
 
 
 # ---------- the whole history is cached ----------
-async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp_path, monkeypatch):
+async def test_archive_caches_every_cycle_so_long_questions_need_no_requests_and_reports_how_much_is_held(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport(history_days=60)
+    transport, fake = ecowitt_transport(history_days=25)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    fetched, failed = await Archive(eco).run_once()
-    assert failed == 0 and fetched > 40
+    arch = Archive(eco)
+    assert arch.held() == "0/0/0/0d held (5m/30m/4h/1d)"
+    fetched, failed = await arch.run_once()
+    assert failed == 0 and fetched > 25
+    held = {c: eco.fetcher(arch.groups).days_held(c) for c in ("5min", "30min", "4hour", "1day")}
+    assert all(20 <= held[c] <= 27 for c in ("5min", "30min", "4hour", "1day"))
+    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']}d held")
     assert {c["cycle_type"] for c in fake.calls if "cycle_type" in c} == {"5min", "30min", "4hour", "1day"}
     fake.calls.clear()
     today = datetime.now(eco.tz).date()
-    for days in (10, 30, 58):  # up to all of the fake station's 60 days
+    for days in (5, 12, 23):  # up to all of the fake station's 25 days
         out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                           "end_date": f"{today - timedelta(days=2)} 23:59:59"})
         assert "Error" not in out[:20], out[:200]
@@ -266,7 +289,7 @@ async def test_archive_caches_every_cycle_so_long_questions_need_no_requests(tmp
 async def test_archive_only_refetches_the_newest_ranges_next_time(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport(history_days=60)
+    transport, fake = ecowitt_transport(history_days=10)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
@@ -280,21 +303,19 @@ async def test_archive_only_refetches_the_newest_ranges_next_time(tmp_path, monk
 async def test_archive_skips_time_before_the_station_existed(tmp_path, monkeypatch):
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, fake = ecowitt_transport()
+    transport, fake = ecowitt_transport(history_days=30)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    eco.created = datetime.now(eco.tz) - timedelta(days=20)
+    eco.created = datetime.now(eco.tz) - timedelta(days=12)
     await Archive(eco).run_once()
     starts = [c["start_date"][:10] for c in fake.calls if "start_date" in c]
-    assert min(starts) >= str((eco.created - timedelta(days=1)).date())
+    assert starts and min(starts) >= str((eco.created - timedelta(days=1)).date())
     assert not any(c["cycle_type"] == "5min" and c["start_date"][:10] < str(eco.created.date() - timedelta(days=1))
                    for c in fake.calls if "cycle_type" in c)
     await eco.close()
 
 
-async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is_cached(tmp_path, monkeypatch):
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
+async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is_cached(tmp_path, archived_cache):
     transport, fake = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
@@ -309,15 +330,16 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
 
     before = monthly(await eco.tools[1].handler(args))          # nothing cached: daily figures, values only
     assert all("low_when" not in m for m in before.values())
+    await eco.close()
 
-    await Archive(eco).run_once()
-    fake.calls.clear()
+    (tmp_path / "archived").mkdir()
+    eco, fake = await archived_station(tmp_path / "archived", archived_cache)   # the whole history archived
     turn = Turn()
     out = await eco.tools[1].handler({**args, "chart": True}, turn)
     spec = turn.charts[0]
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
-    assert all(float(m["low"]) < float(m["high"]) for m in after.values())                 # each month's records refined in place
+    assert all(float(m["low"]) < float(m["high"]) for m in after.values())                 # each month's records, from its days' rows
     assert all(f"{datetime.strptime(month, '%b %Y'):%b %Y}" == month for month in after)  # a row per month: "Oct 2026"
     assert "monthly_note" not in json.loads(out) and fake.calls == []
     assert "daily averages, range shaded" in spec.subtitle      # 200 days: a point a day from the cached 30-minute data
@@ -330,7 +352,7 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     import asyncio as aio
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0.005)
-    transport, fake = ecowitt_transport()
+    transport, fake = ecowitt_transport(history_days=12)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     fake.calls.clear()
@@ -349,41 +371,22 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     await eco.close()
 
 
-async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
-    from lib.ecowitt import Archive, archive as archive_mod
-    monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    transport, _ = ecowitt_transport(history_days=60)
-    eco = Ecowitt(config(tmp_path), transport=transport)
-    await eco.start()
-    arch = Archive(eco)
-    assert arch.held() == "0/0/0/0 days (5m/30m/4h/1d)"
-    await arch.run_once()
-    held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
-    assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
-    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
-    await eco.close()
-
-
 async def test_archive_estimates_its_duration_from_the_pace(tmp_path, monkeypatch, caplog):
     from lib.ecowitt import Archive, archive as archive_mod
     caplog.set_level("INFO")
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    monkeypatch.setattr(archive_mod, "MIN_GAP_SECONDS", 2.0)  # as in production: 2s per range plus about 1s
-    transport, _ = ecowitt_transport(history_days=60)
+    monkeypatch.setattr(archive_mod, "MIN_GAP_SECONDS", 5.0)  # (production's is 2 s) a range takes the gap plus about a second
+    transport, _ = ecowitt_transport(history_days=15)
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    await Archive(eco).run_once()
+    await Archive(eco).run_once()   # a fresh file has everything to fetch: about 6s each, shown in minutes once it is over 90s
     assert not any("readings stored" in r.message for r in caplog.records)
+    line = next(r.message for r in caplog.records if "to fetch" in r.message)
+    n = int(line.split(": ")[1].split(" ")[0])
+    assert n >= 15 and f"{n} requests to fetch (about {n * 6 / 60:.0f} min)" in line
     caplog.clear()
     await Archive(eco).run_once()
     assert not any("to fetch" in r.message for r in caplog.records)  # nothing left: no estimate to give
-    # a fresh cache has everything to fetch: about 3s each, shown in minutes once it is over 90s
-    eco.cache.db.executescript("DELETE FROM coverage; DELETE FROM points;")
-    caplog.clear()
-    await Archive(eco).run_once()
-    line = next(r.message for r in caplog.records if "to fetch" in r.message)
-    n = int(line.split(": ")[1].split(" ")[0])
-    assert f"{n} req to fetch (about {n * 3 / 60:.0f} min)" in line
     await eco.close()
 
 
@@ -391,7 +394,7 @@ async def test_a_group_the_station_lacks_is_dropped_for_the_warm_up_too(tmp_path
     import httpx
     from lib.ecowitt import Archive, archive as archive_mod
     monkeypatch.setattr(archive_mod, "PACE_SECONDS", 0)
-    real = ecowitt_transport()[1]
+    real = ecowitt_transport(history_days=12)[1]
 
     def handler(request):  # this station has no piezo rain gauge
         if "rainfall_piezo" in request.url.params.get("call_back", ""):
@@ -401,7 +404,7 @@ async def test_a_group_the_station_lacks_is_dropped_for_the_warm_up_too(tmp_path
     await eco.start()
     assert "rainfall_piezo" in eco.groups
     fetched, failed = await Archive(eco).run_once()
-    assert failed == 0 and fetched > 100 and "rainfall_piezo" not in eco.groups
+    assert failed == 0 and fetched > 8 and "rainfall_piezo" not in eco.groups
     real.calls.clear()
     await eco.warm(True)  # would fail on the missing group if it still asked for it
     assert real.calls and all("rainfall_piezo" not in c["call_back"] for c in real.calls if "call_back" in c)
@@ -574,13 +577,14 @@ async def test_during_an_outage_the_archive_asks_once_a_range_and_stops_after_th
 
 def test_an_old_range_fetched_does_not_push_out_the_fresh_copy_of_the_last_hours():
     import time as _time
-    from lib.ecowitt.store import HotStore
-    hot, now = HotStore(), int(_time.time())
-    hot.put("M", "5min", "outdoor", now - 3 * 3600, now, {"temperature": "recent"})
-    hot.put("M", "5min", "outdoor", now - 90 * 86400, now - 89 * 86400, {"temperature": "old"})   # the archive, going back
-    assert hot.get("M", "5min", "outdoor", now - 3600, now) == {"temperature": "recent"}
-    hot.put("M", "5min", "outdoor", now - 3600, now + 1, {"temperature": "newer"})                   # a refresh replaces it
-    assert hot.get("M", "5min", "outdoor", now - 1800, now) == {"temperature": "newer"}
+    from lib.ecowitt.fetch import Recent
+    fetched, now = Recent(), int(_time.time())
+    fetched.note("M", "5min", "outdoor", now - 3 * 3600, now)
+    fetched.note("M", "5min", "outdoor", now - 90 * 86400, now - 89 * 86400)   # the archive, going back
+    assert fetched.covers("M", "5min", "outdoor", now - 3600, now) and not fetched.covers("M", "5min", "outdoor", now - 4 * 3600, now)
+    fetched.note("M", "5min", "outdoor", now - 3600, now + 1)                   # a refresh replaces it
+    assert fetched.covers("M", "5min", "outdoor", now - 1800, now) and not fetched.covers("M", "5min", "outdoor", now - 2 * 3600, now)
+    assert not fetched.covers("M", "5min", "indoor", now - 60, now)          # (another group was not fetched)
 
 
 # ---------- wind direction is circular ----------
@@ -628,13 +632,12 @@ async def test_the_wind_rose_reads_its_5_minute_readings_in_runs_of_days_not_a_d
     from lib.ecowitt import query
     from lib.ecowitt.query import consecutive
     eco, _ = await archived_station(tmp_path, archived_cache)
-    made = []
+    made, sibling = [], query.Fetcher.sibling
 
-    class Recorded(query.Fetcher):   # the wind rose's own fetcher, whose reads are counted
-        def __init__(self, *a, **k):
-            super().__init__(*a, **k)
-            made.append(self)
-    monkeypatch.setattr(query, "Fetcher", Recorded)
+    def recorded(self, groups):   # the wind rose's own fetcher, whose reads are counted
+        made.append(fetcher := sibling(self, groups))
+        return fetcher
+    monkeypatch.setattr(query.Fetcher, "sibling", recorded)
     today = eco.now().date()
     turn = Turn(chart_field="wind")
     out = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind",
@@ -709,7 +712,7 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
     await eco.close()
 
 
-async def test_a_chart_is_bucketed_to_the_point_budget_and_only_a_longer_period_carries_a_range(tmp_path):
+async def test_a_chart_is_bucketed_to_the_point_budget_and_every_period_carries_its_range(tmp_path):
     transport, _ = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
@@ -721,18 +724,18 @@ async def test_a_chart_is_bucketed_to_the_point_budget_and_only_a_longer_period_
                                     "start_date": f"{today - timedelta(days=days_back)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         return turn.charts[0]
-    ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: the readings, no shaded range
-    assert "range shaded" not in ten.subtitle and ten.panels[0].lines[0].low is None
-    fortnight = await spec_for(20)                                 # twenty days: hourly averages, still no range (31 days or fewer)
+    ten = await spec_for(9)                                        # nine days of 30-minute readings fit the point budget: the readings, each with its range
+    assert "range shaded" in ten.subtitle and ten.panels[0].lines[0].low is not None
+    fortnight = await spec_for(20)                                 # twenty days: hourly averages, their range shaded
     line = fortnight.panels[0].lines[0]
-    assert "hourly averages" in fortnight.subtitle and "range shaded" not in fortnight.subtitle and line.low is None
+    assert "hourly averages" in fortnight.subtitle and "range shaded" in fortnight.subtitle and line.low is not None
     assert 300 < len(line.x) <= 500
     season = (await spec_for(90)).panels[0].lines[0]               # ninety days: a point a day, each with its low and high
     assert 80 <= len(season.x) <= 92 and len(season.low) == len(season.high) == len(season.y)
     assert all(lo <= y <= hi for lo, y, hi in zip(season.low, season.y, season.high))
-    few = await spec_for(4)                                        # four days: the readings themselves, no range
+    few = await spec_for(4)                                        # four days: the readings themselves, each with its range
     line = few.panels[0].lines[0]
-    assert "range shaded" not in few.subtitle and len(line.x) > 100 and line.low is None
+    assert "range shaded" in few.subtitle and len(line.x) > 100 and line.low is not None
     await eco.close()
 
 
@@ -810,24 +813,21 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
     await eco.close()
 
 
-async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
+async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held(tmp_path, archived_cache, monkeypatch):
     from lib.ecowitt import query as history
     seen = []
-    real = history.HistoryQuery._read
+    real = history.HistoryQuery._hold_period
 
-    async def spy(self, cycle, t, until):
-        seen.append(cycle)
-        await real(self, cycle, t, until)
-    monkeypatch.setattr(history.HistoryQuery, "_read", spy)
+    async def spy(self):
+        plan = await real(self)
+        seen.extend(cycle for cycle, _, _ in plan)
+        return plan
+    monkeypatch.setattr(history.HistoryQuery, "_hold_period", spy)
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 00:00:00"}
     await eco.tools[1].handler(args)
     assert set(seen) == {"30min"} and fake.calls == []            # held: no daily records, no requests
-    seen.clear()
-    monkeypatch.setattr(history, "MAX_ROWS", 1000)                # too big to load: back to daily records
-    await eco.tools[1].handler(args)
-    assert "1day" in seen
     await eco.close()
 
 
@@ -878,7 +878,7 @@ async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(t
         turn = Turn(average_asked=asked)
         await eco.tools[1].handler(args, turn)
         subtitles[asked] = turn.charts[0].subtitle
-    assert "daily averages" not in subtitles[False] and "daily averages" in subtitles[True] and "range shaded" not in subtitles[True]
+    assert "daily averages" not in subtitles[False] and "daily averages" in subtitles[True] and "range shaded" in subtitles[True]
     await eco.close()
 
 
@@ -901,7 +901,7 @@ async def test_resolution_follows_the_length_of_the_period(tmp_path):
         assert not long_five                                           # 5-minute data only ever a day at a time
         await eco.close()
     assert set(seen[20]) <= {"30min", "5min"} and "1day" not in seen[20]  # a month or less: 30-minute weeks
-    assert "1day" in seen[60] and seen[60].get("30min", 0) <= 3        # longer: daily records (+ the newest days, + refinements)
+    assert "1day" in seen[60] and seen[60].get("30min", 0) <= 3        # longer: daily records (+ the newest days)
     assert seen[300]["1day"] >= 1 and seen[300].get("30min", 0) <= 6   # not a year of 30-minute weeks
 
 
@@ -1017,23 +1017,25 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
 
 def test_a_reading_is_shaded_alike_on_every_chart_ecowitts_own_range_else_the_5_minute_readings(tmp_path):
     """reading_slots, which plot_chart and weather_link both draw from: Ecowitt's own 30-minute lows and highs where it gives them,
-    else the range of the cached 5-minute readings in each slot; wind's band reaches its gusts."""
+    widened by the 5-minute readings in each slot (the storage rolls them up as they are written); wind's band reaches its gusts."""
     from lib.ecowitt.link import reading_slots
-    from lib.ecowitt.store import HistoryCache
-    cache = HistoryCache(tmp_path / "c.sqlite", {"u": "C"})
+    from tests.fakes import storage_with
+    storage = storage_with(tmp_path)
     t = int(datetime.now().timestamp() - 10 * 86400) // 1800 * 1800
 
     def put(cycle, group, **fields):
         data = {group: {f: {"unit": "", "list": {str(ts): str(v) for ts, v in points.items()}} for f, points in fields.items()}}
-        cache.store("M", cycle, [group], data, t, t + 1799)
+        storage.writer.run(lambda w: w.put_ecowitt("M", cycle, [group], data, t, t + 1799), ())
+    slots = lambda name: storage.read_now(reading_slots, "M", name, t, t + 1799)
     put("30min", "pressure", relative={t: 1015.0})
     put("5min", "pressure", relative={t + 300 * i: 1014.0 + i for i in range(6)})
-    assert reading_slots(cache, "M", "pressure", t, t + 1799) == ({t: 1015.0}, {t: 1014.0}, {t: 1019.0})
+    assert slots("pressure") == ({t: 1015.0}, {t: 1014.0}, {t: 1019.0})
     put("30min", "outdoor", humidity={t: 60.0}, humidity_low={t: 52.0}, humidity_high={t: 71.0})
     put("5min", "outdoor", humidity={t + 300 * i: 40.0 + i for i in range(6)})
-    assert reading_slots(cache, "M", "humidity", t, t + 1799) == ({t: 60.0}, {t: 52.0}, {t: 71.0})
+    assert slots("humidity") == ({t: 60.0}, {t: 40.0}, {t: 71.0})     # (a band only widens: the 5-minute readings reach lower)
     put("30min", "wind", wind_speed={t: 8.0}, wind_speed_low={t: 2.0}, wind_speed_high={t: 12.0}, wind_gust={t: 20.0}, wind_gust_high={t: 31.0})
-    assert reading_slots(cache, "M", "wind", t, t + 1799) == ({t: 8.0}, {t: 2.0}, {t: 31.0})
+    assert slots("wind") == ({t: 8.0}, {t: 2.0}, {t: 31.0})
+    storage.close()
 
 
 def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_them():
@@ -1141,7 +1143,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG" and fake.calls == []            # cache only
     out, specs = await ask_chart(chart_fields=["pressure", "humidity", "wind", "rain", "temperature"], groups="outdoor,indoor")
     assert [p.label for p in specs[0].panels][0] == "Pressure" and len(specs[0].panels) >= 3
-    assert specs[0].panels[0].bars                                                     # rain goes behind the first line
+    assert next(p for p in specs[0].panels if p.label == "Humidity").bars              # rain goes behind humidity (else pressure)
     temperature = next(p for p in specs[0].panels if p.label == "Temperature")
     assert [s.label for s in temperature.lines] == ["Indoor", "Outdoor"]              # both lines in one panel
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
@@ -1235,9 +1237,7 @@ def test_a_reading_named_as_a_group_becomes_its_group_and_an_unknown_name_is_dro
 
 async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
     from lib.ecowitt.api import EcowittError
-    from lib.ecowitt.fetch import Fetcher
-    from tests.fakes import TZ
-    from lib.ecowitt.store import HistoryCache, HotStore
+    from tests.fakes import fetcher_on, storage_with
 
     class Refusing:
         calls = 0
@@ -1246,11 +1246,12 @@ async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
             Refusing.calls += 1
             raise EcowittError("humidity is invalid", transient=False)
 
-    cache = HistoryCache(tmp_path / "c.sqlite", {})
-    f = Fetcher(Refusing(), cache, HotStore(), "AA:BB", ["pressure"], TZ)
+    storage = storage_with(tmp_path)
+    f = fetcher_on(storage, Refusing(), ["pressure"], "AA:BB")
     for day in range(6):
         await f.get("30min", datetime(2026, 9, 1 + day), datetime(2026, 9, 1 + day, 23, 59))
     assert Refusing.calls == 2 and f.rejected == 2 and len(f.errors) == 2
+    storage.close()
 
 
 async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_readings_hue(tmp_path):
@@ -1266,34 +1267,6 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
         panel = turn.charts[0].panels[0]
         assert panel.reading == reading and _colour(panel.lines[0], 0, panel.reading) == READING_COLOURS[reading]
     await eco.close()
-
-
-async def test_thirty_minute_readings_without_a_range_get_one_from_the_cached_five_minute_readings(tmp_path):
-    import time as _time
-    from lib.ecowitt.fetch import Fetcher
-    from lib.ecowitt.query import HistoryQuery
-    from lib.ecowitt.store import HistoryCache
-    from tests.fakes import TZ
-    base = int(_time.time()) - 10 * 86400
-    base -= base % 1800
-    cache = HistoryCache(tmp_path / "c.sqlite", {})
-    five = {"solar_and_uvi": {"solar": {"unit": "W/m2", "list": {str(base + 300 * i): str(10.0 + i) for i in range(12)}}}}   # two slots of six
-    cache.store("M", "5min", ["solar_and_uvi"], five, base, base + 3600)
-    start, end = datetime(2026, 1, 1), datetime(2026, 1, 2)
-    fetcher = Fetcher(None, cache, None, "M", [], TZ)
-    fetcher.epoch = lambda d: base if d == start else base + 7200
-    q = HistoryQuery(fetcher, {}, Turn())
-    q.start, q.end = start, end
-    q.store = {"solar_and_uvi.solar": {"unit": "W/m²", "pts": {base: {"cycle": "30min", "value": (12.0, "12")},
-                                                               base + 1800: {"cycle": "30min", "value": (18.0, "18")}}},
-               "outdoor.temperature": {"unit": "C", "pts": {base: {"cycle": "30min", "value": (12.0, "12"), "low": (9.0, "9"), "high": (16.0, "16")}}},
-               "wind.wind_speed": {"unit": "km/h", "pts": {base: {"cycle": "30min", "value": (12.0, "12")}}}}
-    await q._fine_ranges()
-    first = q.store["solar_and_uvi.solar"]["pts"][base]
-    assert (first["low"][0], first["high"][0]) == (10.0, 15.0) and q.store["solar_and_uvi.solar"]["pts"][base + 1800]["high"][0] == 21.0
-    assert q.store["outdoor.temperature"]["pts"][base]["low"][0] == 9.0      # its own range is kept
-    assert "low" not in q.store["wind.wind_speed"]["pts"][base]              # wind has its own band
-    cache.close()
 
 
 async def test_a_chart_field_may_be_a_readings_name_or_its_field_however_it_is_written(tmp_path):
@@ -1336,7 +1309,7 @@ async def test_a_failing_live_rain_reading_warns_once_then_says_when_it_recovers
     good = {"rainfall": {"rain_rate": {"time": "100", "value": "1.5"}, "daily": {"time": "100", "value": "2.0"}}}
     answers = [{}, {}, good, good]
 
-    async def realtime(mac, groups):
+    async def realtime(mac, groups, urgent=False):
         return answers.pop(0)
     monkeypatch.setattr(station.api, "realtime", realtime)
     with caplog.at_level("INFO", logger="lib.ecowitt.source"):
@@ -1438,30 +1411,30 @@ def test_naming_one_of_temperature_and_humidity_leaves_the_other_out_of_what_the
 
 
 async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_records_and_by_month_when_asked(tmp_path):
-    from lib.ecowitt.fetch import Fetcher
     from lib.ecowitt.query import HistoryQuery
-    from lib.ecowitt.store import HistoryCache
+    from lib.ecowitt.reads import history_on
     from lib.tools import Turn
-    from tests.fakes import TZ
-    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    from tests.fakes import TZ, fetcher_on, storage_with
     today = datetime.now(TZ).date()
     old = today - timedelta(days=500)
     day_ts = lambda d: int(datetime.combine(d, datetime.min.time()).replace(tzinfo=TZ).timestamp()) + 10 * 3600   # a daily bucket starts 10am
     days = [old + timedelta(days=k) for k in range(60)]
-    cache.store("M", "1day", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(day_ts(d)): "2.0" for d in days}}}},
-                day_ts(days[0]), day_ts(days[-1]) + 86400)
-    f = Fetcher(None, cache, None, "M", [], TZ)
+    storage = storage_with(tmp_path, ("1day", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(day_ts(d)): "2.0" for d in days}}}},
+                                      day_ts(days[0]), day_ts(days[-1]) + 86400))
+    f = fetcher_on(storage)
     f.epoch = lambda dt: int(dt.replace(tzinfo=TZ).timestamp())
     q = HistoryQuery.__new__(HistoryQuery)
     q.f, q.tz, q.turn = f, TZ, Turn()
     q.start, q.end = datetime.combine(days[0], datetime.min.time()), datetime.combine(days[-1], datetime.max.time())
     q.span = q.end - q.start
     q.rain_from_daily, q.store = False, {}
-    daily = await q._rain_bars()
+    held = storage.read_now(history_on, f.mac, ["rainfall"], [], f.epoch(q.start), f.epoch(q.end), False, [], True)
+    daily = q._rain_bars(held)
     assert q.rain_from_daily and len(daily.x) >= 59 and round(sum(daily.y), 1) == 120.0 and daily.per == "day"
     q.turn = Turn(text="rain by month for 2 months")
-    monthly = await q._rain_bars()
+    monthly = q._rain_bars(held)
     assert monthly.per == "month" and monthly.values and round(sum(monthly.y), 1) == 120.0 and len(monthly.x) in (2, 3)
+    storage.close()
 
 
 async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_says_which_cache_it_uses(tmp_path, caplog):
@@ -1481,7 +1454,7 @@ async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_say
                                             "end_date": f"{today} 23:59:59"})
     assert reply.startswith("Error: no history data returned")
     text = caplog.text
-    assert "History cache: " in text and str(eco.cache.path) in text
+    assert any(line.startswith("History: ") and str(eco.storage.path) in line for line in eco.startup_lines())
     assert "History query empty" in text and "readings held for the window {'5min': 0, '30min': 0, '1day': 0}" in text
 
 
@@ -1495,7 +1468,6 @@ def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is
 
 
 async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group(tmp_path, archived_cache):
-    from datetime import datetime
     from lib import intent
     from lib.timeutil import now_local
     from tests.fakes import archived_station
@@ -1517,24 +1489,24 @@ async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group
 async def test_the_newest_rain_is_in_the_bars_though_the_cache_has_not_got_it_yet(tmp_path):
     """The cache holds 30-minute readings only up to the settle horizon (now less 2.5 hours); the newer ones are the query's own
     (from memory or Ecowitt) and their rain must be in the bars and the total, not left out."""
-    from lib.ecowitt.fetch import Fetcher
     from lib.ecowitt.query import HistoryQuery
-    from lib.ecowitt.store import HistoryCache
-    from tests.fakes import TZ
-    cache = HistoryCache(tmp_path / "c.sqlite", {})
+    from lib.ecowitt.reads import history_on
+    from lib.lines import Sample
+    from tests.fakes import TZ, fetcher_on, storage_with
     day = datetime.now(TZ).date() - timedelta(days=3)
     t0 = int(datetime.combine(day, time()).replace(tzinfo=TZ).timestamp())
-    cache.store("M", "30min", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(t0 + i * 1800): "0.0" for i in range(4)}}}},
-                t0, t0 + 4 * 1800 - 1)   # midnight to 2am, dry
-    f = Fetcher(None, cache, None, "M", [], TZ)
+    storage = storage_with(tmp_path, ("30min", ["rainfall"], {"rainfall": {"daily": {"unit": "mm", "list": {str(t0 + i * 1800): "0.0" for i in range(4)}}}},
+                                      t0, t0 + 4 * 1800 - 1))   # midnight to 2am, dry
+    f = fetcher_on(storage)
     q = HistoryQuery.__new__(HistoryQuery)
     q.f, q.tz, q.turn, q.rain_from_daily = f, TZ, Turn(), False
     q.start, q.end = datetime.combine(day, time()), datetime.combine(day, time(3))
     q.span = q.end - q.start
-    q.store = {"rainfall.daily": {"unit": "mm", "pts": {t0 + 7200 + i * 300: {"cycle": "5min", "value": (0.5 * i, f"{0.5 * i}")}
+    q.store = {"rainfall.daily": {"unit": "mm", "pts": {t0 + 7200 + i * 300: Sample(t0 + 7200 + i * 300, 0.5 * i, None, None, 300)
                                                          for i in range(11)}}}   # 2am to 2:50am, 5 mm
-    bars = await q._rain_bars()
+    bars = q._rain_bars(storage.read_now(history_on, f.mac, ["rainfall"], [], f.epoch(q.start), f.epoch(q.end), False, [], True))
     assert round(sum(bars.y), 1) == 5.0 and bars.y[2] == 5.0   # all of it in the 2am bar
+    storage.close()
 
 
 async def test_wind_direction_over_a_past_week_keeps_its_last_day(tmp_path, archived_cache):
@@ -1549,7 +1521,7 @@ async def test_wind_direction_over_a_past_week_keeps_its_last_day(tmp_path, arch
             start = datetime.strptime(p["start_date"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
             return {} if p["cycle_type"] == "5min" and (datetime.now(TZ) - start).days > 89 else FakeEcowitt._history(p)
     cfg = config(tmp_path)
-    shutil.copy(archived_cache, cfg.cache_path)
+    shutil.copy(archived_cache, cfg.storage_path)
     eco = Ecowitt(cfg, transport=httpx.MockTransport(Retaining()))
     await eco.start()
     last = datetime.now(eco.tz).date() - timedelta(days=200)
@@ -1565,8 +1537,8 @@ async def test_the_wind_rose_s_failed_requests_are_reported_with_the_rest(tmp_pa
     eco, _ = await archived_station(tmp_path, archived_cache)
     counted = query.HistoryQuery._summarise_direction
 
-    async def with_a_failure(self):
-        await counted(self)
+    def with_a_failure(self, *args):
+        counted(self, *args)
         self.wind = SimpleNamespace(errors=["5min 16 Oct 2026 - 16 Oct 2026: HTTP 502"], seconds=0.0)
     monkeypatch.setattr(query.HistoryQuery, "_summarise_direction", with_a_failure)
     today = datetime.now(eco.tz).date()

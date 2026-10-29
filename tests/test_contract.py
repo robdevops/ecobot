@@ -1,57 +1,12 @@
-"""What must not change however the code behind it is rebuilt: the shapes the model receives from every tool, and that
-caches written by earlier versions (tests/data, generated once by the pre-recode code) still open and read the same."""
+"""What must not change however the code behind it is rebuilt: the shapes the model receives from every tool."""
 
 import json
-import shutil
-import sqlite3
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from lib.airgradient.store import AirStore
 from lib.tools import Turn
-from lib.ecowitt import api
-from lib.ecowitt.store import HistoryCache
-from tests.fakes import MAC, TZ, archived_station
+from tests.fakes import archived_station
 from tests.test_compose import composer
 
-DATA = Path(__file__).parent / "data"
-
-
-def tables(path) -> dict[str, list[str]]:
-    db = sqlite3.connect(path)
-    names = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-    return {n: [r[1] for r in db.execute(f"PRAGMA table_info({n})")] for n in names}
-
-
-def test_the_cache_schemas_are_unchanged(tmp_path):
-    layout = {
-        "coverage": ["mac", "cycle", "grp", "start", "end"],
-        "meta": ["key", "value"],
-        "points": ["series", "ts", "value"],
-        "series": ["id", "mac", "cycle", "grp", "field", "unit"]}
-    assert tables(DATA / "ecowitt_cache.sqlite") == layout
-    HistoryCache(tmp_path / "fresh.sqlite", api.UNITS).close()                      # a new file gets the same tables
-    assert tables(tmp_path / "fresh.sqlite") == layout
-    assert tables(DATA / "airgradient_cache.sqlite") == {
-        "days": ["loc", "day", "n"],
-        "readings": ["loc", "ts", "pm2_5", "pm10", "pm1", "co2", "voc_index", "nox_index"]}
-
-
-def test_a_recorded_cache_still_opens_and_reads(tmp_path):
-    shutil.copy(DATA / "ecowitt_cache.sqlite", tmp_path / "eco.sqlite")
-    shutil.copy(DATA / "airgradient_cache.sqlite", tmp_path / "air.sqlite")
-    cache = HistoryCache(tmp_path / "eco.sqlite", api.UNITS)                       # the same units: nothing is cleared
-    now = cache._query("SELECT MAX(p.ts) FROM points p JOIN series s ON s.id = p.series WHERE s.cycle = '30min'")[0][0]    # the fixture's own newest reading, so the test does not age
-    for cycle, at_least in (("5min", 100), ("30min", 100), ("1day", 1)):
-        temperature, = cache.slots(MAC, cycle, "outdoor", ["temperature"], now - 5 * 86400, now)
-        assert len(temperature) >= at_least, cycle
-    assert cache.days_held(MAC, "30min", ["outdoor"]) >= 3
-    store = AirStore(tmp_path / "air.sqlite", "42", TZ)
-    newest = store.db.execute("SELECT MAX(ts) FROM readings").fetchone()[0]
-    rows = store.load(newest - 5 * 86400, newest)
-    assert len(rows) > 20 and {"ts", "pm2_5"} <= set(rows[0])
-    cache.close()
-    store.close()
 
 
 async def test_every_tool_result_keeps_its_shape(tmp_path, archived_cache):

@@ -6,21 +6,22 @@
     those are kept quiet and one summary of the rain that fell in them is sent after they end.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
-  - Strong sun: one alert when the UV index is 10 or more in two readings in a row (confirm.py), and no more until it has stayed
+  - Strong sun: one alert when the UV index is 10 or more in two readings in a row (rules.py), and no more until it has stayed
     below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); it has to differ by more than 1 degree, which stops
     sensor noise flip-flopping.
-  Rain and crossing share one back-off rule (backoff.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
+  Rain and crossing share one back-off rule (rules.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
 
+import asyncio
 import logging
 from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
-from . import confirm, pictures
+from . import pictures, rules
 from .menu import kinds_of
-from .backoff import due, remember
+from .rules import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
 from ..timeutil import at_hour, clock_text, to_local
 
@@ -48,6 +49,7 @@ class WeatherMonitor:
         self.station, self.state, self.notify = station, state, notify
         self.cooldown = cooldown_seconds
         self.quiet = quiet   # (from hour, to hour) local, no rain alerts in between; None: always on
+        self._rain_lock = asyncio.Lock()   # the minute's check and the live reading's look at the rain are one at a time
 
     def _quiet(self, ts: int) -> bool:
         if not self.quiet:
@@ -99,7 +101,20 @@ class WeatherMonitor:
         await self._cross(rows)
         self.state.save()
 
+    async def check_rain(self):
+        """Look at the rain alone, on a live reading that has just come in (the station is polled every few seconds, so this is the alert
+        within a few seconds of the gauge, not at the next minute's check)."""
+        rows = await self.station.recent(3)
+        live = await self.station.live_rain() if rows else None
+        if rows and live and live[0] > rows[-1][0]:
+            await self._rain(rows + [live])
+            self.state.save()
+
     async def _rain(self, rows: Rows):
+        async with self._rain_lock:
+            await self._rain_locked(rows)
+
+    async def _rain_locked(self, rows: Rows):
         m = self.state.monitor.setdefault("rain", {})
         m.setdefault("alerted_state", "dry")
         wet = wet_flags(rows)
@@ -165,36 +180,36 @@ class WeatherMonitor:
         latest_ts = rows[-1][0]
         seen, m["checked"] = m.get("checked", latest_ts), latest_ts
         over = [(g, ts) for ts, r in rows if ts > seen and (g := r.get("wind.wind_gust")) is not None and g > GUST_ALERT_KMH]
-        confirm.rearm(m, bool(over), latest_ts, GUST_REARM_SECONDS)
+        rules.rearm(m, bool(over), latest_ts, GUST_REARM_SECONDS)
         if over and not m["active"]:
             m["active"] = True
             gust, ts = max(over)
             await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {clock_text(to_local(ts, self.tz))}"
-                              f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", chart=lambda: self._picture("Wind chart 1d"))
+                              f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", chart=lambda: self._picture(pictures.CHARTS["gusts"]))
 
     async def _uv(self, rows: Rows):
-        """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (confirm.py); only readings newer than the last
+        """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (rules.py); only readings newer than the last
         one counted are looked at, so a restart doesn't re-announce an old spell."""
         m = self.state.monitor.setdefault("uv", {"active": False, "calm_since": None})
         latest_ts = rows[-1][0]
         m.setdefault("stamp", latest_ts)   # the first look only sets the mark
         high = False
         for ts, r in rows:
-            if not confirm.new_reading(m, ts):
+            if not rules.new_reading(m, ts):
                 continue
             u = r.get("solar_and_uvi.uvi")
             hit = None if u is None else u >= UVI_ALERT
-            streak = confirm.run(m, "streak", hit)
+            streak = rules.run(m, "streak", hit)
             if hit and (streak == 1 or u > m["peak"][0]):    # the run's highest reading is the one told
                 m["peak"] = [u, ts]
             high = high or bool(hit)
-        confirm.rearm(m, high, latest_ts, UV_REARM_SECONDS)
-        if m.get("streak", 0) >= confirm.CONFIRM_READINGS and not m["active"]:
+        rules.rearm(m, high, latest_ts, UV_REARM_SECONDS)
+        if m.get("streak", 0) >= rules.CONFIRM_READINGS and not m["active"]:
             m["active"] = True
             uv, ts = m["peak"]
             await self.notify(f"\U0001f9f4 UV index {uv:g} at {clock_text(to_local(ts, self.tz))}"
                               f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
-                              chart=lambda: self._picture("UV chart 1d"))
+                              chart=lambda: self._picture(pictures.CHARTS["uv"]))
 
     async def _cross(self, rows: Rows):
         ts, r = rows[-1]
@@ -212,7 +227,7 @@ class WeatherMonitor:
             icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
             await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
                               f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps",
-                              chart=lambda: self._picture("Temperature chart 1d"))
+                              chart=lambda: self._picture(pictures.CHARTS["temps"]))
             remember(c, current, ts)
 
     async def _fell(self, rows: Rows, since: int, until: int) -> float | None:

@@ -1,0 +1,21 @@
+# The bot in Docker: `sudo docker compose up -d --build` builds the image and starts the bot, and replaces a running one only when its
+# image or settings changed (README). The commit the log's first line names is read from the clone's .git (see the Dockerfile).
+# Logs: Docker's `local` driver (README: "Docker logging", compose.journald.yaml for the journal), which compresses and rotates its files (5 of 10 MB here); read them with `docker logs -tf ecobot`.
+services:
+  ecobot:
+    image: ecobot
+    container_name: ecobot
+    build:
+      context: .
+      args:
+        COMMIT: ${COMMIT:-}
+    restart: unless-stopped
+    # Docker's default network is private, where .local names (mDNS) can't be found (README: "Docker networking", compose.host-network.yaml)
+    env_file: /etc/ecobot.env
+    volumes:
+      - /var/lib/private/ecobot:/data
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"

@@ -10,7 +10,8 @@ from telegram.ext import CallbackQueryHandler
 
 from lib import periods, report_menu, templates
 from lib.admins import Admins
-from lib.alerts import AlertState, menu
+from lib.alerts import menu
+from lib.alerts.notify import AlertState
 from lib.bot import MAX_CALLBACK_BYTES, NOT_ADMIN, NOT_ADMIN_TOAST, STALE_BUTTON, Bot
 from lib.config import Config, _ids
 from lib.irrigation import menu as irrigation_menu
@@ -103,16 +104,16 @@ def board(*data):
 
 
 # ---------- the settings ----------
-def test_admin_only_is_on_unless_switched_off_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
-    for k, v in {"TELEGRAM_BOT_TOKEN": "t", "XAI_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
+def test_admin_only_is_off_unless_switched_on_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
+    for k, v in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("ADMIN_ONLY", raising=False)
-    assert Config.from_env().admin_only is True and Config.from_env().admin_chat_ids == frozenset()
-    for value, on in (("", True), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
-                      ("no", False), ("false", False), ("ture", True), ("of", True)):   # a typo keeps the default: never open by mistake
+    assert Config.from_env().admin_only is False and Config.from_env().admin_chat_ids == frozenset()
+    for value, on in (("", False), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
+                      ("no", False), ("false", False), ("ture", False), ("of", False)):   # a typo keeps the default
         monkeypatch.setenv("ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
-    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (on)" in caplog.text
+    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (off)" in caplog.text
     ids = lambda text: _ids(text, frozenset(), "ADMIN_CHAT_IDS")
     assert ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and ids("") == frozenset()
     assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
@@ -237,6 +238,23 @@ async def test_with_admin_only_off_everyone_is_answered_as_before(tmp_path):
     assert sent == [] and bot.asked == ["how warm is it"] and STRANGER in state.chats and tg.fetches == []
 
 
+async def test_a_refused_sender_is_logged_once_with_the_id_to_list(tmp_path, caplog):
+    bot, state, tg = make(tmp_path)
+    refused = lambda: [r.getMessage() for r in caplog.records if "refused" in r.getMessage()]
+    with caplog.at_level("INFO", logger="lib.bot"):
+        for _ in range(2):
+            update, sent = message("how warm is it", user=STRANGER)
+            await bot.on_message(update, ctx(tg))
+            assert [b for b, _ in sent] == [NOT_ADMIN]                                     # told every time
+        assert refused() == [f"[Telegram {STRANGER}]: @u: refused: user {STRANGER} (U) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"]
+        update, sent = message("hello", user=8)                                                 # another stranger: its own line
+        await bot.on_message(update, ctx(tg))
+        assert len(refused()) == 2 and refused()[1].startswith("[Telegram 8]: @u: refused: user 8 (U) is not")
+        update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))   # as the group: the chat
+        await bot.on_message(update, ctx(tg))
+        assert refused()[2] == f"[Telegram {GROUP}]: @u, group 'Home': refused: chat {GROUP} (Home) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"
+
+
 async def test_a_listed_user_can_use_the_bot_before_it_is_in_any_group(tmp_path):
     bot, state, tg = make(tmp_path, extra=[STRANGER], groups=(), tg=TG({}))
     update, sent = message("hello", user=STRANGER)
@@ -265,12 +283,12 @@ async def test_in_a_group_only_a_message_meant_for_the_bot_is_refused_and_ordina
 
 
 async def test_an_anonymous_admin_gets_in_only_through_a_listed_group_id(tmp_path):
-    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP))
+    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))
     bot, state, tg = make(tmp_path)
     await bot.on_message(update, ctx(tg))
     assert [b for b, _ in sent] == [NOT_ADMIN] and bot.asked == []                          # no automatic pass
     bot, state, tg = make(tmp_path, extra=[GROUP])
-    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP))
+    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))
     await bot.on_message(update, ctx(tg))
     assert sent == [] and bot.asked == ["hi"]
 
@@ -459,7 +477,9 @@ async def test_a_prefix_nobody_handles_is_refused_even_when_the_message_really_h
     assert press.toast == STALE_BUTTON
 
 
-async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path):
+async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path, monkeypatch):
+    from lib import bot as bot_module
+    monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)   # (the controller's pause after an action is not what is tested)
     bot, state, tg = make(tmp_path, irrigation=Remote())
     state.add_chat(ADMIN, "Rob")
     for data, markup in (("ir:refresh", irrigation_menu.keyboard(True, True)), ("al:off:rain:alerts", alert_keyboard()),

@@ -17,15 +17,25 @@ class StubAir:
         self.readings = []
         for i in range(days * 288, 0, -1):                      # 5-minute readings; each day is good, poor or very poor
             when = now - timedelta(minutes=5 * i)
-            self.readings.append({"ts": int(when.timestamp()), "pm2_5": [5.0, 30.0, 80.0][when.day % 3], "pm10": 10.0})
+            self.readings.append({"ts": int(when.timestamp()), "pm2_5": [5.0, 30.0, 80.0][when.day % 3], "pm10": 10.0,
+                                  "air_humidity": 50.0 + when.hour, "air_temperature": 12.0 + when.hour / 3})
 
     async def rows(self, t0, t1):
         lo, hi = t0.replace(tzinfo=TZ).timestamp(), t1.replace(tzinfo=TZ).timestamp()
         return [r for r in self.readings if lo <= r["ts"] <= hi], 0, []
 
 
-async def composer(tmp_path, archived_cache):
+async def composer(tmp_path, archived_cache, shuffles: int = 20):
+    """A Composer over the archived station. Its scans run `shuffles` permutations, not the real 300: the shape of its answers is what is
+    tested here (the statistics have tests of their own, test_scan.py's `world`)."""
+    from functools import partial
+    from unittest import mock
+
+    from lib.analysis import scan
     eco, _ = await archived_station(tmp_path, archived_cache)
+    patch = mock.patch.object(scan, "scan", partial(scan.scan, shuffles=shuffles))
+    patch.start()
+    eco.close = (lambda close: lambda: (patch.stop(), close())[1])(eco.close)   # until the station is closed
     return Composer(eco, StubAir()), eco
 
 
@@ -171,7 +181,65 @@ async def test_two_series_can_share_one_panel_with_a_scale_each(tmp_path, archiv
     assert [s.right for s in specs[0].panels[0].lines] == [False, False, True] or [s.right for s in specs[0].panels[0].lines].count(True) >= 1
     assert render(specs[0], TZ)[:4] == b"\x89PNG" and len(out["panels"]) == 2          # both series are still described
     out, specs = await plot(comp, panels=[{"series": "temperature"}, {"series": "rain"}], two_axes=True)
-    assert "two_axes needs exactly two line series" in out["error"] and specs == []
+    assert "two_axes needs line series" in out["error"] and specs == []
     out, specs = await plot(comp, panels=[{"series": "temperature"}], two_axes=True)
     assert "error" in out and specs == []
+    await eco.close()
+
+
+async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axis(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], same_axis=True)
+    assert len(specs[0].panels) == 1 and len(out["panels"]) == 2
+    panel = specs[0].panels[0]
+    assert [s.label for s in panel.lines] == ["AirGradient temperature", "Ecowitt temperature"] and panel.unit == "°C" and not any(s.right for s in panel.lines)
+    assert [s.reading for s in panel.lines] == ["air_temperature", "temperature"] and render(specs[0], TZ)[:4] == b"\x89PNG"
+    out, specs = await plot(comp, panels=[{"series": "air_humidity"}, {"series": "temperature"}], same_axis=True)
+    assert "same unit" in out["error"] and specs == []                                    # % and °C: two_axes is for that
+    out, specs = await plot(comp, panels=[{"series": "air_humidity"}, {"series": "temperature"}], two_axes=True)
+    assert [s.right for s in specs[0].panels[0].lines] == [False, True]
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "air_humidity"}, {"series": "humidity"}],
+                            two_axes=True)                                                # two pairs: a unit to each axis
+    assert [(s.label, s.right) for s in specs[0].panels[0].lines] == [
+        ("AirGradient temperature (°C)", False), ("Ecowitt temperature (°C)", False), ("AirGradient humidity (%)", True), ("Ecowitt humidity (%)", True)]
+    assert render(specs[0], TZ)[:4] == b"\x89PNG"
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}, {"series": "air_humidity"}, {"series": "humidity"}],
+                            two_axes=True, invert_second_axis=True)                       # the right-hand axis upside down
+    assert specs[0].panels[0].label == "Temperature and Humidity"                      # not every panel's name in a row
+    assert specs[0].panels[0].flip_right and render(specs[0], TZ)[:4] == b"\x89PNG"
+    assert not (await plot(comp, panels=[{"series": "air_temperature"}, {"series": "humidity"}], two_axes=True))[1][0].panels[0].flip_right
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], invert_second_axis=True)
+    assert "needs two_axes" in out["error"] and specs == []
+    out, specs = await plot(comp, panels=[{"series": "air_temperature"}, {"series": "temperature"}], two_axes=True, same_axis=True)
+    assert "can't both be set" in out["error"]
+    out, specs = await plot(comp, panels=[{"series": "air_humidity", "style": "rating"}])
+    assert "error" in out and specs == []                                                 # no traffic light for a humidity
+    await eco.close()
+
+
+async def test_the_tools_offer_the_air_sensors_own_temperature_and_humidity_only_to_a_question_that_asks(tmp_path, archived_cache):
+    from lib.tools import Tools
+    comp, eco = await composer(tmp_path, archived_cache)
+    tools = Tools(comp.tools)
+    plain = tools.schemas_for(Turn())
+    assert plain is tools.schemas and "air_humidity" not in json.dumps(plain) and "same_axis" not in json.dumps(plain)
+    asked = {s["function"]["name"]: s["function"] for s in tools.schemas_for(Turn(air_extra=True))}
+    series = asked["plot_chart"]["parameters"]["properties"]["panels"]["items"]["properties"]["series"]["enum"]
+    assert series == [*SERIES, "air_temperature", "air_humidity"] and "same_axis" in asked["plot_chart"]["parameters"]["properties"]
+    assert [s["function"]["name"] for s in tools.schemas_for(Turn(air_extra=True))] == [s["function"]["name"] for s in plain]   # the same tools, in order
+    await eco.close()
+
+
+async def test_a_composed_air_series_takes_its_range_from_the_readings_the_bot_recorded(tmp_path, archived_cache):
+    comp, eco = await composer(tmp_path, archived_cache)
+    air = StubAir(days=2)
+    for r in air.readings[-12:]:                                      # the last hour was recorded by the bot, with a spread
+        r["_range"] = {"pm2_5": (r["pm2_5"] - 2.0, r["pm2_5"] + 3.0)}
+    comp.air = air
+    first = datetime.now(TZ).date() - timedelta(days=2)
+    series, _ = await comp.air_series(["pm2_5"], first, datetime.now(TZ).date())
+    values, lows, highs = series["pm2_5"]
+    spread = [t for t in values if highs[t] - lows[t] >= 5.0]
+    assert spread and all(highs[t] - lows[t] >= 5.0 for t in spread[-1:])
+    assert any(highs[t] == lows[t] == values[t] for t in values)       # a slot with no recorded range is a single value
     await eco.close()

@@ -1,7 +1,7 @@
 # The bot as a small image: python:3.13-slim with the runtime packages in a venv that has no pip, no pip cache and no test suites,
 # and bytecode for only what the bot imports at start (bytecode for everything is 48 MB more; none adds ~2 s to every start).
-#   docker build --build-arg COMMIT=$(git rev-parse HEAD) -t ecobot .
-#   docker run -d --name ecobot --restart unless-stopped --env-file /etc/ecobot.env -v /var/lib/private/ecobot:/data ecobot   (README: also --log-driver journald, else local)
+#   docker build -t ecobot .
+#   docker compose up -d --build   (compose.yaml)
 # Settings come from the environment, as under systemd (README); the state and caches are kept in /data, the folder mounted from the host.
 FROM python:3.13-slim AS base
 
@@ -26,12 +26,14 @@ RUN groupadd --system --gid 10001 ecobot \
 WORKDIR /app
 COPY ecobot.py ./
 COPY lib lib
+COPY scripts scripts
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
-# COMMIT goes where the bot reads the running commit from (.git/HEAD) for its start-up log line ("unknown" without it). Importing
-# the bot once writes the bytecode of every module it loads at start, and only those.
-ARG COMMIT=unknown
-LABEL org.opencontainers.image.revision=$COMMIT
-RUN mkdir .git && echo "$COMMIT" > .git/HEAD \
+# The bot reads the running commit for its start-up log line from .git (HEAD, the branch's ref, packed-refs: .dockerignore lets only these
+# through), so building from a clone needs nothing more; COMMIT, if given, is used instead (a build from files that are not a clone).
+# Importing the bot once writes the bytecode of every module it loads at start, and only those.
+COPY .git* .git/
+ARG COMMIT=
+RUN if [ -n "$COMMIT" ]; then echo "$COMMIT" > .git/HEAD; fi \
  && DATA_DIR=/tmp/build MPLCONFIGDIR=/tmp/build python -c "import lib.bot, ecobot" \
  && rm -rf /tmp/build
 ENV DATA_DIR=/data

@@ -47,6 +47,8 @@ READING_COLOURS = {
     "humidity": "#4F46E5",      # indigo
     "dew_point": "#5794F2",     # blue (indoors: yellow)
     "wind": "#64748B",          # slate grey
+    "air_temperature": "#E11D48",   # the air sensor's own temperature and humidity: apart from the station's (orange, indigo)
+    "air_humidity": "#0D9488",
     "pm2_5": "#0EA5E9", "pm10": "#8B5CF6", "pm1": "#14B8A6", "co2": "#475569", "voc_index": "#D97706", "nox_index": "#DB2777",
 }
 # Indoors: the pair of the outdoor line in its panel. Temperature is orange outdoors and purple indoors, dew point blue and yellow
@@ -62,6 +64,7 @@ W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
+STACKED_KEY_IN = 0.28            # more room above a big chart whose colour key is stacked below its title (see _stacked_key)
 TITLE_IN, SUBTITLE_IN = 0.27, 0.52   # the headline's lines, centred this far below the top (the colour key beside a big chart's title too)
 ROSE_RECT = [0.685, 0.12, 0.27, 0.62]   # the wind rose beside a wind chart (figure fraction); the line's plot ends before it, at:
 BESIDE_ROSE_WIDTH = 0.57
@@ -102,26 +105,30 @@ SMALL = Look(end_dot=20, end_rim=1.2, pill_font=7.5, pill_dot=12, pill_rim=0.8, 
              pad=0.3, legend_font=8.5, key_from=2, units=False, nbins=4, card=True, in_headline=False)
 
 
+def _stacked_key(p: Panel, look: Look) -> bool:
+    """Is the colour key of this big chart set in a column below the title (long names, or two scales), not in a row beside it?"""
+    names = [s.label for s in p.lines] + ([p.bars.label] if p.bars else [])
+    return look.in_headline and len(names) >= 2 and (any(s.right for s in p.lines) or sum(len(n) for n in names) > 24)
+
+
 def _look_for(chart: Chart) -> Look:
     """A chart of one panel of lines is drawn BIG; anything else (a stack, rain alone) SMALL."""
     return BIG if chart.single else SMALL
 
 
+FONT_DIRS = ("/usr/share/fonts", "/usr/local/share/fonts")
+
+
 def _setup_fonts() -> str:
-    """Use a modern sans font if one is installed (Inter, Roboto, Helvetica, Arial).
-    Font files are registered directly, in case they were installed after
-    matplotlib built its font list."""
-    for pattern in ("/usr/share/fonts/**/Inter-*.[ot]tf", "/usr/share/fonts/**/Roboto-*.ttf",
-                    "/usr/local/share/fonts/**/*.[ot]tf"):
-        for path in glob.glob(pattern, recursive=True):
-            if "Italic" not in path:
-                try:
-                    font_manager.fontManager.addfont(path)
-                except Exception:
-                    pass
+    """Use Inter, else Roboto, if installed; matplotlib's own DejaVu Sans otherwise. The font files are registered directly, in case
+    they were installed after matplotlib built its font list."""
+    for path in (p for d in FONT_DIRS for p in glob.glob(f"{d}/**/*.[ot]tf", recursive=True)):
+        try:
+            font_manager.fontManager.addfont(path)
+        except Exception:
+            pass
     installed = {f.name for f in font_manager.fontManager.ttflist}
-    family = next((n for n in ("Inter", "Roboto", "Helvetica Neue", "Arial", "Liberation Sans") if n in installed),
-                  "DejaVu Sans")
+    family = next((n for n in ("Inter", "Roboto") if n in installed), "DejaVu Sans")
     matplotlib.rcParams.update({"font.family": family, "axes.unicode_minus": False})
     return family
 
@@ -136,13 +143,13 @@ def _colour(line: Line, i: int, reading: str = "") -> str:
     """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback."""
     reading = line.reading or reading
     if base := READING_COLOURS.get(reading):
-        return (INDOOR_COLOURS.get(reading) or _mix(base, 0.4)) if line.indoor else base
+        return (INDOOR_COLOURS.get(reading) or _blend(base, 0.4)) if line.indoor else base
     return FALLBACK[i % len(FALLBACK)]
 
 
-def _mix(colour: str, share: float) -> str:
-    """The colour with this share of white blended in."""
-    return "#" + "".join(f"{round(255 * share + c * 255 * (1 - share)):02X}" for c in to_rgb(colour))
+def _blend(colour: str, share: float, towards: str = "#FFFFFF") -> str:
+    """The colour with this share of `towards` (white, unless given) blended in; gauges dims a tile towards its card with it."""
+    return "#" + "".join(f"{round(255 * t * share + c * 255 * (1 - share)):02X}" for c, t in zip(to_rgb(colour), to_rgb(towards)))
 
 
 def _deg(unit: str) -> str:
@@ -250,7 +257,7 @@ def _draw_bars(ax, bx, ys, width: float, axis_top: float, zorder: int, alpha: fl
     """Rain bars: a pale body (RAIN blended with white by `alpha`, so solid and nothing behind it shows through) with a
     brighter cap, so each reads as a little column. `kw` goes to both (for rain behind a line, the transform)."""
     ys = np.asarray(ys, dtype=float)
-    _columns(ax, bx, ys, width, facecolors=_mix(RAIN, 1 - alpha), zorder=zorder, **kw)
+    _columns(ax, bx, ys, width, facecolors=_blend(RAIN, 1 - alpha), zorder=zorder, **kw)
     cap = np.sign(ys) * np.minimum(axis_top * 0.014, np.abs(ys))   # at the bar's far end, below zero as above it
     _columns(ax, bx, cap, width, ys - cap, facecolors=RAIN, alpha=0.95, zorder=zorder, **kw)
 
@@ -293,30 +300,23 @@ def _headline(fig, title: str, subtitle: str, height: float, unit: str = ""):
     fig.text(AX_RECT[0], 1 - SUBTITLE_IN / height, subtitle, fontsize=8.5, color=MUTED, va="center")
 
 
+TIME_TICKS = (   # a period of up to this many days: its tick locator (for the span and time zone) and the labels' strftime format
+    (1.1, lambda days, tz: mdates.HourLocator(byhour=range(0, 24, 3), tz=tz), "%-I%p"),
+    (4, lambda days, tz: mdates.HourLocator(byhour=[0, 12], tz=tz), "%a %-I%p"),
+    (45, lambda days, tz: mdates.DayLocator(interval=max(1, math.ceil(days / 8)), tz=tz), "%a\n%-d %b"),
+    (400, lambda days, tz: mdates.MonthLocator(tz=tz), "%b\n'%y"),
+    (math.inf, lambda days, tz: mdates.MonthLocator(bymonth=[1, 4, 7, 10], tz=tz), "%b\n'%y"),
+)
+
+
 def _time_axis(ax, span_days: float, tz: tzinfo, bars=None):
     """Tick positions and labels for a date axis, chosen by the length of the period. Bars of whole months or years (a count per
     month or year) are labelled under the middle of each bar instead. The ticks fall on local hours, days and months."""
     if bars and bars.per in ("year", "month") and bars.x and (bars.per == "year" or len(bars.x) <= 14):
-        centres = _nums(bars.x) + _bar_width(bars.width) / 2
-        fmt = "%Y" if bars.per == "year" else "%b\n'%y"
-        ax.xaxis.set_major_locator(FixedLocator(list(centres)))
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: mdates.num2date(v, tz).strftime(fmt)))
-        return
-    if span_days <= 1.1:
-        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(0, 24, 3), tz=tz))
-        fmt = "%-I%p"
-    elif span_days <= 4:
-        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 12], tz=tz))
-        fmt = "%a %-I%p"
-    elif span_days <= 45:
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, math.ceil(span_days / 8)), tz=tz))
-        fmt = "%a\n%-d %b"
-    elif span_days <= 400:
-        ax.xaxis.set_major_locator(mdates.MonthLocator(tz=tz))
-        fmt = "%b\n'%y"
+        locator, fmt = FixedLocator(list(_nums(bars.x) + _bar_width(bars.width) / 2)), "%Y" if bars.per == "year" else "%b\n'%y"
     else:
-        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10], tz=tz))
-        fmt = "%b\n'%y"
+        locator, fmt = next((make(span_days, tz), fmt) for limit, make, fmt in TIME_TICKS if span_days <= limit)
+    ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(FuncFormatter(
         lambda v, _: mdates.num2date(v, tz).strftime(fmt).replace("AM", "am").replace("PM", "pm")))
 
@@ -339,7 +339,7 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float, look
     pills = []
     for s, (colour, xs, ys) in zip(lines, drawn):
         for want, above in (("high", True), ("low", False)):
-            if want in s.records and s.low is not None:  # a banded line: the label sits on the top (bottom) of its band
+            if want in s.records and s.low is not None and not s.on_line:  # a banded line: the label sits on the top (bottom) of its band
                 rx, ry = _extreme(s, want, xs)
             elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
                 rx, ry = float(_nums([s.records[want][0]])[0]), float(s.records[want][1])
@@ -416,7 +416,7 @@ def _render_rose(fig, compass: Compass):
 def _extreme(line: Line, want: str, xs) -> tuple[float, float]:
     """Where the drawn line is highest (or lowest): the top (bottom) of its band when it has one, else the line itself. A
     label sits on what is drawn, never on a raw reading the chart does not reach. `xs` are the line's x as date numbers."""
-    ys = (line.high if want == "high" else line.low) if line.low is not None else line.y
+    ys = (line.high if want == "high" else line.low) if line.low is not None and not line.on_line else line.y
     i = int(np.argmax(ys) if want == "high" else np.argmin(ys))
     return float(xs[i]), float(ys[i])
 
@@ -533,7 +533,7 @@ def _draw_bars_alone(ax, b, x1: float):
     return 0, _end_of(bx, b.width, x1), []
 
 
-def _right_axis(ax, lines: list[Line], first: int, look: Look) -> tuple:
+def _right_axis(ax, lines: list[Line], first: int, look: Look, flip: bool = False) -> tuple:
     """The lines of a panel's second scale, on an axis of their own at the right (ticks in the first line's colour, no frame, no
     grid: the left axis keeps the grid). Returns (the axis, what was drawn on it as _draw_lines gives it)."""
     twin = ax.twinx()
@@ -545,6 +545,8 @@ def _right_axis(ax, lines: list[Line], first: int, look: Look) -> tuple:
     twin.tick_params(axis="y", length=0, labelsize=7.5, labelcolor=drawn[0][0], pad=5)
     twin.yaxis.set_major_locator(MaxNLocator(nbins=look.nbins, steps=[1, 2, 2.5, 5, 10]))
     twin.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    if flip:
+        twin.invert_yaxis()
     return twin, drawn
 
 
@@ -579,7 +581,7 @@ def _draw_readings(ax, p: Panel, first: int, x0: float, x1: float, look: Look):
     if p.bars:
         x1 = max(x1, _bars_behind(ax, p.bars))
     if on_right:
-        twin, drawn_right = _right_axis(ax, on_right, first + len(lines), look)
+        twin, drawn_right = _right_axis(ax, on_right, first + len(lines), look, p.flip_right)
         ax.tick_params(axis="y", labelcolor=drawn[0][0])   # each scale's numbers are in its line's colour
         _own_end_labels(ax, drawn, above=True)
         _own_end_labels(twin, drawn_right, above=False)
@@ -600,7 +602,8 @@ def _build(chart: Chart, tz: tzinfo) -> Figure:
     FigureCanvasAgg(fig)   # drawn on its own canvas: no pyplot, whose figures would need closing
     _headline(fig, panels[0].label if look.in_headline else chart.title, chart.subtitle, height, panels[0].unit if look.in_headline else "")
     width = _axes_width(chart)
-    body = height - HEAD_IN - FOOT_IN
+    head = HEAD_IN + (STACKED_KEY_IN if chart.single and _stacked_key(panels[0], look) else 0)
+    body = height - head - FOOT_IN
     gap = 0.27 if n > 2 else 0.22
     each = (body - gap * (n - 1)) / n
     xs = _nums({t for p in panels for t in p.xs})   # each time once: only the range is wanted
@@ -618,11 +621,12 @@ def _build(chart: Chart, tz: tzinfo) -> Figure:
         count, x1, entries = _draw_panel(ax, p, used, x0, x1, look)
         used += count
         if len(entries) >= look.key_from:   # the colour key: beside the headline for a big chart, above the panel in a stack
-            two_scales = look.in_headline and any(line.right for line in p.lines)   # two long names with units: stacked, between the title and subtitle rows
-            key = dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - ((TITLE_IN + SUBTITLE_IN) / 2 if two_scales else TITLE_IN) / height)) \
-                if look.in_headline else dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
+            stacked = _stacked_key(p, look)   # long names or two scales: a column under the title, clear of it
+            key = dict(loc="upper right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - (TITLE_IN + 0.17) / height)) if stacked else \
+                dict(loc="center right", bbox_to_anchor=(AX_RECT[0] + AX_RECT[2], 1 - TITLE_IN / height)) if look.in_headline else \
+                dict(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.1)
             _legend(fig if look.in_headline else ax, [c for c, _ in entries], [label for _, label in entries],
-                    ncol=1 if two_scales else len(entries), fontsize=look.legend_font, **key)
+                    ncol=1 if stacked else len(entries), fontsize=look.legend_font, **key)
         deg = _deg(p.unit)
         tick_unit = deg if deg == "°" else ""
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3 if n > 2 else look.nbins, steps=[1, 2, 2.5, 5, 10],

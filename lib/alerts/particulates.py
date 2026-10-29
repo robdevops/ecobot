@@ -3,14 +3,14 @@
 "Wear a mask outside" when PM2.5 or PM10 reaches US AQI 151+ ("unhealthy", the official level
 at which masks are advised for everyone) in two readings in a row, each check counting only when the sensor's last
 ANTISPIKE_REQUIRE_CONSECUTIVE (2) readings are all that high (a spike never does); "back to safe" when both are at
-AQI 100 or below in two readings in a row (confirm.py: a check that brings no new reading counts for nothing). Every episode gets the pair. Particles only: masks
+AQI 100 or below in two readings in a row (rules.py: a check that brings no new reading counts for nothing). Every episode gets the pair. Particles only: masks
 filter particles, not gases like CO2/VOC/NOx.
 """
 
 import logging
 from datetime import datetime
 
-from . import confirm, pictures
+from . import pictures, rules
 from .menu import kinds_of
 
 log = logging.getLogger(__name__)
@@ -39,19 +39,19 @@ class ParticulatesMonitor:
         pm10 = (reading.get("pm10") or {}).get("value")
         if pm25 is None and pm10 is None:
             return
-        if when is not None and not confirm.new_reading(m, when.timestamp()):   # the sensor has said nothing new since the last check
+        if when is not None and not rules.new_reading(m, when.timestamp()):   # the sensor has said nothing new since the last check
             return
         # held: the lowest of the last readings (ANTISPIKE_REQUIRE_CONSECUTIVE), so a spike alone can't make the air unhealthy
         high25, high10 = held.get("pm2_5", pm25), held.get("pm10", pm10)
         bad = (high25 is not None and high25 >= MASK_PM25) or (high10 is not None and high10 >= MASK_PM10)
         good = (pm25 is None or pm25 <= SAFE_PM25) and (pm10 is None or pm10 <= SAFE_PM10)
-        confirm.run(m, "above", bad)
-        confirm.run(m, "below", good)
-        if not m["unsafe"] and m["above"] >= confirm.CONFIRM_READINGS:
+        rules.run(m, "above", bad)
+        rules.run(m, "below", good)
+        if not m["unsafe"] and m["above"] >= rules.CONFIRM_READINGS:
             m["unsafe"] = True
             await self.notify("\U0001f637 Unhealthy air outside — wear a P2/N95 mask today. " + self._levels(reading),
                               link=self.air.link, kind="particulates", chart=self._picture)
-        elif m["unsafe"] and m["below"] >= confirm.CONFIRM_READINGS:
+        elif m["unsafe"] and m["below"] >= rules.CONFIRM_READINGS:
             m["unsafe"] = False
             await self.notify("✅ Outdoor air is safe again. " + self._levels(reading), link=self.air.link, kind="particulates",
                               chart=self._picture)
@@ -59,7 +59,7 @@ class ParticulatesMonitor:
 
     async def _picture(self) -> bytes | None:
         """The 1-day particulates chart (what the Particulates button gives), for the alert; None when it cannot be made."""
-        return await pictures.chart(self.air, "Particulates chart 1d", self.air.tz)
+        return await pictures.chart(self.air, pictures.CHARTS["particulates"], self.air.tz)
 
     @staticmethod
     def _levels(reading: dict) -> str:

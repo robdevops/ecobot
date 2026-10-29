@@ -1,28 +1,28 @@
-"""Find, rank and count days by what the station read, from the cache alone (never asks Ecowitt).
+"""Find, rank and count days by what the station read, from the storage alone (never asks Ecowitt).
 
 Questions like "the hottest day it also rained" or "how many days over 35" compare readings on the
-same day across a long period, which the history tool's summaries can't answer. Here each day is
-worked out in code from the best data the cache holds for it:
-  - 5-minute or 30-minute readings, where cached: exact local days (midnight to midnight);
+same day across a long period, which the history tool's summaries can't answer. Each day's figures are
+its day row (lib/storage/days.py), worked out from the best readings held for it:
+  - 5-minute or 30-minute readings, where they hold the whole day: exact local days (midnight to midnight);
   - otherwise the daily buckets, which run 10am to 10am local time, so those days are approximate
     (a morning shower can land on the day before). They are flagged in the answer.
 The exact range grows by itself as the archive keeps more sub-daily data.
 """
 
-import asyncio
 import logging
 import operator
 import re
 from datetime import date, datetime, tzinfo
-from statistics import fmean
 
 from ..daytable import analyse, grouped_as_asked, lists_days, parameters, prepare
 from ..series import WEATHER
-from ..timeutil import day_bounds, day_text, local_date, now_local
+from ..storage import Storage
+from ..storage.catalogue import column_of
+from ..storage.read import Reader
+from ..timeutil import day_text, now_local
 from ..tools import json_result
-from .api import FINE_CYCLES, daily_run
+from .api import daily_run
 from .calendar import PublicHolidays
-from .store import HistoryCache
 
 log = logging.getLogger(__name__)
 
@@ -67,33 +67,42 @@ DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking eve
                "days and the top ones. For a record's value and the time it happened (hottest, coldest, fastest gust), use weather_history instead. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
 
 
-def day_figures(cache: HistoryCache, mac: str, cycle: str, names: list[str], days: set[date], tz: tzinfo, start: int,
-                end: int) -> dict[str, dict[date, float]]:
-    """{reading: {day: its figure}} for each of `days`, from the cached readings between start and end (epochs): the day's highest
-    high, lowest low or mean. Each field is read once, however many readings use it (temp_max, temp_min and temp_avg are one),
-    and folded into days as it is read, one at a time, so a long period of 5-minute readings is not held whole."""
-    readers: dict[tuple[str, str], list[str]] = {}
-    for name in names:
-        readers.setdefault(FIELDS[name][:2], []).append(name)
-    out: dict[str, dict[date, float]] = {}
-    for (group, field), wanted in readers.items():
-        value, high, low = cache.slots(mac, cycle, group, [field, f"{field}_high", f"{field}_low"], start, end)
-        for name in wanted:
-            kind = FIELDS[name][2]
-            points = value if kind == "mean" else {**value, **(high if kind == "high" else low)}   # a slot's own high or low, if it has one
-            figures: dict[date, list[float]] = {}
-            for ts, v in points.items():
-                if (day := local_date(ts, tz)) in days:
-                    got = figures.setdefault(day, [])
-                    if kind == "mean" or not got:
-                        got.append(v)
-                    elif v > got[0] if kind == "high" else v < got[0]:
-                        got[0] = v
-            out[name] = {d: fmean(v) if kind == "mean" else v[0] for d, v in figures.items()}
-    return out
+PARTS = {"high": "hi", "low": "lo", "mean": "mean"}   # a figure's kind -> where a day row (storage.read.Days) keeps it
+COARSER = {"5min": 0, "30min": 1, "1day": 2}
 
 
-def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
+def day_values_on(r: Reader, mac: str, shown: list[str], days) -> tuple[dict[str, dict[date, float]], dict[date, str]]:
+    """({reading: {day: its figure}}, {day: where it came from}) for these days, from the day rows: a day is "5min" or "30min" where every
+    sensor it is asked of has its figures from those (the coarser of them), else "daily" (Ecowitt's daily records: approximate). One
+    query per kind of sensor, on the reader's thread."""
+    days = set(days)
+    values: dict[str, dict[date, float]] = {n: {} for n in shown}
+    if not days:
+        return values, {}
+    places, by_kind = {}, {}
+    for name in shown:
+        group, field, kind, _ = FIELDS[name]
+        sensor, place = r.sensor(mac, group), column_of(group, field)
+        if sensor is not None and place is not None:
+            places[name] = (sensor, place[0], PARTS[kind])
+            by_kind.setdefault(sensor.kind, ({}, set()))[0][sensor.id] = sensor
+            by_kind[sensor.kind][1].add(place[0])
+    rows = {}
+    for kind, (sensors, columns) in by_kind.items():
+        rows.update(r.days(kind, list(sensors), min(days), max(days), sorted(columns)))
+    source: dict[date, str] = {}
+    for name, (sensor, column, part) in places.items():
+        got = rows.get(sensor.id)
+        if got is None or column not in got.mean:
+            continue
+        for d, v, src in zip(got.day, getattr(got, part)[column], got.source):
+            if v is not None and d in days:
+                values[name][d] = v
+                source[d] = max(source.get(d, src), src, key=COARSER.get)
+    return values, {d: "daily" if s == "1day" else s for d, s in source.items()}
+
+
+async def find_days(storage: Storage, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
     asked = prepare(args, FIELD_UNITS, ALWAYS_SHOWN, now.date())
     if isinstance(asked, str):
         return {"error": asked}
@@ -106,31 +115,8 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
     kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
             "public_holiday": lambda d: calendar.name(d) is not None}[only]
     first, last, shown, where, sort_by = asked.first, asked.last, asked.shown, asked.where, asked.sort_by
-    groups = sorted({FIELDS[n][0] for n in shown})
-
-    # which cycle each day is answered from: exact sub-daily data where every needed group has it
     days = asked.days
-    windows = [(cycle, d) for cycle in FINE_CYCLES for d in days]
-    source: dict[date, str] = {}
-    for (cycle, d), gaps in zip(windows, cache.uncovered(mac, groups, [(cycle, *day_bounds(d, tz, True)) for cycle, d in windows])):
-        if d not in source and not any(gaps.values()):
-            source[d] = cycle
-    rest = {d for d in days if d not in source}
-
-    values: dict[str, dict[date, float]] = {n: {} for n in shown}
-    for cycle in FINE_CYCLES:
-        mine = {d for d, c in source.items() if c == cycle}
-        if mine:
-            for n, figures in day_figures(cache, mac, cycle, shown, mine, tz, day_bounds(min(mine), tz, True)[0],
-                                          day_bounds(max(mine), tz, True)[1]).items():
-                values[n].update(figures)
-    if rest:  # daily buckets: labelled with the local date their 10am start falls on
-        for n, figures in day_figures(cache, mac, "1day", shown, rest, tz, day_bounds(min(rest), tz, True)[0] - 86400,
-                                      day_bounds(max(rest), tz, True)[1] + 86400).items():
-            values[n].update(figures)
-        for d in rest:
-            if any(d in values[n] for n in shown):
-                source[d] = "daily"
+    values, source = await storage.read(day_values_on, mac, shown, days)
 
     checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
     got = analyse(values, asked, checked, tz, turn,
@@ -179,7 +165,7 @@ def find_days(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, now: dateti
 HOLIDAY_WORDS = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", re.I)
 
 
-async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=None) -> str:
+async def days_tool(storage: Storage, mac: str, tz: tzinfo, args: dict, turn=None) -> str:
     if args.get("only") and turn is not None and turn.text and not HOLIDAY_WORDS.search(turn.text):
         # the model added a holiday or weekend filter nobody asked for: it would count only those days (and, with holidays,
         # only the years the calendar knows), so it is dropped
@@ -187,5 +173,5 @@ async def days_tool(cache: HistoryCache, mac: str, tz: tzinfo, args: dict, turn=
         args = {k: v for k, v in args.items() if k != "only"}
     args = grouped_as_asked(args, turn)
     now = now_local(tz)
-    result = await asyncio.to_thread(find_days, cache, mac, tz, args, now, turn)
+    result = await find_days(storage, mac, tz, args, now, turn)   # (one read of the day rows; the rest is quick enough to stay here)
     return json_result(result)

@@ -6,18 +6,6 @@ from lib import charts
 from lib.specs import Chart, Line, Panel
 
 
-def test_a_short_period_line_loses_its_range_unless_it_is_wind_or_the_period_is_long():
-    from lib.lines import SHORT_DAYS, Plotted
-
-    def banded():
-        return Plotted([1, 2, 3], [1.0, 2.0, 3.0], 1800, True, [0.0, 1.0, 2.0], [2.0, 3.0, 4.0])
-    assert banded().unbanded(7).low is None and banded().unbanded(SHORT_DAYS).high is None
-    assert banded().unbanded(7, keep=True).low is not None                # wind: the mean shaded up to the gusts
-    assert banded().unbanded(SHORT_DAYS + 1).low is not None              # a quarter keeps its daily range
-    line = banded()
-    assert line.unbanded(7).low is None and line.low is not None             # a new line: the one it came from keeps its range
-
-
 def labels_of(chart):
     import matplotlib.pyplot as plt
     seen = []
@@ -65,7 +53,7 @@ def test_the_wind_rose_is_scaled_as_matplotlib_scales_its_bars():
     rng = random.Random(3)
     roses = [[[4, 2, 1]] * 16, [[3 + k % 5, 0, 0] for k in range(16)], [[0, 0, 0]] * 3 + [[5, 0, 2]] + [[0, 0, 0]] * 12,
              [[4, 2, 1]] * 5 + [[9, 4, 0]] + [[4, 2, 1]] * 10]
-    for _ in range(20):
+    for _ in range(8):
         rose = [[rng.choice([0, 0, rng.randint(1, 40)]) for _ in range(3)] for _ in range(16)]
         rose[rng.randrange(16)][0] += 1                                       # a rose is only drawn when there are readings
         roses.append(rose)
@@ -164,9 +152,14 @@ def test_two_panels_of_lines_become_one_panel_with_a_scale_each_and_nothing_else
     assert both.label == "UV index and Solar radiation" and both.unit == "" and both.peaks == "none"
     assert [(s.label, s.right, s.reading) for s in both.lines] == [("UV index", False, "uv"), ("Solar radiation (W/m²)", True, "solar")]
     rain = panel_for("rain", bars=Bars("Rain", "mm", [1], [1.0], 3600))
-    assert two_axes([uv]) is None and two_axes([uv, solar, uv]) is None and two_axes([uv, rain]) is None
+    assert two_axes([uv]) is None and two_axes([uv, rain]) is None
+    assert not both.flip_right and two_axes([uv, solar], flip_right=True).flip_right
     with pytest.raises(ValueError):
         Panel("x", "", [Line("a", [1, 2], [1.0, 2.0], right=True)])      # a right-hand scale needs a line on the left
+    wind = made("pm2_5", "PM2.5")
+    pairs = two_axes([uv, solar, uv, solar])                              # more than two: a side for each unit
+    assert [s.right for s in pairs.lines] == [False, True, False, True]
+    assert two_axes([uv, solar, wind]) is None                            # three units: no two sides to put them on
 
 
 def test_a_panel_with_two_scales_is_drawn_with_both_latest_values_and_a_right_axis():

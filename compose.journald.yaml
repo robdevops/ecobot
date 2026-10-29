@@ -1,0 +1,4 @@
+services:
+  ecobot:
+    logging: !override
+      driver: journald
