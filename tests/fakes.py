@@ -121,7 +121,7 @@ class FakeEcowitt:
         step = STEP[p["cycle_type"]]
         parse = lambda s: int(datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ).timestamp())
         start, end = parse(p["start_date"]), parse(p["end_date"])
-        first = start - start % step if p["cycle_type"] == "1day" else start  # 1day buckets are UTC days
+        first = start - start % step if p["cycle_type"] == "1day" else start + -start % step  # on the clock; 1day buckets are UTC days
         out: dict = {}
         for group in p["call_back"].split(","):
             named = {"outdoor": [("temperature", temp), ("humidity", humidity), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
