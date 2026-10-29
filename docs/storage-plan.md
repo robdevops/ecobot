@@ -295,42 +295,47 @@ Left to Python on purpose:
 - **Drawing, captions and answers:** from the few hundred rows a query returns, handled as columns (lists of numbers), not a dict per
   reading.
 
-### 3.12 The AirGradient from Home Assistant
+### 3.12 The AirGradient's sources: the monitor, then Home Assistant, then the cloud
 
-`AIRGRADIENT_SOURCE` does for the air monitor what `ECOWITT_SOURCE` does for the station: `auto` (the default) takes its readings from
-Home Assistant when Home Assistant has the monitor (found by its entities' names, as its ranges are now:
-`airgradient.homeassistant.find_prefix`), with AirGradient's cloud as the fallback when its token and location are set; `cloud` is the
-cloud alone; `homeassistant` is Home Assistant alone. Home Assistant's AirGradient integration reads the monitor's own server, as
-`AIRGRADIENT_LOCAL_URL` does, and keeps each change of each entity (10 days unless its recorder is set otherwise), so:
-- **Readings:** each 5 minutes is worked out from Home Assistant's states as the station's are (`hass_history.rollup`: the mean over the
-  time, and the lowest and highest as its band), with `src` Home Assistant. The cloud fills in what Home Assistant lacks (before its 10
-  days, or while it is down) and never replaces it; the bot's own readings of the monitor's server (`AIRGRADIENT_LOCAL_URL`), if that is
-  set, still rank first. A row takes each metric from whichever source has it, by the write rules (3.8), so a metric the cloud has to give
-  (below) sits in the same row as those from Home Assistant.
-- **Minutes:** its states at the end of each minute, `res = '1min'`, kept 10 days, so a chart of a few hours is drawn a reading a minute,
-  as the station's are.
-- **The live reading:** its current states, asked for every few seconds as the station's are; no `.local` name for Docker to look up.
+`AIRGRADIENT_SOURCE` does for the air monitor what `ECOWITT_SOURCE` does for the station. `auto` (the default) uses each source that is
+set, in this order: the monitor's own server (`AIRGRADIENT_LOCAL_URL`), Home Assistant (when it has the monitor, found by its entities'
+names as its ranges are now: `airgradient.homeassistant.find_prefix`), and AirGradient's cloud (its token and location). `local`,
+`homeassistant` or `cloud` is that one alone. Each source fills only what the ones before it lack, which the write rules already do (3.8):
+the bot's own readings rank above Home Assistant's, Home Assistant's above the cloud's, and a lower one only fills a cell a higher one left
+empty, so a row can take its PM2.5 from the bot and a reading the bot lacked from Home Assistant.
+- **The monitor itself.** As now, the bot reads its `/measures/current` every minute while it runs (`SAMPLE_SECONDS`), and each 5 minutes'
+  readings are a row with `src` the bot: their mean, and their lowest and highest as its band. New: each reading is also kept as a minute
+  (`res = '1min'`, 10 days), so a chart of a few hours is drawn a reading a minute, as the station's are. Its latest reading is the live one.
+- **Home Assistant: what the bot did not read.** Its AirGradient integration reads the same server every minute and keeps each change (10
+  days unless its recorder is set otherwise), so it holds the times the bot was down, or the monitor did not answer the bot (a `.local`
+  name Docker cannot look up, say). At start, and every few minutes while the monitor does not answer, the gaps of those 10 days are read
+  back as the station's are (`hass_history.rollup`: each 5 minutes' mean, with its lowest and highest as the band), with `src` Home
+  Assistant, and its states at the end of each minute are the minutes. While the monitor does not answer, its current states are the live
+  reading.
+- **The cloud: what neither has.** The history before Home Assistant's 10 days (the archive, back to the monitor's first reading), the
+  times both were down, and the monitor's name. Its current reading is the live one only when neither answers.
 
-Home Assistant's raw PM2.5 against the cloud's corrected one:
-- **What Home Assistant gives.** Its `sensor.<device>_pm2_5` is the monitor's own corrected PM2.5 (`pm02Compensated` in the monitor's
-  `/measures/current`, firmware 3.1.4 on) where the monitor sends one, else its raw PM2.5 (`pm02`). The raw one has an entity of its own,
-  `sensor.<device>_raw_pm2_5`, off by default. Its temperature and humidity are likewise the corrected ones where the monitor sends them;
-  PM1 and PM10 are as measured (the monitor corrects only PM2.5, temperature and humidity).
-- **What the monitor's correction is.** The one set on the monitor: the AirGradient dashboard's when the monitor is set up there (it takes
-  its configuration from the dashboard), else what was set on the monitor itself (`PUT /config`, `corrections`: `none` by default, or
-  `epa_2021`, or one of AirGradient's calibrations of its PMS5003 sensors). The cloud gives `pm02_corrected`, which the bot keeps now
-  (`metrics.METRICS` takes it first). So Home Assistant's PM2.5 is the cloud's when the monitor takes the dashboard's correction, and the
-  raw one when the monitor is set to none.
-- **The bot checks, it does not guess.** As it does for the ranges now (`airgradient.homeassistant.checked`), each metric's five-minute
-  means from Home Assistant are compared with the cloud's readings of the same five minutes, over the days both hold: within 2 µg/m³ or
-  15%, in four in five of them, is the same reading. A metric that agrees comes from Home Assistant. One that does not (a raw PM2.5 against
-  the cloud's corrected one) keeps coming from the cloud, and the start-up line says so once, with the fix: set the monitor's PM2.5
-  correction to the dashboard's. The check runs again each day on the newest day, so a correction changed on the monitor is followed.
-- **With no cloud to check against** (`homeassistant` alone, or no token), Home Assistant's values are taken as they are, and the
-  start-up line says which correction the monitor applies, from its `/config` when `AIRGRADIENT_LOCAL_URL` is set ("PM2.5: the monitor's
-  EPA 2021 correction", "PM2.5: as measured, no correction").
-- **One variant in the history.** The readings kept from the cloud stay as they are, and a metric is written from Home Assistant only once
-  it has agreed, so no line joins the two variants.
+The PM2.5, and the other readings the monitor corrects:
+- **What each gives.** The monitor's `/measures/current` has its raw PM2.5 (`pm02`) and, from firmware 3.1.4, its corrected one
+  (`pm02Compensated`), corrected as set on the monitor: the AirGradient dashboard's correction when the monitor takes its configuration
+  from there, else its own (`PUT /config`, `corrections`: `none` by default, `epa_2021`, or one of AirGradient's calibrations of its
+  PMS5003 sensors). Home Assistant's `sensor.<device>_pm2_5` is that same corrected one (the raw one is `sensor.<device>_raw_pm2_5`, off by
+  default). Temperature and humidity are likewise the corrected ones where the monitor sends them; PM1 and PM10 are as measured. The
+  cloud gives `pm02_corrected`, corrected as the dashboard says, which the bot keeps now (`metrics.METRICS` takes it first). So the
+  three agree when the monitor takes the dashboard's correction; when the monitor is set to none, it and Home Assistant give the raw PM2.5
+  and the cloud the corrected one.
+- **The bot checks, it does not guess.** As it does for Home Assistant's ranges now (`airgradient.homeassistant.checked`), each metric's
+  five-minute values from a source are compared with those of the source ranked above it, over the time both hold: within 2 µg/m³ or 15%,
+  in four in five of them, is the same reading. While the bot reads the monitor it has little from the cloud to compare, so the cloud is
+  asked once a day for the newest finished day (one request; its rows fill only what the bot lacked).
+- **A metric that disagrees fills no gaps.** It keeps coming from the source ranked first, as the order says, and a lower source does not
+  fill its gaps (they are drawn as gaps), so no line joins two variants over the time the bot reads the monitor. The start-up line says once
+  which metric differs, with the fix: set the monitor's PM2.5 correction to the dashboard's, or have it take its configuration from the
+  dashboard. The history from before stays as it came from the cloud, so a chart across the bot's first days can show the step until the
+  fix. The check runs again each day on the newest day, so a correction changed on the monitor or the dashboard is followed.
+- **With nothing to check against** (one source alone), its values are taken as they are, and the start-up line says which correction the
+  monitor applies, from its `/config` when `AIRGRADIENT_LOCAL_URL` is set ("PM2.5: the monitor's EPA 2021 correction", "PM2.5: as
+  measured, no correction").
 
 ## 4. How each request reads
 
@@ -421,10 +426,11 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    and compares the answers, so any difference is seen and judged.
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
-4. **The AirGradient from Home Assistant** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live reading from Home Assistant with
-   the cloud as the fallback, each metric checked against the cloud before it is taken from Home Assistant; the settings table and the
-   start-up line. After step 3, since it writes the `air` table's rows, minutes and bands by the same rules as the station's, and its
-   readings back to Home Assistant's first state need the archive's code the station uses.
+4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live
+   reading from the monitor itself, Home Assistant filling what the bot did not read and the cloud what neither has, each metric checked
+   against the source ranked above it before it fills a gap; the settings table and the start-up line. After step 3, since it writes the
+   `air` table's rows, minutes and bands by the same rules as the station's, and its readings back to Home Assistant's first state need the
+   archive's code the station uses.
 5. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
    `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
 6. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
