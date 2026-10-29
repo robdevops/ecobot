@@ -86,6 +86,18 @@ def uv_index(ts: int) -> float:
     return 0.0 if hours < 7 or hours > 19 else round(11 * (1 - ((hours - 13) / 6) ** 2), 1)
 
 
+WHOLE = ("humidity", "wind_direction")   # what the station writes as whole numbers ("62", "350"); its UV too when it is whole ("3", "10.5")
+
+
+def written(name: str, value: float) -> str:
+    """A reading as the station writes it: one decimal, but none for the WHOLE readings, nor for a UV index that is whole."""
+    base = name.removesuffix("_low").removesuffix("_high")
+    if base in WHOLE:
+        return f"{value:.0f}"
+    out = f"{value:.1f}"
+    return out[:-2] if base == "uvi" and out.endswith(".0") else out
+
+
 class FakeEcowitt:
     """Handles /device/list, /device/real_time and /device/history like api.ecowitt.net."""
 
@@ -129,10 +141,10 @@ class FakeEcowitt:
             for name, fn in named.get(group, [("temperature", temp)]):
                 for ts in range(first, end + 1, step):
                     samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                    fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = f"{samples[0]:.1f}"
+                    fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, samples[0])
                     if p["cycle_type"] != "5min":
                         for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
-                            fields.setdefault(name + suffix, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = f"{val:.1f}"
+                            fields.setdefault(name + suffix, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, val)
             out[group] = fields
         return out
 
