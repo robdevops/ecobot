@@ -204,9 +204,9 @@ async def test_weekends_and_unknown_places(station):
     out = await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="weekend", limit=10)   # two weekends
     assert out["days_checked"] == 4 and all(r["date"].startswith(("Sat", "Sun")) for r in out["days"])
     assert "error" in await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="bank_holiday")
-    elsewhere = days.find_days(eco.cache, eco.mac, ZoneInfo("Europe/Paris"),
-                               {"start_date": "2026-08-03", "end_date": "2026-08-16", "only": "public_holiday"},
-                               datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None))
+    elsewhere = await days.find_days(eco.storage, eco.mac, ZoneInfo("Europe/Paris"),
+                                     {"start_date": "2026-08-03", "end_date": "2026-08-16", "only": "public_holiday"},
+                                     datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None))
     assert "aren't known for this time zone" in elsewhere["error"]      # says so instead of guessing
 
 

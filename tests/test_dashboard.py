@@ -1,5 +1,5 @@
 import io
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from types import SimpleNamespace as NS
 
 import pytest
@@ -134,22 +134,20 @@ def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
     assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, gauges.CELL_H + 2 * gauges.MARGIN)   # one row
 
 
-async def test_the_days_before_yesterday_are_read_once_a_day_and_yesterday_and_today_every_time(monkeypatch):
+async def test_the_dashboard_reads_the_years_day_rows_in_one_go_and_only_what_its_gauges_show(monkeypatch):
     calls = []
 
-    def day_values(cache, mac, tz, names, days):
+    def day_values_on(r, mac, names, days):
         calls.append((tuple(names), min(days), max(days)))
         return {n: {d: 1.0 for d in days} for n in names}, {}
-    monkeypatch.setattr(dash, "day_values", day_values)
-    memo, live = {}, {"outdoor": {"temperature": reading(12.0)}}
-    for _ in range(3):
-        await dash.dashboard(live, None, "mac", TZ, TODAY, dash.STATUS, memo)
-    settled = [c for c in calls if c[2] < TODAY - timedelta(days=1)]
-    assert len(settled) == 1 and settled[0][1:] == (date(2026, 1, 1), TODAY - timedelta(days=2))            # once
-    assert [c[1:] for c in calls if c not in settled] == [(TODAY - timedelta(days=1), TODAY)] * 3             # every time
-    assert settled[0][0] == ("humidity_max", "humidity_min", "rain", "temp_max", "temp_min")                 # only what the three gauges show
-    await dash.dashboard(live, None, "mac", TZ, TODAY + timedelta(days=1), dash.STATUS, memo)
-    assert len(memo) == 1 and next(iter(memo))[0] == TODAY + timedelta(days=1)                               # a new day: yesterday's are forgotten
+    monkeypatch.setattr(dash, "day_values_on", day_values_on)
+
+    class Storage:
+        async def read(self, fn, *args):
+            return fn(None, *args)
+    sheet = await dash.dashboard({"outdoor": {"temperature": reading(12.0)}}, Storage(), "mac", TODAY, dash.STATUS)
+    assert calls == [(("humidity_max", "humidity_min", "rain", "temp_max", "temp_min"), date(2026, 1, 1), TODAY)]   # one read, the year
+    assert [t.title for t in sheet.tiles] == list(dash.STATUS)
 
 
 def report_bot(alert_state, sheet):
@@ -280,19 +278,26 @@ def test_a_refreshed_report_too_long_for_its_caption_keeps_its_first_sections():
     assert utf16_len(body) <= CAPTION_LIMIT and body.startswith("Weather station\n• 0 ")                    # one long section: its first lines
 
 
-def test_todays_and_the_months_extremes_the_bot_recorded_widen_the_gauges_figures(tmp_path):
-    from lib.ecowitt.live import LiveRanges
-    ranges = LiveRanges(tmp_path / "live.sqlite")
-    today = date(2026, 10, 27)
-    noon = int(datetime(2026, 10, 27, 12, tzinfo=TZ).timestamp()) // 300 * 300
-    earlier = int(datetime(2026, 10, 9, 12, tzinfo=TZ).timestamp()) // 300 * 300
-    ranges.put({"outdoor.temperature": {noon: (4, 14.0, 21.5), earlier: (4, 3.5, 30.0)}})
-    seen = dash.live_extremes(ranges, dash.gauges_of(("Temperature", "Rain")), TZ, today)
-    assert seen == {"outdoor.temperature": {"Daily": (14.0, 21.5), "Monthly": (3.5, 30.0)}}              # nothing recorded of the rain: it is not a range
+async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes_in_the_month(tmp_path):
+    """Between its 5-minute readings the bot (and Home Assistant) saw lower and higher: the day rows take those bands in, so the gauges'
+    Daily and Monthly highs and lows do, and the year's."""
+    from lib.storage import Storage
+    from lib.timeutil import day_bounds
+    from tests.fakes import MAC
+    storage = Storage(tmp_path / "ecobot.sqlite", TZ)
+    earlier = date(2026, 10, 9)
+
+    def day(w, d, low, high, band):
+        start, end = day_bounds(d, TZ, True)
+        sensor = w.ecowitt_sensor(MAC, "outdoor")
+        w.put(sensor, "5min", [{"ts": t, "temperature": low if t < start + 43200 else high} for t in range(start, end, 300)])
+        w.cover(sensor, "5min", start, end)
+        w.put_ranges(MAC, {"outdoor.temperature": {start + 43200: (4, *band)}})
+    storage.writer.run(lambda w: (day(w, earlier, 5.0, 28.0, (3.5, 30.0)), day(w, TODAY, 15.0, 20.0, (14.0, 21.5))), ())
     live = {"outdoor": {"temperature": reading(18.0)}}
-    values = {"temp_max": {date(2026, 10, 9): 28.0, today: 20.0}, "temp_min": {date(2026, 10, 9): 5.0, today: 15.0}}
-    tile = dash.sheet(live, values, today, ("Temperature",), seen).tiles[0]
-    assert tile.rows == {"Daily": (21.5, 14.0), "Monthly": (30.0, 3.5), "Yearly": (30.0, 3.5)}           # the recorded extremes beat the cache's; the year takes in the month
-    plain = dash.sheet(live, values, today, ("Temperature",)).tiles[0]
-    assert plain.rows == {"Daily": (20.0, 15.0), "Monthly": (28.0, 5.0), "Yearly": (28.0, 5.0)}   # without them, the cache alone
-    ranges.close()
+    tile = (await dash.dashboard(live, storage, MAC, TODAY, ("Temperature",))).tiles[0]
+    assert tile.rows == {"Daily": (21.5, 14.0), "Monthly": (30.0, 3.5), "Yearly": (30.0, 3.5)}
+    values = {"temp_max": {earlier: 28.0, TODAY: 20.0}, "temp_min": {earlier: 5.0, TODAY: 15.0}}
+    plain = dash.sheet(live, values, TODAY, ("Temperature",)).tiles[0]
+    assert plain.rows == {"Daily": (20.0, 15.0), "Monthly": (28.0, 5.0), "Yearly": (28.0, 5.0)}   # the readings alone
+    storage.close()

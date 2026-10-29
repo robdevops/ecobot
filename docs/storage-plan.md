@@ -432,7 +432,8 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    migrates at start. While this is built, a temporary test runs the same questions on the same fixture through the old code and the new
    and compares the answers, so any difference is seen and judged (`tests/test_old_against_new.py`: the old code is taken from git).
    In progress: the station writes and reads `ecobot.sqlite` (moved in at start), the readers not moved yet reading it through
-   `ecowitt/stored.py` as they read the old cache; next, the day rows for `weather_days` and the dashboard, then `HistoryQuery`.
+   `ecowitt/stored.py` as they read the old cache. `weather_days` and the dashboard read the day rows (one read each; the dashboard's
+   Daily row is today's day row, its readings so far with their bands). Next, `HistoryQuery`.
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live

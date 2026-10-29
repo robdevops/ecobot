@@ -1,6 +1,6 @@
 """TEMPORARY, while step 2 of docs/storage-plan.md moves the station's readers to the new storage one at a time: what they asked of the old
 history cache (HistoryCache's reads, in its shapes: Ecowitt's {group: {field: {"unit", "list": {epoch: text}}}} and {epoch: float}), and of
-the minutes and the live readings' ranges, answered from the new storage. A reading is written back as the station writes it (the
+the minutes, answered from the new storage. A reading is written back as the station writes it (the
 catalogue's decimals); a value that is not a number (kept in `extra`) is not read, as no answer could use one. A band is read where its
 reading is. What is held (the coverage) is in memory; a read of readings waits for the reader's thread (Storage.read_now), as the readers
 called the cache from threads of their own.
@@ -11,7 +11,7 @@ from bisect import bisect_left
 from ..storage import Storage
 from ..storage.catalogue import AIR, BY_NAME, KINDS, SLOT, column_of, field_of, text
 from ..storage.read import Reader
-from ..storage.schema import q, some_value
+from ..storage.schema import some_value
 
 SLACK_SECONDS = 300   # the first minute held may be this much after a chart's start (minutes.SLACK_SECONDS)
 PARTS = (("", "values"), ("_low", "lo"), ("_high", "hi"))   # a field's own name and its low and high, and where Rows keeps them
@@ -82,18 +82,6 @@ def newest_minute_on(r: Reader, mac: str) -> int | None:
     return max((t for t in found if t is not None), default=None)
 
 
-def extremes_on(r: Reader, mac: str, series: str, start: int, end: int) -> tuple[float, float] | None:
-    """LiveRanges.extremes: (lowest, highest) of the bands of a reading's 5 minutes in [start, end]; None when it has none."""
-    group, field = series.split(".", 1)
-    sensor, place = r.sensor(mac, group), column_of(group, field)
-    if sensor is None or sensor.kind not in KINDS or place is None or place[1] != "value":
-        return None
-    lo, hi = q(place[0] + "_lo"), q(place[0] + "_hi")
-    found = r.db.execute(f"SELECT MIN({lo}), MAX({hi}) FROM {sensor.kind} WHERE sensor = ? AND res = '5min' AND ts BETWEEN ? AND ? "
-                         f"AND {q(place[0])} IS NOT NULL AND {lo} IS NOT NULL", (sensor.id, start, end)).fetchone()
-    return None if found[0] is None else found
-
-
 class StoredHistory:
     """HistoryCache's reads, from the new storage."""
 
@@ -152,14 +140,4 @@ class StoredHistory:
         return lows, highs
 
 
-class StoredBands:
-    """LiveRanges.extremes, for the dashboard: the bands the bot and Home Assistant saw in the station's 5 minutes."""
-
-    def __init__(self, storage: Storage, mac: str):
-        self.storage, self.mac = storage, mac
-
-    def extremes(self, series: str, start: int, end: int) -> tuple[float, float] | None:
-        return self.storage.read_now(extremes_on, self.mac, series, start, end)
-
-
-__all__ = ["StoredBands", "StoredHistory", "load_on", "minutes_on", "newest_minute_on"]
+__all__ = ["StoredHistory", "load_on", "minutes_on", "newest_minute_on"]

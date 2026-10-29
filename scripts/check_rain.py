@@ -21,9 +21,8 @@ from pathlib import Path
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 from lib.config import data_dir, local_tz  # noqa: E402
 
-from lib.ecowitt import days as day_tool  # noqa: E402
 from lib.ecowitt.api import UNITS  # noqa: E402
-from lib.timeutil import day_bounds  # noqa: E402
+from lib.timeutil import day_bounds, local_date  # noqa: E402
 from lib.ecowitt.store import HistoryCache, subtract  # noqa: E402
 
 TOLERANCE = 0.05  # mm: equal within this
@@ -41,13 +40,19 @@ def fields_held(cache: HistoryCache, mac: str) -> dict[str, list[str]]:
 
 
 def totals(cache: HistoryCache, mac: str, tz, cycle: str, days: list) -> dict:
-    """{day: rain total} the way weather_days works it out at this resolution."""
+    """{day: rain total} the way weather_days worked it out at this resolution: the day's highest reading of its rain counter (a reading's
+    own high where it has one; a daily record counts for the local day its start falls on)."""
     if not days:
         return {}
     lo, hi = day_bounds(min(days), tz, True)[0], day_bounds(max(days), tz, True)[1]
     if cycle == "1day":
         lo, hi = lo - 86400, hi + 86400
-    return day_tool.day_figures(cache, mac, cycle, ["rain"], set(days), tz, lo, hi)["rain"]
+    value, high = cache.slots(mac, cycle, "rainfall", ["daily", "daily_high"], lo, hi)
+    wanted, out = set(days), {}
+    for ts, v in {**value, **high}.items():
+        if (day := local_date(ts, tz)) in wanted:
+            out[day] = max(out.get(day, v), v)
+    return out
 
 
 def compare_rain(cache: HistoryCache, mac: str, tz, today, days_back: int = 88) -> dict:

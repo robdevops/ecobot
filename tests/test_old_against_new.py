@@ -36,8 +36,9 @@ BANDS = ("a 5-minute reading's band now takes in both of Home Assistant's ranges
          "up to a step wider (0.1 °C, 1 %), all of them readings Home Assistant had")
 LINE_ORDER = ("a chart of minutes has its lines in the groups' order, as every other chart has (the old minute store gave them "
               "alphabetically, indoor first)")
-DASHBOARD = ("the dashboard's day figures take in the bands of the day's 5-minute readings, Home Assistant's own lowest and highest of each "
-             "too: here the 25 km/h the wind still read at midnight")
+DASHBOARD = ("the dashboard's Daily row is today's day row: its readings so far, with the bands the bot and Home Assistant saw between them "
+             "(the old dashboard took today from the live reading and the bot's own ranges only: the fake station's one live temperature; "
+             "on Home Assistant the 25 km/h the wind still read at midnight)")
 LOWS_HIGHS = r"\[\d+\]\[1\]\.\w+\.\w+_(low|high): "   # a reading's low or high in the alerts' readings (the alerts read only the values)
 JUDGED: dict[str, list[tuple[str, str]]] = {
     "weather all week": [(r"\.result\.series\.wind\.", REFINING)],
@@ -46,7 +47,7 @@ JUDGED: dict[str, list[tuple[str, str]]] = {
     "temperature last 6 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER)],
     "temperature chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
     "humidity chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
-    "dashboard": [(r"\.tiles\[5\]\.rows\.Daily:", DASHBOARD)],
+    "dashboard": [(r"\.tiles\[\d+\]\.rows\.Daily:", DASHBOARD)],
     "alerts, the last 3 hours": [(LOWS_HIGHS, BANDS)],
     "alerts, the last week at 30 minutes": [(LOWS_HIGHS, BANDS)],
 }

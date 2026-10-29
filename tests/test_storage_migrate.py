@@ -1,17 +1,20 @@
 """Moving the old files into ecobot.sqlite (lib/storage/migrate.py): old-format files built here by the old stores themselves, and the fake
-station's whole archive, whose every day must come out as ecowitt.days.day_values works it out from the old cache."""
+station's whole archive, whose every day must come out as ecowitt.days.day_values worked it out from the old cache before the day
+rows (kept here as the reference)."""
 
 import shutil
 import sys
 import time
-from datetime import timedelta
+from datetime import date, timedelta, tzinfo
+from statistics import fmean
 from pathlib import Path
 
 import pytest
 
 from lib.airgradient.store import AirStore
 from lib.ecowitt.api import UNITS
-from lib.ecowitt.days import day_values
+from lib.ecowitt.api import FINE_CYCLES
+from lib.ecowitt.days import FIELDS
 from lib.ecowitt.live import LiveRanges
 from lib.ecowitt.minutes import MinuteStore
 from lib.ecowitt.store import HistoryCache
@@ -137,6 +140,61 @@ def test_without_room_on_the_disk_nothing_is_moved_and_a_run_cut_short_is_starte
 
 def test_with_no_old_files_there_is_nothing_to_move(tmp_path):
     assert migration.migrate(tmp_path, TZ).skipped == "no old files to move"
+
+
+# ---------- each day as the old code worked it out, from the old cache: what the day rows are checked against ----------
+def day_figures(cache: HistoryCache, mac: str, cycle: str, names: list[str], days: set[date], tz: tzinfo, start: int,
+                end: int) -> dict[str, dict[date, float]]:
+    """{reading: {day: its figure}} for each of `days`, from the cached readings between start and end (epochs): the day's highest
+    high, lowest low or mean. Each field is read once, however many readings use it (temp_max, temp_min and temp_avg are one),
+    and folded into days as it is read, one at a time, so a long period of 5-minute readings is not held whole."""
+    readers: dict[tuple[str, str], list[str]] = {}
+    for name in names:
+        readers.setdefault(FIELDS[name][:2], []).append(name)
+    out: dict[str, dict[date, float]] = {}
+    for (group, field), wanted in readers.items():
+        value, high, low = cache.slots(mac, cycle, group, [field, f"{field}_high", f"{field}_low"], start, end)
+        for name in wanted:
+            kind = FIELDS[name][2]
+            points = value if kind == "mean" else {**value, **(high if kind == "high" else low)}   # a slot's own high or low, if it has one
+            figures: dict[date, list[float]] = {}
+            for ts, v in points.items():
+                if (day := local_date(ts, tz)) in days:
+                    got = figures.setdefault(day, [])
+                    if kind == "mean" or not got:
+                        got.append(v)
+                    elif v > got[0] if kind == "high" else v < got[0]:
+                        got[0] = v
+            out[name] = {d: fmean(v) if kind == "mean" else v[0] for d, v in figures.items()}
+    return out
+
+
+def day_values(cache: HistoryCache, mac: str, tz: tzinfo, shown: list[str], days) -> tuple[dict[str, dict[date, float]], dict[date, str]]:
+    """({reading: {day: its figure}}, {day: where it came from}) for these days, each from the best data the cache holds: exact days
+    from the 5- or 30-minute readings where every group needed has them, else the daily buckets (source "daily": approximate)."""
+    groups = sorted({FIELDS[n][0] for n in shown})
+    windows = [(cycle, d) for cycle in FINE_CYCLES for d in days]
+    source: dict[date, str] = {}
+    for (cycle, d), gaps in zip(windows, cache.uncovered(mac, groups, [(cycle, *day_bounds(d, tz, True)) for cycle, d in windows])):
+        if d not in source and not any(gaps.values()):
+            source[d] = cycle
+    rest = {d for d in days if d not in source}
+
+    values: dict[str, dict[date, float]] = {n: {} for n in shown}
+    for cycle in FINE_CYCLES:
+        mine = {d for d, c in source.items() if c == cycle}
+        if mine:
+            for n, figures in day_figures(cache, mac, cycle, shown, mine, tz, day_bounds(min(mine), tz, True)[0],
+                                          day_bounds(max(mine), tz, True)[1]).items():
+                values[n].update(figures)
+    if rest:  # daily buckets: labelled with the local date their 10am start falls on
+        for n, figures in day_figures(cache, mac, "1day", shown, rest, tz, day_bounds(min(rest), tz, True)[0] - 86400,
+                                      day_bounds(max(rest), tz, True)[1] + 86400).items():
+            values[n].update(figures)
+        for d in rest:
+            if any(d in values[n] for n in shown):
+                source[d] = "daily"
+    return values, source
 
 
 def test_every_day_of_the_archive_comes_out_as_day_values_works_it_out(tmp_path, old_archived_cache):

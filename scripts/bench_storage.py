@@ -157,8 +157,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
                  ("The alerts' last 3 hours", lambda: eco.recent(3))]
         for label, run in work:
             rows.append((label, *await measured(run, repeat, lambda: eco.api.asked)))
-        for label, before in (("/dashboard, first time in a day", eco._days_memo.clear), ("/dashboard, Refresh", None)):
-            rows.append((label, *await measured(eco.dashboard, repeat, lambda: eco.api.asked, before)))
+        rows.append(("/dashboard", *await measured(eco.dashboard, repeat, lambda: eco.api.asked)))
         await eco.close()
     if (folder / "airgradient_cache.sqlite").exists() and cfg.airgradient_location:
         asked = [0]

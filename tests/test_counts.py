@@ -56,7 +56,7 @@ async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_
     from tests.fakes import TZ
     rows = await bench_storage.bench(copy, 1, TZ)
     labels = [r[0] for r in rows]
-    assert "Temperature chart, 1Y" in labels and "/dashboard, first time in a day" in labels and len(rows) >= 12
+    assert "Temperature chart, 1Y" in labels and "/dashboard" in labels and len(rows) >= 12
     assert all(r[2].sql > 0 for r in rows if not r[0].startswith("weather_link")) and all(r[3] <= 1 for r in rows)
     assert (data / "ecowitt_cache.sqlite").read_bytes() == before                       # the bot's own file is never written
 

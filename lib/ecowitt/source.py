@@ -32,7 +32,7 @@ from ..series import READING_GROUPS, WEATHER, find
 from ..storage import Storage
 from ..storage.migrate import open_storage
 from .query import HistoryQuery, chart_field, stack_names
-from .stored import StoredBands, StoredHistory, newest_minute_on
+from .stored import StoredHistory, newest_minute_on
 
 log = logging.getLogger(__name__)
 
@@ -176,7 +176,6 @@ class Ecowitt(Source):
         self.fast = home                     # the API that can be asked every few seconds, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
         self._ha_ok: bool | None = None
-        self._days_memo: dict = {}   # the dashboard's figures for the days before yesterday, kept for the day (they no longer change)
         self.live_marks = LiveMarks()   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
@@ -262,7 +261,7 @@ class Ecowitt(Source):
         return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
 
     async def _days(self, args: dict, turn: Turn | None = None) -> str:
-        return await days_tool(self.cache, self.mac, self.tz, args, turn)
+        return await days_tool(self.storage, self.mac, self.tz, args, turn)
 
     async def _link(self, args: dict, turn: Turn | None = None) -> str:
         return await link_tool(self.cache, self.mac, self.tz, args, turn or Turn())
@@ -328,8 +327,7 @@ class Ecowitt(Source):
     async def dashboard(self, titles=None):
         """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
         lows today, this month and this year; None when the station has no reading."""
-        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo,
-                               StoredBands(self.storage, self.mac))
+        return await dashboard(await self._live_data(LIVE_GROUPS), self.storage, self.mac, self.now().date(), titles)
 
     async def watch_live(self):
         """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather

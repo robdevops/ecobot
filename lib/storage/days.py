@@ -1,10 +1,10 @@
 """Each sensor's local days, worked out once from its readings and kept as day rows (`<kind>_day`), so the dashboard, `weather_days`, a
 period's records and a long chart read a few hundred day rows instead of every reading.
 
-A day's figures come from the finest readings that hold the whole local day, as `ecowitt.days.day_values` chooses them: the 5-minute ones
-where the day is covered at 5 minutes, else the 30-minute ones, else Ecowitt's daily record (10am to 10am in Melbourne, labelled with the
-local date its start falls on: approximate). A day none of those hold (today, the edge of what was fetched) is worked out from what there
-is, marked incomplete. Each reading's figures:
+A day's figures come from the finest readings that hold the whole local day, as `ecowitt.days.day_values` chose them: the 5-minute ones
+where the day is covered at 5 minutes, else the 30-minute ones, else Ecowitt's daily record once it is final (10am to 10am in Melbourne,
+labelled with the local date its start falls on: approximate). A day none of those hold (today, the edge of what was fetched) is worked
+out from what there is (the newest readings, still settling, too), marked incomplete. Each reading's figures:
   - its mean: of each half hour's mean, so a stretch with readings missing counts for its time, not its readings (as lines._summarise);
   - its lowest and highest: of each reading's own range where it has one (Ecowitt's lows and highs, the bands of the bot's and Home
     Assistant's readings), else of its value; and when they first happened.
@@ -45,7 +45,8 @@ def _with(kind: str) -> str:
                       f"MIN(CASE WHEN {q(c + '~l')} = {q(c + '~dl')} THEN ts END) AS {q(c + '~lt')}, MAX({q(c + '~dh')}) AS {q(c + '~hi')}, "
                       f"MIN(CASE WHEN {q(c + '~h')} = {q(c + '~dh')} THEN ts END) AS {q(c + '~ht')}" for c in names)
     return (f"WITH src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, {columns} FROM temp.want w JOIN {kind} r "
-            f'ON r.sensor = w.sensor AND r.res = w.res AND r.ts BETWEEN w."start" AND w."end" WHERE {some}), '
+            f'ON r.sensor = w.sensor AND r.res = w.res AND r.ts BETWEEN w."start" AND w."end" '
+            f"WHERE {some} AND (r.final OR w.res IN ('1min', '5min', '30min'))), "   # (a daily record, or its 4 hours, once final)
             f"marked AS (SELECT *, {window} FROM src WINDOW whole AS (PARTITION BY sensor, day)), "
             f"slots AS (SELECT sensor, day, slot, COUNT(*) AS n, {slots} FROM marked GROUP BY sensor, day, slot) ")
 
