@@ -400,7 +400,7 @@ def test_only_a_chat_message_is_cut_to_the_log_width_and_it_is_put_on_one_line()
         assert fmt.format(record) == f"{name} " + timings and record.levelname == logging.getLevelName(level)
     fmt.width = 0
     assert line("[@rob] %s", asked) == "[@rob] " + asked                           # 0 keeps the whole message
-    assert LogFormat("%(message)s").width == 48                                     # and the default is 48
+    assert LogFormat("%(message)s").width == 24                                     # and the default is 24
 
 
 def test_a_traceback_is_logged_whole_after_its_message():
