@@ -168,7 +168,7 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
         # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
         # need Ecowitt inline
         tasks.start(Archive(eco, eco.archive_pace).loop())
-        if eco.ha:   # the readings Home Assistant kept: the charts' 5-minute ranges, for the days the bot was not watching too
+        if eco.ranges_from_ha:   # the cloud's readings get their 5-minute bands from what Home Assistant kept, the days the bot was not watching too
             tasks.start(every(HA_IMPORT_SECONDS, eco.import_ranges))
 
     async def air_part():

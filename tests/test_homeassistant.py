@@ -3,6 +3,7 @@ from datetime import datetime, UTC
 import httpx
 import pytest
 
+from lib.ecowitt import Ecowitt
 from lib.ecowitt.live import BUCKET
 from lib.ecowitt.homeassistant import HomeAssistant, ranges_of, states_of
 from tests.fakes import archived_station, bands_of, config
@@ -80,7 +81,7 @@ async def test_the_station_folds_home_assistants_readings_into_its_ranges_and_lo
     await eco.import_ranges()
     marks = bands_of(eco.storage, eco.mac, "outdoor.temperature", int(t0), int(now))
     assert len(marks) > 15 and any(lo < hi for lo, hi in marks.values())      # (a stretch where it did not change has no width)
-    assert "Backfill Home Assistant (Ecowitt): " in caplog.text
+    assert "Home Assistant (Ecowitt): " in caplog.text and eco.ranges_from_ha
 
     def down(request):
         raise httpx.ConnectError("no route")
@@ -96,3 +97,14 @@ def test_home_assistant_is_on_only_with_its_address_and_its_token(tmp_path):
     assert not config(tmp_path).homeassistant
     assert not config(tmp_path, homeassistant_url="http://ha").homeassistant
     assert config(tmp_path, homeassistant_url="http://ha", homeassistant_token="t").homeassistant
+
+
+async def test_with_home_assistant_as_the_stations_source_nothing_is_read_back_for_the_bands(tmp_path):
+    from tests.fakes import home_assistant_transport
+    transport, home = home_assistant_transport()
+    eco = Ecowitt(config(tmp_path, ecowitt_api_key="", ecowitt_app_key="", homeassistant_url="http://ha", homeassistant_token="tok"), None, transport)
+    assert eco.ha is not None and not eco.ranges_from_ha                      # its history carries the bands with the readings
+    before = len(home.calls) if hasattr(home, "calls") else None
+    assert await eco.import_ranges() is None
+    assert before is None or len(home.calls) == before                           # (nothing was asked)
+    await eco.close()

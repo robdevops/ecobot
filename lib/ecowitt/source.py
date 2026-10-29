@@ -150,7 +150,7 @@ class Ecowitt(Source):
         self.via = "Home Assistant, cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
         self.has_minutes = home is not None   # (only Home Assistant has minutes)
         self.fast = home                     # the API that can be asked every few seconds, if any
-        self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
+        self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # (shared with the air sensor)
         self._ha_ok: bool | None = None
         self.live_marks = LiveMarks()   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
@@ -271,10 +271,16 @@ class Ecowitt(Source):
         await self._record_live(data)
         return data
 
+    @property
+    def ranges_from_ha(self) -> bool:
+        """Are the charts' 5-minute bands read back from Home Assistant's history (import_ranges)? Only when the station's readings come
+        from the cloud and Home Assistant is set: as the station's source, Home Assistant's history carries the bands with the readings."""
+        return self.ha is not None and self.fast is None
+
     async def import_ranges(self):
         """Fold Home Assistant's readings into the 5-minute ranges: the last RANGE_KEEP_DAYS days the first time, then the last few hours.
-        Nothing when no Home Assistant is set. A failure is logged once, then again when it recovers; the next try is a while off."""
-        if self.ha is None:
+        Nothing unless ranges_from_ha. A failure is logged once, then again when it recovers; the next try is a while off."""
+        if not self.ranges_from_ha:
             return
         first, started = self._ha_ok is None, time.monotonic()
         try:
@@ -287,7 +293,7 @@ class Ecowitt(Source):
             return
         self.ha.trouble.ok()
         if first or not self._ha_ok:
-            log.info("Backfill Home Assistant (Ecowitt): %d ranges fetched, 0 failed, %d readings, %.0fs", marks, len(found), time.monotonic() - started)
+            log.info("Home Assistant (Ecowitt): %d five-minute bands widened across %d series, %.0fs", marks, len(found), time.monotonic() - started)
         self._ha_ok = True
 
     async def _record_live(self, data: dict):

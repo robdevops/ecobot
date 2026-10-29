@@ -276,8 +276,8 @@ class AirGradient(Source):
                             "value), so it fills no gaps and its ranges aren't used: %s", LABELS.get(name) or EXTRA_LABELS.get(name, name),
                             agreed, compared, FIX.get(name, "check the correction each applies"))
         if first or not self._ha_ok:
-            log.info("Backfill Home Assistant (AirGradient): %d ranges fetched, 0 failed, %d readings, %d filled, %d minutes, %.0fs", added,
-                     len(keep), filled, kept, time.monotonic() - started)
+            log.info("Home Assistant (AirGradient): %d five-minute bands widened, %d five minutes filled, %d minutes kept, %.0fs", added, filled,
+                     kept, time.monotonic() - started)
         self._ha_ok = True
 
     def _allowed(self, row: dict, src: int) -> dict:
