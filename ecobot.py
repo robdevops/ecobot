@@ -176,11 +176,14 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
         tasks.start(air_history())   # even if the sensor was unreachable just now
 
     async def air_history():
-        """The days the cache lacks, then the ranges Home Assistant kept, every HA_IMPORT_SECONDS (they need the readings they belong to)."""
+        """What Home Assistant kept of the monitor (the readings the bot lacks, their bands, the minutes), then the days the cache lacks, then
+        Home Assistant again every HA_IMPORT_SECONDS."""
+        if air.ha:   # (first: it is quick, and holds the last days; the backfill can take minutes the first time)
+            await safely(air.import_history)
         if air.cloud:
             await safely(air_backfill)
         if air.ha:
-            await every(HA_IMPORT_SECONDS, air.import_ranges)
+            await every(HA_IMPORT_SECONDS, air.import_history)
 
     async def air_backfill():
         started = time.monotonic()

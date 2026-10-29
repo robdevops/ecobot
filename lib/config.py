@@ -66,15 +66,26 @@ def _url(value: str, default: str, name: str) -> str:
 
 
 SOURCES = ("auto", "cloud", "homeassistant")
+AIR_SOURCES = ("auto", "local", "homeassistant", "cloud")
 
 
 def _source(value: str, default: str, name: str) -> str:
     """Where the weather station's readings come from: auto (Home Assistant when it is set, Ecowitt's cloud as its fallback when that is set
     too, else whichever is), cloud, or homeassistant; another value keeps the default, with a warning."""
-    if value.lower() in SOURCES:
+    return _one_of(SOURCES, value, default, name)
+
+
+def _air_source(value: str, default: str, name: str) -> str:
+    """Where the air monitor's readings come from: auto (each source that is set, the monitor itself first, then Home Assistant, then
+    AirGradient's cloud), or one of local, homeassistant, cloud alone; another value keeps the default, with a warning."""
+    return _one_of(AIR_SOURCES, value, default, name)
+
+
+def _one_of(choices: tuple[str, ...], value: str, default: str, name: str) -> str:
+    if value.lower() in choices:
         return value.lower()
     if value:
-        log.warning("%s: %r is not %s; keeping %s", name, value, ", ".join(SOURCES), default)
+        log.warning("%s: %r is not %s; keeping %s", name, value, ", ".join(choices), default)
     return default
 
 
@@ -189,6 +200,7 @@ class Config:
     airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
     airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
     airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
+    airgradient_source: str = _setting("AIRGRADIENT_SOURCE", "auto", _air_source)   # auto: the monitor itself, then Home Assistant, then the cloud, each that is set; or one alone
     homeassistant_url: str = _setting("HOMEASSISTANT_URL", "", _url)       # Home Assistant, where the station's readings are read from (its Ecowitt integration), e.g. http://192.168.1.219:8123
     homeassistant_token: str = _setting("HOMEASSISTANT_TOKEN", "")         # a long-lived access token (your profile page in Home Assistant)
     ecowitt_source: str = _setting("ECOWITT_SOURCE", "auto", _source)      # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
@@ -244,12 +256,23 @@ class Config:
 
     @property
     def airgradient_cloud(self) -> bool:
-        return bool(self.airgradient_token and self.airgradient_location)
+        """The air monitor's readings are asked of AirGradient's cloud (its token and location are set, and AIRGRADIENT_SOURCE allows)."""
+        return bool(self.airgradient_token and self.airgradient_location) and self.airgradient_source in ("auto", "cloud")
+
+    @property
+    def airgradient_local(self) -> bool:
+        """... of the monitor itself (its address is set, and AIRGRADIENT_SOURCE allows)."""
+        return bool(self.airgradient_local_url) and self.airgradient_source in ("auto", "local")
+
+    @property
+    def airgradient_homeassistant(self) -> bool:
+        """... of Home Assistant (it is set, and AIRGRADIENT_SOURCE allows; whether it has the monitor is found at start)."""
+        return self.homeassistant and self.airgradient_source in ("auto", "homeassistant")
 
     @property
     def airgradient(self) -> bool:
-        """AirGradient is on with its cloud account, or with only the sensor's own server (then nothing is ever asked of the cloud)."""
-        return self.airgradient_cloud or bool(self.airgradient_local_url)
+        """AirGradient is on with any of its sources: the monitor's own server, Home Assistant, or its cloud account."""
+        return self.airgradient_cloud or self.airgradient_local or self.airgradient_homeassistant
 
     @classmethod
     def from_env(cls) -> "Config":

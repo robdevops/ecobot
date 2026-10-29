@@ -123,5 +123,19 @@ class LocalSensor:
         self.working = True
         return row
 
+    async def config(self) -> dict | None:
+        """The monitor's own settings (GET /config: how it corrects its PM2.5, whether it takes its configuration from the dashboard ...);
+        None when it does not answer or the reply is not that. Never raises."""
+        try:
+            ip = await self._address()
+            host = f"[{ip}]" if ":" in ip else ip
+            res = await self.client.get(f"http://{host}{':' + str(self.port) if self.port else ''}/config", headers={"Host": self.host})
+            res.raise_for_status()
+            data = res.json()
+            return data if isinstance(data, dict) and "corrections" in data else None
+        except Exception as e:
+            log.debug("AirGradient: (%s) did not give its configuration (%s: %s)", self.describe(), type(e).__name__, e)
+            return None
+
     async def close(self):
         await self.client.aclose()

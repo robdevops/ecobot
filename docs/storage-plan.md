@@ -501,6 +501,23 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    against the source ranked above it before it fills a gap; the settings table and the start-up line. After step 3, since it writes the
    `air` table's rows, minutes and bands by the same rules as the station's, and its readings back to Home Assistant's first state need the
    archive's code the station uses.
+   *Done.* `Config.airgradient_local/homeassistant/cloud` are the setting's modes over what is set. `AirGradient._sample` is the live
+   reading, the monitor's own server first, else Home Assistant's states of it (`homeassistant.live`), and `_record` keeps each sample as
+   a minute (`AirReadings.add_minutes`, `src` the sampler's) and in the bucket being averaged (its row's `src` likewise), so Home
+   Assistant stands in for the monitor minute by minute, with the same bands. `import_history` (was `import_ranges`) reads Home
+   Assistant's history back and writes the five minutes the bot has none of its own for (`homeassistant.gaps`: the mean with its lowest and
+   highest, `src` Home Assistant, in place of the cloud's by the write rule), widens the bot's own buckets' bands as before, and takes
+   the last 9 hours' minutes (`homeassistant.minutes`: the state at the end of each). The checks: `homeassistant.verdicts` compares a
+   source's five-minute values with the readings held from the sources ranked above it (Home Assistant's with the bot's own, the cloud's
+   with both), and a verdict is kept per source and metric once 12 five minutes were compared; `_allowed` strips a differing metric from
+   what the source fills (its live samples, its gap rows, its minutes) and `_judge` says once when a metric starts, or stops, differing,
+   with the fix. The cloud is asked for the whole of a finished day the bot holds its own readings of (`_complete_day`, one request as
+   before): the day's check, and its rows fill only the cells the bot lacked (the upsert keeps a higher source's cell; `_missing` is now
+   per metric, so a bucket Home Assistant gave two metrics of is still asked of the cloud for the rest). A chart of up to 8 hours is
+   drawn from the minutes where they reach back to its start (`AirReadings.load_minutes`, `rows()`), the 5-minute rows filling the
+   buckets that have none. With the monitor alone the start-up line says its PM2.5 correction, from its `/config`. Not done: the
+   air charts' lines are still loaded whole and the glitches filtered in Python (3.11), and Home Assistant's history is not read more
+   often while the monitor does not answer, since its states are sampled every minute meanwhile.
 5. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
    `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
    And a look for dead code left from when the period buttons' charts stopped being drawn ahead on a timer (`92d71df`): what only that

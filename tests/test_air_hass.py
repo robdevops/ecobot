@@ -57,14 +57,14 @@ class FakeHA:
 
     def __init__(self, voc=True):
         self.voc, self.calls, self.off = voc, [], False
+        self.live = lambda: [state(PREFIX + "voc_index", 100), state(PREFIX + "pm2_5", 24, "µg/m³")]   # its states now
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request.url.path)
         if self.off:
             return httpx.Response(503)
         if request.url.path == "/api/states":
-            return httpx.Response(200, json=[state(PREFIX + "voc_index", 100), state(PREFIX + "pm2_5", 24, "µg/m³")] if self.voc else
-                                  [state("sensor.ws2900_outdoor_temperature", 18)])
+            return httpx.Response(200, json=self.live() if self.voc else [state("sensor.ws2900_outdoor_temperature", 18)])
         start = datetime.fromisoformat(request.url.path.rsplit("/", 1)[-1]).timestamp()
         end = min(datetime.fromisoformat(request.url.params["end_time"]).timestamp(), time.time())
         out = []
@@ -88,33 +88,41 @@ async def test_the_voc_index_gets_home_assistants_ranges_and_the_raw_pm25_none_s
     fake = FakeHA()
     air = await air_with(tmp_path, fake)
     caplog.set_level(logging.INFO)
-    await air.import_ranges()
+    await air.import_history()
     now = time.time()
-    rows, _, _ = await air.rows(*(naive_local(t, air.tz) for t in (now - 6 * 3600, now - 600)))
+    rows, _, _ = await air.rows(*(naive_local(t, air.tz) for t in (now - 36 * 3600, now - 600)))   # (a finished day among them: checked against the cloud)
     with_range = [r for r in rows if "voc_index" in r.get("_range", {})]
     assert len(with_range) > 50 and all(r["_range"]["voc_index"] == (80.0, 120.0) for r in with_range)
-    assert not any("pm2_5" in r.get("_range", {}) for r in rows)
     line = air._chart(["voc_index"], rows, "today").panels[0].lines[0]
     assert line.low is not None and min(line.low) == 80.0 and max(line.high) == 120.0                 # the chart is shaded from them
-    assert "Backfill Home Assistant (AirGradient): " in caplog.text and caplog.text.count("isn't the reading the bot keeps") == 1
-    await air.import_ranges()                                                         # the next time: the last hours, nothing said again
+    assert "Backfill Home Assistant (AirGradient): " in caplog.text
+    # Home Assistant is the first source here, so its raw PM2.5 is the one kept for its days, and the cloud's (twice as different) fills no
+    # gaps of it: said once, with the fix. Its other metrics (CO2 ...) fill the cells Home Assistant has nothing for
+    raw = lambda ts: 2 * (5 + datetime.fromtimestamp(ts, timezone.utc).hour % 12)
+    assert all(r["pm2_5"] == raw(r["ts"]) and r["co2"] == 450 for r in rows)
+    assert caplog.text.count("the cloud's PM2.5 isn't the reading the bot keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
+    short, _, _ = await air.rows(*(naive_local(t, air.tz) for t in (now - 6 * 3600, now - 600)))   # a few hours: Home Assistant's minutes
+    assert len(short) > 300 and {r["voc_index"] for r in short} == {80.0, 120.0} and not any("_range" in r for r in short)
+    assert all(r["pm2_5"] == raw(r["ts"]) for r in short)
+    await air.import_history()                                                         # the next time: the last hours, nothing said again
+    await air.rows(*(naive_local(t, air.tz) for t in (now - 60 * 3600, now - 600)))   # (another day checked against the cloud)
     assert caplog.text.count("isn't the reading the bot keeps") == 1 and caplog.text.count("Backfill Home Assistant (AirGradient)") == 1
     await air.close()
 
 
 async def test_no_airgradient_in_home_assistant_is_said_once_and_a_failing_one_is_said_once_too(tmp_path, caplog):
-    fake = FakeHA(voc=False)
-    air = await air_with(tmp_path, fake)
     caplog.set_level(logging.INFO)
-    await air.import_ranges()
-    await air.import_ranges()
-    assert caplog.text.count("Home Assistant has no AirGradient sensor") == 1 and not [c for c in fake.calls if c.startswith("/api/history")]
+    fake = FakeHA(voc=False)
+    air = await air_with(tmp_path, fake)                                              # (the monitor is looked for at start)
+    await air.import_history()
+    await air.import_history()
+    assert caplog.text.count("Home Assistant has no AirGradient monitor") == 1 and not [c for c in fake.calls if c.startswith("/api/history")]
     fake.off = True
-    await air.import_ranges()
-    await air.import_ranges()
-    assert caplog.text.count("Home Assistant: the history for the air sensor's ranges failed") == 1
+    await air.import_history()
+    await air.import_history()
+    assert caplog.text.count("Home Assistant: the history of the air monitor failed") == 1
     fake.off = False
-    await air.import_ranges()
+    await air.import_history()
     assert "Home Assistant is answering again" in caplog.text
     await air.close()
 
@@ -122,7 +130,7 @@ async def test_no_airgradient_in_home_assistant_is_said_once_and_a_failing_one_i
 async def test_without_home_assistant_there_is_nothing_to_import(tmp_path):
     transport, _ = air_transport()
     air = AirGradient(config(tmp_path), transport=transport)
-    assert air.ha is None and await air.import_ranges() is None
+    assert air.ha is None and await air.import_history() is None
     await air.close()
 
 
@@ -148,4 +156,27 @@ async def test_without_the_weather_station_the_air_sensor_has_a_home_assistant_c
     transport, _ = air_transport()
     air = AirGradient(config(tmp_path, homeassistant_url="http://ha", homeassistant_token="tok"), transport=transport)
     assert air.ha is not None and air._own_ha
+    await air.close()
+
+
+async def test_home_assistants_states_are_the_live_reading_and_are_sampled_like_the_monitors_while_it_does_not_answer(tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from lib.airgradient import source
+    from lib.storage.catalogue import HOME_ASSISTANT
+    t0 = 1_793_000_100 // 300 * 300
+    clock = NS(t=float(t0))
+    monkeypatch.setattr(source, "time", NS(time=lambda: clock.t))
+    fake = FakeHA()
+    fake.live = lambda: [state(PREFIX + "voc_index", 100 + (clock.t - t0) // 60), state(PREFIX + "pm2_5", 24, "µg/m³")]
+    air = await air_with(tmp_path, fake)
+    reading = (await air.latest()).reading
+    assert reading["pm2_5"]["value"] == 24.0 and reading["voc_index"]["value"] == 100.0 and reading["sensor"] == "Outdoor"   # Home Assistant's states, with the cloud's name
+    assert air.warmer.interval == source.SAMPLE_SECONDS                                 # read every minute, as the monitor would be
+    for k in range(6):
+        clock.t = t0 + 60 * k + 1
+        await air.warm()
+    rows = await air.store.load(t0, t0 + 600, srcs=(HOME_ASSISTANT,))
+    assert rows[0]["ts"] == t0 and rows[0]["pm2_5"] == 24.0 and rows[0]["voc_index"] == 102.0 and rows[0]["_range"]["voc_index"] == (100.0, 104.0)   # the five samples' mean and band
+    assert len(await air.store.load_minutes(t0, t0 + 360)) == 6
+    assert not [c for c in fake.calls if c.endswith("/current")] or air.requests == 1   # the cloud was asked for the name at most
     await air.close()

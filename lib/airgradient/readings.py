@@ -12,12 +12,14 @@ from ..storage import Storage
 from ..storage.catalogue import BOT, CLOUD
 from ..storage.read import Reader, Rows
 from ..storage.schema import q, some_value
+from ..storage.write import MINUTES_KEPT
 from ..timeutil import day_bounds
 from .metrics import STORED
 
 RESOLUTIONS = ("5min", "1hour")   # the cloud's recent history, and its older one
 COLUMNS = list(STORED)
 HOURLY_GAP = 3600
+SLACK_SECONDS = 300               # the first minute held may be this much after a chart's start (as ecowitt.minutes)
 
 
 class DayFigures(NamedTuple):
@@ -110,11 +112,12 @@ class AirReadings:
                 found.add(d)
         return found
 
-    async def has_recorded(self, day: date) -> bool:
-        """Did the bot record any of this day's readings itself? (Such a day is completed by filling its gaps, never replaced.)"""
+    async def has_own(self, day: date) -> bool:
+        """Does the bot hold any of this day's readings from the monitor itself or Home Assistant? (Such a day is completed by the cloud
+        filling what they lack, never replaced.)"""
         lo, hi = day_bounds(day, self.tz)
         return await self.storage.read(lambda r: self.sensor is not None and r.db.execute(
-            "SELECT 1 FROM air WHERE sensor = ? AND src = ? AND ts >= ? AND ts < ? LIMIT 1", (self.sensor.id, BOT, lo, hi)).fetchone() is not None)
+            "SELECT 1 FROM air WHERE sensor = ? AND src > ? AND ts >= ? AND ts < ? LIMIT 1", (self.sensor.id, CLOUD, lo, hi)).fetchone() is not None)
 
     async def lacking(self) -> dict[str, int]:
         """How many readings held have no value for each column, and "all": how many are held."""
@@ -146,19 +149,43 @@ class AirReadings:
         await self.storage.write(write)
         return len(rows)
 
-    async def add_recorded(self, row: dict) -> None:
-        """Keep a reading the bot took itself from the sensor (a 5-minute average, with the lowest and highest of the readings averaged as
-        its band: what a chart shades), in place of the cloud's for that bucket."""
-        await self.storage.write(lambda w: w.put(w.air_sensor(self.loc), "5min", storage_rows([row], True), BOT))
+    async def add_recorded(self, row: dict, src: int = BOT) -> None:
+        """Keep a reading the bot took itself (a 5-minute average of the monitor's readings, or of Home Assistant's states of it: `src`;
+        with the lowest and highest of the readings averaged as its band: what a chart shades), in place of the cloud's for that bucket."""
+        await self.storage.write(lambda w: w.put(w.air_sensor(self.loc), "5min", storage_rows([row], True), src))
 
     async def add_spreads(self, found: dict[str, dict[int, tuple[float, float]]]) -> int:
         """Widen the 5-minute buckets' bands by these ({metric: {bucket start: (lowest, highest)}}, Home Assistant's). Returns how many."""
         return await self.storage.write(lambda w: w.widen(w.air_sensor(self.loc), "5min", found))
 
-    async def merge(self, rows: list[dict], final: bool) -> int:
-        """Keep these readings of the cloud's where the bot's own lack them (a bucket the bot recorded keeps its own); `final`: of a
-        finished day, else they are replaced by the next fetch. Returns how many were written."""
-        return await self.storage.write(lambda w: w.put(w.air_sensor(self.loc), "5min", storage_rows(rows, final), CLOUD))
+    async def merge(self, rows: list[dict], final: bool, src: int = CLOUD) -> int:
+        """Keep these readings of a source's (the cloud's, else `src`) where the sources ranked above it lack them (a bucket the bot
+        recorded keeps its own); `final`: of a finished day, else they are replaced by the next fetch. Returns how many were written."""
+        if not rows:
+            return 0
+        return await self.storage.write(lambda w: w.put(w.air_sensor(self.loc), "5min", storage_rows(rows, final), src))
+
+    async def add_minutes(self, rows: list[dict], src: int, now: float) -> int:
+        """Keep these minutes ([{"ts", metric...}]: the monitor's reading each minute, or Home Assistant's state at the end of each),
+        MINUTES_KEPT long. Returns how many."""
+        if not rows:
+            return 0
+
+        def write(w):
+            n = w.put(w.air_sensor(self.loc), "1min", storage_rows(rows, True), src)
+            w.prune_minutes(int(now - MINUTES_KEPT))
+            return n
+        return await self.storage.write(write)
+
+    async def load_minutes(self, start_ts: int, end_ts: int) -> list[dict]:
+        """The minutes with start_ts <= ts < end_ts, oldest first; [] when there are none or they do not reach back to the start (a
+        chart then draws the 5-minute readings)."""
+        def read(r: Reader):
+            if self.sensor is None:
+                return []
+            rows = readings(r.rows("air", [self.sensor.id], "1min", start_ts, end_ts - 1).get(self.sensor.id))
+            return rows if rows and rows[0]["ts"] <= start_ts + SLACK_SECONDS else []
+        return await self.storage.read(read)
 
     async def forget_days(self) -> None:
         """Note no day as fetched, so the next backfill fetches every finished day again (the readings stay, filled in as they come)."""
@@ -174,15 +201,16 @@ class AirReadings:
         await self.storage.write(lambda w: w.cover(w.air_sensor(self.loc), "5min", lo, hi - 1))
 
     # ---------- reading ----------
-    async def load(self, start_ts: int, end_ts: int) -> list[dict]:
-        """Readings with start_ts <= ts < end_ts, oldest first, with their bands."""
-        return await self.storage.read(self._load_on, start_ts, end_ts)
+    async def load(self, start_ts: int, end_ts: int, srcs: tuple[int, ...] | None = None) -> list[dict]:
+        """Readings with start_ts <= ts < end_ts, oldest first, with their bands; srcs: only those these sources gave (a row's source is
+        the highest that gave any of it)."""
+        return await self.storage.read(self._load_on, start_ts, end_ts, srcs)
 
-    def _load_on(self, r: Reader, start_ts: int, end_ts: int) -> list[dict]:
+    def _load_on(self, r: Reader, start_ts: int, end_ts: int, srcs: tuple[int, ...] | None = None) -> list[dict]:
         sensor = self.sensor
         if sensor is None:
             return []
-        rows = [row for res in RESOLUTIONS for row in readings(r.rows("air", [sensor.id], res, start_ts, end_ts - 1).get(sensor.id))]
+        rows = [row for res in RESOLUTIONS for row in readings(r.rows("air", [sensor.id], res, start_ts, end_ts - 1, srcs=srcs).get(sensor.id))]
         return sorted(rows, key=lambda row: row["ts"])
 
     async def load_day(self, day: date) -> list[dict]:

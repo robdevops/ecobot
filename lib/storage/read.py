@@ -130,15 +130,18 @@ class Reader:
         return row[0] if row else None
 
     # ---------- readings ----------
-    def rows(self, kind: str, sensors: list[int], res: str, start: int, end: int, columns: list[str] | None = None) -> dict[int, Rows]:
+    def rows(self, kind: str, sensors: list[int], res: str, start: int, end: int, columns: list[str] | None = None,
+             srcs: tuple[int, ...] | None = None) -> dict[int, Rows]:
         """{sensor: its readings at this resolution from start to end (epochs)}: one query, whatever the sensors. A row holding only a band
-        (a reading not fetched yet) is left out."""
+        (a reading not fetched yet) is left out; srcs: only the rows these sources wrote (catalogue.CLOUD ...)."""
         names = _names(kind, columns)
         if not sensors or not names:
             return {}
         cols = ", ".join(f"{q(c)}, {q(c + '_lo')}, {q(c + '_hi')}" for c in names)
+        by_src = f" AND src IN ({_marks(len(srcs))})" if srcs else ""
         found = self.db.execute(f"SELECT sensor, ts, final, {cols} FROM {kind} WHERE sensor IN ({_marks(len(sensors))}) AND res = ? "
-                                f"AND ts BETWEEN ? AND ? AND {some_value(names)} ORDER BY sensor, ts", (*sensors, res, start, end))
+                                f"AND ts BETWEEN ? AND ? AND {some_value(names)}{by_src} ORDER BY sensor, ts",
+                                (*sensors, res, start, end, *(srcs or ())))
         out: dict[int, Rows] = {}
         for sensor, ts, final, *values in found:
             got = out.get(sensor)

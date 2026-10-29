@@ -113,7 +113,7 @@ async def test_the_keep_warm_refresh_reads_the_device_and_asks_the_cloud_only_fo
 
 
 # ---------- the bot keeps what the sensor says ----------
-from datetime import date, datetime, timedelta  # noqa: E402
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
 from types import SimpleNamespace as NS  # noqa: E402
 
 from lib.airgradient import source  # noqa: E402
@@ -192,7 +192,12 @@ async def test_a_bucket_with_too_few_readings_is_not_kept(tmp_path, monkeypatch)
     await air.close()
 
 
-async def test_a_finished_day_the_bot_recorded_is_completed_with_only_the_missing_buckets(tmp_path, monkeypatch):
+def clouds(ts: int) -> float:
+    """What the fake cloud (fakes.air_transport) says PM2.5 was at this time."""
+    return 5.0 + datetime.fromtimestamp(ts, timezone.utc).hour % 12
+
+
+async def test_a_finished_day_the_bot_recorded_is_completed_with_only_what_it_lacks(tmp_path, monkeypatch, caplog):
     clock = Now(int(datetime(2026, 10, 29, 12, 0, tzinfo=TZ).timestamp()))
     monkeypatch.setattr(source, "time", NS(time=clock))
     air, calls = await recording_air(tmp_path, clock, [])
@@ -200,13 +205,36 @@ async def test_a_finished_day_the_bot_recorded_is_completed_with_only_the_missin
     gone = {lo + 300 * 50, lo + 300 * 51, lo + 300 * 200}
     for t in range(lo, hi, 300):
         if t not in gone:
-            await air.store.add_recorded({"ts": t, "pm2_5": 1.0})
-    assert await air._day_rows(DAY) and calls.count("past") == 1
+            await air.store.add_recorded({"ts": t, "pm2_5": clouds(t) + 0.5})     # (near enough the cloud's to be the same reading)
+    assert await air._day_rows(DAY) and calls.count("past") == 1                  # the whole day, in one request
     rows = await air.store.load_day(DAY)
-    assert len(rows) == 288 and {r["ts"] for r in rows if r["pm2_5"] != 1.0} == gone    # the cloud's rows only where there were none
-    assert (await air.store.counts([DAY])) == {DAY: 288}
+    assert len(rows) == 288 and {r["ts"] for r in rows if r["pm2_5"] == clouds(r["ts"])} == gone   # the cloud's PM2.5 only where there was none
+    assert all(r["co2"] == 450 for r in rows)                                                   # ... and what the bot's readings lacked
+    assert (await air.store.counts([DAY])) == {DAY: 288} and "isn't the reading the bot keeps" not in caplog.text
     await air._day_rows(DAY)
     assert calls.count("past") == 1                                                     # a finished day is never asked about again
+    await air.close()
+
+
+async def test_a_metric_the_cloud_gives_differently_fills_no_gaps_and_is_said_once_with_the_fix(tmp_path, monkeypatch, caplog):
+    clock = Now(int(datetime(2026, 10, 29, 12, 0, tzinfo=TZ).timestamp()))
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    air, calls = await recording_air(tmp_path, clock, [])
+    lo, hi = day_bounds(DAY, TZ)
+    gone = {lo + 300 * 50, lo + 300 * 51}
+    for t in range(lo, hi, 300):
+        if t not in gone:
+            await air.store.add_recorded({"ts": t, "pm2_5": 1.0, "pm10": 8.0})        # the monitor's raw PM2.5, and the cloud's PM10
+    rows = {r["ts"]: r for r in await air._day_rows(DAY)}
+    assert len(rows) == 288 and all("pm2_5" not in rows[t] for t in gone)             # the cloud's PM2.5 (5 to 16) is another reading: a gap stays
+    assert all(rows[t]["pm10"] == 8.0 and rows[t]["co2"] == 450 for t in gone)         # the rest of its readings fill it
+    assert caplog.text.count("the cloud's PM2.5 isn't the reading the bot keeps") == 1 and "set the monitor's PM2.5 correction" in caplog.text
+    assert "PM2.5 differs between the cloud and what the bot keeps" in air._summary({})
+    day2 = DAY - timedelta(days=1)
+    for t in range(*day_bounds(day2, TZ), 300):
+        await air.store.add_recorded({"ts": t, "pm2_5": 1.0})
+    await air._day_rows(day2)
+    assert caplog.text.count("isn't the reading the bot keeps") == 1                   # (said once)
     await air.close()
 
 
@@ -264,3 +292,41 @@ def test_zeroconf_is_not_loaded_unless_a_local_name_is_looked_up():
             "import asyncio; asyncio.run(l.address_of('192.168.1.5')); assert 'zeroconf' not in sys.modules")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "MPLCONFIGDIR": "/tmp"})
     assert done.returncode == 0, done.stderr
+
+
+async def test_airgradient_source_picks_the_monitors_sources_and_a_typo_keeps_auto(tmp_path, caplog):
+    ha = {"homeassistant_url": "http://ha", "homeassistant_token": "tok"}
+    for kwargs, monitor, home, cloud in (
+            ({}, False, False, True),
+            ({"airgradient_local_url": URL, **ha}, True, True, True),
+            ({"airgradient_local_url": URL, **ha, "airgradient_source": "local"}, True, False, False),
+            ({"airgradient_local_url": URL, **ha, "airgradient_source": "homeassistant"}, False, True, False),
+            ({"airgradient_local_url": URL, **ha, "airgradient_source": "cloud"}, False, False, True),
+            ({"airgradient_source": "homeassistant"}, False, False, False)):             # no Home Assistant set: nothing
+        cfg = config(tmp_path, **kwargs)
+        assert (cfg.airgradient_local, cfg.airgradient_homeassistant, cfg.airgradient_cloud, cfg.airgradient) == (monitor, home, cloud, monitor or home or cloud), kwargs
+        if cfg.airgradient:
+            air = AirGradient(cfg, air_transport()[0])
+            assert (air.local is not None, air.ha is not None, air.cloud) == (monitor, home, cloud), kwargs
+            await air.close()
+    from lib.config import _air_source
+    assert _air_source("Cloud", "auto", "AIRGRADIENT_SOURCE") == "cloud"
+    assert _air_source("sensor", "auto", "AIRGRADIENT_SOURCE") == "auto" and "AIRGRADIENT_SOURCE: 'sensor' is not" in caplog.text
+
+
+async def test_each_reading_of_the_monitor_is_kept_as_a_minute_and_a_short_chart_is_drawn_from_them(tmp_path, monkeypatch):
+    clock = Now(T0)
+    monkeypatch.setattr(source, "time", NS(time=clock))
+    air, _ = await recording_air(tmp_path, clock, [10 + k for k in range(130)])
+    for k in range(130):                              # a reading a minute for a little over two hours
+        clock.t = T0 + 60 * k
+        await air._record()
+    minutes = await air.store.load_minutes(T0, T0 + 130 * 60)
+    assert [m["ts"] for m in minutes] == [T0 + 60 * k for k in range(130)] and minutes[5]["pm2_5"] == 15.0
+    assert await air.store.load_minutes(T0 - 3600, T0 + 130 * 60) == []              # they do not reach back to the start: not used
+    start = datetime.fromtimestamp(T0, TZ).replace(tzinfo=None)
+    rows, _, _ = await air.rows(start, start + timedelta(hours=2))
+    assert len(rows) == 121 and rows[1]["ts"] - rows[0]["ts"] == 60                  # the chart's readings are the minutes ...
+    rows, _, _ = await air.rows(start - timedelta(hours=1), start + timedelta(hours=2))
+    assert all(b["ts"] - a["ts"] == 300 for a, b in zip(rows, rows[1:]))             # ... else the 5-minute readings
+    await air.close()

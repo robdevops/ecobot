@@ -1,19 +1,25 @@
-"""The air sensor's readings as Home Assistant saw them, for the lowest and highest of each 5 minutes (the store's spreads).
+"""The air monitor's readings as Home Assistant saw them: the readings of the times the bot did not read the monitor itself, their
+lowest and highest of each 5 minutes (the bands), its states at the end of each minute (the minutes), and its states now (the live
+reading while the monitor does not answer).
 
-AirGradient's cloud keeps one average per 5 minutes and the sensor's own server only the reading of the moment, so the bot can shade a
-chart's range only for the time it read the sensor itself. Home Assistant's AirGradient integration reads the sensor every minute and keeps
-each change (10 days unless its recorder is set otherwise), so the ranges of the time before the bot was reading it, or while it was down,
-are read back from it. Its entities are found by the names the integration gives them: sensor.<device>_voc_index, sensor.<device>_pm2_5 ...
+AirGradient's cloud keeps one average per 5 minutes and the monitor's own server only the reading of the moment. Home Assistant's
+AirGradient integration reads the monitor every minute and keeps each change (10 days unless its recorder is set otherwise), so it holds
+the time before the bot was reading the monitor, or while it was down, which is read back from it. Its entities are found by the names
+the integration gives them: sensor.<device>_voc_index, sensor.<device>_pm2_5 ...
 
-A range is kept only where Home Assistant's average over the five minutes agrees with the reading the bot holds for them: Home Assistant
-may show another variant of a reading (the sensor's raw PM2.5 where the bot keeps the corrected one), whose range would not fit the line.
-A metric that disagrees in most of the five minutes compared is that, and none of its ranges are kept.
+A metric of Home Assistant's is taken only where its average over the five minutes agrees with the reading the bot holds for them (the
+source ranked above it): Home Assistant may show another variant of a reading (the monitor's raw PM2.5 where the bot keeps the corrected
+one), whose range would not fit the line and whose readings would put a step in it. A metric that disagrees in most of the five minutes
+compared is that: none of its ranges are kept and it fills no gaps. The same rule judges the cloud's readings against the bot's (verdicts).
 """
 
 import math
+from datetime import UTC, datetime
 
 from ..ecowitt.hass_history import rollup
 from ..ecowitt.hass_map import convert
+from ..ecowitt.homeassistant import parse_time
+from .metrics import STORED
 
 BUCKET = 300
 # The bot's metric -> the end of its entity's name in Home Assistant (sensor.<device>_<suffix>) and what it measures, for its unit
@@ -71,33 +77,92 @@ def ranges(history: dict[str, list[tuple[float, float]]], ids: dict[str, str], u
     return out
 
 
+def minutes(history: dict[str, list[tuple[float, float]]], ids: dict[str, str], units: dict[str, str], start: float, end: float,
+            now: float) -> list[dict]:
+    """The state held at the end of each minute from `start` to `end` as readings ([{"ts", metric...}], oldest first), of the minutes
+    that are over at `now`."""
+    rows: dict[int, dict] = {}
+    for entity, states in history.items():
+        name = ids[entity]
+        converted = [(t, convert(v, ENTITIES[name][1], units.get(entity))) for t, v in states]
+        for minute, (value, _, _) in rollup(converted, "last", start, end, 60, now).items():
+            if minute + 60 <= now:
+                rows.setdefault(minute, {"ts": minute})[name] = value
+    return [rows[t] for t in sorted(rows)]
+
+
+def live(states: list[dict], ids: dict[str, str], now: float) -> dict | None:
+    """The monitor's reading now from Home Assistant's states, in the cloud's shape (the fields metrics.STORED reads first, stamped with
+    the newest state's time, else `now`); None when it has none of the metrics."""
+    row, newest = {}, 0.0
+    for s in states:
+        if not isinstance(s, dict) or (name := ids.get(str(s.get("entity_id", "")))) is None:
+            continue
+        try:
+            row[STORED[name][0][0]] = float(s.get("state"))
+        except (TypeError, ValueError):
+            continue
+        if when := s.get("last_updated") or s.get("last_changed"):
+            newest = max(newest, parse_time(when))
+    if not row:
+        return None
+    return {**row, "timestamp": datetime.fromtimestamp(newest or now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
 def agrees(name: str, mean: float, value: float) -> bool:
     return abs(mean - value) <= max(ABS[name], REL * abs(value))
 
 
-def checked(found: dict[str, dict[int, tuple[float, float, float]]], rows: list[dict]) -> tuple[dict[str, dict[int, tuple[float, float]]],
-                                                                                             dict[str, tuple[int, int]]]:
-    """(the ranges to keep, {metric: (five minutes compared, how many agreed)}): those of the buckets that hold a reading of the metric
-    (a bucket without one has no line to shade) and whose mean agrees with it, of the metrics that agree in most of them. A bucket the
-    bot recorded itself has its own range already: it only counts in the comparison."""
+def verdicts(found: dict[str, dict[int, float]], rows: list[dict]) -> dict[str, tuple[int, int]]:
+    """{metric: (five minutes compared, how many agreed)}: a source's five-minute values ({metric: {bucket start: value}}) against the
+    readings the bot holds for the same five minutes (`rows`), the buckets that hold both."""
     readings = {r["ts"]: r for r in rows}
-    keep, verdict = {}, {}
+    out = {}
     for name, buckets in found.items():
         compared = agreed = 0
-        mine = {}
-        for b, (mean, lo, hi) in buckets.items():
+        for b, value in buckets.items():
             row = readings.get(b)
-            if row is None or name not in row:
-                continue
-            compared += 1
-            if agrees(name, mean, row[name]):
-                agreed += 1
-                if name not in row.get("_range", {}):
-                    mine[b] = (lo, hi)
-        verdict[name] = (compared, agreed)
-        if compared < MIN_COMPARED or agreed >= MATCH * compared:
-            keep[name] = mine
+            if row is not None and name in row:
+                compared += 1
+                agreed += agrees(name, value, row[name])
+        out[name] = (compared, agreed)
+    return out
+
+
+def same_reading(verdict: tuple[int, int]) -> bool:
+    """Does a metric's verdict say the source gives the reading the bot keeps? It does while too few five minutes were compared to say."""
+    compared, agreed = verdict
+    return compared < MIN_COMPARED or agreed >= MATCH * compared
+
+
+def checked(found: dict[str, dict[int, tuple[float, float, float]]], rows: list[dict]) -> tuple[dict[str, dict[int, tuple[float, float]]],
+                                                                                             dict[str, tuple[int, int]]]:
+    """(the ranges to keep, the verdicts): the ranges of the buckets that hold a reading of the metric (a bucket without one has no line
+    to shade) and whose mean agrees with it, of the metrics that agree in most of them. A bucket the bot recorded itself has its own range
+    already: it only counts in the comparison."""
+    readings = {r["ts"]: r for r in rows}
+    verdict = verdicts({name: {b: mean for b, (mean, _, _) in buckets.items()} for name, buckets in found.items()}, rows)
+    keep = {}
+    for name, buckets in found.items():
+        if same_reading(verdict[name]):
+            keep[name] = {b: (lo, hi) for b, (mean, lo, hi) in buckets.items()
+                          if (row := readings.get(b)) is not None and name in row and agrees(name, mean, row[name]) and name not in row.get("_range", {})}
     return keep, verdict
 
 
-__all__ = ["ENTITIES", "checked", "entity_ids", "find_prefix", "ranges"]
+def gaps(found: dict[str, dict[int, tuple[float, float, float]]], rows: list[dict], verdict: dict[str, tuple[int, int]]) -> list[dict]:
+    """The readings to fill the bot's gaps with: each five minutes' mean, with its lowest and highest as the band, of the metrics the
+    verdicts say are the readings the bot keeps, where the bot holds no reading of that metric."""
+    readings = {r["ts"]: r for r in rows}
+    out: dict[int, dict] = {}
+    for name, buckets in found.items():
+        if not same_reading(verdict.get(name, (0, 0))):
+            continue
+        for b, (mean, lo, hi) in buckets.items():
+            if name not in readings.get(b, {}):
+                row = out.setdefault(b, {"ts": b, "_range": {}})
+                row[name], row["_range"][name] = mean, (lo, hi)
+    return [out[b] for b in sorted(out)]
+
+
+__all__ = ["ENTITIES", "checked", "entity_ids", "find_prefix", "gaps", "live", "minutes", "ranges", "same_reading", "verdicts"]
