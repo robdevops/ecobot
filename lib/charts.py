@@ -4,8 +4,8 @@ A history tool adds a specs.Chart to turn.charts (the question's Turn, made by t
 bot renders them after the answer is written and sends them with it. Every chart is one or more panels on a shared time
 axis (see specs.py):
   - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
-    at 864x486 (two thirds of the 1280x720 Telegram displays photos at: sharp enough on a phone, and a third quicker to upload);
-  - several panels are stacked, the figure growing a little taller with each one past two (four panels: 864x783).
+    at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
+  - several panels are stacked, the figure growing a little taller with each one past two (four panels: 1280x1160).
 Rain (bars) sits behind the lines of the panel it belongs to, on a scale of its own read on the right.
 """
 
@@ -60,7 +60,7 @@ RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines an
 RAIN_TEXT = "#2F86C8"            # the same blue, darker, for the rain scale's text
 CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
 WIND_STEPS = ("#CBD5E1", "#94A3B8", "#475569")  # light, middle and strong wind (the wind hue)
-W_IN, H_IN, DPI = 6.4, 3.6, 135  # 864 x 486 px (everything is laid out in points, so the DPI alone sets the size)
+W_IN, H_IN, DPI = 6.4, 3.6, 200  # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
 HEAD_IN, FOOT_IN = 0.9, 0.47     # room above and below the panels (inches)
@@ -700,7 +700,7 @@ _DRAWING = threading.Lock()
 
 
 def render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
-    """PNG bytes for one chart (864x486; a stack of more than two panels is taller). Safe to call from several threads.
+    """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads.
     times (a Turn's): the seconds spent drawing the figure and writing the PNG are added to its "draw" and "png"."""
     started = time.perf_counter()
     with _DRAWING:
