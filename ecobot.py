@@ -17,7 +17,6 @@ from lib.config import ROOT, Config, data_dir
 # Set before anything imports Matplotlib; an MPLCONFIGDIR in the environment wins.
 os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
-from openai import AsyncOpenAI, Timeout
 from telegram import Update
 from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
@@ -198,6 +197,19 @@ def commit_in(git_dir) -> str:
         return "unknown"
 
 
+AsyncOpenAI = Timeout = None   # openai's, imported when the model's client is made (_client): the import takes half a second, more than all of lib
+
+
+def _client(cfg: Config):
+    """The model's client. A request may run as long as the bot gives a whole question (it then asks again, a reasoning step lower); a
+    dropped connection, a 429 or a 5xx is tried again twice, at once, inside that time."""
+    global AsyncOpenAI, Timeout
+    if AsyncOpenAI is None or Timeout is None:
+        import openai
+        AsyncOpenAI, Timeout = AsyncOpenAI or openai.AsyncOpenAI, Timeout or openai.Timeout
+    return AsyncOpenAI(api_key=cfg.openrouter_api_key, base_url=cfg.openrouter_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0), max_retries=2)
+
+
 async def main():
     log.info("Starting ecobot %s", version())
     cfg = Config.from_env()
@@ -218,10 +230,7 @@ async def main():
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
         composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
         tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
-        # A model request may run as long as the bot gives a whole question (it then asks again, a reasoning step lower); a
-        # dropped connection, a 429 or a 5xx is tried again twice, at once, inside that time
-        client = AsyncOpenAI(api_key=cfg.openrouter_api_key, base_url=cfg.openrouter_base_url, timeout=Timeout(TURN_SECONDS, connect=5.0),
-                             max_retries=2) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
+        client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
         if client:
             stack.push_async_callback(safely, client.close)
         else:

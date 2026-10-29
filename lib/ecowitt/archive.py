@@ -97,7 +97,7 @@ class Archive:
             if i % 20 == 0 and i < len(todo):
                 log.info("Backfill Ecowitt: %d of %d requests done", i, len(todo))
             await asyncio.sleep(self.pace)
-        log.info("Backfill Ecowitt: %d fetched, %d failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
+        log.info("Backfill Ecowitt: %d/%d fetched/failed, %s, %.0fs", fetched, failed, self.held(), monotonic() - started)
         return fetched, failed
 
     async def _drop_unsupported_groups(self, cycle: str, start: datetime, end: datetime) -> bool:
@@ -120,10 +120,10 @@ class Archive:
         return False
 
     def held(self) -> str:
-        """Days of history held per resolution, e.g. "88/363/728/1456 days held (5m/30m/4h/1d)" """
+        """Days of history held per resolution, e.g. "88/363/728/1456d held (5m/30m/4h/1d)" """
         cycles = ("5min", "30min", "4hour", "1day")
         days = "/".join(str(self.station.fetcher(self.groups).days_held(c)) for c in cycles)
-        return f"{days} days held (5m/30m/4h/1d)"
+        return f"{days}d held (5m/30m/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:
         return seconds_until(RUN_AT.hour, RUN_AT.minute, self.station.tz)

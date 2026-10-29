@@ -4,11 +4,13 @@ import asyncio
 import json
 import logging
 import time
-
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING
 
 from .lines import POINT_BUDGET
 from .tools import Tools, Turn
+
+if TYPE_CHECKING:   # openai is imported where the client is made (ecobot.py): its import takes half a second, more than all of lib
+    from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data alr
 
 
 class Agent:
-    def __init__(self, client: AsyncOpenAI | None, model: str, tools: Tools):
+    def __init__(self, client: "AsyncOpenAI | None", model: str, tools: Tools):
         self.client, self.model, self.tools = client, model, tools   # no client (no OPENROUTER_API_KEY): the tools are still called, the model never is
 
     @property

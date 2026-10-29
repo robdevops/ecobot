@@ -269,12 +269,12 @@ async def test_archive_caches_every_cycle_so_long_questions_need_no_requests_and
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     arch = Archive(eco)
-    assert arch.held() == "0/0/0/0 days held (5m/30m/4h/1d)"
+    assert arch.held() == "0/0/0/0d held (5m/30m/4h/1d)"
     fetched, failed = await arch.run_once()
     assert failed == 0 and fetched > 25
     held = {c: eco.fetcher(arch.groups).days_held(c) for c in ("5min", "30min", "4hour", "1day")}
     assert all(20 <= held[c] <= 27 for c in ("5min", "30min", "4hour", "1day"))
-    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
+    assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']}d held")
     assert {c["cycle_type"] for c in fake.calls if "cycle_type" in c} == {"5min", "30min", "4hour", "1day"}
     fake.calls.clear()
     today = datetime.now(eco.tz).date()
