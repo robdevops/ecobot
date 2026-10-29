@@ -232,7 +232,7 @@ def test_every_day_of_the_archive_comes_out_as_day_values_works_it_out(tmp_path,
 
 def test_the_script_moves_a_copy_and_times_the_reads(tmp_path, monkeypatch, capsys):
     from tests import bench_cache
-    bench_cache.build(tmp_path / "data", days={"5min": 3, "30min": 9, "4hour": 30, "1day": 60}, air_days=3, live_days=1, minute_hours=2)
+    bench_cache.build(tmp_path / "data", days={"5min": 3, "30min": 9, "4hour": 30, "1day": 60}, air_days=3, live_days=1, minute_hours=2, old=True)
     before = {p.name: p.read_bytes() for p in (tmp_path / "data").glob("*.sqlite")}
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import migrate_storage

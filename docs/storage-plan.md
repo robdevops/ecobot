@@ -380,6 +380,29 @@ the request took 1,205 ms, the first dashboard's in 22 ms where it took 3,146.
 | `/dashboard`: the year's day rows of every sensor | 5 | 1 | 22 ms |
 | Air line (PM2.5), 1M (2-hour buckets) | 1 | 1 | 18 ms |
 
+The requests themselves after step 2, on the stand-in (`tests/bench_cache.py`, built by the new storage with ten days of minutes), each
+the median of three runs, against section 1's table (the owner's real files before the redesign; the stand-in is shaped like them). The
+AirGradient's rows are unchanged: its readings move in step 3.
+
+| Request | SQL statements | Thread hops | Time | Section 1 |
+|---|---|---|---|---|
+| Temperature chart, 3 hours (the minutes) | 4 | 2 | 7 ms | |
+| Temperature chart, 1D | 4 | 1 | 9 ms | 20 ms |
+| Temperature chart, 7D | 4 | 1 | 18 ms | 29 ms |
+| Temperature chart, 1M | 4 | 1 | 34 ms | 107 ms |
+| Temperature chart, 3M | 3 | 1 | 14 ms | 272 ms |
+| Temperature chart, 1Y | 5 | 1 | 25 ms | 1,205 ms |
+| Rain chart, 3M | 6 | 1 | 54 ms | 218 ms |
+| History of outdoor and indoor, 7 days, no chart | 6 | 1 | 19 ms | 46 ms |
+| `weather_days`: days over 30°C, 4 years | 2 | 1 | 26 ms | 725 ms |
+| `weather_days`: rain per month, a year | 2 | 1 | 20 ms | 609 ms |
+| `weather_link`: pressure and rain, 90 days, chart | 2 | 2 | 85 ms | 98 ms |
+| The alerts' last 3 hours | 13 | 1 | 4 ms | 6 ms |
+| `/dashboard`, first time in a day | 5 | 1 | 22 ms | 3,146 ms |
+
+`weather_link`'s time is the analysis, not the read (2 statements); the alerts' 13 statements are one per group and resolution of the
+one read. The 1Y chart's line is 365 day rows, the 3M chart's 90, the 1M chart's 360 two-hour buckets the database works out.
+
 ## 5. Migration
 
 - **Automatic, at start** (from step 2). When the old files hold what `ecobot.sqlite` does not yet, the bot moves it across before the
@@ -438,7 +461,8 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 2. **The station on it.** `Fetcher`, `HistoryQuery`, `days`, `link`, `dashboard`, `compose`, the alerts, the archive, the live readings, the
    minutes and Home Assistant's ranges read and write the new tables; `HotStore`, `LiveRanges`, `MinuteStore` and the refining go. The bot
    migrates at start. While this is built, a temporary test runs the same questions on the same fixture through the old code and the new
-   and compares the answers, so any difference is seen and judged (`tests/test_old_against_new.py`: the old code is taken from git).
+   and compares the answers, so any difference is seen and judged (`tests/test_old_against_new.py`: the old code is taken from git;
+   what it found is in 7.1).
    In progress: the station writes and reads `ecobot.sqlite` (moved in at start), the readers not moved yet reading it through
    `ecowitt/stored.py` as they read the old cache. `weather_days` and the dashboard read the day rows (one read each; the dashboard's
    Daily row is today's day row, its readings so far with their bands). A history answer's records, its rows by day or by month and its
@@ -476,7 +500,7 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 - **The bot's own bands are kept for good.** They are two numbers in a row that is kept anyway, and a 1D chart of any past day keeps
   its band (3.6).
 - **Several sensors: the schema now, step 6 later**, when there is a second sensor.
-- **A day's highest and lowest include the bands** (step 1, to be judged in step 2's comparison). The 5-minute rows carry the bot's and Home
+- **A day's highest and lowest include the bands** (step 1, judged in step 2's comparison: 7.1). The 5-minute rows carry the bot's and Home
   Assistant's ranges, so a day's figures from them are the extremes the bot saw, as the dashboard already counts them; `weather_days` and a
   history answer's records took the 5-minute values alone. Where the bot has no ranges (before it ran, or a day from 30-minute readings) the
   figures are the old ones, as the test against `day_values` shows.
@@ -485,15 +509,38 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 
 ## 7. Testing
 
-- **The answers do not change:** the golden chart images and the evals unchanged; the old-against-new comparison of step 2; the
+- **The answers do not change:** the golden chart images and the evals unchanged; the old-against-new comparison of step 2 (below); the
   dashboard's and `weather_days`' figures compared day by day on the fixture (step 1 does it for the day rows against `day_values`, and
   the buckets against `lines.bucket_summary`, rain per reading against `rain.rain_slots`).
-- **The stores' own tests** (`test_store.py`, `test_live_ranges.py`, `test_migrate_cache.py`, and the dozen tests that write SQL into the old
-  tables) are rewritten for the new tables: writing and reading, widening, day rows, coverage, pruning, the migration and its check.
+- **The stores' own tests** (`test_storage.py`, `test_storage_migrate.py`, `test_period.py`, `test_live_bands.py`) cover the new tables:
+  writing and reading, widening, day rows, part-days, coverage, pruning, the migration and its check. `test_store.py` and
+  `test_migrate_cache.py` stay with the old cache's code until step 5 retires it.
 - **The fixture's archive** (`tests/conftest.py`, `archived_cache`) is built by the new code; one old-format fixture stays for the migration
-  tests.
+  tests and the scripts not moved yet (`old_archived_cache`).
 - **The benchmark's data folder** (`tests/bench_cache.py`) is built by the new storage from step 2 on, with 10 days of minutes (the
   owner's file has 9 hours), so the table shows whether the minutes in the same tables slow anything else.
+
+### 7.1 What the old-against-new comparison found (step 2)
+
+A temporary test (`tests/test_old_against_new.py`, removed at the end of step 2) ran 86 questions, the dashboard, the alerts' reads
+and two composed charts through the old code (taken from git at the start of step 2) and the new, on the same fixture, with the cloud
+and with Home Assistant, and failed on any difference not judged. Identical code gave no difference. Every difference the new storage
+made was judged as it should be:
+
+- **A 5-minute reading's band** takes in both of Home Assistant's ranges of it (its own bucket's and those around its 5-minute mark) and
+  what it read while the bucket was still filling: up to a step wider (0.1 °C, 1 %), all of them readings Home Assistant had.
+- **The dashboard's Daily row** is today's day row (its readings so far, with the bands the bot and Home Assistant saw), where the old
+  took today from the live reading and the bot's own ranges only.
+- **A chart of minutes** has its lines in the groups' order, as every other chart has (the old minute store gave them alphabetically).
+- **Records** are timed from their day's row, as finely as that day's readings allow, where refining narrowed only the first four
+  (the temperatures') and left the rest at the half hour; a tie between days goes to the first of them (the old took the newest week's,
+  having read it first). A minute's reading counts as a reading, not averaged data.
+- **A month's figures** come from its local days where they are held at 30 minutes or finer, where the old long answers read Ecowitt's
+  daily records (10am to 10am) for all but the last week, so the night of the 1st counted in the month before.
+- **A day's mean** is its day row's, from its 5-minute readings where the day is held at 5 minutes, where the old averaged the
+  30-minute readings it drew the period from (each a half hour's first reading): within 0.004 °C.
+- **A line of days** gives a day held at 30 minutes or finer its own local-day mean, lowest and highest, where a period not held whole at
+  30 minutes (a year and a day) drew Ecowitt's daily records as they came.
 
 ## 8. Risks
 

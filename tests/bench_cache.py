@@ -1,8 +1,10 @@
-"""A data folder shaped like a real station's, for scripts/bench_storage.py where the bot's own caches aren't at hand: the storage redesign
+"""A data folder shaped like a real station's, for scripts/bench_storage.py where the bot's own files aren't at hand: the storage redesign
 (docs/storage-plan.md) is measured on it between the owner's runs of the benchmark on the real ones. Shaped like the owner's in October
 2026: about 116, 391, 755 and 1457 days held at 5 minutes, 30 minutes, 4 hours and a day, 22 readings with the lows and highs Ecowitt
-gives (2.4 million values), 184 days of AirGradient readings at 5 minutes, 4 days of the live readings' ranges and the last 9 hours of
-minutes. Written through the bot's own stores, from the fake station's weather (tests/fakes.py), in about 20 seconds:
+gives (2.4 million values), 184 days of AirGradient readings at 5 minutes and 4 days of the live readings' ranges, with ten days of
+minutes (the owner's file has 9 hours: as many as the storage keeps, so the table shows whether they slow anything else). The station's
+is ecobot.sqlite, written by the new storage as the migration writes it (`old=True` writes the old files instead, for the migration's
+own check), the AirGradient's its old file until step 3; from the fake station's weather (tests/fakes.py), in about 30 seconds:
 
     python -m tests.bench_cache /tmp/bench-data
     python scripts/bench_storage.py --data /tmp/bench-data --tz Australia/Melbourne
@@ -18,6 +20,9 @@ from lib.airgradient.store import AirStore
 from lib.ecowitt.api import GROUPS, UNITS, fix_units
 from lib.ecowitt.fetch import spans
 from lib.ecowitt.store import HistoryCache
+from lib.storage import Storage
+from lib.storage.catalogue import CLOUD, KINDS
+from lib.storage.write import horizon, pivot
 from lib.timeutil import local_epoch, local_date, naive_local
 from tests.fakes import MAC, STEP, TZ, direction, gust, humidity, old_live_file, old_minutes_file, pressure, rain_day, temp, uv_index, wind_speed
 
@@ -60,20 +65,26 @@ def history(cycle: str, start: int, end: int) -> dict:
     return fix_units(out)
 
 
-def station(path: Path, days: dict[str, int], now: float):
-    """The history cache, each resolution held for its days, a request's span at a time as the archive stores them."""
-    cache = HistoryCache(path, UNITS)
+def requests(days: dict[str, int], now: float):
+    """(cycle, start, end) of each request the archive makes to hold each resolution for its days."""
     today = naive_local(int(now), TZ).date()
     for cycle, n in days.items():
         first = datetime.combine(today - timedelta(days=n), datetime.min.time())
         for a, b in spans(cycle, first, naive_local(int(now), TZ)):
-            s, e = local_epoch(a, TZ), local_epoch(b, TZ)
-            cache.store(MAC, cycle, GROUPS, history(cycle, s, e), s, e)
+            yield cycle, local_epoch(a, TZ), local_epoch(b, TZ)
+
+
+def old_station(path: Path, days: dict[str, int], now: float):
+    """The old history cache, each resolution held for its days, a request's span at a time as the archive stored them."""
+    cache = HistoryCache(path, UNITS)
+    for cycle, s, e in requests(days, now):
+        cache.store(MAC, cycle, GROUPS, history(cycle, s, e), s, e)
     cache.close()
 
 
-def live_ranges(path: Path, days: float, now: float):
-    """The lowest and highest the bot saw in each 5 minutes (from Home Assistant's readings) of the outdoor readings and the pressure."""
+def live_ranges(days: float, now: float) -> dict:
+    """The lowest and highest the bot saw in each 5 minutes (from Home Assistant's readings) of the outdoor readings and the pressure:
+    {series: {5-minute mark: (readings, lowest, highest)}}."""
     found: dict = {}
     for group in ("outdoor", "pressure"):
         for name, fn, _ in FIELDS[group]:
@@ -82,13 +93,38 @@ def live_ranges(path: Path, days: float, now: float):
             for mark in range(int(now - now % 300 - days * 86400), int(now), 300):
                 values = [fn(mark + s) for s in (-120, -60, 0, 60, 120)]
                 found.setdefault(f"{group}.{name}", {})[mark] = (5, min(values) - 0.2, max(values) + 0.2)
-    old_live_file(path, found)
+    return found
 
 
-def minutes(path: Path, hours: float, now: float):
+def minutes(hours: float, now: float) -> dict:
+    """Home Assistant's minutes of the last `hours`, in the shape the history is told in."""
     first = int(now - now % 60 - hours * 3600)
-    old_minutes_file(path, {group: {name: {"unit": unit, "list": {str(t): f"{fn(t):.1f}" for t in range(first, int(now), 60)}} for name, fn, unit in fields}
-                            for group, fields in FIELDS.items()})
+    return {group: {name: {"unit": unit, "list": {str(t): f"{fn(t):.1f}" for t in range(first, int(now), 60)}} for name, fn, unit in fields}
+            for group, fields in FIELDS.items()}
+
+
+def station(path: Path, days: dict[str, int], live_days: float, minute_hours: float, now: float):
+    """The station's ecobot.sqlite: each resolution held for its days, the live readings' bands and the minutes, written in one
+    transaction as the migration writes them (the rows as they are, the 30-minute bands rolled up and every day worked out once)."""
+    storage = Storage(path, TZ, bulk=True)
+    with storage.writer.transaction() as w:
+        for cycle, s, e in requests(days, now):
+            data, limit = history(cycle, s, e), horizon(cycle, now)
+            for group in GROUPS:   # (a group the station lacks is covered too, as a fetch covers it: nothing is missing there)
+                sensor = w.ecowitt_sensor(MAC, group)
+                rows, extra, units = pivot(group, data.get(group, {}), s, e)
+                for row in rows:
+                    row["final"] = int(row["ts"] <= limit)
+                w.fields(sensor, cycle, units)
+                w.put(sensor, cycle, rows, CLOUD, exact=True)
+                w.extra(sensor, cycle, extra)
+                w.cover(sensor, cycle, s, min(e, limit))
+        w.put_ranges(MAC, live_ranges(live_days, now))
+        w.put_minutes(MAC, minutes(minute_hours, now), now)
+        for sensor in w.all_sensors():
+            if sensor.kind in KINDS:
+                w.roll_up(sensor, 0, 2 ** 40)
+    storage.close()
 
 
 def air(path: Path, days: int, now: float, spreads_days: int = 10):
@@ -114,14 +150,18 @@ def air(path: Path, days: int, now: float, spreads_days: int = 10):
     store.close()
 
 
-def build(folder: Path, days: dict[str, int] = DAYS, air_days: int = AIR_DAYS, live_days: float = 4, minute_hours: float = 9,
-          now: float | None = None):
-    """The four files the benchmark reads, in `folder`."""
+def build(folder: Path, days: dict[str, int] = DAYS, air_days: int = AIR_DAYS, live_days: float = 4, minute_hours: float = 240,
+          now: float | None = None, old: bool = False):
+    """The files the benchmark reads, in `folder`: the station's ecobot.sqlite (old: its three old files, from before it) and the
+    AirGradient's."""
     now = time.time() if now is None else now
     folder.mkdir(parents=True, exist_ok=True)
-    station(folder / "ecowitt_cache.sqlite", days, now)
-    live_ranges(folder / "ecowitt_live.sqlite", live_days, now)
-    minutes(folder / "ecowitt_minutes.sqlite", minute_hours, now)
+    if old:
+        old_station(folder / "ecowitt_cache.sqlite", days, now)
+        old_live_file(folder / "ecowitt_live.sqlite", live_ranges(live_days, now))
+        old_minutes_file(folder / "ecowitt_minutes.sqlite", minutes(minute_hours, now))
+    else:
+        station(folder / "ecobot.sqlite", days, live_days, minute_hours, now)
     air(folder / "airgradient_cache.sqlite", air_days, now)
 
 

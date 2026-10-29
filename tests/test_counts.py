@@ -62,15 +62,16 @@ async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_
 
 
 async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_is_drawn_from_the_minutes(tmp_path, monkeypatch):
-    from lib.ecowitt.api import GROUPS, UNITS
-    from lib.ecowitt.store import HistoryCache
+    from lib.ecowitt.api import GROUPS
+    from lib.storage import Storage
     from tests import bench_cache
     from tests.fakes import MAC, TZ
     days = {"5min": 3, "30min": 9, "4hour": 30, "1day": 60}
     bench_cache.build(tmp_path, days=days, air_days=3, live_days=1, minute_hours=4)
-    cache = HistoryCache(tmp_path / "ecowitt_cache.sqlite", UNITS)
-    held = {cycle: cache.days_held(MAC, cycle, GROUPS) for cycle in days}
-    cache.close()
+    storage = Storage(tmp_path / "ecobot.sqlite", TZ)
+    sensors = [storage.sensors.find(MAC, g) for g in GROUPS if storage.sensors.find(MAC, g)]
+    held = {cycle: min(storage.coverage.days(s.id, cycle) for s in sensors) for cycle in days}
+    storage.close()
     assert all(n - 2 <= held[cycle] <= n for cycle, n in days.items()), held   # (the newest hours are still settling)
     for name in ("TELEGRAM_BOT_TOKEN", "ECOWITT_API_KEY", "ECOWITT_APP_KEY"):
         monkeypatch.setenv(name, "t")
