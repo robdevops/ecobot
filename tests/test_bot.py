@@ -529,7 +529,7 @@ async def test_a_request_and_its_reply_are_logged_under_the_chat_they_came_from(
         assert await _message_aged(alert_state, 5) == ["ok"]
     lines = [r.getMessage() for r in caplog.records if r.name == "lib.bot"]
     assert "[Telegram 1]: @rob: how hot is it" in lines
-    assert any(line.startswith("[Telegram 1]: Replied in ") and line.endswith(", tools 0, charts 0, 2 chars: ok") for line in lines)
+    assert any(line.startswith("[Telegram 1]: Replied in ") and line.endswith(", tools 0, charts 0, 2 chars") for line in lines)
 
 
 async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_and_the_answer_still_comes(alert_state):

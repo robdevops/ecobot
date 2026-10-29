@@ -1233,8 +1233,8 @@ class Bot:
         if answer.ok and not reply.strip() and not photos:   # a chart with no text that could not be drawn
             reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
         used = [m for m in added if m["role"] == "tool"]
-        log.info("%s: %s in %.1fs, tools %d, charts %d, %d chars: %s", chat_tag(msg.chat_id), "Replied" if answer.ok else "Error reply",
-                 time.monotonic() - started, len(used), len(photos), len(reply), reply, extra=QUOTES)
+        log.info("%s: %s in %.1fs, tools %d, charts %d, %d chars", chat_tag(msg.chat_id), "Replied" if answer.ok else "Error reply",
+                 time.monotonic() - started, len(used), len(photos), len(reply))
         used_air = any(tc["function"]["name"] == "air_quality" for m in added for tc in m.get("tool_calls") or [])
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
