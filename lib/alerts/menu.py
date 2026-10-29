@@ -3,7 +3,7 @@
 /alerts has two buttons, 🔔 Alerts and (private chats) 🔊 Sound. Each opens a list of alert types as toggles (Sound lists only the types
 that are on), the button that opened it kept above the list (▾; pressing it closes the list) and the other hidden meanwhile.
 Under an alert there is one 🔔 that opens that type's two toggles, Alert and (while it is on, private chats) Sound, and beside it, under an
-alert that carries a chart, 🔄 Refresh, which draws the chart again with the latest readings.
+alert that carries a chart, 🔄, which draws the chart again with the latest readings.
 
 Callback data is self-contained and short, so an old message's buttons still work after a restart. It is built here and read by
 bot.on_alert_button:
@@ -51,9 +51,9 @@ def _verb(on: bool) -> str:
 def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None, refresh: bool = False) -> InlineKeyboardMarkup:
     """The buttons under an alert of type `kind`: one bell (🔔 ▸, ▾ once `open` is BELL) that opens up to two toggles, Alert (this type's
     alerts in this chat) and, only while that is on and in a private chat (`loud` is not None), Sound (whether they make a notification
-    sound). refresh (the alert carries a chart): 🔄 Refresh beside the bell, which draws the chart again."""
+    sound). refresh (the alert carries a chart): 🔄 beside the bell, which draws the chart again."""
     is_open = open == BELL
-    rows = [[opener("🔔", is_open, f"al:open:{BELL}:{kind}", f"al:close:{kind}"), *([button("🔄 Refresh", f"al:refresh:{kind}")] if refresh else [])]]
+    rows = [[opener("🔔", is_open, f"al:open:{BELL}:{kind}", f"al:close:{kind}"), *([button("🔄", f"al:refresh:{kind}")] if refresh else [])]]
     if is_open:
         on = kind not in muted
         rows.append([toggle_button("Alert", on, lambda turn_on: f"al:{_verb(turn_on)}:{kind}:{BELL}:{kind}")])

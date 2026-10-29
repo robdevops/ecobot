@@ -314,9 +314,9 @@ def test_under_an_alert_one_bell_opens_the_alert_toggle_and_then_the_sound_toggl
 
 
 def test_under_an_alert_with_a_chart_refresh_sits_beside_the_bell_open_or_shut():
-    assert rows(alert_keyboard("gusts", set(), set(), refresh=True)) == [[("🔔 ▸", "al:open:bell:gusts"), ("🔄 Refresh", "al:refresh:gusts")]]
+    assert rows(alert_keyboard("gusts", set(), set(), refresh=True)) == [[("🔔 ▸", "al:open:bell:gusts"), ("🔄", "al:refresh:gusts")]]
     opened = rows(alert_keyboard("gusts", set(), None, "bell", refresh=True))
-    assert opened == [[("🔔 ▾", "al:close:gusts"), ("🔄 Refresh", "al:refresh:gusts")], [("Alert", "al:off:gusts:bell:gusts")]]
+    assert opened == [[("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts")], [("Alert", "al:off:gusts:bell:gusts")]]
 
 
 async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays_open(tmp_path):
@@ -459,7 +459,7 @@ async def test_an_alert_with_a_picture_is_the_picture_with_the_text_as_its_capti
     assert bot.sent == [] and len(bot.photos) == 1
     chat, photo, kw = bot.photos[0]
     assert (chat, photo, kw["caption"]) == (1, b"png", "It's warmer outside") and kw["disable_notification"] is True
-    assert rows(kw["reply_markup"]) == [[("🔔 ▸", "al:open:bell:temps"), ("🔄 Refresh", "al:refresh:temps")]]   # its own buttons ride along
+    assert rows(kw["reply_markup"]) == [[("🔔 ▸", "al:open:bell:temps"), ("🔄", "al:refresh:temps")]]   # its own buttons ride along
 
 
 async def test_an_alerts_picture_is_uploaded_once_and_the_other_chats_are_sent_telegrams_copy(tmp_path):
@@ -548,7 +548,7 @@ async def test_the_bell_under_an_alerts_chart_keeps_its_refresh(tmp_path):
     bot, _ = make_bot(tmp_path)
     q = ChartQuery("al:open:bell:gusts")
     await press(bot, q)
-    assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts"), ("🔄 Refresh", "al:refresh:gusts")]
+    assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts")]
     q = Query("al:open:bell:gusts", text="💨 Strong gusts")                     # an alert that went out as text has none
     await press(bot, q)
     assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts")]
