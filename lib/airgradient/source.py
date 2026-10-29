@@ -272,8 +272,9 @@ class AirGradient(Source):
         for name, (compared, agreed) in verdict.items():
             if name not in keep and name not in self._ha_said:
                 self._ha_said.add(name)
-                log.info("Home Assistant's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes: perhaps the monitor's raw "
-                         "value), so it fills no gaps and its ranges aren't used", LABELS.get(name) or EXTRA_LABELS.get(name, name), agreed, compared)
+                log.warning("Home Assistant's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes: perhaps the monitor's raw "
+                            "value), so it fills no gaps and its ranges aren't used: %s", LABELS.get(name) or EXTRA_LABELS.get(name, name),
+                            agreed, compared, FIX.get(name, "check the correction each applies"))
         if first or not self._ha_ok:
             log.info("Backfill Home Assistant (AirGradient): %d ranges fetched, 0 failed, %d readings, %d filled, %d minutes, %.0fs", added,
                      len(keep), filled, kept, time.monotonic() - started)
