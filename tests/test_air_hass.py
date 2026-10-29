@@ -135,7 +135,7 @@ async def test_the_air_sensor_shares_the_weather_stations_home_assistant_and_its
     ha_t, _ = home_assistant_transport()
     air_t, _ = air_transport()
     eco_init, air_init = Ecowitt.__init__, AirGradient.__init__
-    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c: eco_init(self, c, eco_t, ha_t))
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, **kw: eco_init(self, c, eco_t, ha_t, **kw))
     monkeypatch.setattr(ecobot.AirGradient, "__init__", lambda self, c, **kw: air_init(self, c, transport=air_t, **kw))
     sources, _ = await ecobot.start_sources(cfg)
     eco, air = sources

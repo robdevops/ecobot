@@ -1,7 +1,8 @@
-"""How long the bot's typical requests take, and how many SQL statements and thread hops they make, on a copy of its caches: the
-yardstick for the storage redesign (docs/storage-plan.md, step 0). Nothing is asked of Ecowitt or AirGradient (a request the cache
-cannot answer is counted instead), and the caches themselves are only read: the copy is made with SQLite's backup, so the bot can keep
-running. Run it where the bot runs, with its settings:
+"""How long the bot's typical requests take, and how many SQL statements and thread hops they make, on a copy of its files: the
+yardstick for the storage redesign (docs/storage-plan.md, step 0). The copy is of ecobot.sqlite where the bot has one, and of the old
+caches it is made from (a copy of those only is moved into one first, as the bot does at its first start). Nothing is asked of Ecowitt or
+AirGradient (a request the copy cannot answer is counted instead), and the bot's own files are only read: the copy is made with SQLite's
+backup, so the bot can keep running. Run it where the bot runs, with its settings:
 
     sudo docker compose exec ecobot python scripts/bench_storage.py
     python scripts/bench_storage.py [--data /var/lib/private/ecobot] [--repeat 3]
@@ -30,7 +31,7 @@ from lib import counts  # noqa: E402
 from lib.config import Config, data_dir, local_tz  # noqa: E402
 from lib.tools import Turn  # noqa: E402
 
-FILES = ("ecowitt_cache.sqlite", "ecowitt_live.sqlite", "ecowitt_minutes.sqlite", "airgradient_cache.sqlite")
+FILES = ("ecobot.sqlite", "ecowitt_cache.sqlite", "ecowitt_live.sqlite", "ecowitt_minutes.sqlite", "airgradient_cache.sqlite")
 
 
 class Offline:
@@ -104,6 +105,21 @@ async def measured(work, repeat: int, asked, before=None) -> tuple[float, counts
     return statistics.median(times), count, ask
 
 
+def stations(storage) -> list[tuple[str, int, int]]:
+    """(MAC, rows of readings, minutes) of each station in the file, the one with the most first."""
+    from lib.storage import KINDS
+
+    def count(r):
+        found: dict[str, list[int]] = {}
+        for sensor in r.sensors():
+            if sensor.kind in KINDS and sensor.kind != "air":
+                rows, minutes = r.db.execute(f"SELECT COUNT(*), SUM(res = '1min') FROM {sensor.kind} WHERE sensor = ?", (sensor.id,)).fetchone()
+                got = found.setdefault(sensor.device, [0, 0])
+                got[0], got[1] = got[0] + rows - (minutes or 0), got[1] + (minutes or 0)
+        return sorted(((mac, n, m) for mac, (n, m) in found.items()), key=lambda x: -x[1])
+    return storage.read_now(count)
+
+
 def period(days: float, now: datetime) -> dict:
     return {"start_date": f"{now - timedelta(days=days):%Y-%m-%d %H:%M:%S}", "end_date": f"{now:%Y-%m-%d %H:%M:%S}"}
 
@@ -112,17 +128,18 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, counts.
     from lib.airgradient import AirGradient
     from lib.ecowitt import Ecowitt
     from lib.ecowitt.archive import Archive
-    from lib.ecowitt.minutes import MinuteStore
     cfg = settings(folder)
     rows: list[tuple[str, float, counts.Count, int]] = []
-    if (folder / "ecowitt_cache.sqlite").exists():
-        eco = Ecowitt(cfg)
+    if (folder / "ecowitt_cache.sqlite").exists() or cfg.storage_path.exists():
+        started = time.monotonic()
+        eco = Ecowitt(cfg)   # (the old caches moved into ecobot.sqlite first, if the copy has none)
+        opened = time.monotonic() - started
         eco.api, eco.tz = Offline(), tz
-        if (folder / "ecowitt_minutes.sqlite").exists():   # Home Assistant's minutes, which the bot draws a chart of a few hours from
-            eco.minute_store = MinuteStore(folder / "ecowitt_minutes.sqlite")
-        held = eco.cache._query("SELECT s.mac, COUNT(*) FROM points p JOIN series s ON s.id = p.series GROUP BY s.mac ORDER BY 2 DESC")
+        held = stations(eco.storage)
         eco.mac = held[0][0] if held else ""
-        print(f"Ecowitt {eco.mac}: {held[0][1] if held else 0:,} readings, {Archive(eco).held()}")
+        eco.has_minutes = any(n for _, _, n in held)   # Home Assistant's minutes, which the bot draws a chart of a few hours from
+        print(f"Ecowitt {eco.mac}: {held[0][1] if held else 0:,} rows of readings, {held[0][2] if held else 0:,} minutes, {Archive(eco).held()} "
+              f"(opened in {opened:.1f} s)")
         now = eco.now()
         history, days, link = eco.tools[1].handler, eco.tools[2].handler, eco.tools[3].handler
         chart = lambda field, d, groups="outdoor": lambda: history({"groups": groups, "chart": True, "chart_field": field, **period(d, now)}, Turn())
@@ -174,14 +191,14 @@ def main():
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     found = [name for name in FILES if (args.data / name).exists()]
     if not found:
-        sys.exit(f"No cache files in {args.data}: give the bot's data folder with --data")
+        sys.exit(f"No history files in {args.data}: give the bot's data folder with --data")
     tz = ZoneInfo(args.tz) if args.tz else local_tz()
     counts.install()
     with tempfile.TemporaryDirectory(prefix="ecobot-bench-") as tmp:
         folder = Path(tmp)
         for name in found:
             copy(args.data / name, folder / name)
-        print(f"Caches in {args.data}: " + ", ".join(f"{name} {(args.data / name).stat().st_size / 1e6:.1f} MB" for name in found))
+        print(f"Files in {args.data}: " + ", ".join(f"{name} {(args.data / name).stat().st_size / 1e6:.1f} MB" for name in found))
         print(f"Time zone {tz}, each request run {args.repeat} times (the median shown)\n")
         rows = asyncio.run(bench(folder, args.repeat, tz))
     print("| Request | SQL statements | Thread hops | Asked of the network | Time |")
@@ -189,8 +206,8 @@ def main():
     for label, ms, count, asked in rows:
         print(f"| {label} | {count.sql} | {count.hops} | {asked} | {ms:,.0f} ms |")
     print("\nAsked of the network: what the copy could not answer. For a chart that is the newest hour or so, still settling, which the "
-          "running bot holds in memory; here it is asked of nothing and answered at once. The 3-hour chart is drawn from the minutes where "
-          "ecowitt_minutes.sqlite holds them (Home Assistant), else from the 5-minute readings.")
+          "running bot has fetched lately; here it is asked of nothing and answered at once. The 3-hour chart is drawn from the minutes where "
+          "the file holds them (Home Assistant's), else from the 5-minute readings.")
 
 
 if __name__ == "__main__":

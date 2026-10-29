@@ -138,7 +138,7 @@ class FakeEcowitt:
         for group in p["call_back"].split(","):
             named = {"outdoor": [("temperature", temp), ("humidity", humidity), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
-            for name, fn in named.get(group, [("temperature", temp)]):
+            for name, fn in named.get(group, [("temperature", temp)] if group == "indoor" else []):   # (no piezo gauge)
                 for ts in range(first, end + 1, step):
                     samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
                     fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, samples[0])
@@ -272,16 +272,44 @@ def air_transport(rows_per_day: int = 24, oldest: datetime | None = None, hourly
     return transport, calls
 
 
+# ---------- the bot's file, holding what a test puts in it ----------
+def storage_with(tmp_path, *responses, mac: str = "M", now: float | None = None):
+    """A new storage (lib/storage) holding these Ecowitt responses, written as a fetch writes them: (cycle, groups, data, start, end)
+    each, data in the cloud's shape ({group: {field: {"unit", "list"}}})."""
+    from lib.storage import Storage
+    storage = Storage(tmp_path / "ecobot.sqlite", TZ)
+    for cycle, groups, data, start, end in responses:
+        storage.writer.run(lambda w: w.put_ecowitt(mac, cycle, groups, data, start, end, now), ())
+    return storage
+
+
+def bands_of(storage, mac: str, series: str, start: int, end: int) -> dict[int, tuple[float, float]]:
+    """{5-minute mark: (lowest, highest)} of a reading's bands in the storage (those of the newest 5 minutes too, which may have no reading
+    yet)."""
+    from lib.storage.catalogue import column_of
+    group, field = series.split(".", 1)
+    sensor, (column, _) = storage.sensors.find(mac, group), column_of(group, field)
+    rows = storage.read_now(lambda r: r.db.execute(f'SELECT ts, "{column}_lo", "{column}_hi" FROM {sensor.kind} WHERE sensor = ? AND res = '
+                                                   f"'5min' AND ts BETWEEN ? AND ? AND \"{column}_lo\" IS NOT NULL", (sensor.id, start, end)).fetchall())
+    return {ts: (lo, hi) for ts, lo, hi in rows}
+
+
+def fetcher_on(storage, api=None, groups=(), mac: str = "M"):
+    """A fetcher of the station's history from `storage` (asking `api` for what it lacks)."""
+    from lib.ecowitt.fetch import Fetcher, Recent
+    return Fetcher(api, storage, Recent(), mac, list(groups), TZ)
+
+
 # ---------- a station whose whole history is already archived (built once per test session) ----------
 async def archived_station(tmp_path, cache_file):
-    """(Ecowitt, fake) with a copy of the session's archived cache: what `await Archive(eco).run_once()` would
-    leave, without paying for it in every test. fake.calls is empty."""
+    """(Ecowitt, fake) with a copy of the session's archive (its ecobot.sqlite): what `await Archive(eco).run_once()` would leave,
+    without paying for it in every test. fake.calls is empty."""
     import shutil
 
     from lib.ecowitt import Ecowitt
     transport, fake = ecowitt_transport()
     cfg = config(tmp_path)
-    shutil.copy(cache_file, cfg.cache_path)
+    shutil.copy(cache_file, cfg.storage_path)
     eco = Ecowitt(cfg, transport=transport)
     await eco.start()
     fake.calls.clear()

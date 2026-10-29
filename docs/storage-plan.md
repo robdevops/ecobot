@@ -234,8 +234,9 @@ answer from Home Assistant not at all).
 
 The newest readings (newer than the settle horizon, still changing as late uploads arrive) are written with `final = 0` and replaced by the
 next fetch, so every request reads the file alone. `HotStore` goes, and so does merging memory with the file. Coverage is still recorded
-only for the final part, so the archive asks for the rest again once it has settled. The one-fetch-at-a-time lock per station and cycle
-stays (`HotStore.lock`), as a dict of locks of its own.
+only for the final part, so the archive asks for the rest again once it has settled. What stays in memory is a note of the newest fetch
+of each station, cycle and group and when it was made (`fetch.Recent`): for 5 minutes a question reads those provisional readings from
+the file instead of asking again, and one fetch at a time per station and cycle (its lock, as `HotStore.lock` was).
 
 What replaces what, a write's rules (`Writer.put`): a reading replaces the one held for the same sensor, resolution and time when it is as
 final (a provisional one never replaces a final one) and from a source ranked as high (the bot's own over Home Assistant's over the
@@ -373,10 +374,14 @@ the request took 1,205 ms, the first dashboard's in 22 ms where it took 3,146.
 
 ## 5. Migration
 
-- **Automatic, at start** (from step 2). When `ecobot.sqlite` does not exist and the old files do, the bot copies them across before
-  anything else starts, logging "Moving the history to ecobot.sqlite (once)". Nothing is fetched: Ecowitt's cloud keeps only 90 days of
+- **Automatic, at start** (from step 2). When the old files hold what `ecobot.sqlite` does not yet, the bot moves it across before the
+  station starts, logging "Moving the history to ecobot.sqlite (once)". Nothing is fetched: Ecowitt's cloud keeps only 90 days of
   5-minute readings, so the history is the bot's to keep. `scripts/migrate_storage.py` does the same by hand on a copy of the files, with
-  the bot running, and times the new storage's reads (section 4). `lib/storage/migrate.py` does it.
+  the bot running, and times the new storage's reads (section 4). `lib/storage/migrate.py` does it (`open_storage` at start).
+- **In parts.** Each part moves when its code does, and the file notes it (`migrated.<part>` in `meta`): the station's three files in
+  step 2, the AirGradient's in step 3, the snapshots in step 5. A part moved into a file that is there already is merged into it: its
+  sensors found or added, the file's own readings kept and the old ones filling in what they lack, each band the wider of the two, the
+  coverage of both, and the days of what came in worked out again.
 - **What goes where.**
   - Ecowitt `series` and `points`: each `(mac, cycle, group)` becomes a sensor and a resolution; `field`, `field_low` and `field_high`
     become one row's value, low and high; the text becomes REAL; a field the catalogue does not know, or a value that is not a number,
@@ -392,8 +397,10 @@ the request took 1,205 ms, the first dashboard's in 22 ms where it took 3,146.
 - **Checked before it counts.** It is built as `ecobot.sqlite.part`, in one transaction; for every sensor, resolution and cell (a value,
   a low, a high) the number of values and their sum are compared with the old files' before the bands are widened, and so are the
   coverage, that every range is inside its row's band, the minutes, the AirGradient's readings and its own, and the snapshots. Any
-  difference and the new file is deleted, the bot carries on with the old ones, and the log says why. Only then is the file renamed
-  `ecobot.sqlite`. It needs twice the old files' size free on the disk, and says so if there is not.
+  difference and the built file is deleted and the log says why; the bot starts with what its sources still have (a new `ecobot.sqlite`,
+  filled by the archive from what Ecowitt's cloud still keeps), and the move is tried again at the next start, into that file. Only a
+  move that adds up is renamed `ecobot.sqlite` (or merged into it). It needs twice the old files' size free on the disk, and says so if
+  there is not.
 - **What it says.** On the owner's cache: "Moved the history to ecobot.sqlite in 15.5s: 1,713,215 station readings, 16,589 bands,
   11,880 minutes, 423,571 AirGradient readings, 312 snapshots; 32.7 MB of old files, 28.6 MB now", every count and sum matching. Then,
   with an example of each, the fields it has no column for, the values that are not numbers (1,046 of them there, in five fields that
@@ -423,7 +430,9 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
 2. **The station on it.** `Fetcher`, `HistoryQuery`, `days`, `link`, `dashboard`, `compose`, the alerts, the archive, the live readings, the
    minutes and Home Assistant's ranges read and write the new tables; `HotStore`, `LiveRanges`, `MinuteStore` and the refining go. The bot
    migrates at start. While this is built, a temporary test runs the same questions on the same fixture through the old code and the new
-   and compares the answers, so any difference is seen and judged.
+   and compares the answers, so any difference is seen and judged (`tests/test_old_against_new.py`: the old code is taken from git).
+   In progress: the station writes and reads `ecobot.sqlite` (moved in at start), the readers not moved yet reading it through
+   `ecowitt/stored.py` as they read the old cache; next, the day rows for `weather_days` and the dashboard, then `HistoryQuery`.
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live

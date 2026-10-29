@@ -104,7 +104,7 @@ def copy_db(src: Path, dest: Path):
 async def main():
     logging.disable(logging.WARNING)  # the fetchers log every refused request
     ap = parser(__doc__)
-    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecowitt_cache.sqlite and airgradient_cache.sqlite")
+    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecobot.sqlite (or ecowitt_cache.sqlite) and airgradient_cache.sqlite")
     ap.add_argument("--tz", default="Australia/Melbourne")
     ap.add_argument("--out", default="chart_dump")
     args = ap.parse_args()
@@ -112,9 +112,12 @@ async def main():
     out.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
-        eco_path, air_path = Path(tmp) / "ecowitt.sqlite", Path(tmp) / "airgradient.sqlite"
+        eco_path, air_path = Path(tmp) / "ecowitt_cache.sqlite", Path(tmp) / "airgradient.sqlite"
         have_eco, have_air = (data / "ecowitt_cache.sqlite").exists(), (data / "airgradient_cache.sqlite").exists()
-        if have_eco:
+        if (data / "ecobot.sqlite").exists():   # the station's history since it moved there (else the copy of the old cache is moved in)
+            copy_db(data / "ecobot.sqlite", Path(tmp) / "ecobot.sqlite")
+            have_eco = True
+        elif have_eco:
             copy_db(data / "ecowitt_cache.sqlite", eco_path)
         if have_air:
             copy_db(data / "airgradient_cache.sqlite", air_path)
@@ -130,9 +133,7 @@ async def main():
         eco = air = None
         if have_eco:
             eco = Ecowitt(cfg, transport=Offline())
-            db = sqlite3.connect(f"file:{eco_path}?mode=ro", uri=True)
-            eco.mac = (db.execute("SELECT DISTINCT mac FROM coverage").fetchone() or [""])[0]
-            db.close()
+            eco.mac = next(iter(eco.cache.macs()), "")
         if have_air:
             air = AirGradient(cfg, transport=Offline())
         tools = {t.name: t for s in (eco, air) if s for t in s.tools}

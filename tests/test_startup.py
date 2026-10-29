@@ -60,7 +60,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
     monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
@@ -94,7 +94,7 @@ async def test_the_weather_alerts_that_could_not_start_are_named_as_not_running(
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
     monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
@@ -128,7 +128,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     monkeypatch.setattr(archive, "PACE_SECONDS", 0)
     monkeypatch.setattr(air_source, "BACKFILL_PACE", 0)
@@ -156,7 +156,7 @@ async def test_a_failed_first_refresh_does_not_stop_the_alerts_or_the_archives(t
 
 async def test_a_source_that_cannot_even_be_made_is_left_out_and_the_others_start(tmp_path, monkeypatch, caplog):
     eco_t, _ = ecowitt_transport(history_days=45)
-    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, orig=ecobot.Ecowitt.__init__: orig(self, c, eco_t))
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, orig=ecobot.Ecowitt.__init__, **kw: orig(self, c, eco_t, **kw))
 
     def broken(self, cfg, transport=None):
         raise OSError("the cache folder is read-only")
@@ -177,7 +177,7 @@ async def test_a_failure_part_way_through_starting_closes_everything_already_ope
     app.stop = lambda: closed.append("telegram") or app._noop()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
 
     async def stuck_disk(self):
@@ -208,7 +208,7 @@ async def test_pollen_and_forecast_start_only_when_switched_on_and_the_forecast_
     eco_t, _ = ecowitt_transport(history_days=45)
     calls = []
     eco_init, pollen_init, forecast_init = ecobot.Ecowitt.__init__, ecobot.Pollen.__init__, ecobot.Forecast.__init__
-    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c: eco_init(self, c, eco_t))
+    monkeypatch.setattr(ecobot.Ecowitt, "__init__", lambda self, c, **kw: eco_init(self, c, eco_t, **kw))
     monkeypatch.setattr(ecobot.Pollen, "__init__", lambda self, c: pollen_init(self, c, pollen_transport(page, calls)))
     monkeypatch.setattr(ecobot.Forecast, "__init__", lambda self, c, place=None: forecast_init(self, c, place, forecast_transport(calls)))
     monkeypatch.setattr(ecobot.Pollen, "now", lambda self: datetime(2026, 11, 10, 12, 0))     # in the pollen season, whatever day the test runs
@@ -228,7 +228,7 @@ async def test_the_other_sources_run_in_the_weather_station_s_time_zone(tmp_path
     eco_t, _ = ecowitt_transport(history_days=45)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setenv("TZ", "UTC")
     sources, cfg = await ecobot.start_sources(config(tmp_path, tz=ZoneInfo("UTC")))   # TZ says UTC; the station is in Melbourne
     for s in sources:
@@ -347,7 +347,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     app = FakeApp()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(tuya_module.Tuya, "__init__", lambda self, c, transport=None, orig=tuya_module.Tuya.__init__: orig(self, c, httpx.MockTransport(tuya)))
     monkeypatch.setattr(tuya_module.Tuya, "close", lambda self, orig=tuya_module.Tuya.close: closed.append(1) or orig(self))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
@@ -460,7 +460,7 @@ async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_
     air_t, _ = air_transport()
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     for cls, transport in ((ecobot.Ecowitt, eco_t), (ecobot.AirGradient, air_t)):
-        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport: orig(self, c, t))
+        monkeypatch.setattr(cls, "__init__", lambda self, c, transport=None, orig=cls.__init__, t=transport, **kw: orig(self, c, t, **kw))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(Rejecting())))
     with pytest.raises(SystemExit) as stopped:
         await ecobot.main()

@@ -215,6 +215,11 @@ class Config:
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property
+    def storage_path(self) -> Path:
+        """The bot's one file of readings (lib/storage), beside the files it replaces (docs/storage-plan.md)."""
+        return self.cache_path.with_name("ecobot.sqlite")
+
+    @property
     def homeassistant(self) -> bool:
         return bool(self.homeassistant_url and self.homeassistant_token)
 

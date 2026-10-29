@@ -7,7 +7,7 @@ import pytest
 from lib.ecowitt import homeassistant as ha
 from lib.ecowitt.live import BUCKET
 from lib.ecowitt.homeassistant import HomeAssistant, ranges_of, states_of
-from tests.fakes import archived_station, config
+from tests.fakes import archived_station, bands_of, config
 
 M = 1_800_000_000 // BUCKET * BUCKET
 
@@ -80,7 +80,7 @@ async def test_the_station_folds_home_assistants_readings_into_its_ranges_and_lo
     eco.ha = HomeAssistant("http://ha", "t", transport)
     caplog.set_level("INFO")
     await eco.import_ranges()
-    marks = eco.live.between("outdoor.temperature", int(t0), int(now))
+    marks = bands_of(eco.storage, eco.mac, "outdoor.temperature", int(t0), int(now))
     assert len(marks) > 15 and any(lo < hi for lo, hi in marks.values())      # (a stretch where it did not change has no width)
     assert "Backfill Home Assistant (Ecowitt): " in caplog.text
 

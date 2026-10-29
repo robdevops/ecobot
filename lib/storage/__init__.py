@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import tzinfo
 from pathlib import Path
 from typing import NamedTuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .. import counts
 from . import schema
@@ -69,6 +70,15 @@ class Sensors:
                 self._by_key[s.device, s.external] = s
 
 
+def zone_named(name: str, default: tzinfo) -> tzinfo:
+    """The zone a file names, else (a name this Python does not know) `default`."""
+    try:
+        return ZoneInfo(name)
+    except (ValueError, ZoneInfoNotFoundError):
+        log.warning("Storage: the file's time zone %r is not one this Python knows; using %s", name, default)
+        return default
+
+
 def connect(path: Path, bulk: bool = False) -> sqlite3.Connection:
     """A connection to the file, its statements counted. bulk (the migration, into a file of its own): no WAL and no syncing, as fast as it
     goes, since a failure deletes the file."""
@@ -86,6 +96,7 @@ def connect(path: Path, bulk: bool = False) -> sqlite3.Connection:
 
 class Storage:
     def __init__(self, path, tz: tzinfo, bulk: bool = False):
+        """tz: the zone a new file's days are worked out in; a file keeps its own (the station's, see set_timezone)."""
         from .read import Reader
         from .write import Writer
         self.path, self.tz, self.bulk = Path(path), tz, bulk
@@ -99,13 +110,16 @@ class Storage:
         self.writer, self.reader = Writer(self), Reader(self)
         self._write_pool = ThreadPoolExecutor(1, thread_name_prefix="storage-write")
         self._read_pool = ThreadPoolExecutor(1, thread_name_prefix="storage-read")
-        zone = str(getattr(tz, "key", tz))
-        if (was := self.reader.meta("tz")) != zone:   # the station's days are local to it: a new zone works them all out again
+        if (zone := self.reader.meta("tz")) is None:
             with self.writer.transaction():
-                if was is not None:
-                    log.info("Storage: the time zone is now %s (was %s): working out every day again", zone, was)
-                    self.writer.all_days()
-                self.writer.set_meta("tz", zone)
+                self.writer.set_meta("tz", str(getattr(tz, "key", tz)))
+        else:
+            self.tz = self.writer.tz = zone_named(zone, tz)
+
+    async def set_timezone(self, tz: tzinfo):
+        """The station's days are local to it: a zone other than the file's works them all out again."""
+        if str(getattr(tz, "key", tz)) != str(getattr(self.tz, "key", self.tz)):
+            await self.write(lambda w: w.set_timezone(tz))
 
     # ---------- the hops ----------
     async def read(self, fn, *args):
@@ -115,6 +129,12 @@ class Storage:
     async def write(self, fn, *args):
         """fn(writer, *args) on the writer's thread, in one transaction."""
         return await self._hop(self._write_pool, self.writer.run, fn, args)
+
+    def read_now(self, fn, *args):
+        """read() for code that is not async: the calling thread waits for the reader's (never call it on the reader's own thread)."""
+        if (count := counts.CURRENT.get()) is not None:
+            count.hops += 1
+        return self._read_pool.submit(contextvars.copy_context().run, self.reader.run, fn, args).result()
 
     @staticmethod
     async def _hop(pool: ThreadPoolExecutor, run, fn, args):

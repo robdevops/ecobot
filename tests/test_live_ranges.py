@@ -65,7 +65,8 @@ async def test_a_chart_of_5_minute_readings_is_shaded_between_the_lows_and_highs
     bare = await chart_of_the_last_day(eco)
     assert bare.low is None                                                       # nothing was recorded: a clean line, as before
     now = int(datetime.now(eco.tz).timestamp())
-    eco.live.put({"outdoor.temperature": {mark: (4, 10.0, 11.0) for mark in range((now - 2 * 86400) // BUCKET * BUCKET, now, BUCKET)}})   # the bot has watched the whole time
+    found = {"outdoor.temperature": {mark: (4, 10.0, 11.0) for mark in range((now - 2 * 86400) // BUCKET * BUCKET, now, BUCKET)}}
+    await eco.storage.write(lambda w: w.put_ranges(eco.mac, found))   # the bot has watched the whole time
     shaded = await chart_of_the_last_day(eco)
     assert shaded.low and len(shaded.low) == len(shaded.x) == len(shaded.high)
     assert all(lo <= y <= hi for lo, y, hi in zip(shaded.low, shaded.y, shaded.high))
@@ -76,11 +77,12 @@ async def test_a_chart_of_5_minute_readings_is_shaded_between_the_lows_and_highs
 async def test_the_station_keeps_the_live_readings_it_is_asked_for_and_a_failure_to_keep_them_changes_nothing(tmp_path, archived_cache, caplog):
     eco, _ = await archived_station(tmp_path, archived_cache)
     assert (await eco._live_data(["outdoor"]))["outdoor"]                         # a question's own request: the fake station's one temperature
-    assert eco.live.db.execute("SELECT COUNT(*), MAX(n) FROM ranges").fetchone() == (1, 1)
+    (mark,) = eco.live_marks.marks["outdoor.temperature"].values()
+    assert mark[0] == 1                                                          # counted; one reading is no band yet
 
     def broken(data, now=None):
         raise RuntimeError("disk full")
-    eco.live.add = broken
+    eco.live_marks.add = broken
     assert (await eco._live_data(["outdoor"]))["outdoor"] and "disk full" in caplog.text
     await eco.close()
 
@@ -109,7 +111,8 @@ async def test_a_chart_of_a_week_has_the_true_extremes_of_each_half_hour_in_its_
     plain = await line()
     slot = plain.x[len(plain.x) // 2]                                           # a half hour in the middle of the period
     base = dict(zip(plain.x, zip(plain.low, plain.y, plain.high)))[slot]
-    eco.live.put({"outdoor.temperature": {slot // 1800 * 1800 + 300 * k: (5, base[0] - 4.0, base[2] + 6.0) for k in range(6)}})   # a spike and a dip between its 5-minute marks
+    found = {"outdoor.temperature": {slot // 1800 * 1800 + 300 * k: (5, base[0] - 4.0, base[2] + 6.0) for k in range(6)}}
+    await eco.storage.write(lambda w: w.put_ranges(eco.mac, found))   # a spike and a dip between its 5-minute marks
     widened = await line()
     low, value, high = dict(zip(widened.x, zip(widened.low, widened.y, widened.high)))[slot]
     assert low == base[0] - 4.0 and high == base[2] + 6.0 and value == base[1]    # the range is taken out; the line is not moved

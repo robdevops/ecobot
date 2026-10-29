@@ -1,22 +1,28 @@
-"""scripts/check_rain.py: reports honestly on healthy data, and catches rain totals that are averages."""
+"""scripts/check_rain.py: reports honestly on healthy data, and catches rain totals that are averages. It reads the old cache's file
+until step 5 of docs/storage-plan.md moves it to ecobot.sqlite."""
 
+import shutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 import pytest
 
-from tests.fakes import archived_station
+from lib.ecowitt.api import UNITS
+from lib.ecowitt.store import HistoryCache
+from tests.fakes import MAC, TZ
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import check_rain  # noqa: E402
 
 
 @pytest.fixture
-async def station(tmp_path, archived_cache):
-    eco, _ = await archived_station(tmp_path, archived_cache)
-    yield eco
-    await eco.close()
+def station(tmp_path, old_archived_cache):
+    shutil.copy(old_archived_cache, tmp_path / "ecowitt_cache.sqlite")
+    cache = HistoryCache(tmp_path / "ecowitt_cache.sqlite", UNITS)
+    yield NS(cache=cache, mac=MAC, tz=TZ)
+    cache.close()
 
 
 def run(eco):

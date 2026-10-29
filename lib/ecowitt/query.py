@@ -256,7 +256,7 @@ class HistoryQuery:
         if not keys:
             return
         f = self.f
-        wind = self.wind = Fetcher(f.api, f.cache, f.hot, f.mac, ["wind"], self.tz, f.urgent)
+        wind = self.wind = f.sibling(["wind"])
         first = max(self.start, self.end - timedelta(days=DIRECTION_DAYS))
         bounds = {}   # each day of the period: its part of it, local times
         for n in range((self.end.date() - first.date()).days + 1):

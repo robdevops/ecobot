@@ -6,11 +6,10 @@ its time), plus which time ranges have been fetched per (mac, cycle, group). Cov
 the station existed), so those ranges aren't asked for again. The newest readings may
 still change (late uploads), so only buckets older than a per-cycle horizon are stored.
 
-HotStore (memory) holds the newest response per (mac, cycle, group) for a few minutes, so
-that unsettled tail is fetched by the keep-warm refresh rather than by each question.
+The bot reads and writes ecobot.sqlite now (lib/storage, docs/storage-plan.md); this file is what the scripts that are not moved yet
+read, and what the move into ecobot.sqlite checks itself against.
 """
 
-import asyncio
 import json
 import logging
 import threading
@@ -28,8 +27,6 @@ SCHEMA_VERSION = "1"
 # before it existed). Newer gaps may just be Ecowitt running late, so they're re-asked.
 GAP_FINAL_SECONDS = 2 * 86400
 
-HOT_TTL_SECONDS = 300   # recent readings are reused for this long
-HOT_SLACK_SECONDS = 60  # a response ending within this of its fetch time "reaches the present"
 
 type Interval = tuple[int, int]
 
@@ -237,36 +234,3 @@ class HistoryCache:
         """Cached readings in Ecowitt's response shape: {grp: {field: {unit, list}}}."""
         got = {grp: self.load_fields(mac, cycle, grp, None, start, end) for grp in groups}
         return {grp: fields for grp, fields in got.items() if fields}
-
-
-class HotStore:
-    """Fresh responses per (mac, cycle, group): the fields, the range they cover, and when
-    they were fetched. Only the latest response per key is kept."""
-
-    def __init__(self):
-        self._entries: dict = {}
-        self._locks: dict = {}
-
-    def lock(self, mac: str, cycle: str) -> asyncio.Lock:
-        """One fetch at a time per mac/cycle, so a question waits for an in-flight
-        refresh instead of asking Ecowitt for the same thing."""
-        return self._locks.setdefault((mac, cycle), asyncio.Lock())
-
-    def get(self, mac: str, cycle: str, group: str, start: int, end: int) -> dict | None:
-        """Group's fields if a fresh-enough response covers the whole of [start, end], else
-        None. A response fetched up to the present covers anything up to now (readings newer
-        than that are at most HOT_TTL_SECONDS stale, by design)."""
-        entry = self._entries.get((mac, cycle, group))
-        if not entry or time.time() - entry["fetched_at"] > HOT_TTL_SECONDS or entry["start"] > start:
-            return None
-        reaches_present = entry["end"] >= entry["fetched_at"] - HOT_SLACK_SECONDS
-        return entry["fields"] if end <= entry["end"] or reaches_present else None
-
-    def put(self, mac: str, cycle: str, group: str, start: int, end: int, fields: dict):
-        """Keep a response, unless a fresh one that reaches later is held: an old range (the archive's) is cached on disk, and must
-        not push out the copy of the last hours that questions are answered from."""
-        held = self._entries.get((mac, cycle, group))
-        if held and time.time() - held["fetched_at"] <= HOT_TTL_SECONDS and held["end"] > end:
-            return
-        self._entries[(mac, cycle, group)] = {"start": start, "end": end, "fields": fields,
-                                              "fetched_at": time.time()}

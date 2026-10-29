@@ -62,13 +62,6 @@ def test_changed_units_clear_the_cache(tmp_path):
     assert reopened.load("M", "5min", ["outdoor"], 0, now) == {}
 
 
-def test_hot_store_reuses_fresh_responses_up_to_now():
-    hot, now = store.HotStore(), int(time.time())
-    hot.put("M", "5min", "outdoor", now - 3600, now, {"f": 1})
-    assert hot.get("M", "5min", "outdoor", now - 1800, now + 100) == {"f": 1}   # reaches the present
-    assert hot.get("M", "5min", "outdoor", now - 7200, now) is None            # starts before what we hold
-
-
 def test_a_metric_ecowitt_adds_later_makes_the_days_held_be_fetched_again(tmp_path):
     cache, now = make(tmp_path), int(time.time())
     old = now - 10 * 86400

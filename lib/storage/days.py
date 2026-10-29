@@ -24,6 +24,7 @@ from .catalogue import KINDS, SLOT
 from .schema import day_columns, q, some_value
 
 DAY = 86400
+ANY = "*"   # what is held changed: a day may come from another resolution now
 WANT = ('CREATE TEMP TABLE IF NOT EXISTS want (sensor INTEGER, day TEXT, "start" INTEGER, "end" INTEGER, res TEXT, complete INTEGER, '
         "PRIMARY KEY (sensor, day))")
 MISSING = "SELECT w.sensor, w.day FROM temp.want w LEFT JOIN {kind}_day d ON d.sensor = w.sensor AND d.day = w.day WHERE d.sensor IS NULL"
@@ -78,22 +79,27 @@ def utc_days(day: date, tz: tzinfo) -> tuple[int, int] | None:
     return (found[0], found[-1]) if found else None
 
 
-def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, set[date]], held: Held, tz: tzinfo):
-    """Work out these sensors' days again: their rows replaced, or gone when no readings are left for them."""
+def work_out(db: sqlite3.Connection, kind: str, wanted: dict[int, dict[date, set[str]]], held: Held, tz: tzinfo):
+    """Work out these sensors' days again ({sensor: {day: the resolutions written that day, or ANY}}): their rows replaced, or gone when no
+    readings are left for them. A day held whole at a resolution is left as it is when nothing of that resolution, nor what is held, changed
+    (a day of 5-minute readings has nothing to take from its 30-minute or daily ones: the archive writes every day at each resolution)."""
     insert, select = statements(kind)
     db.execute(WANT)
-    db.executemany(f"DELETE FROM {kind}_day WHERE sensor = ? AND day = ?", [(s, d.isoformat()) for s, days in wanted.items() for d in days])
-    complete, records, rest = [], [], set()
+    complete, records, rest, again = [], [], set(), []
     for sensor, days in wanted.items():
-        for d in days:
+        for d, changed in days.items():
             start, end = day_bounds(d, tz, True)
             res = next((r for r in ("5min", "30min") if held(sensor, r, start, end)), None)
+            if res and not changed & {res, ANY}:
+                continue
+            again.append((sensor, d.isoformat()))
             if res:   # held whole: that resolution, even if it has no readings (the station was off), as day_values does
                 complete.append((sensor, d.isoformat(), start, end, res, 1))
             elif (utc := utc_days(d, tz)) is not None:
                 records.append((sensor, d.isoformat(), *utc, "1day", 0))
             else:
                 rest.add((sensor, d))
+    db.executemany(f"DELETE FROM {kind}_day WHERE sensor = ? AND day = ?", again)
     _insert(db, insert, complete)
     if records:
         _insert(db, insert, records)
@@ -135,12 +141,13 @@ def _time_from_four_hours(db: sqlite3.Connection, kind: str, select: str, record
         db.execute(f"UPDATE {kind}_day SET {', '.join(sets)} WHERE sensor = ? AND day = ?", (*args, sensor, day))
 
 
-def days_of(start: int, end: int, tz: tzinfo) -> set[date]:
-    """The local days [start, end] (epochs) touches, and the day of each daily record it touches (a daily record and its 4-hour readings
-    belong to the local day their UTC day starts on)."""
+def days_of(start: int, end: int, tz: tzinfo, utc: bool = True) -> set[date]:
+    """The local days [start, end] (epochs) touches, and (utc) the day of each daily record it touches (a daily record and its 4-hour
+    readings belong to the local day their UTC day starts on)."""
     first, last = local_date(start, tz), local_date(end, tz)
-    first = min(first, local_date(start - start % DAY, tz))
+    if utc:
+        first = min(first, local_date(start - start % DAY, tz))
     return {first + timedelta(days=n) for n in range((last - first).days + 1)}
 
 
-__all__ = ["days_of", "statements", "utc_days", "work_out"]
+__all__ = ["ANY", "days_of", "statements", "utc_days", "work_out"]

@@ -105,7 +105,7 @@ async def test_a_longer_archive_makes_more_of_the_record_exact_without_code_chan
     for (mac, grp, start, end) in [(eco.mac, g, local_day(first), local_day(last) + 86399) for g in ("outdoor", "rainfall")]:
         data = await eco.api.history(mac, "30min", datetime.fromtimestamp(start, TZ).replace(tzinfo=None),
                                      datetime.fromtimestamp(end, TZ).replace(tzinfo=None), grp)
-        eco.cache.store(mac, "30min", [grp], data, start, end)
+        await eco.storage.write(lambda w: w.put_ecowitt(mac, "30min", [grp], data, start, end))
     assert (await ask(eco, **args))["days"][0]["source"] == "exact"
     await eco.close()
 
@@ -247,8 +247,8 @@ async def test_days_can_be_counted_by_any_reading_not_only_temperature_rain_and_
     uvi = {str(t): ("9.5" if datetime.fromtimestamp(t, TZ).date() in hot and 8 <= datetime.fromtimestamp(t, TZ).hour <= 14 else "3.0")
            for t in range(start, end, 300)}
     humidity = {str(t): "40" if datetime.fromtimestamp(t, TZ).date() in hot else "80" for t in range(start, end, 300)}
-    eco.cache.store(eco.mac, "5min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end)
-    eco.cache.store(eco.mac, "5min", ["outdoor"], {"outdoor": {"humidity": {"unit": "%", "list": humidity}}}, start, end)
+    await eco.storage.write(lambda w: w.put_ecowitt(eco.mac, "5min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end))
+    await eco.storage.write(lambda w: w.put_ecowitt(eco.mac, "5min", ["outdoor"], {"outdoor": {"humidity": {"unit": "%", "list": humidity}}}, start, end))
     out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 9}], limit=5)
     assert out["matching_days"] == 3 and out["units"]["uv_max"] == "" and {r["uv_max"] for r in out["days"]} == {9.5}
     assert all(r["source"] == "exact" for r in out["days"]) and "note_averaged" not in out   # 5-minute readings: the peak is real
@@ -264,7 +264,7 @@ async def test_days_from_30_minute_data_say_their_peaks_are_averages(station):
     first, last = dates(eco, 150, 145)   # older than the 90 days kept at 5 minutes: 30-minute readings
     start, end = local_day(first), local_day(last) + 86399
     uvi = {str(t): "9.2" for t in range(start, end, 1800)}
-    eco.cache.store(eco.mac, "30min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end)
+    await eco.storage.write(lambda w: w.put_ecowitt(eco.mac, "30min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end))
     out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 9}])
     assert out["matching_days"] == out["days_checked"] > 0 and "average" in out["note_averaged"]
 

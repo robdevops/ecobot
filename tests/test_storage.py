@@ -169,9 +169,10 @@ def test_the_live_ranges_of_two_readings_or_more_widen_their_five_minutes(storag
     t = old_day()
     with storage.writer.transaction() as w:
         assert w.put_ranges(MAC, {"outdoor.temperature": {t: (3, 9.0, 11.0), t + 300: (1, 8.0, 8.0)}, "pressure.relative": {t: (2, 1010.0, 1011.0)},
-                                  "rainfall.daily": {t: (2, 1.0, 2.0)}, "outdoor.nothing": {t: (2, 1.0, 2.0)}}) == 3
+                                  "rainfall.daily": {t: (2, 1.0, 2.0)}, "outdoor.nothing": {t: (2, 1.0, 2.0)}}) == 2
     rows = storage.write_db.execute("SELECT sensor, ts, temperature_lo, temperature_hi FROM climate").fetchall()
     assert rows == [(storage.sensors.find(MAC, "outdoor").id, t, 9.0, 11.0)]
+    assert storage.write_db.execute("SELECT COUNT(*) FROM rain").fetchone()[0] == 0          # a rain counter takes no band
 
 
 # ---------- an Ecowitt response, by the old cache's rules (tests/test_store.py) ----------
@@ -292,6 +293,8 @@ def test_a_new_time_zone_works_every_day_out_again(tmp_path):
     s.close()
     perth = ZoneInfo("Australia/Perth")   # two or three hours behind: the same local date holds other readings
     again = Storage(tmp_path / "e.sqlite", perth)
+    assert str(again.tz) == "Australia/Melbourne"                        # a file keeps its own zone ...
+    asyncio.run(again.set_timezone(perth))                               # ... until the station names another
     start_p, end_p = day_bounds(d, perth, True)
     got = read(again, lambda r: r.days("climate", [1], d, d))[1]
     assert got.n == [288] and got.lo_ts["temperature"] == [start_p] and again.reader.meta("tz") == "Australia/Perth"

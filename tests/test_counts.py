@@ -40,10 +40,10 @@ def test_the_timing_line_carries_the_count():
     assert line == "data 12, 22 sql, 17 hops, calc 3, draw 98, PNG 41 (2 KB), send 812"
 
 
-async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_network(tmp_path, archived_cache, monkeypatch):
+async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_network(tmp_path, old_archived_cache, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()
-    shutil.copy(archived_cache, data / "ecowitt_cache.sqlite")
+    shutil.copy(old_archived_cache, data / "ecowitt_cache.sqlite")   # (the copy is moved into ecobot.sqlite, as the bot does)
     before = (data / "ecowitt_cache.sqlite").read_bytes()
     copy = tmp_path / "copy"
     copy.mkdir()

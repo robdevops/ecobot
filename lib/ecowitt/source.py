@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, UTC
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..config import Config
@@ -15,21 +16,23 @@ from ..sources import Source
 from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import FAST_REFRESH_SECONDS, Warmer, safely
-from .api import FINE_CYCLES, EcowittAPI, GROUPS, UNITS, unit_text
+from .api import FINE_CYCLES, EcowittAPI, GROUPS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .dashboard import dashboard
 from .glance import glance
-from .fetch import Fetcher, series_in
+from .fetch import Fetcher, Recent, series_in
 from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
-from .live import LiveRanges
-from .minutes import KEEP_HOURS, MinuteStore
+from .live import BUCKET, MIN_READINGS, readings_in
+from .minutes import KEEP_HOURS
 from ..series import READING_GROUPS, WEATHER, find
+from ..storage import Storage
+from ..storage.migrate import open_storage
 from .query import HistoryQuery, chart_field, stack_names
-from .store import HistoryCache, HotStore
+from .stored import StoredBands, StoredHistory, newest_minute_on
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +104,38 @@ LIVE_RECORD_SECONDS = 30               # ... and counted into the ranges this of
 LIVE_FRESH_SECONDS = 90                # a question is answered from that reading while it is this young
 
 
+def history_files(cfg: Config) -> dict[str, tuple[Path, ...]]:
+    """The station's files from before ecobot.sqlite, moved into it once (docs/storage-plan.md, section 5)."""
+    return {"station": (cfg.cache_path, cfg.cache_path.with_name("ecowitt_live.sqlite"), cfg.cache_path.with_name("ecowitt_minutes.sqlite"))}
+
+
+class LiveMarks:
+    """The live readings of the newest 5-minute marks, each counted in the mark nearest it (as live.LiveRanges did): once a mark has two
+    readings or more of a reading, its lowest and highest are a band, written to that 5-minute reading."""
+
+    def __init__(self):
+        self.marks: dict[str, dict[int, list]] = {}   # series -> mark -> [readings, lowest, highest]
+        self.seen: dict[str, int] = {}                # series -> the reading time last counted (the same reading asked for again is not another)
+
+    def add(self, data: dict, now: float) -> dict[str, dict[int, tuple[int, float, float]]]:
+        """Count a real_time response in; returns the bands it made or widened ({series: {mark: (readings, lowest, highest)}})."""
+        found: dict = {}
+        for series, at, value in readings_in(data):
+            at = at or int(now)
+            if self.seen.get(series) == at:
+                continue
+            self.seen[series] = at
+            mark = round(at / BUCKET) * BUCKET
+            got = self.marks.setdefault(series, {}).setdefault(mark, [0, value, value])
+            got[0], got[1], got[2] = got[0] + 1, min(got[1], value), max(got[2], value)
+            if got[0] >= MIN_READINGS:
+                found.setdefault(series, {})[mark] = tuple(got)
+        for marks in self.marks.values():   # only the newest marks are still being counted
+            for mark in [m for m in marks if m < now - 2 * BUCKET]:
+                del marks[mark]
+        return found
+
+
 def live_summary(data: dict) -> str:
     """A live reading in a few words for the log: rain first, then outdoor temperature and humidity, wind and pressure. A reading the
     response lacks is left out."""
@@ -121,25 +156,28 @@ def live_summary(data: dict) -> str:
 class Ecowitt(Source):
     name = "Ecowitt"
 
-    def __init__(self, cfg: Config, transport=None, ha_transport=None):
+    def __init__(self, cfg: Config, transport=None, ha_transport=None, storage: Storage | None = None):
         """transport: for Ecowitt's cloud, ha_transport: for Home Assistant (a test's stand-ins). Where the readings come from follows the
-        settings (config.ecowitt_source): Home Assistant, Ecowitt's cloud, or Home Assistant with the cloud to make up what it lacks."""
+        settings (config.ecowitt_source): Home Assistant, Ecowitt's cloud, or Home Assistant with the cloud to make up what it lacks.
+        storage: the bot's file (lib/storage), opened at start; without one the station opens it itself (the old files moved in first,
+        once). Either way the station closes it."""
         self.tz = cfg.tz
-        self.cache = HistoryCache(cfg.cache_path, UNITS)
-        self.hot = HotStore()
-        macs = self.cache.macs()   # the station the cache holds, so Home Assistant's readings join its history
+        self.storage = storage or open_storage(cfg.storage_path, cfg.tz, history_files(cfg))
+        self.cache = StoredHistory(self.storage)   # (TEMPORARY: what the readers not moved to the storage yet read)
+        self.fetches = Recent()   # the newest fetches, read from the storage while fresh
+        macs = self.cache.macs()   # the station the file holds, so Home Assistant's readings join its history
         home = HomeAssistantAPI(cfg.homeassistant_url, cfg.homeassistant_token, cfg.tz, macs[0] if len(macs) == 1 else "HOMEASSISTANT",
                                 ha_transport) if cfg.ecowitt_home_assistant else None
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
         self.api = FallbackAPI(home, cloud, cfg.tz) if home and cloud else home or cloud
         self.via = "Home Assistant, cloud fallback" if home and cloud else "Home Assistant" if home else "Ecowitt cloud"
-        self.minute_store = MinuteStore(cfg.cache_path.with_name("ecowitt_minutes.sqlite")) if home else None   # (only Home Assistant has minutes)
+        self.has_minutes = home is not None   # (only Home Assistant has minutes)
         self._minutes_ok: bool | None = None
         self.fast = home                     # the API that can be asked every few seconds, if any
         self.ha = home.ha if home else HomeAssistant(cfg.homeassistant_url, cfg.homeassistant_token) if cfg.homeassistant else None   # also reads the charts' ranges
         self._ha_ok: bool | None = None
         self._days_memo: dict = {}   # the dashboard's figures for the days before yesterday, kept for the day (they no longer change)
-        self.live = LiveRanges(cfg.cache_path.with_name("ecowitt_live.sqlite"))   # the live readings' lows and highs, for the recent charts' bands
+        self.live_marks = LiveMarks()   # the live readings' lows and highs, for the recent charts' bands
         self.groups = list(GROUPS)  # shared with the archive, which drops any group the station lacks
         self.warmer = Warmer(self.warm, FAST_REFRESH_SECONDS)
         self._live_ok: bool | None = None  # the live rain reading: None until first tried
@@ -174,6 +212,7 @@ class Ecowitt(Source):
                 log.warning("Ecowitt names a time zone Python doesn't know, %r; using %s", zone, self.tz)
         if hasattr(self.api, "set_timezone"):   # (Home Assistant's history is cut in the station's days)
             self.api.set_timezone(self.tz)
+        await self.storage.set_timezone(self.tz)   # (so are the day rows)
         try:
             self.created = datetime.fromtimestamp(int(device["createtime"]), UTC).astimezone(self.tz)
         except (KeyError, TypeError, ValueError):
@@ -191,10 +230,10 @@ class Ecowitt(Source):
         self.summary = (f"Ecowitt: '{self.station_name}' ({self.mac}) via {self.via} (every {self.warmer.interval:g}s)"
                         + (f", {len(devices)} devices" if len(devices) > 1 else ""))
         try:
-            size = os.path.getsize(self.cache.path) if os.path.exists(self.cache.path) else 0
-            self.cache_line = f"History cache: {self.cache.path} ({size / 1e6:.1f} MB)"
+            size = os.path.getsize(self.storage.path) if os.path.exists(self.storage.path) else 0
+            self.cache_line = f"History: {self.storage.path} ({size / 1e6:.1f} MB)"
         except Exception as e:   # only a log line
-            log.warning("History cache not readable: %s", e)
+            log.warning("History file not readable: %s", e)
 
     def startup_lines(self) -> list[str]:
         return [*([self.cache_line] if self.cache_line else []), *super().startup_lines()]
@@ -211,7 +250,7 @@ class Ecowitt(Source):
 
     def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
         """urgent: for a question (its requests go before the background ones)."""
-        return Fetcher(self.api, self.cache, self.hot, self.mac, groups, self.tz, urgent, self.live, self.minute_store)
+        return Fetcher(self.api, self.storage, self.fetches, self.mac, groups, self.tz, urgent, self.has_minutes)
 
     # ---------- tools ----------
     async def _history(self, args: dict, turn: Turn | None = None) -> str:
@@ -266,7 +305,7 @@ class Ecowitt(Source):
         first, started = self._ha_ok is None, time.monotonic()
         try:
             found = await self.ha.ranges(time.time() - (RANGE_KEEP_DAYS * 86400 if first else HA_RECENT_SECONDS))
-            marks = await asyncio.to_thread(self.live.put, found)
+            marks = await self.storage.write(lambda w: w.put_ranges(self.mac, found))
         except Exception as e:
             self.ha.trouble.failed("history for the charts' ranges", f"{type(e).__name__}: {e}",
                                    "the ranges come from the bot's own readings")
@@ -278,16 +317,19 @@ class Ecowitt(Source):
         self._ha_ok = True
 
     async def _record_live(self, data: dict):
-        """Count a live reading into the 5-minute ranges. Only a chart's shading depends on it, so a failure is logged and goes no further."""
+        """Count a live reading into the 5-minute bands (LiveMarks). Only a chart's shading depends on it, so a failure is logged and goes no
+        further."""
         try:
-            await asyncio.to_thread(self.live.add, data)
+            if found := self.live_marks.add(data, time.time()):
+                await self.storage.write(lambda w: w.put_ranges(self.mac, found))
         except Exception as e:
             log.warning("Couldn't keep the live readings' ranges: %s", e)
 
     async def dashboard(self, titles=None):
         """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
         lows today, this month and this year; None when the station has no reading."""
-        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo, self.live)
+        return await dashboard(await self._live_data(LIVE_GROUPS), self.cache, self.mac, self.tz, self.now().date(), titles, self._days_memo,
+                               StoredBands(self.storage, self.mac))
 
     async def watch_live(self):
         """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather
@@ -320,10 +362,10 @@ class Ecowitt(Source):
         """Take Home Assistant's minute readings since the newest held (the last KEEP_HOURS at first, or after the bot was down) into the
         minute store, for the short charts. A failure is logged once; the charts then use the 5-minute readings."""
         now = time.time()
-        since = max(await asyncio.to_thread(self.minute_store.newest) or 0, now - KEEP_HOURS * 3600)
+        since = max(await self.storage.read(newest_minute_on, self.mac) or 0, now - KEEP_HOURS * 3600)
         try:
             data = await self.fast.history(self.mac, "1min", naive_local(since, self.tz), naive_local(now, self.tz), ",".join(self.groups))
-            await asyncio.to_thread(self.minute_store.put, data, now)
+            await self.storage.write(lambda w: w.put_minutes(self.mac, data, now))
         except Exception as e:
             self.fast.ha.trouble.failed("minute readings", e, "short charts use the 5-minute readings")
             self._minutes_ok = False
@@ -388,9 +430,6 @@ class Ecowitt(Source):
 
     async def close(self):
         await self.api.close()
-        self.cache.close()
-        self.live.close()
-        if self.minute_store:
-            self.minute_store.close()
+        self.storage.close()
         if self.ha:
             await self.ha.close()

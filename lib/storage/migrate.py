@@ -1,9 +1,13 @@
 """Moving the old files' history into ecobot.sqlite, once (docs/storage-plan.md, section 5), and checking it before it counts.
 
-The old files are only read (opened read-only), never changed or deleted, so the previous version of the bot still runs on them. The new
-file is built as ecobot.sqlite.part and renamed only once, for every sensor and resolution, the number of readings and their sum match the
-old files', and so do the coverage, the ranges, the minutes, the AirGradient's readings and the snapshots. Otherwise it is deleted and the
-report says why. Nothing is fetched: the history is the bot's to keep (Ecowitt's cloud keeps 90 days of 5-minute readings).
+The old files are only read (opened read-only), never changed or deleted, so the previous version of the bot still runs on them. What they
+hold is moved in parts, each when its code moves to the new storage: the station's (step 2), the AirGradient's (step 3), the snapshots
+(step 5); the file notes each part moved (meta `migrated.<part>`). A move is built as ecobot.sqlite.part and counts only once, for every
+sensor and resolution, the number of readings and their sum match the old files', and so do the coverage, the ranges, the minutes, the
+AirGradient's readings and the snapshots; otherwise it is deleted and the report says why. With no ecobot.sqlite yet the built file
+becomes it; into one that is there (a part moved later than the others, or a move tried again after one that failed while the bot went on
+with a new file) it is merged: the file's own readings win, the old ones fill in what it lacks, a band takes in both, and so does the
+coverage. Nothing is fetched: the history is the bot's to keep (Ecowitt's cloud keeps 90 days of 5-minute readings).
 
 What goes where:
   - ecowitt_cache.sqlite: each (station, cycle, group) becomes a sensor's readings at that resolution, a field and its _low and _high one
@@ -37,7 +41,9 @@ from .write import pivot
 
 log = logging.getLogger(__name__)
 
-OLD = ("ecowitt_cache.sqlite", "ecowitt_live.sqlite", "ecowitt_minutes.sqlite", "airgradient_cache.sqlite", "conditions_cache.sqlite")
+PARTS = {"station": ("ecowitt_cache.sqlite", "ecowitt_live.sqlite", "ecowitt_minutes.sqlite"),   # the old files of each part, by name
+         "airgradient": ("airgradient_cache.sqlite",), "snapshots": ("conditions_cache.sqlite",)}
+OLD = tuple(name for names in PARTS.values() for name in names)
 HOURLY_MAX_READINGS = 30   # an AirGradient day with this few readings holds hourly averages (as airgradient.days)
 SPARE = 20e6               # bytes of disk asked for beyond twice the old files
 
@@ -59,7 +65,8 @@ class Report:
         if self.skipped:
             return [f"Storage: {self.skipped}"]
         if not self.ok:
-            return [f"Couldn't move the history to {FILE}: {self.problem}; the bot carries on with the old files"]
+            return [f"Couldn't move the history to {FILE}: {self.problem}. The old files are as they were; it is tried again at the "
+                    "next start (meanwhile the bot keeps what its sources still have)"]
         moved = ", ".join(f"{n:,} {what}" for what, n in self.moved.items() if n)
         out = [f"Moved the history to {FILE} in {self.seconds:.1f}s: {moved}; {self.sizes[0] / 1e6:.1f} MB of old files, "
                f"{self.sizes[1] / 1e6:.1f} MB now"]
@@ -79,8 +86,22 @@ class Mismatch(Exception):
     """The new file does not hold what the old ones do."""
 
 
-def old_files(folder: Path) -> list[Path]:
-    return [folder / name for name in OLD if (folder / name).exists()]
+def old_files(folder: Path) -> dict[str, tuple[Path, ...]]:
+    """Each part's old files, as they are named in the data folder."""
+    return {part: tuple(Path(folder) / name for name in names) for part, names in PARTS.items()}
+
+
+def moved(target: Path) -> set[str]:
+    """The parts already moved into the file (none when there is no file)."""
+    if not target.exists():
+        return set()
+    db = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+    try:
+        return {key.removeprefix("migrated.") for (key,) in db.execute("SELECT key FROM meta WHERE key LIKE 'migrated.%'")}
+    except sqlite3.Error:   # (a file with no meta yet)
+        return set()
+    finally:
+        db.close()
 
 
 def _open_old(path: Path) -> sqlite3.Connection | None:
@@ -94,22 +115,24 @@ def _tables(db: sqlite3.Connection) -> set[str]:
     return {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
-def migrate(folder: Path, tz: tzinfo, target: Path | None = None) -> Report:
-    """Build `target` (ecobot.sqlite in `folder`) from the old files there, unless it exists already."""
+def migrate(folder: Path, tz: tzinfo, target: Path | None = None, parts=tuple(PARTS), files: dict | None = None) -> Report:
+    """Move these parts' history from the old files (`files`: {part: its files}; by default those named so in `folder`) into `target`
+    (ecobot.sqlite in `folder`), those not moved already."""
     folder = Path(folder)
     target = Path(target) if target else folder / FILE
+    files = {part: tuple(map(Path, paths)) for part, paths in (files or old_files(folder)).items()}
     report = Report()
-    if target.exists():
-        report.skipped = f"{target.name} is there already"
+    done = moved(target)
+    due = [part for part in parts if part not in done and any(p.exists() for p in files.get(part, ()))]
+    if not due:
+        report.skipped = f"{target.name} is there already" if target.exists() else "no old files to move"
         return report
-    old = old_files(folder)
-    if not old:
-        report.skipped = "no old files to move"
-        return report
+    old = [p for part in due for p in files[part] if p.exists()]
     size = sum(p.stat().st_size for p in old)
     if (free := shutil.disk_usage(target.parent).free) < 2 * size + SPARE:
         report.problem = f"{free / 1e6:.0f} MB free; it needs {(2 * size + SPARE) / 1e6:.0f} MB"
         return report
+    log.info("Moving the history to %s (once): %s", target.name, ", ".join(p.name for p in old))
     part = target.with_name(target.name + ".part")
     for leftover in (part, Path(f"{part}-journal")):
         leftover.unlink(missing_ok=True)   # a run that was cut short
@@ -117,29 +140,97 @@ def migrate(folder: Path, tz: tzinfo, target: Path | None = None) -> Report:
     storage = Storage(part, tz, bulk=True)
     try:
         with storage.writer.transaction() as w:
-            mac = _ecowitt(w, folder / OLD[0], report)
-            if mac:
-                _live(w, folder / OLD[1], mac, report)
-                _minutes(w, folder / OLD[2], mac, report)
-            _air(w, folder / OLD[3], tz, report)
-            _snapshots(w, folder / OLD[4], report)
+            if "station" in due:
+                cache, live, minutes = (files["station"] + (Path("/nonexistent"),) * 3)[:3]
+                if mac := _ecowitt(w, cache, report):
+                    _live(w, live, mac, report)
+                    _minutes(w, minutes, mac, report)
+            if "airgradient" in due:
+                _air(w, files["airgradient"][0], tz, report)
+            if "snapshots" in due:
+                _snapshots(w, files["snapshots"][0], report)
             for sensor in w.all_sensors():   # the 30-minute bands, from the 5-minute readings now all in
                 if sensor.kind in KINDS:
                     w.roll_up(sensor, 0, 2 ** 40)
-            w.set_meta("migrated", ", ".join(p.name for p in old))
+            for name in due:
+                w.set_meta(f"migrated.{name}", ", ".join(p.name for p in files[name] if p.exists()))
     except Exception as e:
         storage.close()
         part.unlink(missing_ok=True)
         report.problem = str(e) if isinstance(e, Mismatch) else f"{type(e).__name__}: {e}"
-        log.warning("%s", report.lines()[0])
         return report
     storage.close()
-    db = sqlite3.connect(part)
-    db.execute("PRAGMA journal_mode = WAL")   # as the bot keeps it
-    db.close()
-    os.replace(part, target)
+    try:
+        if target.exists():
+            _merge(part, target, tz)
+            part.unlink()
+        else:
+            db = sqlite3.connect(part)
+            db.execute("PRAGMA journal_mode = WAL")   # as the bot keeps it
+            db.close()
+            os.replace(part, target)
+    except Exception as e:   # (the file is as it was: the merge is one transaction)
+        part.unlink(missing_ok=True)
+        report.problem = f"{type(e).__name__}: {e}"
+        return report
     report.ok, report.seconds, report.sizes = True, time.monotonic() - started, (size, target.stat().st_size)
     return report
+
+
+def open_storage(target: Path, tz: tzinfo, files: dict[str, tuple[Path, ...]], parts=("station",)) -> Storage:
+    """The bot's file at start, these parts of the old files' history moved into it first if they are not yet (logged). A move that fails
+    leaves the file as it was, or none (the bot then starts it anew with what its sources still have), and is tried again next time."""
+    report = migrate(Path(target).parent, tz, target, parts, files)
+    for line in [] if report.skipped else report.lines():
+        (log.info if report.ok else log.warning)("%s", line)
+    return Storage(target, tz)
+
+
+def _merge(part: Path, target: Path, tz: tzinfo):
+    """A checked move (`part`) into the file the bot has been writing: its sensors found or added, the file's own readings kept and the old
+    ones filling in what they lack, each band the wider of the two, the coverage of both, and the days of what came in worked out again."""
+    storage = Storage(target, tz)
+    db = storage.write_db
+    try:
+        db.execute("ATTACH DATABASE ? AS part", (str(part),))
+        with storage.writer.transaction() as w:
+            new = {sid: w.sensor(kind, role, label, device, external) for sid, kind, role, label, device, external
+                   in db.execute("SELECT id, kind, role, label, device, external FROM part.sensors").fetchall()}
+            db.execute("CREATE TEMP TABLE IF NOT EXISTS moved_ids (old INTEGER PRIMARY KEY, new INTEGER NOT NULL)")
+            db.execute("DELETE FROM temp.moved_ids")
+            db.executemany("INSERT INTO temp.moved_ids VALUES (?, ?)", [(sid, sensor.id) for sid, sensor in new.items()])
+            for kind in KINDS:
+                names = [c.name for c in KINDS[kind]]
+                cells = [f"{c}{part}" for c in names for part in ("", "_lo", "_hi")]
+                sets = []
+                for c in names:
+                    v, lo, hi = q(c), q(c + "_lo"), q(c + "_hi")
+                    value = f"COALESCE({v}, excluded.{v})"
+                    sets += [f"{v} = {value}",
+                             f"{lo} = MIN(COALESCE({lo}, excluded.{lo}), COALESCE(excluded.{lo}, {lo}), COALESCE({value}, {lo}, excluded.{lo}))",
+                             f"{hi} = MAX(COALESCE({hi}, excluded.{hi}), COALESCE(excluded.{hi}, {hi}), COALESCE({value}, {hi}, excluded.{hi}))"]
+                db.execute(f"INSERT INTO main.{kind} (sensor, res, ts, src, final, {', '.join(map(q, cells))}) "
+                           f"SELECT i.new, p.res, p.ts, p.src, p.final, {', '.join('p.' + q(c) for c in cells)} FROM part.{kind} p "
+                           f"JOIN temp.moved_ids i ON i.old = p.sensor WHERE true ON CONFLICT (sensor, res, ts) DO UPDATE SET {', '.join(sets)}")
+                for sid, res, first, last in db.execute(f"SELECT sensor, res, MIN(ts), MAX(ts) FROM part.{kind} GROUP BY sensor, res").fetchall():
+                    w.touch(new[sid], res, first, last)
+                    if res in ("5min", "30min"):
+                        w.roll_up(new[sid], first, last)
+            for table in ("fields", "extra"):
+                columns = [row[1] for row in db.execute(f"PRAGMA part.table_info({table})")][1:]
+                db.execute(f"INSERT OR IGNORE INTO main.{table} SELECT i.new, {', '.join('p.' + q(c) for c in columns)} FROM part.{table} p "
+                           "JOIN temp.moved_ids i ON i.old = p.sensor")
+            for sid, res, start, end in db.execute('SELECT sensor, res, "start", "end" FROM part.coverage').fetchall():
+                w.cover(new[sid], res, start, end)
+            if not db.execute("SELECT 1 FROM main.snapshots LIMIT 1").fetchone():
+                db.execute("INSERT INTO main.snapshots (kind, first_seen, last_seen, payload) SELECT kind, first_seen, last_seen, payload "
+                           "FROM part.snapshots ORDER BY id")
+            db.execute("INSERT OR IGNORE INTO main.snapshot_meta SELECT key, value FROM part.snapshot_meta")
+            db.execute("INSERT OR REPLACE INTO main.meta SELECT key, value FROM part.meta WHERE key LIKE 'migrated.%'")
+            db.execute("INSERT OR IGNORE INTO main.meta SELECT key, value FROM part.meta WHERE key NOT IN ('tz', 'schema')")
+        db.execute("DETACH DATABASE part")
+    finally:
+        storage.close()
 
 
 # ---------- the station ----------
@@ -391,4 +482,4 @@ def _snapshots(w, path: Path, report: Report):
         db.close()
 
 
-__all__ = ["OLD", "Report", "migrate", "old_files"]
+__all__ = ["OLD", "PARTS", "Report", "migrate", "moved", "old_files", "open_storage"]

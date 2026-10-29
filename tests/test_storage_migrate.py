@@ -102,7 +102,8 @@ def test_the_old_files_move_whole_and_are_not_touched(tmp_path):
         assert s.coverage.held(air.id, "5min", *day_bounds(d, TZ, True)) and s.coverage.held(air.id, "1hour", *day_bounds(held["hourly"], TZ, True))
         assert s.write_db.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 2
         assert s.write_db.execute("SELECT value FROM snapshot_meta WHERE key = 'forecast_baseline'").fetchone()[0] == "x"
-        assert r.meta("ecowitt_signature") and "ecowitt_cache.sqlite" in r.meta("migrated")
+        assert r.meta("ecowitt_signature") and r.meta("migrated.station") == "ecowitt_cache.sqlite, ecowitt_live.sqlite, ecowitt_minutes.sqlite"
+        assert r.meta("migrated.airgradient") == "airgradient_cache.sqlite" and r.meta("migrated.snapshots") == "conditions_cache.sqlite"
     finally:
         s.close()
     assert migration.migrate(tmp_path, TZ).skipped == f"{FILE} is there already"
@@ -120,7 +121,7 @@ def test_a_move_that_does_not_add_up_leaves_no_new_file(tmp_path, monkeypatch):
             self.writer.put = lambda sensor, res, rows, *a, **k: put(sensor, res, rows[:-1], *a, **k)
     monkeypatch.setattr(migration, "Storage", Lossy)
     report = migration.migrate(tmp_path, TZ)
-    assert not report.ok and "holds" in report.problem and "carries on with the old files" in report.lines()[0]
+    assert not report.ok and "holds" in report.problem and "tried again at the next start" in report.lines()[0]
     assert not (tmp_path / FILE).exists() and not (tmp_path / f"{FILE}.part").exists()
 
 
@@ -138,10 +139,10 @@ def test_with_no_old_files_there_is_nothing_to_move(tmp_path):
     assert migration.migrate(tmp_path, TZ).skipped == "no old files to move"
 
 
-def test_every_day_of_the_archive_comes_out_as_day_values_works_it_out(tmp_path, archived_cache):
-    """The fake station's whole archive (88 days at 5 minutes, 363 at 30, 548 at 4 hours, 546 daily records): each day's figures from the new
-    day rows are the old code's, from the same readings, and so is where each came from."""
-    shutil.copy(archived_cache, tmp_path / "ecowitt_cache.sqlite")
+def test_every_day_of_the_archive_comes_out_as_day_values_works_it_out(tmp_path, old_archived_cache):
+    """The fake station's whole archive (90 days at 5 minutes, 365 at 30, 548 at 4 hours and daily records): each day's figures from the
+    new day rows are the old code's, from the same readings, and so is where each came from."""
+    shutil.copy(old_archived_cache, tmp_path / "ecowitt_cache.sqlite")
     report = migration.migrate(tmp_path, TZ)
     assert report.ok, report.problem
     old = HistoryCache(tmp_path / "ecowitt_cache.sqlite", UNITS)
@@ -192,3 +193,60 @@ def test_the_script_moves_a_copy_and_times_the_reads(tmp_path, monkeypatch, caps
     assert "Moved the history to ecobot.sqlite" in out and "| Temperature line, 1Y (day rows) | 1 | 1 |" in out
     assert (tmp_path / "kept.sqlite").exists() and not (tmp_path / "data" / FILE).exists()
     assert {p.name: p.read_bytes() for p in (tmp_path / "data").glob("*.sqlite")} == before
+
+
+def test_a_part_moved_later_is_merged_into_the_file_the_bot_has_been_writing(tmp_path):
+    """Step 2 moves the station; the AirGradient moves when its code does (step 3), into the file the station has been written to since."""
+    now = int(time.time())
+    held = old_files(tmp_path, now)
+    assert migration.migrate(tmp_path, TZ, parts=("station",)).ok
+    s = Storage(tmp_path / FILE, TZ)
+    outdoor = s.sensors.find(MAC, "outdoor")
+    assert s.air_sensor("42") is None and s.reader.meta("migrated.station") and s.reader.meta("migrated.airgradient") is None
+    s.close()
+    report = migration.migrate(tmp_path, TZ, parts=("station", "airgradient"))
+    assert report.ok and report.moved["AirGradient readings"] and not report.moved["station readings"]   # (the station is not moved twice)
+    s = Storage(tmp_path / FILE, TZ)
+    try:
+        air = s.air_sensor("42")
+        assert s.sensors.find(MAC, "outdoor") == outdoor and air.id != outdoor.id
+        assert s.write_db.execute("SELECT COUNT(*) FROM air WHERE sensor = ?", (air.id,)).fetchone()[0] == 24 + 289
+        assert s.coverage.held(air.id, "5min", *day_bounds(held["day"], TZ, True)) and s.reader.meta("migrated.airgradient")
+        assert s.write_db.execute("SELECT COUNT(*) FROM climate WHERE sensor = ? AND res = '5min'", (outdoor.id,)).fetchone()[0] == 288
+    finally:
+        s.close()
+    assert migration.migrate(tmp_path, TZ, parts=("station", "airgradient")).skipped == f"{FILE} is there already"
+
+
+def test_a_move_tried_again_after_one_that_failed_keeps_what_the_bot_wrote_meanwhile(tmp_path, monkeypatch, caplog):
+    """A move that fails leaves no file; the bot goes on with a new one, and the next start moves the old history into it: the old readings
+    fill in what it lacks, its own stay, a band takes in both, and the coverage and days are of both."""
+    import logging
+    now = int(time.time())
+    held = old_files(tmp_path, now)
+    start, d = held["start"], held["day"]
+    files = migration.old_files(tmp_path)
+    monkeypatch.setattr(migration, "_minutes", lambda *a: (_ for _ in ()).throw(migration.Mismatch("the minutes differ")))
+    with caplog.at_level(logging.INFO, logger="lib.storage.migrate"):
+        s = migration.open_storage(tmp_path / FILE, TZ, files)
+    assert "Moving the history to ecobot.sqlite (once)" in caplog.text and "Couldn't move the history" in caplog.text
+    outdoor = s.writer.run(lambda w: w.ecowitt_sensor(MAC, "outdoor"), ())
+    mine = [{"ts": start, "temperature": 50.0}, {"ts": start + 300, "humidity": 1.0, "temperature_lo": -5.0, "temperature_hi": 99.0}]
+    s.writer.run(lambda w: w.put(outdoor, "5min", mine), ())   # what the bot fetched meanwhile (no temperature at start + 300)
+    s.writer.run(lambda w: w.cover(outdoor, "5min", start - DAY, start - 1), ())
+    s.close()
+    monkeypatch.undo()
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="lib.storage.migrate"):
+        s = migration.open_storage(tmp_path / FILE, TZ, files)
+    try:
+        assert "Moved the history to ecobot.sqlite" in caplog.text and s.reader.meta("migrated.station")
+        five = s.reader.rows("climate", [outdoor.id], "5min", start, start + 600)[outdoor.id]
+        assert five.values["temperature"][:3] == [50.0, 10.1, 10.2]               # its own reading stays; the old ones fill in the rest
+        assert five.values["humidity"][:2] == [80.0, 1.0] and (five.lo["temperature"][1], five.hi["temperature"][1]) == (-5.0, 99.0)
+        assert s.coverage.held(outdoor.id, "5min", start - DAY, held["end"])          # the coverage of both
+        day = s.reader.days("climate", [outdoor.id], d, d)[outdoor.id]
+        assert day.hi["temperature"] == [99.0] and day.lo["temperature"] == [-5.0]       # its days worked out again
+        assert s.reader.rows("climate", [outdoor.id], "1min", now - 3600, now)[outdoor.id].ts   # the minutes, this time
+    finally:
+        s.close()

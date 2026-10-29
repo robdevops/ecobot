@@ -14,11 +14,10 @@ from contextlib import contextmanager
 from datetime import date
 
 from ..counts import uncounted
-from ..ecowitt.api import CYCLES
 from . import Sensor
-from .catalogue import AIR, AIR_EXTERNAL, CLOUD, HOME_ASSISTANT, KINDS, SLOT, column_of, kind_of, label_of
+from .catalogue import AIR, AIR_EXTERNAL, BY_NAME, CLOUD, HOME_ASSISTANT, KINDS, SLOT, column_of, kind_of, label_of
 from .coverage import merge, subtract
-from .days import days_of, work_out
+from .days import ANY, days_of, work_out
 from .schema import q
 
 log = logging.getLogger(__name__)
@@ -30,9 +29,15 @@ DAY_KINDS = tuple(k for k in KINDS if k != "air")      # the AirGradient's days 
 MIN_READINGS = 2                # a 5 minutes of live readings with fewer than this has no band (as live.MIN_READINGS)
 
 
+def cycle_of(name: str):
+    """One of Ecowitt's cycles (api.CYCLES), imported here and not at the top: the station's package opens the storage."""
+    from ..ecowitt.api import CYCLES
+    return CYCLES[name]
+
+
 def horizon(cycle: str, now: float) -> int:
     """The latest start of an Ecowitt reading of this cycle that is final (as ecowitt.store.horizon)."""
-    c = CYCLES[cycle]
+    c = cycle_of(cycle)
     return int(now - c.settle - c.seconds)
 
 
@@ -133,7 +138,8 @@ class Writer:
         self._depth = 0
         self._coverage: dict[tuple[int, str], list] = {}   # this transaction's coverage, by (sensor, res)
         self._sensors: list[Sensor] = []                    # ... its new sensors
-        self._days: dict[str, dict[int, set[date]]] = {}    # ... and the days to work out again, by kind and sensor
+        self._days: dict[str, dict[int, dict[date, set[str]]]] = {}   # ... and the days to work out again, by kind and sensor, with what
+                                                                     # changed: the resolutions written, ANY for what is held
 
     # ---------- transactions ----------
     def run(self, fn, args):
@@ -231,7 +237,7 @@ class Writer:
                 args.append((sensor.id, res, row["ts"], src, int(row.get("final", final)), *values))
             self.db.executemany(upsert_sql(sensor.kind), args)
         first, last = min(row["ts"] for row in rows), max(row["ts"] for row in rows)
-        self._touch(sensor, res, first, last)
+        self.touch(sensor, res, first, last)
         if res in ("5min", "30min") and not exact:
             self.roll_up(sensor, first, last)
         return len(rows)
@@ -244,7 +250,7 @@ class Writer:
             self.db.executemany(widen_sql(sensor.kind, column), [(sensor.id, res, ts, lo, hi) for ts, (lo, hi) in found.items()])
             times += found
         if times:
-            self._touch(sensor, res, min(times), max(times))
+            self.touch(sensor, res, min(times), max(times))
             if res == "5min":
                 self.roll_up(sensor, min(times), max(times))
         return len(times)
@@ -274,12 +280,12 @@ class Writer:
     def cover(self, sensor: Sensor, res: str, start: int, end: int):
         """[start, end] (epochs) was fetched at this resolution, readings or none."""
         self._set_coverage(sensor, res, merge([*self.coverage_of(sensor.id, res), (start, end)]))
-        self._touch(sensor, res, start, end)
+        self.touch(sensor, res, start, end)   # (a day held whole at this resolution now takes its figures from it)
 
     def uncover(self, sensor: Sensor, res: str):
         """Forget what was fetched at this resolution (it is all asked for again)."""
         for start, end in self.coverage_of(sensor.id, res):
-            self._touch(sensor, res, start, end)
+            self.touch(sensor, ANY, start, end)   # (a day's figures may come from another resolution now)
         self._set_coverage(sensor, res, [])
 
     def _set_coverage(self, sensor: Sensor, res: str, spans: list):
@@ -288,9 +294,21 @@ class Writer:
         self._coverage[sensor.id, res] = spans
 
     # ---------- days ----------
-    def _touch(self, sensor: Sensor, res: str, start: int, end: int):
-        if sensor.kind in DAY_KINDS and res in DAY_RESOLUTIONS:
-            self._days.setdefault(sensor.kind, {}).setdefault(sensor.id, set()).update(days_of(start, end, self.tz))
+    def touch(self, sensor: Sensor, res: str, start: int, end: int):
+        """Note that readings of [start, end] at this resolution changed (ANY: what is held there changed): their days are worked out again
+        when the transaction is committed, those that can come out otherwise (days.work_out)."""
+        if sensor.kind in DAY_KINDS and (res in DAY_RESOLUTIONS or res == ANY):
+            days = self._days.setdefault(sensor.kind, {}).setdefault(sensor.id, {})
+            for d in days_of(start, end, self.tz, utc=res in ("4hour", "1day", ANY)):
+                days.setdefault(d, set()).add(res)
+
+    def set_timezone(self, tz):
+        """Work out every day in this zone from now on (and every day held, again)."""
+        zone = str(getattr(tz, "key", tz))
+        log.info("Storage: the time zone is now %s (was %s): working out every day again", zone, getattr(self.tz, "key", self.tz))
+        self.tz = self.storage.tz = tz
+        self.all_days()
+        self.set_meta("tz", zone)
 
     def all_days(self):
         """Work out every day of every sensor again (a new time zone)."""
@@ -298,7 +316,7 @@ class Writer:
             if s.kind in DAY_KINDS:
                 first, last = self.db.execute(f"SELECT MIN(ts), MAX(ts) FROM {s.kind} WHERE sensor = ?", (s.id,)).fetchone()
                 if first is not None:
-                    self._touch(s, "5min", first, last)
+                    self.touch(s, ANY, first, last)
 
     # ---------- the sources' own shapes ----------
     def put_ecowitt(self, mac: str, cycle: str, groups: list[str], data: dict, start: int, end: int, now: float | None = None,
@@ -338,7 +356,7 @@ class Writer:
             if old_enough:
                 self.cover(sensors[group], cycle, start, limit)
             elif reached is not None:
-                self.cover(sensors[group], cycle, start, min(limit, reached + CYCLES[cycle].seconds - 1))
+                self.cover(sensors[group], cycle, start, min(limit, reached + cycle_of(cycle).seconds - 1))
 
     def put_minutes(self, mac: str, data: dict, now: float | None = None, kept: int = MINUTES_KEPT) -> int:
         """Home Assistant's minutes ({group: {field: {"unit", "list"}}}); those older than `kept` seconds are dropped. Returns how many."""
@@ -359,8 +377,8 @@ class Writer:
         widened = 0
         for series, marks in found.items():
             group, field = series.split(".", 1)
-            if (place := column_of(group, field)) is None or place[1] != "value":
-                continue
+            if (place := column_of(group, field)) is None or place[1] != "value" or not BY_NAME[kind_of(group)][place[0]].ranged:
+                continue   # (a compass point and the rain counters take no band)
             bands = {ts: (lo, hi) for ts, (n, lo, hi) in marks.items() if n >= MIN_READINGS}
             widened += self.widen(self.ecowitt_sensor(mac, group), "5min", {place[0]: bands})
         return widened

@@ -150,6 +150,8 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobo
 
 Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept. The log's first line, `Starting ecobot <commit>`, says which version is running.
 
+The weather station's history now lives in one file, `ecobot.sqlite`. The first start after the upgrade moves it there from the old files (`ecowitt_cache.sqlite` and the two beside it), checks every reading came across, and says so in the log ("Moved the history to ecobot.sqlite in 15.5s: ..."); a few seconds, once. The old files are left as they were, so the previous version still runs on them.
+
 ### systemd
 
 ```

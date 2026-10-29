@@ -110,11 +110,11 @@ async def test_the_minutes_are_kept_for_nine_hours_and_a_chart_that_reaches_furt
     eco, ha, _ = await home(tmp_path)
     await eco.pull_minutes()
     now = eco.now().timestamp()
-    held = eco.minute_store.db.execute("SELECT MIN(t), MAX(t) FROM minutes").fetchone()
+    held = eco.storage.read_now(lambda r: r.db.execute("SELECT MIN(ts), MAX(ts) FROM climate WHERE res = '1min'").fetchone())
     assert now - 9 * 3600 - 70 <= held[0] <= now - 9 * 3600 + 70 and held[1] > now - 130        # nine hours, up to the minute
     _, turn = await chart(eco, 8)
     assert all(b - a == 60 for a, b in zip(*(lambda x: (x, x[1:]))(turn.charts[0].panels[0].lines[0].x)))
-    eco.minute_store.db.execute("DELETE FROM minutes WHERE t < ?", (int(now - 2 * 3600),))     # as if the bot had only just begun
+    await eco.storage.write(lambda w: w.prune_minutes(int(now - 2 * 3600)))                   # as if the bot had only just begun
     _, turn = await chart(eco, 3)
     assert all(b - a == 300 for a, b in zip(*(lambda x: (x, x[1:]))(turn.charts[0].panels[0].lines[0].x)))
     await eco.close()

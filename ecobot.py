@@ -31,7 +31,7 @@ from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor,
 from lib.alerts.menu import LABELS, available_kinds
 from lib.bot import TURN_SECONDS, Bot, polling_error
 from lib.ecowitt import Archive, Ecowitt
-from lib.ecowitt.source import HA_IMPORT_SECONDS
+from lib.ecowitt.source import HA_IMPORT_SECONDS, history_files
 from lib.forecast import Forecast
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
@@ -41,6 +41,7 @@ from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.sources import Source
+from lib.storage.migrate import open_storage
 from lib.tools import Tools
 from lib.warm import every, safely
 
@@ -71,7 +72,13 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
             if source is not None:
                 await safely(source.close)
     if cfg.ecowitt:
-        await start(Ecowitt, cfg)
+        try:   # (the first time, the old files' history is moved into it: a few seconds, in a thread)
+            storage = await asyncio.to_thread(open_storage, cfg.storage_path, cfg.tz, history_files(cfg))
+        except Exception as e:
+            log.error("Ecowitt couldn't start: its history file %s (%s: %s) - continuing without it", cfg.storage_path, type(e).__name__, e,
+                      exc_info=isinstance(e, BUGS))
+        else:
+            await start(Ecowitt, cfg, storage=storage)
     eco = sources[0] if sources else None
     if eco and str(eco.tz) != str(cfg.tz):
         if os.getenv("TZ"):

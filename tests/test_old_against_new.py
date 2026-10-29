@@ -10,6 +10,7 @@ import importlib
 import io
 import json
 import math
+import re
 import subprocess
 import sys
 import tarfile
@@ -27,8 +28,28 @@ OLD_FILES = ("cache.sqlite", "ecowitt_live.sqlite", "ecowitt_minutes.sqlite")
 HA_HISTORY_DAYS = 60   # the Home Assistant station is younger: its archive is quick
 USED = ("ecowitt", "ecowitt.api", "ecowitt.archive", "intent", "tools", "timeutil", "compose")
 
-# Questions whose answers may differ, and why (judged): {question: reason}
-JUDGED: dict[str, str] = {}
+# The differences judged, and why: {question: [(where in the answer it is (a pattern its line starts with), why)]}. Any other fails.
+REFINING = ("refining narrows only the first four records to finer readings, and which come first follows the order the fields come in, "
+            "the catalogue's now; step 2d replaces refining with the times the day rows keep")
+BANDS = ("a 5-minute reading's band now takes in both of Home Assistant's ranges of it, the lowest and highest of its own bucket and those "
+         "around its 5-minute mark (a reading with a range of its own kept only that), and what it read while its bucket was still filling: "
+         "up to a step wider (0.1 °C, 1 %), all of them readings Home Assistant had")
+LINE_ORDER = ("a chart of minutes has its lines in the groups' order, as every other chart has (the old minute store gave them "
+              "alphabetically, indoor first)")
+DASHBOARD = ("the dashboard's day figures take in the bands of the day's 5-minute readings, Home Assistant's own lowest and highest of each "
+             "too: here the 25 km/h the wind still read at midnight")
+LOWS_HIGHS = r"\[\d+\]\[1\]\.\w+\.\w+_(low|high): "   # a reading's low or high in the alerts' readings (the alerts read only the values)
+JUDGED: dict[str, list[tuple[str, str]]] = {
+    "weather all week": [(r"\.result\.series\.wind\.", REFINING)],
+    "history, a week of everything": [(r"\.result\.series\.wind\.", REFINING)],
+    "temperature last 3 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER)],
+    "temperature last 6 hours": [(r"\.charts\[0\]\.panels\[0\]\.line_order", LINE_ORDER)],
+    "temperature chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
+    "humidity chart 1d": [(r"\.charts\[0\]\.panels\[0\]\.lines\[\d\]\.(low|high):", BANDS)],
+    "dashboard": [(r"\.tiles\[5\]\.rows\.Daily:", DASHBOARD)],
+    "alerts, the last 3 hours": [(LOWS_HIGHS, BANDS)],
+    "alerts, the last week at 30 minutes": [(LOWS_HIGHS, BANDS)],
+}
 
 
 def old_package(root: Path):
@@ -176,7 +197,13 @@ def plain(value):
 
 
 def specs(turn) -> list:
-    return plain([dataclasses.asdict(c) for c in turn.charts])
+    """The charts as plain JSON, each panel's lines by their labels (their order told apart, as `line_order`)."""
+    charts = plain([dataclasses.asdict(c) for c in turn.charts])
+    for chart in charts:
+        for panel in chart["panels"]:
+            panel["line_order"] = [line["label"] for line in panel["lines"]]
+            panel["lines"] = sorted(panel["lines"], key=lambda line: line["label"])
+    return charts
 
 
 def questions(pkg, eco, texts: list[str], with_calls: bool) -> list[tuple[str, object]]:
@@ -297,14 +324,23 @@ async def compare(tmp_path, ha: bool) -> tuple[dict[str, list[str]], int]:
     return found, len(pairs)
 
 
+def judged(name: str, line: str) -> str | None:
+    """Why this difference is as it should be, if it was judged so."""
+    return next((why for where, why in JUDGED.get(name, ()) if re.match(where, line)), None)
+
+
 def report(found: dict[str, list[str]], asked: int, label: str) -> list[str]:
-    """The differences printed; returns the questions that differ and are not judged."""
+    """The differences printed, each judged one with why; returns the questions with one that is not judged."""
     print(f"\n{label}: {asked} questions, {len(found)} answer(s) differ")
+    unjudged = []
     for name, diffs in found.items():
-        print(f"  {name}" + (f"  (judged: {JUDGED[name]})" if name in JUDGED else ""))
+        print(f"  {name}")
         for line in diffs:
-            print(f"      {line}")
-    return [name for name in found if name not in JUDGED]
+            why = judged(name, line)
+            print(f"      {line}" + (f"   [judged: {why}]" if why else "   [NOT JUDGED]"))
+            if not why and name not in unjudged:
+                unjudged.append(name)
+    return unjudged
 
 
 async def test_the_old_code_and_the_new_answer_alike(tmp_path):
