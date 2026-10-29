@@ -2,7 +2,6 @@ import io
 from datetime import date, datetime
 from types import SimpleNamespace as NS
 
-import pytest
 from PIL import Image
 from telegram import InlineKeyboardMarkup
 
@@ -67,10 +66,6 @@ def test_the_gauges_are_drawn_as_a_png_of_the_size_their_tiles_make():
     image = Image.open(io.BytesIO(gauges.render(Dashboard([tile, tile, tile, dull]))))
     assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, 2 * gauges.CELL_H + 2 * gauges.MARGIN)
     assert image.convert("RGB").getpixel((2, 2)) == (0x14, 0x19, 0x1D)
-    with pytest.raises(ValueError):
-        Tile("x", "", 1, "gauge", 0, 1, ("#fff",))
-    with pytest.raises(ValueError):
-        Tile("x", "", 1, "dial", 0, 1, ("#fff",), ("Max",), {"Daily": (1.0, 2.0)})
 
 
 async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(tmp_path, archived_cache):

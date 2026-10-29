@@ -188,31 +188,6 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
     assert state.keyboard(1) == templates.version()
 
 
-async def test_at_startup_private_chats_with_old_buttons_are_told_once_and_others_left_alone(tmp_path):
-    from telegram.error import Forbidden
-    from lib.alerts.notify import AlertState
-    state = AlertState(tmp_path / "s.json")
-    for chat_id in (10, 11, 12, 13, -20):                     # -20 is a group
-        state.add_chat(chat_id, str(chat_id))
-    state.set_keyboard(10, "old1234")
-    state.set_keyboard(11, templates.version())
-    state.set_keyboard(12, templates.HIDDEN)                  # 13 and the group have no record
-    sent, tried = [], []
-
-    class TG:
-        async def send_message(self, chat_id, text, **kw):
-            tried.append(chat_id)
-            if chat_id == 13:
-                raise Forbidden("bot was blocked by the user")
-            sent.append((chat_id, text, kw["reply_markup"].is_persistent))
-    bot = Bot(NS(tz=TZ), None, [], state)
-    assert await bot.refresh_keyboards(TG()) == 1
-    assert sent == [(10, "Buttons updated.", True)]
-    assert state.keyboard(10) == templates.version() and state.chats[13]["gone"] and state.keyboard(-20) is None
-    tried.clear()
-    assert await bot.refresh_keyboards(TG()) == 0 and tried == []   # nothing more on the next start: 13 blocked the bot
-
-
 def test_the_capabilities_list_is_the_users_bullets():
     assert templates.capabilities_text() == "\n".join([
         "\u2022 Temperature, humidity (indoor, outdoor)", "\u2022 Dew point, vapour pressure deficit, pressure, wind speed",

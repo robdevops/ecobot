@@ -265,7 +265,6 @@ async def main():
                 log.info("%s", line)
         notify = Notifier(app.bot, state)
         await bot.publish_commands(app.bot)   # the / menu
-        await bot.refresh_keyboards(app.bot)  # chats whose buttons are out of date are told, with the new ones
         running, weather = start_alerts(cfg, bot, notify, tasks)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
             tasks.start(source.warmer.run())

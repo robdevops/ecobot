@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 from telegram import BotCommand, InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
-from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
+from telegram.error import BadRequest, ChatMigrated, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, periods, prompt, report, report_menu, templates
@@ -841,23 +841,6 @@ class Bot:
             await tg_bot.set_my_commands([BotCommand(name, description) for name, description in templates.MENU])
         except Exception as e:
             log.warning("Couldn't set the command menu: %s: %s", type(e).__name__, e)
-
-    async def refresh_keyboards(self, tg_bot) -> int:
-        """At startup: tell each private chat whose buttons are out of date that they changed, with the new keyboard (silently).
-        A chat that hid them is left alone. Returns how many were sent."""
-        sent = 0
-        for chat_id in [c for c in self.state.present() if c > 0 and self.state.keyboard(c) not in (self.keyboard_version, templates.HIDDEN)]:
-            try:
-                await tg_bot.send_message(chat_id, "Buttons updated.", reply_markup=templates.keyboard(self.irrigation is not None), disable_notification=True)
-                self.state.set_keyboard(chat_id, self.keyboard_version)
-                sent += 1
-            except Forbidden as e:  # blocked the bot
-                self.state.mark_gone(chat_id, f"can't post: {e}")
-            except TelegramError as e:
-                log.warning("Buttons update to %s failed: %s", chat_id, e)
-        if sent:
-            log.info("Buttons: told %d private chat(s) the buttons changed (keyboard %s)", sent, self.keyboard_version)
-        return sent
 
     def _keyboard_stale(self, msg: Message) -> bool:
         """Does this private chat need the current buttons (it has never had them, or they have changed since)? Not when it

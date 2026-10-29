@@ -196,7 +196,7 @@ async def test_a_failure_part_way_through_starting_closes_everything_already_ope
 
     async def down(self, bot):
         raise RuntimeError("Telegram is down")
-    monkeypatch.setattr(ecobot.Bot, "refresh_keyboards", down)
+    monkeypatch.setattr(ecobot.Bot, "publish_commands", down)
     with pytest.raises(RuntimeError, match="Telegram is down"):
         await ecobot.main()
     assert closed == ["telegram", "model", "AirGradient", "Ecowitt"] and "disk I/O error" in caplog.text

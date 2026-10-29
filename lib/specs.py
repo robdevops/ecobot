@@ -212,12 +212,6 @@ class Tile:
     ticks: tuple[float, ...] = ()          # the scale's labels
     decimals: int = 1
 
-    def __post_init__(self):
-        if self.kind not in ("thermometer", "dial", "beaker"):
-            raise ValueError(f"tile {self.title!r}: kind is 'thermometer', 'dial' or 'beaker'")
-        if any(len(figures) != len(self.columns) for figures in self.rows.values()):
-            raise ValueError(f"tile {self.title!r}: each row needs a figure per column")
-
 
 @dataclass
 class Dashboard:

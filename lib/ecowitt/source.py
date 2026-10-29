@@ -252,12 +252,14 @@ class Ecowitt(Source):
                         pass
         return json_result({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})})
 
-    async def _live_data(self, groups: list[str]) -> dict:
-        """The real_time data for these groups: the keep-warm's reading when it is under a minute and a half old and asked for them,
-        else a request of its own, ahead of the background refreshes (someone is waiting)."""
-        if self._live and time.time() - self._live[0] <= LIVE_FRESH_SECONDS and set(groups) <= set(LIVE_GROUPS):
+    async def _live_data(self, groups: list[str], max_age: float = LIVE_FRESH_SECONDS, urgent: bool = True) -> dict:
+        """The real_time data for these groups: the kept reading when it is under `max_age` old (a minute and a half for a question) and
+        asked for them, or when Home Assistant's poll has just confirmed it is the newest; else a request of its own, ahead of the background
+        refreshes when someone is waiting (urgent)."""
+        fresh = self._live and (time.time() - self._live[0] <= max_age or time.time() - self._polled <= LIVE_POLL_SECONDS * 3)
+        if fresh and set(groups) <= set(LIVE_GROUPS):
             return {g: self._live[1][g] for g in groups if g in self._live[1]}
-        return await self._fetch_live(groups, urgent=True)
+        return await self._fetch_live(groups, urgent=urgent)
 
     async def _fetch_live(self, groups: list[str], urgent: bool = False) -> dict:
         """A real_time request for these groups, counted into the 5-minute bands; with every group in it, kept as the minute's own reading
@@ -351,10 +353,7 @@ class Ecowitt(Source):
         by up to 5 minutes, this is about a minute old. The same request keeps every live reading ready for "weather now" and the
         report (self._live), one request a minute. None when unavailable."""
         try:
-            if self.fast is not None and self._live and time.time() - self._polled <= LIVE_POLL_SECONDS * 3 and newest(self._live[1]):
-                data = self._live[1]    # the poll's, a few seconds old at most
-            else:
-                data = await self._fetch_live(LIVE_GROUPS)
+            data = await self._live_data(LIVE_GROUPS, max_age=0, urgent=False)   # the newest minute: the poll's, else a request
             group = data.get("rainfall") or {}
             row = {f"rainfall.{k}": float(group[k]["value"]) for k in ("rain_rate", "daily") if k in group}
             ts = max((int(group[k].get("time") or 0) for k in group if isinstance(group[k], dict)), default=0)
