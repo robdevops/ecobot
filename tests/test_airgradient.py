@@ -187,6 +187,10 @@ async def test_bucketed_air_lines_carry_a_band_and_the_peak_label_sits_on_its_to
     rows = [dict(r, co2=450.0 + (t - ts[7000]) // 60 % 97) for r, t in zip(rows, ts)]
     co2 = air._chart(["co2"], rows, "period").panels[0].lines[0]
     assert co2.low is not None and _extreme(co2, "low", range(len(co2.x)))[1] == min(co2.low)
+    # a day of readings with a band from what the monitor saw inside each 5 minutes: the label is the highest reading, not the shading's top
+    spiky = [{"ts": r["ts"], "pm2_5": r["pm2_5"], "_range": {"pm2_5": (r["pm2_5"], r["pm2_5"] + (50.0 if i == 100 else 1.0))}} for i, r in enumerate(five)]
+    raw = air._chart(["pm2_5"], spiky, "period").panels[0].lines[0]
+    assert raw.high is not None and max(raw.high) > 50 and _extreme(raw, "high", range(len(raw.x)))[1] == max(raw.y) < 20
     await air.close()
 
 

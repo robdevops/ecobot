@@ -339,7 +339,7 @@ def _pills(ax, lines: list[Line], drawn: list[tuple], x0: float, x1: float, look
     pills = []
     for s, (colour, xs, ys) in zip(lines, drawn):
         for want, above in (("high", True), ("low", False)):
-            if want in s.records and s.low is not None:  # a banded line: the label sits on the top (bottom) of its band
+            if want in s.records and s.low is not None and not s.on_line:  # a banded line: the label sits on the top (bottom) of its band
                 rx, ry = _extreme(s, want, xs)
             elif want in s.records:  # the true record, at its actual time (may sit off an averaged line)
                 rx, ry = float(_nums([s.records[want][0]])[0]), float(s.records[want][1])
@@ -416,7 +416,7 @@ def _render_rose(fig, compass: Compass):
 def _extreme(line: Line, want: str, xs) -> tuple[float, float]:
     """Where the drawn line is highest (or lowest): the top (bottom) of its band when it has one, else the line itself. A
     label sits on what is drawn, never on a raw reading the chart does not reach. `xs` are the line's x as date numbers."""
-    ys = (line.high if want == "high" else line.low) if line.low is not None else line.y
+    ys = (line.high if want == "high" else line.low) if line.low is not None and not line.on_line else line.y
     i = int(np.argmax(ys) if want == "high" else np.argmin(ys))
     return float(xs[i]), float(ys[i])
 

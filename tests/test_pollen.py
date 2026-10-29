@@ -54,7 +54,7 @@ def test_outside_the_asthma_season_there_is_no_asthma_forecast_and_an_unknown_pa
 async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path):
     pollen, _ = make(tmp_path, lambda: page(grass="High", asthma="High"))
     await pollen.start()
-    assert pollen.lines() == ["Grass pollen: 🔴 High", "Thunderstorm asthma risk: 🔴 High"]
+    assert pollen.lines() == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🔴 High"]
     out = json.loads(await pollen.handle({}))
     assert out["lines"] == pollen.lines() and "Central" not in json.dumps(out) and out["asthma_updated"] == "1 Oct 2026 4:00pm"
     await pollen.close()
@@ -64,7 +64,7 @@ async def test_a_forecast_for_another_day_and_a_missing_asthma_forecast_are_said
     pollen, _ = make(tmp_path, lambda: page(grass="Moderate", day=SEASON_DAY + timedelta(days=1), season=False))
     with caplog.at_level("WARNING"):
         await pollen.start()
-    assert pollen.lines() == ["Grass pollen: 🟠 Moderate (forecast for Wed 11 Nov)"]
+    assert pollen.lines() == ["Grass pollen forecast: 🟠 Moderate (forecast for Wed 11 Nov)"]
     assert json.loads(await pollen.handle({}))["asthma_note"] == "The page had no thunderstorm asthma level for this district when it was last read."
     assert "no thunderstorm asthma level for Central on the page" in caplog.text            # in season the page should have one
     await pollen.close()
@@ -96,7 +96,7 @@ async def test_the_page_is_fetched_conditionally_and_not_again_while_fresh(tmp_p
     assert len(calls) == 1
     await pollen.warm(True)                                # the timer: asks again with the validator, gets a 304
     assert len(calls) == 2 and calls[1].headers["if-none-match"] == "v1"
-    assert pollen.lines() == ["Grass pollen: 🟢 Low", "Thunderstorm asthma risk: 🟢 Low"]
+    assert pollen.lines() == ["Grass pollen forecast: 🟢 Low", "Thunderstorm asthma forecast: 🟢 Low"]
     await pollen.close()
 
 
@@ -167,7 +167,7 @@ async def test_last_seasons_page_is_not_shown_and_the_report_leaves_the_block_ou
     from lib import report
     pollen, _ = make_on(tmp_path, date(2026, 12, 20), html=lambda: page(grass="High", day=date(2026, 12, 20)))
     await pollen.start()
-    assert pollen.lines()[0].startswith("Grass pollen: 🔴 High")
+    assert pollen.lines()[0].startswith("Grass pollen forecast: 🔴 High")
     assert json.loads(await pollen.handle({"cached": True}))["time"]      # when the page was fetched, for the report's heading
     await pollen.close()
     january, calls = make_on(tmp_path, date(2027, 1, 5))                # the saved page is still in the database

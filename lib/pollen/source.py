@@ -142,9 +142,9 @@ class Pollen(Source):
         cur, out = self.current(), []
         if g := cur["grass"]:
             when = f" (forecast for {day_text(g['date'], year=False)})" if g["date"] and g["date"] != self.now().date() else ""
-            out.append(f"Grass pollen: {g['emoji']} {g['level']}{when}")
+            out.append(f"Grass pollen forecast: {g['emoji']} {g['level']}{when}")
         if a := cur["asthma"]:
-            out.append(f"Thunderstorm asthma risk: {a['emoji']} {a['level']}")
+            out.append(f"Thunderstorm asthma forecast: {a['emoji']} {a['level']}")
         return out
 
     async def handle(self, args: dict, turn: Turn | None = None) -> str:

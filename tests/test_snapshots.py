@@ -49,12 +49,12 @@ async def test_a_restart_in_the_evening_starts_from_the_saved_pollen_page_withou
     await first.close()
     again, more = make_pollen(tmp_path, lambda: page(grass="Low"), hour=22)
     await again.start()
-    assert more == [] and again.lines() == ["Grass pollen: 🔴 High", "Thunderstorm asthma risk: 🔴 High"]
+    assert more == [] and again.lines() == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🔴 High"]
     assert again.current()["fetched_at"] == first.fetched_at
     again.now = lambda: datetime.combine(SEASON_DAY, dtime(9, 0))
     await again.warm(True)                                   # next morning: asks with the saved validator
     assert len(more) == 1 and more[0].headers["if-none-match"] == "v1"
-    assert again.lines()[0].startswith("Grass pollen: 🔴 High")      # a 304: the saved page still stands
+    assert again.lines()[0].startswith("Grass pollen forecast: 🔴 High")      # a 304: the saved page still stands
     await again.close()
 
 

@@ -30,6 +30,7 @@ class Line:
     reading: str = ""                                  # which reading it is ("pm2_5", ...), for its colour; else its panel's
     indoor: bool = False                               # the indoor sensor's line: the reading's complementary colour
     right: bool = False                                # drawn against the panel's second axis, on the right (see panels.two_axes)
+    on_line: bool = False                              # its peak is marked on the line itself, not on the top of its band (the band's high may be one glitch)
 
     def __post_init__(self):
         if len(self.x) != len(self.y) or len(self.x) < 2:
