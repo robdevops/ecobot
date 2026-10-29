@@ -187,9 +187,7 @@ def _from_env(f) -> object:
 class Config:
     tz: tzinfo
     state_path: Path
-    cache_path: Path                                               # the files from before ecobot.sqlite (storage_path), moved into it once:
-    air_cache_path: Path                                           # ... the station's, the air sensor's, and the last pollen page and forecast
-    conditions_cache_path: Path
+    storage_path: Path                                             # the bot's one file of readings, the pollen page and the forecast (lib/storage)
     telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
     openrouter_api_key: str = _setting("OPENROUTER_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
     openrouter_base_url: str = _setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -225,11 +223,6 @@ class Config:
     antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
     log_width: int = _setting("LOG_WIDTH", 48, _whole)             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
-
-    @property
-    def storage_path(self) -> Path:
-        """The bot's one file of readings (lib/storage), beside the files it replaces (docs/storage-plan.md)."""
-        return self.cache_path.with_name("ecobot.sqlite")
 
     @property
     def homeassistant(self) -> bool:
@@ -287,8 +280,7 @@ class Config:
         if not writable:
             raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
-        cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", cache_path=data / "ecowitt_cache.sqlite",
-                  air_cache_path=data / "airgradient_cache.sqlite", conditions_cache_path=data / "conditions_cache.sqlite",
+        cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", storage_path=data / "ecobot.sqlite",
                   **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
         if not (cfg.ecowitt or cfg.airgradient):
             raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or HOMEASSISTANT_URL + HOMEASSISTANT_TOKEN and/or AIRGRADIENT_API_TOKEN + "

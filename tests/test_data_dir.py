@@ -7,7 +7,7 @@ import pytest
 
 from lib.config import ROOT, Config, data_dir
 
-NAMES = ("bot_state.json", "ecowitt_cache.sqlite", "airgradient_cache.sqlite", "conditions_cache.sqlite")
+NAMES = ("bot_state.json", "ecobot.sqlite")
 
 
 def configured(monkeypatch, **env):
@@ -17,7 +17,7 @@ def configured(monkeypatch, **env):
 
 
 def paths(cfg):
-    return (cfg.state_path, cfg.cache_path, cfg.air_cache_path, cfg.conditions_cache_path)
+    return (cfg.state_path, cfg.storage_path)
 
 
 def test_without_data_dir_the_files_stay_where_they_have_always_been(monkeypatch):
@@ -29,7 +29,7 @@ def test_without_data_dir_the_files_stay_where_they_have_always_been(monkeypatch
     assert data_dir() == ROOT                                                     # blank is the same as unset
 
 
-def test_data_dir_moves_the_state_and_all_three_caches_and_is_created(monkeypatch, tmp_path):
+def test_data_dir_moves_the_state_and_the_file_and_is_created(monkeypatch, tmp_path):
     target = tmp_path / "a" / "data"
     cfg = configured(monkeypatch, DATA_DIR=str(target))
     assert paths(cfg) == tuple(target / n for n in NAMES) and target.is_dir()

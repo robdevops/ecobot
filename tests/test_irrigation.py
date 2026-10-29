@@ -679,13 +679,16 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
             return "ok"
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
+    async def quiet(*a, **k):
+        pass
+    ctx = NS(bot=NS(username="testbot", id=99, send_chat_action=quiet, send_message_draft=quiet))   # the model is asked: "typing..." and a draft go first
     bot = Bot(NS(tz=TZ), Agent(), [], state, Remote())
     update, sent = private_message("how much water did the rain add this week")
-    await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    await bot.on_message(update, ctx)
     assert asked == ["how much water did the rain add this week"]
     plain = Bot(NS(tz=TZ), Agent(), [], AlertState(tmp_path / "t.json"))
     update, sent = private_message("irrigation")
-    await plain.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    await plain.on_message(update, ctx)
     assert asked[-1] == "irrigation"                                                       # nothing to show: the model answers as before
 
 

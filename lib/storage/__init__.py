@@ -1,7 +1,7 @@
 """The bot's one file of readings (docs/storage-plan.md): `ecobot.sqlite` in the data folder.
 
 Storage opens it, makes or upgrades its tables (schema.py, from the catalogue), and keeps two connections, each on a thread of its own:
-the writer's (the archive, the refreshes, the live readings, the migration) and the reader's (the questions, the reports, the alerts). In
+the writer's (the archive, the refreshes, the live readings) and the reader's (the questions, the reports, the alerts). In
 WAL mode a read never waits for a write. A request runs all its queries in one hop to the reader's thread, in one read transaction:
 
     rows, days = await storage.read(lambda r: (r.rows("climate", [s.id], "30min", start, end), r.days("climate", [s.id], first, last)))
@@ -73,8 +73,8 @@ def zone_named(name: str, default: tzinfo) -> tzinfo:
 
 
 def connect(path: Path, bulk: bool = False) -> sqlite3.Connection:
-    """A connection to the file. bulk (the migration, into a file of its own): no WAL and no syncing, as fast as it goes, since a failure
-    deletes the file."""
+    """A connection to the file. bulk (a file built from scratch, tests/bench_cache.py): no WAL and no syncing, as fast as it goes, since a
+    failure deletes the file."""
     db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     db.execute("PRAGMA busy_timeout = 5000")
     db.execute("PRAGMA temp_store = MEMORY")

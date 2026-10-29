@@ -828,7 +828,7 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
     await eco.close()
 
 
-async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held_and_fits_the_row_budget(tmp_path, archived_cache, monkeypatch):
+async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_held(tmp_path, archived_cache, monkeypatch):
     from lib.ecowitt import query as history
     seen = []
     real = history.HistoryQuery._hold_period
@@ -843,10 +843,6 @@ async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_hel
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 00:00:00"}
     await eco.tools[1].handler(args)
     assert set(seen) == {"30min"} and fake.calls == []            # held: no daily records, no requests
-    seen.clear()
-    monkeypatch.setattr(history, "MAX_ROWS", 1000)                # too big to load: back to daily records
-    await eco.tools[1].handler(args)
-    assert "1day" in seen
     await eco.close()
 
 
@@ -1540,7 +1536,7 @@ async def test_wind_direction_over_a_past_week_keeps_its_last_day(tmp_path, arch
             start = datetime.strptime(p["start_date"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
             return {} if p["cycle_type"] == "5min" and (datetime.now(TZ) - start).days > 89 else FakeEcowitt._history(p)
     cfg = config(tmp_path)
-    shutil.copy(archived_cache, cfg.cache_path)
+    shutil.copy(archived_cache, cfg.storage_path)
     eco = Ecowitt(cfg, transport=httpx.MockTransport(Retaining()))
     await eco.start()
     last = datetime.now(eco.tz).date() - timedelta(days=200)

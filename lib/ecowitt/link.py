@@ -13,7 +13,7 @@ from datetime import date, datetime, time, tzinfo
 
 from ..analysis.pairs import analyse
 from ..captions import LINK_CHART_HINT, wants_chart
-from ..lines import build_line, slot_readings
+from ..lines import build_line, shaded_up_to, slot_readings
 from ..rain import rain_bars, rain_slots
 from ..panels import panel_for
 from ..series import WEATHER
@@ -55,7 +55,7 @@ def reading_slots(r: Reader, mac: str, name: str, start: int, end: int) -> tuple
     values, lows, highs = slot_values_on(r, mac, group, field, "30min", start, end)
     if reading.band_field:
         gust, _, gust_high = slot_values_on(r, mac, group, reading.band_field, "30min", start, end)
-        highs = {t: max(gust.get(t, 0.0), gust_high.get(t, 0.0)) for t in {*gust, *gust_high}}
+        highs = shaded_up_to(highs, shaded_up_to(gust, gust_high))
     return values, lows, highs
 
 

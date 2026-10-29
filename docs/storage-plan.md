@@ -413,6 +413,9 @@ one read. The 1Y chart's line is 365 day rows, the 3M chart's 90, the 1M chart's
 
 ## 5. Migration
 
+*Retired after it had run on the owner's data (29 October 2026): `lib/storage/migrate.py`, `scripts/migrate_storage.py` and their
+tests are in the history up to commit 56a998c. The section stays as a record of what was moved and how it was checked.*
+
 - **Automatic, at start** (from step 2). When the old files hold what `ecobot.sqlite` does not yet, the bot moves it across before the
   station starts, logging "Moving the history to ecobot.sqlite (once)". Nothing is fetched: Ecowitt's cloud keeps only 90 days of
   5-minute readings, so the history is the bot's to keep. `scripts/migrate_storage.py` does the same by hand on a copy of the files, with

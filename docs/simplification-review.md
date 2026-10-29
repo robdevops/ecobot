@@ -30,14 +30,14 @@ source (only `warm()`'s unread return string uses them), the six `getattr`/`hasa
 let test fakes lack attributes. Replacing the shims with plain attribute access and giving the fakes the attributes is small but tightens
 the contracts.
 
-## 2. One-off and measurement code that can retire (owner's timing; the counts instrumentation went with the dead code)
+## 2. One-off and measurement code that can retire (both retired on 29 October 2026, after the dead code)
 
 | where | lines | what | recommendation |
 |---|---|---|---|
 | lib/storage/migrate.py (whole), write.py `exact=` 219-227, __init__.py `bulk` 82-109/162-163, ecobot.py 76-79, `open_storage` in both sources | ~510 (+122 scripts/migrate_storage.py, +300 tests, conftest `old_archived_cache`) | the one-off move of the old files into ecobot.sqlite, its checks, and the merge of a part into an existing file | Retire once the old files have been moved on every deployment and deleted. Until then it still fires when a part is enabled later (POLLEN switched on with conditions_cache.sqlite still present). Carries a second upsert SQL and a second "hourly day" rule that go with it |
 | lib/counts.py (whole), ecobot.py:225, bot.py:1071/1199/1025, warm.py:256, storage `counts.connect`/`uncounted` (6 sites), tools timing fields | ~110 | SQL-statement and thread-hop counters via a sqlite3 Connection subclass and a monkeypatched `asyncio.to_thread`, for the DEBUG `Chart ms` line and the bench script | The redesign it measured is done. Remove from the production path (the monkeypatch of `asyncio.to_thread` at start is the riskiest line in the repo for its value); keep wall-clock timing in scripts/bench_storage.py |
 | lib/config.py:190-192, 290-291 | 6 | the three old file paths on Config | go with the migration |
-| ecobot.py:252-253 | 2 | "XAI_API_KEY is no longer used" hint | remove after one release |
+| ecobot.py:252-253 | 2 | "XAI_API_KEY is no longer used" hint | removed |
 
 ## 3. Optional features: keep or drop is the owner's call
 

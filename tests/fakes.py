@@ -6,8 +6,6 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
-import json
-import sqlite3
 
 from lib.config import Config
 from lib.tools import Tools
@@ -28,8 +26,7 @@ def config(tmp_path, **over) -> Config:
     base = dict(telegram_token="1:x", openrouter_api_key="k", openrouter_base_url="http://x", openrouter_model="m", tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                cache_path=tmp_path / "cache.sqlite", air_cache_path=tmp_path / "air.sqlite",
-                conditions_cache_path=tmp_path / "conditions.sqlite", admin_only=False)   # tests that are about ADMIN_ONLY switch it on
+                storage_path=tmp_path / "ecobot.sqlite", admin_only=False)   # tests that are about ADMIN_ONLY switch it on
     return Config(**{**base, **over})
 
 
@@ -316,69 +313,3 @@ async def archived_station(tmp_path, cache_file):
     await eco.start()
     fake.calls.clear()
     return eco, fake
-
-
-def old_live_file(path, found: dict, now: float | None = None):
-    """An ecowitt_live.sqlite of the bot from before ecobot.sqlite ({series: {5-minute mark: (readings, lowest, highest)}}), as
-    ecowitt.live.LiveRanges wrote it: the ranges, and the half hours of those with two readings or more rolled up."""
-    db = sqlite3.connect(path)
-    db.execute("CREATE TABLE IF NOT EXISTS ranges (series TEXT, ts INTEGER, n INTEGER, lo REAL, hi REAL, PRIMARY KEY (series, ts)) WITHOUT ROWID")
-    db.execute("CREATE TABLE IF NOT EXISTS slots (series TEXT, ts INTEGER, lo REAL, hi REAL, PRIMARY KEY (series, ts)) WITHOUT ROWID")
-    rows = [(series, mark, n, lo, hi) for series, marks in found.items() for mark, (n, lo, hi) in marks.items()]
-    db.executemany("INSERT INTO ranges VALUES (?, ?, ?, ?, ?) ON CONFLICT (series, ts) DO UPDATE SET "
-                   "n = MAX(n, excluded.n), lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)", rows)
-    db.executemany("INSERT INTO slots VALUES (?, ?, ?, ?) ON CONFLICT (series, ts) DO UPDATE SET lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)",
-                   [(series, mark // 1800 * 1800, lo, hi) for series, mark, n, lo, hi in rows if n >= 2])
-    db.commit()
-    db.close()
-
-
-def old_conditions_file(path, rows: list[tuple[str, float, float, dict]], meta: dict[str, str]):
-    """A conditions_cache.sqlite of the bot from before ecobot.sqlite: its snapshots ([(kind, first_seen, last_seen, payload)]) and meta."""
-    db = sqlite3.connect(path)
-    db.execute("CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY, kind TEXT, first_seen REAL, last_seen REAL, payload TEXT)")
-    db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID")
-    db.executemany("INSERT INTO snapshots (kind, first_seen, last_seen, payload) VALUES (?, ?, ?, ?)",
-                   [(kind, a, b, json.dumps(payload, sort_keys=True)) for kind, a, b, payload in rows])
-    db.executemany("INSERT INTO meta VALUES (?, ?)", list(meta.items()))
-    db.commit()
-    db.close()
-
-
-def old_minutes_file(path, data: dict):
-    """An ecowitt_minutes.sqlite of the bot from before ecobot.sqlite ({group: {field: {"unit", "list": {epoch: text}}}}), as
-    ecowitt.minutes.MinuteStore wrote it."""
-    db = sqlite3.connect(path)
-    db.execute("CREATE TABLE IF NOT EXISTS minutes (grp TEXT, field TEXT, t INTEGER, unit TEXT, value TEXT, PRIMARY KEY (grp, field, t)) WITHOUT ROWID")
-    db.executemany("INSERT OR REPLACE INTO minutes VALUES (?, ?, ?, ?, ?)",
-                   [(group, field, int(t), obj.get("unit", ""), str(v)) for group, fields in data.items() for field, obj in fields.items()
-                    for t, v in obj["list"].items()])
-    db.commit()
-    db.close()
-
-
-def old_air_file(path, loc: str, days: dict, recorded: list[dict] = (), spreads: dict | None = None, done: dict | None = None):
-    """An airgradient_cache.sqlite of the bot from before ecobot.sqlite, as airgradient.store.AirStore wrote it: {day: its readings} each
-    a finished day (noted in `days` with its count, unless `done` says otherwise), the bot's own readings (`recorded`, with their
-    `_range`), and Home Assistant's `spreads` ({metric: {bucket: (lowest, highest)}})."""
-    from lib.airgradient.metrics import STORED
-    columns = list(STORED)
-    db = sqlite3.connect(path)
-    db.executescript(f"""
-        CREATE TABLE IF NOT EXISTS readings (loc TEXT, ts INTEGER, {", ".join(f"{c} REAL" for c in columns)}, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
-        CREATE TABLE IF NOT EXISTS days (loc TEXT, day TEXT, n INTEGER, PRIMARY KEY (loc, day)) WITHOUT ROWID;
-        CREATE TABLE IF NOT EXISTS recorded (loc TEXT, ts INTEGER, PRIMARY KEY (loc, ts)) WITHOUT ROWID;
-        CREATE TABLE IF NOT EXISTS spreads (loc TEXT, ts INTEGER, name TEXT, lo REAL, hi REAL, PRIMARY KEY (loc, ts, name)) WITHOUT ROWID;
-    """)
-    insert = f"INSERT OR REPLACE INTO readings VALUES (?, ?, {', '.join('?' * len(columns))})"
-    for day, rows in days.items():
-        db.executemany(insert, [(loc, r["ts"], *(r.get(c) for c in columns)) for r in rows])
-        db.execute("INSERT OR REPLACE INTO days VALUES (?, ?, ?)", (loc, day.isoformat(), (done or {}).get(day, len(rows))))
-    for r in recorded:
-        db.execute(insert, (loc, r["ts"], *(r.get(c) for c in columns)))
-        db.execute("INSERT OR REPLACE INTO recorded VALUES (?, ?)", (loc, r["ts"]))
-        db.executemany("INSERT OR REPLACE INTO spreads VALUES (?, ?, ?, ?, ?)", [(loc, r["ts"], n, lo, hi) for n, (lo, hi) in (r.get("_range") or {}).items()])
-    db.executemany("INSERT OR IGNORE INTO spreads VALUES (?, ?, ?, ?, ?)",
-                   [(loc, ts, name, lo, hi) for name, got in (spreads or {}).items() for ts, (lo, hi) in got.items()])
-    db.commit()
-    db.close()

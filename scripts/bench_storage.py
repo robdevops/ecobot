@@ -1,8 +1,7 @@
-"""How long the bot's typical requests take, and how many SQL statements and thread hops they make, on a copy of its files: the
-yardstick for the storage redesign (docs/storage-plan.md, step 0). The copy is of ecobot.sqlite where the bot has one, and of the old
-caches it is made from (a copy of those only is moved into one first, as the bot does at its first start). Nothing is asked of Ecowitt or
-AirGradient (a request the copy cannot answer is counted instead), and the bot's own files are only read: the copy is made with SQLite's
-backup, so the bot can keep running. Run it where the bot runs, with its settings:
+"""How long the bot's typical requests take on a copy of its file, ecobot.sqlite: the yardstick for the storage redesign
+(docs/storage-plan.md, step 0). Nothing is asked of Ecowitt or AirGradient (a request the copy cannot answer is counted instead), and the
+bot's own file is only read: the copy is made with SQLite's backup, so the bot can keep running. Run it where the bot runs, with its
+settings:
 
     sudo docker compose exec ecobot python scripts/bench_storage.py
     python scripts/bench_storage.py [--data /var/lib/private/ecobot] [--repeat 3]
@@ -30,7 +29,7 @@ from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 from lib.config import Config, data_dir, local_tz  # noqa: E402
 from lib.tools import Turn  # noqa: E402
 
-FILES = ("ecobot.sqlite", "ecowitt_cache.sqlite", "ecowitt_live.sqlite", "ecowitt_minutes.sqlite", "airgradient_cache.sqlite")
+FILES = ("ecobot.sqlite",)
 
 
 class Offline:
@@ -73,15 +72,9 @@ def settings(folder: Path) -> Config:
         os.environ.setdefault(name, "bench")
     cfg = Config.from_env()
     location = None
-    air = folder / "airgradient_cache.sqlite"
     if cfg.storage_path.exists():   # the air sensor the bot's file holds
         db = sqlite3.connect(f"file:{cfg.storage_path}?mode=ro", uri=True)
         found = db.execute("SELECT device FROM sensors WHERE kind = 'air' ORDER BY id LIMIT 1").fetchone()
-        db.close()
-        location = found[0] if found else None
-    if location is None and air.exists():
-        db = sqlite3.connect(air)
-        found = db.execute("SELECT loc, COUNT(*) FROM readings GROUP BY loc ORDER BY 2 DESC LIMIT 1").fetchone()
         db.close()
         location = found[0] if found else None
     return dataclasses.replace(cfg, homeassistant_url="", homeassistant_token="", ecowitt_source="cloud", airgradient_local_url="",
@@ -128,9 +121,9 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
     from lib.ecowitt.archive import Archive
     cfg = settings(folder)
     rows: list[tuple[str, float, int]] = []
-    if (folder / "ecowitt_cache.sqlite").exists() or cfg.storage_path.exists():
+    if cfg.storage_path.exists():
         started = time.monotonic()
-        eco = Ecowitt(cfg)   # (the old caches moved into ecobot.sqlite first, if the copy has none)
+        eco = Ecowitt(cfg)
         opened = time.monotonic() - started
         eco.api, eco.tz = Offline(), tz
         held = stations(eco.storage)
@@ -157,7 +150,7 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
             rows.append((label, *await measured(run, repeat, lambda: eco.api.asked)))
         rows.append(("/dashboard", *await measured(eco.dashboard, repeat, lambda: eco.api.asked)))
         await eco.close()
-    if cfg.airgradient_location and ((folder / "airgradient_cache.sqlite").exists() or cfg.storage_path.exists()):
+    if cfg.airgradient_location and cfg.storage_path.exists():
         asked = [0]
 
         def cloud(request):   # what the cache lacks is counted, and there is none of it

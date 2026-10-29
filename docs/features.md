@@ -32,7 +32,7 @@ Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off i
 
 ## Who can use it
 
-By default the bot answers everyone who messages it. `ADMIN_ONLY=on` answers only the admins of the groups it is in, plus any ids in `ADMIN_CHAT_IDS`; everyone else is told it is for group admins. See [configuration.md](configuration.md).
+By default the bot answers everyone who messages it. `ADMIN_ONLY=on` answers only the admins of the groups it is in, plus any ids in `ADMIN_CHAT_IDS`; everyone else is told it is for group admins. A refused sender is logged once, with their id, so the owner can add them to `ADMIN_CHAT_IDS`. See [configuration.md](configuration.md).
 
 ## Optional extras
 

@@ -237,6 +237,23 @@ async def test_with_admin_only_off_everyone_is_answered_as_before(tmp_path):
     assert sent == [] and bot.asked == ["how warm is it"] and STRANGER in state.chats and tg.fetches == []
 
 
+async def test_a_refused_sender_is_logged_once_with_the_id_to_list(tmp_path, caplog):
+    bot, state, tg = make(tmp_path)
+    refused = lambda: [r.getMessage() for r in caplog.records if "refused" in r.getMessage()]
+    with caplog.at_level("INFO", logger="lib.bot"):
+        for _ in range(2):
+            update, sent = message("how warm is it", user=STRANGER)
+            await bot.on_message(update, ctx(tg))
+            assert [b for b, _ in sent] == [NOT_ADMIN]                                     # told every time
+        assert refused() == [f"[Telegram {STRANGER}]: @u: refused: user {STRANGER} (U) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"]
+        update, sent = message("hello", user=8)                                                 # another stranger: its own line
+        await bot.on_message(update, ctx(tg))
+        assert len(refused()) == 2 and refused()[1].startswith("[Telegram 8]: @u: refused: user 8 (U) is not")
+        update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))   # as the group: the chat
+        await bot.on_message(update, ctx(tg))
+        assert refused()[2] == f"[Telegram {GROUP}]: @u, group 'Home': refused: chat {GROUP} (Home) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"
+
+
 async def test_a_listed_user_can_use_the_bot_before_it_is_in_any_group(tmp_path):
     bot, state, tg = make(tmp_path, extra=[STRANGER], groups=(), tg=TG({}))
     update, sent = message("hello", user=STRANGER)
@@ -265,12 +282,12 @@ async def test_in_a_group_only_a_message_meant_for_the_bot_is_refused_and_ordina
 
 
 async def test_an_anonymous_admin_gets_in_only_through_a_listed_group_id(tmp_path):
-    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP))
+    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))
     bot, state, tg = make(tmp_path)
     await bot.on_message(update, ctx(tg))
     assert [b for b, _ in sent] == [NOT_ADMIN] and bot.asked == []                          # no automatic pass
     bot, state, tg = make(tmp_path, extra=[GROUP])
-    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP))
+    update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))
     await bot.on_message(update, ctx(tg))
     assert sent == [] and bot.asked == ["hi"]
 

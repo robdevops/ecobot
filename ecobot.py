@@ -10,7 +10,6 @@ import logging
 import os
 import signal
 import time
-from collections.abc import Coroutine
 
 from lib.config import ROOT, Config, data_dir
 
@@ -29,7 +28,7 @@ from lib.airgradient import metrics as air_metrics
 from lib.alerts import (PARTICULATES_CHECK_SECONDS, AlertState, ForecastMonitor, IrrigationMonitor, Notifier, ParticulatesMonitor,
                         PollenAndAsthmaMonitor, WeatherMonitor)
 from lib.alerts.menu import LABELS, available_kinds
-from lib.bot import TURN_SECONDS, Bot, polling_error
+from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.ecowitt.source import HA_IMPORT_SECONDS
 from lib.forecast import Forecast
@@ -40,7 +39,7 @@ from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
 from lib.compose import Composer
 from lib.sources import Source
-from lib.storage.migrate import history_files, open_storage
+from lib.storage import Storage
 from lib.tools import Tools
 from lib.warm import every, safely
 
@@ -71,11 +70,9 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
             if source is not None:
                 await safely(source.close)
     storage = None
-    parts = tuple(part for part, wanted in (("station", cfg.ecowitt), ("airgradient", cfg.airgradient), ("snapshots", cfg.pollen or cfg.forecast))
-                  if wanted)
-    if parts:
-        try:   # (the first time, the old files' history is moved into it: a few seconds, in a thread)
-            storage = await asyncio.to_thread(open_storage, cfg.storage_path, cfg.tz, history_files(cfg), parts)
+    if cfg.ecowitt or cfg.airgradient:
+        try:   # (in a thread: opening makes or upgrades its tables)
+            storage = await asyncio.to_thread(Storage, cfg.storage_path, cfg.tz)
         except Exception as e:
             log.error("The history file %s couldn't be opened (%s: %s) - continuing without the weather station and the air sensor",
                       cfg.storage_path, type(e).__name__, e, exc_info=isinstance(e, BUGS))
@@ -98,29 +95,6 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     if cfg.forecast:
         await start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and None not in (eco.latitude, eco.longitude) else None)
     return sources, cfg
-
-
-class Tasks:
-    """The tasks the bot runs in the background: one that stops with an error is logged as it does, and close() cancels them."""
-
-    def __init__(self):
-        self.running: set[asyncio.Task] = set()
-
-    def start(self, work: Coroutine) -> asyncio.Task:
-        task = asyncio.create_task(work, name=getattr(work, "__qualname__", None))
-        self.running.add(task)
-        task.add_done_callback(self._ended)
-        return task
-
-    def _ended(self, task: asyncio.Task):
-        self.running.discard(task)
-        if not task.cancelled() and (error := task.exception()):
-            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error if isinstance(error, BUGS) else None)
-
-    async def close(self):
-        for task in self.running:
-            task.cancel()
-        await asyncio.gather(*self.running, return_exceptions=True)
 
 
 def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks) -> tuple[list[str], WeatherMonitor | None]:
@@ -247,19 +221,16 @@ async def main():
         if client:
             stack.push_async_callback(safely, client.close)
         else:
-            log.warning("OPENROUTER_API_KEY is not set%s: running without the model, so answers are limited",
-                        " (XAI_API_KEY is no longer used: the model now comes through OpenRouter)" if os.getenv("XAI_API_KEY") else "")
+            log.warning("OPENROUTER_API_KEY is not set: running without the model, so answers are limited")
         state = AlertState(cfg.state_path)
-        if cfg.admin_only:
-            log.info("Telegram: ADMIN_ONLY=on: only admins are answered (see: ADMIN_CHAT_IDS)")
-            if not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
-                log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
-                            "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
+        if cfg.admin_only and not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
+            log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
+                        "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
         irrigation = Tuya(cfg) if cfg.irrigation else None
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
-        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation)
-        stack.push_async_callback(bot.close)
+        tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation, tasks)
 
         app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
                .defaults(Defaults(disable_notification=True))  # silent messages
@@ -280,7 +251,6 @@ async def main():
         await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False,
                                         error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
         stack.push_async_callback(app.updater.stop)
-        tasks = Tasks()
         stack.push_async_callback(tasks.close)
         for source in sources:
             stack.push_async_callback(source.warmer.stop)

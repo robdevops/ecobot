@@ -12,7 +12,7 @@ from datetime import date, datetime, time, timedelta
 from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
-from ..lines import DAY, Plotted, Sample, bucket_width, build_line
+from ..lines import DAY, Plotted, Sample, build_line, how_drawn, shaded_up_to
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
 from ..timeutil import at_hour, day_bounds, day_text, local_date, now_local, parse_local, SLOT
@@ -36,15 +36,9 @@ INTRADAY_DAYS = 8               # up to this many days: 5-minute readings where 
 FINE_DAYS = 31                  # up to this many: 30-minute readings and a breakdown by day; longer periods use daily records, by month
 DAILY_ALL_DAYS = 7              # longer periods send every day's figures only when day by day was asked for
 DIRECTION_DAYS = 365            # how far back wind direction is counted (from cached 5-minute readings)
-# Periods up to this long are built from local-day-aligned data, so each month's low/high and its
-# date are exact even at month boundaries. Longer periods use daily data (10am-10am buckets), unless
-# the cache already holds the 30-minute data (the archive does), in which case up to a year is detailed.
-DETAILED_DAYS = 93
 # Slow readings, by "group.field": a 5-minute line of these is lightly smoothed (wind, rain and the rest are not)
 SMOOTH_SERIES = {f"{g}.{f}" for g in ("outdoor", "indoor") for f in ("temperature", "humidity", "dew_point", "feels_like")} | {
     "pressure.relative", "pressure.absolute"}
-MAX_ROWS = 500_000              # readings loaded per question from the cache: days x 48 x groups x FIELDS_PER_GROUP
-FIELDS_PER_GROUP = 12           # about how many fields (with lows and highs) a group has
 # Fields Ecowitt derives from the others (feels-like, dew point ...): left out of results unless the question asks for them
 # (or charts one), so an "averaged data" note can't be misapplied to them.
 DERIVED = ("feels_like", "app_temp", "app_tempin", "dew_point", "vpd")
@@ -88,8 +82,7 @@ class HistoryQuery:
         self.drawing = ("none", 0)  # how the chart's lines are drawn (_drawing)
         self.lines: dict[str, Plotted] = {}                # the lines the database bucketed
         self.start = self.end = self.span = None          # the period, set by run()
-        self.held = False                                  # the whole period is in the cache at 30 minutes, and fits the row budget
-        self.detailed = False                              # local-day-aligned data available for the whole period
+        self.held = False                                  # the whole period is in the cache at 30 minutes: local days, so each month's records are dated
         self.overall: dict = {}                            # key -> {"low": Ext, "high": Ext}
         self.monthly: dict = {}                            # key -> {month: {"low": Ext, "high": Ext}}
         self.direction: dict = {}                          # "wind.wind_direction" -> its summary (never low/high)
@@ -122,7 +115,6 @@ class HistoryQuery:
             return f"Error: start_date must be before end_date and within the last {CYCLES['1day'].kept // 365} years."
         self.span = self.end - self.start
         self.held = await self._held_locally()
-        self.detailed = self.held or self.span <= timedelta(days=DETAILED_DAYS)
 
         f = self.f
         plan = await self._hold_period()
@@ -150,22 +142,16 @@ class HistoryQuery:
         """Say why a query found nothing: what was asked, where it was answered from, and what the cache holds for the window."""
         f = self.f
         lo, hi = f.epoch(self.start), f.epoch(self.end)
-        try:
-            held = await f.stored(counts_on, f.mac, f.groups, lo, hi)
-        except Exception as e:
-            held = f"unreadable ({e})"
         log.warning("History query empty: %s to %s (tz %s, epoch %d-%d), groups %s, %d ranges, %d from cache, %d from memory, %d requests, "
                     "%d failed%s, cache %s, readings held for the window %s", f"{self.start:%Y-%m-%d %H:%M}", f"{self.end:%Y-%m-%d %H:%M}",
                     getattr(self.tz, "key", self.tz), lo, hi, ",".join(f.groups), f.ranges, f.from_cache, f.from_memory, f.calls,
-                    len(f.errors), f" ({f.errors[0]})" if f.errors else "", f.storage.path, held)
+                    len(f.errors), f" ({f.errors[0]})" if f.errors else "", f.storage.path, await f.stored(counts_on, f.mac, f.groups, lo, hi))
 
     async def _held_locally(self) -> bool:
-        """Is the whole period already in the cache at 30 minutes (bar the newest day, which is still settling), and
-        small enough to load? Then any length is read from it at no cost in requests."""
+        """Is the whole period already in the cache at 30 minutes (bar the newest day, which is still settling)? Then any length is read
+        from it at no cost in requests."""
         f = self.f
-        if (self.span.days + 1) * 48 * len(f.groups) * FIELDS_PER_GROUP > MAX_ROWS:
-            return False
-        return await f.covered("30min", f.epoch(self.start), f.epoch(self.end - timedelta(days=1)))
+        return (await f.covered_each("30min", [(f.epoch(self.start), f.epoch(self.end - timedelta(days=1)))]))[0]
 
     async def _hold_period(self) -> list[tuple[str, datetime, datetime]]:
         """The readings the period is drawn from, at the fewest requests: (resolution, start, end) each, held (what the storage lacks of
@@ -181,13 +167,13 @@ class HistoryQuery:
                 first := await f.stored(first_minute_on, f.mac, f.groups, f.epoch(start), f.epoch(end))) is not None \
                 and first <= f.epoch(start) + SLACK_SECONDS:
             return [(MINUTE, start, end)]   # (kept by the bot: nothing to ask for)
-        if self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or await f.covered(
-                "5min", f.epoch(start), f.epoch(end))):
+        if self.span <= timedelta(days=1) and (start.date() >= kept_from("5min", today) or (await f.covered_each(
+                "5min", [(f.epoch(start), f.epoch(end))]))[0]):
             plan = [("5min", start, end)]
         elif self.span <= timedelta(days=FINE_DAYS) and end > thirty_floor:
             plan = []
             for a, b in spans("30min", max(start, thirty_floor), end):
-                five = self.span <= timedelta(days=INTRADAY_DAYS) and await f.covered("5min", f.epoch(a), f.epoch(b))
+                five = self.span <= timedelta(days=INTRADAY_DAYS) and (await f.covered_each("5min", [(f.epoch(a), f.epoch(b))]))[0]
                 plan.append(("5min" if five else "30min", a, b))
             if start < thirty_floor:
                 plan.append(("1day", start, min(end, thirty_floor - timedelta(seconds=1))))
@@ -267,7 +253,7 @@ class HistoryQuery:
         log.debug("%s..%s: %d reads (%d cache, %d mem), %d req%s", f"{self.start:%m-%d}", f"{self.end:%m-%d}", f.ranges, f.from_cache,
                   f.from_memory, f.calls, f", {len(f.errors)} failed" if f.errors else "")
         out = {"period": f"{day_text(self.start)} - {day_text(self.end)}", "series": shown if shown else series_out}
-        if self.monthly and not self.detailed:
+        if self.monthly and not self.held:
             out["monthly_note"] = (f"Monthly figures for long periods come from daily data that runs "
                                    f"{daily_run(self.tz, self.start.date(), self.end.date())}, so they have no dates, and a low "
                                    "early on the 1st may be counted in the previous month.")
@@ -307,7 +293,7 @@ class HistoryQuery:
             entry["monthly"] = {}
             for month, d in self.monthly.get(key, {}).items():
                 row = entry["monthly"][month] = {w: e.raw for w, e in d.items()}  # long periods: values only, to keep it small
-                if self.detailed:  # each month's low/high with when and date
+                if self.held:  # each month's low/high with when and date
                     for w, e in d.items():
                         _, row[f"{w}_when"], row[f"{w}_date"] = describe_time(e.ts, e.cycle, tz)
         if (self.args.get("average") or self.turn.average_asked) and not key.startswith("rainfall"):  # a rain total has no mean
@@ -417,31 +403,23 @@ class HistoryQuery:
 
     def _series_readings(self, k: str) -> list[Sample]:
         """One series as readings for lines.build_line. A reading with a band series (wind) is its mean shaded up to that series."""
-        band = self._band_key(k)
+        band, pts = self._band_key(k), self.store[k]["pts"]
         if band is None:
-            return list(self.store[k]["pts"].values())
-        gust = self.store[band]["pts"]
-        return [s._replace(low=s.bounds()[0], high=max(gust[t].bounds()[1] if t in gust else s.bounds()[1], s.value))
-                for t, s in self.store[k]["pts"].items()]
+            return list(pts.values())
+        tops = shaded_up_to({t: s.bounds()[1] for t, s in pts.items()}, {t: s.bounds()[1] for t, s in self.store[band]["pts"].items()})
+        return [s._replace(low=s.bounds()[0], high=max(tops[t], s.value)) for t, s in pts.items()]
 
     def _drawing(self, plan: list[tuple[str, datetime, datetime]]) -> tuple[str, int]:
-        """How the chart's lines are drawn, as lines.build_line would draw the plan's readings: ("readings", 0), the readings themselves
-        (build_line still picks: lightly smoothed, or in buckets where two resolutions meet); ("buckets", width), in buckets the database
-        works out; ("days", hour), a point a day from the period's days (at that hour where they are local days)."""
-        fine = {cycle_seconds(cycle) for cycle, _, _ in plan if cycle != "1day"}
-        records = any(cycle == "1day" for cycle, _, _ in plan)
-        if not fine:   # (Ecowitt's daily records alone: as they are)
-            return "readings", 0
-        width = DAY if records or self.turn.average_asked else bucket_width(self.span.total_seconds(), min(fine))
-        if width >= DAY:
-            return "days", 10 if records else 12   # (where Ecowitt's 10am-10am records are in the line, its local days are drawn where they sit)
-        if width > min(fine) or len(fine) > 1:
-            return "buckets", max(width, SLOT)
-        return "readings", 0
+        """How the chart's lines are drawn, as lines.build_line would draw the plan's readings (lines.how_drawn): ("readings", 0), the
+        readings themselves, by build_line (Ecowitt's daily records alone too); ("buckets", width), in buckets the database works out;
+        ("days", hour), a point a day from the period's days (at that hour where they are local days)."""
+        how, at = how_drawn(self.span.total_seconds(), {cycle_seconds(cycle) for cycle, _, _ in plan if cycle != "1day"},
+                            any(cycle == "1day" for cycle, _, _ in plan), self.turn.average_asked)
+        return (how, at) if how in ("buckets", "days") else ("readings", 0)
 
     def _day_line(self, k: str, hour: int) -> Plotted | None:
-        """One point a day from the period's days (as lines._daily): a day held finer than a daily record at `hour`, its mean, lowest and
-        highest; a daily record's at its own time (its 10am start); today and later not (the day is not over)."""
+        """One point a day from the period's days (as lines._daily): a day held finer than a daily record at `hour` (how_drawn's), its mean,
+        lowest and highest; a daily record's at its own time (its 10am start); today and later not (the day is not over)."""
         if (p := self.period.get(k)) is None:
             return None
         points = {}
@@ -456,8 +434,8 @@ class HistoryQuery:
     def _shaded(self, line: Plotted | None, band: Plotted | None) -> Plotted | None:
         """A line shaded up to its band series' (wind: up to the gusts), where that is higher."""
         if line is not None and band is not None:
-            highs = dict(zip(band.x, band.high))
-            line.high = [max(h, highs.get(x, h)) for x, h in zip(line.x, line.high)]
+            tops = shaded_up_to(dict(zip(line.x, line.high)), dict(zip(band.x, band.high)))
+            line.high = [tops[x] for x in line.x]
         return line
 
     def _series_entry(self, k: str) -> tuple[Line, str] | None:

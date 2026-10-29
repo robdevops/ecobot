@@ -31,7 +31,6 @@ from .minutes import KEEP_HOURS
 from ..series import READING_GROUPS, WEATHER, find
 from ..storage import Storage
 from ..storage.catalogue import AIR
-from ..storage.migrate import history_files, open_storage
 from .query import HistoryQuery, chart_field, stack_names
 from .reads import newest_minute_on
 
@@ -137,10 +136,9 @@ class Ecowitt(Source):
     def __init__(self, cfg: Config, transport=None, ha_transport=None, storage: Storage | None = None):
         """transport: for Ecowitt's cloud, ha_transport: for Home Assistant (a test's stand-ins). Where the readings come from follows the
         settings (config.ecowitt_source): Home Assistant, Ecowitt's cloud, or Home Assistant with the cloud to make up what it lacks.
-        storage: the bot's file (lib/storage), opened at start; without one the station opens it itself (the old files moved in first,
-        once). Either way the station closes it."""
+        storage: the bot's file (lib/storage), opened at start; without one the station opens it itself. Either way the station closes it."""
         self.tz = cfg.tz
-        self.storage = storage or open_storage(cfg.storage_path, cfg.tz, history_files(cfg))
+        self.storage = storage or Storage(cfg.storage_path, cfg.tz)
         self.fetches = Recent()   # the newest fetches, read from the storage while fresh
         macs = sorted({s.device for s in self.storage.sensors.all() if s.kind != AIR[0]})   # the station the file holds, so Home Assistant's readings join its history
         home = HomeAssistantAPI(cfg.homeassistant_url, cfg.homeassistant_token, cfg.tz, macs[0] if len(macs) == 1 else "HOMEASSISTANT",

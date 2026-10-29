@@ -3,20 +3,18 @@ import shutil
 import sys
 from pathlib import Path
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import bench_storage  # noqa: E402
 
 
-
-async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_network(tmp_path, old_archived_cache, monkeypatch):
+async def test_the_benchmark_reads_a_copy_of_the_file_and_asks_nothing_of_the_network(tmp_path, archived_cache, monkeypatch):
     data = tmp_path / "data"
     data.mkdir()
-    shutil.copy(old_archived_cache, data / "ecowitt_cache.sqlite")   # (the copy is moved into ecobot.sqlite, as the bot does)
-    before = (data / "ecowitt_cache.sqlite").read_bytes()
+    shutil.copy(archived_cache, data / "ecobot.sqlite")
+    before = (data / "ecobot.sqlite").read_bytes()
     copy = tmp_path / "copy"
     copy.mkdir()
-    bench_storage.copy(data / "ecowitt_cache.sqlite", copy / "ecowitt_cache.sqlite")
+    bench_storage.copy(data / "ecobot.sqlite", copy / "ecobot.sqlite")
     for name in ("TELEGRAM_BOT_TOKEN", "ECOWITT_API_KEY", "ECOWITT_APP_KEY"):   # (the benchmark sets them where they are missing)
         monkeypatch.setenv(name, "t")
     monkeypatch.setenv("DATA_DIR", str(copy))
@@ -25,7 +23,7 @@ async def test_the_benchmark_reads_a_copy_of_the_caches_and_asks_nothing_of_the_
     labels = [r[0] for r in rows]
     assert "Temperature chart, 1Y" in labels and "/dashboard" in labels and len(rows) >= 12
     assert all(r[2] <= 1 for r in rows)
-    assert (data / "ecowitt_cache.sqlite").read_bytes() == before                       # the bot's own file is never written
+    assert (data / "ecobot.sqlite").read_bytes() == before                       # the bot's own file is never written
 
 
 async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_is_drawn_from_the_minutes(tmp_path, monkeypatch):

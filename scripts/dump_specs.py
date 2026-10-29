@@ -1,7 +1,6 @@
 """Draw the charts the bot would draw, from the bot's file (ecobot.sqlite), and save each chart spec (JSON) and picture (PNG).
 Strictly offline: no API keys, no network (any request raises), and your file is never touched (it is copied to a temporary folder
-first; the old files from before ecobot.sqlite are moved into the copy if that is all there is). A question the file cannot answer
-is reported as "not cached" and skipped.
+first). A question the file cannot answer is reported as "not cached" and skipped.
 
     python scripts/dump_specs.py --data-dir . --tz Australia/Melbourne --out chart_dump
 
@@ -28,7 +27,6 @@ from lib.compose import Composer  # noqa: E402
 from lib.config import Config  # noqa: E402
 from lib.ecowitt import Ecowitt  # noqa: E402
 from lib.storage import FILE, Storage  # noqa: E402
-from lib.storage.migrate import OLD, migrate  # noqa: E402
 from lib.tools import Turn  # noqa: E402
 
 FMT = "%Y-%m-%d %H:%M:%S"
@@ -107,7 +105,7 @@ def copy_db(src: Path, dest: Path):
 async def main():
     logging.disable(logging.WARNING)  # the fetchers log every refused request
     ap = parser(__doc__)
-    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecobot.sqlite (or the old files it replaced)")
+    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecobot.sqlite")
     ap.add_argument("--tz", default="Australia/Melbourne")
     ap.add_argument("--out", default="chart_dump")
     args = ap.parse_args()
@@ -116,22 +114,15 @@ async def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         folder = Path(tmp)
-        if (data / FILE).exists():
-            copy_db(data / FILE, folder / FILE)
-        else:   # only the files from before ecobot.sqlite: their copies moved into one, as the bot's first start does
-            for name in OLD:
-                if (data / name).exists():
-                    copy_db(data / name, folder / name)
-            report = migrate(folder, tz)
-            if not report.ok:
-                raise SystemExit(f"{data} holds no {FILE}, and the old files could not be moved into one: {report.problem or report.skipped}")
+        if not (data / FILE).exists():
+            raise SystemExit(f"{data} holds no {FILE}")
+        copy_db(data / FILE, folder / FILE)
         storage = Storage(folder / FILE, tz)
         macs = sorted({s.device for s in storage.sensors.all() if s.kind != "air"})
         air_sensors = storage.sensors.all(kind="air")
         cfg = Config(telegram_token="", openrouter_api_key="", openrouter_base_url="", openrouter_model="", tz=tz, ecowitt_api_key="offline",
                      ecowitt_app_key="offline", airgradient_token="offline", airgradient_location=air_sensors[0].device if air_sensors else "offline",
-                     airgradient_dashboard="", state_path=folder / "state.json", cache_path=folder / "ecowitt_cache.sqlite",
-                     air_cache_path=folder / "airgradient_cache.sqlite", conditions_cache_path=folder / "conditions_cache.sqlite")
+                     airgradient_dashboard="", state_path=folder / "state.json", storage_path=folder / FILE)
         eco = air = None
         if macs:
             eco = Ecowitt(cfg, transport=Offline(), storage=storage)

@@ -41,7 +41,6 @@ from ..panels import panel_for
 from ..specs import Chart, Line
 from ..storage import Storage
 from ..storage.catalogue import BOT, CLOUD, HOME_ASSISTANT
-from ..storage.migrate import history_files, open_storage
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import Warmer
@@ -124,8 +123,8 @@ class AirGradient(Source):
     def __init__(self, cfg: Config, transport=None, ha: HomeAssistant | None = None, storage: Storage | None = None,
                  owned: bool | None = None):
         """ha: the weather station's Home Assistant client, shared (so a failing Home Assistant is said once); else one of its own when
-        Home Assistant is set. storage: the bot's file (lib/storage), the station's, shared; without one the source opens it itself (the
-        old air file moved in first, once). owned: the file is this source's to close (so when it opened it, or no station has it)."""
+        Home Assistant is set. storage: the bot's file (lib/storage), the station's, shared; without one the source opens it itself.
+        owned: the file is this source's to close (so when it opened it, or no station has it)."""
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
         self.cloud = cfg.airgradient_cloud    # without an account (or with AIRGRADIENT_SOURCE saying not) the cloud is never asked
@@ -133,7 +132,7 @@ class AirGradient(Source):
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
         self.local = LocalSensor(cfg.airgradient_local_url, cloud=self.cloud) if cfg.airgradient_local else None   # the monitor's own server
         owned = (storage is None) if owned is None else owned
-        storage = storage or open_storage(cfg.storage_path, cfg.tz, history_files(cfg), parts=("airgradient",))
+        storage = storage or Storage(cfg.storage_path, cfg.tz)
         self.store = AirReadings(storage, self.loc, self.tz, owned)
         self._current: tuple[dict, float] | None = None       # (raw row, fetched at)
         self._names: dict = {}                                # the sensor's name and type, from the last cloud reading

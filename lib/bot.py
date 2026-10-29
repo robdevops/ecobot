@@ -12,6 +12,7 @@ import random
 import re
 import time
 from collections import defaultdict
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import NamedTuple
@@ -54,7 +55,6 @@ NOT_ADMIN = "Sorry, only group admins can use this bot."
 NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
-WATCHDOG_SECONDS = 45        # a question still running after this many seconds logs where everything is waiting
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
@@ -98,15 +98,21 @@ async def answer_query(query, *args, **kwargs) -> bool:
         return False
 
 
-async def watchdog(label: str, seconds: float):
-    """Log every task's stack if the question is still running after `seconds`: a hang says where it waits."""
-    await asyncio.sleep(seconds)
-    stacks = []
-    for task in asyncio.all_tasks():
-        frames = task.get_stack(limit=4)
-        if frames:
-            stacks.append(f"{task.get_name()}: " + " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames)))
-    log.warning("Still working after %ds on %s; tasks waiting:\n  %s", seconds, label, "\n  ".join(stacks) or "(none)")
+async def toast_quietly(query, text: str):
+    """answer_query with a toast for a press that goes no further (a refusal): Telegram not taking it, for whatever reason, changes nothing."""
+    with contextlib.suppress(TelegramError):
+        await answer_query(query, text)
+
+
+async def _edit_quietly(editing):
+    """Await an edit of a message (edit_message_text and the like) and return what it gives; Telegram refusing an edit that changes
+    nothing ("message is not modified") is fine: None then."""
+    try:
+        return await editing
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            raise
+        return None
 
 
 def _short(text: str, limit: int) -> str:
@@ -252,20 +258,20 @@ def caption_of(text: str, title: str = "", link: tuple[str, str] | None = None, 
     return body, [*(report.heading_entities(body) if bold_headings else []), *ents]
 
 
-def report_caption(text: str):
-    """(caption, entities) for the report under its gauges: the whole report, or as many of its first sections as fit a caption (only a
-    report longer than any yet, refreshed in its photo, needs cutting: a new one that long goes apart from its picture)."""
-    sections = text.split("\n\n")
-    while len(sections) > 1 and caption_of("\n\n".join(sections), bold_headings=True) is None:
-        sections.pop()
-    lines = "\n\n".join(sections).splitlines()
-    while len(lines) > 1 and caption_of("\n".join(lines), bold_headings=True) is None:
-        lines.pop()
-    return caption_of("\n".join(lines), bold_headings=True) or (lines[0][:CAPTION_LIMIT // 2], [])
-
-
-async def _nothing():
+def _first_fitting(pieces: list[str], glue: str):
+    """(caption, entities) of as many of the first `pieces` (joined by `glue`) as fit a caption; None when even the first doesn't."""
+    for n in range(len(pieces), 0, -1):
+        if fitted := caption_of(glue.join(pieces[:n]), bold_headings=True):
+            return fitted
     return None
+
+
+def report_caption(text: str):
+    """(caption, entities) for the report under its gauges: the whole report, else as many of its first sections as fit a caption, else as
+    many of its first section's lines (only a report longer than any yet, refreshed in its photo, needs cutting: a new one that long goes
+    apart from its picture)."""
+    sections = text.split("\n\n")
+    return _first_fitting(sections, "\n\n") or _first_fitting(sections[0].splitlines(), "\n") or (text.splitlines()[0][:CAPTION_LIMIT // 2], [])
 
 
 async def _photos(msg: Message, photos: list[bytes], titles: list[str], buttons, alone: bool) -> tuple[bool, Message | None]:
@@ -322,28 +328,47 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
     return Delivered(on_text and bool(text), sent)
 
 
+class Tasks:
+    """The tasks the bot runs in the background: one that stops with an error is logged as it does, and close() cancels them."""
+
+    def __init__(self):
+        self.running: set[asyncio.Task] = set()
+
+    def start(self, work: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(work, name=getattr(work, "__qualname__", None))
+        self.running.add(task)
+        task.add_done_callback(self._ended)
+        return task
+
+    def _ended(self, task: asyncio.Task):
+        self.running.discard(task)
+        if not task.cancelled() and (error := task.exception()):
+            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error if isinstance(error, BUGS) else None)
+
+    async def close(self):
+        for task in self.running:
+            task.cancel()
+        await asyncio.gather(*self.running, return_exceptions=True)
+
+
 class Bot:
-    def __init__(self, cfg: Config, agent: Agent, sources: list[Source], state: AlertState, irrigation=None):
+    def __init__(self, cfg: Config, agent: Agent, sources: list[Source], state: AlertState, irrigation=None, tasks: Tasks | None = None):
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
-        configured (its button replaces Wind)."""
+        configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
+        its own when none is given."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
+        self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
         self.admin_only = bool(getattr(cfg, "admin_only", False))   # ADMIN_ONLY: only the admins of the groups the bot is in may use it
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
+        self._refused: set[int] = set()   # the senders ADMIN_ONLY has turned away, each logged once with its id (for ADMIN_CHAT_IDS)
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.preloading: set[str] = set()        # questions whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
-        self.background: set[asyncio.Task] = set()   # tasks running on their own, kept so they aren't dropped
-        self.charted = periods.Charted(state.charts if state else None, state.save if state else None)   # the question behind each chart sent (kept across restarts)
-
-    async def close(self):
-        """Cancel the tasks still running on their own (the uploads of a chart's other periods)."""
-        for task in self.background:
-            task.cancel()
-        await asyncio.gather(*self.background, return_exceptions=True)
+        self.charted = periods.Charted(state.charts, state.save)   # the question behind each chart sent (kept across restarts)
 
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
@@ -369,6 +394,15 @@ class Bot:
             ids.append(msg.sender_chat.id)
         return ids
 
+    @staticmethod
+    def _sender(update: Update) -> tuple[str, int, str] | None:
+        """("user", id, full name) of who sent this, for the log; ("chat", id, title) for a message an admin sends "as the group" (or as a
+        channel), which names no real user."""
+        msg = update.effective_message
+        if update.callback_query is None and msg is not None and getattr(msg, "sender_chat", None) is not None:
+            return "chat", msg.sender_chat.id, msg.sender_chat.title
+        return ("user", update.effective_user.id, update.effective_user.full_name) if update.effective_user else None
+
     async def _allowed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """With ADMIN_ONLY on, only known group admins (and ADMIN_CHAT_IDS) get through; anyone else is told so, once, and False is
         returned. A group the bot hears from is remembered first: it has to be known for its admins to count."""
@@ -377,11 +411,13 @@ class Bot:
             self.remember_chat(update)
         if not self.admin_only or await self.admins.allowed(context.bot, self._sender_ids(update)):
             return True
-        log.info("%s: refused, not a known group admin", describe_source(update))
-        with contextlib.suppress(TelegramError):
-            if update.callback_query is not None:
-                await answer_query(update.callback_query, NOT_ADMIN_TOAST)
-            elif update.effective_message is not None:
+        if (who := self._sender(update)) and who[1] not in self._refused:   # once per sender in this run: the id is for the owner to list
+            self._refused.add(who[1])
+            log.info("%s: refused: %s %d (%s) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in", describe_source(update), *who)
+        if update.callback_query is not None:
+            await toast_quietly(update.callback_query, NOT_ADMIN_TOAST)
+        elif update.effective_message is not None:
+            with contextlib.suppress(TelegramError):
                 await update.effective_message.reply_text(NOT_ADMIN)
         return False
 
@@ -406,8 +442,7 @@ class Bot:
                     and message is not None and self._on_keyboard(message, data))
         if not believed:
             log.info("Ignored a button press that is not on its message: %s", _short(repr(data), 60))
-            with contextlib.suppress(TelegramError):
-                await answer_query(query, STALE_BUTTON)
+            await toast_quietly(query, STALE_BUTTON)
         return believed
 
     def buttons(self) -> dict:
@@ -423,8 +458,7 @@ class Bot:
             return
         handler = next((h for prefix, h in self.buttons().items() if query.data.startswith(prefix)), None)
         if handler is None:
-            with contextlib.suppress(TelegramError):
-                await answer_query(query, STALE_BUTTON)
+            await toast_quietly(query, STALE_BUTTON)
             return
         if not await self._allowed(update, context):
             return
@@ -432,8 +466,7 @@ class Bot:
             await handler(update, context)
         except ChatMigrated as e:   # a press on an alert from before its group became a supergroup (the chat has a new id)
             self.state.migrate_chat(query.message.chat.id, e.new_chat_id)
-            with contextlib.suppress(TelegramError):
-                await answer_query(query, "This group was upgraded to a supergroup: please use the buttons on new alerts")
+            await toast_quietly(query, "This group was upgraded to a supergroup: please use the buttons on new alerts")
 
     # ---------- alert chats ----------
     @staticmethod
@@ -566,12 +599,8 @@ class Bot:
             await answer_query(query, "Couldn't draw the chart, please try again", show_alert=True)
             return
         await answer_query(query)   # no toast: the chart is the answer
-        try:
-            await query.edit_message_media(InputMediaPhoto(photo, caption=message.caption, caption_entities=message.caption_entities or None),
-                                           reply_markup=message.reply_markup)
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                raise
+        await _edit_quietly(query.edit_message_media(InputMediaPhoto(photo, caption=message.caption, caption_entities=message.caption_entities or None),
+                                                     reply_markup=message.reply_markup))
         log.debug("%s: the %s alert's chart drawn again", chat_tag(message.chat.id), kind)
 
     # ---------- irrigation ----------
@@ -598,8 +627,18 @@ class Bot:
         text, markup = self._irrigation_view(status, msg.chat_id)
         await msg.reply_text(text, reply_markup=markup)
 
-    async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str | None:
-        """Do what a button asks. Returns the toast to show, or None for a button that means nothing. Raises IrrigationError."""
+    async def _controller(self, query, request, what: str):
+        """What the controller answers `request` with (its status, or the toast of an action). When it can't be reached: logged as
+        "Irrigation {what} failed", said in a toast, and None (the press goes no further)."""
+        try:
+            return await request
+        except IrrigationError as e:
+            log.warning("Irrigation %s failed: %s", what, e)
+            await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
+            return None
+
+    async def _irrigation_act(self, action: str, arg: str, chat_id: int) -> str:
+        """Do what a button asks. Returns the toast to show, or "" for a button that means nothing. Raises IrrigationError."""
         if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:
             if self.watchdog:   # first: a command whose reply is lost may still have opened the valve
                 self.watchdog.arm(int(arg))
@@ -617,7 +656,7 @@ class Bot:
             kind, name = irrigation_menu.ALERTS[action]
             self.state.set_kind(chat_id, kind, arg == "on", self._alert_kinds())
             return f"Irrigation {name} alerts {arg} in this chat"
-        return None
+        return ""
 
     async def on_irrigation_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on the irrigation buttons: open or close a list of options, or water, delay, switch, or (un)subscribe; the
@@ -636,21 +675,15 @@ class Bot:
                                                                     irrigation_menu.running_in(message.text)))
             return
         if action == "refresh":   # read the controller again and redraw: nothing is sent to it, so no wait
-            try:
-                status = await self.irrigation.status()
-            except IrrigationError as e:
-                log.warning("Irrigation refresh failed: %s", e)
-                await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
+            status = await self._controller(query, self.irrigation.status(), "refresh")
+            if status is None:
                 return
             await answer_query(query, "Refreshed")
             await self._edit(query, *self._irrigation_view(status, message.chat_id))
             return
         if action == "water" and arg.isdigit() and int(arg) in irrigation_menu.WATER_MINUTES:   # not while the timer is paused
-            try:
-                status = await self.irrigation.status()
-            except IrrigationError as e:
-                log.warning("Irrigation water %s failed: %s", arg, e)
-                await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
+            status = await self._controller(query, self.irrigation.status(), f"water {arg}")
+            if status is None:
                 return
             if irrigation_menu.is_paused(status):
                 log.info("Irrigation: water %s refused, paused for %s (chat %s)", arg, status["weather_delay"], message.chat_id)
@@ -659,13 +692,10 @@ class Bot:
                 text, entities = irrigation_menu.with_error(text)
                 await self._edit(query, text, markup, entities)   # nothing was sent: no wait
                 return
-        try:
-            toast = await self._irrigation_act(action, arg, message.chat_id)
-        except IrrigationError as e:
-            log.warning("Irrigation %s %s failed: %s", action, arg, e)
-            await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)
-            return
+        toast = await self._controller(query, self._irrigation_act(action, arg, message.chat_id), f"{action} {arg}")
         if toast is None:
+            return
+        if not toast:
             await answer_query(query)
             return
         log.info("Irrigation: %s %s in chat %s", action, arg, message.chat_id)
@@ -681,16 +711,11 @@ class Bot:
 
     @staticmethod
     async def _edit(query, text: str | None, markup, entities=None):
-        """Put new text (None: the text stays) and buttons into the message a button was pressed under. Telegram refusing an edit
-        that changes nothing is fine."""
-        try:
-            if text is None:
-                await query.edit_message_reply_markup(reply_markup=markup)
-            else:
-                await query.edit_message_text(text, reply_markup=markup, **({"entities": entities} if entities else {}))
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                raise
+        """Put new text (None: the text stays) and buttons into the message a button was pressed under."""
+        if text is None:
+            await _edit_quietly(query.edit_message_reply_markup(reply_markup=markup))
+        else:
+            await _edit_quietly(query.edit_message_text(text, reply_markup=markup, **({"entities": entities} if entities else {})))
 
     async def on_report_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on Refresh under the report: read everything again and redraw the report in the same message. The chat's
@@ -699,8 +724,7 @@ class Bot:
         read = intent.read("Report", now_local(self.cfg.tz), self.by_name)
         pictured = bool(getattr(getattr(query, "message", None), "photo", None))   # the report is the caption of its gauges: they are drawn again too
         try:
-            text, gauge = await asyncio.wait_for(asyncio.gather(self._written_in_code(read, Turn(text="Report")),
-                                                                self._status_gauges() if pictured else _nothing()), TURN_SECONDS)
+            text, gauge = await self._report(read, Turn(text="Report"), pictured)
         except Exception as e:   # the message stays as it was
             log.warning("Report refresh failed: %s", e)
             await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
@@ -714,16 +738,12 @@ class Bot:
     @staticmethod
     async def _recaption(query, text: str, photo: bytes | None):
         """Put the report's new text, and its gauges drawn again, into the photo message its Refresh was pressed under (no new picture:
-        the caption alone). Telegram refusing an edit that changes nothing is fine."""
+        the caption alone)."""
         body, ents = report_caption(text)
-        try:
-            if photo:
-                await query.edit_message_media(InputMediaPhoto(photo, caption=body, caption_entities=ents or None), reply_markup=report_menu.keyboard())
-            else:
-                await query.edit_message_caption(caption=body, caption_entities=ents or None, reply_markup=report_menu.keyboard())
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                raise
+        if photo:
+            await _edit_quietly(query.edit_message_media(InputMediaPhoto(photo, caption=body, caption_entities=ents or None), reply_markup=report_menu.keyboard()))
+        else:
+            await _edit_quietly(query.edit_message_caption(caption=body, caption_entities=ents or None, reply_markup=report_menu.keyboard()))
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on 1D / 7D / 1M / 3M / 1Y under a chart: ask the chart's question again for that period and put the new chart
@@ -745,33 +765,31 @@ class Bot:
         key = self.images.key(asked, days, now)
         if cached := self.images.get(key):   # drawn lately: no new question
             photo, title = cached
-            try:
-                began = time.monotonic()
-                self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=title or None), reply_markup=periods.keyboard(days)))
-                self.charted.remember(message.chat_id, message.message_id, asked)
+            began = time.monotonic()
+            if await self._redraw(message, "", photo, title, periods.keyboard(days), asked, key, TelegramError, "drawing it again"):
                 self.preload_soon(context.bot, asked)
                 log.debug("Period button: cached chart sent in %.0f ms%s", (time.monotonic() - began) * 1000,
-                         " (Telegram's copy)" if isinstance(photo, str) else "")
+                          " (Telegram's copy)" if isinstance(photo, str) else "")
                 return
-            except TelegramError as e:
-                log.warning("Couldn't edit the chart in place (%s); drawing it again", e)
         await self.respond(update, context, asked, redraw=message)
 
-    async def _redraw(self, message: Message, reply: str, photo: bytes, title: str, row, question: str, key: str | None = None) -> bool:
+    async def _redraw(self, message: Message, reply: str, photo: bytes | str, title: str, row, question: str, key: str | None = None,
+                      refused=BadRequest, then: str = "sending a new one") -> bool:
         """Put a new chart into the message a period button was pressed under (its answer text, if any, follows as a message of
         its own, unless it fits the caption: then the chart's caption is its title and the answer, as deliver sends them). False when
-        Telegram refuses, and the chart is then sent as a new message. key: where the image cache keeps it."""
+        Telegram refuses (an error of the `refused` kind, logged with what is done `then`): the chart is then sent as a new message,
+        or drawn again. key: where the image cache keeps it."""
         text = strip_chart_talk(reply.strip())
         fitted = caption_of(text, title) if text else None
         in_caption = fitted is not None
         body, ents = fitted or (title, [])
         try:
-            self.images.sent(key, await message.edit_media(InputMediaPhoto(photo, caption=(body if in_caption else title) or None,
-                                                                          caption_entities=(ents or None) if in_caption else None), reply_markup=row))
-        except BadRequest as e:
-            if "not modified" not in str(e).lower():
-                log.warning("Couldn't edit the chart in place (%s); sending a new one", e)
-                return False
+            self.images.sent(key, await _edit_quietly(message.edit_media(InputMediaPhoto(photo, caption=(body if in_caption else title) or None,
+                                                                                        caption_entities=(ents or None) if in_caption else None),
+                                                                         reply_markup=row)))
+        except refused as e:
+            log.warning("Couldn't edit the chart in place (%s); %s", e, then)
+            return False
         self.charted.remember(message.chat_id, message.message_id, question)
         if text and not in_caption:
             await deliver(message, reply, [])
@@ -923,11 +941,18 @@ class Bot:
             return report.report(by_tool, now_local(self.cfg.tz).date())
         return report.weather_now(by_tool["weather_now"]) or "The weather station isn't answering right now."
 
+    async def _report(self, read, turn: Turn, gauges: bool) -> tuple[str, bytes | None]:
+        """The report (or "weather now") written in code and, with `gauges`, its picture drawn alongside (None without one), in TURN_SECONDS."""
+        written = self._written_in_code(read, turn)
+        if gauges:
+            return tuple(await asyncio.wait_for(asyncio.gather(written, self._status_gauges()), TURN_SECONDS))
+        return await asyncio.wait_for(written, TURN_SECONDS), None
+
     async def _status_gauges(self) -> bytes | None:
         """The report's picture: the weather station's temperature, humidity and rain gauges (ecowitt.dashboard.STATUS). None without the
         station, or when they can't be drawn (the report then goes as text alone)."""
         station = self.by_name.get("Ecowitt")
-        if getattr(station, "dashboard", None) is None:
+        if station is None:
             return None
         try:
             sheet = await station.dashboard(STATUS)
@@ -1012,9 +1037,7 @@ class Bot:
         if chat is None or self.preload_off or question in self.preloading:
             return
         self.preloading.add(question)
-        task = asyncio.create_task(self.preload(bot, chat, question))
-        self.background.add(task)
-        task.add_done_callback(self.background.discard)
+        self.tasks.start(self.preload(bot, chat, question))
 
     async def preload(self, bot, chat: int, question: str):
         """Upload (silently, to `chat`) the chart for each other period of `question`, so a press of a period button edits the message by
@@ -1082,10 +1105,8 @@ class Bot:
         chat = self.chats[self._key(msg)]
         started = time.monotonic()
         async with chat.lock:
-            draft = (Draft(context.bot, msg.chat_id, self._thread(msg))
-                     if redraw is None and msg.chat.type == ChatType.PRIVATE and hasattr(context.bot, "send_message_draft") else None)
+            draft = Draft(context.bot, msg.chat_id, self._thread(msg)) if redraw is None and msg.chat.type == ChatType.PRIVATE else None
             drafting = asyncio.create_task(draft.run(stop_typing)) if draft else None   # a private chat also gets the "Thinking..." draft
-            stuck = asyncio.create_task(watchdog(_short(text, 40), WATCHDOG_SECONDS))
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             turn = Turn.of(read, text)
@@ -1115,7 +1136,6 @@ class Bot:
                 # The details (which can include provider error bodies) go to the log, not the chat
                 answer = Answer(f"Sorry, something went wrong on my side ({type(e).__name__}). Please try again in a moment.", ok=False)
             finally:
-                stuck.cancel()
                 stop_typing.set()
                 await asyncio.gather(*[t for t in (typing, drafting) if t])  # wait for any in-flight "typing" or draft so none is sent after the reply
         await self._send(msg, context.bot, read, turn, answer, working[new_from:], now, redraw, started)
@@ -1136,8 +1156,7 @@ class Bot:
             if answer.reply is None:
                 turn.forecast_shown.clear()
         elif read.fast and (read.report or read.weather_now):   # written in code from the tools' results, no model (the report: with its gauges)
-            text, gauge = await asyncio.wait_for(asyncio.gather(self._written_in_code(read, turn),
-                                                                self._status_gauges() if read.report else _nothing()), TURN_SECONDS)
+            text, gauge = await self._report(read, turn, read.report)
             answer = Answer(text, [gauge] if gauge else [], [""] if gauge else [])
         else:
             answer = Answer()

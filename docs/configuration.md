@@ -22,7 +22,7 @@ One `NAME=value` per line, no `export`; a line starting with `#` is a comment (n
 | Variable | Default | Description |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | – | Required. Bot token (@BotFather) |
-| `OPENROUTER_API_KEY` | – | [OpenRouter](https://openrouter.ai/keys) API key (it replaces `XAI_API_KEY`, which is no longer read). Unset → no model: `/report`, chart commands, plain lookups ("how hot is it?", "rain chart 7d", "forecast") and all alerts work; anything needing the model gets a "no model" reply |
+| `OPENROUTER_API_KEY` | – | [OpenRouter](https://openrouter.ai/keys) API key. Unset → no model: `/report`, chart commands, plain lookups ("how hot is it?", "rain chart 7d", "forecast") and all alerts work; anything needing the model gets a "no model" reply |
 | `OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash-1017` | Model, by its OpenRouter name |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | API endpoint |
 

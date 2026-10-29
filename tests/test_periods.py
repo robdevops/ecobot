@@ -72,8 +72,8 @@ async def test_closing_the_bot_cancels_its_uploads_still_running(alert_state, mo
     import asyncio
     bot = make_bot(alert_state, monkeypatch)
     upload = asyncio.create_task(asyncio.Event().wait())
-    bot.background.add(upload)
-    await bot.close()
+    bot.tasks.running.add(upload)
+    await bot.tasks.close()
     assert upload.cancelled()
 
 
@@ -92,7 +92,7 @@ async def send_chat_action(*a, **k):
     pass
 
 
-CONTEXT = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+CONTEXT = NS(bot=NS(send_chat_action=send_chat_action, send_message_draft=send_chat_action, id=99))
 
 
 async def test_a_chart_is_sent_with_the_other_periods_under_it_and_its_question_is_remembered(alert_state, monkeypatch):
@@ -275,7 +275,7 @@ def preloading_bot(alert_state, monkeypatch, refuse=None, clock=None):
             raise refused.error
         uploads.append((chat, photo, disable_notification))
         return NS(photo=(NS(file_id="small"), NS(file_id=f"file {photo.decode()}")))
-    return bot, uploads, NS(bot=NS(send_chat_action=send_chat_action, send_photo=send_photo, id=99), refused=refused)
+    return bot, uploads, NS(bot=NS(send_chat_action=send_chat_action, send_message_draft=send_chat_action, send_photo=send_photo, id=99), refused=refused)
 
 
 def uploads_of(*days):
@@ -285,7 +285,7 @@ def uploads_of(*days):
 
 async def settle(bot):
     import asyncio
-    await asyncio.gather(*bot.background)
+    await asyncio.gather(*bot.tasks.running)
 
 
 async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits_by_file_id(alert_state, monkeypatch):
@@ -316,7 +316,7 @@ async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_uploa
     update = pressed(bot, [])
     await bot.respond(update, context, "Temperature chart 7d")
     await settle(bot)
-    assert uploads == [] and not bot.background
+    assert uploads == [] and not bot.tasks.running
     from telegram.error import BadRequest
     bot, uploads, context = preloading_bot(alert_state, monkeypatch, refuse=BadRequest("Chat not found"))
     with caplog.at_level("WARNING"):

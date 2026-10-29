@@ -205,7 +205,7 @@ class Writer:
     # ---------- readings ----------
     def put(self, sensor: Sensor, res: str, rows: list[dict], src: int = CLOUD, final: bool = True, exact: bool = False) -> int:
         """Write a sensor's readings at one resolution: rows of {"ts": epoch, column: value, column_lo, column_hi, and "final" where it
-        differs from `final`}. exact (the migration): rows the file does not have yet, as they are (a row it has already is an error), the
+        differs from `final`}. exact (a file built from scratch, tests/bench_cache.py): rows the file does not have yet, as they are (a row it has already is an error), the
         30-minute bands not yet widened from the 5-minute readings (roll_up does that once they are all in). Returns how many."""
         if not rows:
             return 0

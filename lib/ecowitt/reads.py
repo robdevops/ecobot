@@ -97,11 +97,6 @@ def slot_values_on(r: Reader, mac: str, group: str, field: str, res: str, start:
     return ({t: v for t, v, _, _ in rows}, {t: lo for t, _, lo, _ in rows if lo is not None}, {t: hi for t, _, _, hi in rows if hi is not None})
 
 
-def _settled(r: Reader, mac: str, group: str, column: str, res: str, start: int, end: int) -> dict[int, float]:
-    """{epoch: value} of a reading's settled rows at this resolution."""
-    return slot_values_on(r, mac, group, column, res, start, end)[0]
-
-
 def rows_on(r: Reader, mac: str, groups: list[str], cycle: str, start: int, end: int) -> list[tuple[int, dict[str, float]]]:
     """The groups' readings at this resolution from start to end (the newest, not settled, too) as the alert monitors read them:
     [(epoch, {"group.field": value, "group.field_low": ..., "group.field_high": ...})], oldest first."""
@@ -159,8 +154,8 @@ def history_on(r: Reader, mac: str, groups: list[str], plan: list[tuple[str, int
     for a, b in wind:
         readings_on(r, mac, ["wind"], "5min", a, b, held.wind, units=units)
     if rain:
-        held.rain = _settled(r, mac, "rainfall", "daily", "30min", start, end)
-        held.rain_daily = _settled(r, mac, "rainfall", "daily", "1day", start - 86400, end + 86400)
+        held.rain = slot_values_on(r, mac, "rainfall", "daily", "30min", start, end)[0]
+        held.rain_daily = slot_values_on(r, mac, "rainfall", "daily", "1day", start - 86400, end + 86400)[0]
     return held
 
 

@@ -68,6 +68,29 @@ def bucket_width(span_seconds: float, source_seconds: float, budget: int = POINT
     return next((w for w in WIDTHS if w >= source_seconds and span_seconds / w <= budget), WIDTHS[-1])
 
 
+def how_drawn(span_seconds: float, sources: set[int], records: bool, force_daily: bool = False) -> tuple[str, int]:
+    """How a line over span_seconds is drawn from readings at these resolutions (the seconds each sub-daily one covers), with (records)
+    daily records among them: ("records", 0), the daily records alone, as they are; ("days", hour), one point a day, a day of sub-daily
+    readings at that hour (10am beside Ecowitt's daily records, which run 10am to 10am, else noon); ("buckets", width), buckets of this
+    width, never under a slot (too many readings for the chart, or two resolutions side by side); ("readings", seconds), the finest
+    readings themselves. force_daily: one point a day whatever the length (an average was asked for)."""
+    if not sources:
+        return "records", 0
+    source = min(sources)
+    width = DAY if records or force_daily else bucket_width(span_seconds, source)
+    if width >= DAY:
+        return "days", 10 if records else 12
+    if width > source or len(sources) > 1:
+        return "buckets", max(width, SLOT)
+    return "readings", source
+
+
+def shaded_up_to(highs: dict[int, float], band: dict[int, float]) -> dict[int, float]:
+    """A reading's highs ({epoch: highest}) shaded up to its band series' (wind: the average speed up to the gusts): the higher of the two
+    at each time, and either one alone where the other has none."""
+    return {t: max(v for v in (highs.get(t), band.get(t)) if v is not None) for t in {*highs, *band}}
+
+
 def _summarise(points, key) -> dict:
     """{bucket: (mean, lowest low, highest high)} from (ts, value, low, high, fine) readings. The mean takes one value
     per 30-minute slot, so a stretch held as 5-minute readings (fine) counts no more than the same stretch held as
@@ -135,18 +158,17 @@ def build_line(readings: list[Sample], tz, span_seconds: float, *, smooth: bool 
     rs = sorted(map(Sample._make, readings))
     fine = [r for r in rs if r.seconds < DAY]
     records = [r for r in rs if r.seconds >= DAY]
-    if not fine:  # only daily records: as they are, each with its own range
+    how, at = how_drawn(span_seconds, {r.seconds for r in fine}, bool(records), force_daily)
+    if how == "records":  # only daily records: as they are, each with its own range
         return _as_they_are(records) if len(records) >= 2 else None
-    source = min(r.seconds for r in fine)
-    width = DAY if records or force_daily else bucket_width(span_seconds, source)
-    if width >= DAY:
-        return _daily(fine, records, tz, until)
-    if width > source or len({r.seconds for r in fine}) > 1:  # too many for the chart, or two resolutions side by side
-        xs, mean, low, high = bucketed([(r.t, r.value, *r.bounds(), r.seconds < SLOT) for r in fine], max(width, SLOT))
-        return Plotted(xs, mean, max(width, SLOT), False, low, high) if len(xs) >= 2 else None
-    line = _as_they_are([r for r in fine if r.seconds == source])
-    if line and smooth and source in (60, 300):  # slow readings come in 0.1-degree steps: a light average of the real readings
-        smoothed = rolling_mean(dict(zip(line.x, line.y)), SMOOTH_POINTS * source // 2)
+    if how == "days":
+        return _daily(fine, records, tz, until, at)
+    if how == "buckets":
+        xs, mean, low, high = bucketed([(r.t, r.value, *r.bounds(), r.seconds < SLOT) for r in fine], at)
+        return Plotted(xs, mean, at, False, low, high) if len(xs) >= 2 else None
+    line = _as_they_are([r for r in fine if r.seconds == at])
+    if line and smooth and at in (60, 300):  # slow readings come in 0.1-degree steps: a light average of the real readings
+        smoothed = rolling_mean(dict(zip(line.x, line.y)), SMOOTH_POINTS * at // 2)
         if len(smoothed) == len(line.x):  # every reading was a finite number
             smoothed[line.x[-1]] = line.y[-1]  # the end dot is the latest reading
             line.y, line.smoothed = [smoothed[t] for t in line.x], True
@@ -164,12 +186,11 @@ def _as_they_are(rs: list[Sample]) -> Plotted | None:
                 [lo for lo, _ in ranges] if ranged else None, [hi for _, hi in ranges] if ranged else None)
 
 
-def _daily(fine: list[Sample], records: list[Sample], tz, until: date | None) -> Plotted | None:
-    """One point a day. Days held as sub-daily readings get their own mean, lowest and highest over the local day; the
-    older days come from the daily records, each with its own range."""
+def _daily(fine: list[Sample], records: list[Sample], tz, until: date | None, hour: int) -> Plotted | None:
+    """One point a day. Days held as sub-daily readings get their own mean, lowest and highest over the local day, drawn at `hour`
+    (how_drawn's); the older days come from the daily records, each with its own range."""
     keep = [r for r in fine if until is None or local_date(r.t, tz) < until]
     days = daily_summary(((r.t, r.value, *r.bounds(), r.seconds < SLOT) for r in keep), tz)
-    hour = 10 if records else 12  # Ecowitt's daily records are 10am-10am windows: draw the exact days where they sit
     points = {at_hour(d, hour, tz): v for d, v in days.items()}
     for r in records:
         if local_date(r.t, tz) not in days:

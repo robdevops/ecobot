@@ -169,11 +169,7 @@ class Fetcher:
         """A fetcher of other groups for the same job."""
         return Fetcher(self.api, self.storage, self.recent, self.mac, groups, self.tz, self.urgent, self.has_minutes)
 
-    async def covered(self, cycle: str, start: int, end: int) -> bool:
-        """True if the cache holds every group for [start, end] (epoch seconds)."""
-        return (await self.covered_each(cycle, [(start, end)]))[0]
-
     @timed
     async def covered_each(self, cycle: str, windows: list[tuple[int, int]]) -> list[bool]:
-        """covered() for each of these windows, from one read of the coverage."""
+        """For each of these windows ((start, end) epoch seconds), does the cache hold every group of it? One read of the coverage."""
         return [bool(self.groups) and not any(missing.values()) for missing in self.uncovered(cycle, windows)]

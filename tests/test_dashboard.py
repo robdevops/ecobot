@@ -112,9 +112,7 @@ async def test_the_dashboard_command_sends_one_picture_with_no_period_buttons_an
     msg = NS(chat_id=1, message_id=50, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo, text="Dashboard",
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
 
-    async def no_action(*a, **k):
-        pass
-    context = NS(bot=NS(send_chat_action=no_action, id=99))
+    context = CONTEXT
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, context, "Dashboard")
     assert asked == [1] and len(sent) == 1
@@ -197,7 +195,7 @@ async def no_action(*a, **k):
     pass
 
 
-CONTEXT = NS(bot=NS(send_chat_action=no_action, id=99))
+CONTEXT = NS(bot=NS(send_chat_action=no_action, send_message_draft=no_action, id=99))   # a Telegram bot that shows "typing..." and takes drafts
 
 
 async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_refresh_redraws_both(alert_state, monkeypatch):

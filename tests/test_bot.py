@@ -21,6 +21,13 @@ class AnsweringAgent:
         return "It is 12 degrees."
 
 
+def telegram(send_chat_action, **more):
+    """The Telegram bot a context carries, as the tests fake it: it shows "typing...", takes drafts without keeping them, and is bot 99."""
+    async def send_message_draft(*a, **k):
+        pass
+    return NS(send_chat_action=send_chat_action, send_message_draft=send_message_draft, id=99, **more)
+
+
 async def ask(alert_state, agent, text="how hot is it"):
     replies = []
 
@@ -32,7 +39,7 @@ async def ask(alert_state, agent, text="how hot is it"):
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    context = NS(bot=telegram(send_chat_action))
     await Bot(NS(tz=TZ), agent, [], alert_state).respond(update, context, text)
     return replies
 
@@ -90,11 +97,10 @@ async def test_a_hung_question_is_given_up_on_so_the_next_one_in_the_chat_is_ans
             await asyncio.sleep(3600)
 
     monkeypatch.setattr(bot, "TURN_SECONDS", 0.3)
-    monkeypatch.setattr(bot, "WATCHDOG_SECONDS", 0.1)
     with caplog.at_level("WARNING"):
         replies = await ask(alert_state, Hanging())
     assert len(replies) == 1 and "took too long" in replies[0]
-    assert "Still working" in caplog.text and "[Telegram 1]: gave up after 0s on: how hot is it" in caplog.text
+    assert "[Telegram 1]: gave up after 0s on: how hot is it" in caplog.text
 
 
 async def test_charts_are_drawn_one_at_a_time_from_any_thread():
@@ -228,7 +234,9 @@ async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_mode
 
         async def run(self, *a, **k):
             raise AssertionError("the model must not be asked for a report")
-    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "AirGradient")]
+    async def dashboard(titles=None):
+        return None   # the station has no gauges to draw: the report goes as text
+    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n, dashboard=dashboard) for n in ("Ecowitt", "AirGradient")]
     agent, replies = Agent(), []
 
     async def reply_text(body, **kw):
@@ -240,8 +248,8 @@ async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_mode
     async def send_chat_action(*a, **k):
         pass
     bot = Bot(NS(tz=TZ), agent, sources, alert_state)
-    await bot.respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "report")
-    await bot.respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "weather now")
+    await bot.respond(update, NS(bot=telegram(send_chat_action)), "report")
+    await bot.respond(update, NS(bot=telegram(send_chat_action)), "weather now")
     assert agent.tools.called == ["weather_now", "air_quality", "weather_now"]
     assert replies[0] == "Weather station\n• Outdoor: 12.3 °C, 💦 94 %\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"
     assert replies[1] == "• Outdoor: 12.3 °C, 💦 94 %"
@@ -321,7 +329,7 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "Humidity chart 7d")
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "Humidity chart 7d")
     name, args = Agent.tools.calls[0]
     assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
     assert sent == ["Humidity"]    # the chart's title is its whole caption
@@ -356,7 +364,7 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
 
     async def send_chat_action(*a, **k):
         pass
-    bot, context = Bot(NS(tz=TZ), Agent(), sources, alert_state), NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    bot, context = Bot(NS(tz=TZ), Agent(), sources, alert_state), NS(bot=telegram(send_chat_action))
     await bot.respond(update, context, "Temperature chart 7d")
     assert pokes == []
     await bot.respond(update, context, "what do you think about the weather today?")
@@ -391,7 +399,7 @@ async def test_a_chart_reply_logs_how_long_each_step_took(alert_state, tmp_path,
     async def send_chat_action(*a, **k):
         pass
     with caplog.at_level("DEBUG"):
-        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)),
+        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)),
                                                              "Temperature chart 1d")
     await eco.close()
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
@@ -425,7 +433,7 @@ async def _ask_with(alert_state, tool_result, text, monkeypatch=None):
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), text)
     return replies, bool(asked)
 
 
@@ -478,7 +486,7 @@ async def test_the_forecast_is_fetched_with_the_first_step_of_a_rain_ahead_quest
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "will it rain?")
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "will it rain?")
     assert [name for name, _ in got[0]] == ["weather_now", "weather_history", "weather_forecast"] and replies == ["Possibly."]
 
 
@@ -502,7 +510,7 @@ async def _message_aged(alert_state, seconds):
              from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     bot = Bot(NS(tz=TZ), Agent(), [], alert_state)
-    await bot.on_message(update, NS(bot=NS(send_chat_action=send_chat_action, id=99, username="b")))
+    await bot.on_message(update, NS(bot=telegram(send_chat_action, username="b")))
     return replies
 
 
@@ -540,7 +548,7 @@ async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_an
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), "is it too cold to run")
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "is it too cold to run")
     assert replies == ["\u26a0\ufe0f That's pulling in about 24k tokens of data, so it will take a little longer. Working on it...", "The answer."]
 
 
@@ -578,7 +586,7 @@ async def test_the_model_is_asked_with_the_tool_choice_the_message_calls_for(ale
 
         async def send_chat_action(*a, **k):
             pass
-        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
+        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), text)
     assert seen == ["required", "auto"]
 
 
@@ -612,7 +620,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
 
         async def send_chat_action(*a, **k):
             pass
-        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=NS(send_chat_action=send_chat_action, id=99)), text)
+        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), text)
         assert sent == ["t"], text
 
 
@@ -650,7 +658,7 @@ async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(aler
 
     async def send_chat_action(*a, **k):
         pass
-    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    context = NS(bot=telegram(send_chat_action))
     bot = Bot(NS(tz=TZ), Agent(), sources, alert_state)
     alert_state.add_chat(1, "Rob")
     alert_state.set_keyboard(1, bot.keyboard_version)   # its buttons are current, so a reply carries only its own
@@ -710,7 +718,7 @@ async def test_the_air_sensors_own_readings_stay_offered_in_a_chat_until_two_run
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    context = NS(bot=telegram(send_chat_action))
     bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
     for said in ("what is the weather like", "overlay ecowitt humidity with airgradient humidity", "do that again but for temperature",
                  "and the wind?", "and the rain?", "and the pressure?", "and the uv?"):
@@ -740,7 +748,7 @@ async def test_either_side_naming_the_air_sensors_readings_keeps_them_offered(al
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    context = NS(bot=telegram(send_chat_action))
     bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
     for said in replies_by_question:
         await bot.respond(update, context, said)
@@ -765,7 +773,7 @@ async def test_the_air_sensors_own_readings_are_offered_to_a_follow_up_when_the_
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    context = NS(bot=telegram(send_chat_action))
     for earlier in (
             [{"role": "user", "content": "plot airgradient humidity"}, {"role": "assistant", "content": "Done."}],     # the person named it
             [{"role": "user", "content": "plot humidity"}, {"role": "assistant", "content": "Here is AirGradient humidity over Ecowitt."}],   # the reply did
@@ -800,7 +808,7 @@ async def test_every_guidance_topic_stays_on_in_a_chat_while_either_side_names_i
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=NS(send_chat_action=send_chat_action, id=99))
+    context = NS(bot=telegram(send_chat_action))
     bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
     for said in script:
         await bot.respond(update, context, said)
