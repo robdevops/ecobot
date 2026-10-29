@@ -223,18 +223,30 @@ def test_a_field_the_catalogue_lacks_and_a_value_that_is_not_a_number_are_kept_a
 def test_a_day_is_worked_out_from_the_finest_readings_that_hold_it_whole(storage):
     d = local_date(old_day(20), TZ)
     start, end = day_bounds(d, TZ, True)
-    five = {t: f"{10 + (t - start) // 3600 / 10:.1f}" for t in range(start, end + 1, 300)}
-    thirty = {t: "20.0" for t in range(start, end + 1, 1800)}
+    hour = lambda t: f"{10 + (t - start) // 3600 / 10:.1f}"   # 10.0 at midnight, up a tenth each hour
+    five = {t: hour(t) for t in range(start, end + 1, 300)}
+    thirty = data(values={t: hour(t) for t in range(start, end + 1, 1800)})
+    thirty["outdoor"] |= {"temperature_high": {"unit": "℃", "list": {str(start + 14 * 3600 + 1800): "12.9"}},   # between 5-minute readings
+                          "temperature_low": {"unit": "℃", "list": {str(start + 3 * 3600): "9.5"}}}
     with storage.writer.transaction() as w:
-        w.put_ecowitt(MAC, "30min", ["outdoor"], data(values=thirty), start, end)
+        w.put_ecowitt(MAC, "30min", ["outdoor"], thirty, start, end)
         assert storage.write_db.execute("SELECT source FROM climate_day").fetchone() is None   # (worked out when it is committed)
     assert read(storage, lambda r: r.days("climate", [1], d, d))[1].source == ["30min"]
     storage.writer.run(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], data(values=five), start, end), ())
     got = read(storage, lambda r: r.days("climate", [1], d, d))[1]
     assert (got.source, got.complete, got.n) == (["5min"], [True], [288])
-    assert got.hi["temperature"] == [12.3] and got.hi_ts["temperature"] == [start + 23 * 3600]       # the first time it was that high
-    assert got.lo["temperature"] == [10.0] and got.lo_ts["temperature"] == [start]
-    assert got.mean["temperature"][0] == pytest.approx(sum(10 + h / 10 for h in range(24)) / 24)
+    # the half hours' own lows and highs count, at the first of its 5-minute readings that is lowest or highest in the half hour
+    assert got.hi["temperature"] == [12.9] and got.hi_ts["temperature"] == [start + 14 * 3600 + 1800]
+    assert got.lo["temperature"] == [9.5] and got.lo_ts["temperature"] == [start + 3 * 3600]
+    assert got.mean["temperature"][0] == pytest.approx(sum(10 + h / 10 for h in range(24)) / 24)     # the 5-minute readings' only
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "30min", ["outdoor"], data(values={t: hour(t) for t in range(start, end + 1, 1800)}),
+                                               start, end), ())
+    got = read(storage, lambda r: r.days("climate", [1], d, d))[1]
+    assert got.hi["temperature"] == [12.9]                  # (a band only widens)
+    five[start + 23 * 3600 + 600] = "13.0"
+    storage.writer.run(lambda w: w.put_ecowitt(MAC, "5min", ["outdoor"], data(values=five), start, end), ())
+    got = read(storage, lambda r: r.days("climate", [1], d, d))[1]
+    assert got.hi["temperature"] == [13.0] and got.hi_ts["temperature"] == [start + 23 * 3600 + 600]   # its 5-minute readings' own, when higher
 
 
 def test_a_day_not_held_whole_comes_from_its_daily_record_with_the_times_from_the_four_hour_readings(storage):

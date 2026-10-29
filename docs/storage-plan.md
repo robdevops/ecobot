@@ -184,16 +184,23 @@ CREATE TABLE climate_day (
   day is held at 5 minutes (even if the station sent none: that day has no row), else the 30-minute ones, else Ecowitt's daily record
   labelled with the local date its 10am start falls on. A day none of those hold (today) is worked out from what there is and marked
   incomplete. A day's highest is the highest of each reading's own range where it has one, else of its value (the rain counter's highest
-  is the day's total); its mean is the mean of its half hours' means, as the charts' daily points have it. The tests check every day of the
-  fake station's archive against `day_values` (over 5,000 figures, all equal).
-- **When the low and high happened.** A day row keeps the time of its low and high, so a period's records come from one query on the
-  day rows (`ORDER BY temperature_hi DESC, temperature_hi_ts LIMIT 1`: the first time, as refining has it). A daily record's day takes the
-  times from the 4-hour readings of its UTC day where they are held ("sometime between 2pm and 6pm", as refining found them), its figures
-  staying the record's. That replaces the refining. The part-days at either end of a period are read from the fine rows.
+  is the day's total); its mean is the mean of its half hours' means, as the charts' daily points have it. A day of 5-minute readings
+  takes in its 30-minute readings' lows and highs too (Ecowitt's, from readings finer than its 5 minutes, which its 5-minute ones miss:
+  what refining a period's records kept), never in its mean. The tests check every day of the fake station's archive against
+  `day_values` (over 5,000 figures, all equal: the fake's half hours hold nothing its 5 minutes miss).
+- **When the low and high happened.** A day row keeps the time of its low and high, so a period's records come from one query on the day
+  rows (`ORDER BY temperature_hi DESC, temperature_hi_ts LIMIT 1`: the first time, as refining has it). In a day of 5-minute readings it
+  is the first half hour that holds the day's high, at its own highest 5-minute reading (where refining found a half hour's high). A daily
+  record's day takes the times from the 4-hour readings of its UTC day where they are held ("sometime between 2pm and 6pm", as refining
+  found them), its figures staying the record's. That replaces the refining. The part-days at either end of a period are read from the
+  fine rows.
 - **Kept up to date as readings arrive.** A write notes the local days it touched, and their rows are worked out again in the same
   transaction: Python chooses each day's resolution and window and puts them in a temporary table, and one `INSERT ... SELECT` per kind
-  works them out (a window over each day finds its lowest and highest, a `GROUP BY` each half hour). A day of every climate sensor takes
-  about 10 ms, the whole migration's 10,000 days about 4 s. A new time zone (the station moved) works them all out again.
+  works them out (a `GROUP BY` each half hour, a window over each day's half hours for its lowest and highest, and a look at the few
+  readings of the half hour that holds them, for when). The temporary table is the outer loop (`CROSS JOIN`: the planner, with no
+  statistics on it, scanned every reading of the kind for each work-out). One day of every sensor, as one fetch's write, takes about
+  13 ms on the fake station's archive (it took 170 ms with the scan), all its 3,300 day rows 3 s (123 s). A new time zone (the station
+  moved) works them all out again.
 - **The AirGradient's days** wait for its step (3), since they need the spike filter.
 - **Months and years** are a `GROUP BY substr(day, 1, 7)` or `substr(day, 1, 4)` on the day rows: a year is 365 rows, not 17,520.
 

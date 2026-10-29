@@ -7,7 +7,9 @@ labelled with the local date its start falls on: approximate). A day none of tho
 out from what there is (the newest readings, still settling, too), marked incomplete. Each reading's figures:
   - its mean: of each half hour's mean, so a stretch with readings missing counts for its time, not its readings (as lines._summarise);
   - its lowest and highest: of each reading's own range where it has one (Ecowitt's lows and highs, the bands of the bot's and Home
-    Assistant's readings), else of its value; and when they first happened.
+    Assistant's readings), else of its value; and when they first happened. A day of 5-minute readings takes in its 30-minute readings'
+    bands too (Ecowitt's lows and highs from its finer readings, which its 5-minute ones miss), timed by the 5-minute reading lowest or
+    highest in that half hour (where refining an extreme found it); its mean stays the 5-minute readings'.
 A day from a daily record takes the times of its lowest and highest from the 4-hour readings, where those are held ("sometime between 2pm
 and 6pm", as refining an extreme finds it); its figures stay the record's, as day_values has them.
 
@@ -33,28 +35,50 @@ type Held = Callable[[int, str, int, int], bool]
 
 
 def _with(kind: str) -> str:
-    """The rows of temp.want's windows (only those with a value: a row holding only a band, for a reading not yet fetched, is no reading),
-    each reading's lowest and highest over its whole day (a window over the day), and its half hours: their mean, and whether and when
-    they hold the day's lowest and highest."""
+    """The figures of temp.want's days (`figures`), from the rows of their windows (only those with a value: a row holding only a band,
+    for a reading not yet fetched, is no reading) and, for a day of 5-minute readings, the bands of its 30-minute ones (Ecowitt's own lows
+    and highs, from readings finer than its 5 minutes: they count in the day's lowest and highest, never in its mean). Worked out by half
+    hours: their mean, lowest and highest, and when the day's lowest and highest happened, the first half hour that holds them (a window
+    over the day's half hours, not its readings)."""
     names = [c.name for c in KINDS[kind]]
+    ranged = [c.name for c in KINDS[kind] if c.ranged]
     columns = ", ".join(f"r.{q(c)} AS {q(c + '~v')}, CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_lo')}, r.{q(c)}) END AS {q(c + '~l')}, "
                         f"CASE WHEN r.{q(c)} IS NOT NULL THEN COALESCE(r.{q(c + '_hi')}, r.{q(c)}) END AS {q(c + '~h')}" for c in names)
-    some = some_value(names, "r.")
-    window = ", ".join(f"MIN({q(c + '~l')}) OVER whole AS {q(c + '~dl')}, MAX({q(c + '~h')}) OVER whole AS {q(c + '~dh')}" for c in names)
-    slots = ", ".join(f"AVG({q(c + '~v')}) AS {q(c + '~m')}, MIN({q(c + '~dl')}) AS {q(c + '~lo')}, "
-                      f"MIN(CASE WHEN {q(c + '~l')} = {q(c + '~dl')} THEN ts END) AS {q(c + '~lt')}, MAX({q(c + '~dh')}) AS {q(c + '~hi')}, "
-                      f"MIN(CASE WHEN {q(c + '~h')} = {q(c + '~dh')} THEN ts END) AS {q(c + '~ht')}" for c in names)
-    return (f"WITH src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, {columns} FROM temp.want w JOIN {kind} r "
-            f'ON r.sensor = w.sensor AND r.res = w.res AND r.ts BETWEEN w."start" AND w."end" '
-            f"WHERE {some} AND (r.final OR w.res IN ('1min', '5min', '30min'))), "   # (a daily record, or its 4 hours, once final)
-            f"marked AS (SELECT *, {window} FROM src WINDOW whole AS (PARTITION BY sensor, day)), "
-            f"slots AS (SELECT sensor, day, slot, COUNT(*) AS n, {slots} FROM marked GROUP BY sensor, day, slot) ")
+    bands = ", ".join(f"NULL AS {q(c + '~v')}, " + (f"r.{q(c + '_lo')} AS {q(c + '~l')}, r.{q(c + '_hi')} AS {q(c + '~h')}" if c in ranged
+                      else f"NULL AS {q(c + '~l')}, NULL AS {q(c + '~h')}") for c in names)
+    within = 'r.sensor = w.sensor AND r.res = {} AND r.ts BETWEEN w."start" AND w."end"'   # (want first: it is a few rows, the readings many)
+    halves = (f"UNION ALL SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 0 AS own, {bands} FROM temp.want w CROSS JOIN {kind} r "
+              f"ON {within.format(repr('30min'))} WHERE w.res = '5min' "
+              f"AND {some_value([c + part for c in ranged for part in ('_lo', '_hi')], 'r.')}") if ranged else ""
+    slots = ", ".join(f"AVG({q(c + '~v')}) AS {q(c + '~m')}, MIN({q(c + '~l')}) AS {q(c + '~lo')}, MAX({q(c + '~h')}) AS {q(c + '~hi')}"
+                      for c in names)
+    window = ", ".join(f"MIN({q(c + '~lo')}) OVER whole AS {q(c + '~dl')}, MAX({q(c + '~hi')}) OVER whole AS {q(c + '~dh')}" for c in names)
+    figures = ", ".join(f"AVG({q(c + '~m')}) AS {q(c + '~m')}, MIN({q(c + '~lo')}) AS {q(c + '~lo')}, "
+                        f"MIN(CASE WHEN {q(c + '~lo')} = {q(c + '~dl')} THEN t END) AS {q(c + '~lt')}, MAX({q(c + '~hi')}) AS {q(c + '~hi')}, "
+                        f"MIN(CASE WHEN {q(c + '~hi')} = {q(c + '~dh')} THEN t END) AS {q(c + '~ht')}" for c in names)
+    return (f"WITH src AS (SELECT w.sensor, w.day, r.ts, r.ts / {SLOT} AS slot, 1 AS own, {columns} FROM temp.want w CROSS JOIN {kind} r "
+            f"ON {within.format('w.res')} WHERE {some_value(names, 'r.')} "
+            f"AND (r.final OR w.res IN ('1min', '5min', '30min')) {halves}), "   # (a daily record, or its 4 hours, once final)
+            f"slots AS (SELECT sensor, day, slot, SUM(own) AS n, MIN(ts) AS t, {slots} FROM src GROUP BY sensor, day, slot), "
+            f"marked AS (SELECT *, {window} FROM slots WINDOW whole AS (PARTITION BY sensor, day)), "
+            f"figures AS (SELECT m.sensor, m.day, w.res, w.complete, SUM(m.n) AS n, {figures} FROM marked m JOIN temp.want w "
+            f"ON w.sensor = m.sensor AND w.day = m.day GROUP BY m.sensor, m.day HAVING SUM(m.n) > 0) ")
 
 
 def _figures(kind: str) -> str:
-    """Each reading's figures over the day, in the day table's order: mean, lowest, its time, highest, its time."""
-    return ", ".join(f"AVG({q(c.name + '~m')}), MIN({q(c.name + '~lo')}), MIN({q(c.name + '~lt')}), MAX({q(c.name + '~hi')}), "
-                     f"MIN({q(c.name + '~ht')})" for c in KINDS[kind])
+    """Each reading's figures over the day, in the day table's order: mean, lowest, its time, highest, its time. In a day of 5-minute
+    readings, the time is the first of the half hour's own readings that is lowest or highest in it (where refining an extreme found it;
+    the half hour's, where it has none of its own): a look at a few rows, for the one half hour."""
+    out = []
+    for c in KINDS[kind]:
+        v, lo, hi = q(c.name), q(c.name + "_lo"), q(c.name + "_hi")
+        lt, ht = q(c.name + "~lt"), q(c.name + "~ht")
+        first = (f"(SELECT r.ts FROM {kind} r WHERE r.sensor = f.sensor AND r.res = '5min' AND r.ts BETWEEN f.{{0}} - f.{{0}} % {SLOT} "
+                 f"AND f.{{0}} - f.{{0}} % {SLOT} + {SLOT - 1} AND r.{v} IS NOT NULL ORDER BY {{1}}, r.ts LIMIT 1)")
+        when = lambda t, order: f"CASE WHEN f.res = '5min' THEN COALESCE({first.format(t, order)}, f.{t}) ELSE f.{t} END"
+        out.append(f"f.{q(c.name + '~m')}, f.{q(c.name + '~lo')}, {when(lt, f'COALESCE(r.{lo}, r.{v})')}, f.{q(c.name + '~hi')}, "
+                   f"{when(ht, f'COALESCE(r.{hi}, r.{v}) DESC')}")
+    return ", ".join(out)
 
 
 _SQL: dict[str, tuple[str, str]] = {}
@@ -64,10 +88,9 @@ def statements(kind: str) -> tuple[str, str]:
     """(the INSERT of the day rows of temp.want's windows, the SELECT of their figures, for reading back): generated once per kind."""
     if kind not in _SQL:
         names = ", ".join(q(n) for n, _ in day_columns(kind))
-        tail = "FROM slots s JOIN temp.want w ON w.sensor = s.sensor AND w.day = s.day GROUP BY s.sensor, s.day"
         insert = (f"{_with(kind)}INSERT INTO {kind}_day (sensor, day, source, timing, complete, n, {names}) "
-                  f"SELECT s.sensor, s.day, w.res, w.res, w.complete, SUM(s.n), {_figures(kind)} {tail}")
-        select = f"{_with(kind)}SELECT s.sensor, s.day, SUM(s.n), {_figures(kind)} {tail}"
+                  f"SELECT f.sensor, f.day, f.res, f.res, f.complete, f.n, {_figures(kind)} FROM figures f")
+        select = f"{_with(kind)}SELECT f.sensor, f.day, f.n, {_figures(kind)} FROM figures f"
         _SQL[kind] = insert, select
     return _SQL[kind]
 

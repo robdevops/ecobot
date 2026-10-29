@@ -243,14 +243,14 @@ async def test_days_can_be_counted_by_any_reading_not_only_temperature_rain_and_
     eco, fake = station
     first, last = dates(eco, 10, 1)
     start, end = local_day(first), local_day(last) + 86399
-    hot = {first + timedelta(days=k) for k in (2, 5, 7)}          # the days UV reaches 9
-    uvi = {str(t): ("9.5" if datetime.fromtimestamp(t, TZ).date() in hot and 8 <= datetime.fromtimestamp(t, TZ).hour <= 14 else "3.0")
+    hot = {first + timedelta(days=k) for k in (2, 5, 7)}   # the days UV reaches 11.5, past the fake's own peak (its half hours' highs count)
+    uvi = {str(t): ("11.5" if datetime.fromtimestamp(t, TZ).date() in hot and 8 <= datetime.fromtimestamp(t, TZ).hour <= 14 else "3.0")
            for t in range(start, end, 300)}
     humidity = {str(t): "40" if datetime.fromtimestamp(t, TZ).date() in hot else "80" for t in range(start, end, 300)}
     await eco.storage.write(lambda w: w.put_ecowitt(eco.mac, "5min", ["solar_and_uvi"], {"solar_and_uvi": {"uvi": {"unit": "", "list": uvi}}}, start, end))
     await eco.storage.write(lambda w: w.put_ecowitt(eco.mac, "5min", ["outdoor"], {"outdoor": {"humidity": {"unit": "%", "list": humidity}}}, start, end))
-    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 9}], limit=5)
-    assert out["matching_days"] == 3 and out["units"]["uv_max"] == "" and {r["uv_max"] for r in out["days"]} == {9.5}
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uv_max", "op": ">=", "value": 11.5}], limit=5)
+    assert out["matching_days"] == 3 and out["units"]["uv_max"] == "" and {r["uv_max"] for r in out["days"]} == {11.5}
     assert all(r["source"] == "exact" for r in out["days"]) and "note_averaged" not in out   # 5-minute readings: the peak is real
     dry = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "humidity_min", "op": "<", "value": 50}])
     assert dry["matching_days"] == 3 and dry["units"]["humidity_min"] == "%"
