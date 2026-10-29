@@ -20,6 +20,7 @@ from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, Re
 from ..entities import with_link
 from ..logs import QUOTES
 from .menu import ALL, LABELS, alert_keyboard
+from .pictures import CHARTS
 
 log = logging.getLogger(__name__)
 
@@ -226,17 +227,22 @@ class Notifier:
         return sent
 
     async def _post(self, chat_id: int, text: str, entities, kind: str | None, photo: bytes | str | None):
-        """The message itself (returned): silent unless the chat turned sound on for this type, with the alert type's settings button (the bell). With a photo it is the picture with the text as its caption; a picture Telegram refuses falls back to the text alone."""
-        common = dict(disable_notification=kind not in self.state.loud(chat_id),
-                      reply_markup=alert_keyboard(kind, self.state.muted(chat_id), self.state.loud(chat_id) if chat_id > 0 else None) if kind else None)
+        """The message itself (returned): silent unless the chat turned sound on for this type, with the alert type's settings button (the
+        bell). With a photo it is the picture with the text as its caption, and a Refresh that draws the chart again; a picture Telegram
+        refuses falls back to the text alone."""
+        quiet = kind not in self.state.loud(chat_id)
+        markup = lambda refresh: alert_keyboard(kind, self.state.muted(chat_id), self.state.loud(chat_id) if chat_id > 0 else None,
+                                                refresh=refresh) if kind else None
         if photo:
             try:
-                return await self.bot.send_photo(chat_id, photo, caption=text, caption_entities=entities, **common)
+                return await self.bot.send_photo(chat_id, photo, caption=text, caption_entities=entities, disable_notification=quiet,
+                                                 reply_markup=markup(kind in CHARTS))
             except BadRequest as e:
                 if "chat not found" in str(e).lower():
                     raise
                 log.warning("Alert picture to %s failed (%s); sending the text alone", chat_id, e)
-        return await self.bot.send_message(chat_id, text, entities=entities, disable_web_page_preview=True, **common)
+        return await self.bot.send_message(chat_id, text, entities=entities, disable_web_page_preview=True, disable_notification=quiet,
+                                           reply_markup=markup(False))
 
     async def _send(self, chat_id: int, text: str, entities, kind: str | None = None, photo: bytes | str | None = None,
                     again: bool = True) -> tuple[bool, object]:

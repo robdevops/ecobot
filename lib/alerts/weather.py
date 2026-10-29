@@ -185,7 +185,7 @@ class WeatherMonitor:
             m["active"] = True
             gust, ts = max(over)
             await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {clock_text(to_local(ts, self.tz))}"
-                              f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", chart=lambda: self._picture("Wind chart 1d"))
+                              f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", chart=lambda: self._picture(pictures.CHARTS["gusts"]))
 
     async def _uv(self, rows: Rows):
         """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (confirm.py); only readings newer than the last
@@ -209,7 +209,7 @@ class WeatherMonitor:
             uv, ts = m["peak"]
             await self.notify(f"\U0001f9f4 UV index {uv:g} at {clock_text(to_local(ts, self.tz))}"
                               f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
-                              chart=lambda: self._picture("UV chart 1d"))
+                              chart=lambda: self._picture(pictures.CHARTS["uv"]))
 
     async def _cross(self, rows: Rows):
         ts, r = rows[-1]
@@ -227,7 +227,7 @@ class WeatherMonitor:
             icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
             await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
                               f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps",
-                              chart=lambda: self._picture("Temperature chart 1d"))
+                              chart=lambda: self._picture(pictures.CHARTS["temps"]))
             remember(c, current, ts)
 
     async def _fell(self, rows: Rows, since: int, until: int) -> float | None:

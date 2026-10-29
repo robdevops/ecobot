@@ -20,13 +20,13 @@ Alerts go to every chat the bot is in, silently unless you turn sound on:
 - rain starting and stopping (with quiet hours, default midnight to 6 am, summed up when they end)
 - gusts over 40 km/h, with the last day's wind chart
 - UV index of 10 or more in two readings in a row, with the UV chart
-- indoor and outdoor temperatures crossing by more than 1 °C
+- indoor and outdoor temperatures crossing by more than 1 °C, with the temperature chart
 - unhealthy air (two readings in a row), and when it is safe again, with the particulates chart
 - grass pollen or thunderstorm asthma risk reaching High (optional)
 - a forecast day you were told about changing substantially (optional)
 - irrigation battery low, and the bot pausing watering for rain (optional)
 
-Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off in this chat) and, in a private chat while that is on, **Sound**. Every toggle in the bot is a blue button while on and a plain one with its name struck through while off.
+Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off in this chat) and, in a private chat while that is on, **Sound**. An alert with a chart also has **🔄 Refresh**, which draws the chart again with the latest readings, in the same message, the alert's text as it was (anyone in the chat can press it). Every toggle in the bot is a blue button while on and a plain one with its name struck through while off.
 
 `/alerts` opens a menu with 🔔 Alerts and (in a private chat) 🔊 Sound. Each lists the alert types as toggles; while one is open only its own button shows (press it to close the list). `/alerts on` or `/alerts off` switches every type. A chat that blocks or removes the bot keeps its settings, which apply again when it comes back. In a group anyone can open `/alerts`, but only admins can change anything.
 

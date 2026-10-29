@@ -433,6 +433,8 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    archive's code the station uses.
 5. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
    `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
+   And a look for dead code left from when the period buttons' charts stopped being drawn ahead on a timer (`92d71df`): what only that
+   timer used, in the image cache, the bot and the tests.
 6. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
    channels found from its live reading, a `sensor` argument for the tools and the words for it in the prompt, labels, alerts per sensor,
    and a sensor per Home Assistant prefix (today it takes the first and warns).

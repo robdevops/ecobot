@@ -59,7 +59,7 @@ class ParticulatesMonitor:
 
     async def _picture(self) -> bytes | None:
         """The 1-day particulates chart (what the Particulates button gives), for the alert; None when it cannot be made."""
-        return await pictures.chart(self.air, "Particulates chart 1d", self.air.tz)
+        return await pictures.chart(self.air, pictures.CHARTS["particulates"], self.air.tz)
 
     @staticmethod
     def _levels(reading: dict) -> str:

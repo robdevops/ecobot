@@ -23,7 +23,7 @@ from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler
 
 from . import counts, intent, periods, prompt, report, report_menu, templates
 from .admins import Admins
-from .alerts import menu
+from .alerts import menu, pictures
 from .alerts import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
@@ -509,11 +509,14 @@ class Bot:
 
     async def on_alert_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on the alert settings buttons (under an alert or the /alerts message): open or close a menu, or turn a type's alerts or
-        its sound on or off. In a group only admins may change them."""
+        its sound on or off. In a group only admins may change them. Refresh, under an alert's chart, changes nothing: anyone may press it."""
         query = update.callback_query
         press = menu.parse(query.data)
         if press is None:
             await answer_query(query)
+            return
+        if press.action == "refresh":
+            await self._redraw_alert(query, press.kind)
             return
         message = query.message
         chat = message.chat
@@ -540,9 +543,38 @@ class Bot:
         loud = self.state.loud(chat.id) if private else None
         await answer_query(query, toast)
         if parent:   # an alert: only its buttons change
-            await self._edit(query, None, menu.alert_keyboard(parent, muted, loud, opened))
+            await self._edit(query, None, menu.alert_keyboard(parent, muted, loud, opened, refresh=self._redrawable(message, parent)))
         else:        # the /alerts message: its on/off summary is kept current too
             await self._edit(query, menu.title(muted, kinds), menu.keyboard(muted, kinds, opened, loud))
+
+    @staticmethod
+    def _redrawable(message, kind: str) -> bool:
+        """Does this alert carry a chart its Refresh can draw again (it went out as a picture)?"""
+        return kind in pictures.CHARTS and bool(getattr(message, "photo", None))
+
+    async def _redraw_alert(self, query, kind: str):
+        """A press on Refresh under an alert's chart: the chart drawn again with the latest readings, in the same message. The alert's text
+        (what happened, as it was sent) and its buttons stay as they are."""
+        message = query.message
+        source = self.by_name.get(menu.TYPES[kind][1]) if kind in menu.TYPES else None
+        if source is None or not self._redrawable(message, kind):   # an alert of a type, or from a source, the bot no longer has
+            await answer_query(query, STALE_BUTTON)
+            return
+        try:
+            photo = await asyncio.wait_for(pictures.chart(source, pictures.CHARTS[kind], source.tz), TURN_SECONDS)
+        except TimeoutError:
+            photo = None
+        if photo is None:   # (pictures.chart has said why) the message stays as it was
+            await answer_query(query, "Couldn't draw the chart, please try again", show_alert=True)
+            return
+        await answer_query(query)   # no toast: the chart is the answer
+        try:
+            await query.edit_message_media(InputMediaPhoto(photo, caption=message.caption, caption_entities=message.caption_entities or None),
+                                           reply_markup=message.reply_markup)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                raise
+        log.debug("%s: the %s alert's chart drawn again", chat_tag(message.chat.id), kind)
 
     # ---------- irrigation ----------
     def _irrigation_alerts(self, chat_id: int) -> tuple[bool, bool]:

@@ -10,11 +10,10 @@ import importlib
 import io
 import json
 import math
-import shutil
 import subprocess
 import sys
 import tarfile
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -182,8 +181,7 @@ def specs(turn) -> list:
 
 def questions(pkg, eco, texts: list[str], with_calls: bool) -> list[tuple[str, object]]:
     """[(name, a coroutine function giving its answer)]: {"call", "result", "charts"}, or the error it raised."""
-    from tests.fakes import TZ as zone
-    now = pkg.timeutil.now_local(zone)
+    now = pkg.timeutil.now_local(TZ)
     first = (eco.created.date() if eco.created else now.date() - timedelta(days=HISTORY_DAYS)) + timedelta(days=1)
     tools = {t.name: t for t in eco.tools}
     asked = []
@@ -211,7 +209,7 @@ def questions(pkg, eco, texts: list[str], with_calls: bool) -> list[tuple[str, o
         return plain(await eco.recent(3))
 
     async def week():
-        at = pkg.timeutil.now_local(zone).replace(tzinfo=None)
+        at = pkg.timeutil.now_local(TZ).replace(tzinfo=None)
         return plain(await eco.readings("30min", at - timedelta(days=6, hours=23), at, ["outdoor", "indoor"]))
 
     out = [(name, tool_call(tool, args, make_turn)) for name, tool, args, make_turn in asked]
