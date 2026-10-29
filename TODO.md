@@ -39,4 +39,6 @@ It has only been run against a fake Home Assistant. Check in the log and the cha
 - with both set, nothing is asked of the cloud except what Home Assistant lacks.
 
 Then the storage redesign: [docs/storage-plan.md](docs/storage-plan.md) has the measurements, the design, the migration and the steps (the
-requirements that were here are its section 2, the decisions its section 6.1). It starts with step 0, measuring the real cache.
+requirements that were here are its section 2, the decisions its section 6.1). Steps 0 and 1 are done (the measurements, and the new storage
+checked on the real cache); next is step 2, the station on it. Its step 4 makes Home Assistant a source of the AirGradient's readings too
+(`AIRGRADIENT_SOURCE`, the cloud as the fallback; section 3.12 has how its PM2.5 is checked against the cloud's corrected one).

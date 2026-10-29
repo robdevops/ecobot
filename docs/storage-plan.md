@@ -116,7 +116,7 @@ sensors, and the extra channels (`temp_and_humidity_ch1` ...) are more climate s
 naming series `role.field` ("outdoor.temperature"), so most of `HistoryQuery`, the charts and the captions are unchanged by this; a second
 station or AirGradient gets roles of its own ("garage", "bedroom"). The schema supports several sensors from the start. The product side
 (settings for a second AirGradient, finding Ecowitt's channels, a `sensor` argument for the tools, the prompt, alerts per sensor, one
-sensor per Home Assistant entity prefix) is a later step (section 6, step 5).
+sensor per Home Assistant entity prefix) is a later step (section 6, step 6).
 
 ### 3.3 The readings tables
 
@@ -295,6 +295,43 @@ Left to Python on purpose:
 - **Drawing, captions and answers:** from the few hundred rows a query returns, handled as columns (lists of numbers), not a dict per
   reading.
 
+### 3.12 The AirGradient from Home Assistant
+
+`AIRGRADIENT_SOURCE` does for the air monitor what `ECOWITT_SOURCE` does for the station: `auto` (the default) takes its readings from
+Home Assistant when Home Assistant has the monitor (found by its entities' names, as its ranges are now:
+`airgradient.homeassistant.find_prefix`), with AirGradient's cloud as the fallback when its token and location are set; `cloud` is the
+cloud alone; `homeassistant` is Home Assistant alone. Home Assistant's AirGradient integration reads the monitor's own server, as
+`AIRGRADIENT_LOCAL_URL` does, and keeps each change of each entity (10 days unless its recorder is set otherwise), so:
+- **Readings:** each 5 minutes is worked out from Home Assistant's states as the station's are (`hass_history.rollup`: the mean over the
+  time, and the lowest and highest as its band), with `src` Home Assistant. The cloud fills in what Home Assistant lacks (before its 10
+  days, or while it is down) and never replaces it; the bot's own readings of the monitor's server (`AIRGRADIENT_LOCAL_URL`), if that is
+  set, still rank first. A row takes each metric from whichever source has it, by the write rules (3.8), so a metric the cloud has to give
+  (below) sits in the same row as those from Home Assistant.
+- **Minutes:** its states at the end of each minute, `res = '1min'`, kept 10 days, so a chart of a few hours is drawn a reading a minute,
+  as the station's are.
+- **The live reading:** its current states, asked for every few seconds as the station's are; no `.local` name for Docker to look up.
+
+Home Assistant's raw PM2.5 against the cloud's corrected one:
+- **What Home Assistant gives.** Its `sensor.<device>_pm2_5` is the monitor's own corrected PM2.5 (`pm02Compensated` in the monitor's
+  `/measures/current`, firmware 3.1.4 on) where the monitor sends one, else its raw PM2.5 (`pm02`). The raw one has an entity of its own,
+  `sensor.<device>_raw_pm2_5`, off by default. Its temperature and humidity are likewise the corrected ones where the monitor sends them;
+  PM1 and PM10 are as measured (the monitor corrects only PM2.5, temperature and humidity).
+- **What the monitor's correction is.** The one set on the monitor: the AirGradient dashboard's when the monitor is set up there (it takes
+  its configuration from the dashboard), else what was set on the monitor itself (`PUT /config`, `corrections`: `none` by default, or
+  `epa_2021`, or one of AirGradient's calibrations of its PMS5003 sensors). The cloud gives `pm02_corrected`, which the bot keeps now
+  (`metrics.METRICS` takes it first). So Home Assistant's PM2.5 is the cloud's when the monitor takes the dashboard's correction, and the
+  raw one when the monitor is set to none.
+- **The bot checks, it does not guess.** As it does for the ranges now (`airgradient.homeassistant.checked`), each metric's five-minute
+  means from Home Assistant are compared with the cloud's readings of the same five minutes, over the days both hold: within 2 µg/m³ or
+  15%, in four in five of them, is the same reading. A metric that agrees comes from Home Assistant. One that does not (a raw PM2.5 against
+  the cloud's corrected one) keeps coming from the cloud, and the start-up line says so once, with the fix: set the monitor's PM2.5
+  correction to the dashboard's. The check runs again each day on the newest day, so a correction changed on the monitor is followed.
+- **With no cloud to check against** (`homeassistant` alone, or no token), Home Assistant's values are taken as they are, and the
+  start-up line says which correction the monitor applies, from its `/config` when `AIRGRADIENT_LOCAL_URL` is set ("PM2.5: the monitor's
+  EPA 2021 correction", "PM2.5: as measured, no correction").
+- **One variant in the history.** The readings kept from the cloud stay as they are, and a metric is written from Home Assistant only once
+  it has agreed, so no line joins the two variants.
+
 ## 4. How each request reads
 
 | Request | Queries |
@@ -312,21 +349,22 @@ Left to Python on purpose:
 Aims, against section 1: a chart under 50 ms whatever its length (the 1Y chart is 1.2 s now), `/dashboard` and `weather_days` over
 the whole record under 50 ms (3.1 s and 0.7 s now), and every request one thread hop.
 
-The reads themselves, on the stand-in moved into the new storage (`scripts/migrate_storage.py`, which prints this table for the real
-cache): the data a request needs, before step 2 builds its answer and chart on it.
+The reads themselves, on the owner's cache moved into the new storage (`scripts/migrate_storage.py` in the container, October 2026): the
+data a request needs, before step 2 builds its answer and chart on it. Against section 1's table: the 1Y chart's data in 2.4 ms where
+the request took 1,205 ms, the first dashboard's in 22 ms where it took 3,146.
 
 | Read on the new file | SQL statements | Thread hops | Time |
 |---|---|---|---|
 | Temperature line, 1D (5-minute rows) | 1 | 1 | 1.3 ms |
-| Temperature line, 7D (30-minute rows) | 1 | 1 | 1.1 ms |
-| Temperature line, 1M (2-hour buckets) | 1 | 1 | 8.5 ms |
+| Temperature line, 7D (30-minute rows) | 1 | 1 | 1.5 ms |
+| Temperature line, 1M (2-hour buckets) | 1 | 1 | 5.5 ms |
 | Temperature line, 3M (day rows) | 1 | 1 | 0.9 ms |
-| Temperature line, 1Y (day rows) | 1 | 1 | 3.3 ms |
-| Records: each month's hottest day, a year | 1 | 1 | 1.8 ms |
-| `weather_days`: 4 years of temperature and rain (day rows) | 2 | 1 | 14 ms |
+| Temperature line, 1Y (day rows) | 1 | 1 | 2.4 ms |
+| Records: each month's hottest day, a year | 1 | 1 | 1.2 ms |
+| `weather_days`: 4 years of temperature and rain (day rows) | 2 | 1 | 16 ms |
 | Rain per half hour, 3M | 1 | 1 | 23 ms |
-| `/dashboard`: the year's day rows of every sensor | 5 | 1 | 21 ms |
-| Air line (PM2.5), 1M (2-hour buckets) | 1 | 1 | 22 ms |
+| `/dashboard`: the year's day rows of every sensor | 5 | 1 | 22 ms |
+| Air line (PM2.5), 1M (2-hour buckets) | 1 | 1 | 18 ms |
 
 ## 5. Migration
 
@@ -351,9 +389,13 @@ cache): the data a request needs, before step 2 builds its answer and chart on i
   coverage, that every range is inside its row's band, the minutes, the AirGradient's readings and its own, and the snapshots. Any
   difference and the new file is deleted, the bot carries on with the old ones, and the log says why. Only then is the file renamed
   `ecobot.sqlite`. It needs twice the old files' size free on the disk, and says so if there is not.
-- **What it says.** "Moved the history to ecobot.sqlite in 15.6s: 2,372,502 station readings, 20,938 bands, 11,880 minutes, 424,936
-  AirGradient readings; 45.8 MB of old files, 27.2 MB now" (the stand-in), then the fields kept as they came and the values written back
-  with other digits, each with an example, if any.
+- **What it says.** On the owner's cache: "Moved the history to ecobot.sqlite in 15.5s: 1,713,215 station readings, 16,589 bands,
+  11,880 minutes, 423,571 AirGradient readings, 312 snapshots; 32.7 MB of old files, 28.6 MB now", every count and sum matching. Then,
+  with an example of each, the fields it has no column for, the values that are not numbers (1,046 of them there, in five fields that
+  have columns: indoor `app_tempin`, `dew_point` and `feels_like`, outdoor `vpd`, rain `yearly`; kept in `extra`, read by no answer),
+  and the values that would be written back with other digits. That run found the UV written two ways, the cloud's
+  whole numbers ("3") and Home Assistant's one decimal ("1.4"): UV is now written with one decimal unless it is whole, so both come back
+  as they were. The only other change is a zero's minus ("-0.0" is "0.0", 10 values).
 - **The old files are not touched.** They stay where they are, so going back is the previous commit. That version fetches again whatever
   its files lack (the cloud still has the last 90 days at 5 minutes), so a few days on the new storage cost nothing but the live bands of
   those days. Deleting them is left to a later release, after a few weeks.
@@ -379,9 +421,13 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    and compares the answers, so any difference is seen and judged.
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
-4. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
+4. **The AirGradient from Home Assistant** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live reading from Home Assistant with
+   the cloud as the fallback, each metric checked against the cloud before it is taken from Home Assistant; the settings table and the
+   start-up line. After step 3, since it writes the `air` table's rows, minutes and bands by the same rules as the station's, and its
+   readings back to Home Assistant's first state need the archive's code the station uses.
+5. **Tidying.** The snapshots move; the old store code goes; the scripts that read the files (`cache_status`, `check_rain`,
    `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
-5. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
+6. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
    channels found from its live reading, a `sensor` argument for the tools and the words for it in the prompt, labels, alerts per sensor,
    and a sensor per Home Assistant prefix (today it takes the first and warns).
 
@@ -391,7 +437,7 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
   almost never drawn; 10 days is what Home Assistant keeps, so the bot can always read a gap back. A constant, if that changes.
 - **The bot's own bands are kept for good.** They are two numbers in a row that is kept anyway, and a 1D chart of any past day keeps
   its band (3.6).
-- **Several sensors: the schema now, step 5 later**, when there is a second sensor.
+- **Several sensors: the schema now, step 6 later**, when there is a second sensor.
 - **A day's highest and lowest include the bands** (step 1, to be judged in step 2's comparison). The 5-minute rows carry the bot's and Home
   Assistant's ranges, so a day's figures from them are the extremes the bot saw, as the dashboard already counts them; `weather_days` and a
   history answer's records took the 5-minute values alone. Where the bot has no ranges (before it ran, or a day from 30-minute readings) the
