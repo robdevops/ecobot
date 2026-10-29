@@ -3,7 +3,7 @@ December only).
 
 A warning when grass pollen or the thunderstorm asthma risk is High 🔴 or Extreme 🟣 (the scale is Low 🟢, Moderate 🟠, High 🔴, Extreme 🟣; "No data" counts
 as no reading). One alert per metric and day: another on a new day that is still High, and again when it rises (High to Extreme);
-none while it stays the same. Once it drops below High the metric is ready to warn again.
+none while it stays the same; none before 7 am. Once it drops below High the metric is ready to warn again.
 """
 
 import logging
@@ -16,6 +16,7 @@ from .menu import kinds_of
 log = logging.getLogger(__name__)
 
 WARN_FROM = LEVELS.index("High")
+ALERT_FROM_HOUR = 7            # the day's alert goes out from 7 am (the page is read from 6; the forecast is out by 6:15)
 STALE_SECONDS = 2 * 3600       # a page not fetched for this long (it is only fetched in the day) is not news
 ADVICE = {"grass": "", "asthma": " Check your asthma action plan."}
 LABELS = {"grass": "Grass pollen forecast", "asthma": "Thunderstorm asthma forecast"}
@@ -29,7 +30,7 @@ class PollenAndAsthmaMonitor:
         self.pollen, self.state, self.notify = pollen, state, notify
 
     async def check(self):
-        if not self.pollen.in_season():   # October to December only
+        if not self.pollen.in_season() or self.pollen.now().hour < ALERT_FROM_HOUR:   # October to December only; not before 7 am
             return
         cur = self.pollen.current()
         if not cur["fetched_at"] or time.time() - cur["fetched_at"] > STALE_SECONDS:
