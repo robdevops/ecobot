@@ -1,4 +1,4 @@
-"""The station's readings as Home Assistant saw them, for the lowest and highest of each 5 minutes (live.LiveRanges).
+"""The station's readings as Home Assistant saw them, for the lowest and highest of each 5 minutes (the bands of the 5-minute rows).
 
 Home Assistant's Ecowitt integration is sent every reading the gateway makes (every 16 to 60 seconds, as the gateway is set), and keeps
 every change of each sensor for a while (10 days unless its recorder is set otherwise). That is finer than anything Ecowitt's cloud gives

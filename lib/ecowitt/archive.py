@@ -70,10 +70,11 @@ class Archive:
         """Cache whatever is missing. Returns (ranges fetched, ranges failed). Each range is saved as
         soon as it arrives, so an interrupted run just carries on from there next time."""
         started = monotonic()
-        work, epoch = list(self._work()), self.station.fetcher(self.groups).epoch
-        missing = await asyncio.to_thread(self.station.cache.uncovered, self.station.mac, self.groups,   # one read of what is held
-                                          [(cycle, epoch(start), epoch(end)) for cycle, start, end in work])
-        todo = [w for w, gaps in zip(work, missing) if any(gaps.values())]
+        work, fetcher = list(self._work()), self.station.fetcher(self.groups)
+        todo = []   # what is held is known in memory: no read
+        for cycle, runs in {c: [w for w in work if w[0] == c] for c in dict.fromkeys(w[0] for w in work)}.items():
+            missing = fetcher.uncovered(cycle, [(fetcher.epoch(start), fetcher.epoch(end)) for _, start, end in runs])
+            todo += [w for w, gaps in zip(runs, missing) if any(gaps.values())]
         if todo:
             # each range takes the pause after it plus about a second for the request itself
             seconds = len(todo) * (max(self.pace, MIN_GAP_SECONDS) + 1)
@@ -121,7 +122,7 @@ class Archive:
     def held(self) -> str:
         """Days of history held per resolution, e.g. "88/363/728/1456 days held (5m/30m/4h/1d)" """
         cycles = ("5min", "30min", "4hour", "1day")
-        days = "/".join(str(self.station.cache.days_held(self.station.mac, c, self.groups)) for c in cycles)
+        days = "/".join(str(self.station.fetcher(self.groups).days_held(c)) for c in cycles)
         return f"{days} days held (5m/30m/4h/1d)"
 
     def _seconds_until_next_run(self) -> float:

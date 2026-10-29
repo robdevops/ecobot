@@ -99,7 +99,7 @@ async def test_home_assistant_alone_is_kept_warm_and_backfilled_like_the_cloud(t
     fetched, failed = await Archive(eco, eco.archive_pace).run_once()
     assert fetched > 10 and not failed                                                          # a day at a time, 5-minute, then the coarser
     for cycle in ("5min", "30min", "1day"):
-        assert eco.cache.days_held(eco.mac, cycle, eco.groups) >= 8, cycle                       # (the fake has ten days)
+        assert eco.fetcher(eco.groups).days_held(cycle) >= 8, cycle                              # (the fake has ten days)
     again = len(ha.calls)
     fetched, failed = await Archive(eco, 0).run_once()                                          # what is held is not asked again; the one day before
     assert fetched <= 1 and not failed and len(ha.calls) == again                               # it began is tried (and costs no request: it has nothing)

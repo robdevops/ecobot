@@ -22,7 +22,7 @@ from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
 from .dashboard import dashboard
 from .glance import glance
-from .fetch import Fetcher, Recent, series_in
+from .fetch import Fetcher, Recent
 from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
@@ -30,9 +30,10 @@ from .live import BUCKET, MIN_READINGS, readings_in
 from .minutes import KEEP_HOURS
 from ..series import READING_GROUPS, WEATHER, find
 from ..storage import Storage
+from ..storage.catalogue import AIR
 from ..storage.migrate import open_storage
 from .query import HistoryQuery, chart_field, stack_names
-from .stored import StoredHistory, newest_minute_on
+from .reads import newest_minute_on
 
 log = logging.getLogger(__name__)
 
@@ -47,18 +48,6 @@ def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
     named = (p.split(".")[0].strip().lower() for p in parts if p.strip())
     groups = (g if g in GROUPS else (r.group if (r := find(g)) else None) for g in named)
     return list(dict.fromkeys(g for g in groups if g)) or default.split(",")
-
-
-def readings(data: dict) -> list[tuple[int, dict]]:
-    """Ecowitt 'data' -> [(epoch, {"group.field": value})] sorted by time."""
-    rows: dict[int, dict] = {}
-    for group, field, obj in series_in(data):
-        for ts, v in obj["list"].items():
-            try:
-                rows.setdefault(int(ts), {})[f"{group}.{field}"] = float(v)
-            except (TypeError, ValueError):
-                pass
-    return sorted(rows.items())
 
 
 HISTORY_PARAMS = {
@@ -110,7 +99,7 @@ def history_files(cfg: Config) -> dict[str, tuple[Path, ...]]:
 
 
 class LiveMarks:
-    """The live readings of the newest 5-minute marks, each counted in the mark nearest it (as live.LiveRanges did): once a mark has two
+    """The live readings of the newest 5-minute marks, each counted in the mark nearest it (as the old live ranges were): once a mark has two
     readings or more of a reading, its lowest and highest are a band, written to that 5-minute reading."""
 
     def __init__(self):
@@ -163,9 +152,8 @@ class Ecowitt(Source):
         once). Either way the station closes it."""
         self.tz = cfg.tz
         self.storage = storage or open_storage(cfg.storage_path, cfg.tz, history_files(cfg))
-        self.cache = StoredHistory(self.storage)   # (TEMPORARY: what the readers not moved to the storage yet read)
         self.fetches = Recent()   # the newest fetches, read from the storage while fresh
-        macs = self.cache.macs()   # the station the file holds, so Home Assistant's readings join its history
+        macs = sorted({s.device for s in self.storage.sensors.all() if s.kind != AIR[0]})   # the station the file holds, so Home Assistant's readings join its history
         home = HomeAssistantAPI(cfg.homeassistant_url, cfg.homeassistant_token, cfg.tz, macs[0] if len(macs) == 1 else "HOMEASSISTANT",
                                 ha_transport) if cfg.ecowitt_home_assistant else None
         cloud = EcowittAPI(cfg.ecowitt_api_key, cfg.ecowitt_app_key, transport) if cfg.ecowitt_cloud else None
@@ -264,7 +252,7 @@ class Ecowitt(Source):
         return await days_tool(self.storage, self.mac, self.tz, args, turn)
 
     async def _link(self, args: dict, turn: Turn | None = None) -> str:
-        return await link_tool(self.cache, self.mac, self.tz, args, turn or Turn())
+        return await link_tool(self.storage, self.mac, self.tz, args, turn or Turn())
 
     async def _realtime(self, args: dict, turn: Turn | None = None) -> str:
         groups = parse_groups(args.get("groups"))
@@ -418,8 +406,8 @@ class Ecowitt(Source):
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
                        groups: list[str] | None = None) -> list[tuple[int, dict]]:
-        """Readings for the alert monitors, straight from the warm data."""
-        return readings(await self.fetcher(groups or self.groups).get(cycle, start, end))
+        """Readings for the alert monitors ([(epoch, {"group.field": value, ...})]), from the storage (the newest fetched first)."""
+        return await self.fetcher(groups or self.groups).get(cycle, start, end)
 
     async def recent(self, hours: float) -> list[tuple[int, dict]]:
         """The last `hours` of 5-minute readings: real hours, so the night the clocks change is no longer or shorter."""

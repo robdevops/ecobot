@@ -448,7 +448,12 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    and for a chart its readings as `lines.Sample`s where they are drawn as they are, the lines bucketed by the database (2-hour and
    4-hour buckets: `Reader.buckets`) where they are too many, or a point a day from the period's days (so a year's line is 365 day rows,
    not 17,520 readings, and a day held finer than Ecowitt's daily record is its local day); the wind's 5-minute readings for the rose
-   and the rain counter for the bars come in the same read. Next, `link`, `compose`, the alerts and the archive (2e).
+   and the rain counter for the bars come in the same read. `weather_link`, the composed charts, the alerts and the archive read the
+   storage too (`reads.slot_values_on`, `rows_on`; the archive asks the coverage in memory), so the adapter (`ecowitt/stored.py`) and the
+   `LiveRanges`, `MinuteStore` and `HotStore` classes are gone; the old-format files the migration tests and the benchmark's stand-in
+   need are written with SQL of their own (`tests/fakes.py`). On the stand-in (section 1's requests): the 1Y temperature chart 27 ms
+   (was 910 ms before this step, 1,205 at the start), 3M 10 ms (212), 1M 30 ms (91), 7D 12 ms (32). Next (2f): the old stores' tests
+   on the new tables, the benchmark's stand-in built by the new storage, the docs, and the comparison test removed.
 3. **The AirGradient on it.** Its readings, the bot's own, its days, its spreads and Home Assistant's ranges in the `air` tables;
    `AirStore` goes.
 4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live

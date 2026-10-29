@@ -16,6 +16,7 @@ from .analysis import scan
 from .analysis.pairs import analyse_air
 from .captions import COMPOSED_CHART_HINT, wants_chart
 from .ecowitt.link import driver_series, reading_slots
+from .ecowitt.reads import slot_values_on
 from .series import WEATHER
 from .panels import panel_for, same_axis, two_axes
 from .specs import Panel, Shares, stack
@@ -138,9 +139,9 @@ class Composer:
     def _span(self, first: date, last: date) -> tuple[int, int]:
         return day_bounds(first, self.tz)[0], day_bounds(last, self.tz, last_second=True)[1]
 
-    def weather(self, group: str, field: str, first: date, last: date) -> dict[int, float]:
-        """One reading per 30-minute slot from the weather station's cache."""
-        return self.eco.cache.slots(self.eco.mac, "30min", group, [field], *self._span(first, last))[0]
+    async def weather(self, group: str, field: str, first: date, last: date) -> dict[int, float]:
+        """One reading per 30-minute slot of the station's, from the storage."""
+        return (await self.eco.storage.read(slot_values_on, self.eco.mac, group, field, "30min", *self._span(first, last)))[0]
 
     async def air_series(self, metrics: list[str], first: date, last: date) -> tuple[dict[str, tuple[dict, dict, dict]], dict]:
         """({metric: (values, lows, highs)}, notes): the sensor's readings averaged into 30-minute slots, with each slot's
@@ -183,7 +184,7 @@ class Composer:
         air, notes = await self.air_series([name for name, _ in asked if name in ALL_METRICS or name in EXTRA], first, last)
         built, summary = [], []
         for name, style in asked:
-            panel, facts = self._panel(name, style, first, last, air.get(name))
+            panel, facts = await self._panel(name, style, first, last, air.get(name))
             if panel is None:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
@@ -224,8 +225,8 @@ class Composer:
             return _error(period)
         first, last = period
         series, notes = await self.air_series([metric], first, last)
-        air_panel, _ = self._panel(metric, "line", first, last, series[metric])
-        rain = rain_slots(self.weather("rainfall", "daily", first, last))
+        air_panel, _ = await self._panel(metric, "line", first, last, series[metric])
+        rain = rain_slots(await self.weather("rainfall", "daily", first, last))
         result = analyse_air(series[metric][0], rain, RATINGS[metric], self.tz, LABELS[metric])
         out = {"period": f"{first} to {last}", "metric": f"{LABELS[metric]} ({CHART_UNITS[metric]})",
                "resolution": "30-minute slots (air readings averaged, rain from the weather station's cache)",
@@ -254,15 +255,15 @@ class Composer:
             notes["period"] = f"Only the last {SCAN_MAX_DAYS} days can be scanned per question; this covers {first} to {last}"
         weather = {}
         for name, (group, field, _, _) in SCAN_WEATHER.items():
-            if values := self.weather(group, field, first, last):
+            if values := await self.weather(group, field, first, last):
                 weather[name] = values
         if "pressure" in weather:  # falling pressure often comes with stagnant or changing air
             weather["pressure_change"] = {t: v - weather["pressure"][t - 6 * SLOT] for t, v in weather["pressure"].items()
                                           if t - 6 * SLOT in weather["pressure"]}
-        rain = rain_slots(self.weather("rainfall", "daily", first, last))
+        rain = rain_slots(await self.weather("rainfall", "daily", first, last))
         if rain:
             weather["rain"] = rain
-        direction, speed = self.weather("wind", "wind_direction", first, last), weather.get("wind_speed")
+        direction, speed = await self.weather("wind", "wind_direction", first, last), weather.get("wind_speed")
         air_names = {m: (LABELS[m], CHART_UNITS[m]) for m in air}
         weather_names = {**{k: (v[2], v[3]) for k, v in SCAN_WEATHER.items()}, "pressure_change": ("3-hour pressure change", "hPa"),
                          "rain": ("rain", "mm")}
@@ -277,22 +278,22 @@ class Composer:
         if strongest and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
             drawn = [n for n in (strongest["air"], {"wind_speed": "wind"}.get(strongest["weather"], strongest["weather"])) if n in SERIES]
             if len(drawn) == 2:
-                panels = [self._panel(n, "bars" if n == "rain" else "line", first, last, air.get(n))[0] for n in drawn]
+                panels = [(await self._panel(n, "bars" if n == "rain" else "line", first, last, air.get(n)))[0] for n in drawn]
                 if all(panels):
                     self._add_chart(out, panels, first, last, turn)
         return json_result(out)
 
-    def _panel(self, name: str, style: str, first: date, last: date,
-               air: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
+    async def _panel(self, name: str, style: str, first: date, last: date,
+                     air: tuple[dict, dict, dict] | None = None) -> tuple[Panel | None, dict]:
         """(the panel, its figures for the caption); the panel is None when there is nothing to draw. A weather reading comes from
-        the station's cache, an air metric's readings in `air` (values, lows, highs: see air_series)."""
+        the station's storage, an air metric's readings in `air` (values, lows, highs: see air_series)."""
         if name in WEATHER:
             reading = WEATHER[name]
             if name == "rain":
-                bars = rain_bars(rain_slots(self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
+                bars = rain_bars(rain_slots(await self.weather(reading.group, reading.field, first, last)), self.tz, first, last)
                 return (panel_for("rain", bars=bars) if bars.x else None,
                         {"series": name, "total_mm": round(sum(bars.y), 1), "wet_bars": len(bars.y)})
-            values, lows, highs = reading_slots(self.eco.cache, self.eco.mac, name, *self._span(first, last))
+            values, lows, highs = await self.eco.storage.read(reading_slots, self.eco.mac, name, *self._span(first, last))
             line = driver_series(values, self.tz, first, last, reading.label, lows, highs)
             facts = {"series": name, **self._stats(values, reading.unit)}
             return (panel_for(name, [line]) if line else None), facts

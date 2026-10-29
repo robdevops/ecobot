@@ -17,11 +17,9 @@ from pathlib import Path
 from lib.airgradient.store import AirStore
 from lib.ecowitt.api import GROUPS, UNITS, fix_units
 from lib.ecowitt.fetch import spans
-from lib.ecowitt.live import LiveRanges
-from lib.ecowitt.minutes import MinuteStore
 from lib.ecowitt.store import HistoryCache
 from lib.timeutil import local_epoch, local_date, naive_local
-from tests.fakes import MAC, STEP, TZ, direction, gust, humidity, pressure, rain_day, temp, uv_index, wind_speed
+from tests.fakes import MAC, STEP, TZ, direction, gust, humidity, old_live_file, old_minutes_file, pressure, rain_day, temp, uv_index, wind_speed
 
 DAYS = {"5min": 116, "30min": 391, "4hour": 755, "1day": 1457}   # days held at each resolution
 AIR_DAYS = 184
@@ -84,17 +82,13 @@ def live_ranges(path: Path, days: float, now: float):
             for mark in range(int(now - now % 300 - days * 86400), int(now), 300):
                 values = [fn(mark + s) for s in (-120, -60, 0, 60, 120)]
                 found.setdefault(f"{group}.{name}", {})[mark] = (5, min(values) - 0.2, max(values) + 0.2)
-    live = LiveRanges(path)
-    live.put(found)
-    live.close()
+    old_live_file(path, found)
 
 
 def minutes(path: Path, hours: float, now: float):
-    store = MinuteStore(path)
     first = int(now - now % 60 - hours * 3600)
-    store.put({group: {name: {"unit": unit, "list": {str(t): f"{fn(t):.1f}" for t in range(first, int(now), 60)}} for name, fn, unit in fields}
-               for group, fields in FIELDS.items()}, now)
-    store.close()
+    old_minutes_file(path, {group: {name: {"unit": unit, "list": {str(t): f"{fn(t):.1f}" for t in range(first, int(now), 60)}} for name, fn, unit in fields}
+                            for group, fields in FIELDS.items()})
 
 
 def air(path: Path, days: int, now: float, spreads_days: int = 10):

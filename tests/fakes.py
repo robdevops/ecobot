@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
+import sqlite3
 
 from lib.config import Config
 from lib.tools import Tools
@@ -314,3 +315,30 @@ async def archived_station(tmp_path, cache_file):
     await eco.start()
     fake.calls.clear()
     return eco, fake
+
+
+def old_live_file(path, found: dict, now: float | None = None):
+    """An ecowitt_live.sqlite of the bot from before ecobot.sqlite ({series: {5-minute mark: (readings, lowest, highest)}}), as
+    ecowitt.live.LiveRanges wrote it: the ranges, and the half hours of those with two readings or more rolled up."""
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS ranges (series TEXT, ts INTEGER, n INTEGER, lo REAL, hi REAL, PRIMARY KEY (series, ts)) WITHOUT ROWID")
+    db.execute("CREATE TABLE IF NOT EXISTS slots (series TEXT, ts INTEGER, lo REAL, hi REAL, PRIMARY KEY (series, ts)) WITHOUT ROWID")
+    rows = [(series, mark, n, lo, hi) for series, marks in found.items() for mark, (n, lo, hi) in marks.items()]
+    db.executemany("INSERT INTO ranges VALUES (?, ?, ?, ?, ?) ON CONFLICT (series, ts) DO UPDATE SET "
+                   "n = MAX(n, excluded.n), lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)", rows)
+    db.executemany("INSERT INTO slots VALUES (?, ?, ?, ?) ON CONFLICT (series, ts) DO UPDATE SET lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)",
+                   [(series, mark // 1800 * 1800, lo, hi) for series, mark, n, lo, hi in rows if n >= 2])
+    db.commit()
+    db.close()
+
+
+def old_minutes_file(path, data: dict):
+    """An ecowitt_minutes.sqlite of the bot from before ecobot.sqlite ({group: {field: {"unit", "list": {epoch: text}}}}), as
+    ecowitt.minutes.MinuteStore wrote it."""
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS minutes (grp TEXT, field TEXT, t INTEGER, unit TEXT, value TEXT, PRIMARY KEY (grp, field, t)) WITHOUT ROWID")
+    db.executemany("INSERT OR REPLACE INTO minutes VALUES (?, ?, ?, ?, ?)",
+                   [(group, field, int(t), obj.get("unit", ""), str(v)) for group, fields in data.items() for field, obj in fields.items()
+                    for t, v in obj["list"].items()])
+    db.commit()
+    db.close()

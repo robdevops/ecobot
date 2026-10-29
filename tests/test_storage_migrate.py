@@ -15,15 +15,13 @@ from lib.airgradient.store import AirStore
 from lib.ecowitt.api import UNITS
 from lib.ecowitt.api import FINE_CYCLES
 from lib.ecowitt.days import FIELDS
-from lib.ecowitt.live import LiveRanges
-from lib.ecowitt.minutes import MinuteStore
 from lib.ecowitt.store import HistoryCache
 from lib.snapshots import Snapshots
 from lib.storage import FILE, Storage
 from lib.storage import migrate as migration
 from lib.storage.catalogue import BOT, CLOUD
 from lib.timeutil import day_bounds, local_date
-from tests.fakes import MAC, TZ
+from tests.fakes import MAC, TZ, old_live_file, old_minutes_file
 
 DAY = 86400
 
@@ -49,12 +47,8 @@ def old_files(folder: Path, now: int) -> dict:
     cache.db.execute("DELETE FROM meta WHERE key = 'unit_fixes'")   # as a cache from before the vpd's unit fix
     cache.db.commit()
     cache.close()
-    live = LiveRanges(folder / "ecowitt_live.sqlite")
-    live.put({"outdoor.temperature": {start + 600: (3, 9.0, 13.0), start + 900: (1, 11.0, 11.0)}})
-    live.close()
-    minutes = MinuteStore(folder / "ecowitt_minutes.sqlite")
-    minutes.put({"outdoor": {"temperature": {"unit": "℃", "list": {str(t): "12.5" for t in range(now - 3600, now, 60)}}}}, now)
-    minutes.close()
+    old_live_file(folder / "ecowitt_live.sqlite", {"outdoor.temperature": {start + 600: (3, 9.0, 13.0), start + 900: (1, 11.0, 11.0)}})
+    old_minutes_file(folder / "ecowitt_minutes.sqlite", {"outdoor": {"temperature": {"unit": "℃", "list": {str(t): "12.5" for t in range(now - 3600, now, 60)}}}})
     air = AirStore(folder / "airgradient_cache.sqlite", "42", TZ)
     air.save_day(d, [{"ts": t, "pm2_5": 5.0, "co2": 420.0} for t in range(start, end + 1, 300)])
     hourly = d - timedelta(days=200)

@@ -222,8 +222,8 @@ async def test_a_question_the_cache_and_memory_can_answer_does_not_wait_for_a_re
     now = eco.now()
     since = max(now - timedelta(hours=3), datetime.combine(now.date(), time()))   # (memory holds today: not the evening before, in the first hours of the day)
     question = eco.fetcher(["outdoor"], urgent=True)
-    data = await asyncio.wait_for(question.get("5min", since, now), 2)
-    assert data["outdoor"]["temperature"]["list"] and question.calls == 0 and question.from_memory == 1
+    rows = await asyncio.wait_for(question.get("5min", since, now), 2)
+    assert rows and "outdoor.temperature" in rows[-1][1] and question.calls == 0 and question.from_memory == 1
     assert not refresh.done()
     answering.set()
     await refresh
@@ -257,7 +257,7 @@ async def test_the_refresh_builds_no_result_it_would_not_read(station, monkeypat
     from lib.ecowitt import fetch
     eco, fake = station
     built = []
-    monkeypatch.setattr(fetch, "load_on", lambda *a, **k: built.append(a))
+    monkeypatch.setattr(fetch, "rows_on", lambda *a, **k: built.append(a))
     await eco.warm(True)
     assert any(c["path"] == "history" for c in fake.calls) and built == []
 
@@ -377,7 +377,7 @@ async def test_archive_reports_how_much_history_is_held(tmp_path, monkeypatch):
     arch = Archive(eco)
     assert arch.held() == "0/0/0/0 days held (5m/30m/4h/1d)"
     await arch.run_once()
-    held = {c: eco.cache.days_held(eco.mac, c, arch.groups) for c in ("5min", "30min", "4hour", "1day")}
+    held = {c: eco.fetcher(arch.groups).days_held(c) for c in ("5min", "30min", "4hour", "1day")}
     assert all(55 <= held[c] <= 62 for c in ("5min", "30min", "4hour", "1day"))
     assert arch.held().startswith(f"{held['5min']}/{held['30min']}/{held['4hour']}/{held['1day']} days")
     await eco.close()
@@ -1037,23 +1037,25 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
 
 def test_a_reading_is_shaded_alike_on_every_chart_ecowitts_own_range_else_the_5_minute_readings(tmp_path):
     """reading_slots, which plot_chart and weather_link both draw from: Ecowitt's own 30-minute lows and highs where it gives them,
-    else the range of the cached 5-minute readings in each slot; wind's band reaches its gusts."""
+    widened by the 5-minute readings in each slot (the storage rolls them up as they are written); wind's band reaches its gusts."""
     from lib.ecowitt.link import reading_slots
-    from lib.ecowitt.store import HistoryCache
-    cache = HistoryCache(tmp_path / "c.sqlite", {"u": "C"})
+    from tests.fakes import storage_with
+    storage = storage_with(tmp_path)
     t = int(datetime.now().timestamp() - 10 * 86400) // 1800 * 1800
 
     def put(cycle, group, **fields):
         data = {group: {f: {"unit": "", "list": {str(ts): str(v) for ts, v in points.items()}} for f, points in fields.items()}}
-        cache.store("M", cycle, [group], data, t, t + 1799)
+        storage.writer.run(lambda w: w.put_ecowitt("M", cycle, [group], data, t, t + 1799), ())
+    slots = lambda name: storage.read_now(reading_slots, "M", name, t, t + 1799)
     put("30min", "pressure", relative={t: 1015.0})
     put("5min", "pressure", relative={t + 300 * i: 1014.0 + i for i in range(6)})
-    assert reading_slots(cache, "M", "pressure", t, t + 1799) == ({t: 1015.0}, {t: 1014.0}, {t: 1019.0})
+    assert slots("pressure") == ({t: 1015.0}, {t: 1014.0}, {t: 1019.0})
     put("30min", "outdoor", humidity={t: 60.0}, humidity_low={t: 52.0}, humidity_high={t: 71.0})
     put("5min", "outdoor", humidity={t + 300 * i: 40.0 + i for i in range(6)})
-    assert reading_slots(cache, "M", "humidity", t, t + 1799) == ({t: 60.0}, {t: 52.0}, {t: 71.0})
+    assert slots("humidity") == ({t: 60.0}, {t: 40.0}, {t: 71.0})     # (a band only widens: the 5-minute readings reach lower)
     put("30min", "wind", wind_speed={t: 8.0}, wind_speed_low={t: 2.0}, wind_speed_high={t: 12.0}, wind_gust={t: 20.0}, wind_gust_high={t: 31.0})
-    assert reading_slots(cache, "M", "wind", t, t + 1799) == ({t: 8.0}, {t: 2.0}, {t: 31.0})
+    assert slots("wind") == ({t: 8.0}, {t: 2.0}, {t: 31.0})
+    storage.close()
 
 
 def test_the_pair_chart_band_is_ecowitts_own_lows_and_highs_where_the_cache_has_them():

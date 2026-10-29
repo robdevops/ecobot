@@ -26,9 +26,10 @@ lib/specs.py            what a chart is (typed: Chart > Panel > Line/Bars/Shares
 lib/panels.py           how a reading becomes a panel (title, unit, colour key, zones): every chart producer uses it
 lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading
 lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
-lib/ecowitt/            api, fetch (what a job reads, from the storage or Ecowitt), stored (for now: the old cache's reads, from the storage),
-                        extremes, query (one history question), link (weather_link), days (rank/count days), rain (rain times and amounts
-                        for the alerts), station, nightly archive; store (the old cache: what the scripts and the move to ecobot.sqlite read)
+lib/ecowitt/            api, fetch (what a job reads, from the storage or Ecowitt), reads and period (what a question reads of the storage:
+                        its period's days, readings, lines), extremes, query (one history question), link (weather_link), days (rank/count
+                        days), rain (rain times and amounts for the alerts), station, nightly archive; store (the old cache: what the
+                        scripts and the move to ecobot.sqlite read)
 lib/airgradient/        metrics, store (SQLite), source
 lib/storage/            the bot's file of readings, ecobot.sqlite (docs/storage-plan.md): the station's since step 2, the AirGradient's from step 3;
                         catalogue, schema, write, days, read, migrate (the old files moved in, once, at start)

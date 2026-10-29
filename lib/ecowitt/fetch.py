@@ -11,7 +11,7 @@ from ..storage import Storage
 from ..storage.coverage import merge as merge_intervals
 from ..timeutil import local_epoch, naive_local
 from .api import CYCLES, EcowittError
-from .stored import StoredHistory, load_on, minutes_on
+from .reads import rows_on
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,6 @@ class Fetcher:
         """urgent: someone is waiting for the answer, so its requests go before the background ones queued for Ecowitt. minutes: the
         station's minute readings are kept (Home Assistant's)."""
         self.api, self.storage, self.recent, self.tz, self.urgent, self.has_minutes = api, storage, recent, tz, urgent, minutes
-        self.cache = StoredHistory(storage)   # (TEMPORARY: what the readers not moved to the storage yet read)
         self.mac = mac.strip().upper()
         self.groups = [g.split(".")[0].strip() for g in groups if g.strip()]  # plain names, never "outdoor.temp"
         self.ranges = self.from_cache = self.from_memory = self.calls = 0
@@ -104,13 +103,13 @@ class Fetcher:
         return naive_local(epoch, self.tz)
 
     @timed
-    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> dict:
-        """Readings for [start, end] (local time), however long: what Ecowitt is asked for is split to its per-request limit.
-        refresh=True ignores the in-memory copy (used by
-        the keep-warm refresh). load=False only makes sure the range is cached and in memory, and
-        skips building the result nobody will read (the refresh and the archive).
-        When the cache and memory hold it all (the usual case) it is read at once, even while a refresh is fetching; otherwise
-        it waits for any fetch of this cycle in flight (which may bring it), so the same thing isn't asked of Ecowitt twice."""
+    async def get(self, cycle: str, start: datetime, end: datetime, refresh: bool = False, load: bool = True) -> list[tuple[int, dict]]:
+        """The readings of [start, end] (local time) at this resolution, as rows ([(epoch, {"group.field": value, ...})], reads.rows_on),
+        however long: what the storage lacks is asked of Ecowitt, split to its per-request limit, and written there first. refresh=True
+        asks again for what a fresh fetch brought (the keep-warm refresh). load=False only makes sure the range is held, and reads nothing
+        (the refresh, the archive, a question that reads in its own way). When the storage holds it all (the usual case) it is read at
+        once, even while a refresh is fetching; otherwise it waits for any fetch of this cycle in flight (which may bring it), so the same
+        thing isn't asked of Ecowitt twice."""
         self.ranges += 1
         s, e = self.epoch(start), self.epoch(end)
         if not refresh and (held := await self._read(cycle, s, e, load, fetch=False)) is not None:
@@ -118,10 +117,10 @@ class Fetcher:
         async with self.recent.lock(self.mac, cycle):
             return await self._read(cycle, s, e, load, fetch=True, refresh=refresh)
 
-    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> dict | None:
+    async def _read(self, cycle: str, s: int, e: int, load: bool, fetch: bool, refresh: bool = False) -> list | None:
         """[s, e] (epoch seconds) from the storage, and (fetch) what it does not hold, nor a fresh fetch brought, from Ecowitt (written to
         the storage first). None, with nothing counted, when fetch is False and some of it is neither held nor fresh."""
-        (missing,) = self._missing(cycle, [(s, e)])
+        (missing,) = self.uncovered(cycle, [(s, e)])
         gaps = merge_intervals([iv for ivs in missing.values() for iv in ivs])
         from_memory = 0
         for gap_start, gap_end in gaps:
@@ -142,8 +141,8 @@ class Fetcher:
         self.from_cache += not gaps
         self.from_memory += from_memory
         if not load:
-            return {}
-        return await self.storage.read(load_on, self.mac, cycle, self.groups, s, e)
+            return []
+        return await self.storage.read(rows_on, self.mac, self.groups, cycle, s, e)
 
     async def _fetch(self, cycle: str, start: datetime, end: datetime, groups: list[str]) -> dict | None:
         """One Ecowitt request: its data ({} if none), or None if it failed."""
@@ -169,9 +168,16 @@ class Fetcher:
         """fn(reader, *args) on the storage's reader thread: one hop, its queries in one read transaction."""
         return await self.storage.read(fn, *args)
 
-    def _missing(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
-        """For each window (epoch seconds), the parts of it the storage lacks, by group (the coverage is in memory)."""
-        return self.cache.uncovered(self.mac, self.groups, [(cycle, s, e) for s, e in windows])
+    def uncovered(self, cycle: str, windows: list[tuple[int, int]]) -> list[dict[str, list[tuple[int, int]]]]:
+        """For each window (epoch seconds), the parts of it the storage lacks at this resolution, by group (the coverage is in memory; a
+        group the storage has no sensor for lacks all of it)."""
+        sensors = {g: self.storage.sensors.find(self.mac, g) for g in self.groups}
+        return [{g: self.storage.coverage.gaps(s.id, cycle, a, b) if s else [(a, b)] for g, s in sensors.items()} for a, b in windows]
+
+    def days_held(self, cycle: str) -> int:
+        """How many days of readings the storage holds at this resolution, of the group it holds the fewest of."""
+        return min((self.storage.coverage.days(s.id, cycle) if (s := self.storage.sensors.find(self.mac, g)) else 0 for g in self.groups),
+                   default=0)
 
     def sibling(self, groups: list[str]) -> "Fetcher":
         """A fetcher of other groups for the same job."""
@@ -184,12 +190,4 @@ class Fetcher:
     @timed
     async def covered_each(self, cycle: str, windows: list[tuple[int, int]]) -> list[bool]:
         """covered() for each of these windows, from one read of the coverage."""
-        return [bool(self.groups) and not any(missing.values()) for missing in self._missing(cycle, windows)]
-
-    @timed
-    async def minutes(self, start: datetime, end: datetime) -> dict:
-        """The minute readings of [start, end] (local time) the bot has kept (Home Assistant's): {} where it has none or they do not reach
-        back to the start, and the caller uses the 5-minute readings."""
-        if not self.has_minutes:
-            return {}
-        return await self.storage.read(minutes_on, self.mac, self.groups, self.epoch(start), self.epoch(end))
+        return [bool(self.groups) and not any(missing.values()) for missing in self.uncovered(cycle, windows)]

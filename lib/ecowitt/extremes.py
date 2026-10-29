@@ -1,11 +1,10 @@
-"""Ecowitt readings as per-series points, and a record (a lowest or highest) with when it happened, in words."""
+"""A record (a lowest or highest reading) and when it happened, in words."""
 
 from datetime import datetime, tzinfo, UTC
 from typing import NamedTuple
 
 from ..timeutil import clock_text, day_text
 from .api import MINUTE, cycle_seconds
-from .fetch import series_in
 
 
 class Ext(NamedTuple):
@@ -14,24 +13,6 @@ class Ext(NamedTuple):
     ts: int
     cycle: str
     exact: bool     # a real reading or a bucket's true low/high, not an average
-
-
-def collect(store: dict, data: dict, cycle: str):
-    """Fold an Ecowitt 'data' object into store["group.field"] = {unit, pts: {ts: rec}}.
-    rec holds value / low / high as (float, raw string) and the source cycle."""
-    for group, fname, fobj in series_in(data):
-        base, kind = fname, "value"
-        if fname.endswith("_low"):
-            base, kind = fname[:-4], "low"
-        elif fname.endswith("_high"):
-            base, kind = fname[:-5], "high"
-        series = store.setdefault(f"{group}.{base}", {"unit": fobj.get("unit", ""), "pts": {}})
-        for ts, raw in fobj["list"].items():
-            try:
-                rec = series["pts"].setdefault(int(ts), {"cycle": cycle})
-                rec[kind] = (float(raw), str(raw))
-            except (TypeError, ValueError):
-                continue
 
 
 def low_of(rec: dict) -> float:

@@ -1,7 +1,8 @@
-"""What a history answer reads from the storage, once what it needs is held (fetched first where the storage lacked it): in one read on
-the reader's thread, the period's days (period.py) and the series it has, what its chart draws (the readings themselves for a line short
-enough to draw them, else the line bucketed by the database; a line of days is drawn from the period's days), the wind's readings for
-counting its direction and the rain counter for its bars.
+"""What the station's readers read from the storage, each in one read on the reader's thread. A history answer, once what it needs is held
+(fetched first where the storage lacked it): the period's days (period.py) and the series it has, what its chart draws (the readings
+themselves for a line short enough to draw them, else the line bucketed by the database; a line of days is drawn from the period's days),
+the wind's readings for counting its direction and the rain counter for its bars. The alerts: the newest readings as rows. weather_link
+and the composed charts: a reading per 30-minute slot, with its band.
 
 A reading is a lines.Sample (its value, its band where it has one, the seconds it covers), written as the station writes it (the
 catalogue's decimals: a 5-minute mean of the bot's live readings is drawn as the station would have sent it).
@@ -10,7 +11,7 @@ catalogue's decimals: a 5-minute mean of the bot's live readings is drawn as the
 from dataclasses import dataclass, field
 
 from ..lines import Plotted, Sample
-from ..storage.catalogue import BY_NAME, KINDS, field_of
+from ..storage.catalogue import BY_NAME, KINDS, column_of, field_of
 from ..storage.read import Reader
 from ..storage.schema import some_value
 from .api import cycle_seconds
@@ -62,6 +63,13 @@ def first_minute_on(r: Reader, mac: str, groups: list[str], start: int, end: int
     return min((t for t in found if t is not None), default=None)
 
 
+def newest_minute_on(r: Reader, mac: str) -> int | None:
+    """The time of the newest minute held of the station (where the next pull of Home Assistant's starts), None for none."""
+    found = [r.db.execute(f"SELECT MAX(ts) FROM {s.kind} WHERE sensor = ? AND res = '1min'", (s.id,)).fetchone()[0]
+             for s in r.sensors(device=mac) if s.kind in KINDS]
+    return max((t for t in found if t is not None), default=None)
+
+
 def counts_on(r: Reader, mac: str, groups: list[str], start: int, end: int) -> dict[str, int]:
     """{resolution: the readings held of the groups from start to end}, for a question that found none."""
     out = {}
@@ -74,13 +82,39 @@ def counts_on(r: Reader, mac: str, groups: list[str], start: int, end: int) -> d
     return out
 
 
+def slot_values_on(r: Reader, mac: str, group: str, field: str, res: str, start: int, end: int) -> tuple[dict, dict, dict]:
+    """({epoch: value}, {epoch: lowest}, {epoch: highest}) of a reading's settled rows at this resolution (the band where the row has
+    one: Ecowitt's own lows and highs, or those its finer readings and the bot's and Home Assistant's live readings gave it)."""
+    sensor, place = r.sensor(mac, group), column_of(group, field)
+    if sensor is None or sensor.kind not in KINDS or place is None:
+        return {}, {}, {}
+    column = place[0]
+    got = r.rows(sensor.kind, [sensor.id], res, start, end, [column]).get(sensor.id)
+    if got is None:
+        return {}, {}, {}
+    rows = [(t, v, lo, hi) for t, v, lo, hi, final in zip(got.ts, got.values[column], got.lo[column], got.hi[column], got.final)
+            if v is not None and final]
+    return ({t: v for t, v, _, _ in rows}, {t: lo for t, _, lo, _ in rows if lo is not None}, {t: hi for t, _, _, hi in rows if hi is not None})
+
+
 def _settled(r: Reader, mac: str, group: str, column: str, res: str, start: int, end: int) -> dict[int, float]:
     """{epoch: value} of a reading's settled rows at this resolution."""
-    sensor = r.sensor(mac, group)
-    if sensor is None or sensor.kind not in KINDS:
-        return {}
-    got = r.rows(sensor.kind, [sensor.id], res, start, end, [column]).get(sensor.id)
-    return {} if got is None else {t: v for t, v, final in zip(got.ts, got.values[column], got.final) if v is not None and final}
+    return slot_values_on(r, mac, group, column, res, start, end)[0]
+
+
+def rows_on(r: Reader, mac: str, groups: list[str], cycle: str, start: int, end: int) -> list[tuple[int, dict[str, float]]]:
+    """The groups' readings at this resolution from start to end (the newest, not settled, too) as the alert monitors read them:
+    [(epoch, {"group.field": value, "group.field_low": ..., "group.field_high": ...})], oldest first."""
+    store: Store = {}
+    readings_on(r, mac, groups, cycle, start, end, store)
+    rows: dict[int, dict[str, float]] = {}
+    for key, series in store.items():
+        for t, s in series["pts"].items():
+            row = rows.setdefault(t, {})
+            row[key] = s.value
+            if s.low is not None:
+                row[key + "_low"], row[key + "_high"] = s.low, s.high
+    return sorted(rows.items())
 
 
 def buckets_on(r: Reader, mac: str, groups: list[str], res: tuple[str, ...], start: int, end: int, width: int) -> dict[str, Plotted]:
@@ -130,4 +164,5 @@ def history_on(r: Reader, mac: str, groups: list[str], plan: list[tuple[str, int
     return held
 
 
-__all__ = ["Held", "Store", "buckets_on", "counts_on", "first_minute_on", "history_on", "readings_on"]
+__all__ = ["Held", "Store", "buckets_on", "counts_on", "first_minute_on", "history_on", "newest_minute_on", "readings_on", "rows_on",
+           "slot_values_on"]

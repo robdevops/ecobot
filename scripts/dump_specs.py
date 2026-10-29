@@ -133,7 +133,7 @@ async def main():
         eco = air = None
         if have_eco:
             eco = Ecowitt(cfg, transport=Offline())
-            eco.mac = next(iter(eco.cache.macs()), "")
+            eco.mac = next(iter(sorted({s.device for s in eco.storage.sensors.all() if s.kind != "air"})), "")
         if have_air:
             air = AirGradient(cfg, transport=Offline())
         tools = {t.name: t for s in (eco, air) if s for t in s.tools}

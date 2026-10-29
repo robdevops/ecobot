@@ -256,8 +256,8 @@ class Writer:
         return len(times)
 
     def roll_up(self, sensor: Sensor, start: int, end: int):
-        """Widen the bands of the 30-minute readings from start to end by the 5-minute readings inside them (what
-        HistoryCache.slot_ranges and LiveRanges' half hours gave at read time)."""
+        """Widen the bands of the 30-minute readings from start to end by the 5-minute readings inside them (what the old cache's
+        slot_ranges and the live ranges' half hours gave at read time)."""
         if any(c.ranged for c in KINDS[sensor.kind]):
             self.db.execute(rollup_sql(sensor.kind), {"sensor": sensor.id, "start": start - start % SLOT, "end": end})
 
