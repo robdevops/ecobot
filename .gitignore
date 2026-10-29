@@ -16,3 +16,4 @@ chart-diffs/
 .claude/settings.local.json
 matplotlib/
 .env
+.claude/worktrees/
