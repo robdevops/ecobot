@@ -96,6 +96,8 @@ Watch the logs:
 journalctl -fu ecobot
 ```
 
+Warnings and errors alone: `journalctl -p warning -u ecobot`.
+
 Then message `/report` to your Telegram bot.
 
 The service runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
@@ -135,6 +137,8 @@ Logs go to Docker's own rotated log; to send them to the journal instead (kept a
 ```
 echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee /opt/ecobot/.env
 ```
+
+The bot writes warnings and errors to stderr and the rest to stdout, which Docker files in the journal at the priorities err and info, so `journalctl -p warning CONTAINER_NAME=ecobot` shows the warnings and errors alone.
 
 To use both this and [Docker host network](#docker-networking), set `COMPOSE_FILE=compose.yaml:compose.host-network.yaml:compose.journald.yaml`.
 
