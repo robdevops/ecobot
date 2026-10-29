@@ -1069,8 +1069,7 @@ class Bot:
             if skipped:
                 log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take %d of the charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
             if done:
-                log.info("[Telegram] Preloaded %s of %r to chat %s in %.1fs", ", ".join(periods.NAMES[days] for days in periods.PERIODS if days in done), question,
-                         chat, time.monotonic() - started, extra=QUOTES)
+                log.info("[Telegram] Preloaded %r to %s in %.1fs", question, chat, time.monotonic() - started, extra=QUOTES)
         finally:
             self.preloading.discard(question)
 

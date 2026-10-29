@@ -209,4 +209,14 @@ async def test_the_first_warm_on_the_first_of_october_fetches_without_a_restart(
 def test_no_data_is_not_a_level_so_it_reads_as_no_forecast():
     got = parse_melbourne_pollen(page(grass="No data", asthma="No data"))
     assert got["melbourne_grass"] is None and got["thunderstorm_asthma"] == {"Wimmera": "High"}   # Central has none: Wimmera is another district
-    assert LEVELS == ("Low", "Moderate", "High") and [LEVEL_EMOJI[k] for k in LEVELS] == ["🟢", "🟠", "🔴"]
+    assert LEVELS == ("Low", "Moderate", "High", "Extreme") and [LEVEL_EMOJI[k] for k in LEVELS] == ["🟢", "🟠", "🔴", "🟣"]
+
+
+def test_extreme_is_the_top_of_the_scale_and_is_read_like_the_others():
+    got = parse_melbourne_pollen(page(grass="Extreme", asthma="Extreme"))
+    assert got["melbourne_grass"] == "Extreme" and got["thunderstorm_asthma"].get("Central") == "Extreme"
+
+
+def test_the_level_is_read_whatever_its_case():
+    got = parse_melbourne_pollen(page(grass="EXTREME", asthma="EXTREME"))
+    assert got["melbourne_grass"] == "Extreme" and got["thunderstorm_asthma"].get("Central") == "Extreme"

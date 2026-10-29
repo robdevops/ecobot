@@ -1,9 +1,9 @@
 """Pollen and thunderstorm asthma alerts, checked after every refresh of the Pollen source (every 30 minutes in the day, October to
 December only).
 
-A warning when grass pollen or the thunderstorm asthma risk is High 🔴 (the scale is Low 🟢, Moderate 🟠, High 🔴; "No data" counts
-as no reading). One alert per metric and day: another on a new day that is still High; none while it stays the same. Once it drops
-below High the metric is ready to warn again.
+A warning when grass pollen or the thunderstorm asthma risk is High 🔴 or Extreme 🟣 (the scale is Low 🟢, Moderate 🟠, High 🔴, Extreme 🟣; "No data" counts
+as no reading). One alert per metric and day: another on a new day that is still High, and again when it rises (High to Extreme);
+none while it stays the same. Once it drops below High the metric is ready to warn again.
 """
 
 import logging
@@ -43,8 +43,9 @@ class PollenAndAsthmaMonitor:
             if LEVELS.index(reading["level"]) < WARN_FROM:
                 m.pop(key, None)
                 continue
-            if (m.get(key) or {}).get("day") != str(today):   # once a day while it stays High (the top of the scale)
-                m[key] = {"day": str(today)}
+            seen = m.get(key) or {}
+            if seen.get("day") != str(today) or LEVELS.index(seen.get("level", "High")) < LEVELS.index(reading["level"]):   # once a day while it stays High or worse, and again when it rises
+                m[key] = {"day": str(today), "level": reading["level"]}
                 for_day = reading.get("date")
                 when = f" (forecast for {day_text(for_day, year=False)})" if for_day and for_day != today else ""
                 await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen_and_asthma")

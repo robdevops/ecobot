@@ -7,8 +7,8 @@ from datetime import datetime
 from html.parser import HTMLParser
 from itertools import pairwise
 
-LEVELS = ("Low", "Moderate", "High")   # the site's scale; "No data" is not a level: it reads as if there were no forecast
-LEVEL_EMOJI = {"Low": "🟢", "Moderate": "🟠", "High": "🔴"}
+LEVELS = ("Low", "Moderate", "High", "Extreme")   # the site's scale; "No data" is not a level: it reads as if there were no forecast
+LEVEL_EMOJI = {"Low": "🟢", "Moderate": "🟠", "High": "🔴", "Extreme": "🟣"}
 DISTRICTS = {"Central", "East Gippsland", "Mallee", "North Central", "North East",
              "Northern Country", "South West", "West and South Gippsland", "Wimmera"}
 GRASS_HEADING, ASTHMA_HEADING = "Victorian District Grass Pollen Forecast", "Thunderstorm Asthma Forecast"
@@ -54,7 +54,7 @@ def _section(lines: list[str], heading: str, stops: list[str]) -> list[str]:
 
 
 def _district_levels(lines: list[str]) -> dict[str, str]:
-    return {a: b for a, b in pairwise(lines) if a in DISTRICTS and b in LEVELS}
+    return {a: b.capitalize() for a, b in pairwise(lines) if a in DISTRICTS and b.capitalize() in LEVELS}   # (the site writes EXTREME on the gauge at times)
 
 
 def _last_updated(lines: list[str]) -> str | None:
@@ -75,7 +75,7 @@ def parse_melbourne_pollen(html: str) -> dict:
     # Today's Melbourne forecast: the elements with id="plevel" / id="pdate" (fallback: the first "pollen-level level-X" class)
     m_level = (re.search(r'id="plevel"[^>]*>\s*([^<]+?)\s*<', html)
                or re.search(r'class="pollen-level level-\w+"[^>]*>\s*([^<]+?)\s*<', html))
-    level = m_level.group(1) if m_level and m_level.group(1) in LEVELS else None
+    level = m_level.group(1).capitalize() if m_level and m_level.group(1).capitalize() in LEVELS else None
 
     date = None
     if m_date := re.search(r'id="pdate"[^>]*>\s*([^<]+?)\s*<', html):

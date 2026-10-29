@@ -197,7 +197,7 @@ def capabilities(have: Collection[str], brief: bool = False) -> str:
                      "Use them for \"plot X against Y\", \"does rain affect air quality\" and \"is there a correlation between air "
                      "quality and other metrics\"; a series or style not listed can't be plotted: say so.")
     if "Pollen" in have:
-        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High), tool pollen_asthma. "
+        lines.append("- Pollen: Melbourne's grass pollen level and the thunderstorm asthma risk (Low, Moderate, High, Extreme), tool pollen_asthma. "
                      "Both forecasts only run from October to December: outside those months the tool says so.")
     if "Forecast" in have:
         lines.append("- Forecast: today and the days ahead from Open-Meteo (summary, temperatures, chance of at least 1 mm of rain), tool weather_forecast.")
