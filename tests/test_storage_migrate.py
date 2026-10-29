@@ -76,8 +76,8 @@ def test_the_old_files_move_whole_and_are_not_touched(tmp_path):
     assert report.ok, report.problem
     assert {p.name: p.read_bytes() for p in tmp_path.glob("*.sqlite") if p.name != FILE} == before   # the old files, as they were
     assert not (tmp_path / f"{FILE}.part").exists() and report.moved["station readings"] == 288 * 2 + 3 * 48 + 4   # (and the lightning, two rain values, the vpd)
-    assert report.extra == {"outdoor.lightning": 1, "rainfall.daily": 1}       # no column for it; a value that is no number
-    assert report.differ == {}
+    assert report.extra == {"outdoor.lightning": 1} and report.odd == {"rainfall.daily": 1}   # no column for it; a value that is no number
+    assert report.differ == {} and "rainfall.daily 1 ('-')" in "\n".join(report.lines())
     s = Storage(tmp_path / FILE, TZ)
     try:
         r, start, d = s.reader, held["start"], held["day"]

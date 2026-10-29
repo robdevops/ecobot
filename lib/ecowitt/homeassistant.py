@@ -11,8 +11,9 @@ Entities are found by their names: the Ecowitt integration calls them sensor.<st
 """
 
 import logging
+import math
 import time
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left
 from datetime import UTC, datetime
 
 import httpx
@@ -40,7 +41,9 @@ def states_of(rows: list[dict]) -> list[tuple[float, float]]:
     out = []
     for row in rows:
         try:
-            out.append((parse_time(row.get("last_changed") or row["last_updated"]), float(row["state"])))
+            value = float(row["state"])
+            if math.isfinite(value):   # ("nan" and "inf" are numbers to float, not readings)
+                out.append((parse_time(row.get("last_changed") or row["last_updated"]), value))
         except (KeyError, TypeError, ValueError):
             continue
     return sorted(out)

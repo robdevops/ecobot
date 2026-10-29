@@ -18,7 +18,8 @@ def iso(t: float) -> str:
 
 def test_a_state_that_is_not_a_number_is_left_out_of_an_entitys_history():
     rows = [{"entity_id": "sensor.a", "state": "12.5", "last_changed": iso(M)}, {"state": "unavailable", "last_changed": iso(M + 60)},
-            {"state": "13.0", "last_changed": iso(M + 120)}, {"state": "oops"}, {"state": "9", "last_updated": iso(M + 30)}]
+            {"state": "13.0", "last_changed": iso(M + 120)}, {"state": "oops"}, {"state": "9", "last_updated": iso(M + 30)},
+            {"state": "nan", "last_changed": iso(M + 180)}, {"state": "inf", "last_changed": iso(M + 240)}]   # numbers to float, not readings
     assert states_of(rows) == [(M, 12.5), (M + 30, 9.0), (M + 120, 13.0)]
 
 

@@ -49,9 +49,10 @@ class Report:
     problem: str = ""                                         # why it failed
     seconds: float = 0.0
     moved: Counter = field(default_factory=Counter)           # what was moved: "station", "minutes", "bands", "AirGradient", "snapshots"
-    extra: Counter = field(default_factory=Counter)           # "group.field": values kept as they came (no column for them)
-    differ: Counter = field(default_factory=Counter)          # "group.field": values written back with other digits ...
-    example: dict = field(default_factory=dict)               # ... and one of them: (the old text, the new)
+    extra: Counter = field(default_factory=Counter)           # "group.field": values kept as they came, the catalogue having no column for them
+    odd: Counter = field(default_factory=Counter)             # "group.field": values that are not numbers, kept as they came
+    differ: Counter = field(default_factory=Counter)          # "group.field": values written back with other digits
+    example: dict = field(default_factory=dict)               # "group.field": one of each of those (the old text, and the new)
     sizes: tuple[int, int] = (0, 0)                           # bytes: the old files, the new one
 
     def lines(self) -> list[str]:
@@ -63,7 +64,11 @@ class Report:
         out = [f"Moved the history to {FILE} in {self.seconds:.1f}s: {moved}; {self.sizes[0] / 1e6:.1f} MB of old files, "
                f"{self.sizes[1] / 1e6:.1f} MB now"]
         if self.extra:
-            out.append("Kept as they came (no column for them yet): " + ", ".join(f"{k} ({n:,})" for k, n in sorted(self.extra.items())))
+            out.append("No column for them yet, kept as they came: " + ", ".join(
+                f"{k} {n:,} ({self.example[k][0]!r})" for k, n in sorted(self.extra.items())))
+        if self.odd:
+            out.append("Not numbers, kept as they came (no answer reads them): " + ", ".join(
+                f"{k} {n:,} ({self.example[k][0]!r})" for k, n in sorted(self.odd.items())))
         if self.differ:
             out.append("Written back with other digits: " + ", ".join(
                 f"{k} {n:,} ({self.example[k][0]!r} is now {self.example[k][1]!r})" for k, n in sorted(self.differ.items())))
@@ -165,7 +170,8 @@ def _ecowitt(w, path: Path, report: Report) -> str | None:
                 units[name] = unit
                 place = column_of(group, name)
                 key = None if place is None else place[0] if place[1] == "value" else f"{place[0]}_{place[1]}"
-                plan[sid] = (name, key, BY_NAME[sensor.kind][place[0]].decimals if place else 0, factor)
+                column = BY_NAME[sensor.kind][place[0]] if place else None
+                plan[sid] = (name, key, (column.decimals, column.whole) if column else (0, False), factor)
             w.fields(sensor, cycle, units)
             rows: dict[int, dict] = {}
             extra = []
@@ -180,18 +186,19 @@ def _ecowitt(w, path: Path, report: Report) -> str | None:
                 got = seen.get((raw, decimals))
                 if got is None:
                     number = _number(raw)
-                    got = seen[raw, decimals] = (number, number is None or text(number, decimals) == str(raw))
+                    got = seen[raw, decimals] = (number, number is None or text(number, *decimals) == str(raw))
                 number, same = got
                 if key is None or number is None:
                     extra.append((name, ts, str(raw)))
-                    report.extra[f"{group}.{name}"] += 1
+                    (report.extra if key is None else report.odd)[f"{group}.{name}"] += 1
+                    report.example.setdefault(f"{group}.{name}", (str(raw), ""))
                     continue
                 rows.setdefault(ts, {"ts": ts})[key] = number
                 moved[sid] += 1
                 totals[sid] += number
                 if not same:
                     report.differ[f"{group}.{name}"] += 1
-                    report.example.setdefault(f"{group}.{name}", (str(raw), text(number, decimals)))
+                    report.example.setdefault(f"{group}.{name}", (str(raw), text(number, *decimals)))
             for sid, n in moved.items():
                 got = expected[sensor, cycle, plan[sid][1]]
                 got[0], got[1] = got[0] + n, got[1] + totals[sid]

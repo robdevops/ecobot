@@ -70,9 +70,10 @@ def test_a_state_that_is_not_a_number_is_left_out_and_the_time_is_when_the_gatew
               {"entity_id": HA_PREFIX + "humidity", "state": "71", "last_changed": "2026-10-27T01:00:00+00:00", "last_updated": "2026-10-27T01:00:05+00:00",
                "last_reported": "2026-10-27T01:02:00+00:00"},
               {"entity_id": HA_PREFIX + "dewpoint", "state": "9.5", "last_updated": "2026-10-27T01:00:05+00:00"},
+              {"entity_id": HA_PREFIX + "relative_pressure", "state": "nan", "last_updated": "2026-10-27T01:00:05+00:00"},
               {"entity_id": "sensor.other_humidity", "state": "10", "last_updated": "2026-10-27T01:00:05+00:00"}]
-    got = live_data(states, HA_PREFIX, {"outdoor"})
-    assert set(got["outdoor"]) == {"humidity", "dew_point"}
+    got = live_data(states, HA_PREFIX, {"outdoor", "pressure"})
+    assert set(got["outdoor"]) == {"humidity", "dew_point"} and "pressure" not in got
     assert got["outdoor"]["humidity"] == {"time": "1793062920", "unit": "%", "value": "71"}                               # last_reported, when there is one
     assert got["outdoor"]["dew_point"]["time"] == "1793062805"                                                            # else last_updated
 

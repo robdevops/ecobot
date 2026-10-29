@@ -11,6 +11,7 @@ refused token).
 """
 
 import logging
+import math
 import time
 from datetime import tzinfo
 
@@ -43,6 +44,8 @@ def live_data(states: list[dict], prefix: str, groups: set[str], units: dict[str
             value = convert(float(state["state"]), e.kind, (units or {}).get(state["entity_id"]) or (state.get("attributes") or {}).get("unit_of_measurement"), e.scale)
             at = int(parse_time(state.get("last_reported") or state["last_updated"]))
         except (KeyError, TypeError, ValueError):
+            continue
+        if not math.isfinite(value):   # ("nan" is a number to float, not a reading)
             continue
         out.setdefault(e.group, {})[e.field] = {"time": str(at), "unit": e.unit, "value": written(value, e.decimals)}
     return out

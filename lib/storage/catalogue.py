@@ -15,6 +15,7 @@ class Column(NamedTuple):
     decimals: int       # how it is written back out: "12.3", "94"
     mode: str           # how a stretch of readings is told as one: "mean" (over time), "max" (gusts), "last" (a counter, a compass point)
     ranged: bool = True     # it takes a band from finer readings (a compass point and the rain counters do not)
+    whole: bool = False     # a whole number is written without its decimals: the cloud's UV is "3", Home Assistant's "1.4"
 
 
 RAIN_COUNTERS = ("daily", "event", "1_hour", "weekly", "monthly", "yearly")
@@ -24,7 +25,7 @@ KINDS: dict[str, tuple[Column, ...]] = {
     "pressure": (Column("relative", 1, "mean"), Column("absolute", 1, "mean")),
     "wind": (Column("wind_speed", 1, "mean"), Column("wind_gust", 1, "max"), Column("wind_direction", 0, "last", False)),
     "rain": (Column("rain_rate", 1, "mean", False), *(Column(name, 1, "last", False) for name in RAIN_COUNTERS)),
-    "light": (Column("solar", 1, "mean"), Column("uvi", 0, "mean")),
+    "light": (Column("solar", 1, "mean"), Column("uvi", 1, "mean", whole=True)),
     "air": (Column("pm1", 1, "mean"), Column("pm2_5", 1, "mean"), Column("pm10", 1, "mean"), Column("co2", 0, "mean"),
             Column("voc_index", 0, "mean"), Column("nox_index", 0, "mean"), Column("air_temperature", 1, "mean"),
             Column("air_humidity", 0, "mean")),
@@ -88,9 +89,11 @@ def field_of(group: str, column: str) -> str:
     return next((field for field, col in ECOWITT[group].aliases if col == column), column) if group in ECOWITT else column
 
 
-def text(value: float, decimals: int) -> str:
-    """A reading as the sources write one ("12.3", "94"): a zero is never written with a minus."""
+def text(value: float, decimals: int, whole: bool = False) -> str:
+    """A reading as the sources write one ("12.3", "94"): a zero is never written with a minus; whole, a whole number has no decimals."""
     written = f"{value:.{decimals}f}"
+    if whole and decimals and written.endswith("." + "0" * decimals):
+        written = written[: -decimals - 1]
     return written.lstrip("-") if float(written) == 0 else written
 
 

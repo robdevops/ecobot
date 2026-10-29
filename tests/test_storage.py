@@ -52,6 +52,7 @@ def test_each_field_has_its_column_its_low_and_high_theirs_and_an_unknown_one_no
     assert column_of("outdoor", "lightning") is None and column_of("temp_and_humidity_ch1", "temperature") is None
     assert catalogue.kind_of("temp_and_humidity_ch1") == catalogue.OTHER
     assert text(-0.04, 1) == "0.0" and text(12.25, 1) == "12.2" and text(94.0, 0) == "94" and text(0.0846, 3) == "0.085"
+    assert [text(v, 1, whole=True) for v in (3.0, 1.4, 2.96, -0.0)] == ["3", "1.4", "3", "0"]   # UV: the cloud's "3", Home Assistant's "1.4"
 
 
 def test_the_tables_come_from_the_catalogue_and_a_reading_added_to_it_is_added_to_them(tmp_path, monkeypatch):
