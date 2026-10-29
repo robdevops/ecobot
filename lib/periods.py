@@ -1,4 +1,4 @@
-"""The period buttons under a chart: 1D, 7D, 1M, 3M and 1Y (1, 7, 30, 90 and 365 days), always all five, the chart's own marked with ●. Pressing one redraws the chart
+"""The period buttons under a chart: 1D, 7D, 1M, 3M and 1Y (1, 7, 30, 90 and 365 days), always all five, the chart's own shaded (the blue of an alert toggle that is on). Pressing one redraws the chart
 for that period (Bot.on_period_button); the question behind each chart is remembered for that."""
 
 import time
@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from telegram import InlineKeyboardMarkup
 
 from . import intent
+from telegram.constants import KeyboardButtonStyle
+
 from .buttons import button
 
 NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # each period, in days, and what its button says
@@ -17,8 +19,9 @@ REMEMBERED = 300   # charts whose question is kept, newest first to stay
 
 
 def keyboard(current: int | None = None) -> InlineKeyboardMarkup:
-    """The one row of period buttons; the one for the chart's own period (`current`, in days) is marked with ●."""
-    return InlineKeyboardMarkup([[button(f"\u25cf {NAMES[days]}" if days == current else NAMES[days], f"{PREFIX}{days}") for days in PERIODS]])
+    """The one row of period buttons; the one for the chart's own period (`current`, in days) is shaded."""
+    return InlineKeyboardMarkup([[button(NAMES[days], f"{PREFIX}{days}", KeyboardButtonStyle.PRIMARY if days == current else None)
+                                  for days in PERIODS]])
 
 
 def days_in(data: str | None) -> int | None:
