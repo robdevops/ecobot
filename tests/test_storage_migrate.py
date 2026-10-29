@@ -14,13 +14,12 @@ import pytest
 from lib.ecowitt.api import UNITS
 from lib.ecowitt.api import FINE_CYCLES
 from lib.ecowitt.days import FIELDS
-from lib.ecowitt.store import HistoryCache
-from lib.snapshots import Snapshots
+from tests.old_cache import HistoryCache
 from lib.storage import FILE, Storage
 from lib.storage import migrate as migration
 from lib.storage.catalogue import BOT, CLOUD
 from lib.timeutil import day_bounds, local_date
-from tests.fakes import MAC, TZ, old_air_file, old_live_file, old_minutes_file
+from tests.fakes import MAC, TZ, old_air_file, old_conditions_file, old_live_file, old_minutes_file
 
 DAY = 86400
 
@@ -54,11 +53,8 @@ def old_files(folder: Path, now: int) -> dict:
                  {d: [{"ts": t, "pm2_5": 5.0, "co2": 420.0} for t in range(start, end + 1, 300)],
                   hourly: [{"ts": h_start + 3600 * h, "pm2_5": 7.0} for h in range(24)]},
                  recorded=[{"ts": now - 900, "pm2_5": 9.0, "_range": {"pm2_5": (8.0, 12.0)}}], spreads={"pm2_5": {start: (4.0, 6.0)}})
-    snaps = Snapshots(folder / "conditions_cache.sqlite")
-    snaps.save("pollen", {"level": "Low"}, now=100)
-    snaps.save("pollen", {"level": "High"}, now=200)
-    snaps.put("forecast_baseline", "x")
-    snaps.close()
+    old_conditions_file(folder / "conditions_cache.sqlite", [("pollen", 100, 100, {"level": "Low"}), ("pollen", 200, 200, {"level": "High"})],
+                        {"forecast_baseline": "x"})
     return {"day": d, "start": start, "end": end, "hourly": hourly}
 
 

@@ -1,7 +1,6 @@
 """The count of SQL statements and thread hops a request makes (lib/counts.py), and the benchmark that reports them."""
 import asyncio
 import shutil
-import sqlite3
 import sys
 from pathlib import Path
 

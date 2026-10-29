@@ -98,7 +98,7 @@ class Forecast(Source):
         self.source = ""
         self.fetched_at = 0.0
         self.requests = 0
-        self.store = Snapshots(cfg.conditions_cache_path)
+        self.store = Snapshots(cfg.storage_path)
         self._load()
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
         self.tools = [Tool("weather_forecast", DESCRIPTION, PARAMETERS, self.handle)]

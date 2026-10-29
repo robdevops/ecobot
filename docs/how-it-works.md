@@ -28,18 +28,17 @@ lib/charts.py           the one renderer: panels on a shared time axis, rain beh
 lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
 lib/ecowitt/            api, fetch (what a job reads, from the storage or Ecowitt), reads and period (what a question reads of the storage:
                         its period's days, readings, lines), extremes, query (one history question), link (weather_link), days (rank/count
-                        days), rain (rain times and amounts for the alerts), station, nightly archive; store (the old cache: what the
-                        scripts and the move to ecobot.sqlite read)
-lib/airgradient/        metrics, store (SQLite), source
-lib/storage/            the bot's file of readings, ecobot.sqlite (docs/storage-plan.md): the station's since step 2, the AirGradient's from step 3;
-                        catalogue, schema, write, days, read, migrate (the old files moved in, once, at start)
+                        days), rain (rain times and amounts for the alerts), station, nightly archive
+lib/airgradient/        metrics, readings (its readings in the bot's file), local (the monitor's own server), homeassistant (its states and
+                        history of the monitor), days (air_days), source
+lib/storage/            the bot's one file, ecobot.sqlite (docs/storage-plan.md): both sensors' readings, their day rows, the pollen page and
+                        the forecast; catalogue, schema, coverage, write, days, read, migrate (the old files moved in, once, at start)
 lib/alerts/             notify (chats, silent send), weather, particulates, pollen_and_asthma, irrigation (battery and rain delay)
 lib/irrigation/         the optional Tuya irrigation controller: tuya (signed API client), menu (status text and buttons), watchdog (closes the valve after a run)
 lib/pollen/, forecast/  the optional website sources: pollen + thunderstorm asthma, Open-Meteo forecast (fetched only 6 am-6 pm, see warm.py SYNC_HOURS)
 tests/                  pytest, against fake Ecowitt/AirGradient/Telegram; tests/evals holds the routing cases, tests/charts the chart reference images
-scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (is everything cached?), bench_storage.py (how long typical requests take on a copy of the caches, with their SQL statements and thread hops; in the Docker image too; tests/bench_cache.py builds a data folder like a real one for it), migrate_storage.py (moves a copy of the caches into the new storage, checks it, and times its reads), refill_airgradient.py (one-off: fetch the whole AirGradient history again), eval_prompts.py, show_request.py (exactly what is
-                        sent to the model for a question), check_rain.py (are rain totals trustworthy?), migrate_cache.py (one-off: converts an Ecowitt cache from before the series layout),
-                        dump_specs.py (draw the charts from the caches, offline, to compare before/after a change)
+scripts/                ecowitt_metrics.py (which metrics the station reports), cache_status.py (what ecobot.sqlite holds, and its gaps), bench_storage.py (how long typical requests take on a copy of the bot's file, with their SQL statements and thread hops; in the Docker image too; tests/bench_cache.py builds a data folder like a real one for it), migrate_storage.py (moves a copy of the old files into the new storage, checks it, and times its reads), refill_airgradient.py (one-off: fetch the whole AirGradient history again), eval_prompts.py, show_request.py (exactly what is
+                        sent to the model for a question), check_rain.py (are rain totals trustworthy?), dump_specs.py (draw the charts from the bot's file, offline, to compare before/after a change)
 ```
 
 A design for tappable commands and buttons is in `TELEGRAM_UX.md` (not built yet).
@@ -59,9 +58,9 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed)
 - Recent readings are refreshed every minute (the weather station: written to its storage, those still settling as provisional readings the next fetch replaces) and every 4 minutes (the air sensor, in memory); a question that may need them starts a refresh as it arrives (a chart made in code doesn't: it reads just what it needs). A question never waits for a refresh in flight when the storage already holds what it needs (the newest readings for 5 minutes after they were fetched), and its own Ecowitt requests go before the background ones.
 - A chart is drawn when it is asked for (a question, a button, an alert), and uploaded once: sending it again (to the next chat an alert goes to, toggling back to a period drawn lately, the next press of a button) uses Telegram's copy. With `TELEGRAM_PRELOAD_CHAT` the other periods of a chart are uploaded ahead of the press.
 - Each chart reply logs (at DEBUG) where its time went: `Chart ms: data 12, calc 6, draw 112, PNG 41 (22 KB), send 812`, or `Chart ms: drawn 40s ago, send 210 (Telegram's copy)` for one drawn lately.
-- The whole history of both sensors is kept in one SQLite file, `ecobot.sqlite` (`lib/storage`, docs/storage-plan.md; moved there once
-  from `ecowitt_cache.sqlite`, `ecowitt_live.sqlite`, `ecowitt_minutes.sqlite` and `airgradient_cache.sqlite`, which are left as they
-  were). A background archive copies every Ecowitt cycle (5-minute, 30-minute, 4-hour, daily) before Ecowitt expires it, and backfills
+- The whole history of both sensors, and the last pollen page and forecast, are kept in one SQLite file, `ecobot.sqlite` (`lib/storage`,
+  docs/storage-plan.md; moved there once from `ecowitt_cache.sqlite`, `ecowitt_live.sqlite`, `ecowitt_minutes.sqlite`,
+  `airgradient_cache.sqlite` and `conditions_cache.sqlite`, which are left as they were). A background archive copies every Ecowitt cycle (5-minute, 30-minute, 4-hour, daily) before Ecowitt expires it, and backfills
   AirGradient day by day to where the sensor's data starts. Questions only go to the APIs for data the file is missing. Each sensor's
   local days are worked out as its readings are written (the air sensor's with its glitches taken out), so `weather_days`, `air_days`,
   the dashboard and the long charts read a row a day.

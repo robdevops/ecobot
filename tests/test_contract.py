@@ -12,7 +12,7 @@ from lib.airgradient.readings import AirReadings
 from lib.storage import Storage, migrate as migration
 from lib.tools import Turn
 from lib.ecowitt import api
-from lib.ecowitt.store import HistoryCache
+from tests.old_cache import HistoryCache
 from tests.fakes import MAC, TZ, archived_station
 from tests.test_compose import composer
 

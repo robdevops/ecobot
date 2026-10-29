@@ -2,7 +2,6 @@ import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 
-import asyncio
 import pytest
 
 from lib.airgradient import Latest

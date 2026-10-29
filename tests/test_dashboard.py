@@ -6,7 +6,6 @@ import pytest
 from PIL import Image
 from telegram import InlineKeyboardMarkup
 
-from lib import bot as botmod
 from lib import gauges, intent
 from lib.bot import Bot
 from lib.ecowitt import dashboard as dash

@@ -254,7 +254,7 @@ def _ecowitt(w, path: Path, report: Report) -> str | None:
         meta = dict(db.execute("SELECT key, value FROM meta").fetchall()) if "meta" in _tables(db) else {}
         if "signature" in meta:
             w.set_meta("ecowitt_signature", meta["signature"])
-        fixed = meta.get("unit_fixes") == repr(sorted(UNIT_FIXES.items()))   # (else the vpd is still in inHg: converted, as HistoryCache does)
+        fixed = meta.get("unit_fixes") == repr(sorted(UNIT_FIXES.items()))   # (else the vpd is still in inHg: converted, as the old cache did)
         expected: dict[tuple[Sensor, str, str], list[float]] = defaultdict(lambda: [0, 0.0])
         per_mac: Counter = Counter()
         for mac, cycle, group in db.execute("SELECT DISTINCT mac, cycle, grp FROM series ORDER BY mac, cycle, grp").fetchall():

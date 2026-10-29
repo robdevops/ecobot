@@ -1,10 +1,8 @@
-import json
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, UTC
 
 import httpx
 import pytest
 
-from lib.ecowitt import homeassistant as ha
 from lib.ecowitt.live import BUCKET
 from lib.ecowitt.homeassistant import HomeAssistant, ranges_of, states_of
 from tests.fakes import archived_station, bands_of, config

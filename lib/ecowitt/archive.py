@@ -11,13 +11,13 @@ import asyncio
 import logging
 from collections.abc import Iterator
 from datetime import datetime, time, timedelta
-from time import monotonic
+from time import monotonic, time as epoch_now
 
 from ..timeutil import naive_local, now_local, seconds_until
 from ..warm import every
 from .api import CYCLES, MIN_GAP_SECONDS, kept_from
 from .fetch import spans
-from .store import horizon
+from ..storage.write import horizon
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class Archive:
             so the edge holds still between runs instead of creeping forward with the clock (which
             would leave a few seconds uncovered, and refetched, every time)."""
             size = CYCLES[cycle].seconds
-            ts = horizon(cycle) - size
+            ts = horizon(cycle, epoch_now()) - size
             return naive_local(ts - ts % size - 1, tz)
 
         for n in range((today - first_day("5min")).days, 0, -1):  # finished days only

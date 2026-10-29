@@ -72,7 +72,8 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
             if source is not None:
                 await safely(source.close)
     storage = None
-    parts = tuple(part for part, wanted in (("station", cfg.ecowitt), ("airgradient", cfg.airgradient)) if wanted)
+    parts = tuple(part for part, wanted in (("station", cfg.ecowitt), ("airgradient", cfg.airgradient), ("snapshots", cfg.pollen or cfg.forecast))
+                  if wanted)
     if parts:
         try:   # (the first time, the old files' history is moved into it: a few seconds, in a thread)
             storage = await asyncio.to_thread(open_storage, cfg.storage_path, cfg.tz, history_files(cfg), parts)

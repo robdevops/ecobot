@@ -1,6 +1,5 @@
 import json
 from datetime import date, datetime, time as dtime, timedelta
-from types import SimpleNamespace as NS
 
 import httpx
 

@@ -1,7 +1,5 @@
 import json
-from datetime import datetime, time as dtime, timedelta
-
-import httpx
+from datetime import datetime, time as dtime
 
 from lib import intent
 from lib.forecast import Forecast
@@ -120,7 +118,7 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
 
 async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):
     from lib.snapshots import Snapshots
-    store = Snapshots(tmp_path / "conditions.sqlite")
+    store = Snapshots(config(tmp_path).storage_path)
     today = datetime.now(TZ).date()
     store.save("forecast", {"source": "Bureau of Meteorology, Testville", "tag": "BOM",
                             "days": [{"date": str(today), "min_c": 11, "max_c": 17, "summary": "Rain.", "rain_chance_pct": 90}]})

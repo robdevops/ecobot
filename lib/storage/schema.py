@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS coverage (   -- the times fetched, merged (readings o
 CREATE TABLE IF NOT EXISTS extra (   -- a field the catalogue has no column for, or a value that is not a number: kept as it came
     sensor INTEGER NOT NULL, res TEXT NOT NULL, field TEXT NOT NULL, ts INTEGER NOT NULL, value TEXT,
     PRIMARY KEY (sensor, res, field, ts)) WITHOUT ROWID;
+"""
+
+SNAPSHOT_TABLES = """   -- the pollen page and the forecast, as fetched (lib/snapshots.py), and what their sources keep with them
 CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY, kind TEXT, first_seen REAL, last_seen REAL, payload TEXT);
 CREATE INDEX IF NOT EXISTS snapshots_kind ON snapshots (kind, id);
 CREATE TABLE IF NOT EXISTS snapshot_meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID;
@@ -84,6 +87,7 @@ def create(db: sqlite3.Connection) -> list[str]:
     if version > SCHEMA_VERSION:
         raise NewerFile(f"its schema is version {version}; this bot knows {SCHEMA_VERSION}")
     db.executescript(FIXED)
+    db.executescript(SNAPSHOT_TABLES)
     for kind in KINDS:
         db.execute(readings_table(kind))
         db.execute(days_table(kind))

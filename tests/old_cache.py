@@ -1,13 +1,10 @@
-"""Where Ecowitt readings are kept between questions.
+"""The station's old cache (ecowitt_cache.sqlite, from before ecobot.sqlite), as the old code wrote and read it: what the tests write old
+files with, and what the move into ecobot.sqlite is checked against (tests/test_storage_migrate.py). The bot has no use for it.
 
-HistoryCache (SQLite, survives restarts) holds settled readings per series and timestamp (a series is one
-(mac, cycle, group, field), kept once in the `series` table with its unit and a small integer id, so a reading's key is just that id and
-its time), plus which time ranges have been fetched per (mac, cycle, group). Coverage is recorded even when Ecowitt returns nothing (e.g. before
-the station existed), so those ranges aren't asked for again. The newest readings may
-still change (late uploads), so only buckets older than a per-cycle horizon are stored.
-
-The bot reads and writes ecobot.sqlite now (lib/storage, docs/storage-plan.md); this file is what the scripts that are not moved yet
-read, and what the move into ecobot.sqlite checks itself against.
+HistoryCache held settled readings per series and timestamp (a series is one (mac, cycle, group, field), kept once in the `series` table
+with its unit and a small integer id, so a reading's key is just that id and its time), plus which time ranges had been fetched per
+(mac, cycle, group). Coverage was recorded even when Ecowitt returned nothing, so those ranges weren't asked for again. The newest readings
+may still change (late uploads), so only buckets older than a per-cycle horizon were stored.
 """
 
 import json
@@ -16,9 +13,9 @@ import threading
 import time
 from bisect import bisect_left
 
-from ..counts import connect
-from ..timeutil import SLOT
-from .api import CYCLES, UNIT_FIXES
+from lib.counts import connect
+from lib.ecowitt.api import CYCLES, UNIT_FIXES
+from lib.timeutil import SLOT
 
 log = logging.getLogger(__name__)
 

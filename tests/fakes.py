@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
+import json
 import sqlite3
 
 from lib.config import Config
@@ -328,6 +329,18 @@ def old_live_file(path, found: dict, now: float | None = None):
                    "n = MAX(n, excluded.n), lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)", rows)
     db.executemany("INSERT INTO slots VALUES (?, ?, ?, ?) ON CONFLICT (series, ts) DO UPDATE SET lo = MIN(lo, excluded.lo), hi = MAX(hi, excluded.hi)",
                    [(series, mark // 1800 * 1800, lo, hi) for series, mark, n, lo, hi in rows if n >= 2])
+    db.commit()
+    db.close()
+
+
+def old_conditions_file(path, rows: list[tuple[str, float, float, dict]], meta: dict[str, str]):
+    """A conditions_cache.sqlite of the bot from before ecobot.sqlite: its snapshots ([(kind, first_seen, last_seen, payload)]) and meta."""
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY, kind TEXT, first_seen REAL, last_seen REAL, payload TEXT)")
+    db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID")
+    db.executemany("INSERT INTO snapshots (kind, first_seen, last_seen, payload) VALUES (?, ?, ?, ?)",
+                   [(kind, a, b, json.dumps(payload, sort_keys=True)) for kind, a, b, payload in rows])
+    db.executemany("INSERT INTO meta VALUES (?, ?)", list(meta.items()))
     db.commit()
     db.close()
 

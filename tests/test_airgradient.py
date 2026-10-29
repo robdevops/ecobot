@@ -95,7 +95,6 @@ async def test_history_is_capped_at_14_days(tmp_path):
 from datetime import timezone  # noqa: E402
 
 from lib.airgradient import source  # noqa: E402
-import httpx  # noqa: E402
 
 
 async def test_finished_days_survive_a_restart_and_need_no_requests(tmp_path):

@@ -1,6 +1,7 @@
-"""Draw the charts the bot would draw, from your two SQLite caches, and save each chart spec (JSON) and picture (PNG).
-Strictly offline: no API keys, no network (any request raises), and your caches are never touched (they are copied to a
-temporary folder first). A question the cache cannot answer is reported as "not cached" and skipped.
+"""Draw the charts the bot would draw, from the bot's file (ecobot.sqlite), and save each chart spec (JSON) and picture (PNG).
+Strictly offline: no API keys, no network (any request raises), and your file is never touched (it is copied to a temporary folder
+first; the old files from before ecobot.sqlite are moved into the copy if that is all there is). A question the file cannot answer
+is reported as "not cached" and skipped.
 
     python scripts/dump_specs.py --data-dir . --tz Australia/Melbourne --out chart_dump
 
@@ -26,6 +27,8 @@ from lib.charts import render  # noqa: E402
 from lib.compose import Composer  # noqa: E402
 from lib.config import Config  # noqa: E402
 from lib.ecowitt import Ecowitt  # noqa: E402
+from lib.storage import FILE, Storage  # noqa: E402
+from lib.storage.migrate import OLD, migrate  # noqa: E402
 from lib.tools import Turn  # noqa: E402
 
 FMT = "%Y-%m-%d %H:%M:%S"
@@ -104,7 +107,7 @@ def copy_db(src: Path, dest: Path):
 async def main():
     logging.disable(logging.WARNING)  # the fetchers log every refused request
     ap = parser(__doc__)
-    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecobot.sqlite (or ecowitt_cache.sqlite) and airgradient_cache.sqlite")
+    ap.add_argument("--data-dir", default=str(data_dir()), help="folder (default DATA_DIR) holding ecobot.sqlite (or the old files it replaced)")
     ap.add_argument("--tz", default="Australia/Melbourne")
     ap.add_argument("--out", default="chart_dump")
     args = ap.parse_args()
@@ -112,36 +115,38 @@ async def main():
     out.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
-        eco_path, air_path = Path(tmp) / "ecowitt_cache.sqlite", Path(tmp) / "airgradient.sqlite"
-        have_eco, have_air = (data / "ecowitt_cache.sqlite").exists(), (data / "airgradient_cache.sqlite").exists()
-        if (data / "ecobot.sqlite").exists():   # the station's history since it moved there (else the copy of the old cache is moved in)
-            copy_db(data / "ecobot.sqlite", Path(tmp) / "ecobot.sqlite")
-            have_eco = True
-        elif have_eco:
-            copy_db(data / "ecowitt_cache.sqlite", eco_path)
-        if have_air:
-            copy_db(data / "airgradient_cache.sqlite", air_path)
-        loc = ""
-        if have_air:
-            db = sqlite3.connect(f"file:{air_path}?mode=ro", uri=True)
-            loc = (db.execute("SELECT loc FROM days LIMIT 1").fetchone() or [""])[0]
-            db.close()
+        folder = Path(tmp)
+        if (data / FILE).exists():
+            copy_db(data / FILE, folder / FILE)
+        else:   # only the files from before ecobot.sqlite: their copies moved into one, as the bot's first start does
+            for name in OLD:
+                if (data / name).exists():
+                    copy_db(data / name, folder / name)
+            report = migrate(folder, tz)
+            if not report.ok:
+                raise SystemExit(f"{data} holds no {FILE}, and the old files could not be moved into one: {report.problem or report.skipped}")
+        storage = Storage(folder / FILE, tz)
+        macs = sorted({s.device for s in storage.sensors.all() if s.kind != "air"})
+        air_sensors = storage.sensors.all(kind="air")
         cfg = Config(telegram_token="", openrouter_api_key="", openrouter_base_url="", openrouter_model="", tz=tz, ecowitt_api_key="offline",
-                     ecowitt_app_key="offline", airgradient_token="offline", airgradient_location=str(loc or "offline"),
-                     airgradient_dashboard="", state_path=Path(tmp) / "state.json", cache_path=eco_path, air_cache_path=air_path,
-                     conditions_cache_path=Path(tmp) / "conditions.sqlite")
+                     ecowitt_app_key="offline", airgradient_token="offline", airgradient_location=air_sensors[0].device if air_sensors else "offline",
+                     airgradient_dashboard="", state_path=folder / "state.json", cache_path=folder / "ecowitt_cache.sqlite",
+                     air_cache_path=folder / "airgradient_cache.sqlite", conditions_cache_path=folder / "conditions_cache.sqlite")
         eco = air = None
-        if have_eco:
-            eco = Ecowitt(cfg, transport=Offline())
-            eco.mac = next(iter(sorted({s.device for s in eco.storage.sensors.all() if s.kind != "air"})), "")
-        if have_air:
-            air = AirGradient(cfg, transport=Offline())
+        if macs:
+            eco = Ecowitt(cfg, transport=Offline(), storage=storage)
+            eco.mac = macs[0]
+        if air_sensors:
+            air = AirGradient(cfg, transport=Offline(), storage=storage, owned=eco is None)
+        if not (eco or air):
+            storage.close()
+            raise SystemExit(f"{folder / FILE} holds no sensors")
         tools = {t.name: t for s in (eco, air) if s for t in s.tools}
         if eco and air:
             tools.update({t.name: t for t in Composer(eco, air).tools})
 
         now = datetime.now(tz)
-        print(f"as of {now:%Y-%m-%d %H:%M %Z}; caches: ecowitt={'yes' if have_eco else 'NO'} airgradient={'yes' if have_air else 'NO'}")
+        print(f"as of {now:%Y-%m-%d %H:%M %Z}; held: ecowitt={'yes' if eco else 'NO'} airgradient={'yes' if air else 'NO'}")
         for name, tool, tool_args, _ in questions(now):
             if tool not in tools:
                 print(f"  skip   {name}: no {tool} tool (a cache is missing)")

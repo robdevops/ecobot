@@ -20,7 +20,7 @@ from pathlib import Path
 from lib.airgradient.readings import storage_rows
 from lib.ecowitt.api import GROUPS, UNITS, fix_units
 from lib.ecowitt.fetch import spans
-from lib.ecowitt.store import HistoryCache
+from tests.old_cache import HistoryCache
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD, KINDS
 from lib.storage.write import horizon, pivot

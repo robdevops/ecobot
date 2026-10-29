@@ -36,7 +36,6 @@ async def test_a_new_reading_is_found_in_seconds_and_calls_the_rain_alert_each_t
 
 async def test_a_reading_no_newer_than_the_last_is_not_announced_again(tmp_path, monkeypatch):
     eco, home = await home_station(tmp_path, monkeypatch)
-    original = home.__call__
     seen = []
     eco.on_live.append(lambda: seen.append(1) or asyncio.sleep(0))
     first = await eco.fast.realtime(eco.mac, "outdoor")

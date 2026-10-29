@@ -78,7 +78,7 @@ class ImageCache:
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
     PRELOAD_TTL = 30 * 60   # a chart uploaded ahead (TELEGRAM_PRELOAD_CHAT) is used for this long, then drawn afresh
-    FRESH = 330   # a little over the time between two rounds of drawing ahead, so a press always finds one
+    FRESH = 330   # a chart made in code this lately answers the same words again as it is (the readings move slowly)
 
     def __init__(self, clock=None):
         self.clock = clock or time.monotonic
@@ -115,8 +115,8 @@ class ImageCache:
         return self._kept(entry) and entry.file_id is not None
 
     def ready(self, question: str, now) -> Drawn | None:
-        """The chart made in code for exactly these words in the last FRESH seconds (drawn ahead, or for someone's question),
-        with the text that went with it; None if there is none."""
+        """The chart made in code for exactly these words in the last FRESH seconds (for someone's question, or uploaded ahead to
+        TELEGRAM_PRELOAD_CHAT), with the text that went with it; None if there is none."""
         key = self.canonical(question, now)
         entry = self.items.get(key) if key else None
         if entry is None or entry.caption is None or self.age(entry) > self.FRESH:

@@ -39,14 +39,14 @@ def archived_cache(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def old_archived_cache(tmp_path_factory):
-    """The fake station's whole archive in the old cache's format (ecowitt_cache.sqlite, from before ecobot.sqlite), built once, for what
-    reads that format still: the move into the new file, and the scripts not moved to it yet. Written as the old archive wrote it: each
-    cycle's spans, from the fake station's answers, its settled readings only."""
+    """The fake station's whole archive in the old cache's format (ecowitt_cache.sqlite, from before ecobot.sqlite), built once, for the
+    move into the new file and its checks. Written as the old archive wrote it (tests/old_cache.py): each cycle's spans, from the fake
+    station's answers, its settled readings only."""
     from datetime import datetime, time, timedelta
 
     from lib.ecowitt.api import CYCLES, GROUPS, UNITS, kept_from
     from lib.ecowitt.fetch import spans
-    from lib.ecowitt.store import HistoryCache
+    from tests.old_cache import HistoryCache
     from lib.timeutil import local_epoch
     from tests.fakes import HISTORY_DAYS, MAC, TZ, FakeEcowitt
     path = tmp_path_factory.mktemp("old-archive") / "ecowitt_cache.sqlite"

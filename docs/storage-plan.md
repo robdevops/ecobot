@@ -522,6 +522,14 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    `show_request`, `dump_specs`, `refill_airgradient`) read the new one; `migrate_cache.py` retires; the docs say how the storage works.
    And a look for dead code left from when the period buttons' charts stopped being drawn ahead on a timer (`92d71df`): what only that
    timer used, in the image cache, the bot and the tests.
+   *Done.* The pollen and forecast sources keep their snapshots in `ecobot.sqlite` (`snapshots`, `snapshot_meta`; `lib/snapshots.py`
+   opens its own connection beside the storage's, and makes the file with those two tables when there is none), and
+   `conditions_cache.sqlite` is moved in at start when either source is on. `lib/ecowitt/store.py` is `tests/old_cache.py` (the
+   migration's reference; nothing in the bot reads it), the archive takes its horizon from `storage.write`, and `test_store.py`,
+   `test_migrate_cache.py`, `scripts/migrate_cache.py` and `tests/data/make_fixture.py` are gone. `cache_status`, `check_rain`,
+   `show_request` and `dump_specs` read `ecobot.sqlite` (`dump_specs` moves a copy of the old files into one when that is all there is).
+   Of `92d71df` nothing was left but comments: the image cache's FRESH and `ready` serve a chart made in code for someone's question, and
+   `_draw_ahead` the preload chat. The pyflakes warnings in the tests are fixed.
 6. **Several sensors in use (later, when there is a second sensor).** Settings for more than one AirGradient, the station's extra
    channels found from its live reading, a `sensor` argument for the tools and the words for it in the prompt, labels, alerts per sensor,
    and a sensor per Home Assistant prefix (today it takes the first and warns).
@@ -549,10 +557,10 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
   dashboard's and `weather_days`' figures compared day by day on the fixture (step 1 does it for the day rows against `day_values`, and
   the buckets against `lines.bucket_summary`, rain per reading against `rain.rain_slots`).
 - **The stores' own tests** (`test_storage.py`, `test_storage_migrate.py`, `test_period.py`, `test_live_bands.py`) cover the new tables:
-  writing and reading, widening, day rows, part-days, coverage, pruning, the migration and its check. `test_store.py` and
-  `test_migrate_cache.py` stay with the old cache's code until step 5 retires it.
+  writing and reading, widening, day rows, part-days, coverage, pruning, the migration and its check. The old cache's code is
+  `tests/old_cache.py` since step 5: what the tests write old files with, and what the migration is checked against.
 - **The fixture's archive** (`tests/conftest.py`, `archived_cache`) is built by the new code; one old-format fixture stays for the migration
-  tests and the scripts not moved yet (`old_archived_cache`).
+  tests (`old_archived_cache`).
 - **The benchmark's data folder** (`tests/bench_cache.py`) is built by the new storage from step 2 on, with 10 days of minutes (the
   owner's file has 9 hours), so the table shows whether the minutes in the same tables slow anything else.
 

@@ -1,18 +1,17 @@
 """Show exactly what the bot sends to the model for a question, without calling the model.
 
 Builds the real system prompt and tool definitions, runs the real reasoning/fast-path decisions, and
-runs the real tools against your cache (no network, no API keys). A recording stand-in plays the
+runs the real tools against the bot's file (no network, no API keys). A recording stand-in plays the
 model: its first reply is a tool call you choose with --call (default: the call the model made for
 "hottest day where it also rained"), its second is a short answer. Every request the bot would send
 is printed in full.
 
     python scripts/show_request.py "hottest day where it also rained"
-    python scripts/show_request.py --cache /path/ecowitt_cache.sqlite --call '{"name": ..., "arguments": {...}}' "..."
+    python scripts/show_request.py --file /path/ecobot.sqlite --call '{"name": ..., "arguments": {...}}' "..."
 """
 
 import asyncio
 import json
-import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,9 +23,8 @@ from lib.config import data_dir, local_tz  # noqa: E402
 from lib import intent, prompt  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
 from lib.ecowitt import days, source as station  # noqa: E402
-from lib.ecowitt.api import UNITS  # noqa: E402
-from lib.ecowitt.store import HistoryCache  # noqa: E402
 from lib.llm import Agent  # noqa: E402
+from lib.storage import FILE, Storage  # noqa: E402
 from lib.tools import Tool, Tools  # noqa: E402
 
 
@@ -60,19 +58,22 @@ def banner(text):
 async def main():
     ap = parser(__doc__)
     ap.add_argument("question")
-    ap.add_argument("--cache", type=Path, default=data_dir() / "ecowitt_cache.sqlite")
+    ap.add_argument("--file", type=Path, default=data_dir() / FILE, help="the bot's file (default: ecobot.sqlite in DATA_DIR)")
     ap.add_argument("--call", help="JSON tool call the stand-in model makes first")
     args = ap.parse_args()
 
     tz = local_tz()
     now = datetime.now(tz)
-    macs = [m for (m,) in sqlite3.connect(f"file:{args.cache}?mode=ro", uri=True).execute("SELECT DISTINCT mac FROM coverage")]
+    if not args.file.exists():
+        sys.exit(f"{args.file}: not found")
+    storage = Storage(args.file, tz)
+    macs = sorted({s.device for s in storage.sensors.all() if s.kind != "air"})
     if not macs:
-        sys.exit(f"{args.cache} has no cached history")
-    cache = HistoryCache(args.cache, UNITS)
+        storage.close()
+        sys.exit(f"{args.file} has no station history")
 
     async def days_handler(a):
-        return await days.days_tool(cache, macs[0], tz, a)
+        return await days.days_tool(storage, macs[0], tz, a)
 
     async def unavailable(a):
         return "(not run by this script)"
@@ -114,6 +115,7 @@ async def main():
         chars = len(json.dumps(req["messages"], ensure_ascii=False)) + len(json.dumps(req.get("tools", [])))
         print(f"request {n}: {chars:,} characters (about {chars // 4:,} tokens)")
     print(f"total sent: about {total // 4:,} tokens")
+    storage.close()
 
 
 if __name__ == "__main__":

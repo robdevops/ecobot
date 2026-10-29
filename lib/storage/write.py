@@ -37,7 +37,7 @@ def cycle_of(name: str):
 
 
 def horizon(cycle: str, now: float) -> int:
-    """The latest start of an Ecowitt reading of this cycle that is final (as ecowitt.store.horizon)."""
+    """The latest start of an Ecowitt reading of this cycle that is final."""
     c = cycle_of(cycle)
     return int(now - c.settle - c.seconds)
 
@@ -328,7 +328,7 @@ class Writer:
     def put_ecowitt(self, mac: str, cycle: str, groups: list[str], data: dict, start: int, end: int, now: float | None = None,
                     src: int = CLOUD):
         """One of Ecowitt's history responses (or Home Assistant's, told as Ecowitt's) for [start, end] at this cycle, by the rules of
-        HistoryCache.store: what is newer than the cycle's settle horizon is kept as provisional (replaced by the next fetch of it), and what
+        the old cache did: what is newer than the cycle's settle horizon is kept as provisional (replaced by the next fetch of it), and what
         was fetched is marked only up to the last final reading Ecowitt returned, so a stretch it is late with is asked for again; one
         entirely older than two days is marked in full (what is missing there is missing). A group with no readings while others have some is
         a sensor the station lacks, marked as far as the others. A group that sends a field it never sent at this cycle has all of it asked

@@ -187,9 +187,9 @@ def _from_env(f) -> object:
 class Config:
     tz: tzinfo
     state_path: Path
-    cache_path: Path
-    air_cache_path: Path
-    conditions_cache_path: Path                                    # the last pollen page and forecast, kept across restarts
+    cache_path: Path                                               # the files from before ecobot.sqlite (storage_path), moved into it once:
+    air_cache_path: Path                                           # ... the station's, the air sensor's, and the last pollen page and forecast
+    conditions_cache_path: Path
     telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
     openrouter_api_key: str = _setting("OPENROUTER_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
     openrouter_base_url: str = _setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

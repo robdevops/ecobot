@@ -183,7 +183,6 @@ async def test_derived_readings_hidden_unless_asked(tmp_path):
 async def test_chart_request_adds_a_spec(station):
     eco, _ = station
     day = datetime.now(eco.tz).date() - timedelta(days=2)
-    holder = []
     turn = Turn()
     out = json.loads(await eco.tools[1].handler(
         {"groups": "outdoor,indoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, turn))
@@ -1488,7 +1487,6 @@ def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is
 
 
 async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group(tmp_path, archived_cache):
-    from datetime import datetime
     from lib import intent
     from lib.timeutil import now_local
     from tests.fakes import archived_station
