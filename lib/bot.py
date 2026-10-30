@@ -52,7 +52,7 @@ DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
 AHEAD_SECONDS = 300          # the keyboard's charts are drawn ahead this often (draw_buttons_ahead), so a press sends one already drawn
 AHEAD_KEEP_SECONDS = 60      # ... unless the chart was drawn for a question this lately
-USED_SECONDS = 3600          # the bot counts as in use this long after a message or a press: the charts drawn ahead are then uploaded ahead too
+USED_SECONDS = 900           # the bot counts as in use this long after a message or a press: the charts drawn ahead are then uploaded ahead too
 IRRIGATION_SETTLE_SECONDS = 3   # after any irrigation action, the controller is given this long to report its new state before it is read and the message redrawn
 NOT_ADMIN = "Sorry, only group admins can use this bot."
 NOT_ADMIN_TOAST = "Only group admins can use this bot"
@@ -1108,7 +1108,7 @@ class Bot:
         """The chart of each keyboard button, and of each alert type sent in the last hours (alert_charts.warm), drawn afresh (every
         AHEAD_SECONDS, from ecobot.warm_up), so a press, or the Refresh under the alert, is answered with a chart already drawn
         (images.ready, AlertCharts.newer_than) instead of drawing one then; with TELEGRAM_PRELOAD_CHAT set and the bot used in the last
-        hour, uploaded too, so the press sends Telegram's copy and uploads nothing. A chart drawn for a question in the last minute is left.
+        15 minutes, uploaded too, so the press sends Telegram's copy and uploads nothing. A chart drawn for a question in the last minute is left.
         Nobody is waiting: the requests are not urgent, and the logs are quiet."""
         started, now = time.monotonic(), now_local(self.cfg.tz)
         chat = getattr(self.cfg, "telegram_preload_chat", None) if self.used_lately else None
