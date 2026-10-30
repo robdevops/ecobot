@@ -483,7 +483,7 @@ async def test_the_keyboards_charts_are_uploaded_ahead_only_while_the_bot_is_in_
     await settle(bot)                                                                        # (the press's other periods, uploaded ahead)
     uploads.clear()
     clock[0] += 120
-    bot.last_used = time.monotonic() - USED_SECONDS - 1                                     # an hour without a message or a press
+    bot.last_used = time.monotonic() - USED_SECONDS - 1                                     # 15 minutes without a message or a press
     await bot.draw_buttons_ahead(context.bot)
     assert uploads == []
 
