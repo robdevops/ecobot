@@ -69,7 +69,7 @@ def plot_asked() -> tuple[str, dict]:
 
 
 SCAN_DAYS = 90
-SCAN_MAX_DAYS = 400   # a longer scan is cut to its latest days: the shuffles grow with the period
+SCAN_MAX_DAYS = 400   # a longer scan is cut to its latest days: its time grows with the period
 SCAN_AIR = ("pm2_5", "pm10", "co2", "voc_index", "nox_index")
 # What the scan compares the air with: name -> (group, field, label, unit)
 SCAN_WEATHER = {**{n: (WEATHER[n].group, WEATHER[n].field, WEATHER[n].label.lower(), WEATHER[n].unit)

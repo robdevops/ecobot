@@ -1,19 +1,17 @@
 """Render a chart the same way everywhere and compare it with its reference image (tests/charts/<name>.png).
 
-The reference images are rendered with matplotlib's own font (DejaVu Sans), not whichever font the machine has, and shrunk to 40% and
+The reference images are rendered with Pillow's own font, not whichever font the machine has (it lacks a few characters, such as
+₂ and µ, drawn as boxes: only in these pictures), and shrunk to 40% and
 reduced to 64 colours (10 to 35 KB each, so the repository stays small), so the picture does not depend on the machine. A chart passes when no more than TOLERANCE of its pixels differ by more
 than PER_CHANNEL (0 to 255) in any colour: that absorbs the odd anti-aliasing difference but not a moved label or a changed colour.
 Regenerate the references with scripts/update_charts.py when a change to a chart is intended."""
 
 import io
 from pathlib import Path
-from unittest import mock
 
-import matplotlib
-import numpy as np
-from PIL import Image
+from PIL import Image, ImageChops
 
-from lib import charts, gauges
+from lib import charts, draw, gauges
 from lib.specs import Dashboard
 from tests.fakes import TZ
 
@@ -28,9 +26,13 @@ COLOURS = 64
 
 
 def snapshot(chart) -> Image.Image:
-    """The chart as the reference images are made: DejaVu Sans, shrunk, 64 colours (a palette image)."""
-    with matplotlib.rc_context({"font.family": "DejaVu Sans"}), mock.patch.object(charts, "TITLE_WEIGHT", "bold"):
+    """The chart as the reference images are made: Pillow's own font, shrunk, 64 colours (a palette image)."""
+    fonts = draw.FONTS
+    draw.use_fonts(None)
+    try:
         png = gauges.render(chart) if isinstance(chart, Dashboard) else charts.render(chart, TZ)
+    finally:
+        draw.FONTS = fonts
     image = Image.open(io.BytesIO(png)).convert("RGB")
     small = image.resize((round(image.width * SCALE), round(image.height * SCALE)), Image.Resampling.LANCZOS)
     return small.quantize(colors=COLOURS, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
@@ -45,11 +47,13 @@ def difference(actual: Image.Image, golden: Image.Image) -> tuple[float, Image.I
     """(the share of pixels that differ by more than PER_CHANNEL, a picture of where). A different size is a total difference."""
     if actual.size != golden.size:
         return 1.0, None
-    a, g = np.asarray(actual.convert("RGB"), dtype=int), np.asarray(golden.convert("RGB"), dtype=int)
-    changed = np.abs(a - g).max(axis=2) > PER_CHANNEL
-    shown = (g * 0.25 + 255 * 0.75).astype(np.uint8)   # the reference faded, with what changed in red
-    shown[changed] = (230, 30, 30)
-    return float(changed.mean()), Image.fromarray(shown)
+    golden = golden.convert("RGB")
+    r, g, b = ImageChops.difference(actual.convert("RGB"), golden).split()
+    changed = ImageChops.lighter(ImageChops.lighter(r, g), b).point(lambda v: 255 if v > PER_CHANNEL else 0)
+    share = changed.histogram()[255] / (golden.width * golden.height)
+    shown = Image.blend(golden, Image.new("RGB", golden.size, "#FFFFFF"), 0.75)   # the reference faded, with what changed in red
+    shown.paste((230, 30, 30), mask=changed)
+    return share, shown
 
 
 def check(name: str, chart) -> str | None:

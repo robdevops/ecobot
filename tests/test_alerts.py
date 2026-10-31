@@ -570,31 +570,37 @@ def rain_at(flags, n):
     return rain(*flags[:n])
 
 
-async def test_rain_that_starts_again_inside_the_cooldown_is_announced_when_it_ends_if_it_is_still_raining(tmp_path):
+async def test_rain_that_starts_again_after_the_stopped_alert_is_announced_at_once(tmp_path):
     m, state, sent = monitor(tmp_path, None)
-    flags = [0, 0, 1, 1] + [0] * 6 + [1] * 8                # starts, stops at reading 10 (30 dry minutes), starts again at 10, rains on
-    for n in (3, 4, 10):                                    # (reading numbers are counts, so 10 readings end at index 9)
+    flags = [0, 0, 1, 1] + [0] * 6 + [1] * 8                # starts, stops at reading 10 (30 dry minutes), starts again at reading 11, rains on
+    for n in (3, 4, 10):
         m.station.data = rain_at(flags, n)
         await m.check()
     assert len(sent) == 2 and "started" in sent[0] and "stopped" in sent[1]
-    m.station.data = rain_at(flags, 11)                     # raining again 5 minutes after the "stopped": held
-    await m.check()
-    assert len(sent) == 2
-    m.station.data = rain_at(flags, 15)                     # 25 minutes after
-    await m.check()
-    assert len(sent) == 2
-    m.station.data = rain_at(flags, 16)                     # 30 minutes after the "stopped", still raining: now announced
+    m.station.data = rain_at(flags, 11)                     # raining again 5 minutes after the "stopped": told at once
     await m.check()
     assert len(sent) == 3 and "started raining" in sent[2]
+    m.station.data = rain_at(flags, 16)                     # and rain that goes on is not told again
+    await m.check()
+    assert len(sent) == 3
 
 
-async def test_rain_that_comes_and_goes_inside_the_cooldown_and_ends_as_alerted_sends_nothing(tmp_path):
+async def test_a_shower_after_the_stopped_alert_is_its_own_spell_with_its_own_stopped_alert(tmp_path):
     m, state, sent = monitor(tmp_path, None)
     flags = [0, 0, 1, 1] + [0] * 6 + [1] + [0] * 8          # stopped at reading 10, one wet reading, then dry again
     for n in (3, 4, 10, 11, 14, 19):
         m.station.data = rain_at(flags, n)
         await m.check()
-    assert len(sent) == 2 and "stopped" in sent[1]          # no "started" for the shower, no second "stopped"
+    assert [("started" in t, "stopped" in t) for t in sent] == [(True, False), (False, True), (True, False), (False, True)]
+
+
+async def test_patchy_showers_inside_the_dry_time_are_one_spell_with_one_started_and_one_stopped(tmp_path):
+    m, state, sent = monitor(tmp_path, None)
+    flags = [0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0]   # gaps of 10 to 15 minutes, all under the 30
+    for n in range(3, len(flags) + 1):
+        m.station.data = rain_at(flags, n)
+        await m.check()
+    assert [("started" in t, "stopped" in t) for t in sent] == [(True, False), (False, True)]
 
 
 def night_rain(start, *wet):

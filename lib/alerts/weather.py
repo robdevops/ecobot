@@ -1,8 +1,8 @@
 """Weather alerts from the Ecowitt station, checked after every keep-warm refresh (from the same
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
-  - Rain: "started" (one tip of the gauge is enough) and "stopped" (dry for ALERT_COOLDOWN_MINUTES), with how much fell over
-    the whole spell. Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am, and they may run across midnight):
+  - Rain: "started" (one tip of the gauge is enough, told at once, however lately it stopped) and "stopped" (dry for
+    ALERT_COOLDOWN_MINUTES, so patchy showers are one spell), with how much fell over the whole spell. Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am, and they may run across midnight):
     those are kept quiet and one summary of the rain that fell in them is sent after they end.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
@@ -10,7 +10,7 @@
     below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); it has to differ by more than 1 degree, which stops
     sensor noise flip-flopping.
-  Rain and crossing share one back-off rule (rules.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
+  The crossing has a back-off rule (rules.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 """
 
@@ -126,7 +126,7 @@ class WeatherMonitor:
         last_wet = wet_times[-1] if wet_times else None
         raining = last_wet is not None and latest_ts - last_wet < self.cooldown   # dry means no rain for the whole cooldown
         state = "raining" if raining else "dry"
-        if not due(m, state, latest_ts, self.cooldown) and not (quiet and state != m["alerted_state"]):
+        if state == m["alerted_state"]:   # (no back-off here: rain is told the moment it falls, and "dry" has already waited out the cooldown above)
             return
         if raining:
             m["since"] = next(ts for ts in wet_times if latest_ts - ts < self.cooldown)

@@ -7,19 +7,8 @@ from lib.specs import Chart, Line, Panel
 
 
 def labels_of(chart):
-    import matplotlib.pyplot as plt
-    seen = []
-    original = plt.Axes.annotate
-
-    def record(self, text, *a, **k):
-        seen.append(text)
-        return original(self, text, *a, **k)
-    plt.Axes.annotate = record
-    try:
-        charts.render(chart, timezone.utc)
-    finally:
-        plt.Axes.annotate = original
-    return seen
+    """The labels drawn on the chart (values, pills, numbers), in the order they were laid out; the headline first."""
+    return [t.text for t in charts.draw_texts(chart, timezone.utc)]
 
 
 def one_line(reading, ys):
@@ -43,29 +32,9 @@ def test_a_latest_value_of_zero_is_labelled_too(reading):
     assert labels_of(one_line(reading, flat[:-1] + [0.4]))[-1] == "0.4"
 
 
-def test_the_wind_rose_is_scaled_as_matplotlib_scales_its_bars():
-    """The rose is one collection of wedges, not polar bars, so its radius is set by hand: it must be the one the bars got (5% room
-    past the longest wedge, none when that wedge ends in an empty step), so the rose keeps its size whatever the readings."""
-    import random
-
-    import matplotlib.pyplot as plt
-    import numpy as np
-    rng = random.Random(3)
-    roses = [[[4, 2, 1]] * 16, [[3 + k % 5, 0, 0] for k in range(16)], [[0, 0, 0]] * 3 + [[5, 0, 2]] + [[0, 0, 0]] * 12,
-             [[4, 2, 1]] * 5 + [[9, 4, 0]] + [[4, 2, 1]] * 10]
-    for _ in range(8):
-        rose = [[rng.choice([0, 0, rng.randint(1, 40)]) for _ in range(3)] for _ in range(16)]
-        rose[rng.randrange(16)][0] += 1                                       # a rose is only drawn when there are readings
-        roses.append(rose)
-    for rose in roses:
-        percent = np.asarray(rose, dtype=float) / np.sum(rose) * 100
-        ax = plt.figure().add_axes([0, 0, 1, 1], projection="polar")
-        bottom = np.zeros(16)
-        for i in range(3):                                                    # the rose as it was drawn before
-            ax.bar(np.deg2rad(np.arange(16) * 22.5), percent[:, i], width=np.deg2rad(20), bottom=bottom)
-            bottom += percent[:, i]
-        assert charts._rose_radius(np.cumsum(percent, axis=1)) == pytest.approx(ax.get_ylim()[1], rel=1e-12), rose
-        plt.close(ax.figure)
+def test_the_wind_rose_reaches_5_percent_past_its_longest_wedge():
+    assert charts._rose_radius([[10.0, 30.0, 40.0], [5.0, 5.0, 20.0]]) == pytest.approx(42.0)
+    assert charts._rose_radius([[0.0, 0.0, 0.0]] * 16) == 1.0                    # nothing to draw
 
 
 def test_an_end_value_is_never_written_in_exponent_form():
@@ -75,19 +44,7 @@ def test_an_end_value_is_never_written_in_exponent_form():
 
 def annotations_of(chart):
     """[(text, which side of its point the pill sits)] for every label drawn."""
-    import matplotlib.pyplot as plt
-    seen = []
-    original = plt.Axes.annotate
-
-    def record(self, text, *a, **k):
-        seen.append((text, k.get("va")))
-        return original(self, text, *a, **k)
-    plt.Axes.annotate = record
-    try:
-        charts.render(chart, timezone.utc)
-    finally:
-        plt.Axes.annotate = original
-    return seen
+    return [(t.text, t.va) for t in charts.draw_texts(chart, timezone.utc)]
 
 
 def test_two_lows_that_end_together_at_the_right_edge_get_pills_on_opposite_sides():
@@ -117,21 +74,15 @@ def test_a_day_of_25_hours_is_drawn_25_hours_long_with_its_ticks_on_local_hours(
     local clock times it drew that hour twice), and the hour ticks still fall on local 0, 3, 6 ... o'clock."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    import matplotlib.dates as mdates
-    import matplotlib.pyplot as plt
-    import numpy as np
+    from lib.draw import Canvas
     tz = ZoneInfo("Australia/Melbourne")
     start = int(datetime(2026, 4, 5, tzinfo=tz).timestamp())
-    xs = charts._nums(range(start, start + 25 * 3600, 1800))
-    assert np.all(np.diff(xs) > 0) and round((xs[-1] - xs[0]) * 24, 3) == 24.5
-    fig, ax = plt.subplots()
-    try:
-        ax.set_xlim(xs[0], xs[-1])
-        charts._time_axis(ax, xs[-1] - xs[0], tz)
-        ticks = [mdates.num2date(t, tz) for t in ax.xaxis.get_major_locator()()]
-    finally:
-        plt.close(fig)
+    xs = list(range(start, start + 25 * 3600, 1800))
+    ax = charts.Axes(Canvas(100, 100), [0, 0, 1, 1], xs[0], xs[-1])
+    assert all(ax.X(b) > ax.X(a) for a, b in zip(xs, xs[1:])) and (xs[-1] - xs[0]) / 3600 == 24.5   # real time: never backwards
+    ticks = [datetime.fromtimestamp(t, tz) for t, _ in charts._time_ticks(xs[0], xs[-1], (xs[-1] - xs[0]) / 86400, tz)]
     assert ticks and {t.hour for t in ticks} <= {0, 3, 6, 9, 12, 15, 18, 21} and ticks[0].day == 5
+    assert [t.hour for t in ticks].count(3) == 1 and len(ticks) == 8          # 3am once, and every 3 hours to 9pm ticked
 
 
 def test_every_weather_reading_and_air_metric_has_a_colour_of_its_own():

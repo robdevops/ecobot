@@ -307,8 +307,8 @@ SQLite does the work wherever the work is the same for every row:
 Left to Python on purpose:
 - **Time zones.** SQLite knows only UTC and the computer's own zone, so local days come from Python as a small table of each day's
   start and end (which also gets the 23- and 25-hour days of the clock changes right), joined in the query.
-- **The statistics** of `weather_link` and `air_scan` (correlations, the share of rain while a reading falls): numpy over the arrays one
-  query returns.
+- **The statistics** of `weather_link` and `air_scan` (correlations, the share of rain while a reading falls): pure Python over the series one
+  query returns (numpy until 31 October 2026).
 - **Drawing, captions and answers:** from the few hundred rows a query returns, handled as columns (lists of numbers), not a dict per
   reading.
 

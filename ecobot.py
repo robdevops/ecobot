@@ -11,11 +11,8 @@ import os
 import signal
 import time
 
-from lib.config import ROOT, Config, data_dir
+from lib.config import ROOT, Config
 
-# Matplotlib keeps its font cache here: a service user without a home directory would otherwise get a throw-away /tmp one on every start.
-# Set before anything imports Matplotlib; an MPLCONFIGDIR in the environment wins.
-os.environ.setdefault("MPLCONFIGDIR", str(data_dir() / "matplotlib"))
 
 from telegram import Update
 from telegram.error import InvalidToken, NetworkError

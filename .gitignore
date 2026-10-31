@@ -14,6 +14,5 @@ mcp_ecowitt.json
 chart-diffs/
 !tests/data/*.sqlite
 .claude/settings.local.json
-matplotlib/
 .env
 .claude/worktrees/

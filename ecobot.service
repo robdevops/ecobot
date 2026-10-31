@@ -6,7 +6,7 @@
 # Any other place needs only the WorkingDirectory and ExecStart lines changed.
 # The bot never opens the environment file itself: systemd loads it (TZ, OPENROUTER_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
 # TELEGRAM_BOT_TOKEN, ...).
-# StateDirectory= gives the bot /var/lib/ecobot (the state file, the SQLite caches and Matplotlib's font cache): the bot finds it through
+# StateDirectory= gives the bot /var/lib/ecobot (the state file and the SQLite caches): the bot finds it through
 # STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older install kept in
 # the checkout (bot_state.json, *_cache.sqlite) are not read from there: with the service stopped, copy them into /var/lib/ecobot once;
 # systemd hands the folder to the dynamic user when it starts.
@@ -21,8 +21,6 @@ WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
-# One BLAS thread: numpy's thread pool gains a bot this small nothing and counts against TasksMax.
-Environment=OPENBLAS_NUM_THREADS=1
 StateDirectory=ecobot
 CacheDirectory=ecobot
 ExecStart=/opt/ecobot/.venv/bin/python ecobot.py
