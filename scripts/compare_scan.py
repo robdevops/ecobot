@@ -31,6 +31,12 @@ def series(values):
 
 
 def unrelated(rng, kind):
+    if kind == "showers":   # dry most of the time, showers most likely in the afternoon
+        out = []
+        for _ in range(DAYS):
+            wet = rng.random() < 0.3
+            out += [rng.expovariate(2) if wet and rng.random() < 0.15 + 0.25 * (24 <= s < 36) else 0.0 for s in range(48)]
+        return out
     if kind == "noise":
         return [rng.gauss(0, 1) for _ in range(N)]
     if kind == "smooth":   # each day its own slow swings: smooth within the day, unrelated across
@@ -66,7 +72,7 @@ def planted(rng, kind):
 
 def synthetic(runs: int):
     print(f"Made-up data, {runs} runs each, 90 days. Unrelated readings (any link found is false; about 10% of runs is the target):")
-    for kind in ("noise", "spells", "smooth"):
+    for kind in ("noise", "spells", "smooth", "showers"):
         hits = {"old": 0, "new": 0}
         for seed in range(runs):
             rng = random.Random(seed)
@@ -164,23 +170,30 @@ def shifted(series_: dict[int, float], origin: int, days: int, by_days: int) -> 
 
 
 def self_check(args):
-    """The new scan with the air moved by whole weeks against the weather: any link it still finds is a false one, on these very
+    """Both scans with the air moved by whole weeks against the weather: any link they still find is a false one, on these very
     readings. A sound scan finds about none (a few at most over all the shifts)."""
     air, weather, direction, speed, origin, days, tz = args
     shifts = [k for k in (7, 14, 21, 28) if k < days - 3]
-    found, total = [], 0
+    found, total = {"old": [], "new": []}, 0
     for k in shifts:
         moved = {name: shifted(v, origin, days, k) for name, v in air.items()}
-        result = new.scan(moved, weather, direction, speed, origin, days, tz)
-        if "note" in result:
-            continue
-        tests = [*result["tests"], *result["directions"]]
-        total += len(tests)
-        found += [(k, t["air"], t.get("weather", "direction"), t["p"]) for t in tests if t["survives"]]
-    print(f"  self-check, the air moved by {', '.join(map(str, shifts))} days (no real link left): "
-          f"{len(found)} false finds in {total} pairs tested")
-    for k, a, w, p in sorted(found, key=lambda f: f[3])[:8]:
-        print(f"    moved {k} days: {a} ~ {w}  p {p:.4f}")
+        for name, mod in (("old", old), ("new", new)):
+            result = mod.scan(moved, weather, direction, speed, origin, days, tz)
+            if "note" in result:
+                continue
+            tests = [*result["tests"], *result["directions"]]
+            total += len(tests) if name == "new" else 0
+            found[name] += [(k, t) for t in tests if t["survives"]]
+    print(f"  self-check, the air moved by {', '.join(map(str, shifts))} days (no real link left), {total} pairs tested: "
+          f"false finds old {len(found['old'])}, new {len(found['new'])}")
+    for k, t in sorted(found["new"], key=lambda f: f[1]["p"])[:8]:
+        if "weather" in t:
+            view = "within the day" if t["p_within"] <= (t["p_daily"] if t["p_daily"] is not None else 1) else "day to day"
+            print(f"    new, moved {k} days: {t['air']} ~ {t['weather']}  p {t['p']:.4f} ({view}: within p {t['p_within']:.4f} r "
+                  f"{t['r'] if t['r'] is not None else float('nan'):+.2f}, daily p {t['p_daily'] if t['p_daily'] is not None else float('nan'):.4f} "
+                  f"r {t['r_daily'] if t['r_daily'] is not None else float('nan'):+.2f})")
+        else:
+            print(f"    new, moved {k} days: {t['air']} ~ wind direction  p {t['p']:.4f}")
 
 
 def main():

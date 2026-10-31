@@ -4,9 +4,10 @@ pattern or the daily cycle is not reported as a link.
 Everything works on 30-minute slots. Each pair is looked at two ways: within the day (both readings minus their own
 time-of-day average and that day's own level, so the shared daily cycle and a spell of days both cancel, with the weather leading
 the air by 0 to 6 hours) and day to day (daily means). How strong a result is judged by Student's t with an effective sample size: readings half an hour (or a
-day) apart are not independent, so the count of readings is shrunk by how long each series stays much the same (Bretherton's
-estimate from the two series' autocorrelations, up to a day apart, or a fortnight for daily means), and the best of the 13 lags is
-allowed for (Šidák). Then the number of
+day) apart are not independent. Within the day, the correlation is a sum over days, so how sure it is comes from the day totals
+and how far they follow on from each other over a week (Newey-West), whatever the readings do within a day; day to day, the count
+of days is shrunk by how long each series stays much the same (Bretherton's estimate from their autocorrelations up to a
+fortnight). The best of the 13 lags is allowed for (Šidák). Then the number of
 pairs tested is allowed for (Benjamini-Hochberg), so only pairs that survive are called links. Rank correlations throughout:
 rain and spikes are skewed, and a rank correlation is not thrown by them. Pure Python (math.sumprod for the long sums)."""
 
@@ -51,8 +52,7 @@ def p_value(r: float, n_eff: float) -> float:
     if n_eff <= 3 or r != r:
         return 1.0
     r = min(abs(r), 1 - 1e-12)
-    df = n_eff - 2
-    return incomplete_beta(df / 2, 0.5, df / (df + df * r * r / (1 - r * r)))
+    return t_p(r * math.sqrt((n_eff - 2) / (1 - r * r)), n_eff - 2)
 
 
 def incomplete_beta(a: float, b: float, x: float) -> float:
@@ -189,7 +189,6 @@ def within_days(x: Series) -> Series:
     return out
 
 
-SLOT_LAGS = PER_DAY - 1      # how far within-day persistence is looked for: up to a day
 DAY_LAGS = 14                # and day-to-day persistence: up to a fortnight (at most a quarter of the days)
 
 
@@ -218,10 +217,10 @@ def centred_ranks(x: Series) -> tuple[list[float], list[float]]:
     return [0.0 if v is None else v - mean for v in r], [0.0 if v is None else 1.0 for v in r]
 
 
-def _ranked(grid: Series) -> tuple[list[float], list[float], list[float], list[float]]:
-    """(anomaly ranks centred, mask, their squares, autocorrelations up to a day): what a series contributes to every pair it is in."""
+def _ranked(grid: Series) -> tuple[list[float], list[float], list[float], None]:
+    """(anomaly ranks centred, mask, their squares, -): what a series contributes to every pair it is in."""
     x, m = centred_ranks(within_days(grid))
-    return x, m, [v * v for v in x], autocorrelations(x, m, SLOT_LAGS)
+    return x, m, [v * v for v in x], None
 
 
 def _leads(weather: tuple) -> list[tuple[list[float], list[float], list[float]]]:
@@ -238,17 +237,49 @@ def _lag_corr(lead: tuple, air: tuple, lag: int) -> float:
     return math.sumprod(xs, y[lag:]) / (math.sqrt(sx * sy) + 1e-12)
 
 
+WEEK = 7    # how many days apart the day totals of a within-day comparison are allowed to go together (Newey-West)
+
+
+def t_p(t: float, df: float) -> float:
+    """Two-sided p of Student's t with `df` degrees of freedom."""
+    if df < 1 or t != t:
+        return 1.0
+    return incomplete_beta(df / 2, 0.5, df / (df + t * t))
+
+
+def day_totals(lead: list[float], air: list[float], lag: int) -> list[float]:
+    """The products of the weather (cut for `lag`: weather[:n-lag]) and air[lag:], summed day by day."""
+    y = air[lag:]
+    return [math.sumprod(lead[d:d + PER_DAY], y[d:d + PER_DAY]) for d in range(0, len(lead), PER_DAY)]
+
+
+def newey_west(totals: list[float], lags: int) -> float:
+    """The variance of the sum of these day totals, allowing for totals up to `lags` days apart going together (Bartlett weights).
+    Under no link each day's total averages zero, so they are not centred."""
+    variance = math.sumprod(totals, totals)
+    for k in range(1, lags + 1):
+        variance += 2 * (1 - k / (lags + 1)) * math.sumprod(totals[:-k], totals[k:])
+    return max(variance, math.sumprod(totals, totals) / (2 * lags + 1))
+
+
 def within_day(weather: tuple, air: tuple, leads: list | None = None) -> tuple[float, int, float] | None:
-    """(correlation at the best lag, that lag in slots, p) of the weather's and air's anomalies, the best of the lags allowed for.
+    """(correlation at the best lag, that lag in slots, p) of the weather's and air's within-day anomalies, the best of the lags
+    allowed for. The correlation is a sum over days, so how sure it is comes from the days themselves: the spread of each day's
+    total, and how far a day's total follows on from the days before it (up to a week), whatever the readings do within a day.
     None when they share too few readings. `weather` and `air` are _ranked results; `leads` the weather's _leads, if made."""
     if math.sumprod(weather[1], air[1]) < MIN_OVERLAP:
         return None
     leads = leads or _leads(weather)
     found = [_lag_corr(leads[lag], air, lag) for lag in LAGS]
     best = max(range(len(found)), key=lambda k: abs(found[k]))
-    r, n = found[best], math.sumprod(leads[best][1], air[1][best:])   # and the slots they share at that lag
-    p = sidak(p_value(r, effective(n, weather[3], air[3])), len(LAGS))
-    return float(r), best, p
+    totals = day_totals(leads[best][0], air[0], best)
+    days = sum(1 for t in totals if t)
+    lags = min(WEEK, days // 4)
+    variance = newey_west(totals, lags)
+    if days < MIN_DAILY or variance <= 0:
+        return None
+    p = sidak(t_p(sum(totals) / math.sqrt(variance), days - 1), len(LAGS))
+    return float(found[best]), best, p
 
 
 def daily_means(grid: Series) -> list[float | None]:
@@ -358,7 +389,7 @@ def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]],
             r, lag, p = inside or (None, 0, 1.0)
             best_p = min(p, p_daily if p_daily is not None else 1.0) * 2  # two views of one pair: allow for both
             tests.append({"air": a_name, "weather": w_name, "r": r, "lag_hours": lag * SLOT / 3600, "r_daily": r_daily,
-                          "days": n_days, "p": min(1.0, best_p)})
+                          "days": n_days, "p": min(1.0, best_p), "p_within": p, "p_daily": p_daily})
     directions = []
     if direction and speed:
         d, s = to_grid(direction, origin, days, clock), to_grid(speed, origin, days, clock)
