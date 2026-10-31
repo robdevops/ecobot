@@ -70,9 +70,9 @@ def test_a_period_shows_the_year_on_both_dates_when_it_spans_years():
 
 
 def test_a_reading_that_cannot_be_negative_is_not_drawn_below_zero_and_temperature_may_be():
-    from matplotlib.figure import Figure
     from lib import charts
-    ax = Figure().add_axes([0, 0, 1, 1])
+    from lib.draw import Canvas
+    ax = charts.Axes(Canvas(10, 10), [0, 0, 1, 1])
     pad = lambda lo, hi, floor: charts._pad_limits(ax, lo, hi, top=0.12, bottom=0.12, floor=floor)
     pad(0.0, 8.0, 0)
     assert ax.get_ylim()[0] == 0
@@ -111,20 +111,21 @@ def test_a_chart_is_a_png_of_at_most_256_colours_and_its_own_colours_are_exact()
     assert (0xFF, 0x98, 0x30) in {rgb for _, rgb in colours}                          # and the line its own orange
 
 
-def test_the_palette_keeps_every_colour_when_there_are_few_and_the_common_ones_when_there_are_many():
-    import numpy as np
-    from lib.charts import _palette
-    rng = np.random.default_rng(1)
-    few = rng.integers(0, 256, (200, 3)).astype(float)
-    taken, nearest = _palette(few, rng.integers(1, 1000, 200))
-    assert sorted(taken) == list(range(200)) and [taken[i] for i in nearest] == list(range(200))   # each colour is its own entry
-    many = rng.integers(0, 256, (3000, 3)).astype(float)
-    counts = rng.integers(1, 10, 3000)
-    counts[:20] = 100_000                                                              # a few colours cover areas
-    taken, nearest = _palette(many, counts)
-    assert len(taken) == 256 and set(range(20)) <= set(taken)                          # they are kept exactly
-    distance = ((many[:, None, :] - many[taken][None, :, :]) ** 2).sum(axis=2)
-    assert np.array_equal(distance[np.arange(len(many)), nearest], distance.min(axis=1))   # and every colour is drawn in its nearest
+def test_the_png_keeps_every_colour_of_an_area_exactly_even_close_ones_and_has_at_most_256():
+    import io
+    import random
+    from PIL import Image, ImageDraw
+    from lib import draw
+    rng = random.Random(1)
+    image = Image.new("RGB", (400, 300), "#FFFFFF")
+    pen = ImageDraw.Draw(image)
+    pen.rectangle((0, 0, 199, 299), fill="#F8FAFC")                               # a card a few levels off the white beside it
+    pen.rectangle((250, 50, 300, 250), fill="#FF9830")
+    for _ in range(3000):                                                           # and thousands of stray shades
+        pen.point((rng.randrange(400), rng.randrange(300)), fill=tuple(rng.randrange(256) for _ in range(3)))
+    out = Image.open(io.BytesIO(draw.png(image)))
+    colours = {c for _, c in out.convert("RGB").getcolors(256)}
+    assert out.mode == "P" and {(255, 255, 255), (0xF8, 0xFA, 0xFC), (0xFF, 0x98, 0x30)} <= colours
 
 
 def test_a_daily_air_line_has_its_range_band_alone_and_in_a_multi_panel_chart():
@@ -193,22 +194,19 @@ def test_the_vpd_chart_is_titled_with_the_full_name():
 
 
 def test_a_long_list_of_readings_in_a_stack_headline_is_cut_to_fit_the_chart():
-    import matplotlib.pyplot as plt
     from lib import charts
-    fig = plt.figure(figsize=(charts.W_IN, 8), dpi=charts.DPI)
-    try:
-        charts._headline(fig, "Temperature, Humidity, Pressure, Rain, Dew point, Solar radiation, Wind", "sub", 8)
-        title = fig.texts[0]
-        room = charts.AX_RECT[2] * fig.get_figwidth() * fig.dpi
-        assert title.get_window_extent(fig.canvas.get_renderer()).width <= room
-        assert title.get_text().startswith("Temperature, Humidity") and title.get_text().endswith(" more")
-        shown = title.get_text().split(" and ")[0].split(", ")
-        more = int(title.get_text().rsplit(" and ", 1)[1].split()[0])
-        assert len(shown) + more == 6 and "Rain" not in shown          # six panels have a heading; rain sits behind one of them
-        charts._headline(fig, "Temperature", "sub", 8)
-        assert fig.texts[2].get_text() == "Temperature"                                  # a short one is untouched
-    finally:
-        plt.close(fig)
+    from lib.draw import Canvas
+    canvas = Canvas(1280, 1600)
+    charts._headline(canvas, "Temperature, Humidity, Pressure, Rain, Dew point, Solar radiation, Wind, Feels like", "sub", 8)
+    title = canvas.texts[0]
+    room = charts.AX_RECT[2] * canvas.width
+    assert title.box[2] - title.box[0] <= room
+    assert title.text.startswith("Temperature, Humidity") and title.text.endswith(" more")
+    shown = title.text.split(" and ")[0].split(", ")
+    more = int(title.text.rsplit(" and ", 1)[1].split()[0])
+    assert len(shown) + more == 7 and "Rain" not in shown          # seven panels have a heading; rain sits behind one of them
+    charts._headline(canvas, "Temperature", "sub", 8)
+    assert canvas.texts[2].text == "Temperature"                                     # a short one is untouched
 
 
 def test_a_single_panel_charts_caption_is_one_line_and_a_stacks_is_two():
@@ -236,7 +234,7 @@ def test_a_panel_of_bars_with_no_bar_is_refused_when_built():
 def test_a_bar_below_zero_has_its_bright_end_at_the_bottom(monkeypatch):
     from lib import charts
     drawn = []
-    monkeypatch.setattr(charts, "_columns", lambda ax, x, heights, width, bottom=0.0, **style: drawn.append((list(heights), bottom)))
+    monkeypatch.setattr(charts, "_columns", lambda ax, x, heights, width, bottom=0.0, *a, **k: drawn.append((list(heights), bottom)))
     charts._draw_bars(None, [0.0, 1.0], [-3.0, 2.0], 0.85, 10.0, 3)
     heights, bottom = drawn[1]   # the caps (the bodies are drawn first)
     assert heights == [-0.14, 0.14] and [round(b, 2) for b in bottom] == [-2.86, 1.86]   # each cap ends where its bar does

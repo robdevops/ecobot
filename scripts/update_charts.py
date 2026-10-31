@@ -7,8 +7,8 @@ request) before committing:
     python scripts/update_charts.py            # every chart
     python scripts/update_charts.py wind air   # just these
 
-The images are drawn from the made-up data in tests/chart_samples.py with matplotlib's own font, so the result is the same on any
-machine with the same matplotlib, numpy and Pillow versions (pinned in requirements.txt)."""
+The images are drawn from the made-up data in tests/chart_samples.py with Pillow's own font, so the result is the same on any
+machine with the same Pillow version (pinned in requirements.txt)."""
 
 import sys
 from pathlib import Path
