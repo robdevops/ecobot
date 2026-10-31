@@ -68,9 +68,9 @@ def test_a_folder_that_cannot_be_made_stops_the_start_with_a_plain_message(monke
     assert "not writable" in str(stop.value) and "DATA_DIR" in str(stop.value)
 
 
-def test_the_bot_starts_without_matplotlib():
-    """The charts are drawn with Pillow: importing the bot loads no matplotlib (nor needs a cache folder for it)."""
-    done = subprocess.run([sys.executable, "-c", "import sys, ecobot; assert 'matplotlib' not in sys.modules"], cwd=ROOT,
+def test_the_bot_starts_without_matplotlib_or_numpy():
+    """The charts are drawn with Pillow and the statistics in plain Python: importing the bot loads neither."""
+    done = subprocess.run([sys.executable, "-c", "import sys, ecobot, lib.bot, lib.compose; assert not {'matplotlib', 'numpy'} & set(sys.modules)"], cwd=ROOT,
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr[-500:]
 

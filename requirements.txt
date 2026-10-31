@@ -1,6 +1,5 @@
 holidays
 httpx
-numpy==2.5.4
 openai
 python-telegram-bot>=22.8
 pillow==13.0.0

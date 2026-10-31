@@ -21,8 +21,6 @@ WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
-# One BLAS thread: numpy's thread pool gains a bot this small nothing and counts against TasksMax.
-Environment=OPENBLAS_NUM_THREADS=1
 StateDirectory=ecobot
 CacheDirectory=ecobot
 ExecStart=/opt/ecobot/.venv/bin/python ecobot.py
