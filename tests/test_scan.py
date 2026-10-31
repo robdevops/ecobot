@@ -105,6 +105,27 @@ def test_wind_that_holds_for_days_beside_air_that_drifts_is_not_called_a_directi
     assert found <= 2
 
 
+def smooth_days(rng):
+    """Each day its own slow swings (periods of 4 to 16 hours) on top of a little noise: smooth within the day, unrelated across."""
+    out = []
+    for _ in range(DAYS):
+        waves = [(rng.gauss(0, 1), rng.uniform(4, 16), rng.uniform(0, 2 * math.pi)) for _ in range(3)]
+        out += [sum(a * math.sin(2 * math.pi * s / (2 * h) + ph) for a, h, ph in waves) + rng.gauss(0, 0.2) for s in range(48)]
+    return out
+
+
+def test_unrelated_readings_that_curve_smoothly_within_each_day_are_not_called_linked():
+    """Half-hours of a smooth curve are not independent for hours: counted by their neighbour alone they look like thousands of
+    agreeing readings. The effective size uses each series' persistence up to a day apart."""
+    found = 0
+    for seed in range(8):
+        rng = random.Random(900 + seed)
+        air = {f"a{i}": series(smooth_days(rng)) for i in range(3)}
+        weather = {f"w{i}": series(smooth_days(rng)) for i in range(6)}
+        found += any(t["survives"] for t in correlate.scan(air, weather, None, None, ORIGIN, DAYS, UTC)["tests"])
+    assert found <= 2
+
+
 def test_a_lagged_relationship_is_found_at_its_lag():
     rng, n, _, cycle, wind = world(2)
     lagged = wind[-6:] + wind[:-6]                                      # the air answers the wind three hours later
@@ -116,11 +137,15 @@ def test_a_lagged_relationship_is_found_at_its_lag():
 
 def test_the_air_by_wind_direction_finds_the_sector_it_is_worst_from():
     rng, n, _, _, wind = world(3)
-    direction = [45.0 if (i // 48) % 3 == 0 else 225.0 if (i // 48) % 3 == 1 else 135.0 for i in range(n)]   # NE, SW or SE days
-    air = {"pm2_5": series([10 + 8 * (d == 45.0) + e for d, e in zip(direction, noise(rng, 0, 1, n))])}
+    days, d = [], 45.0
+    for _ in range(DAYS):                                               # NE, SW or SE, each holding for a few days at a time
+        d = d if rng.random() < 0.6 else rng.choice((45.0, 225.0, 135.0))
+        days.append(d)
+    direction = [d for d in days for _ in range(48)]
+    air = {"pm2_5": series([10 + 3 * (d == 45.0) + e for d, e in zip(direction, noise(rng, 0, 1, n))])}
     result = correlate.scan(air, {"wind": series(wind)}, series(direction), series([20.0] * n), ORIGIN, DAYS, UTC)
     d = result["directions"][0]
-    assert d["survives"] and d["highest"] == "NE" and d["lowest"] in ("SW", "SE") and d["highest_by"] > 3
+    assert d["survives"] and d["highest"] == "NE" and d["lowest"] in ("SW", "SE") and d["highest_by"] > 1
     out = correlate.summarise(result, *names(air, {"wind": 1}))
     assert any("highest with winds from the NE" in f for f in out["findings"])
 
@@ -141,11 +166,15 @@ def test_the_helpers_rank_with_ties_allow_for_many_tests_and_word_strength():
 
 
 def test_the_formulas_match_their_tables():
-    assert abs(correlate.p_value(0.3, 43) - 0.0491) < 0.002                    # r 0.3 from 43 pairs: just under 5%
+    assert abs(correlate.p_value(0.3, 43) - 0.0506) < 0.001                    # r 0.3 from 43 pairs: just over 5% (t, 41 df)
+    assert abs(correlate.p_value(0.5, 12) - 0.0979) < 0.001
     assert correlate.p_value(0.0, 100) == 1.0 and correlate.p_value(0.9, 3) == 1.0
     assert abs(correlate.chi2_sf(14.067, 7) - 0.05) < 1e-3 and abs(correlate.chi2_sf(3.841, 1) - 0.05) < 1e-3
     assert abs(correlate.chi2_sf(2.0, 7) - 0.9598) < 1e-3
-    assert correlate.effective(1000, 0.9, 0.9) < 120 and correlate.effective(1000, 0.5, -0.5) == 1000
+    ar = [0.9 ** k for k in range(1, 48)]                                       # two series that each hold on as an AR(1) of 0.9
+    assert abs(correlate.effective(1000, ar, ar) - 1000 * 0.19 / 1.81) < 1      # Bretherton's AR(1) form, as it should be
+    assert correlate.effective(1000, [0.5] * 5, [-0.5] * 5) == 1000 and correlate.effective(1000, ar, [0.0] * 47) == 1000
+    assert correlate.effective(1000, [1.0] * 47, [1.0] * 47) == 1000 / 95        # flat for a day: about one turn a day
     assert abs(correlate.sidak(0.01, 13) - 0.1225) < 1e-3
 
 

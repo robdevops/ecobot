@@ -33,6 +33,12 @@ def series(values):
 def unrelated(rng, kind):
     if kind == "noise":
         return [rng.gauss(0, 1) for _ in range(N)]
+    if kind == "smooth":   # each day its own slow swings: smooth within the day, unrelated across
+        out = []
+        for _ in range(DAYS):
+            waves = [(rng.gauss(0, 1), rng.uniform(4, 16), rng.uniform(0, 2 * math.pi)) for _ in range(3)]
+            out += [sum(a * math.sin(2 * math.pi * s / (2 * h) + ph) for a, h, ph in waves) + rng.gauss(0, 0.2) for s in range(48)]
+        return out
     out, level = [], 0.0
     for _ in range(DAYS):   # spells of days, a daily cycle and noise: what weather and air look like
         level = 0.8 * level + rng.gauss(0, 1)
@@ -60,7 +66,7 @@ def planted(rng, kind):
 
 def synthetic(runs: int):
     print(f"Made-up data, {runs} runs each, 90 days. Unrelated readings (any link found is false; about 10% of runs is the target):")
-    for kind in ("noise", "spells"):
+    for kind in ("noise", "spells", "smooth"):
         hits = {"old": 0, "new": 0}
         for seed in range(runs):
             rng = random.Random(seed)
@@ -122,6 +128,7 @@ async def real(periods: list[int]):
                 started = time.perf_counter()
                 out[name] = (mod.scan(*args), time.perf_counter() - started)
             report(days, out, args)
+            self_check(args)
     finally:
         compose.scan.scan = real_scan
         for s in sources:
@@ -147,6 +154,33 @@ def report(days: int, out: dict, args):
         mark = "  " if a["survives"] == b["survives"] else "≠ "
         print(f"  {mark}{k[0]} ~ {k[1]}: old p {a['p']:.3f} {'FOUND' if a['survives'] else '-'} | new p {b['p']:.4f} "
               f"{'FOUND' if b['survives'] else '-'}  {r(b)}")
+
+
+def shifted(series_: dict[int, float], origin: int, days: int, by_days: int) -> dict[int, float]:
+    """The readings moved `by_days` later, the end wrapping round to the start: the same readings, the same daily cycle and
+    persistence, but no longer lined up with the weather they went with."""
+    span = days * 86400
+    return {origin + (t - origin + by_days * 86400) % span: v for t, v in series_.items()}
+
+
+def self_check(args):
+    """The new scan with the air moved by whole weeks against the weather: any link it still finds is a false one, on these very
+    readings. A sound scan finds about none (a few at most over all the shifts)."""
+    air, weather, direction, speed, origin, days, tz = args
+    shifts = [k for k in (7, 14, 21, 28) if k < days - 3]
+    found, total = [], 0
+    for k in shifts:
+        moved = {name: shifted(v, origin, days, k) for name, v in air.items()}
+        result = new.scan(moved, weather, direction, speed, origin, days, tz)
+        if "note" in result:
+            continue
+        tests = [*result["tests"], *result["directions"]]
+        total += len(tests)
+        found += [(k, t["air"], t.get("weather", "direction"), t["p"]) for t in tests if t["survives"]]
+    print(f"  self-check, the air moved by {', '.join(map(str, shifts))} days (no real link left): "
+          f"{len(found)} false finds in {total} pairs tested")
+    for k, a, w, p in sorted(found, key=lambda f: f[3])[:8]:
+        print(f"    moved {k} days: {a} ~ {w}  p {p:.4f}")
 
 
 def main():

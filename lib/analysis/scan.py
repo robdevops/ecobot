@@ -3,14 +3,16 @@ pattern or the daily cycle is not reported as a link.
 
 Everything works on 30-minute slots. Each pair is looked at two ways: within the day (both readings minus their own
 time-of-day average and that day's own level, so the shared daily cycle and a spell of days both cancel, with the weather leading
-the air by 0 to 6 hours) and day to day (daily means). How strong a result is judged by Fisher's z with an effective sample size: readings half an hour (or a
-day) apart are not independent, so the count of readings is shrunk by how much each series follows on from itself (Bretherton's
-estimate from the two series' lag-1 autocorrelations), and the best of the 13 lags is allowed for (Šidák). Then the number of
+the air by 0 to 6 hours) and day to day (daily means). How strong a result is judged by Student's t with an effective sample size: readings half an hour (or a
+day) apart are not independent, so the count of readings is shrunk by how long each series stays much the same (Bretherton's
+estimate from the two series' autocorrelations, up to a day apart, or a fortnight for daily means), and the best of the 13 lags is
+allowed for (Šidák). Then the number of
 pairs tested is allowed for (Benjamini-Hochberg), so only pairs that survive are called links. Rank correlations throughout:
 rain and spikes are skewed, and a rank correlation is not thrown by them. Pure Python (math.sumprod for the long sums)."""
 
 import math
 from datetime import tzinfo
+from itertools import groupby
 from statistics import fmean
 
 from ..timeutil import MIN_DAY_SLOTS, SLOT, naive_local
@@ -31,31 +33,59 @@ Series = list   # a grid: one value (or None) per 30-minute slot of the local cl
 
 def rank(values: list) -> list:
     """Ranks, ties averaged, 1 = smallest; a missing value (None or NaN) stays None."""
-    known = sorted((v, i) for i, v in enumerate(values) if v is not None and v == v)
+    order = sorted((i for i, v in enumerate(values) if v is not None and v == v), key=values.__getitem__)
     out: list = [None] * len(values)
-    k = 0
-    while k < len(known):
-        j = k
-        while j + 1 < len(known) and known[j + 1][0] == known[k][0]:
-            j += 1
-        for m in range(k, j + 1):
-            out[known[m][1]] = (k + j + 2) / 2
-        k = j + 1
+    start = 0
+    for _, run in groupby(order, key=values.__getitem__):
+        run = list(run)
+        middle = start + (len(run) + 1) / 2          # ties share the average of the places they take
+        for i in run:
+            out[i] = middle
+        start += len(run)
     return out
 
 
 def p_value(r: float, n_eff: float) -> float:
-    """Two-sided p of a correlation `r` from `n_eff` independent pairs (Fisher's z, normal tail)."""
+    """Two-sided p of a correlation `r` from `n_eff` independent pairs: Student's t with n_eff - 2 degrees of freedom (with few
+    effective pairs its tails are much heavier than the normal curve's, as they should be)."""
     if n_eff <= 3 or r != r:
         return 1.0
-    z = math.atanh(min(abs(r), 1 - 1e-12)) * math.sqrt(n_eff - 3)
-    return math.erfc(z / math.sqrt(2))
+    r = min(abs(r), 1 - 1e-12)
+    df = n_eff - 2
+    return incomplete_beta(df / 2, 0.5, df / (df + df * r * r / (1 - r * r)))
 
 
-def effective(n: float, r1x: float, r1y: float) -> float:
-    """Bretherton's effective number of independent pairs for two series of `n` with these lag-1 autocorrelations."""
-    rho = r1x * r1y
-    return n if rho <= 0 else max(2.0, n * (1 - rho) / (1 + rho))
+def incomplete_beta(a: float, b: float, x: float) -> float:
+    """The regularised incomplete beta function I_x(a, b) (a continued fraction, Lentz's method)."""
+    if x <= 0:
+        return 0.0
+    if x >= 1:
+        return 1.0
+    if x > (a + 1) / (a + b + 2):   # the fraction converges quickly only on this side
+        return 1 - incomplete_beta(b, a, 1 - x)
+    front = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log(1 - x)) / a
+    tiny = 1e-300
+    c, d = 1.0, 1 - (a + b) * x / (a + 1)
+    d = 1 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 300):
+        for num in (m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m)), -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))):
+            d = 1 + num * d
+            d = 1 / (d if abs(d) > tiny else tiny)
+            c = 1 + num / c
+            c = c if abs(c) > tiny else tiny
+            h *= d * c
+        if abs(d * c - 1) < 1e-14:
+            break
+    return front * h
+
+
+def effective(n: float, acf_x: list[float], acf_y: list[float]) -> float:
+    """The effective number of independent pairs for two series of `n` readings with these autocorrelations (at lags 1, 2, ...):
+    n / (1 + 2 Σ ρx(k)·ρy(k)), the general form of Bretherton's estimate. Two series that each stay much the same for hours (or
+    days) share far fewer independent turns than they have readings; where only one of them persists, nearly all count."""
+    shared = sum(a * b for a, b in zip(acf_x, acf_y))
+    return min(float(n), max(2.0, n / (1 + 2 * shared))) if 1 + 2 * shared > 0 else float(n)
 
 
 def sidak(p: float, tries: int) -> float:
@@ -159,11 +189,25 @@ def within_days(x: Series) -> Series:
     return out
 
 
-def lag1(x: list[float], m: list[float]) -> float:
-    """The lag-1 autocorrelation of a centred series (`m` marks its readings), from neighbours that are both there."""
-    num = math.sumprod(x[:-1], x[1:])
-    den = math.sqrt(math.sumprod([v * v for v in x[:-1]], m[1:]) * math.sumprod(m[:-1], [v * v for v in x[1:]]))
-    return num / den if den > 0 else 0.0
+SLOT_LAGS = PER_DAY - 1      # how far within-day persistence is looked for: up to a day
+DAY_LAGS = 14                # and day-to-day persistence: up to a fortnight (at most a quarter of the days)
+
+
+def autocorrelations(x: list[float], m: list[float], lags: int) -> list[float]:
+    """The autocorrelation of a centred series at lags 1 to `lags` (the usual estimate: the sum of the products `k` apart over the sum
+    of squares). A missing reading is 0 in `x`; `m` marks the readings, so each lag is scaled by the pairs it actually has."""
+    total, n = math.sumprod(x, x), sum(m)
+    if total <= 0 or n < 2:
+        return [0.0] * lags
+    share = n / len(x)                                # the pairs k apart that both have a reading: about (len - k) x share²
+    return [math.sumprod(x[:-k], x[k:]) / total * n / max((len(x) - k) * share * share, 1.0) for k in range(1, min(lags, len(x) - 1) + 1)]
+
+
+def _series_acf(values: list[float], lags: int) -> list[float]:
+    """The autocorrelations at lags 1 to `lags` of a short series with no gaps (days in order)."""
+    mean = fmean(values)
+    x = [v - mean for v in values]
+    return autocorrelations(x, [1.0] * len(x), min(lags, len(x) // 4))
 
 
 def centred_ranks(x: Series) -> tuple[list[float], list[float]]:
@@ -174,30 +218,35 @@ def centred_ranks(x: Series) -> tuple[list[float], list[float]]:
     return [0.0 if v is None else v - mean for v in r], [0.0 if v is None else 1.0 for v in r]
 
 
-def _ranked(grid: Series) -> tuple[list[float], list[float], list[float], float]:
-    """(anomaly ranks centred, mask, their squares, lag-1 autocorrelation): what a series contributes to every pair it is in."""
+def _ranked(grid: Series) -> tuple[list[float], list[float], list[float], list[float]]:
+    """(anomaly ranks centred, mask, their squares, autocorrelations up to a day): what a series contributes to every pair it is in."""
     x, m = centred_ranks(within_days(grid))
-    return x, m, [v * v for v in x], lag1(x, m)
+    return x, m, [v * v for v in x], autocorrelations(x, m, SLOT_LAGS)
 
 
-def _lag_corr(weather: tuple, air: tuple, lag: int) -> tuple[float, float]:
-    """(correlation, slots shared) of the weather leading the air by `lag` slots: weather[:n-lag] against air[lag:]."""
-    (x, mx, xx, _), (y, my, yy, _) = weather, air
-    m = len(x) - lag
-    ys, mys, yys = y[lag:], my[lag:], yy[lag:]
-    xs, mxs, xxs = x[:m], mx[:m], xx[:m]
-    sx, sy = math.sumprod(xxs, mys), math.sumprod(mxs, yys)
-    return math.sumprod(xs, ys) / (math.sqrt(sx * sy) + 1e-12), math.sumprod(mxs, mys)
+def _leads(weather: tuple) -> list[tuple[list[float], list[float], list[float]]]:
+    """The weather's (values, mask, squares) cut for each lag (weather[:n-lag]): made once, used against every air series."""
+    x, mx, xx, _ = weather
+    return [(x[:len(x) - lag], mx[:len(x) - lag], xx[:len(x) - lag]) for lag in LAGS]
 
 
-def within_day(weather: tuple, air: tuple) -> tuple[float, int, float] | None:
+def _lag_corr(lead: tuple, air: tuple, lag: int) -> float:
+    """The correlation of the weather leading the air by `lag` slots: the weather cut for the lag (`lead`, from _leads) against
+    air[lag:], over the slots where both have a reading."""
+    (xs, mxs, xxs), (y, my, yy, _) = lead, air
+    sx, sy = math.sumprod(xxs, my[lag:]), math.sumprod(mxs, yy[lag:])
+    return math.sumprod(xs, y[lag:]) / (math.sqrt(sx * sy) + 1e-12)
+
+
+def within_day(weather: tuple, air: tuple, leads: list | None = None) -> tuple[float, int, float] | None:
     """(correlation at the best lag, that lag in slots, p) of the weather's and air's anomalies, the best of the lags allowed for.
-    None when they share too few readings. `weather` and `air` are _ranked results."""
+    None when they share too few readings. `weather` and `air` are _ranked results; `leads` the weather's _leads, if made."""
     if math.sumprod(weather[1], air[1]) < MIN_OVERLAP:
         return None
-    found = [_lag_corr(weather, air, lag) for lag in LAGS]
-    best = max(range(len(found)), key=lambda k: abs(found[k][0]))
-    r, n = found[best]
+    leads = leads or _leads(weather)
+    found = [_lag_corr(leads[lag], air, lag) for lag in LAGS]
+    best = max(range(len(found)), key=lambda k: abs(found[k]))
+    r, n = found[best], math.sumprod(leads[best][1], air[1][best:])   # and the slots they share at that lag
     p = sidak(p_value(r, effective(n, weather[3], air[3])), len(LAGS))
     return float(r), best, p
 
@@ -222,8 +271,7 @@ def day_to_day(weather: list, air: list) -> tuple[float | None, int, float | Non
     r = _pearson(x, y)
     if r is None:
         return None, len(both), None
-    persists = lambda v: _pearson(v[:-1], v[1:]) or 0.0
-    return r, len(both), p_value(r, effective(len(both), persists(x), persists(y)))
+    return r, len(both), p_value(r, effective(len(both), _series_acf(x, DAY_LAGS), _series_acf(y, DAY_LAGS)))
 
 
 def kruskal_wallis(groups: list[list[float]]) -> float:
@@ -268,16 +316,19 @@ def direction_effect(air: Series, direction: Series, speed: Series) -> dict | No
     order = sorted(days)
     level = {d: fmean([v for vs in days[d].values() for v in vs]) for d in order}
     wind = {d: max(days[d], key=lambda k: len(days[d][k])) for d in order}       # the day's commonest sector
-    neighbours = [(d, d + 1) for d in order if d + 1 in days]
-    r1_air = _pearson([level[d] for d, _ in neighbours], [level[e] for _, e in neighbours]) or 0.0
     shares = [list(wind.values()).count(k) / len(wind) for k in set(wind.values())]
     chance = sum(s * s for s in shares)                                       # two days with the same wind by chance
-    same = sum(wind[d] == wind[e] for d, e in neighbours) / max(len(neighbours), 1)
-    r1_wind = (same - chance) / (1 - chance) if chance < 1 else 1.0           # how much more often than chance the wind holds
+    lags = min(DAY_LAGS, len(order) // 4)
+    acf_air, acf_wind = [], []
+    for k in range(1, lags + 1):                                              # how both persist from day to day, k days apart
+        pairs = [(d, d + k) for d in order if d + k in days]
+        acf_air.append(_pearson([level[d] for d, _ in pairs], [level[e] for _, e in pairs]) or 0.0)
+        same = sum(wind[d] == wind[e] for d, e in pairs) / max(len(pairs), 1)
+        acf_wind.append((same - chance) / (1 - chance) if chance < 1 else 1.0)   # how much more often than chance the wind holds
     groups_used = [g for g in by_sector.values() if g]
     if len(groups_used) < 2 or n < 3:
         return None
-    h = kruskal_wallis(groups_used) * effective(n, r1_air, r1_wind) / n
+    h = kruskal_wallis(groups_used) * effective(n, acf_air, acf_wind) / n
     return {"spread": means[high] - means[low], "p": chi2_sf(h, len(groups_used) - 1), "highest": SECTORS[high], "lowest": SECTORS[low],
             "highest_by": float(means[high]), "lowest_by": float(means[low])}
 
@@ -295,12 +346,13 @@ def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]],
         return {"tests": [], "directions": [], "note": f"Only {overlap} days have enough air-quality readings; at least {MIN_DAYS} are needed."}
     air_ranked = {k: _ranked(g) for k, g in grids.items()}   # what each series contributes to every pair, worked out once
     weather_ranked = {k: _ranked(g) for k, g in wgrids.items()}
+    leads = {k: _leads(r) for k, r in weather_ranked.items()}
     air_daily, weather_daily = ({k: daily_means(g) for k, g in gs.items()} for gs in (grids, wgrids))
     tests = []
     for a_name in grids:
         for w_name in wgrids:
             r_daily, n_days, p_daily = day_to_day(weather_daily[w_name], air_daily[a_name])
-            inside = within_day(weather_ranked[w_name], air_ranked[a_name])
+            inside = within_day(weather_ranked[w_name], air_ranked[a_name], leads[w_name])
             if inside is None and p_daily is None:
                 continue
             r, lag, p = inside or (None, 0, 1.0)
