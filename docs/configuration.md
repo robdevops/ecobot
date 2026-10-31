@@ -59,7 +59,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ALERT_COOLDOWN_MINUTES` | `60` (5–150) | Rain: dry time before "stopped". Rain and temperature crossing: minimum gap between alerts. A change inside the cooldown is held, then sent if still different |
+| `ALERT_COOLDOWN_MINUTES` | `60` (5–150) | Rain: dry time before "stopped" (rain that starts again sooner is the same spell; "started" is never held). Temperature crossing: minimum gap between alerts; a change inside the cooldown is held, then sent if still different |
 | `RAIN_QUIET_HOURS` | `0-6` | Local hours with no rain alerts; summarised afterwards. `22-6` wraps midnight, `off` disables |
 | `ANTISPIKE_REQUIRE_CONSECUTIVE` | `2` | Readings in a row a PM1/PM2.5/PM10 rise needs to count (spike ≥ 2.5× and +5 µg/m³ over neighbours otherwise dropped from charts, figures, unhealthy-air alert). `1` / `off` disables. Live "air now" unaffected |
 
