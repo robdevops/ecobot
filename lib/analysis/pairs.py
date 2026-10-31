@@ -7,8 +7,7 @@ rain fell while the reading was falling, steady or rising; its level in wet and 
 change before and the rain after; and the biggest rain spells with the change that preceded each."""
 
 from datetime import tzinfo
-
-import numpy as np
+from statistics import correlation, fmean, pstdev
 
 from ..airgradient.metrics import ZONES, zone
 from ..rain import SPELL_MM, rain_spells
@@ -106,15 +105,15 @@ def analyse(driver: dict[int, float], rain: dict[int, float], threshold: float, 
                        "rain_vs_fair_share": f"{rain_share / time_share:.1f}x" if time_share else None,
                        "wet_share": f"{100 * sum(1 for t in ts if rain[t] > 0) / max(len(ts), 1):.0f}%"}
     dry = [t for t in slots if rain[t] <= 0]
-    level = {"during_rain": round(float(np.mean([driver[t] for t in wet])), 1) if wet else None,
-             "dry": round(float(np.mean([driver[t] for t in dry])), 1) if dry else None}
+    level = {"during_rain": round(fmean([driver[t] for t in wet]), 1) if wet else None,
+             "dry": round(fmean([driver[t] for t in dry]), 1) if dry else None}
     pairs = [(c, sum(rain.get(t + k * SLOT, 0.0) for k in range(1, AHEAD + 1))) for t in slots
              if (c := change_before(driver, t)) is not None and t + AHEAD * SLOT in rain]
     r = None
     if len(pairs) >= 30:
-        a, b = np.array(pairs).T
-        if a.std() > 0 and b.std() > 0:
-            r = round(float(np.corrcoef(a, b)[0, 1]), 2)
+        a, b = [c for c, _ in pairs], [mm for _, mm in pairs]
+        if pstdev(a) > 0 and pstdev(b) > 0:
+            r = round(correlation(a, b), 2)
     events = [{"start": s[0], "end": s[-1], "mm": round(sum(rain[t] for t in s), 1), "change": change_before(driver, s[0]),
                "lowest": min(driver[t] for t in s if t in driver)} for s in rain_spells(rain, wet)]
     fell = sum(1 for e in events if e["change"] is not None and e["change"] <= -threshold)
@@ -154,7 +153,7 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
     if not slots:
         return {}
     wet, dry = [t for t in slots if rain[t] > 0], [t for t in slots if rain[t] <= 0]
-    mean = lambda ts: float(np.mean([values[t] for t in ts])) if ts else None
+    mean = lambda ts: fmean([values[t] for t in ts]) if ts else None
     word = lambda v: ZONES[zone(v, limits)]
     wet_level, dry_level = mean(wet), mean(dry)
     events = []
@@ -162,8 +161,7 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
         before = [values[t] for t in range(s[0] - WASH_SLOTS * SLOT, s[0], SLOT) if t in values]
         after = [values[t] for t in range(s[-1] + SLOT, s[-1] + (WASH_SLOTS + 1) * SLOT, SLOT) if t in values]
         if len(before) >= MIN_WASH_SLOTS and len(after) >= MIN_WASH_SLOTS:
-            events.append({"start": s[0], "mm": round(sum(rain[t] for t in s), 1), "before": float(np.mean(before)),
-                           "after": float(np.mean(after))})
+            events.append({"start": s[0], "mm": round(sum(rain[t] for t in s), 1), "before": fmean(before), "after": fmean(after)})
     cleaned = sum(1 for e in events if e["after"] < e["before"] and e["after"] <= CLEANED * e["before"])   # unchanged (as zero to
     worse = sum(1 for e in events if e["after"] > e["before"] and e["after"] * CLEANED >= e["before"])     # zero) is neither
     ratio = wet_level / dry_level if wet_level is not None and dry_level else None
@@ -173,13 +171,13 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
         day["rain"] += rain[t]
         day["air"].append(values[t])
     days = {d: v for d, v in days.items() if len(v["air"]) >= MIN_DAY_SLOTS}
-    wet_days = [float(np.mean(v["air"])) for v in days.values() if v["rain"] >= SPELL_MM]
-    dry_days = [float(np.mean(v["air"])) for v in days.values() if v["rain"] == 0]
+    wet_days = [fmean(v["air"]) for v in days.values() if v["rain"] >= SPELL_MM]
+    dry_days = [fmean(v["air"]) for v in days.values() if v["rain"] == 0]
     r = None
     if len(days) >= 10:
-        rain_ranks, air_ranks = (rank(np.array(x)) for x in ([v["rain"] for v in days.values()], [float(np.mean(v["air"])) for v in days.values()]))
-        if rain_ranks.std() > 0 and air_ranks.std() > 0:
-            r = round(float(np.corrcoef(rain_ranks, air_ranks)[0, 1]), 2)
+        rain_ranks, air_ranks = (rank(x) for x in ([v["rain"] for v in days.values()], [fmean(v["air"]) for v in days.values()]))
+        if pstdev(rain_ranks) > 0 and pstdev(air_ranks) > 0:
+            r = round(correlation(rain_ranks, air_ranks), 2)
     findings = []
     if wet_level is not None and dry_level is not None:
         findings.append(f"Average {label} {wet_level:.1f} in wet half-hours ({word(wet_level)}) against {dry_level:.1f} when dry "
@@ -188,8 +186,8 @@ def analyse_air(values: dict[int, float], rain: dict[int, float], limits: tuple[
         findings.append(f"Over {len(events)} rain events (1 mm or more) with readings around them: {cleaned} left the air cleaner "
                         f"in the 6 hours after than the 6 before, {worse} worse and {len(events) - cleaned - worse} about the same")
     if wet_days and dry_days:
-        findings.append(f"Daily average {label} on wet days {np.mean(wet_days):.1f} ({len(wet_days)} days) against "
-                        f"{np.mean(dry_days):.1f} on dry days ({len(dry_days)} days)")
+        findings.append(f"Daily average {label} on wet days {fmean(wet_days):.1f} ({len(wet_days)} days) against "
+                        f"{fmean(dry_days):.1f} on dry days ({len(dry_days)} days)")
     biggest = max(events, key=lambda e: e["mm"], default=None)
     if biggest:
         findings.append(f"The biggest event, {biggest['mm']:g} mm: {biggest['before']:.1f} in the 6 hours before, "

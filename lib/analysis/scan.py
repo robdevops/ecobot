@@ -2,16 +2,16 @@
 pattern or the daily cycle is not reported as a link.
 
 Everything works on 30-minute slots. Each pair is looked at two ways: within the day (both readings minus their own
-time-of-day average, so the shared daily cycle cancels, with the weather leading the air by 0 to 6 hours) and day to
-day (daily means). How strong a result is judged by shuffling whole days of the weather against the air (readings in
-one day are not independent) and asking how often chance does as well; then the number of pairs tested is allowed for
-(Benjamini-Hochberg), so only pairs that survive are called links. Rank correlations throughout: rain and spikes are
-skewed, and a rank correlation is not thrown by them."""
+time-of-day average and that day's own level, so the shared daily cycle and a spell of days both cancel, with the weather leading
+the air by 0 to 6 hours) and day to day (daily means). How strong a result is judged by Fisher's z with an effective sample size: readings half an hour (or a
+day) apart are not independent, so the count of readings is shrunk by how much each series follows on from itself (Bretherton's
+estimate from the two series' lag-1 autocorrelations), and the best of the 13 lags is allowed for (Šidák). Then the number of
+pairs tested is allowed for (Benjamini-Hochberg), so only pairs that survive are called links. Rank correlations throughout:
+rain and spikes are skewed, and a rank correlation is not thrown by them. Pure Python (math.sumprod for the long sums)."""
 
-import warnings
+import math
 from datetime import tzinfo
-
-import numpy as np
+from statistics import fmean
 
 from ..timeutil import MIN_DAY_SLOTS, SLOT, naive_local
 
@@ -20,27 +20,85 @@ LAGS = range(13)              # the weather leads the air by 0 to 6 hours
 MIN_DAYS = 21
 MIN_DAILY = 14                # days with enough readings for the day-to-day view
 MIN_OVERLAP = 200             # slots two series must share for a within-day comparison
-PERMUTATIONS = 300
-DAILY_PERMUTATIONS = 2000
 FDR = 0.1
 CALM_KMH = 5                  # wind direction only counts with at least this much wind
 MIN_SECTOR_SLOTS = 30
 SECTORS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 MAX_FINDINGS = 6
 
+Series = list   # a grid: one value (or None) per 30-minute slot of the local clock
 
-def rank(x: np.ndarray) -> np.ndarray:
-    """Ranks, ties averaged, 1 = smallest; NaN stays NaN."""
-    out = np.full(len(x), np.nan)
-    ok = ~np.isnan(x)
-    values = x[ok]
-    order = np.argsort(values, kind="mergesort")
-    _, inverse, counts = np.unique(values[order], return_inverse=True, return_counts=True)
-    ends = np.cumsum(counts)
-    ranks = np.empty(len(values))
-    ranks[order] = ((ends - counts + 1) + ends)[inverse] / 2
-    out[ok] = ranks
+
+def rank(values: list) -> list:
+    """Ranks, ties averaged, 1 = smallest; a missing value (None or NaN) stays None."""
+    known = sorted((v, i) for i, v in enumerate(values) if v is not None and v == v)
+    out: list = [None] * len(values)
+    k = 0
+    while k < len(known):
+        j = k
+        while j + 1 < len(known) and known[j + 1][0] == known[k][0]:
+            j += 1
+        for m in range(k, j + 1):
+            out[known[m][1]] = (k + j + 2) / 2
+        k = j + 1
     return out
+
+
+def p_value(r: float, n_eff: float) -> float:
+    """Two-sided p of a correlation `r` from `n_eff` independent pairs (Fisher's z, normal tail)."""
+    if n_eff <= 3 or r != r:
+        return 1.0
+    z = math.atanh(min(abs(r), 1 - 1e-12)) * math.sqrt(n_eff - 3)
+    return math.erfc(z / math.sqrt(2))
+
+
+def effective(n: float, r1x: float, r1y: float) -> float:
+    """Bretherton's effective number of independent pairs for two series of `n` with these lag-1 autocorrelations."""
+    rho = r1x * r1y
+    return n if rho <= 0 else max(2.0, n * (1 - rho) / (1 + rho))
+
+
+def sidak(p: float, tries: int) -> float:
+    """The chance of doing as well as `p` in the best of `tries` looks."""
+    return 1 - (1 - p) ** tries
+
+
+def chi2_sf(x: float, df: int) -> float:
+    """P(X >= x) for a chi-square with `df` degrees of freedom: the regularised upper incomplete gamma Q(df/2, x/2)."""
+    if x <= 0:
+        return 1.0
+    a, x = df / 2, x / 2
+    if x < a + 1:   # the series for the lower part
+        term = total = 1 / a
+        n = a
+        while abs(term) > abs(total) * 1e-15:
+            n += 1
+            term *= x / n
+            total += term
+        return max(0.0, 1 - total * math.exp(-x + a * math.log(x) - math.lgamma(a)))
+    b, c, d = x + 1 - a, 1e300, 1 / (x + 1 - a)   # the continued fraction for the upper part (Lentz)
+    h = d
+    for i in range(1, 300):
+        an = -i * (i - a)
+        b += 2
+        d = an * d + b
+        d = 1 / (d if abs(d) > 1e-300 else 1e-300)
+        c = b + an / c
+        c = c if abs(c) > 1e-300 else 1e-300
+        h *= d * c
+        if abs(d * c - 1) < 1e-15:
+            break
+    return math.exp(-x + a * math.log(x) - math.lgamma(a)) * h
+
+
+def _pearson(x: list[float], y: list[float]) -> float | None:
+    """Pearson's r of two lists of numbers; None when either does not vary."""
+    if len(x) < 3:
+        return None
+    mx, my = fmean(x), fmean(y)
+    dx, dy = [v - mx for v in x], [v - my for v in y]
+    sx, sy = math.sumprod(dx, dx), math.sumprod(dy, dy)
+    return math.sumprod(dx, dy) / math.sqrt(sx * sy) if sx > 0 and sy > 0 else None
 
 
 def strength_word(r: float) -> str:
@@ -62,162 +120,190 @@ def benjamini_hochberg(pvalues: list[float], q: float = FDR) -> list[bool]:
     return keep
 
 
-def clock_slots(origin: int, days: int, tz: tzinfo) -> np.ndarray:
+def clock_slots(origin: int, days: int, tz: tzinfo) -> list[int]:
     """Each 30-minute slot from `origin` (a midnight in tz) as a slot of the local clock, 48 a day: across a daylight-saving change
     a time of day keeps its place (the skipped hour's slots stay empty, the repeated hour's are filled twice)."""
     start = naive_local(origin, tz)
-    return np.array([int((naive_local(origin + k * SLOT, tz) - start).total_seconds()) // SLOT for k in range(days * PER_DAY + 2)])
+    return [int((naive_local(origin + k * SLOT, tz) - start).total_seconds()) // SLOT for k in range(days * PER_DAY + 2)]
 
 
-def to_grid(series: dict[int, float], origin: int, days: int, clock: np.ndarray) -> np.ndarray:
-    """A series as an array of the local clock's 30-minute slots from `origin` (clock: clock_slots), NaN where there is no reading."""
-    out = np.full(days * PER_DAY, np.nan)
-    times = (np.fromiter(series, np.int64, len(series)) - origin) // SLOT
-    values = np.fromiter(series.values(), float, len(series))
-    inside = (times >= 0) & (times < len(clock))
-    slots = clock[times[inside]]
-    kept = slots < len(out)
-    out[slots[kept]] = values[inside][kept]
+def to_grid(series: dict[int, float], origin: int, days: int, clock: list[int]) -> Series:
+    """A series as a list of the local clock's 30-minute slots from `origin` (clock: clock_slots), None where there is no reading."""
+    out: Series = [None] * (days * PER_DAY)
+    for t, v in series.items():
+        k = (t - origin) // SLOT
+        if 0 <= k < len(clock) and clock[k] < len(out):
+            out[clock[k]] = float(v)
     return out
 
 
-def anomalies(x: np.ndarray) -> np.ndarray:
+def anomalies(x: Series) -> Series:
     """The series minus its average for that time of day."""
-    by_slot = x.reshape(-1, PER_DAY)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        return (by_slot - np.nanmean(by_slot, axis=0)).reshape(-1)
+    means = []
+    for s in range(PER_DAY):
+        known = [v for v in x[s::PER_DAY] if v is not None]
+        means.append(fmean(known) if known else None)
+    return [None if v is None else v - means[i % PER_DAY] for i, v in enumerate(x)]
 
 
-def centred_ranks(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(ranks minus their mean with missing readings as 0, a 1/0 mask of the readings there are)."""
-    r = rank(x)
-    return np.nan_to_num(r - np.nanmean(r)), (~np.isnan(r)).astype(float)
-
-
-def _ranked(grid: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """(anomaly ranks centred, mask, their squares): what a series contributes to every pair it is in. Single precision:
-    the correlations are judged to two decimals, and the shuffles take half the memory."""
-    x, m = (a.astype(np.float32) for a in centred_ranks(anomalies(grid)))
-    return x, m, x * x
-
-
-def _shuffled(x: np.ndarray, permutations: np.ndarray) -> np.ndarray:
-    """One row per permutation: whole days of the series moved around."""
-    return x.reshape(len(x) // PER_DAY, PER_DAY)[permutations].reshape(len(permutations), -1)
-
-
-def _lag_corr(x: np.ndarray, xx: np.ndarray, mx: np.ndarray, y: np.ndarray, yy: np.ndarray, my: np.ndarray) -> np.ndarray:
-    """For each row of x (P shuffles of the weather; xx its squares, mx marks the readings), the correlation with y at
-    every lag, over the slots where both have a reading: (P, len(LAGS)). The weather leads the air by L slots:
-    x[:n-L] against y[L:]."""
-    n = x.shape[1]
-    out = np.zeros((x.shape[0], len(LAGS)))
-    for j, lag in enumerate(LAGS):
-        m = n - lag
-        num = x[:, :m] @ y[lag:]
-        sx, sy = xx[:, :m] @ my[lag:], mx[:, :m] @ yy[lag:]
-        out[:, j] = num / (np.sqrt(sx * sy) + 1e-12)
+def within_days(x: Series) -> Series:
+    """The series' movement within each day: its time-of-day anomaly minus that day's average anomaly. What a spell of days does
+    (the level they sit at) is left to the day-to-day view, so a slow drift is not counted as thousands of half-hours agreeing."""
+    a = anomalies(x)
+    out: Series = []
+    for d in range(len(a) // PER_DAY):
+        day = a[d * PER_DAY:(d + 1) * PER_DAY]
+        known = [v for v in day if v is not None]
+        mean = fmean(known) if known else 0.0
+        out += [None if v is None else v - mean for v in day]
     return out
 
 
-def within_day(weather: tuple, air: tuple, shuffled: tuple) -> tuple[float, int, float] | None:
-    """(correlation at the best lag, that lag in slots, p) of the weather's and air's anomalies; p by shuffling days. None
-    when they share too few readings. `weather` and `air` are _ranked results; `shuffled` is the weather's (x, xx, mx)
-    with its days shuffled."""
-    (x, mx, xx), (y, my, yy) = weather, air
-    if mx @ my < MIN_OVERLAP:
+def lag1(x: list[float], m: list[float]) -> float:
+    """The lag-1 autocorrelation of a centred series (`m` marks its readings), from neighbours that are both there."""
+    num = math.sumprod(x[:-1], x[1:])
+    den = math.sqrt(math.sumprod([v * v for v in x[:-1]], m[1:]) * math.sumprod(m[:-1], [v * v for v in x[1:]]))
+    return num / den if den > 0 else 0.0
+
+
+def centred_ranks(x: Series) -> tuple[list[float], list[float]]:
+    """(ranks minus their mean, missing readings as 0; a 1/0 mask of the readings there are)."""
+    r = rank(x)
+    known = [v for v in r if v is not None]
+    mean = fmean(known) if known else 0.0
+    return [0.0 if v is None else v - mean for v in r], [0.0 if v is None else 1.0 for v in r]
+
+
+def _ranked(grid: Series) -> tuple[list[float], list[float], list[float], float]:
+    """(anomaly ranks centred, mask, their squares, lag-1 autocorrelation): what a series contributes to every pair it is in."""
+    x, m = centred_ranks(within_days(grid))
+    return x, m, [v * v for v in x], lag1(x, m)
+
+
+def _lag_corr(weather: tuple, air: tuple, lag: int) -> tuple[float, float]:
+    """(correlation, slots shared) of the weather leading the air by `lag` slots: weather[:n-lag] against air[lag:]."""
+    (x, mx, xx, _), (y, my, yy, _) = weather, air
+    m = len(x) - lag
+    ys, mys, yys = y[lag:], my[lag:], yy[lag:]
+    xs, mxs, xxs = x[:m], mx[:m], xx[:m]
+    sx, sy = math.sumprod(xxs, mys), math.sumprod(mxs, yys)
+    return math.sumprod(xs, ys) / (math.sqrt(sx * sy) + 1e-12), math.sumprod(mxs, mys)
+
+
+def within_day(weather: tuple, air: tuple) -> tuple[float, int, float] | None:
+    """(correlation at the best lag, that lag in slots, p) of the weather's and air's anomalies, the best of the lags allowed for.
+    None when they share too few readings. `weather` and `air` are _ranked results."""
+    if math.sumprod(weather[1], air[1]) < MIN_OVERLAP:
         return None
-    observed = _lag_corr(x[None, :], xx[None, :], mx[None, :], y, yy, my)[0]
-    best = int(np.abs(observed).argmax())
-    strongest = np.abs(_lag_corr(*shuffled, y, yy, my)).max(axis=1)
-    return float(observed[best]), best, (1 + int((strongest >= abs(observed[best])).sum())) / (len(strongest) + 1)
+    found = [_lag_corr(weather, air, lag) for lag in LAGS]
+    best = max(range(len(found)), key=lambda k: abs(found[k][0]))
+    r, n = found[best]
+    p = sidak(p_value(r, effective(n, weather[3], air[3])), len(LAGS))
+    return float(r), best, p
 
 
-def _within_day_tests(weather: np.ndarray, air: dict[str, tuple], permutations: np.ndarray) -> dict[str, tuple | None]:
-    """within_day of one weather series against every air series (`air`: their _ranked results). The weather's days shuffled
-    are the bulk of a scan's memory (100 MB and more for a year), so they are made for one weather series at a time."""
-    ranked = _ranked(weather)
-    xs, ms = _shuffled(ranked[0], permutations), _shuffled(ranked[1], permutations)
-    return {name: within_day(ranked, a, (xs, xs * xs, ms)) for name, a in air.items()}
+def daily_means(grid: Series) -> list[float | None]:
+    """One mean per day (None for a day with under 12 hours of readings)."""
+    out = []
+    for d in range(len(grid) // PER_DAY):
+        known = [v for v in grid[d * PER_DAY:(d + 1) * PER_DAY] if v is not None]
+        out.append(fmean(known) if len(known) >= MIN_DAY_SLOTS else None)
+    return out
 
 
-def daily_means(grid: np.ndarray) -> np.ndarray:
-    """One mean per day (NaN for a day with under 12 hours of readings)."""
-    counts = (~np.isnan(grid)).reshape(-1, PER_DAY).sum(axis=1)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        means = np.nanmean(grid.reshape(-1, PER_DAY), axis=1)
-    return np.where(counts >= MIN_DAY_SLOTS, means, np.nan)
+def day_to_day(weather: list, air: list) -> tuple[float | None, int, float | None]:
+    """(correlation of the daily means, days used, p), or (None, days, None) with too few days or no variation. `weather` and
+    `air` are daily_means results; the days are not independent either (a dry spell lasts), so each series' day-to-day
+    persistence shrinks the count."""
+    both = [d for d in range(len(weather)) if weather[d] is not None and air[d] is not None]
+    if len(both) < MIN_DAILY:
+        return None, len(both), None
+    x, y = rank([weather[d] for d in both]), rank([air[d] for d in both])
+    r = _pearson(x, y)
+    if r is None:
+        return None, len(both), None
+    persists = lambda v: _pearson(v[:-1], v[1:]) or 0.0
+    return r, len(both), p_value(r, effective(len(both), persists(x), persists(y)))
 
 
-def day_to_day(weather: np.ndarray, air: np.ndarray, rng: np.random.Generator,
-               shuffles: int = DAILY_PERMUTATIONS) -> tuple[float | None, int, float | None]:
-    """(correlation of the daily means, days used, p by shuffling days), or (None, days, None) with too few days.
-    `weather` and `air` are daily_means results."""
-    both = ~np.isnan(weather) & ~np.isnan(air)
-    if both.sum() < MIN_DAILY:
-        return None, int(both.sum()), None
-    x, y = rank(weather[both]), rank(air[both])
-    x, y = x - x.mean(), y - y.mean()
-    if not x.any() or not y.any():
-        return None, int(both.sum()), None
-    corr = lambda xs: xs @ y / (np.sqrt((xs * xs).sum(axis=-1)) * np.sqrt((y * y).sum()) + 1e-12)
-    observed = float(corr(x))
-    strongest = np.abs(corr(rng.permuted(np.tile(x, (shuffles, 1)), axis=1)))
-    return observed, int(both.sum()), (1 + int((strongest >= abs(observed)).sum())) / (shuffles + 1)
+def kruskal_wallis(groups: list[list[float]]) -> float:
+    """The Kruskal-Wallis H of these groups of values (ranked together)."""
+    pooled = [v for g in groups for v in g]
+    ranks = rank(pooled)
+    n = len(pooled)
+    h, k = 0.0, 0
+    for g in groups:
+        total = sum(ranks[k:k + len(g)])
+        h += total * total / len(g)
+        k += len(g)
+    return 12 / (n * (n + 1)) * h - 3 * (n + 1)
 
 
-def direction_effect(air: np.ndarray, direction: np.ndarray, speed: np.ndarray, permutations: np.ndarray) -> dict | None:
-    """Does the air differ by where the wind comes from? Average anomaly per 8 compass sectors (with some wind), the
-    spread between the highest and lowest, and p by shuffling days. None when there is nothing to compare."""
+def direction_effect(air: Series, direction: Series, speed: Series) -> dict | None:
+    """Does the air differ by where the wind comes from? Average anomaly per 8 compass sectors (with some wind), the spread
+    between the highest and lowest, and p by a Kruskal-Wallis test across the sectors. Its units are a sector on a day (the air's
+    average there): half-hours of one wind on one day are not independent. Their count is shrunk further by how much the air's
+    daily level and the day's wind persist from one day to the next. None when there is nothing to compare."""
     a = anomalies(air)
-    usable = ~np.isnan(direction) & ~np.isnan(speed) & (speed >= CALM_KMH)
-    sectors = np.where(usable, ((np.nan_to_num(direction) % 360 + 22.5) // 45).astype(int) % 8, -1)   # N covers 337.5 to 22.5
-    known = ~np.isnan(a)
-
-    def means(secs: np.ndarray) -> np.ndarray:
-        take = known & (secs >= 0)
-        counts = np.bincount(secs[take], minlength=8)
-        sums = np.bincount(secs[take], weights=a[take], minlength=8)
-        return np.where(counts >= MIN_SECTOR_SLOTS, sums / np.maximum(counts, 1), np.nan)
-
-    def spread(secs: np.ndarray) -> float:
-        m = means(secs)
-        return float(np.nanmax(m) - np.nanmin(m)) if np.isfinite(m).sum() >= 2 else 0.0
-    by_sector = means(sectors)
-    if np.isfinite(by_sector).sum() < 2:
+    groups: dict[int, list[float]] = {}
+    cells: dict[tuple[int, int], list[float]] = {}
+    for i, (v, d, s) in enumerate(zip(a, direction, speed)):
+        if v is None or d is None or s is None or s < CALM_KMH:
+            continue
+        k = int(((d % 360) + 22.5) // 45) % 8
+        groups.setdefault(k, []).append(v)
+        cells.setdefault((i // PER_DAY, k), []).append(v)
+    kept = {k: g for k, g in groups.items() if len(g) >= MIN_SECTOR_SLOTS}
+    if len(kept) < 2:
         return None
-    observed = spread(sectors)
-    exceed = sum(spread(shuffled) >= observed for shuffled in _shuffled(sectors, permutations))
-    high, low = int(np.nanargmax(by_sector)), int(np.nanargmin(by_sector))
-    return {"spread": observed, "p": (1 + exceed) / (len(permutations) + 1), "highest": SECTORS[high], "lowest": SECTORS[low],
-            "highest_by": float(by_sector[high]), "lowest_by": float(by_sector[low])}
+    means = {k: fmean(g) for k, g in kept.items()}
+    high, low = max(means, key=means.get), min(means, key=means.get)
+    by_sector: dict[int, list[float]] = {}
+    days: dict[int, dict[int, list[float]]] = {}
+    for (day, k), values in sorted(cells.items()):
+        if k in kept:
+            by_sector.setdefault(k, []).append(fmean(values))
+            days.setdefault(day, {})[k] = values
+    n = sum(len(g) for g in by_sector.values())
+    order = sorted(days)
+    level = {d: fmean([v for vs in days[d].values() for v in vs]) for d in order}
+    wind = {d: max(days[d], key=lambda k: len(days[d][k])) for d in order}       # the day's commonest sector
+    neighbours = [(d, d + 1) for d in order if d + 1 in days]
+    r1_air = _pearson([level[d] for d, _ in neighbours], [level[e] for _, e in neighbours]) or 0.0
+    shares = [list(wind.values()).count(k) / len(wind) for k in set(wind.values())]
+    chance = sum(s * s for s in shares)                                       # two days with the same wind by chance
+    same = sum(wind[d] == wind[e] for d, e in neighbours) / max(len(neighbours), 1)
+    r1_wind = (same - chance) / (1 - chance) if chance < 1 else 1.0           # how much more often than chance the wind holds
+    groups_used = [g for g in by_sector.values() if g]
+    if len(groups_used) < 2 or n < 3:
+        return None
+    h = kruskal_wallis(groups_used) * effective(n, r1_air, r1_wind) / n
+    return {"spread": means[high] - means[low], "p": chi2_sf(h, len(groups_used) - 1), "highest": SECTORS[high], "lowest": SECTORS[low],
+            "highest_by": float(means[high]), "lowest_by": float(means[low])}
 
 
 def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]], direction: dict[int, float] | None,
-         speed: dict[int, float] | None, origin: int, days: int, tz: tzinfo, seed: int = 1, shuffles: int = PERMUTATIONS) -> dict:
+         speed: dict[int, float] | None, origin: int, days: int, tz: tzinfo) -> dict:
     """The whole scan. `air` and `weather` map a name to {epoch: value} at 30-minute slots; `origin` is the epoch of the
     first slot (a midnight in `tz`) and `days` the number of days. Returns {"tests": [...], "directions": [...], "note"?: ...}
     where each test is {air, weather, r, lag_hours, r_daily, days, p, survives}."""
     clock = clock_slots(origin, days, tz)   # series with no readings (a metric the sensor doesn't have) are left out
     grids = {k: to_grid(v, origin, days, clock) for k, v in air.items() if v}
     wgrids = {k: to_grid(v, origin, days, clock) for k, v in weather.items() if v}
-    overlap = max((int(((~np.isnan(g)).reshape(-1, PER_DAY).sum(axis=1) >= MIN_DAY_SLOTS).sum()) for g in grids.values()), default=0)
+    overlap = max((sum(1 for m in daily_means(g) if m is not None) for g in grids.values()), default=0)
     if overlap < MIN_DAYS:
         return {"tests": [], "directions": [], "note": f"Only {overlap} days have enough air-quality readings; at least {MIN_DAYS} are needed."}
-    rng = np.random.default_rng(seed)
-    permutations = np.array([rng.permutation(days) for _ in range(shuffles)])
-    air_ranked = {k: _ranked(g) for k, g in grids.items()}   # what each air series contributes to every pair, worked out once
-    inside = {w: _within_day_tests(g, air_ranked, permutations) for w, g in wgrids.items()}
+    air_ranked = {k: _ranked(g) for k, g in grids.items()}   # what each series contributes to every pair, worked out once
+    weather_ranked = {k: _ranked(g) for k, g in wgrids.items()}
     air_daily, weather_daily = ({k: daily_means(g) for k, g in gs.items()} for gs in (grids, wgrids))
     tests = []
     for a_name in grids:
         for w_name in wgrids:
-            r_daily, n_days, p_daily = day_to_day(weather_daily[w_name], air_daily[a_name], rng, DAILY_PERMUTATIONS * shuffles // PERMUTATIONS)
-            if inside[w_name][a_name] is None and p_daily is None:
+            r_daily, n_days, p_daily = day_to_day(weather_daily[w_name], air_daily[a_name])
+            inside = within_day(weather_ranked[w_name], air_ranked[a_name])
+            if inside is None and p_daily is None:
                 continue
-            r, lag, p = inside[w_name][a_name] or (None, 0, 1.0)
+            r, lag, p = inside or (None, 0, 1.0)
             best_p = min(p, p_daily if p_daily is not None else 1.0) * 2  # two views of one pair: allow for both
             tests.append({"air": a_name, "weather": w_name, "r": r, "lag_hours": lag * SLOT / 3600, "r_daily": r_daily,
                           "days": n_days, "p": min(1.0, best_p)})
@@ -225,7 +311,7 @@ def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]],
     if direction and speed:
         d, s = to_grid(direction, origin, days, clock), to_grid(speed, origin, days, clock)
         for a_name, a in grids.items():
-            if (found := direction_effect(a, d, s, permutations)) is not None:
+            if (found := direction_effect(a, d, s)) is not None:
                 directions.append({"air": a_name, **found})
     if not tests and not directions:   # "nothing stands out" would claim a comparison that wasn't made
         return {"tests": [], "directions": [], "note": "No weather readings overlap the air-quality readings enough to compare."}
