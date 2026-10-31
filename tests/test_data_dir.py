@@ -68,16 +68,11 @@ def test_a_folder_that_cannot_be_made_stops_the_start_with_a_plain_message(monke
     assert "not writable" in str(stop.value) and "DATA_DIR" in str(stop.value)
 
 
-def test_matplotlib_keeps_its_cache_in_the_data_folder_unless_told_otherwise(tmp_path):
-    code = "import os, ecobot; print(os.environ['MPLCONFIGDIR'])"
-    env = {k: v for k, v in os.environ.items() if k != "MPLCONFIGDIR"}
-    run = lambda **extra: subprocess.Popen([sys.executable, "-c", code], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                           env={**env, "DATA_DIR": str(tmp_path), **extra})
-    told, mine = run(), run(MPLCONFIGDIR=str(tmp_path / "mine"))   # (side by side: each is an import of the bot)
-    out, err = told.communicate()
-    assert out.strip() == str(tmp_path / "matplotlib"), err[-500:]
-    assert mine.communicate()[0].strip() == str(tmp_path / "mine")
-
+def test_the_bot_starts_without_matplotlib():
+    """The charts are drawn with Pillow: importing the bot loads no matplotlib (nor needs a cache folder for it)."""
+    done = subprocess.run([sys.executable, "-c", "import sys, ecobot; assert 'matplotlib' not in sys.modules"], cwd=ROOT,
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr[-500:]
 
 def test_the_running_commit_is_read_without_running_git(tmp_path):
     from ecobot import commit_in

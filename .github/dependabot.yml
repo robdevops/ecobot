@@ -6,8 +6,8 @@ updates:
       interval: weekly
     open-pull-requests-limit: 3
     groups:
-      charts:   # these decide how the chart pictures look: one pull request for all three, so the reference images are redone once
-        patterns: [matplotlib, numpy, pillow]
+      charts:   # Pillow draws the chart pictures: its update is the cue to redo the reference images
+        patterns: [pillow]
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -1,6 +1,5 @@
 holidays
 httpx
-matplotlib==3.11.2
 numpy==2.5.4
 openai
 python-telegram-bot>=22.8

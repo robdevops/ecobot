@@ -290,7 +290,7 @@ def test_zeroconf_is_not_loaded_unless_a_local_name_is_looked_up():
     import sys
     code = ("import sys, lib.airgradient, lib.airgradient.local as l; assert 'zeroconf' not in sys.modules; "
             "import asyncio; asyncio.run(l.address_of('192.168.1.5')); assert 'zeroconf' not in sys.modules")
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={**__import__("os").environ, "MPLCONFIGDIR": "/tmp"})
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
 
 

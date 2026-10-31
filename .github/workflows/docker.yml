@@ -23,7 +23,7 @@ jobs:
           grep -q "Starting ecobot ${GITHUB_SHA::7}" start.log
       - name: Charts drawn in the image
         run: |
-          docker run --rm --network none -v "$PWD/tests:/app/tests:ro" -e MPLCONFIGDIR=/tmp/mpl ecobot python -c '
+          docker run --rm --network none -v "$PWD/tests:/app/tests:ro" ecobot python -c '
           from PIL import Image
           from lib import charts
           from tests import chart_samples, imagecmp
