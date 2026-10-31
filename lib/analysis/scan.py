@@ -4,8 +4,8 @@ pattern or the daily cycle is not reported as a link.
 Everything works on 30-minute slots. Each pair is looked at two ways: within the day (both readings minus their own
 time-of-day average and that day's own level, so the shared daily cycle and a spell of days both cancel, with the weather leading
 the air by 0 to 6 hours) and day to day (daily means). How strong a result is judged by Student's t with an effective sample size: readings half an hour (or a
-day) apart are not independent. Within the day, the correlation is a sum over days, so how sure it is comes from the day totals
-and how far they follow on from each other over a week (Newey-West), whatever the readings do within a day; day to day, the count
+day) apart are not independent. Within the day, each day's own correlation is worked out and the days are averaged: how sure that
+is comes from the days themselves and how far they follow on from each other over a week (Newey-West); day to day, the count
 of days is shrunk by how long each series stays much the same (Bretherton's estimate from their autocorrelations up to a
 fortnight). The best of the 13 lags is allowed for (Šidák). Then the number of
 pairs tested is allowed for (Benjamini-Hochberg), so only pairs that survive are called links. Rank correlations throughout:
@@ -22,7 +22,6 @@ PER_DAY = 48
 LAGS = range(13)              # the weather leads the air by 0 to 6 hours
 MIN_DAYS = 21
 MIN_DAILY = 14                # days with enough readings for the day-to-day view
-MIN_OVERLAP = 200             # slots two series must share for a within-day comparison
 FDR = 0.1
 CALM_KMH = 5                  # wind direction only counts with at least this much wind
 MIN_SECTOR_SLOTS = 30
@@ -167,26 +166,94 @@ def to_grid(series: dict[int, float], origin: int, days: int, clock: list[int]) 
     return out
 
 
-def anomalies(x: Series) -> Series:
-    """The series minus its average for that time of day."""
-    means = []
+SEASON_DAYS = 14   # within the day, a time of day's usual level is its average over this many days either side
+
+
+def anomalies(x: Series, around: int | None = None) -> Series:
+    """The series minus its average for that time of day: over the whole period, or (`around` days) over the days either side, so a
+    daily cycle whose shape changes with the season is measured against this time of year's."""
+    days = len(x) // PER_DAY
+    out: Series = [None] * len(x)
     for s in range(PER_DAY):
-        known = [v for v in x[s::PER_DAY] if v is not None]
-        means.append(fmean(known) if known else None)
-    return [None if v is None else v - means[i % PER_DAY] for i, v in enumerate(x)]
-
-
-def within_days(x: Series) -> Series:
-    """The series' movement within each day: its time-of-day anomaly minus that day's average anomaly. What a spell of days does
-    (the level they sit at) is left to the day-to-day view, so a slow drift is not counted as thousands of half-hours agreeing."""
-    a = anomalies(x)
-    out: Series = []
-    for d in range(len(a) // PER_DAY):
-        day = a[d * PER_DAY:(d + 1) * PER_DAY]
-        known = [v for v in day if v is not None]
-        mean = fmean(known) if known else 0.0
-        out += [None if v is None else v - mean for v in day]
+        column = x[s::PER_DAY]
+        if around is None:
+            known = [v for v in column if v is not None]
+            mean = fmean(known) if known else 0.0
+            means = [mean] * days
+        else:   # running sums: the average over days d - around .. d + around that have a reading
+            total, count = [0.0], [0]
+            for v in column:
+                total.append(total[-1] + (v or 0.0))
+                count.append(count[-1] + (v is not None))
+            means = []
+            for d in range(days):
+                a, b = max(0, d - around), min(days, d + around + 1)
+                n = count[b] - count[a]
+                means.append((total[b] - total[a]) / n if n else 0.0)
+        for d, v in enumerate(column):
+            if v is not None:
+                out[d * PER_DAY + s] = v - means[d]
     return out
+
+
+MIN_DAY_PAIRS = 12            # half-hours a day must share (at the lag) for that day's correlation to count
+MIN_DISTINCT = 4              # a day counts within the day only if the reading takes at least this many values in it
+
+
+def _days(grid: Series) -> list[tuple | None]:
+    """A series day by day for the within-day view: each day's time-of-day anomalies ranked within the day (None where there is no
+    reading), with running sums of a complete day's ranks and their squares; None for a day with too few readings, or on which
+    the reading hardly moved (a dry day's rain): such a day has no movement to compare, and taking the usual daily shape off it
+    would only leave that shape upside down on it. The usual shape is measured from the days that moved."""
+    moving = list(grid)
+    for d in range(len(grid) // PER_DAY):
+        day = grid[d * PER_DAY:(d + 1) * PER_DAY]
+        if len({v for v in day if v is not None}) < MIN_DISTINCT:
+            moving[d * PER_DAY:(d + 1) * PER_DAY] = [None] * PER_DAY
+    a = anomalies(moving, SEASON_DAYS)
+    out: list[tuple | None] = []
+    for d in range(len(a) // PER_DAY):
+        r = rank(a[d * PER_DAY:(d + 1) * PER_DAY])
+        if all(v is not None for v in r):
+            sums, squares = [0.0], [0.0]
+            for v in r:
+                sums.append(sums[-1] + v)
+                squares.append(squares[-1] + v * v)
+            out.append((r, sums, squares))
+        elif sum(v is not None for v in r) >= MIN_DAY_PAIRS:   # gaps: missing half-hours as 0, with a 1/0 mask of the others
+            x = [0.0 if v is None else v for v in r]
+            out.append((x, [0.0 if v is None else 1.0 for v in r], [v * v for v in x]))
+        else:
+            out.append(None)
+    return out
+
+
+def _day_r(xd: tuple, yd: tuple, lag: int) -> float | None:
+    """The correlation within one day of the weather (`xd`) and the air `lag` half-hours later (`yd`), from the half-hours of the day
+    both have; None when either does not move that day (a dry day's rain) or they share too few."""
+    (x, sx, sxx), (y, sy, syy) = xd, yd
+    n = PER_DAY - lag
+    if sx is not None and sy is not None and len(sx) == PER_DAY + 1 and len(sy) == PER_DAY + 1:   # complete days: running sums
+        mx, my = sx[n] / n, (sy[PER_DAY] - sy[lag]) / n
+        vx, vy = sxx[n] - n * mx * mx, (syy[PER_DAY] - syy[lag]) - n * my * my
+        if vx <= 1e-9 or vy <= 1e-9:
+            return None
+        return (math.sumprod(x[:n], y[lag:]) - n * mx * my) / math.sqrt(vx * vy)
+    # a day with gaps (sx, sy: its mask and squares there; a complete day's are made here): sums over the half-hours both have
+    if sx is None or len(sx) != PER_DAY or sxx is None or len(sxx) != PER_DAY:
+        sx, sxx = [1.0] * PER_DAY, [v * v for v in x]
+    if sy is None or len(sy) != PER_DAY or syy is None or len(syy) != PER_DAY:
+        sy, syy = [1.0] * PER_DAY, [v * v for v in y]
+    mx, my = sx[:n], sy[lag:]
+    xs, ys = x[:n], y[lag:]
+    count = math.sumprod(mx, my)
+    if count < MIN_DAY_PAIRS:
+        return None
+    ax, ay = math.sumprod(xs, my) / count, math.sumprod(mx, ys) / count
+    vx, vy = math.sumprod(sxx[:n], my) - count * ax * ax, math.sumprod(mx, syy[lag:]) - count * ay * ay
+    if vx <= 1e-9 or vy <= 1e-9:
+        return None
+    return (math.sumprod(xs, ys) - count * ax * ay) / math.sqrt(vx * vy)
 
 
 DAY_LAGS = 14                # and day-to-day persistence: up to a fortnight (at most a quarter of the days)
@@ -209,35 +276,7 @@ def _series_acf(values: list[float], lags: int) -> list[float]:
     return autocorrelations(x, [1.0] * len(x), min(lags, len(x) // 4))
 
 
-def centred_ranks(x: Series) -> tuple[list[float], list[float]]:
-    """(ranks minus their mean, missing readings as 0; a 1/0 mask of the readings there are)."""
-    r = rank(x)
-    known = [v for v in r if v is not None]
-    mean = fmean(known) if known else 0.0
-    return [0.0 if v is None else v - mean for v in r], [0.0 if v is None else 1.0 for v in r]
-
-
-def _ranked(grid: Series) -> tuple[list[float], list[float], list[float], None]:
-    """(anomaly ranks centred, mask, their squares, -): what a series contributes to every pair it is in."""
-    x, m = centred_ranks(within_days(grid))
-    return x, m, [v * v for v in x], None
-
-
-def _leads(weather: tuple) -> list[tuple[list[float], list[float], list[float]]]:
-    """The weather's (values, mask, squares) cut for each lag (weather[:n-lag]): made once, used against every air series."""
-    x, mx, xx, _ = weather
-    return [(x[:len(x) - lag], mx[:len(x) - lag], xx[:len(x) - lag]) for lag in LAGS]
-
-
-def _lag_corr(lead: tuple, air: tuple, lag: int) -> float:
-    """The correlation of the weather leading the air by `lag` slots: the weather cut for the lag (`lead`, from _leads) against
-    air[lag:], over the slots where both have a reading."""
-    (xs, mxs, xxs), (y, my, yy, _) = lead, air
-    sx, sy = math.sumprod(xxs, my[lag:]), math.sumprod(mxs, yy[lag:])
-    return math.sumprod(xs, y[lag:]) / (math.sqrt(sx * sy) + 1e-12)
-
-
-WEEK = 7    # how many days apart the day totals of a within-day comparison are allowed to go together (Newey-West)
+WEEK = 7    # how many days apart the days of a within-day comparison are allowed to go together (Newey-West)
 
 
 def t_p(t: float, df: float) -> float:
@@ -247,39 +286,43 @@ def t_p(t: float, df: float) -> float:
     return incomplete_beta(df / 2, 0.5, df / (df + t * t))
 
 
-def day_totals(lead: list[float], air: list[float], lag: int) -> list[float]:
-    """The products of the weather (cut for `lag`: weather[:n-lag]) and air[lag:], summed day by day."""
-    y = air[lag:]
-    return [math.sumprod(lead[d:d + PER_DAY], y[d:d + PER_DAY]) for d in range(0, len(lead), PER_DAY)]
-
-
 def newey_west(totals: list[float], lags: int) -> float:
     """The variance of the sum of these day totals, allowing for totals up to `lags` days apart going together (Bartlett weights).
-    Under no link each day's total averages zero, so they are not centred."""
-    variance = math.sumprod(totals, totals)
+    The totals are taken about their mean: a real link makes every day lean the same way, and that is the signal, not noise."""
+    mean = fmean(totals)
+    dev = [t - mean for t in totals]
+    own = math.sumprod(dev, dev)
+    variance = own
     for k in range(1, lags + 1):
-        variance += 2 * (1 - k / (lags + 1)) * math.sumprod(totals[:-k], totals[k:])
-    return max(variance, math.sumprod(totals, totals) / (2 * lags + 1))
+        variance += 2 * (1 - k / (lags + 1)) * math.sumprod(dev[:-k], dev[k:])
+    return max(variance, own / (2 * lags + 1))
 
 
-def within_day(weather: tuple, air: tuple, leads: list | None = None) -> tuple[float, int, float] | None:
-    """(correlation at the best lag, that lag in slots, p) of the weather's and air's within-day anomalies, the best of the lags
-    allowed for. The correlation is a sum over days, so how sure it is comes from the days themselves: the spread of each day's
-    total, and how far a day's total follows on from the days before it (up to a week), whatever the readings do within a day.
-    None when they share too few readings. `weather` and `air` are _ranked results; `leads` the weather's _leads, if made."""
-    if math.sumprod(weather[1], air[1]) < MIN_OVERLAP:
+def within_day(weather: list, air: list) -> tuple[float, int, float] | None:
+    """(the typical within-day correlation at the best lag, that lag in slots, p) of the weather and the air. Each day is compared with
+    itself: how the two moved together within that day (both ranked within the day, against this time of year's daily cycle).
+    Under no link a day's correlation is as likely to be negative as positive, so whatever shape a day has cannot lean the
+    result; a real link leans day after day. p: the days' Fisher z averaged, its spread from the days themselves allowing for runs
+    of similar days over a week (Newey-West, Student's t), the best of the lags allowed for. None with too few days."""
+    best = None
+    for lag in LAGS:
+        zs = []
+        for xd, yd in zip(weather, air):
+            if xd is not None and yd is not None and (r := _day_r(xd, yd, lag)) is not None:
+                zs.append(math.atanh(max(-0.999999, min(0.999999, r))))
+        if len(zs) < MIN_DAILY:
+            return None
+        mean = fmean(zs)
+        if best is None or abs(mean) > abs(best[0]):
+            best = (mean, lag, zs)
+    mean, lag, zs = best
+    n = len(zs)
+    window = min(WEEK, n // 4)
+    variance = newey_west(zs, window)
+    if variance <= 0:
         return None
-    leads = leads or _leads(weather)
-    found = [_lag_corr(leads[lag], air, lag) for lag in LAGS]
-    best = max(range(len(found)), key=lambda k: abs(found[k]))
-    totals = day_totals(leads[best][0], air[0], best)
-    days = sum(1 for t in totals if t)
-    lags = min(WEEK, days // 4)
-    variance = newey_west(totals, lags)
-    if days < MIN_DAILY or variance <= 0:
-        return None
-    p = sidak(t_p(sum(totals) / math.sqrt(variance), days - 1), len(LAGS))
-    return float(found[best]), best, p
+    df = 1.5 * n / window if window else n - 1   # the variance is estimated from n days over a window: fewer degrees of freedom
+    return math.tanh(mean), lag, sidak(t_p(sum(zs) / math.sqrt(variance), df), len(LAGS))
 
 
 def daily_means(grid: Series) -> list[float | None]:
@@ -375,15 +418,14 @@ def scan(air: dict[str, dict[int, float]], weather: dict[str, dict[int, float]],
     overlap = max((sum(1 for m in daily_means(g) if m is not None) for g in grids.values()), default=0)
     if overlap < MIN_DAYS:
         return {"tests": [], "directions": [], "note": f"Only {overlap} days have enough air-quality readings; at least {MIN_DAYS} are needed."}
-    air_ranked = {k: _ranked(g) for k, g in grids.items()}   # what each series contributes to every pair, worked out once
-    weather_ranked = {k: _ranked(g) for k, g in wgrids.items()}
-    leads = {k: _leads(r) for k, r in weather_ranked.items()}
+    air_days = {k: _days(g) for k, g in grids.items()}   # what each series contributes to every pair, worked out once
+    weather_days = {k: _days(g) for k, g in wgrids.items()}
     air_daily, weather_daily = ({k: daily_means(g) for k, g in gs.items()} for gs in (grids, wgrids))
     tests = []
     for a_name in grids:
         for w_name in wgrids:
             r_daily, n_days, p_daily = day_to_day(weather_daily[w_name], air_daily[a_name])
-            inside = within_day(weather_ranked[w_name], air_ranked[a_name], leads[w_name])
+            inside = within_day(weather_days[w_name], air_days[a_name])
             if inside is None and p_daily is None:
                 continue
             r, lag, p = inside or (None, 0, 1.0)

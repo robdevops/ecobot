@@ -126,6 +126,54 @@ def test_unrelated_readings_that_curve_smoothly_within_each_day_are_not_called_l
     assert found <= 2
 
 
+def showers(rng, days=DAYS):
+    """Rain: dry most days, showers on some, most likely in the afternoon."""
+    out = []
+    for _ in range(days):
+        wet = rng.random() < 0.3
+        out += [rng.expovariate(2) if wet and rng.random() < 0.15 + 0.25 * (24 <= s < 36) else 0.0 for s in range(48)]
+    return out
+
+
+def test_unrelated_rain_like_readings_are_not_called_linked():
+    """Two readings that are zero most days with an afternoon habit: a dry day has no movement to compare, and taking the usual
+    afternoon off it would leave the same upside-down shape on every dry day of both."""
+    found = 0
+    for seed in range(8):
+        rng = random.Random(800 + seed)
+        air = {f"a{i}": series(showers(rng)) for i in range(3)}
+        weather = {f"w{i}": series(showers(rng)) for i in range(3)}
+        found += any(t["survives"] for t in correlate.scan(air, weather, None, None, ORIGIN, DAYS, UTC)["tests"])
+    assert found <= 2
+
+
+def test_daily_cycles_that_change_shape_with_a_shared_season_are_not_called_linked():
+    """Both readings' daily cycle grows and shrinks with the season, nothing more: the within-day view measures each half-hour
+    against this time of year's cycle, so the season's change of shape is not a link."""
+    found = 0
+    for seed in range(8):
+        rng = random.Random(1200 + seed)
+        def seasonal():
+            return [(1 + 0.8 * math.sin(2 * math.pi * d / 365)) * math.sin(2 * math.pi * s / 48) + rng.gauss(0, 0.5)   # a year's season
+                    for d in range(DAYS) for s in range(48)]
+        air = {f"a{i}": series(seasonal()) for i in range(3)}
+        weather = {f"w{i}": series(seasonal()) for i in range(3)}
+        found += any(t["survives"] for t in correlate.scan(air, weather, None, None, ORIGIN, DAYS, UTC)["tests"])
+    assert found <= 2
+
+
+def test_a_within_day_link_is_found_in_a_month_too():
+    """30 days are enough for a link that shows within the day, every day."""
+    rng, _, _, _, _ = world(7)
+    days, n = 30, 30 * 48
+    gusty = [abs(v) for v in noise(rng, 15, 8, n)]
+    wind = [sum(gusty[max(0, i - 6):i + 6]) / 12 for i in range(n)]
+    air = {"co2": series([450 - 3 * w + e for w, e in zip(wind, noise(rng, 0, 10, n))])}
+    result = correlate.scan(air, {"wind": series(wind)}, None, None, ORIGIN, days, UTC)
+    test = result["tests"][0]
+    assert test["survives"] and test["r"] < -0.3
+
+
 def test_a_lagged_relationship_is_found_at_its_lag():
     rng, n, _, cycle, wind = world(2)
     lagged = wind[-6:] + wind[:-6]                                      # the air answers the wind three hours later
