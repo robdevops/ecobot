@@ -54,6 +54,7 @@ async def test_a_reading_with_its_zones_over_rain_is_one_stacked_chart(tmp_path,
     assert line.zones == (9.0, 55.4) and len(line.lines[0].x) > 20
     assert line.bars.width == 6 * 3600 and all(v >= 0 for v in line.bars.y)                  # thirty days: a bar per 6 hours
     assert out["panels"][0]["series"] == "pm2_5" and "total_mm" in out["panels"][1]
+    assert spec.source == "Ecowitt weather station and AirGradient sensor"                # the devices its readings come from
     assert render(spec, TZ)[:4] == b"\x89PNG"
     await eco.close()
 

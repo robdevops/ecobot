@@ -320,10 +320,11 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     today = datetime.now(eco.tz).date()
-    # ends yesterday, not at midnight today: the newest hours are still settling, and just after midnight
-    # "today 00:00" is one of them (so the test would fail in the small hours, when it must ask again)
+    # ends before yesterday, not at midnight today: the newest hours are still settling, and just after midnight
+    # "today 00:00" is one of them (so the test would fail in the small hours, when it must ask again). It ends a second
+    # before midnight: ending at 00:00 on the 1st of a month would give that month a row of its one reading (low = high)
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=201)} 00:00:00",
-            "end_date": f"{today - timedelta(days=1)} 00:00:00"}
+            "end_date": f"{today - timedelta(days=2)} 23:59:59"}
 
     def monthly(out):
         return json.loads(out)["series"]["outdoor.temperature"]["monthly"]

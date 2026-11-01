@@ -19,7 +19,7 @@ from .ecowitt.link import driver_series, reading_slots
 from .ecowitt.reads import slot_values_on
 from .series import WEATHER
 from .panels import panel_for, same_axis, two_axes
-from .specs import Panel, Shares, stack
+from .specs import AIR_SOURCE, ECOWITT_SOURCE, Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
 from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
 from .tools import Tool, Turn, json_result
@@ -128,9 +128,9 @@ class Composer:
 
     def __init__(self, eco, air):
         self.eco, self.air, self.tz = eco, air, eco.tz
-        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart, asked=plot_asked),
-                      Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link),
-                      Tool("air_scan", SCAN_DESCRIPTION, SCAN_PARAMETERS, self.air_scan)]
+        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart, asked=plot_asked, source=""),
+                      Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link, source=""),
+                      Tool("air_scan", SCAN_DESCRIPTION, SCAN_PARAMETERS, self.air_scan, source="")]
 
     def period(self, args: dict, default_days: int = DEFAULT_DAYS) -> tuple[date, date] | str:
         """(first, last) day, or an error text. The last day is at most yesterday: today is still settling."""
@@ -213,6 +213,9 @@ class Composer:
     def _add_chart(self, out: dict, panels: list[Panel], first: date, last: date, turn: Turn):
         """Send the panels as one chart (rain behind the first line) and tell the model what its reply is for."""
         chart = stack(panels, first, last)
+        if not chart.source:   # the devices its readings come from (the model named none)
+            names = {n for p in panels for n in (p.reading, *(line.reading for line in p.lines), *(["rain"] if p.bars else [])) if n}
+            chart.source = " and ".join(s for s, used in ((ECOWITT_SOURCE, names & set(WEATHER)), (AIR_SOURCE, names - set(WEATHER))) if used)
         turn.charts.append(chart)
         out["chart"] = COMPOSED_CHART_HINT
 

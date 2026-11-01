@@ -114,6 +114,8 @@ BAR_FILL = 0.85                  # a bar fills this share of its slot; the rest 
 LEADER_CLEARANCE = 0.05          # peak labels sit at least this share of the panel's width away from the peaks (shorter = closer)
 BARS_SHARE = 0.95                # rain behind a line is drawn over the panel's full height (the tallest bar nearly reaches the top), under the line
 TICK_FONT, TICK_PAD = 7.5, 5     # tick labels: size, and their distance from the axis (pt)
+SOURCE_FONT, SOURCE_PAD = 6, 4   # the source line in the bottom left corner: size, and its distance from the edges (pt)
+SOURCE_IN = 0.07                 # the room it takes from the panels, so it stays clear of the time axis's labels (inches)
 DOTTED = (1, 2)                  # a dotted line: one width drawn, two left
 
 
@@ -812,14 +814,15 @@ def _build(chart: Chart, tz: tzinfo) -> Canvas:
     canvas = Canvas(round(W_IN * DPI), round(height * DPI), BG)
     width = BESIDE_ROSE_WIDTH if chart.compass else _axes_width(chart)
     head = HEAD_IN + (STACKED_KEY_IN if chart.single and _stacked_key(panels[0], look) else 0)
-    body = height - head - FOOT_IN
+    foot = FOOT_IN + (SOURCE_IN if chart.source else 0)
+    body = height - head - foot
     gap = 0.27 if n > 2 else 0.22
     each = (body - gap * (n - 1)) / n
     x0, x1 = _x_range(panels)
     margin = (x1 - x0) * 0.015 or 1.0   # room for the end dots
     axes, used, later = [], 0, []
     for i, p in enumerate(panels):
-        bottom = (FOOT_IN + (n - 1 - i) * (each + gap)) / height
+        bottom = (foot + (n - 1 - i) * (each + gap)) / height
         ax = Axes(canvas, [AX_RECT[0], bottom, width, each / height], x0 - margin, x1 + margin)
         if look.card:   # the faint tint behind the panel
             canvas.rect(ax.left, ax.top, ax.right, ax.bottom, CARD)
@@ -855,6 +858,8 @@ def _build(chart: Chart, tz: tzinfo) -> Canvas:
     if chart.compass:  # beside the wind line
         _render_rose(canvas, chart.compass).draw()
     _headline(canvas, panels[0].label if look.in_headline else chart.title, chart.subtitle, height, panels[0].unit if look.in_headline else "")
+    if chart.source:   # where the data came from: small and muted in the bottom left corner, under the time axis's labels
+        canvas.text(f"Source: {chart.source}", SOURCE_PAD * PT, canvas.height - SOURCE_PAD * PT, SOURCE_FONT, MUTED, va="bottom", record=False)
     for item in later:
         if not isinstance(item, Axes):
             _, entries, key = item

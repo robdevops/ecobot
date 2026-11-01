@@ -7,10 +7,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from .logs import BUGS, QUOTES
+from .specs import CHART_SOURCE, source_text
 
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_CHARS = 60000
+SOURCE_PARAMETER = {"type": "string", "description": "With a chart: where its data came from, written small under it. Name the site, "
+                                                     "tool or URL (e.g. 'Ecowitt weather station', 'AirGradient sensor', 'ecowitt.net'). "
+                                                     "Leave out to use the device the tool reads."}
 
 
 def json_result(out) -> str:
@@ -53,9 +57,13 @@ class Tool:
     handler: Callable[[dict, Turn], Awaitable[str]]   # (arguments, the question's Turn); a Turn is optional when called directly
     asked: Callable[[], tuple[str, dict]] | None = None   # (description, parameters) a question that asks for the air sensor's own
                                                           # temperature or humidity is offered instead (Turn.air_extra)
+    source: str | None = None   # the tool draws charts: where their data comes from unless the model says (specs.CHART_SOURCE);
+                                # "" leaves it to the tool. It is then offered a `source` argument (SOURCE_PARAMETER).
 
     def schema(self, turn: "Turn | None" = None) -> dict:
         description, parameters = self.asked() if turn and turn.air_extra and self.asked else (self.description, self.parameters)
+        if self.source is not None:
+            parameters = {**parameters, "properties": {**parameters["properties"], "source": SOURCE_PARAMETER}}
         return {"type": "function", "function": {"name": self.name, "description": description, "parameters": parameters}}
 
 
@@ -81,11 +89,14 @@ class Tools:
         except json.JSONDecodeError as e:
             return f"Error: tool arguments were not valid JSON ({e})"
         log.debug("Tool call %s %s", name, raw_args, extra=QUOTES)
+        sourced = CHART_SOURCE.set(source_text(args.get("source") if isinstance(args, dict) else None) or tool.source or "")   # the charts this call draws
         try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
             out = await tool.handler(args, turn or Turn())
         except Exception as e:
             log.error("Tool %s failed: %s: %s", name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return f"Error calling tool: {e}"
+        finally:
+            CHART_SOURCE.reset(sourced)
         out = out or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
