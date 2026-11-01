@@ -356,9 +356,14 @@ async def test_an_interrupted_archive_resumes_where_it_stopped(tmp_path, monkeyp
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     fake.calls.clear()
-    with pytest.raises(aio.TimeoutError):  # power cut / restart part-way through the backfill
-        await aio.wait_for(Archive(eco).run_once(), timeout=0.6)
-    first = {(c["cycle_type"], c["start_date"]) for c in fake.calls if "cycle_type" in c}
+    fetched = lambda: [c for c in fake.calls if "cycle_type" in c]
+    run = aio.create_task(Archive(eco).run_once())   # power cut / restart part-way through the backfill: after a few ranges,
+    while len(fetched()) < 6 and not run.done():     # however fast the machine is
+        await aio.sleep(0.001)
+    run.cancel()
+    with pytest.raises(aio.CancelledError):
+        await run
+    first = {(c["cycle_type"], c["start_date"]) for c in fetched()}
     assert 5 < len(first) < 150, len(first)
     fake.calls.clear()
     fetched, failed = await Archive(eco).run_once()  # the next start

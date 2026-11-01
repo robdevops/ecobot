@@ -113,8 +113,45 @@ async def test_the_dashboard_command_sends_one_picture_with_no_period_buttons_an
     assert asked == [1] and len(sent) == 1
     photo, caption, markup = sent[0]
     assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ")
-    assert not isinstance(markup, InlineKeyboardMarkup)                         # the chat's own keyboard may ride on it, never the period buttons
+    assert not isinstance(markup, InlineKeyboardMarkup)                         # a chat whose keyboard is out of date gets that instead
     assert bot.charted.get(1, 7) is None
+    bot.state.add_chat(1, "private")
+    bot.state.set_keyboard(1, bot.keyboard_version)
+    await bot.respond(update, context, "Dashboard")
+    from lib import report_menu
+    assert [b.callback_data for b in sent[-1][2].inline_keyboard[0]] == [report_menu.DASHBOARD]   # its 🔄, no period buttons
+
+
+async def test_the_dashboards_refresh_draws_it_again_in_the_same_message_and_a_station_that_fails_leaves_it(alert_state):
+    from lib import report_menu
+    from lib.bot import STALE_BUTTON
+    bot, _ = report_bot(alert_state, three_tiles)
+    edits = []
+
+    class Query:
+        data, message, toast = report_menu.DASHBOARD, NS(photo=[NS(file_id="x")]), "unset"
+
+        async def answer(self, text=None, **k):
+            self.toast = text
+
+        async def edit_message_media(self, media, reply_markup=None):
+            edits.append((media.media.input_file_content[:4], media.caption, reply_markup))
+    query = Query()
+    await bot.on_report_button(NS(callback_query=query), CONTEXT)
+    (photo, caption, markup), = edits
+    assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ") and query.toast is None
+    assert markup.inline_keyboard[0][0].callback_data == report_menu.DASHBOARD                               # the 🔄 stays
+
+    async def failing(titles=None):
+        raise RuntimeError("station down")
+    bot.by_name["Ecowitt"].dashboard = failing
+    query = Query()
+    await bot.on_report_button(NS(callback_query=query), CONTEXT)
+    assert len(edits) == 1 and "Couldn't refresh" in query.toast                                              # left as it was
+    query = Query()
+    query.message = NS(photo=None)
+    await bot.on_report_button(NS(callback_query=query), CONTEXT)
+    assert len(edits) == 1 and query.toast == STALE_BUTTON
 
 
 def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
@@ -159,7 +196,7 @@ def report_bot(alert_state, sheet):
         tools = Tools()
 
     async def dashboard(titles=None):
-        assert titles == dash.STATUS
+        assert titles in (dash.STATUS, None)   # the report's three gauges, or the whole dashboard
         return sheet()
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt", dashboard=dashboard),
                NS(name="AirGradient", wants=lambda t: True, poke=lambda: None, describe=lambda: "AirGradient")]

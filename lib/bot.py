@@ -748,9 +748,12 @@ class Bot:
             await _edit_quietly(query.edit_message_text(text, reply_markup=markup, **({"entities": entities} if entities else {})))
 
     async def on_report_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """A press on Refresh under the report: read everything again and redraw the report in the same message. The chat's
-        conversation is not touched (this is not a new question)."""
+        """A press on 🔄 under the report (or the dashboard: _redraw_dashboard): read everything again and redraw the report in the
+        same message. The chat's conversation is not touched (this is not a new question)."""
         query = update.callback_query
+        if query.data == report_menu.DASHBOARD:
+            await self._redraw_dashboard(query)
+            return
         read = intent.read("Report", now_local(self.cfg.tz), self.by_name)
         pictured = bool(getattr(getattr(query, "message", None), "photo", None))   # the report is the caption of its gauges: they are drawn again too
         try:
@@ -764,6 +767,25 @@ class Bot:
             await self._recaption(query, text, gauge)
         else:
             await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
+
+    async def _redraw_dashboard(self, query):
+        """A press on 🔄 under the dashboard: its gauges drawn again with the latest readings, and the time in its title, in the same
+        message. When the station doesn't answer, the message stays as it was."""
+        eco = self.by_name.get("Ecowitt")
+        if eco is None or not getattr(getattr(query, "message", None), "photo", None):   # no station any more, or not the dashboard's picture
+            await answer_query(query, STALE_BUTTON)
+            return
+        try:
+            answer = await asyncio.wait_for(self._dashboard(eco), TURN_SECONDS)
+        except Exception as e:
+            log.warning("Dashboard refresh failed: %s: %s", type(e).__name__, e)
+            answer = None
+        if answer is None or not answer.ok:
+            await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
+            return
+        await answer_query(query)   # no toast: the time in the title shows it was drawn again
+        await _edit_quietly(query.edit_message_media(InputMediaPhoto(answer.photos[0], caption=answer.titles[0]),
+                                                     reply_markup=report_menu.dashboard_keyboard()))
 
     @staticmethod
     async def _recaption(query, text: str, photo: bytes | None):
@@ -1260,7 +1282,8 @@ class Bot:
             if redraw is not None and row and await self._redraw(redraw, reply, photos[0], titles[0], row, text, kept):
                 reply, photos, row = "", [], None
             sent = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
-                                 markup=markup or (report_menu.keyboard() if refresh else None), titles=titles, period_row=row,
+                                 markup=markup or (report_menu.keyboard() if refresh else report_menu.dashboard_keyboard()
+                                                   if answer.ok and read.dashboard and photos else None), titles=titles, period_row=row,
                                  bold_headings=answer.ok and bool(read.report or read.lookup in ("pollen", "forecast")), photos_first=read.report)
             carried_keyboard = sent.carried and bool(markup)   # the refresh button is not the chat's keyboard
             if answer.ready:
