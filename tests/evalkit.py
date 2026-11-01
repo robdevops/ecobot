@@ -19,6 +19,7 @@ from lib.forecast import source as forecast
 from lib.pollen import source as pollen
 from tests.fakes import EVERY_SOURCE
 from lib.llm import Agent
+from lib.specs import AIR_SOURCE, ECOWITT_SOURCE
 from lib.tools import Tool, Tools
 
 CASES = Path(__file__).resolve().parent / "evals" / "cases.json"
@@ -85,7 +86,9 @@ def make_tools(calls: list) -> Tools:
             ("pollen_asthma", pollen.DESCRIPTION, pollen.PARAMETERS),
             ("weather_forecast", forecast.DESCRIPTION, forecast.PARAMETERS),
             ("air_days", air_days.DESCRIPTION, air_days.PARAMETERS)]
-    return Tools([Tool(n, d, p, recorder(n)) for n, d, p in defs])
+    sources = {name: ECOWITT_SOURCE for name in ("weather_history", "weather_days", "weather_link")} | \
+              {name: AIR_SOURCE for name in ("air_quality", "air_days")} | {name: "" for name in ("plot_chart", "air_link", "air_scan")}
+    return Tools([Tool(n, d, p, recorder(n), source=sources.get(n)) for n, d, p in defs])
 
 
 def content(case: Case) -> str:

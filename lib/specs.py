@@ -8,11 +8,26 @@ A Line is a series of points, each optionally with the low and high it stands fo
 optionally the true records (lowest and highest reading, with when). Anything malformed raises here, when the chart is
 built, not when it is drawn."""
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, tzinfo
 
 from .series import RAIN_WITH, WEATHER
 from .timeutil import day_bounds, day_text
+
+
+# Where a chart's data came from, written small in its bottom left corner ("Source: Ecowitt weather station"). Set by tools.Tools.call
+# for the length of one tool call (each call runs in its own context, so calls made together don't mix), from the model's `source`
+# argument or else the tool's own; a chart built in that call takes it.
+CHART_SOURCE: ContextVar[str] = ContextVar("chart_source", default="")
+SOURCE_CHARS = 60   # the longest source written (a URL beyond it is cut with an ellipsis)
+ECOWITT_SOURCE, AIR_SOURCE = "Ecowitt weather station", "AirGradient sensor"
+
+
+def source_text(given) -> str:
+    """A source as it is written on a chart: one line, at most SOURCE_CHARS characters; "" for nothing usable."""
+    text = " ".join(str(given or "").split())
+    return text if len(text) <= SOURCE_CHARS else text[:SOURCE_CHARS - 1].rstrip() + "…"
 
 
 NO_LOW = tuple(name for name, r in WEATHER.items() if not r.low)   # readings whose low is nothing every night or calm hour: only the high is tagged
@@ -136,6 +151,7 @@ class Chart:
     panels: list[Panel]
     compass: Compass | None = None
     period: tuple[date, date] | None = None            # the first and last day it covers, for its caption
+    source: str = ""                                   # where the data came from (CHART_SOURCE when not given): bottom left, small
 
     @property
     def single(self) -> bool:
@@ -153,6 +169,7 @@ class Chart:
             raise ValueError("a chart needs a panel")
         if self.compass and not self.single:
             raise ValueError("a compass goes beside a single line panel")
+        self.source = source_text(self.source or CHART_SOURCE.get())
         for panel in self.panels:  # every line is labelled with its high and low, so each carries its records
             for line in panel.lines:
                 line.records = line.records or line.own_records()

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..config import Config
 from ..lines import RANGE_KEEP_DAYS
 from ..sources import Source
+from ..specs import ECOWITT_SOURCE
 from ..timeutil import local_epoch, naive_local, when
 from ..tools import Tool, Turn, json_result
 from ..warm import FAST_REFRESH_SECONDS, Warmer, safely
@@ -166,9 +167,9 @@ class Ecowitt(Source):
         self.latitude: float | None = None  # the station's own location (the forecast uses it unless one is configured)
         self.longitude: float | None = None
         self.tools = [Tool("weather_now", REALTIME_DESCRIPTION, REALTIME_PARAMS, self._realtime),
-                      Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history),
-                      Tool("weather_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days),
-                      Tool("weather_link", LINK_DESCRIPTION, LINK_PARAMETERS, self._link)]
+                      Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history, source=ECOWITT_SOURCE),
+                      Tool("weather_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days, source=ECOWITT_SOURCE),
+                      Tool("weather_link", LINK_DESCRIPTION, LINK_PARAMETERS, self._link, source=ECOWITT_SOURCE)]
 
     async def start(self):
         devices = await self.api.devices()

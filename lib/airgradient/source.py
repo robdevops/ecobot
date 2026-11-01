@@ -39,7 +39,7 @@ from ..ecowitt.live import BUCKET
 from ..ecowitt.query import KEEP_HOURS, MINUTE_HOURS
 from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line
 from ..panels import panel_for
-from ..specs import Chart, Line
+from ..specs import AIR_SOURCE, Chart, Line
 from ..storage import Storage
 from ..storage.catalogue import BOT, CLOUD, HOME_ASSISTANT
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
@@ -152,7 +152,8 @@ class AirGradient(Source):
         self._ha_said: set[str] = set()                       # what was said once about it: no sensor, a metric that is another variant
         self._verdict: dict[int, dict[str, tuple[int, int]]] = {HOME_ASSISTANT: {}, CLOUD: {}}   # per source, per metric: (five minutes compared, agreed)
         self._correction: str | None = None                   # how the monitor corrects its PM2.5, from its own configuration
-        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle, asked=asked), Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days)]
+        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle, asked=asked, source=AIR_SOURCE),
+                      Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days, source=AIR_SOURCE)]
 
     async def start(self):
         try:

@@ -36,7 +36,8 @@ def temperature() -> Chart:
     n, noise = len(HALF_HOURS), wobble(1, len(HALF_HOURS))
     outdoor = line("Outdoor", [15 + 8 * daily(i) + noise[i] for i in range(n)], "temperature")
     indoor = line("Indoor", [18 + 1.5 * math.sin(i / 25) for i in range(n)], "temperature", indoor=True)
-    return Chart("Temperature", "Mon 28 Sep – Sun 4 Oct 2026  ·  30-minute readings", [panel_for("temperature", [outdoor, indoor])])
+    return Chart("Temperature", "Mon 28 Sep – Sun 4 Oct 2026  ·  30-minute readings", [panel_for("temperature", [outdoor, indoor])],
+                 source="Ecowitt weather station")
 
 
 def rain_bars(n: int = 28, width: int = 6 * 3600) -> Bars:
@@ -82,7 +83,9 @@ def air() -> Chart:
               panel_for("co2", [line("CO₂", [520 + 80 * math.sin(i / 7) + 30 * rng.random() for i in range(n)], "co2", xs)]),
               panel_for("voc_index", [line("VOC", [110 + 25 * math.sin(i / 11) + 10 * rng.random() for i in range(n)], "voc_index", xs)]),
               panel_for("nox_index", [line("NOx", [1 + 6 * max(0, math.sin(i / 20)) for i in range(n)], "nox_index", xs)])]
-    return stack(panels, *WEEK)
+    chart = stack(panels, *WEEK)
+    chart.source = "AirGradient sensor"
+    return chart
 
 
 def wind() -> Chart:
@@ -91,7 +94,8 @@ def wind() -> Chart:
     gusts = [m + 6 + 6 * abs(noise[i]) for i, m in enumerate(mean)]
     rose = [[max(0.0, 4 + 3 * math.cos(math.radians(22.5 * k - 200)) + s) for s in (0, 1.5, 0.6)] for k in range(16)]
     chart = Chart("Wind", "Mon 28 Sep – Sun 4 Oct 2026  ·  30-minute readings, shaded up to the gusts",
-                  [panel_for("wind", [line("Wind", mean, "wind", low=mean, high=gusts)])], compass=Compass(rose, True))
+                  [panel_for("wind", [line("Wind", mean, "wind", low=mean, high=gusts)])], compass=Compass(rose, True),
+                  source="https://www.ecowitt.net")
     return chart
 
 
