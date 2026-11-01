@@ -29,7 +29,7 @@ jobs:
           from tests import chart_samples, imagecmp
           assert (charts.FONT, charts.TITLE_WEIGHT) == ("Inter", "semibold"), (charts.FONT, charts.TITLE_WEIGHT)
           for name, make in chart_samples.SAMPLES.items():
-              share = imagecmp.difference(imagecmp.snapshot(make()), Image.open(imagecmp.GOLDEN / f"{name}.png"))[0]
+              share = imagecmp.difference(imagecmp.snapshot(make(), name.endswith("_dark")), Image.open(imagecmp.GOLDEN / f"{name}.png"))[0]
               assert share <= imagecmp.TOLERANCE, f"{name}: {share:.2%} of the pixels differ from tests/charts/{name}.png"
           print("Inter with semibold titles; every sample chart matches its reference image")'
       - name: Size

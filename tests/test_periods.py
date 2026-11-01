@@ -521,3 +521,14 @@ async def test_the_chart_of_an_alert_sent_lately_is_drawn_ahead_with_the_keyboar
     clock[0] += AlertCharts.WARM_SECONDS
     await bot.draw_buttons_ahead(context.bot)
     assert "UV chart 1d" not in drawn                                                    # six hours on: no longer kept warm
+
+
+def test_a_chart_drawn_in_one_theme_is_not_sent_again_after_the_theme_changes(monkeypatch):
+    from lib import charts
+    images = periods.ImageCache(lambda: 0.0)
+    monkeypatch.setattr(charts, "MODE", "off")
+    images.put("temperature chart 1d", b"light", "T", "caption")
+    assert images.get("temperature chart 1d") and images.ready("Temperature chart 1d", NOW)
+    monkeypatch.setattr(charts, "MODE", "on")                                      # 9pm under DARKMODE=auto
+    assert images.ready("Temperature chart 1d", NOW) is None and images.get("temperature chart 1d") is None
+

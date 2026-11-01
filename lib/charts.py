@@ -17,7 +17,7 @@ import threading
 import time
 from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import datetime, timedelta, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from statistics import fmean
 
 from . import draw
@@ -26,7 +26,7 @@ from .specs import Chart, Compass, Line, Panel
 
 # Palette. Slate neutrals for the furniture; one hue per reading (weather and air quality, kept clear of the green/yellow/red
 # rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
-BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"
+BG, TEXT, MUTED, GRID, AXIS = "#FFFFFF", "#0F172A", "#64748B", "#E2E8F0", "#CBD5E1"   # the light theme's (see Theme, _use)
 READING_COLOURS = {
     "temperature": "#FF9830",   # orange (indoors: purple)
     "feels_like": "#FF8C42",    # tangerine (beside the crimson, as blue sits beside violet)
@@ -50,6 +50,58 @@ RAIN = "#7CC3F7"                 # light blue: the rain sits behind the lines an
 RAIN_TEXT = "#2F86C8"            # the same blue, darker, for the rain scale's text
 CARD = "#F8FAFC"                 # the faint tint behind each panel of a stack
 WIND_STEPS = ("#CBD5E1", "#94A3B8", "#475569")  # light, middle and strong wind (the wind hue)
+INK_DARK = "#0F172A"             # the text on a light pill, in either theme
+
+
+@dataclass(frozen=True)
+class Theme:
+    """The colours of a chart's furniture, and of the lines that would be lost on its background."""
+    bg: str
+    text: str
+    muted: str
+    grid: str
+    axis: str
+    card: str
+    rain: str
+    rain_text: str
+    wind_steps: tuple[str, str, str]
+    lines: dict                  # reading -> its colour in this theme, where READING_COLOURS' would not stand out
+
+
+LIGHT = Theme(BG, TEXT, MUTED, GRID, AXIS, CARD, RAIN, RAIN_TEXT, WIND_STEPS, {})
+DARK = Theme("#14191D", "#E8EAED", "#94A3B8", "#2A323A", "#3A444E", "#1B2228", "#3B8FD0", "#7CC3F7",   # the dashboard's card
+             ("#334155", "#64748B", "#B8C2CF"),                                                       # calm dark, strong light
+             {"wind": "#94A3B8", "co2": "#A3B3C6", "humidity": "#818CF8"})                            # the slate and indigo, lifted
+_LINES: dict = {}
+
+
+def _use(theme: Theme):
+    """Draw in this theme from now on (under _DRAWING, which every drawing holds)."""
+    global BG, TEXT, MUTED, GRID, AXIS, CARD, RAIN, RAIN_TEXT, WIND_STEPS, _LINES
+    BG, TEXT, MUTED, GRID, AXIS, CARD = theme.bg, theme.text, theme.muted, theme.grid, theme.axis, theme.card
+    RAIN, RAIN_TEXT, WIND_STEPS, _LINES = theme.rain, theme.rain_text, theme.wind_steps, theme.lines
+
+
+# DARKMODE: "off" (light), "on" (dark), or "auto" (dark from DARK_FROM to DARK_UNTIL o'clock in the bot's time zone)
+DARK_FROM, DARK_UNTIL = 21, 7
+MODE: str = "off"
+ZONE: tzinfo | None = None
+
+
+def configure(mode: str, tz: tzinfo | None = None):
+    """The dark-mode setting, and the time zone "auto" reads the clock in."""
+    global MODE, ZONE
+    MODE, ZONE = mode, tz
+
+
+def dark_now(at: datetime | None = None) -> bool:
+    """Are charts drawn dark now?"""
+    if MODE == "on":
+        return True
+    if MODE != "auto":
+        return False
+    hour = (at or datetime.now(UTC)).astimezone(ZONE).hour
+    return hour >= DARK_FROM or hour < DARK_UNTIL
 W_IN, H_IN = 6.4, 3.6            # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)
@@ -115,8 +167,8 @@ TITLE_WEIGHT = draw.FONTS.title_weight   # titles in semi-bold where the font ha
 def _colour(line: Line, i: int, reading: str = "") -> str:
     """The line's reading's hue (indoors, its complement), the panel's reading when the line names none, else the next fallback."""
     reading = line.reading or reading
-    if base := READING_COLOURS.get(reading):
-        return (INDOOR_COLOURS.get(reading) or _blend(base, 0.4)) if line.indoor else base
+    if base := _LINES.get(reading) or READING_COLOURS.get(reading):
+        return (INDOOR_COLOURS.get(reading) or _blend(base, 0.4, BG)) if line.indoor else base
     return FALLBACK[i % len(FALLBACK)]
 
 
@@ -134,7 +186,7 @@ def _deg(unit: str) -> str:
 def _ink_on(colour: str) -> str:
     """The text colour for a label on this fill: white, or near-black on a light one (yellow, amber)."""
     r, g, b = (c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in (v / 255 for v in rgb(colour)))
-    return TEXT if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 else "#FFFFFF"
+    return INK_DARK if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 else "#FFFFFF"
 
 
 # ---------- an axes: a panel's box, its data limits, and what is drawn in it ----------
@@ -190,9 +242,9 @@ class Axes:
         self.canvas.current = ()
 
 
-def _style_axis(ax: Axes, ticks: list[float], fmt, colour: str = MUTED):
+def _style_axis(ax: Axes, ticks: list[float], fmt, colour: str | None = None):
     """The plain look shared by every chart: no frame but the baseline, faint horizontal grid, small muted ticks."""
-    c = ax.canvas
+    c, colour = ax.canvas, colour or MUTED
     shown = [t for t in ticks if min(ax.y0, ax.y1) - 1e-9 <= t <= max(ax.y0, ax.y1) + 1e-9]
     ax.add(0.5, lambda: [c.line([(ax.left, ax.Y(t)), (ax.right, ax.Y(t))], GRID, 0.8, round_ends=False) for t in shown])
     ax.add(0.5, lambda: [c.text(fmt(t), ax.left - TICK_PAD * PT, ax.Y(t), TICK_FONT, colour, ha="right", va="center", record=False)
@@ -240,7 +292,7 @@ def _interp(x: float, xs: list[float], ys: list[float]) -> float:
 
 def _dot(ax: Axes, x: float, y: float, colour: str, size: float = 12, edge: float = 0.8, z: float = 4):
     """A small dot with a white rim, marking a point on a line (`size` is its area in pt², as a marker's is given)."""
-    ax.add(z, lambda: ax.canvas.dot(ax.X(x), ax.Y(y), math.sqrt(size), colour, edge))
+    ax.add(z, lambda: ax.canvas.dot(ax.X(x), ax.Y(y), math.sqrt(size), colour, edge, BG))
 
 
 def _draw_lines(ax: Axes, lines: list[Line], look: Look, first: int = 0, reading: str = "") -> list[tuple]:
@@ -278,9 +330,9 @@ def _columns(ax: Axes, x, heights, width: float, bottom=0.0, colour: str = RAIN,
 def _draw_bars(ax: Axes, bx, ys, width: float, axis_top: float, zorder: float, alpha: float = 0.5, share: bool = False):
     """Rain bars: a pale body (RAIN blended with white by `alpha`) with a brighter cap, so each reads as a little column."""
     ys = [float(y) for y in ys]
-    _columns(ax, bx, ys, width, 0.0, _blend(RAIN, 1 - alpha), zorder, share)
+    _columns(ax, bx, ys, width, 0.0, _blend(RAIN, 1 - alpha, BG), zorder, share)
     cap = [math.copysign(min(axis_top * 0.014, abs(y)), y) for y in ys]   # at the bar's far end, below zero as above it
-    _columns(ax, bx, cap, width, [y - c for y, c in zip(ys, cap)], _blend(RAIN, 0.05), zorder, share)
+    _columns(ax, bx, cap, width, [y - c for y, c in zip(ys, cap)], _blend(RAIN, 0.05, BG), zorder, share)
 
 
 def _end_of(xs, width: float, default: float) -> float:
@@ -381,9 +433,10 @@ def _time_axis(ax: Axes, span_days: float, tz: tzinfo, bars=None):
 
 
 def _legend(canvas: Canvas, entries: list[tuple[str, str]], at: tuple[float, float], loc: str, size: float = 6, marker: str = "o",
-            ink: str = TEXT, spacing: float = 1.1, fontsize: float = 10, ncol: int = 1, pad: float = 0.5):
+            ink: str | None = None, spacing: float = 1.1, fontsize: float = 10, ncol: int = 1, pad: float = 0.5):
     """A row (or `ncol` columns) of coloured markers (dots; squares for shares and the rose's speeds), each with its name, unframed,
     placed by its corner or side `loc` ("center right", "upper right", "lower right") at `at` (pixels), `pad` font sizes in from it."""
+    ink = ink or TEXT
     fs = fontsize * PT
     handle, gap, col_gap, row = 2.0 * fs, 0.2 * fs, spacing * fs, fs * 1.5
     widths = [handle + gap + canvas.measure(label, fontsize)[0] for _, label in entries]
@@ -819,12 +872,17 @@ def twin_colour(entries: list[tuple[str, str]]) -> str:
 _DRAWING = threading.Lock()
 
 
-def render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
+def render(chart: Chart, tz: tzinfo, times: dict | None = None, dark: bool | None = None) -> bytes:
     """PNG bytes for one chart (1280x720; a stack of more than two panels is taller). Safe to call from several threads.
-    times (a Turn's): the seconds spent drawing the figure and writing the PNG are added to its "draw" and "png"."""
+    times (a Turn's): the seconds spent drawing the figure and writing the PNG are added to its "draw" and "png". dark: the dark
+    theme (None: as DARKMODE says now, dark_now)."""
     started = time.perf_counter()
     with _DRAWING:
-        canvas = _build(chart, tz)
+        _use(DARK if (dark_now() if dark is None else dark) else LIGHT)
+        try:
+            canvas = _build(chart, tz)
+        finally:
+            _use(LIGHT)
         drawn = time.perf_counter()
         png = canvas.png()
     if times is not None:
@@ -833,7 +891,11 @@ def render(chart: Chart, tz: tzinfo, times: dict | None = None) -> bytes:
     return png
 
 
-def draw_texts(chart: Chart, tz: tzinfo) -> list[draw.Text]:
+def draw_texts(chart: Chart, tz: tzinfo, dark: bool = False) -> list[draw.Text]:
     """Every label recorded while drawing the chart (its values, pills and bar numbers), in the order drawn: for tests."""
     with _DRAWING:
-        return sorted(_build(chart, tz).texts, key=lambda t: t.order)
+        _use(DARK if dark else LIGHT)
+        try:
+            return sorted(_build(chart, tz).texts, key=lambda t: t.order)
+        finally:
+            _use(LIGHT)

@@ -238,3 +238,36 @@ def test_a_bar_below_zero_has_its_bright_end_at_the_bottom(monkeypatch):
     charts._draw_bars(None, [0.0, 1.0], [-3.0, 2.0], 0.85, 10.0, 3)
     heights, bottom = drawn[1]   # the caps (the bodies are drawn first)
     assert heights == [-0.14, 0.14] and [round(b, 2) for b in bottom] == [-2.86, 1.86]   # each cap ends where its bar does
+
+
+def test_darkmode_is_off_by_default_on_always_and_auto_from_nine_at_night_to_seven_in_the_morning(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from lib import charts
+    zone = ZoneInfo("Australia/Melbourne")
+    at = lambda hour, minute=0: datetime(2026, 11, 1, hour, minute, tzinfo=zone)
+    monkeypatch.setattr(charts, "MODE", "off")
+    assert not charts.dark_now(at(23))
+    charts.configure("on", zone)
+    assert charts.dark_now(at(12))
+    charts.configure("auto", zone)
+    assert [charts.dark_now(at(h, m)) for h, m in ((20, 59), (21, 0), (2, 0), (6, 59), (7, 0), (12, 0))] == [False, True, True, True, False, False]
+    utc = datetime(2026, 11, 1, 11, 0, tzinfo=ZoneInfo("UTC"))                  # 10pm in Melbourne (daylight saving): the bot's clock counts
+    assert charts.dark_now(utc)
+    charts.configure("off", None)
+
+
+def test_a_dark_chart_is_drawn_on_the_dark_background_with_its_lines_in_their_own_colours():
+    from PIL import Image
+    import io
+    from lib import charts
+    image = Image.open(io.BytesIO(render(Chart("One", "x", [Panel("Temperature", "°C", [line("Outdoor", reading="temperature")])]), TZ, dark=True)))
+    colours = {rgb for _, rgb in image.convert("RGB").getcolors(256)}
+    assert image.convert("RGB").getpixel((0, 0)) == (0x14, 0x19, 0x1D) and (0xFF, 0x98, 0x30) in colours
+    assert charts.BG == "#FFFFFF"                                                  # and the light theme is back for the next chart
+
+
+def test_darkmode_setting_reads_off_on_and_auto_and_keeps_off_for_anything_else(monkeypatch):
+    from lib.config import _dark_mode
+    assert [_dark_mode(v, "off", "DARKMODE") for v in ("", "on", "AUTO", "off", "dusk")] == ["off", "on", "auto", "off", "off"]
+

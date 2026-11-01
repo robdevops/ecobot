@@ -83,6 +83,7 @@ def _one_of(choices: tuple[str, ...], value: str, default: str, name: str) -> st
 # too, else whichever is), cloud, or homeassistant. The air monitor's: auto (each source that is set, the monitor itself first, then Home
 # Assistant, then AirGradient's cloud), or one of local, homeassistant, cloud alone.
 _source, _air_source = partial(_one_of, SOURCES), partial(_one_of, AIR_SOURCES)
+_dark_mode = partial(_one_of, ("off", "on", "auto"))   # the charts' theme: light, dark, or dark from 21:00 to 07:00
 
 
 def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int, int] | None:
@@ -209,6 +210,7 @@ class Config:
     tuya_client_secret: str = _setting("TUYA_CLIENT_SECRET", "")
     tuya_base_url: str = _setting("TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url)   # the data centre's address (EU by default)
     irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
+    dark_mode: str = _setting("DARKMODE", "off", _dark_mode)       # off: light charts; on: dark; auto: dark from 21:00 to 07:00 in the bot's time zone
     admin_only: bool = _setting("ADMIN_ONLY", False, _flag)         # on: the bot answers nobody but the admins of the groups it is in (and ADMIN_CHAT_IDS)
     admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # dry this long before "the rain has stopped"; and the temperature-crossing alert's minimum gap

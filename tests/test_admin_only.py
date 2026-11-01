@@ -392,6 +392,7 @@ def every_keyboard(bot):
     for current in (None, *periods.PERIODS):
         yield periods.keyboard(current)
     yield report_menu.keyboard()
+    yield report_menu.dashboard_keyboard()
 
 
 def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(tmp_path):

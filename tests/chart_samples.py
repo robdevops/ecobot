@@ -140,3 +140,5 @@ def status():
 
 SAMPLES = {"temperature": temperature, "humidity_rain": humidity_rain, "all_week": all_week, "quarter": quarter, "air": air,
            "wind": wind, "counts": counts, "two_scales": two_scales, "dashboard": dashboard, "status": status}
+SAMPLES |= {f"{name}_dark": SAMPLES[name] for name in ("temperature", "all_week", "air", "wind")}   # DARKMODE's theme: a name
+# ending _dark is drawn dark (imagecmp.snapshot)
