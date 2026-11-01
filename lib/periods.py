@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from telegram import InlineKeyboardMarkup
 
-from . import intent
+from . import charts, intent
 from telegram.constants import KeyboardButtonStyle
 
 from .buttons import button
@@ -67,6 +67,7 @@ class Drawn:
     caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
     ttl: float = 10 * 60         # how long it is kept (ImageCache.CHART_TTL; PRELOAD_TTL for one uploaded ahead)
     newest: int | None = None    # the time of the newest reading it draws (epoch), when known: an alert about that reading can send it
+    dark: bool = False           # drawn in the dark theme: kept only while the charts are (DARKMODE=auto turns at 21:00 and 07:00)
 
     @property
     def photo(self) -> bytes | str:
@@ -101,8 +102,8 @@ class ImageCache:
         return key if key == " ".join(question.split()).lower() else None
 
     def _kept(self, entry: Drawn | None) -> bool:
-        """Is there a chart, and is it still within its time to live?"""
-        return entry is not None and self.age(entry) <= entry.ttl
+        """Is there a chart, still within its time to live, in the theme charts are drawn in now?"""
+        return entry is not None and self.age(entry) <= entry.ttl and entry.dark == charts.dark_now()
 
     def get(self, key: str) -> tuple[bytes | str, str] | None:
         """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
@@ -133,7 +134,7 @@ class ImageCache:
         TELEGRAM_PRELOAD_CHAT), with the text that went with it; None if there is none."""
         key = self.canonical(question, now)
         entry = self.items.get(key) if key else None
-        if entry is None or entry.caption is None or self.age(entry) > self.FRESH:
+        if entry is None or entry.caption is None or self.age(entry) > self.FRESH or entry.dark != charts.dark_now():
             return None
         self.items.move_to_end(key)
         return entry
@@ -144,7 +145,7 @@ class ImageCache:
     def put(self, key: str, png: bytes, title: str, caption: str | None = None, ttl: float | None = None, newest: int | None = None):
         """caption: the answer's text, only for a chart made in code for its canonical question (then it can be ready).
         newest: the time of the newest reading drawn, when known."""
-        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL, newest=newest)
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL, newest=newest, dark=charts.dark_now())
         self.items.move_to_end(key)
         while len(self.items) > self.CHART_IMAGES:
             self.items.popitem(last=False)

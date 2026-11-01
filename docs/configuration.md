@@ -70,6 +70,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | `CHART_ALL_FEELS_LIKE` | `off` | Add feels-like panel to "weather all week" |
 | `CHART_ALL_VPD` | `off` | Add VPD panel to "weather all week" |
 | `TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload charts to: the other periods of each chart asked for, and, while the bot has been used in the last 15 minutes, the keyboard's charts every 5 minutes. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
+| `DARKMODE` | `off` | The charts' colours. `off`: light; `on`: dark; `auto`: dark from 21:00 to 07:00 in the bot's time zone (the weather station's), light the rest of the day. The dashboard's gauges are dark whatever this says. |
 
 ### Storage and logging
 

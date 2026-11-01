@@ -25,12 +25,12 @@ SCALE = 0.4
 COLOURS = 64
 
 
-def snapshot(chart) -> Image.Image:
+def snapshot(chart, dark: bool = False) -> Image.Image:
     """The chart as the reference images are made: Pillow's own font, shrunk, 64 colours (a palette image)."""
     fonts = draw.FONTS
     draw.use_fonts(None)
     try:
-        png = gauges.render(chart) if isinstance(chart, Dashboard) else charts.render(chart, TZ)
+        png = gauges.render(chart) if isinstance(chart, Dashboard) else charts.render(chart, TZ, dark=dark)
     finally:
         draw.FONTS = fonts
     image = Image.open(io.BytesIO(png)).convert("RGB")
@@ -58,7 +58,7 @@ def difference(actual: Image.Image, golden: Image.Image) -> tuple[float, Image.I
 
 def check(name: str, chart) -> str | None:
     """None when the chart matches its reference image; else what is wrong (and the picture and the difference are saved in DIFFS)."""
-    actual, path = snapshot(chart), GOLDEN / f"{name}.png"
+    actual, path = snapshot(chart, name.endswith("_dark")), GOLDEN / f"{name}.png"
     if not path.exists():
         return f"no reference image for {name}: run python scripts/update_charts.py"
     share, diff = difference(actual, Image.open(path))

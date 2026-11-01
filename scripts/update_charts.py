@@ -27,7 +27,7 @@ def main(names: list[str]):
     imagecmp.GOLDEN.mkdir(exist_ok=True)
     for name in names or chart_samples.SAMPLES:
         path = imagecmp.GOLDEN / f"{name}.png"
-        image = imagecmp.snapshot(chart_samples.SAMPLES[name]())
+        image = imagecmp.snapshot(chart_samples.SAMPLES[name](), name.endswith("_dark"))
         share = imagecmp.difference(image, Image.open(path))[0] if path.exists() else None
         imagecmp.save(image, path)
         what = "new" if share is None else "unchanged" if share == 0 else f"{share:.2%} of the pixels changed"

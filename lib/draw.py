@@ -150,7 +150,7 @@ class Canvas:
     font sizes are in points."""
 
     def __init__(self, width: int, height: int, bg: str = "#FFFFFF", scale: int = SCALE):
-        self.width, self.height, self.s = width, height, scale
+        self.width, self.height, self.s, self.bg = width, height, scale, bg
         self.image = Image.new("RGB", (width * scale, height * scale), bg)
         self.pen = ImageDraw.Draw(self.image)
         self.texts: list[Text] = []
@@ -219,7 +219,7 @@ class Canvas:
         if len(points) < 2:
             return
         if alpha < 1:
-            colour = blend(colour, 1 - alpha, "#FFFFFF")
+            colour = blend(colour, 1 - alpha, self.bg)
         if dots:
             for a, b in _dashes(points, dots[0] * width * PT, dots[1] * width * PT):
                 self.line([a, b], colour, width, round_ends=False)

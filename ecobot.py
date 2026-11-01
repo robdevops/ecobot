@@ -18,7 +18,7 @@ from telegram import Update
 from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
-from lib import intent
+from lib import charts, intent
 from lib.airgradient import AirGradient
 from lib.airgradient import metrics as air_metrics
 from lib.alerts.forecast import ForecastMonitor
@@ -245,6 +245,7 @@ async def main():
             raise SystemExit("No data source is working - nothing to talk about")
         by_name = {s.name: s for s in sources}
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
+        charts.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
         composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
         tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
         client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
