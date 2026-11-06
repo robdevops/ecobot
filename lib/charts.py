@@ -82,14 +82,13 @@ def _use(theme: Theme):
     RAIN, RAIN_TEXT, WIND_STEPS, _LINES = theme.rain, theme.rain_text, theme.wind_steps, theme.lines
 
 
-# DARKMODE: "off" (light), "on" (dark), or "auto" (dark from DARK_FROM to DARK_UNTIL o'clock in the bot's time zone)
-DARK_FROM, DARK_UNTIL = 21, 7
-MODE: str = "off"
+# DARKMODE: "off" (light), "on" (dark), or (from, until): dark between those times of day (minutes past midnight) in the bot's time zone
+MODE: str | tuple[int, int] = "off"
 ZONE: tzinfo | None = None
 
 
-def configure(mode: str, tz: tzinfo | None = None):
-    """The dark-mode setting, and the time zone "auto" reads the clock in."""
+def configure(mode: str | tuple[int, int], tz: tzinfo | None = None):
+    """The dark-mode setting, and the time zone a time range is read in."""
     global MODE, ZONE
     MODE, ZONE = mode, tz
 
@@ -98,10 +97,12 @@ def dark_now(at: datetime | None = None) -> bool:
     """Are charts drawn dark now?"""
     if MODE == "on":
         return True
-    if MODE != "auto":
+    if not isinstance(MODE, tuple):
         return False
-    hour = (at or datetime.now(UTC)).astimezone(ZONE).hour
-    return hour >= DARK_FROM or hour < DARK_UNTIL
+    start, end = MODE
+    local = (at or datetime.now(UTC)).astimezone(ZONE)
+    now = local.hour * 60 + local.minute
+    return start <= now < end if start < end else now >= start or now < end   # a range past midnight wraps
 W_IN, H_IN = 6.4, 3.6            # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)

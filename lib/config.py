@@ -83,7 +83,36 @@ def _one_of(choices: tuple[str, ...], value: str, default: str, name: str) -> st
 # too, else whichever is), cloud, or homeassistant. The air monitor's: auto (each source that is set, the monitor itself first, then Home
 # Assistant, then AirGradient's cloud), or one of local, homeassistant, cloud alone.
 _source, _air_source = partial(_one_of, SOURCES), partial(_one_of, AIR_SOURCES)
-_dark_mode = partial(_one_of, ("off", "on", "auto"))   # the charts' theme: light, dark, or dark from 21:00 to 07:00
+_CLOCK = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap]m)?")   # "8pm", "20:00", "20", "8:30pm"
+
+
+def _clock(text: str) -> int | None:
+    """A time of day in minutes past midnight ("8pm" -> 1200, "20:00" -> 1200, "7" -> 420); None if unreadable."""
+    match = _CLOCK.fullmatch(text.strip().lower())
+    if not match:
+        return None
+    hour, minute, half = int(match[1]), int(match[2] or 0), match[3]
+    if half:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if half == "pm" else 0)
+    if hour == 24 and minute == 0:
+        hour = 0                      # "20-24": until midnight
+    return hour * 60 + minute if hour <= 23 and minute <= 59 else None
+
+
+def _dark_mode(value: str, default: str | tuple[int, int], name: str) -> str | tuple[int, int]:
+    """The charts' theme: "off" (light), "on" (dark), or a time range dark ("8pm-8am", "20:00-8:00", "20-8") -> (1200, 480) in minutes
+    past midnight; anything else keeps the default, with a warning."""
+    if value.lower() in ("off", "on"):
+        return value.lower()
+    start, _, end = value.partition("-")
+    span = (_clock(start), _clock(end)) if end else (None, None)
+    if None not in span and span[0] != span[1]:
+        return span
+    if value:
+        log.warning("%s: %r is not off, on, or a time range like 8pm-8am, 20:00-8:00 or 20-8; keeping %s", name, value, default)
+    return default
 
 
 def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int, int] | None:
@@ -210,7 +239,7 @@ class Config:
     tuya_client_secret: str = _setting("TUYA_CLIENT_SECRET", "")
     tuya_base_url: str = _setting("TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url)   # the data centre's address (EU by default)
     irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
-    dark_mode: str = _setting("DARKMODE", "off", _dark_mode)       # off: light charts; on: dark; auto: dark from 21:00 to 07:00 in the bot's time zone
+    dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the bot's time zone
     admin_only: bool = _setting("ADMIN_ONLY", False, _flag)         # on: the bot answers nobody but the admins of the groups it is in (and ADMIN_CHAT_IDS)
     admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # dry this long before "the rain has stopped"; and the temperature-crossing alert's minimum gap
