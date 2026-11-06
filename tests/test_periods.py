@@ -529,6 +529,6 @@ def test_a_chart_drawn_in_one_theme_is_not_sent_again_after_the_theme_changes(mo
     monkeypatch.setattr(charts, "MODE", "off")
     images.put("temperature chart 1d", b"light", "T", "caption")
     assert images.get("temperature chart 1d") and images.ready("Temperature chart 1d", NOW)
-    monkeypatch.setattr(charts, "MODE", "on")                                      # 9pm under DARKMODE=auto
+    monkeypatch.setattr(charts, "MODE", "on")                                      # 8pm under DARKMODE=8pm-8am
     assert images.ready("Temperature chart 1d", NOW) is None and images.get("temperature chart 1d") is None
 

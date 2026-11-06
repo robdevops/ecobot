@@ -240,7 +240,7 @@ def test_a_bar_below_zero_has_its_bright_end_at_the_bottom(monkeypatch):
     assert heights == [-0.14, 0.14] and [round(b, 2) for b in bottom] == [-2.86, 1.86]   # each cap ends where its bar does
 
 
-def test_darkmode_is_off_by_default_on_always_and_auto_from_nine_at_night_to_seven_in_the_morning(monkeypatch):
+def test_darkmode_is_off_by_default_on_always_and_a_time_range_dark_between_its_ends(monkeypatch):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     from lib import charts
@@ -250,10 +250,12 @@ def test_darkmode_is_off_by_default_on_always_and_auto_from_nine_at_night_to_sev
     assert not charts.dark_now(at(23))
     charts.configure("on", zone)
     assert charts.dark_now(at(12))
-    charts.configure("auto", zone)
+    charts.configure((21 * 60, 7 * 60), zone)                                      # 9pm-7am: past midnight
     assert [charts.dark_now(at(h, m)) for h, m in ((20, 59), (21, 0), (2, 0), (6, 59), (7, 0), (12, 0))] == [False, True, True, True, False, False]
     utc = datetime(2026, 11, 1, 11, 0, tzinfo=ZoneInfo("UTC"))                  # 10pm in Melbourne (daylight saving): the bot's clock counts
     assert charts.dark_now(utc)
+    charts.configure((13 * 60 + 30, 17 * 60), zone)                                # 1:30pm-5pm: within a day
+    assert [charts.dark_now(at(h, m)) for h, m in ((13, 29), (13, 30), (16, 59), (17, 0), (2, 0))] == [False, True, True, False, False]
     charts.configure("off", None)
 
 
@@ -267,7 +269,9 @@ def test_a_dark_chart_is_drawn_on_the_dark_background_with_its_lines_in_their_ow
     assert charts.BG == "#FFFFFF"                                                  # and the light theme is back for the next chart
 
 
-def test_darkmode_setting_reads_off_on_and_auto_and_keeps_off_for_anything_else(monkeypatch):
+def test_darkmode_setting_reads_off_on_and_a_time_range_and_keeps_off_for_anything_else(monkeypatch):
     from lib.config import _dark_mode
-    assert [_dark_mode(v, "off", "DARKMODE") for v in ("", "on", "AUTO", "off", "dusk")] == ["off", "on", "auto", "off", "off"]
+    assert [_dark_mode(v, "off", "DARKMODE") for v in ("", "ON", "off", "auto", "dusk", "8-8", "25-7", "13pm-7am", "20-")] == ["off", "on"] + ["off"] * 7
+    assert [_dark_mode(v, "off", "DARKMODE") for v in ("8pm-8am", "20:00-8:00", "20-8", "8PM - 8AM", "8:30pm-6:15am", "12am-6am", "18-24")] == [
+        (1200, 480), (1200, 480), (1200, 480), (1200, 480), (1230, 375), (0, 360), (1080, 0)]
 

@@ -67,7 +67,7 @@ class Drawn:
     caption: str | None = None   # the answer's text (kept in the chat's history), when it was made in code for exactly the key's words
     ttl: float = 10 * 60         # how long it is kept (ImageCache.CHART_TTL; PRELOAD_TTL for one uploaded ahead)
     newest: int | None = None    # the time of the newest reading it draws (epoch), when known: an alert about that reading can send it
-    dark: bool = False           # drawn in the dark theme: kept only while the charts are (DARKMODE=auto turns at 21:00 and 07:00)
+    dark: bool = False           # drawn in the dark theme: kept only while the charts are (a DARKMODE time range turns at its ends)
 
     @property
     def photo(self) -> bytes | str:
