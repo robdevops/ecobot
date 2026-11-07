@@ -608,3 +608,15 @@ def test_the_air_sensors_own_temperature_and_humidity_are_offered_only_when_the_
         assert intent.wants_air_extra(said) and intent.read(said, now).air_extra and "air_extra" in intent.topics(said), said
     for said in ("plot humidity", "how hot is it", "air quality now", "plot pm2.5 and temperature", "what's the average humidity yesterday"):
         assert not intent.wants_air_extra(said) and not intent.read(said, now).air_extra, said
+
+
+def test_calendar_months_with_their_year_are_a_period_from_the_first_of_one_to_the_end_of_the_other():
+    now = datetime(2026, 11, 7, 20, 18)
+    day = lambda *a: datetime(*a)
+    assert intent.spans_in("co2 chart oct 2025 to oct 2026", now) == [("Oct 2025 - Oct 2026", day(2025, 10, 1), day(2026, 10, 31, 23, 59, 59))]
+    assert intent.spans_in("rain between jan 2026 and March 2026", now)[0][1:] == (day(2026, 1, 1), day(2026, 3, 31, 23, 59, 59))
+    assert intent.spans_in("humidity chart October 2025", now) == [("Oct 2025", day(2025, 10, 1), day(2025, 10, 31, 23, 59, 59))]
+    assert intent.spans_in("co2 chart nov 2025 - nov 2026", now)[0][2] == day(2026, 11, 7, 23, 59, 59)   # up to today
+    read = intent.read("co2 chart oct 2025 to oct 2026", now, {"Ecowitt": 1, "AirGradient": 1})
+    assert read.fast[1]["start_date"] == "2025-10-01 00:00:00" and read.fast[1]["end_date"] == "2026-10-31 23:59:59"
+    assert not intent.read("co2 chart dec 2026", now, {"AirGradient": 1}).chart_in_code   # a month ahead: not the last day, the model's

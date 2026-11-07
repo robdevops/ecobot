@@ -1193,6 +1193,8 @@ class Bot:
                       + [str(m["content"]) for m in earlier if m["role"] == "assistant"][-1:])
             # the topics of the last messages (the person's last two, the bot's last reply) and those this chat is still on
             turn.topics = chat.topics.active().union(*(intent.topics_in(said) for said in recent))
+            said = [str(m["content"]) for m in earlier if m["role"] == "user"][-2:]   # the air readings named: now, else just before
+            turn.air_named = next(filter(None, map(intent.air_named, [text, *reversed(said)])), [])
             try:
                 answer = await self._answer(msg, read, turn, working, draft, now, redraw)
                 tools_used = {tc["function"]["name"] for m in working[new_from:] for tc in m.get("tool_calls") or []}
@@ -1221,12 +1223,13 @@ class Bot:
     async def _answer(self, msg: Message, read, turn: Turn, working: list[dict], draft, now: datetime, redraw: Message | None) -> Answer:
         """The answer, from the first way that gives one: a chart drawn moments ago, a chart made in code, a lookup, the report
         written in code, else the model. `working` is the conversation, the question last; the answer joins it."""
+        shown = bool(intent.HILO.search(turn.text))   # "when was CO2 highest": the answer is a chart's figures, so they go with it
         if read.chart_in_code and redraw is None and (ready := self.images.ready(turn.text, now)):
-            answer = Answer(ready.caption, [ready.photo], [ready.title], silent=True, ready=ready)   # drawn ahead, or for someone's same question
+            answer = Answer(ready.caption, [ready.photo], [ready.title], silent=not shown or not ready.caption, ready=ready)   # drawn ahead, or for someone's same question
         elif read.chart_in_code:   # drawn by the tool; the chart goes out with just its title (the text is kept for the history)
             began = time.monotonic()
             reply = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
-            answer = Answer(reply, silent=reply is not None, made=time.monotonic() - began if reply is not None else None)
+            answer = Answer(reply, silent=reply is not None and not shown, made=time.monotonic() - began if reply is not None else None)
         elif read.dashboard and "Ecowitt" in self.by_name:
             answer = await asyncio.wait_for(self._dashboard(self.by_name["Ecowitt"]), TURN_SECONDS)
         elif read.lookup:

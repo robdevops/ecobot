@@ -57,6 +57,7 @@ AIR_EXTERNAL = "air"
 SLOT = 1800
 # Where a row's values came from: a write replaces those of a row from a source ranked as high or lower (and fills what one ranked higher lacks)
 CLOUD, HOME_ASSISTANT, BOT = 0, 1, 2
+EDITED = 3   # a value set by hand (scripts/edit_readings.py): outranks every source, so a fetch again only fills in what its row lacks
 
 
 def kind_of(group: str) -> str:
@@ -96,5 +97,5 @@ def text(value: float, decimals: int, whole: bool = False) -> str:
     return written.lstrip("-") if float(written) == 0 else written
 
 
-__all__ = ["AIR", "AIR_EXTERNAL", "BOT", "BY_NAME", "CLOUD", "Column", "ECOWITT", "Group", "HOME_ASSISTANT", "KINDS", "OTHER",
+__all__ = ["AIR", "AIR_EXTERNAL", "BOT", "BY_NAME", "CLOUD", "Column", "ECOWITT", "EDITED", "Group", "HOME_ASSISTANT", "KINDS", "OTHER",
            "SLOT", "column_of", "field_of", "kind_of", "label_of", "text"]

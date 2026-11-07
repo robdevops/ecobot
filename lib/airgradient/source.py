@@ -85,7 +85,7 @@ PARAMETERS = {
                                                     "it covers the last 24 hours."},
         "metrics": {"type": "array", "items": {"type": "string", "enum": list(LABELS)},
                     "description": "Which metrics to chart (several are drawn as panels in one image; "
-                                   "for 'all', list all six). Default: pm2_5."},
+                                   "for 'all', list all six). Default: the reading the person named, else pm2_5."},
         "start_date": {"type": "string", "description": "Start of a past period, 'YYYY-MM-DD HH:MM:SS' local time. "
                                                         "Omit (with end_date) for the current reading."},
         "end_date": {"type": "string", "description": "End of the past period, 'YYYY-MM-DD HH:MM:SS' local time."},
@@ -706,7 +706,8 @@ class AirGradient(Source):
         if not rows:
             out["note"] = "No readings for this period."
         if chart and rows:
-            chart_spec = self._chart([m for m in (*ALL_METRICS, *EXTRA) if m in (metrics or ["pm2_5"])] or ["pm2_5"], rows, out["period"],
+            asked = metrics or turn.air_named or ["pm2_5"]   # unnamed: the reading the person is asking about
+            chart_spec = self._chart([m for m in (*ALL_METRICS, *EXTRA) if m in asked] or ["pm2_5"], rows, out["period"],
                                      (t0.date(), t1.date()))
             if chart_spec:
                 turn.charts.append(chart_spec)
@@ -741,7 +742,7 @@ class AirGradient(Source):
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         line = plotted.spec(LABELS.get(name) or EXTRA_LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name)
-        line.on_line = plotted.raw   # the readings themselves: marked where they peak, not at the top of the shading (one glitch inside a bucket sets that)
+        line.on_line = True   # the readings themselves marked where they peak, as the answer gives them, not the top of the shading (one sample inside a reading)
         return line, plotted
 
     def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None) -> Chart | None:

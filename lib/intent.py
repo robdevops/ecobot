@@ -237,7 +237,8 @@ NUMBER_WORDS = {w: i for i, w in enumerate("zero one two three four five six sev
 NUMBERED_PERIOD = re.compile(
     r"(?<![\d.])(\d+|" + "|".join(list(NUMBER_WORDS)[1:]) + r") ?(hours?|hrs?|h|days?|d|weeks?|w|months?|mo|m|years?|y)\b(?! ago)", I)
 # Any of these left unrecognised means the question names a period we can't read: let the model decide
-TIME_WORDS = re.compile(r"\b(hours?|days?|weeks?|months?|years?|quarter|fortnight|decade|since|between|until|ago|ytd)\b", I)
+TIME_WORDS = re.compile(r"\b(hours?|days?|weeks?|months?|years?|quarter|fortnight|decade|since|between|until|ago|ytd|"
+                        r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(19|20)\d\d)\b", I)   # (a month and year: "oct 2025")
 
 
 def span(name: str, now: datetime) -> tuple[datetime, datetime]:
@@ -274,9 +275,30 @@ def numbered_span(count: str, unit: str, now: datetime) -> tuple[str, datetime, 
     return f"last {n} {label[:-1] if n == 1 else label}", start, datetime.combine(now.date(), datetime.max.time()).replace(microsecond=0)
 
 
+_MONTH_NAMES = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+_MONTH_YEAR = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+((?:19|20)\d\d)"
+# "oct 2025 to oct 2026", "from March 2025 until June 2025", "between jan 2026 and mar 2026", "oct 2025": whole calendar months
+MONTHS_SPAN = re.compile(rf"\b(?:(?:from|between)\s+)?{_MONTH_YEAR}(?:\s*(?:to|until|till|through|and|-|–)\s*{_MONTH_YEAR})?\b", I)
+
+
+def months_span(m: re.Match, now: datetime) -> tuple[str, datetime, datetime] | None:
+    """The calendar months a MONTHS_SPAN match names, from the first day of the first to the last day of the last (today at most);
+    None when it starts after today or ends before it starts."""
+    first = date(int(m[2]), _MONTH_NAMES.index(m[1][:3].lower()) + 1, 1)
+    last = date(int(m[4]), _MONTH_NAMES.index(m[3][:3].lower()) + 1, 1) if m[3] else first
+    last = min((last.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), now.date())
+    if first > now.date() or last < first:
+        return None
+    name = f"{first:%b %Y}" + (f" - {last:%b %Y}" if (first.year, first.month) != (last.year, last.month) else "")
+    return name, datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
+
+
 def _periods(text: str, now: datetime) -> dict[tuple[datetime, datetime], tuple[str, str]]:
     """{(start, end): (the words said, the period's name)} for every distinct period the text names."""
     found: dict = {}
+    for m in MONTHS_SPAN.finditer(text):
+        if months := months_span(m, now):
+            found.setdefault(months[1:], (m.group(0), months[0]))
     for phrase, name in PERIOD_PHRASES:
         if m := re.search(rf"\b({phrase})\b", text, I):
             found.setdefault(span(name, now), (m.group(0), name))
