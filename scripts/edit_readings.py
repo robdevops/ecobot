@@ -7,7 +7,8 @@
     python scripts/edit_readings.py co2 --at 2026-10-27T13:25 --set 425 --apply
     python scripts/edit_readings.py co2 --from 2026-10-27T13:00 --to 2026-10-27T14:00 --above 1000   # every one over 1000 then
 
-What is matched: the reading at --at (each resolution held at that exact time: --res picks one), or those from --from up to --to, over
+What is matched: the reading at --at, with every other reading that takes in its time (the hourly reading that holds a 5-minute one,
+the minutes inside it: a spike is in each; --res picks one), or those from --from up to --to, over
 --above / under --below where given (by their value or their band's high or low); of every sensor of its kind, or --sensor's alone
 (outdoor and indoor both have a temperature: --list names them). A dry run shows each match marked >> among the
 readings either side of it (--context, 3 by default) with the value it would get, so you can see you caught the whole spike and
@@ -40,6 +41,7 @@ from lib.storage.schema import q  # noqa: E402
 TOP = 10     # with nothing narrowed, how many of the highest are listed
 SHOWN = 50   # the most matches listed (all are changed)
 SERVICE_FILE = Path("/var/lib/private/ecobot") / FILE   # the systemd service's file (StateDirectory=ecobot, with DynamicUser)
+WIDTHS = {"1min": 60, "5min": 300, "30min": 1800, "1hour": 3600}   # the time each resolution's reading covers, those --at takes in
 CONTEXT = 3  # the readings either side of each match shown in a dry run (--context)
 
 
@@ -70,10 +72,15 @@ def _cells(reading: str) -> tuple[str, str, str, str]:
 
 
 def matches(storage: Storage, kind: str, reading: str, start: int | None, end: int | None, above: float | None, below: float | None,
-            top: int | None = None, res: str | None = None, sensor: int | None = None) -> list[tuple]:
-    """(sensor, res, ts, value, lo, hi) of the readings matched, oldest first (the highest first with `top`)."""
+            top: int | None = None, res: str | None = None, sensor: int | None = None, span: tuple[int, int] | None = None) -> list[tuple]:
+    """(sensor, res, ts, value, lo, hi) of the readings matched, oldest first (the highest first with `top`). span (--at): every
+    reading, at each resolution up to an hour, whose time takes in any of [start, end)."""
     v, lo, hi, has = _cells(reading)
     where, args = [has], []
+    if span:
+        width = "CASE res " + " ".join(f"WHEN '{r}' THEN {w}" for r, w in WIDTHS.items()) + " END"
+        where.append(f"res IN ({', '.join(repr(r) for r in WIDTHS)}) AND ts < ? AND ts + {width} > ?")
+        args += [span[1], span[0]]
     for sql, value in (("ts >= ?", start), ("ts < ?", end), ("res = ?", res), ("sensor = ?", sensor),
                        (f"MAX(COALESCE({v}, {hi}), COALESCE({hi}, {v})) > ?", above),
                        (f"MIN(COALESCE({v}, {lo}), COALESCE({lo}, {v})) < ?", below)):
@@ -83,6 +90,18 @@ def matches(storage: Storage, kind: str, reading: str, start: int | None, end: i
     order = f"MAX(COALESCE({v}, {hi}), COALESCE({hi}, {v})) DESC LIMIT {top}" if top else "sensor, res, ts"
     sql = f"SELECT sensor, res, ts, {v}, {lo}, {hi} FROM {kind} WHERE {' AND '.join(where)} ORDER BY {order}"
     return storage.read_now(lambda r: r.db.execute(sql, args).fetchall())
+
+
+def at_span(storage: Storage, kind: str, reading: str, at: int, sensor: int | None = None) -> tuple[int, int] | None:
+    """The time the reading at exactly `at` covers, [at, at + 5 minutes) for a 5-minute one (a minute alone only where no 5-minute
+    reading starts then): what --at takes out, at every resolution (the hour that holds it, the minutes inside it). None when no reading
+    is at that time."""
+    _, _, _, has = _cells(reading)
+    found = storage.read_now(lambda r: r.db.execute(
+        f"SELECT DISTINCT res FROM {kind} WHERE ts = ? AND {has}" + (" AND sensor = ?" if sensor else ""), (at, *([sensor] if sensor else []))).fetchall())
+    widths = [WIDTHS[res] for (res,) in found if res in WIDTHS]
+    five = [w for w in widths if w <= WIDTHS["5min"]]   # a 5-minute reading's time where there is one (its minutes all inside), else the finest
+    return (at, at + max(five or [min(widths)])) if widths else None
 
 
 def around(storage: Storage, kind: str, reading: str, found: list[tuple], n: int) -> list[tuple]:
@@ -177,7 +196,7 @@ if __name__ == "__main__":
     ap = parser(__doc__)
     ap.add_argument("reading", nargs="?", help="the reading's name in the file: co2, pm2_5, temperature, humidity, wind_gust ... (--list)")
     ap.add_argument("--list", action="store_true", help="list the readings' names, by sensor, and stop")
-    ap.add_argument("--at", help="just the reading at this time (ISO 8601, local unless it has an offset)")
+    ap.add_argument("--at", help="the reading at this time (ISO 8601, local unless it has an offset), and those that take it in")
     ap.add_argument("--from", dest="start", help="the first time")
     ap.add_argument("--to", dest="end", help="the end (not included)")
     ap.add_argument("--above", type=float, help="only readings (or their band's high) over this")
@@ -204,12 +223,9 @@ if __name__ == "__main__":
         raise SystemExit("--at is one time: give it, or --from/--to, not both")
     tz = local_tz()
     kind = kind_of(args.reading)
-    if args.at:
-        start = epoch(args.at, tz)
-        end = start + 1
-    else:
-        start, end = (epoch(t, tz) if t else None for t in (args.start, args.end))
-    narrowed = any(x is not None for x in (start, end, args.above, args.below))
+    at = epoch(args.at, tz) if args.at else None
+    start, end = (epoch(t, tz) if t else None for t in (args.start, args.end))
+    narrowed = any(x is not None for x in (at, start, end, args.above, args.below))
     if args.apply and not narrowed:
         raise SystemExit("--apply needs --at, --from/--to, --above or --below: it won't change every reading")
     storage = Storage(args.file, tz)
@@ -219,7 +235,9 @@ if __name__ == "__main__":
             sensor = next((s.id for s in storage.sensors.all() if s.kind == kind and args.sensor.lower() in (s.role.lower(), s.label.lower())), None)
             if sensor is None:
                 raise SystemExit(f"no {kind} sensor called {args.sensor!r} in the file (--list shows them)")
-        found = matches(storage, kind, args.reading, start, end, args.above, args.below, None if narrowed else TOP, args.res, sensor)
+        span = at_span(storage, kind, args.reading, at, sensor) if at is not None else None
+        found = [] if at is not None and span is None else matches(storage, kind, args.reading, start, end, args.above, args.below,
+                                                                   None if narrowed else TOP, args.res, sensor, span)
         if not narrowed:
             print(f"The {TOP} highest {args.reading} readings (pick one with --at to change it):")
             show(storage, found, tz)

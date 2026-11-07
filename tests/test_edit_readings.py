@@ -137,3 +137,21 @@ def test_it_needs_no_library_beyond_pythons_own_so_runs_under_the_systems_python
             f"runpy.run_path({str(root / 'scripts' / 'edit_readings.py')!r}, run_name='__main__')")
     run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
     assert run.returncode == 0 and "Changed 1 co2 reading" in run.stdout, run.stderr
+
+
+def test_at_takes_in_every_reading_that_holds_that_time_the_hour_and_the_minutes_too(storage):
+    with storage.writer.transaction() as w:
+        air = w.air_sensor("42")
+        w.put(air, "1hour", [{"ts": SPIKE - 1500 + 3600 * k, "co2": 420.0} for k in (-1, 1)] + [{"ts": SPIKE - 1500, "co2": 725.9, "co2_lo": 418.0, "co2_hi": 1850.0}], CLOUD)
+        w.put(air, "1min", [{"ts": SPIKE + 60 * k, "co2": 5202.0 if k == 1 else 419.0} for k in range(-2, 7)], BOT)
+    span = edit_readings.at_span(storage, "air", "co2", SPIKE)
+    assert span == (SPIKE, SPIKE + 300)                                                     # the 5 minutes of 1:25, not its minute alone
+    assert edit_readings.at_span(storage, "air", "co2", SPIKE + 60) == (SPIKE + 60, SPIKE + 120)   # a minute alone: just it
+    found = edit_readings.matches(storage, "air", "co2", None, None, None, None, span=span)
+    assert sorted((res, (ts - SPIKE) // 60) for _, res, ts, *_ in found) == [
+        ("1hour", -25), *(("1min", k) for k in range(5)), ("5min", 0)]                      # 1pm's hour, 1:25 to 1:29's minutes, 1:25
+    assert edit_readings.at_span(storage, "air", "co2", SPIKE + 30) is None                  # no reading at that time
+    values = edit_readings.new_values(storage, "air", "co2", found)
+    assert values[1, "1hour", SPIKE - 1500] == 420.0 and values[1, "5min", SPIKE] == 416.1
+    edit_readings.change(storage, "air", "co2", values)
+    assert not edit_readings.matches(storage, "air", "co2", None, None, 700.0, None)        # nothing left over 700, band or value
