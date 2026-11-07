@@ -67,6 +67,17 @@ async def test_history_summary_and_chart(tmp_path):
     await air.close()
 
 
+async def test_a_chart_the_model_names_no_reading_for_is_of_the_one_the_person_asked_about(tmp_path):
+    air, _ = await make(tmp_path)
+    day = datetime.now(TZ).date() - timedelta(days=5)
+    for named, title in (([], "PM2.5"), (["co2"], "CO₂")):   # "give me that timestamp", after "CO2 since Sunday": CO2, not PM2.5
+        turn = Turn(air_named=named)
+        await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day + timedelta(days=3)} 23:59:59"}, turn)   # 3+ days: drawn anyway
+        (chart,) = turn.charts
+        assert chart.title == title
+    await air.close()
+
+
 async def test_finished_days_are_fetched_once(tmp_path):
     air, calls = await make(tmp_path)
     await air.warm(True)

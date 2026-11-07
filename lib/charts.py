@@ -626,7 +626,10 @@ def _render_rose(canvas: Canvas, compass: Compass) -> Axes:
 # ---------- several panels on one time axis ----------
 def _extreme(line: Line, want: str, xs) -> tuple[float, float]:
     """Where the drawn line is highest (or lowest): the top (bottom) of its band when it has one, else the line itself. A
-    label sits on what is drawn, never on a raw reading the chart does not reach. `xs` are the line's x."""
+    label sits on what is drawn, never on a raw reading the chart does not reach; a line marked on its readings (on_line) has its true
+    record. `xs` are the line's x."""
+    if line.on_line and want in line.records:
+        return float(line.records[want][0]), float(line.records[want][1])
     ys = (line.high if want == "high" else line.low) if line.low is not None and not line.on_line else line.y
     pick = max if want == "high" else min
     i = pick(range(len(ys)), key=lambda k: ys[k])

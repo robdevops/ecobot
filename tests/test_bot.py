@@ -333,6 +333,9 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
     name, args = Agent.tools.calls[0]
     assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
     assert sent == ["Humidity"]    # the chart's title is its whole caption
+    sent.clear()
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "when was humidity highest this week")
+    assert "high 60 %, Sat 26 Sep" in sent[0]    # a record asked for: its figures, with when, go with the chart
 
 
 async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(alert_state, monkeypatch):
