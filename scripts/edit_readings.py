@@ -20,7 +20,8 @@ other readings of that time stay as they are. The days it falls on are worked ou
 and long charts follow.
 
 The file is ecobot.sqlite in DATA_DIR when that is set, else the systemd service's, /var/lib/private/ecobot/ecobot.sqlite (readable by
-root alone: run it with sudo), or --file. Times are local (TZ, else the system's), or carry their own offset (2026-10-27T13:25+11:00). The bot may keep running: it reads the file
+root alone: run it with sudo; SQLite makes its side files, -wal and -shm, as the file's owner and mode, and removes them on closing),
+or --file. Times are local (TZ, else the system's), or carry their own offset (2026-10-27T13:25+11:00). The bot may keep running: it reads the file
 in WAL mode. A chart it drew before the change can be reused for a few minutes.
 """
 
@@ -45,17 +46,6 @@ CONTEXT = 3  # the readings either side of each match shown in a dry run (--cont
 def default_file() -> Path:
     """The file: in DATA_DIR (or the service's STATE_DIRECTORY) when one is set, else the systemd service's."""
     return data_dir() / FILE if os.getenv("DATA_DIR", "").strip() or os.getenv("STATE_DIRECTORY", "").strip() else SERVICE_FILE
-
-
-def give_back(file: Path):
-    """Run as root (sudo), the side files SQLite may leave beside the file (-wal, -shm) are given to the file's owner, the service's
-    user, which could not open them otherwise."""
-    if os.geteuid() != 0 or not file.exists():
-        return
-    owner = file.stat()
-    for side in (Path(f"{file}-wal"), Path(f"{file}-shm")):
-        if side.exists():
-            os.chown(side, owner.st_uid, owner.st_gid)
 
 
 def kind_of(reading: str) -> str:
@@ -247,4 +237,3 @@ if __name__ == "__main__":
                 show(storage, around(storage, kind, args.reading, found, args.context), tz, values)
     finally:
         storage.close()
-        give_back(args.file)

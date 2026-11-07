@@ -1,6 +1,7 @@
 """scripts/edit_readings.py: finds a spike, shows it among the readings either side in a dry run, and changes just that reading, for
 good: the day's figures follow, and a fetch of that time again doesn't bring it back."""
 
+import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -105,3 +106,18 @@ def test_the_file_is_in_data_dir_when_it_is_set_else_the_services(monkeypatch, t
     assert edit_readings.default_file() == Path("/var/lib/private/ecobot/ecobot.sqlite")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     assert edit_readings.default_file() == tmp_path / "ecobot.sqlite"
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root, as under sudo")
+def test_run_as_root_it_changes_no_ones_owner_or_mode(tmp_path):
+    """SQLite run as root makes its side files (-wal, -shm) as the file's owner, with its mode, and removes them on closing."""
+    Storage(tmp_path / "ecobot.sqlite", TZ).close()
+    os.chown(tmp_path / "ecobot.sqlite", 65534, 65534)                                # the service's user
+    os.chmod(tmp_path / "ecobot.sqlite", 0o600)
+    before = {p.name: (p.stat().st_uid, p.stat().st_mode) for p in tmp_path.iterdir()}
+    s = Storage(tmp_path / "ecobot.sqlite", TZ)
+    found = edit_readings.matches(s, "air", "co2", None, None, None, None, top=1)
+    edit_readings.change(s, "air", "co2", edit_readings.new_values(s, "air", "co2", found, 400.0))
+    assert {p.stat().st_uid for p in tmp_path.iterdir()} == {65534}                  # the side files too, while it is open
+    s.close()
+    assert {p.name: (p.stat().st_uid, p.stat().st_mode) for p in tmp_path.iterdir()} == before
