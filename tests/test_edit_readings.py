@@ -80,3 +80,20 @@ def test_a_reading_is_named_as_the_file_has_it():
     assert edit_readings.kind_of("co2") == "air" and edit_readings.kind_of("temperature") == "climate"
     with pytest.raises(SystemExit, match="co2"):
         edit_readings.kind_of("co3")
+
+
+def test_the_list_gives_each_kinds_readings_and_the_sensors_the_file_has_of_it(storage):
+    lines = edit_readings.listing(storage)
+    at = lines.index("air: air = AirGradient (42)")
+    assert "co2" in lines[at + 1].split() and "climate: no sensor in the file" in lines
+
+
+def test_a_reading_of_one_sensor_alone(tmp_path):
+    s = Storage(tmp_path / "e.sqlite", TZ)
+    with s.writer.transaction() as w:
+        for group, value in (("outdoor", 12.0), ("indoor", 21.0)):
+            w.put(w.ecowitt_sensor("mac", group), "5min", [{"ts": SPIKE, "temperature": value}])
+    outdoor = s.sensors.find("mac", "outdoor").id
+    assert len(edit_readings.matches(s, "climate", "temperature", SPIKE, SPIKE + 1, None, None)) == 2   # both have one
+    assert [f[3] for f in edit_readings.matches(s, "climate", "temperature", SPIKE, SPIKE + 1, None, None, sensor=outdoor)] == [12.0]
+    s.close()
