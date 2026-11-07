@@ -620,3 +620,13 @@ def test_calendar_months_with_their_year_are_a_period_from_the_first_of_one_to_t
     read = intent.read("co2 chart oct 2025 to oct 2026", now, {"Ecowitt": 1, "AirGradient": 1})
     assert read.fast[1]["start_date"] == "2025-10-01 00:00:00" and read.fast[1]["end_date"] == "2026-10-31 23:59:59"
     assert not intent.read("co2 chart dec 2026", now, {"AirGradient": 1}).chart_in_code   # a month ahead: not the last day, the model's
+
+
+def test_a_readings_full_history_is_the_longest_chart_and_history_alone_is_too_unless_a_period_is_named():
+    now = datetime(2026, 11, 7, 20, 52)
+    for text in ("co2 full history", "co2 history", "full history of co2", "pm2.5 all history", "co2 whole history", "humidity history",
+                 "temperature full history"):
+        read = intent.read(text, now, {"Ecowitt": 1, "AirGradient": 1})
+        assert read.chart_in_code and read.fast[2].endswith("on record"), text   # not the reading now
+    assert intent.spans_in("co2 history 7d", now)[0][0] == "last 7 days"
+    assert intent.spans_in("rain history this week", now)[0][0] == "last 7 days"

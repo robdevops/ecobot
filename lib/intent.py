@@ -220,7 +220,7 @@ def period_ranges(today: date) -> dict[str, tuple[date, date]]:
 # Phrase -> period name. Numbered periods ("4 months", "24h", "last 7 days") are parsed separately.
 PERIOD_PHRASES = [
     # "the last year" / "in the last year" = rolling; bare "last year" = previous calendar year
-    (r"(on record|all[- ]time|of all time|ever recorded|ever)", "on record"),
+    (r"(on record|all[- ]time|of all time|ever recorded|ever|(the )?(full|whole|entire|complete|all( the)?) (history|record|data))", "on record"),
     (r"(the )?past year|the last year", "past year"),
     (r"(the )?past month|the last month", "past month"),
     (r"(the )?past week|the last week|this week", "last 7 days"),
@@ -293,6 +293,9 @@ def months_span(m: re.Match, now: datetime) -> tuple[str, datetime, datetime] | 
     return name, datetime.combine(first, datetime.min.time()), datetime.combine(last, datetime.max.time()).replace(microsecond=0)
 
 
+HISTORY = re.compile(r"\bhistory\b", I)   # with no other period named: the whole record
+
+
 def _periods(text: str, now: datetime) -> dict[tuple[datetime, datetime], tuple[str, str]]:
     """{(start, end): (the words said, the period's name)} for every distinct period the text names."""
     found: dict = {}
@@ -305,6 +308,8 @@ def _periods(text: str, now: datetime) -> dict[tuple[datetime, datetime], tuple[
     for m in NUMBERED_PERIOD.finditer(text):
         if numbered := numbered_span(m.group(1), m.group(2), now):
             found.setdefault(numbered[1:], (m.group(0), numbered[0]))
+    if not found and (said := HISTORY.search(text)):   # "co2 history": all of it
+        found[span("on record", now)] = (said.group(0), "on record")
     if not found and (bare := BARE_PERIOD.search(text)):  # "weather week", "aq month": as if "this ..."
         name = BARE_PERIODS[bare.group(1).lower()]
         found[span(name, now)] = (bare.group(0), name)
