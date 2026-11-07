@@ -421,3 +421,42 @@ def test_the_fake_stations_first_day_ever_and_the_daily_records_labels(storage):
     d = date(2026, 1, 10)   # summer: Melbourne is 11 hours ahead, the UTC midnight is 11am
     first, last = utc_days(d, TZ)
     assert first == last and datetime.fromtimestamp(first, TZ).hour == 11
+
+
+# ---------- IGNORE_TIMES ----------
+def test_readings_in_ignore_times_are_deleted_at_start_their_days_worked_out_again_and_never_written_again(tmp_path):
+    base = old_day()
+    spike = datetime.fromtimestamp(base + 3600, TZ).replace(tzinfo=None)              # 1am, the bot's time (no zone)
+    s = Storage(tmp_path / "e.sqlite", TZ)
+    with s.writer.transaction() as w:
+        air = w.air_sensor("42")
+        w.put(air, "5min", [{"ts": base + 300 * i, "co2": 5202.0 if 12 <= i < 15 else 420.0} for i in range(24)])   # 1:00 to 1:15 breathed on
+        w.put(air, "1hour", [{"ts": base, "co2": 420.0}, {"ts": base + 3600, "co2": 1500.0}])
+        w.cover(air, "5min", base, base + DAY - 1)
+    assert read(s, lambda r: r.days("air", [air.id], local_date(base, TZ), local_date(base, TZ)))[air.id].hi["co2"] == [5202.0]
+    s.close()
+    s = Storage(tmp_path / "e.sqlite", TZ, ignore=((spike, spike + timedelta(minutes=15)),))
+    five = read(s, lambda r: r.rows("air", [air.id], "5min", base, base + DAY))[air.id]
+    assert len(five.ts) == 21 and max(five.values["co2"]) == 420.0
+    assert read(s, lambda r: r.rows("air", [air.id], "1hour", base, base + DAY))[air.id].ts == [base]   # the hour that takes it in goes too
+    assert read(s, lambda r: r.days("air", [air.id], local_date(base, TZ), local_date(base, TZ)))[air.id].hi["co2"] == [420.0]
+    with s.writer.transaction() as w:                                                  # fetched again: still left out
+        assert w.put(air, "5min", [{"ts": base + 3600, "co2": 5202.0}, {"ts": base + 3900 + 600, "co2": 430.0}]) == 1
+        assert w.widen(air, "5min", {"co2": {base + 3600: (400.0, 5300.0)}}) == 0
+    assert max(read(s, lambda r: r.rows("air", [air.id], "5min", base, base + DAY))[air.id].values["co2"]) == 430.0
+    s.close()
+
+
+def test_ignore_times_reads_start_end_in_iso_8601_and_keeps_none_for_anything_else():
+    from lib.config import _windows
+    at = lambda *a, **k: datetime(2026, 11, 5, *a, **k)
+    one = [(at(14, 5), at(14, 20))]
+    for text in ("2026-11-05T14:05-2026-11-05T14:20", "2026-11-05 14:05/2026-11-05 14:20", "2026-11-05T14:05-14:20", "20261105T1405-20261105T1420"):
+        assert list(_windows(text, (), "IGNORE_TIMES")) == one, text
+    assert _windows("2026-11-05T23:50-00:10, 2026-11-05-2026-11-06", (), "IGNORE_TIMES") == (
+        (at(23, 50), datetime(2026, 11, 6, 0, 10)), (at(0), datetime(2026, 11, 6)))   # past midnight; whole days
+    from datetime import timezone
+    zone = timezone(timedelta(hours=11))
+    assert _windows("2026-11-05T14:05+11:00-2026-11-05T14:20+11:00", (), "X") == ((at(14, 5, tzinfo=zone), at(14, 20, tzinfo=zone)),)
+    for bad in ("", "x", "2026-11-05T14:20-2026-11-05T14:05", "2026-11-05T14:05Z-2026-11-05T14:20", "2026-11-05T14:05"):
+        assert _windows(bad, (), "IGNORE_TIMES") == (), bad

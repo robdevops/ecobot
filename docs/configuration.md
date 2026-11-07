@@ -77,5 +77,6 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | Variable | Default | Description |
 |---|---|---|
 | `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | State (`bot_state.json`) and SQLite caches. Relative paths from the working dir. Created if missing. |
+| `IGNORE_TIMES` | – | Times whose readings are thrown away (a sensor breathed on, a station moved), comma separated, each `start-end` or `start/end` in ISO 8601: `2026-11-05T14:05-2026-11-05T14:20`; the end may be a time alone (`2026-11-05T14:05-14:20`), a date alone is its midnight. Without a zone (`+11:00`, `Z`) a time is the bot's (the weather station's). At start every reading that takes in any of it, weather station's and air monitor's, is deleted from the file (a half hour's or a day's reading too, if it overlaps) and the days are worked out again; one fetched again later is left out. Removing an entry does not bring its readings back |
 | `LOG_WIDTH` | `24` | Characters of a chat message kept in the log, then `…`; `0` keeps all. No other line is cut |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the bot's own lines (chart timings) |
