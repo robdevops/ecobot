@@ -121,3 +121,19 @@ def test_run_as_root_it_changes_no_ones_owner_or_mode(tmp_path):
     assert {p.stat().st_uid for p in tmp_path.iterdir()} == {65534}                  # the side files too, while it is open
     s.close()
     assert {p.name: (p.stat().st_uid, p.stat().st_mode) for p in tmp_path.iterdir()} == before
+
+
+def test_it_needs_no_library_beyond_pythons_own_so_runs_under_the_systems_python(tmp_path):
+    """sudo python3 is the system's Python, without the bot's libraries: a change, with its day figures worked out again, needs none."""
+    import subprocess
+    root = Path(__file__).resolve().parent.parent
+    s = Storage(tmp_path / "ecobot.sqlite", TZ)
+    with s.writer.transaction() as w:
+        w.put(w.air_sensor("42"), "5min", [{"ts": BASE + 300 * i, "co2": 1604.9 if i == 161 else 418.0} for i in range(288)])
+    s.close()
+    blocked = "httpx", "openai", "telegram", "PIL", "dateutil"
+    code = (f"import sys; sys.modules.update(dict.fromkeys({blocked!r})); sys.path.insert(0, {str(root / 'scripts')!r}); sys.argv = ['edit_readings.py', 'co2', '--at', "
+            f"'2026-10-27T13:25:00+11:00', '--apply', '--file', {str(tmp_path / 'ecobot.sqlite')!r}]; import runpy; "
+            f"runpy.run_path({str(root / 'scripts' / 'edit_readings.py')!r}, run_name='__main__')")
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
+    assert run.returncode == 0 and "Changed 1 co2 reading" in run.stdout, run.stderr
