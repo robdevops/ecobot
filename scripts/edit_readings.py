@@ -19,10 +19,12 @@ backfill or gap filling, Ecowitt's archive, scripts/refill_airgradient.py) only 
 other readings of that time stay as they are. The days it falls on are worked out again in the same transaction, so the day figures
 and long charts follow.
 
-Times are local (TZ, else the system's), or carry their own offset (2026-10-27T13:25+11:00). The bot may keep running: it reads the file
+The file is ecobot.sqlite in DATA_DIR when that is set, else the systemd service's, /var/lib/private/ecobot/ecobot.sqlite (readable by
+root alone: run it with sudo), or --file. Times are local (TZ, else the system's), or carry their own offset (2026-10-27T13:25+11:00). The bot may keep running: it reads the file
 in WAL mode. A chart it drew before the change can be reused for a few minutes.
 """
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,7 +38,24 @@ from lib.storage.schema import q  # noqa: E402
 
 TOP = 10     # with nothing narrowed, how many of the highest are listed
 SHOWN = 50   # the most matches listed (all are changed)
+SERVICE_FILE = Path("/var/lib/private/ecobot") / FILE   # the systemd service's file (StateDirectory=ecobot, with DynamicUser)
 CONTEXT = 3  # the readings either side of each match shown in a dry run (--context)
+
+
+def default_file() -> Path:
+    """The file: in DATA_DIR (or the service's STATE_DIRECTORY) when one is set, else the systemd service's."""
+    return data_dir() / FILE if os.getenv("DATA_DIR", "").strip() or os.getenv("STATE_DIRECTORY", "").strip() else SERVICE_FILE
+
+
+def give_back(file: Path):
+    """Run as root (sudo), the side files SQLite may leave beside the file (-wal, -shm) are given to the file's owner, the service's
+    user, which could not open them otherwise."""
+    if os.geteuid() != 0 or not file.exists():
+        return
+    owner = file.stat()
+    for side in (Path(f"{file}-wal"), Path(f"{file}-shm")):
+        if side.exists():
+            os.chown(side, owner.st_uid, owner.st_gid)
 
 
 def kind_of(reading: str) -> str:
@@ -178,7 +197,8 @@ if __name__ == "__main__":
     ap.add_argument("--set", type=float, dest="value", help="the value to give them (default: the mean of the readings either side)")
     ap.add_argument("--context", type=int, default=CONTEXT, help=f"readings shown either side of each match (default {CONTEXT})")
     ap.add_argument("--apply", action="store_true", help="make the change (without it: a dry run)")
-    ap.add_argument("--file", type=Path, default=data_dir() / FILE, help="the bot's file (default: ecobot.sqlite in DATA_DIR)")
+    ap.add_argument("--file", type=Path, default=default_file(),
+                    help=f"the bot's file (default: ecobot.sqlite in DATA_DIR if it is set, else {SERVICE_FILE})")
     args = ap.parse_args()
     if args.list:
         storage = Storage(args.file, local_tz()) if args.file.exists() else None
@@ -189,7 +209,7 @@ if __name__ == "__main__":
     if not args.reading:
         ap.error("name a reading (--list shows them)")
     if not args.file.exists():
-        raise SystemExit(f"{args.file}: not found")
+        raise SystemExit(f"{args.file}: not found" + (" (or not readable by this user: try sudo)" if args.file == SERVICE_FILE else ""))
     if args.at and (args.start or args.end):
         raise SystemExit("--at is one time: give it, or --from/--to, not both")
     tz = local_tz()
@@ -227,3 +247,4 @@ if __name__ == "__main__":
                 show(storage, around(storage, kind, args.reading, found, args.context), tz, values)
     finally:
         storage.close()
+        give_back(args.file)

@@ -97,3 +97,11 @@ def test_a_reading_of_one_sensor_alone(tmp_path):
     assert len(edit_readings.matches(s, "climate", "temperature", SPIKE, SPIKE + 1, None, None)) == 2   # both have one
     assert [f[3] for f in edit_readings.matches(s, "climate", "temperature", SPIKE, SPIKE + 1, None, None, sensor=outdoor)] == [12.0]
     s.close()
+
+
+def test_the_file_is_in_data_dir_when_it_is_set_else_the_services(monkeypatch, tmp_path):
+    monkeypatch.delenv("STATE_DIRECTORY", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    assert edit_readings.default_file() == Path("/var/lib/private/ecobot/ecobot.sqlite")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    assert edit_readings.default_file() == tmp_path / "ecobot.sqlite"
