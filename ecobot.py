@@ -76,7 +76,7 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     storage = None
     if cfg.ecowitt or cfg.airgradient:
         try:   # (in a thread: opening makes or upgrades its tables)
-            storage = await asyncio.to_thread(Storage, cfg.storage_path, cfg.tz, ignore=cfg.ignore_times)
+            storage = await asyncio.to_thread(Storage, cfg.storage_path, cfg.tz)
         except Exception as e:
             log.error("The history file %s couldn't be opened (%s: %s) - continuing without the weather station and the air sensor",
                       cfg.storage_path, type(e).__name__, e, exc_info=isinstance(e, BUGS))

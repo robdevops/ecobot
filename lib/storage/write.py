@@ -12,7 +12,7 @@ import logging
 import math
 import time
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date
 
 from . import Sensor
 from .catalogue import AIR, AIR_EXTERNAL, BY_NAME, CLOUD, HOME_ASSISTANT, KINDS, SLOT, column_of, kind_of, label_of
@@ -25,7 +25,6 @@ log = logging.getLogger(__name__)
 GAP_FINAL_SECONDS = 2 * 86400   # readings missing for longer than this are missing for good (the station was off): their time counts as fetched
 MINUTES_KEPT = 10 * 86400       # Home Assistant's minutes are kept this long (only a chart of a few hours draws them; docs/storage-plan.md 3.9)
 DAY_RESOLUTIONS = ("5min", "30min", "1hour", "4hour", "1day")   # what the day rows are worked out from
-WIDTHS = {"1min": 60, "5min": 300, "30min": 1800, "1hour": 3600, "4hour": 14400, "1day": 86400}   # each resolution's reading spans this long from its time
 MIN_READINGS = 2                # a 5 minutes of live readings with fewer than this has no band (the station counts them: ecowitt.source.LiveMarks)
 
 
@@ -137,7 +136,6 @@ class Writer:
         self.storage = storage
         self.db = storage.write_db
         self.tz = storage.tz
-        self.ignore: tuple[tuple[datetime, datetime], ...] = ()   # IGNORE_TIMES: no reading that takes in any of these is kept
         self._coverage: dict[tuple[int, str], list] = {}   # this transaction's coverage, by (sensor, res)
         self._sensors: list[Sensor] = []                    # ... its new sensors
         self._days: dict[str, dict[int, dict[date, set[str]]]] = {}   # ... and the days to work out again, by kind and sensor, with what
@@ -200,8 +198,7 @@ class Writer:
                             [(sensor.id, res, name, unit) for name, unit in units.items()])
 
     def extra(self, sensor: Sensor, res: str, rows: list[tuple[str, int, str]]):
-        self.db.executemany("INSERT OR REPLACE INTO extra VALUES (?, ?, ?, ?, ?)",
-                            [(sensor.id, res, f, ts, v) for f, ts, v in rows if self.kept(res, ts)])
+        self.db.executemany("INSERT OR REPLACE INTO extra VALUES (?, ?, ?, ?, ?)", [(sensor.id, res, f, ts, v) for f, ts, v in rows])
 
     def set_meta(self, key: str, value: str):
         self.db.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
@@ -210,9 +207,7 @@ class Writer:
     def put(self, sensor: Sensor, res: str, rows: list[dict], src: int = CLOUD, final: bool = True, exact: bool = False) -> int:
         """Write a sensor's readings at one resolution: rows of {"ts": epoch, column: value, column_lo, column_hi, and "final" where it
         differs from `final`}. exact (a file built from scratch, tests/bench_cache.py): rows the file does not have yet, as they are (a row it has already is an error), the
-        30-minute bands not yet widened from the 5-minute readings (roll_up does that once they are all in). A reading in IGNORE_TIMES is
-        left out. Returns how many."""
-        rows = [row for row in rows if self.kept(res, row["ts"])]
+        30-minute bands not yet widened from the 5-minute readings (roll_up does that once they are all in). Returns how many."""
         if not rows:
             return 0
         if exact:   # rows new to the file: only the cells they have
@@ -243,7 +238,6 @@ class Writer:
         minutes). Returns how many."""
         times = []
         for column, found in bands.items():
-            found = {ts: band for ts, band in found.items() if self.kept(res, ts)}
             self.db.executemany(widen_sql(sensor.kind, column), [(sensor.id, res, ts, lo, hi) for ts, (lo, hi) in found.items()])
             times += found
         if times:
@@ -264,34 +258,6 @@ class Writer:
         for s in self.all_sensors():
             if s.kind in KINDS:
                 gone += self.db.execute(f"DELETE FROM {s.kind} WHERE sensor = ? AND res = '1min' AND ts < ?", (s.id, before)).rowcount
-        return gone
-
-    # ---------- IGNORE_TIMES ----------
-    def ignored(self) -> list[tuple[int, int]]:
-        """IGNORE_TIMES as [start, end) epochs (a time without a zone is in the file's: the station's)."""
-        epoch = lambda t: int((t if t.tzinfo else t.replace(tzinfo=self.tz)).timestamp())
-        return [(epoch(start), epoch(end)) for start, end in self.ignore]
-
-    def kept(self, res: str, ts: int) -> bool:
-        """Is a reading of this resolution at this time kept: does it take in none of IGNORE_TIMES (a reading spans its resolution from
-        its time: a half hour's takes in any of the half hour)."""
-        width = WIDTHS.get(res, 1)
-        return not self.ignore or not any(ts < end and ts + width > start for start, end in self.ignored())
-
-    def drop_ignored(self) -> int:
-        """Delete the readings held that take in any of IGNORE_TIMES, and work their days out again. Returns how many."""
-        gone = 0
-        for start, end in self.ignored():
-            for s in self.all_sensors():
-                for res, width in WIDTHS.items():   # (by the key: sensor, res, ts)
-                    args = (s.id, res, start - width, end)
-                    if s.kind in KINDS:
-                        times = [ts for (ts,) in self.db.execute(
-                            f"DELETE FROM {s.kind} WHERE sensor = ? AND res = ? AND ts > ? AND ts < ? RETURNING ts", args)]
-                        if times:
-                            gone += len(times)
-                            self.touch(s, ANY, min(times), max(times))
-                    self.db.execute("DELETE FROM extra WHERE sensor = ? AND res = ? AND ts > ? AND ts < ?", args)
         return gone
 
     # ---------- coverage ----------
@@ -337,7 +303,6 @@ class Writer:
         zone = str(getattr(tz, "key", tz))
         log.info("Storage: the time zone is now %s (was %s): working out every day again", zone, getattr(self.tz, "key", self.tz))
         self.tz = tz   # (the storage's follows once this is committed: Storage.set_timezone)
-        self.drop_ignored()   # (a time without a zone is another instant now)
         self.all_days()
         self.set_meta("tz", zone)
 

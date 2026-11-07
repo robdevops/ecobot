@@ -88,9 +88,8 @@ def connect(path: Path, bulk: bool = False) -> sqlite3.Connection:
 
 
 class Storage:
-    def __init__(self, path, tz: tzinfo, bulk: bool = False, ignore: tuple = ()):
-        """tz: the zone a new file's days are worked out in; a file keeps its own (the station's, see set_timezone). ignore: IGNORE_TIMES,
-        ((start, end) datetimes): the readings that take in any of them are deleted now and left out of every write."""
+    def __init__(self, path, tz: tzinfo, bulk: bool = False):
+        """tz: the zone a new file's days are worked out in; a file keeps its own (the station's, see set_timezone)."""
         from .read import Reader
         from .write import Writer
         self.path, self.tz, self.bulk = Path(path), tz, bulk
@@ -109,11 +108,6 @@ class Storage:
                 self.writer.set_meta("tz", str(getattr(tz, "key", tz)))
         else:
             self.tz = self.writer.tz = zone_named(zone, tz)
-        self.writer.ignore = tuple(ignore)
-        if ignore:
-            with self.writer.transaction():
-                if gone := self.writer.drop_ignored():
-                    log.info("Storage: deleted %d readings taken in IGNORE_TIMES", gone)
 
     async def set_timezone(self, tz: tzinfo):
         """The station's days are local to it: a zone other than the file's works them all out again."""

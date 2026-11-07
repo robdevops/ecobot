@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field, fields
-from datetime import datetime, time, timedelta, tzinfo
+from datetime import datetime, tzinfo
 from functools import partial
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -126,62 +126,6 @@ def _hours(value: str, default: tuple[int, int] | None, name: str) -> tuple[int,
     return (start, end) if 0 <= start <= 23 and 0 <= end <= 24 and start != end else default
 
 
-type Window = tuple[datetime, datetime]
-
-
-def _instant(text: str, after: datetime | None = None) -> datetime | None:
-    """An ISO 8601 date and time ("2026-11-05T14:05", "2026-11-05 14:05:30+11:00", a date alone: its midnight); with `after`, also a time
-    alone ("14:20"): the first such time after it. None if unreadable."""
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        pass
-    if after is None:
-        return None
-    try:
-        clock = time.fromisoformat(text)
-    except ValueError:
-        return None
-    found = datetime.combine(after.date(), clock.replace(tzinfo=clock.tzinfo or after.tzinfo))
-    try:
-        return found if found > after else found + timedelta(days=1)
-    except TypeError:   # one has a time zone, the other not
-        return None
-
-
-def _window(text: str) -> Window | None:
-    """"start/end" or "start-end" (each ISO 8601; the end may be a time alone) -> (start, end), the end after the start; else None. A hyphen
-    is also inside a date, so "start-end" is split at the one hyphen that leaves two readable times."""
-    cuts = [text.index("/")] if "/" in text else [i for i, c in enumerate(text) if c == "-"]
-    found = {True: [], False: []}   # by whether the end is a whole date and time (preferred: a time alone is read loosely)
-    for i in cuts:
-        start = _instant(text[:i].strip())
-        whole = start and _instant(text[i + 1:].strip())
-        end = start and (whole or _instant(text[i + 1:].strip(), start))
-        if start and end:
-            found[bool(whole)].append((start, end))
-    pick = found[True] or found[False]
-    if len(pick) != 1:
-        return None
-    start, end = pick[0]
-    try:
-        return pick[0] if end > start else None
-    except TypeError:   # one has a time zone, the other not
-        return None
-
-
-def _windows(value: str, default: tuple[Window, ...], name: str) -> tuple[Window, ...]:
-    """"2026-11-05T14:05-2026-11-05T14:20, 2026-11-01/2026-11-02" -> those (start, end) pairs; an entry that isn't one is ignored (and
-    logged). A time without a zone is the bot's (the weather station's), worked out where it is used."""
-    found, bad = [], []
-    for part in filter(None, (p.strip() for p in value.split(","))):
-        (found.append if (w := _window(part)) else bad.append)(w or part)
-    if bad:
-        log.warning("%s: ignoring %s (not start-end, each an ISO 8601 date and time, e.g. 2026-11-05T14:05-2026-11-05T14:20)",
-                    name, ", ".join(map(repr, bad)))
-    return tuple(found) or default
-
-
 def _ids(value: str, default: frozenset[int], name: str) -> frozenset[int]:
     """"123, -1001 456" -> {123, -1001, 456}. An entry that is not a whole number is ignored (and logged): it must not stop the bot."""
     found, bad = set(), []
@@ -296,7 +240,6 @@ class Config:
     tuya_base_url: str = _setting("TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url)   # the data centre's address (EU by default)
     irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
     dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the bot's time zone
-    ignore_times: tuple[Window, ...] = _setting("IGNORE_TIMES", (), _windows)   # readings taken in these times are deleted and never kept again (a sensor breathed on)
     admin_only: bool = _setting("ADMIN_ONLY", False, _flag)         # on: the bot answers nobody but the admins of the groups it is in (and ADMIN_CHAT_IDS)
     admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # dry this long before "the rain has stopped"; and the temperature-crossing alert's minimum gap
