@@ -1,12 +1,12 @@
 """The readings tool (lib/history.py): one reading's stored values at an interval, each with its time."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
-from lib.history import MAX_ROWS, History, interval_starts
+from lib.history import MAX_ROWS, History, finest_fit, interval_starts
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import local_epoch, when
@@ -83,9 +83,11 @@ async def test_an_hour_is_worked_out_from_the_finer_readings_and_the_last_one_is
     assert "note_last" in out and out["metric"] == "outdoor.humidity"
 
 
-def test_intervals_are_blocks_of_local_time_across_a_clock_change():
-    four = interval_starts(at(3, 9), at(4, 9), 4 * 3600, TZ)
-    assert [when(t, TZ).split(" ", 4)[-1] for t in four] == ["8:00am", "12:00pm", "4:00pm", "8:00pm", "12:00am", "4:00am", "8:00am"]
+def test_intervals_are_blocks_of_local_time_across_a_clock_change_and_four_hours_are_the_stations_own():
+    four = interval_starts(at(3, 9), at(4, 9), 4 * 3600, TZ)   # Ecowitt's 4-hour records are cut on UTC hours: 3am, 7am ... in AEDT
+    assert [when(t, TZ).split(" ", 4)[-1] for t in four] == ["7:00am", "11:00am", "3:00pm", "7:00pm", "11:00pm", "3:00am", "7:00am"]
+    days = interval_starts(at(3, 9), at(5, 9), 86400, TZ)
+    assert [when(t, TZ).split(" ", 4)[-1] for t in days] == ["12:00am"] * 3
     spring = interval_starts(local_epoch(datetime(2026, 10, 4, 0, 30), TZ), local_epoch(datetime(2026, 10, 4, 4, 0), TZ), 3600, TZ)
     assert [when(t, TZ).split(" ", 4)[-1] for t in spring] == ["12:00am", "1:00am", "3:00am", "4:00am"]   # (2am never happened)
 
@@ -155,3 +157,67 @@ async def test_days_come_from_the_day_rows_with_when_their_extremes_happened(sto
     assert out["columns"] == ["day", "value", "low", "low_time", "high", "high_time"]
     (day, mean, low, low_time, high, high_time), _ = out["rows"]
     assert day == "Fri 6 Nov 2026" and low == 10.0 and high == 20.0 and high_time == "3:00pm" and mean == 10.0   # (10.03: as the station writes it)
+
+
+async def test_a_four_hour_record_is_its_own_row_and_a_reading_straddling_two_rows_is_left_out(storage):
+    put(storage, "outdoor", "4hour", [{"ts": at(5, 11), "temperature": 20.0, "temperature_lo": 18.0, "temperature_hi": 35.0}])  # 11am-3pm
+    put(storage, "outdoor", "5min", [{"ts": at(5, 8) + 300 * i, "temperature": 15.0} for i in range(36)])   # 8am to 10:55am
+    out = await ask(tool(storage), metric="outdoor.temperature", start="2026-11-05 08:00", end="2026-11-05 14:59", interval="4hour")
+    assert out["rows"] == [["Thu 5 Nov 2026 7:00am", 15.0, 15.0, 15.0], ["Thu 5 Nov 2026 11:00am", 20.0, 18.0, 35.0]]
+    put(storage, "outdoor", "30min", [{"ts": at(5, 23, 30), "temperature": 9.0, "temperature_lo": 1.0, "temperature_hi": 9.0}])
+    out = await ask(tool(storage), metric="outdoor.temperature", start="2026-11-05 23:00", end="2026-11-05 23:59", interval="5min")
+    assert all(r[1] is None for r in out["rows"]) and out["fits"] == "30min"   # (a 30-minute reading is not split into 5-minute rows)
+
+
+async def test_rain_from_two_resolutions_never_reads_their_seam_as_the_midnight_reset(storage):
+    put(storage, "rainfall", "5min", [{"ts": at(8, 20) + 300 * i, "daily": 10.0 + (0.25 if i >= 12 else 0)} for i in range(13)])  # 8pm-9pm
+    put(storage, "rainfall", "1min", [{"ts": at(8, 21, 2) + 60 * i, "daily": 10.1 + 0.05 * i} for i in range(28)])   # 9:02pm on
+    out = await ask(tool(storage), metric="rainfall.rain", start="2026-11-08 20:00", end="2026-11-08 21:29", interval="1hour")
+    (_, eight), (_, nine) = out["rows"]
+    assert eight == 0.0 and 1.4 <= nine <= 1.5   # 9:02pm to 9:29pm (never the day's whole total again: about 11 mm)
+
+
+async def test_gusts_take_the_records_own_highest(storage):
+    put(storage, "wind", "30min", [{"ts": at(7, 10) + 1800 * i, "wind_gust": 20.0, "wind_gust_hi": 35.0 + i} for i in range(4)])
+    out = await ask(tool(storage), metric="wind.wind_gust", start="2026-11-07 10:00", end="2026-11-07 11:59", interval="1hour")
+    assert [r[1] for r in out["rows"]] == [36.0, 38.0]
+
+
+async def test_the_interval_still_filling_is_not_a_gap_to_ask_coarser_for(storage):
+    put(storage, "outdoor", "5min", [{"ts": at(9, 0) + 300 * i, "temperature": 12.0} for i in range(21)])   # midnight to 1:40am
+    put(storage, "outdoor", "30min", [{"ts": at(9, 0) + 1800 * i, "temperature": 12.0} for i in range(4)])
+    out = await ask(tool(storage), metric="outdoor.temperature", start="2026-11-09 01:00", interval="5min")
+    assert out["missing"] == 1 and "fits" not in out and "note_coarser" not in out and "note_last" in out
+
+
+async def test_a_period_held_only_as_days_points_to_days(storage):
+    def write(w):
+        utc_day = int(datetime(2026, 11, 2, tzinfo=UTC).timestamp())   # (Ecowitt's daily records are cut on UTC days)
+        w.put(w.ecowitt_sensor(MAC, "outdoor"), "1day", [{"ts": utc_day, "temperature": 14.0, "temperature_lo": 8.0, "temperature_hi": 21.0}])
+    storage.writer.run(write, ())
+    out = await ask(tool(storage), metric="outdoor.temperature", start="2026-11-02 00:00", end="2026-11-02 23:59", interval="4hour")
+    assert out["fits"] == "1day" and "ask again with interval 1day" in out["note"]
+
+
+async def test_an_air_glitch_at_the_edge_of_the_window_is_still_taken_out(storage):
+    put(storage, "air", "5min", [{"ts": at(8, 21, 30) + 300 * i, "pm2_5": 50.0 if i == 6 else 5.0, "pm10": 8.0, "pm1": 3.0} for i in range(12)])
+    out = await ask(tool(storage), metric="air.pm2_5", start="2026-11-08 22:00", end="2026-11-08 22:29", interval="30min")
+    assert out["rows"] == [["Sun 8 Nov 2026 10:00pm", 5.0, 5.0, 5.0]]
+
+
+async def test_a_sensor_named_is_kept_and_a_time_with_an_offset_is_moved_into_local_time(storage):
+    h = tool(storage)
+    assert h.find("air.humidity").name == "air.air_humidity" and h.find("humidity").name == "outdoor.humidity"
+    assert h.find("indoor.feels_like") is None and h.find("air.temperature").name == "air.air_temperature"
+    put(storage, "outdoor", "5min", [{"ts": at(9, 1), "temperature": 12.0}])
+    out = await ask(h, metric="outdoor.temperature", start="2026-11-08T14:00:00Z", end="2026-11-08T14:05:00Z", interval="5min")
+    assert out["rows"][0] == ["Mon 9 Nov 2026 1:00am", 12.0, 12.0, 12.0]
+
+
+async def test_the_interval_offered_instead_is_one_that_is_then_accepted(storage):
+    h = tool(storage)
+    for start in ("2026-08-15 07:15", "2026-09-20 22:00", "2026-10-28 01:47", "2026-01-14 00:00"):   # (the third: 300 hours; the last: 300 days)
+        refused = await ask(h, metric="outdoor.temperature", start=start, end="2026-11-09 01:47", interval="1min")
+        assert refused["error"] == "too many rows" and refused["fits"], start
+        assert "error" not in await ask(h, metric="outdoor.temperature", start=start, end="2026-11-09 01:47", interval=refused["fits"]), start
+    assert finest_fit(local_epoch(datetime(2026, 1, 14), TZ), NOW, TZ) == "1day"
