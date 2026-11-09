@@ -386,7 +386,25 @@ OUTDOOR = re.compile(r"\b(outdoors?|outside)\b", I)
 FMT = "%Y-%m-%d %H:%M:%S"
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 # "all metrics", "everything", "aq all week" (every reading, a week), but not the period "all time" nor "every day" or "each month"
-ALL = re.compile(r"\b(all(?![\s-]+time\b)|everything|(?:every|each)(?!\s+(?:days?|nights?|weeks?|months?|years?|hours?|times?)\b))\b", I)
+# How many of a unit, before it: "every 30 minutes", "every ten minutes", "every half an hour", "every couple of hours", "every other hour"
+_HOW_MANY = (r"(?:\d+\s*|(?:a\s+)?few\s+|half[\s-]+(?:an?\s+)?|quarter[\s-]+(?:of\s+)?(?:an?\s+)?|other\s+|(?:a\s+)?couple(?:\s+of)?\s+|"
+             r"(?:one|two|three|four|five|six|ten|twelve|fifteen|twenty|thirty|forty|sixty)(?:[\s-]+five)?\s+)")
+ALL = re.compile(rf"\b(all(?![\s-]+time\b)|everything|(?:every|each)(?!\s+{_HOW_MANY}?(?:days?|nights?|weeks?|months?|years?|hours?|hrs?|"
+                 r"min(?:ute)?s?|times?)\b))\b", I)
+# Values at an interval ("each hour", "every 30 minutes", "hourly", "in 15 minute steps"): the readings tool, through the model, never
+# a whole period's highs and lows. A speed or a rate ("miles per hour", "mm per hour") is a unit, not an interval: UNIT_PER takes it out first.
+INTERVAL = re.compile(rf"\b(?:each|every)\s+{_HOW_MANY}?(?:hours?|hrs?|min(?:ute)?s?)\b|\bper\s+(?:hour|minute)\b|\btwice\s+an\s+hour\b|"
+                      r"\b(?:half[\s-]+)?hourly\b|\bhour[\s-]+by[\s-]+hour\b|"
+                      r"\b\d+[\s-]*(?:min(?:ute)?s?|hours?|hrs?)\s+(?:intervals?|steps?|increments?|resolution)\b", I)
+UNIT_PER = re.compile(r"(?:\b(?:kms?|kilomet(?:re|er)s?|mi|miles?|mm|millimet(?:re|er)s?|inch(?:es)?|metres?|meters?|m|ft|feet|knots?|kmh|kph|"
+                      r"mph)|\d(?:km|mm|m))\s+per\s+(?:hour|minute)\b|\bkm/h\s+per\s+(?:hour|minute)\b", I)
+
+
+def asks_interval(text: str) -> bool:
+    """Does the question want values at an interval ("humidity each hour", "pm2.5 every ten minutes")? A chart is drawn in code as before."""
+    return bool(INTERVAL.search(UNIT_PER.sub(" ", text))) and not GRAPH.search(text)
+
+
 PER_DAY = re.compile(r"\b(each|every|per|by)\s+day|daily|day[- ]by[- ]day|which days|list|breakdown|one by one", I)
 
 
@@ -704,6 +722,8 @@ def period_figures_call(text: str, now: datetime, sources: Collection[str]) -> t
 
 def fast_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, dict, str] | None:
     """(tool name, arguments, what it is) for a question the bot can fetch for without the model, from these sources (by name)."""
+    if asks_interval(text):   # "each hour", "highest hourly rain each month": an interval's figures, never a day's or a period's
+        return None
     if (counted := count_days_call(text, now, sources)) or (counted := period_figures_call(text, now, sources)):
         return counted
     ecowitt, air, pollen, forecast = ("Ecowitt" in sources, "AirGradient" in sources, "Pollen" in sources, "Forecast" in sources)

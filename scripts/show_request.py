@@ -8,6 +8,8 @@ is printed in full.
 
     python scripts/show_request.py "hottest day where it also rained"
     python scripts/show_request.py --file /path/ecobot.sqlite --call '{"name": ..., "arguments": {...}}' "..."
+    python scripts/show_request.py --call '{"name": "readings", "arguments": {"metric": "outdoor.humidity", "start": "2026-11-08 20:47",
+        "interval": "1hour"}}' "humidity each hour for the last 5 hours"     # the readings tool, run on the file
 """
 
 import asyncio
@@ -21,6 +23,7 @@ from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 from lib.config import data_dir, local_tz  # noqa: E402
 
 from lib import intent, prompt  # noqa: E402
+from lib.history import History  # noqa: E402
 from lib.airgradient import source as air  # noqa: E402
 from lib.ecowitt import days, source as station  # noqa: E402
 from lib.llm import Agent  # noqa: E402
@@ -78,10 +81,13 @@ async def main():
     async def unavailable(a):
         return "(not run by this script)"
 
+    air_sensor = next(iter(storage.sensors.all(kind="air")), None)
+    history = await History.open(NS(storage=storage, mac=macs[0], tz=tz),
+                                 NS(store=NS(storage=storage, sensor=lambda: air_sensor), tz=tz) if air_sensor else None)
     tools = Tools([Tool("weather_now", station.REALTIME_DESCRIPTION, station.REALTIME_PARAMS, unavailable),
                    Tool("weather_history", station.HISTORY_DESCRIPTION, station.HISTORY_PARAMS, unavailable),
                    Tool("weather_days", days.DESCRIPTION, days.PARAMETERS, days_handler),
-                   Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable)])
+                   Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable), *history.tools])
     text = args.question
     r = intent.read(text, now.replace(tzinfo=None))
     system = prompt.build(now, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor"}, r.hints)

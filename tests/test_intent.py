@@ -630,3 +630,16 @@ def test_a_readings_full_history_is_the_longest_chart_and_history_alone_is_too_u
         assert read.chart_in_code and read.fast[2].endswith("on record"), text   # not the reading now
     assert intent.spans_in("co2 history 7d", now)[0][0] == "last 7 days"
     assert intent.spans_in("rain history this week", now)[0][0] == "last 7 days"
+
+
+def test_values_at_an_interval_go_to_the_model_for_the_readings_tool_but_a_chart_of_them_is_still_drawn_in_code():
+    for text in ("What was the humidity each hour for the last 5 hours", "temperature every 30 minutes today", "temperature every ten minutes today",
+                 "temperature every half an hour today", "temperature every couple of hours today", "temperature in 15 minute increments today",
+                 "pm2.5 every ten minutes today", "humidity hour by hour yesterday", "rain per hour today",
+                 "highest hourly rain each month this year", "max rain per hour by month"):   # (an hour's figure, never a day's)
+        assert call(text) is None, text
+    for text in ("hourly rain chart today", "rain per hour chart 7d", "plot hourly temperature today", "hourly pm2.5 chart 24h"):
+        assert intent.read(text, NOW).chart_in_code, text
+    for text in ("max wind speed in miles per hour this week", "highest gust in kilometres per hour this week", "max gust today in km/h per hour"):
+        assert call(text) is not None, text   # a speed's unit, not an interval
+    assert intent.ALL.search("pm2.5 every ten minutes") is None and intent.ALL.search("everything every day")

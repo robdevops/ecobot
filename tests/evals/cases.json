@@ -1495,5 +1495,63 @@
       "fast": null
     },
     "covers": []
+  },
+  {
+    "id": "humidity-each-hour",
+    "ask": "What was the humidity each hour for the last 5 hours",
+    "note": "the bot said its tool only gave extremes: the readings tool gives a value per hour",
+    "expect": {
+      "fast": null,
+      "hints": [
+        "\"5 hours\" = last 5 hours"
+      ],
+      "tools": [
+        "readings"
+      ],
+      "not_tools": [
+        "weather_history"
+      ],
+      "args": {
+        "readings": {
+          "metric": {
+            "regex": "humidity$"
+          },
+          "interval": "1hour",
+          "start": {
+            "regex": "^2026-09-29 (08|09)"
+          }
+        }
+      }
+    },
+    "covers": [
+      "q:interval",
+      "m:humidity"
+    ]
+  },
+  {
+    "id": "temperature-every-30-minutes",
+    "ask": "temperature every 30 minutes today",
+    "note": "took the fast path to a highs-and-lows summary of today",
+    "expect": {
+      "fast": null,
+      "tools": [
+        "readings"
+      ],
+      "args": {
+        "readings": {
+          "metric": {
+            "regex": "temperature$"
+          },
+          "interval": "30min",
+          "start": {
+            "regex": "^2026-09-29 00:00"
+          }
+        }
+      }
+    },
+    "covers": [
+      "q:interval",
+      "m:temperature"
+    ]
   }
 ]

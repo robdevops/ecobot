@@ -38,6 +38,7 @@ from lib.llm import Agent
 from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
 from lib.compose import Composer
+from lib.history import History
 from lib.sources import Source
 from lib.storage import Storage
 from lib.tools import Tools
@@ -247,7 +248,8 @@ async def main():
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
         charts.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
         composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
-        tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []))
+        history = await History.open(eco, air) if eco or air else None   # the readings tool: values at an interval, from the file
+        tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []) + (history.tools if history else []))
         client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
         if client:
             stack.push_async_callback(safely, client.close)
