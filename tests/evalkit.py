@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from lib import compose, intent, prompt
+from lib import compose, history, intent, prompt
 from lib.airgradient import days as air_days, source as air
 from lib.ecowitt import days, link, source as station
 from lib.forecast import source as forecast
@@ -37,7 +37,7 @@ COVERAGE = {
     "q:correction": "the person says the answer was wrong", "q:about-the-bot": "questions about the bot itself",
     "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report", "q:dashboard": "the station's gauges",
     "q:detail-level": "asking for a finer data resolution", "q:cross-source": "a question that needs both devices together",
-    "q:scan": "which readings go with which (every pair)",
+    "q:scan": "which readings go with which (every pair)", "q:interval": "values at an interval (each hour, every 30 minutes)",
     "m:temperature": "temperature", "m:humidity": "humidity", "m:pressure": "pressure", "m:wind-speed": "wind speed and gusts",
     "m:wind-direction": "wind direction", "m:rain": "rain", "m:air-quality": "air quality",
     "c:line": "a line chart of one reading", "c:daily-band": "a long chart: daily mean with its range",
@@ -65,7 +65,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
 
 def tool_names() -> list[str]:
     return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link", "air_scan",
-            "pollen_asthma", "weather_forecast", "air_days"]
+            "pollen_asthma", "weather_forecast", "air_days", "readings"]
 
 
 def make_tools(calls: list) -> Tools:
@@ -85,7 +85,8 @@ def make_tools(calls: list) -> Tools:
             ("air_scan", compose.SCAN_DESCRIPTION, compose.SCAN_PARAMETERS),
             ("pollen_asthma", pollen.DESCRIPTION, pollen.PARAMETERS),
             ("weather_forecast", forecast.DESCRIPTION, forecast.PARAMETERS),
-            ("air_days", air_days.DESCRIPTION, air_days.PARAMETERS)]
+            ("air_days", air_days.DESCRIPTION, air_days.PARAMETERS),
+            ("readings", history.DESCRIPTION, history.PARAMETERS)]
     sources = {name: ECOWITT_SOURCE for name in ("weather_history", "weather_days", "weather_link")} | \
               {name: AIR_SOURCE for name in ("air_quality", "air_days")} | {name: "" for name in ("plot_chart", "air_link", "air_scan")}
     return Tools([Tool(n, d, p, recorder(n), source=sources.get(n)) for n, d, p in defs])

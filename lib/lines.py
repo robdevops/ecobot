@@ -114,6 +114,11 @@ def daily_summary(points, tz: tzinfo) -> dict[date, tuple[float, float, float]]:
     return _summarise(points, lambda ts: local_date(ts, tz))
 
 
+def summary_by(points, key) -> dict:
+    """{key(ts): (mean, lowest low, highest high)} for buckets of any shape (the readings tool's blocks of local time); see _summarise."""
+    return _summarise(points, key)
+
+
 def bucket_summary(points, width: int) -> dict[int, tuple[float, float, float]]:
     """{bucket start epoch: (mean, lowest low, highest high)} for buckets of `width` seconds; see _summarise."""
     return _summarise(points, lambda ts: ts // width * width)

@@ -386,7 +386,11 @@ OUTDOOR = re.compile(r"\b(outdoors?|outside)\b", I)
 FMT = "%Y-%m-%d %H:%M:%S"
 AVERAGE = re.compile(r"\b(averages?|avg|mean)\b", I)
 # "all metrics", "everything", "aq all week" (every reading, a week), but not the period "all time" nor "every day" or "each month"
-ALL = re.compile(r"\b(all(?![\s-]+time\b)|everything|(?:every|each)(?!\s+(?:days?|nights?|weeks?|months?|years?|hours?|times?)\b))\b", I)
+ALL = re.compile(r"\b(all(?![\s-]+time\b)|everything|(?:every|each)(?!\s+(?:\d+\s*|few\s+|half[\s-]+)?(?:days?|nights?|weeks?|months?|years?|hours?|hrs?|min(?:ute)?s?|times?)\b))\b", I)
+# Values at an interval ("each hour", "every 30 minutes", "hourly"): the readings tool, through the model, never a whole period's
+# highs and lows. "km per hour" and "mm per hour" are units, not intervals.
+INTERVAL = re.compile(r"\b(?:each|every)\s+(?:\d+\s*|few\s+|half[\s-]+)?(?:hours?|hrs?|min(?:ute)?s?)\b|(?<!km )(?<!mm )\bper\s+(?:hour|minute)\b|"
+                      r"\b(?:half[\s-]+)?hourly\b|\bhour[\s-]+by[\s-]+hour\b|\b\d+[\s-]*(?:min(?:ute)?s?|hours?|hrs?)\s+intervals?\b", I)
 PER_DAY = re.compile(r"\b(each|every|per|by)\s+day|daily|day[- ]by[- ]day|which days|list|breakdown|one by one", I)
 
 
@@ -707,8 +711,8 @@ def fast_call(text: str, now: datetime, sources: Collection[str]) -> tuple[str, 
     if (counted := count_days_call(text, now, sources)) or (counted := period_figures_call(text, now, sources)):
         return counted
     ecowitt, air, pollen, forecast = ("Ecowitt" in sources, "AirGradient" in sources, "Pollen" in sources, "Forecast" in sources)
-    if SPECIFIC_MOMENT.search(text) or COUNTING.search(text):  # "high on 5 Jan this year", "at 3pm today": a whole period would be the wrong data
-        return None
+    if SPECIFIC_MOMENT.search(text) or COUNTING.search(text) or INTERVAL.search(text):   # "high on 5 Jan this year", "at 3pm today",
+        return None                                                                  # "each hour": a whole period would be the wrong data
     if air and (period := air_period(text, now)):
         name, start, end = period
         return "air_quality", {"chart": True, "metrics": air_metrics(text),
