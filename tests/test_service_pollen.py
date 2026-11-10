@@ -4,7 +4,7 @@ section word for word, what is held when the request says not to fetch, and the 
 import json
 from datetime import date, datetime, time as dtime, timedelta
 
-from lib import report
+from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.pollen.source import OFF_SEASON
 from lib.service.common import FRESH
 from lib.service.context import Context

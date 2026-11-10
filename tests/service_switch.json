@@ -425,11 +425,11 @@
   "gauges": [
    "aa7350dd52231dc7"
   ],
-  "history": "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C, 63 %\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
+  "history": "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
   "sent": [
    [
     "photo",
-    "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C, 63 %\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
+    "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
     [
      [
       [
@@ -1548,7 +1548,7 @@
  "dashboard": {
   "charts": [],
   "gauges": [
-   "1bc0e0d78b0b8287"
+   "2035f1d261cdf408"
   ],
   "history": "Weather station dashboard, Tue 10 Nov 2026 2:05pm",
   "sent": [
@@ -1811,11 +1811,11 @@
  "humidity": {
   "charts": [],
   "gauges": [],
-  "history": "• Outdoor: 💦 94 %\n• Indoor: 63 %",
+  "history": "• Outdoor: 💦 94 %",
   "sent": [
    [
     "text",
-    "• Outdoor: 💦 94 %\n• Indoor: 63 %",
+    "• Outdoor: 💦 94 %",
     null
    ]
   ]
@@ -2281,7 +2281,7 @@
    ]
   ]
  },
- "press 30 under Rain chart 1d": {
+ "press 1M under Rain chart 1d": {
   "charts": [
    {
     "panels": [
@@ -2326,7 +2326,7 @@
    ]
   ]
  },
- "press 365 under rain by month this year": {
+ "press 1Y under rain by month this year": {
   "charts": [
    {
     "panels": [
@@ -2371,7 +2371,7 @@
    ]
   ]
  },
- "press 7 under Temperature chart 1d": {
+ "press 7D under Temperature chart 1d": {
   "charts": [
    {
     "panels": [
@@ -2675,11 +2675,11 @@
   "gauges": [
    "aa7350dd52231dc7"
   ],
-  "history": "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C, 63 %\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
+  "history": "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
   "sent": [
    [
     "photo",
-    "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C, 63 %\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
+    "Weather station (2:05pm)\n• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h\n\nAir quality (2:05pm)\n• PM2.5: 12.0 µg/m³ 🟢 good (AQI 44)\n• PM10: 8.0 µg/m³ 🟢 good\n• PM1: 3.0 µg/m³ 🟢 good\n• CO₂: 450 ppm 🟢 good\n• VOC index: 100 🟢 good\n• NOx index: 1.0 🟢 good\n\nPollen & asthma (Melbourne, 2:05pm)\n• Grass pollen forecast: 🟠 Moderate\n• Thunderstorm asthma forecast: 🟢 Low\n\nForecast (Melbourne, 2:05pm)\n• Today: 🌧️ Rain. 11–16°C, 0% chance of at least 1 mm\n• Wednesday: ☀️ Clear. 12–17°C, 75% chance of at least 1 mm\n• Thursday: ⛈️ Thunderstorm. 13–18°C, 0% chance of at least 1 mm",
     [
      [
       [
@@ -3627,11 +3627,11 @@
  "weather now": {
   "charts": [],
   "gauges": [],
-  "history": "• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C, 63 %\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h",
+  "history": "• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h",
   "sent": [
    [
     "text",
-    "• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C, 63 %\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h",
+    "• Outdoor: 🧥 12.3 °C, 💦 94 %\n• Indoor: 🧥 18.3 °C\n• Pressure: 🗜️ 1025.0 hPa\n• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)\n• Sun: solar radiation 412.5 W/m² (medium), 😎 UV index 6\n• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h",
     null
    ]
   ]

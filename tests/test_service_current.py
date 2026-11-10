@@ -8,7 +8,7 @@ from datetime import date, datetime
 
 import pytest
 
-from lib import report
+from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient import AirGradient
 from lib.ecowitt.days import day_values_on
 from lib.intent import NOW_GROUPS

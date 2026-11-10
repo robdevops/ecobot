@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta
 
 import pytest
 
-from lib import report
+from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient.days import find_air_days
 from lib.airgradient.readings import AirReadings
 from lib.ecowitt.days import find_days

@@ -1,16 +1,17 @@
-"""The report (and "weather now") written in code from the tools' own results, with no model: the layout, units and emoji are all
-decided here, so it is instant and always the same. Each tool result is JSON; one that failed or is missing is left out."""
+"""What the model path still needs written in code from the old tools' results, until the model gets the service's tools (docs/
+mcp-service.md 6, step 3): the caption of a chart that answers the question by itself (the bot's chart_answers_it finish on
+weather_history, air_quality and the day tools), and the bold names of the report's headings. Everything the bot answers without the
+model is the service's own words now (lib/service: current's lines, summary's caption and text, days' answer, the forecast's and the
+pollen's text). Each tool result is JSON; one that failed or is missing gives nothing."""
 
 import json
 import re
-from datetime import date, datetime
 
 from telegram import MessageEntity
 
 from .ecowitt.api import unit_text
-from .ecowitt.glance import solar_band
 from .entities import utf16_len
-from .series import AIR, INDOOR_READINGS, WEATHER, find
+from .series import AIR, find
 from .timeutil import clock_text, day_text, to_local
 
 
@@ -23,136 +24,9 @@ def _load(result: str | None) -> dict | None:
     return data if isinstance(data, dict) and "error" not in data else None
 
 
-def _zero(text: str | None) -> bool:
-    """Is this reading missing or zero ("0.0 W/m²", "0")?"""
-    try:
-        return not text or float(text.split()[0]) == 0
-    except ValueError:
-        return False
-
-
-def _band(solar: str | None) -> str:
-    """" (medium)" for a solar reading like "40.2 W/m²"; nothing when it can't be read."""
-    try:
-        return f" ({solar_band(float(solar.split()[0]))})"
-    except (AttributeError, IndexError, ValueError):
-        return ""
-
-
-def _join(parts: list[str | None], sep: str = ", ") -> str:
-    return sep.join(p for p in parts if p)
-
-
-def _stamp(result: dict, today: date) -> str | None:
-    """The time of the data, "11:45pm", with its day when that isn't today ("Sat 10 Oct 11:45pm"), from the result's "time" (as
-    timeutil.when writes it, "Sun 11 Oct 2026 11:45pm"); None when it is missing or unreadable."""
-    try:
-        at = datetime.strptime(result.get("time") or "", "%a %d %b %Y %I:%M%p")
-    except ValueError:
-        return None
-    return clock_text(at) if at.date() == today else f"{day_text(at, year=False)} {clock_text(at)}"
-
-
-def _heading(name: str, result: dict, today: date) -> str:
-    """"Forecast (Melbourne, 6:00pm)": the place the result names and the time of its data, whichever it has."""
-    note = ", ".join(x for x in (result.get("place"), _stamp(result, today)) if x)
-    return f"{name} ({note})" if note else name
-
-
-def _getters(now: dict):
-    """(get, tag) for a weather_now result: a reading's text, and the same with its emoji (if it has one) before it."""
-    emoji = now.get("emoji") or {}
-
-    def get(group: str, field: str) -> str | None:
-        return unit_text((now.get(group) or {}).get(field))
-
-    def tag(group: str, field: str, text: str | None = None) -> str | None:
-        text = text or get(group, field)
-        return f"{emoji[f'{group}.{field}']} {text}" if text and f"{group}.{field}" in emoji else text
-    return get, tag
-
-
-def _rain(now: dict) -> str:
-    """Today's rain, the month's and, while it rains, the rate: "☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"."""
-    get, tag = _getters(now)
-    rate, month = get("rainfall", "rain_rate"), get("rainfall", "monthly")
-    return _join([_join([tag("rainfall", "daily"), f"(month total {month})" if month else None], " "),
-                  None if _zero(rate) else tag("rainfall", "rain_rate", f"raining ({rate})")], "; ")
-
-
-def _wind(now: dict) -> str | None:
-    """The wind, where it comes from and its gusts: "14.0 km/h from 131°, gust 31.0 km/h"; None when it is calm."""
-    get, tag = _getters(now)
-    if _zero(get("wind", "wind_speed")) and _zero(get("wind", "wind_gust")):
-        return None
-    direction, gust = get("wind", "wind_direction"), tag("wind", "wind_gust")
-    return _join([_join([tag("wind", "wind_speed"), f"from {direction}" if direction else None], " "), f"gust {gust}" if gust else None])
-
-
-def weather_lines(now: dict) -> list[str]:
-    """The weather station's bullets from a weather_now result: an emoji sits right before the reading it is keyed to."""
-    get, tag = _getters(now)
-    solar, uvi = get("solar_and_uvi", "solar"), get("solar_and_uvi", "uvi")
-    sun = _join([None if _zero(solar) else tag("solar_and_uvi", "solar", f"solar radiation {solar}{_band(solar)}"),       # night: no sun line
-                 None if _zero(uvi) else tag("solar_and_uvi", "uvi", f"UV index {uvi}")])
-    bullets = [("Outdoor", _join([tag("outdoor", "temperature"), tag("outdoor", "humidity")])),   # (dew point and VPD are there to ask for)
-               ("Indoor", _join([tag("indoor", "temperature"), tag("indoor", "humidity")])),
-               ("Pressure", tag("pressure", "relative")),
-               ("Rain today", _rain(now)),
-               ("Sun", sun),
-               ("Wind", _wind(now))]    # calm: no line
-    return [f"• {name}: {text}" for name, text in bullets if text]
-
-
-def air_lines(air: dict, only: list[str] | None = None) -> list[str]:
-    out = []
-    for key, label in ((name, m.label) for name, m in AIR.items()):
-        entry = air.get(key) if only is None or key in only else None
-        if not isinstance(entry, dict) or entry.get("value") is None:
-            continue
-        unit = entry.get("unit", "")
-        shown = (f"{entry['value']:.1f} {unit}" if unit.startswith("µg") else f"{entry['value']:.0f} {unit}" if unit == "ppm"
-                 else f"{entry['value']:.1f}" if key == "nox_index" else f"{entry['value']:.0f}")
-        aqi = f" (AQI {entry['aqi_us']})" if key == "pm2_5" and "aqi_us" in entry else ""
-        out.append(f"• {label}: {_join([shown, entry.get('rating')], ' ')}{aqi}")
-    return out
-
-
-def reading_lines(now: dict, names: list[str], sides: list[str]) -> list[str]:
-    """Just the readings asked about from a weather_now result ("how hot is it": the temperature, indoors and out)."""
-    get, tag = _getters(now)
-    lines = []
-    for name in names:
-        reading = WEATHER[name]
-        if name in ("temperature", "humidity"):   # a line for each side asked about; the temperature with what it feels like
-            for side in sides:
-                feels = get(side, "feels_like") if name == "temperature" else None
-                if text := _join([tag(side, reading.field), f"feels like {feels}" if feels else None]):
-                    lines.append(f"• {side.capitalize()}: {text}")
-        elif name == "wind":
-            lines.append(f"• Wind: {_wind(now) or 'calm'}")
-        elif name == "rain":
-            lines.append(f"• Rain today: {_rain(now) or 'none'}")
-        else:
-            group = sides[0] if name in INDOOR_READINGS and len(sides) == 1 else reading.group   # "indoor dew point": that sensor's
-            if text := tag(group, reading.field):
-                lines.append(f"• {reading.label}{' (indoor)' if group == 'indoor' else ''}: {text}")
-    return lines
-
-
-def _own_lines(result: dict) -> list[str]:
-    """The bullets of a result that brings its own lines (pollen and asthma, the forecast)."""
-    return [f"• {line}" for line in result.get("lines", [])]
-
-
-# The report's sections in order: the tool, the section's heading, its bullets from the tool's result, and whether it is still
-# shown when that result failed ("• not available right now") rather than left out
-SECTIONS = (("weather_now", "Weather station", weather_lines, True),
-            ("air_quality", "Air quality", air_lines, True),
-            ("pollen_asthma", "Pollen & asthma", _own_lines, False),
-            ("weather_forecast", "Forecast", _own_lines, False))
-HEADINGS = {tool: heading for tool, heading, _, _ in SECTIONS}   # the pollen and forecast lookups start with theirs too
-HEADING_LINE = re.compile(rf"^({'|'.join(map(re.escape, HEADINGS.values()))})(?= \(|$)", re.M)
+# ---------- the report's headings (the service's current, pollen and forecast write them) ----------
+HEADINGS = ("Weather station", "Air quality", "Pollen & asthma", "Forecast")
+HEADING_LINE = re.compile(rf"^({'|'.join(map(re.escape, HEADINGS))})(?= \(|$)", re.M)
 
 
 def heading_entities(text: str) -> list[MessageEntity]:
@@ -160,29 +34,7 @@ def heading_entities(text: str) -> list[MessageEntity]:
     return [MessageEntity(MessageEntity.BOLD, utf16_len(text[:m.start()]), utf16_len(m.group(1))) for m in HEADING_LINE.finditer(text)]
 
 
-def report(results: dict[str, str], today: date) -> str:
-    """The full report from the tool results by tool name (weather_now, air_quality, pollen_asthma, weather_forecast), on `today` (local)."""
-    sections = []
-    for tool, heading, bullets, always in SECTIONS:
-        data = _load(results.get(tool))
-        if data or (always and tool in results):
-            sections.append("\n".join([_heading(heading, data or {}, today), *(bullets(data) if data else ["• not available right now"])]))
-    return "\n\n".join(sections) or "No readings are available right now."
-
-
-def weather_now(result: str | None) -> str | None:
-    """"Weather now": the weather station's bullets alone (None if the reading isn't available)."""
-    now = _load(result)
-    return "\n".join(weather_lines(now)) if now else None
-
-
-# ---------- plain lookups ----------
-def _alone(tool: str, result: dict, today: date) -> str | None:
-    """A pollen or forecast result on its own: its section of the report, or None when it has no lines."""
-    lines = _own_lines(result)
-    return "\n".join([_heading(HEADINGS[tool], result, today), *lines]) if lines else None
-
-
+# ---------- a days lookup ----------
 def _days(data: dict) -> str | None:
     """"137 of 1,454 days with UV index ≥ 10 (period)", or a total, average, highest or lowest over the period: the chart (if any)
     carries the breakdown."""
@@ -196,40 +48,11 @@ def _days(data: dict) -> str | None:
     return f"{data['matching_days']:,} of {data['days_checked']:,} days{what} ({_period(data)}).{note}"
 
 
-def _series_label(field: str) -> str:
-    """A series' name: its reading's label ("Temperature"), the gusts their own ("Wind gust")."""
-    if field == "wind_gust":
-        return "Wind gust"
-    return reading.label if (reading := find(field)) else field.replace("_", " ").capitalize()
-
-
-def _extremes(data: dict, names: list[str]) -> str | None:
-    """The period, then the low and high (or the average) of each reading named, each with its day and time: wind, its speed and
-    its gusts; nothing named, the temperature. A reading on both sides (indoor, outdoor) has a line for each."""
-    series = data.get("series") or {}
-    wanted = [f for r in filter(None, map(find, names)) for f in (r.field, r.band_field) if f] or ["temperature"]
-    keys = [k for k in series if k.split(".", 1)[1] in wanted and "low" in series[k]]
-    fields = [k.split(".", 1)[1] for k in keys]
-    lines = []
-    for key in keys:
-        group, field = key.split(".", 1)
-        label = _series_label(field) + (f" ({group})" if fields.count(field) > 1 else "")
-        lines.append(f"• {_range(label, series[key], 'average' in series[key])}")
-    return "\n".join([_period(data), *lines]) if lines else None
-
-
-def lookup(kind: str, result: str | None, names: list[str], sides: list[str], today: date) -> str | None:
-    """A plain lookup written from its one tool result: `kind` is "reading", "air", "days", "extremes", "pollen" or "forecast",
-    `names` the readings asked about and `sides` where (indoor, outdoor), on `today` (local). None when the result can't be used
-    (the model then takes the question)."""
+def lookup(kind: str, result: str | None, names: list[str] = (), sides: list[str] = (), today=None) -> str | None:
+    """A day tool's result in words (`kind` "days"): the count, or the figure over the period. None when the result can't be used (the
+    model then answers). (`names`, `sides` and `today` are the old lookups', kept so its callers read as before.)"""
     data = _load(result)
-    answers = {"reading": lambda: "\n".join(reading_lines(data, names, sides)),
-               "air": lambda: "\n".join(air_lines(data, names or None)),
-               "days": lambda: _days(data),
-               "extremes": lambda: _extremes(data, names),
-               "pollen": lambda: _alone("pollen_asthma", data, today),
-               "forecast": lambda: _alone("weather_forecast", data, today)}
-    return (answers[kind]() or None) if data and kind in answers else None
+    return (_days(data) or None) if data and kind == "days" else None
 
 
 # ---------- chart captions ----------
@@ -265,6 +88,7 @@ def _rain_line(turn, tz) -> list[str]:
     bars = next((p.bars for c in turn.charts for p in c.panels if p.bars and p.bars.x), None)
     if not bars:
         return []
+
     def day(i: int) -> str:
         start = to_local(bars.x[i], tz)
         return day_text(start, year=False) + (f" {clock_text(start, whole_hours=True)}" if bars.width < 86400 else "")

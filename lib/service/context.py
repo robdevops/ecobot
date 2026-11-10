@@ -19,7 +19,7 @@ class Context:
     pollen: object | None = None       # lib.pollen.Pollen, when switched on
     catalogue: Catalogue | None = None   # the readings the file holds (names.Catalogue.open); None: every reading the service knows
     tz: tzinfo | None = None           # the station's zone (the station's own, once it has named it)
-    clock: Callable[[], float] = field(default=time.time)   # the time now, as an epoch (a test's own)
+    clock: Callable[[], float] = field(default=lambda: time.time())   # the time now, as an epoch (a test's own)
 
     @property
     def storage(self):

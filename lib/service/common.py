@@ -39,7 +39,9 @@ from ..tools import Tool, Turn, json_result
 
 # ---------- the request's metadata ----------
 CHART_POINTS = 150        # the most points a line of a chart is sent in, unless the request asks for more (3.7): enough for a model to redraw
-MAX_CHART_POINTS = 500    # the most a request may ask for: today's drawing budget (lines.POINT_BUDGET), what the bot asks for
+MAX_CHART_POINTS = 500    # the most a request may ask for: today's drawing budget (lines.POINT_BUDGET)
+AS_DRAWN = "drawn"        # chart_points asking for every point as the chart was drawn, unbucketed: what the bot asks for, so its pictures
+                          # are as they were (a chart of each day's average over years has more points than the budget)
 NORMAL, BACKGROUND = "normal", "background"   # priority: someone is waiting, or the work is ahead of need (a chart drawn ahead)
 META = {"chart_points": CHART_POINTS, "fetch": True, "priority": NORMAL}   # each key a handler reads, with its default
 
@@ -47,13 +49,15 @@ META = {"chart_points": CHART_POINTS, "fetch": True, "priority": NORMAL}   # eac
 def request_meta(raw: dict | None = None) -> dict:
     """The request's metadata as a handler reads it: every key in META, each checked, defaulted where missing or not understood; any
     other key passed on as it came.
-      - chart_points: the most points a chart's line is sent in, a whole number from 2 to MAX_CHART_POINTS (default CHART_POINTS);
+      - chart_points: the most points a chart's line is sent in, a whole number from 2 to MAX_CHART_POINTS (default CHART_POINTS), or
+        AS_DRAWN ("drawn"): every point, as the chart was drawn (a client that draws for itself, as the bot does);
       - fetch: False answers from what is held, fetching nothing that is missing (default True);
       - priority: "background" for work nobody is waiting on (a chart drawn ahead), whose requests wait their turn; else "normal"."""
     raw = dict(raw) if isinstance(raw, dict) else {}
     points = raw.get("chart_points")
     try:
-        points = CHART_POINTS if points is None or isinstance(points, bool) else min(max(int(points), 2), MAX_CHART_POINTS)
+        points = AS_DRAWN if points == AS_DRAWN else CHART_POINTS if points is None or isinstance(points, bool) else \
+            min(max(int(points), 2), MAX_CHART_POINTS)
     except (TypeError, ValueError):
         points = CHART_POINTS
     fetch = raw.get("fetch", True)
@@ -236,9 +240,9 @@ CHART_NOTE = "The chart's data is in `charts`: draw it if you can, and keep your
 
 def charts_field(charts: list[specs.Chart], tz: tzinfo, meta: dict | None = None) -> list[dict]:
     """The charts as data (specs.to_json, schemas/chart.json), each line bucketed to the request's `chart_points` (default CHART_POINTS,
-    at most MAX_CHART_POINTS), times local to `tz`."""
+    at most MAX_CHART_POINTS; AS_DRAWN: as drawn), times local to `tz`."""
     points = request_meta(meta)["chart_points"]
-    return [specs.to_json(chart, tz, max_points=points) for chart in charts]
+    return [specs.to_json(chart, tz, max_points=None if points == AS_DRAWN else points) for chart in charts]
 
 
 def with_charts(charts: list[specs.Chart], tz: tzinfo, meta: dict | None = None) -> dict:
@@ -254,6 +258,6 @@ def complete(reply: str) -> dict:
     return {"reply": reply, "complete": True}
 
 
-__all__ = ["BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
+__all__ = ["AS_DRAWN", "BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
            "ServiceTool", "WHOLE_DAY_FORMS", "answer", "as_of_field", "charts_field", "complete", "iso", "period_field", "period_properties",
            "read_period", "refuse", "refuse_period", "request_meta", "turn_meta", "with_charts"]

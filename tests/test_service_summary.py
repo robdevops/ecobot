@@ -5,7 +5,7 @@ chart (lib/report.py), word for word."""
 import json
 from datetime import datetime, timedelta
 
-from lib import report
+from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient import AirGradient
 from lib.bot import _as_drawn
 from lib.compose import Composer

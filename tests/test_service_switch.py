@@ -131,6 +131,7 @@ class World:
 
     def __init__(self):
         self.charts: list[dict] = []
+        self.drawn_by: list[dict | None] = []   # each chart's drawn_by (the service's charts only)
         self.sheets: list[str] = []
         self.sent: list[list] = []
         self.edits: list[list] = []
@@ -153,7 +154,7 @@ class World:
         eco = Ecowitt(cfg, transport=transport)
         await eco.start()
         Station(eco, live(FROZEN, **{"solar_and_uvi.solar": "412.5", "solar_and_uvi.uvi": "6", "wind.wind_speed": "14.0",
-                                     "wind.wind_gust": "31.0"}))
+                                     "wind.wind_gust": "31.0", "indoor.humidity": None}))   # (the fake station has no indoor humidity)
         air_transport_, _ = __import__("tests.fakes", fromlist=["air_transport"]).air_transport()
         air = AirGradient(cfg, transport=air_transport_, storage=eco.storage, owned=False)
         await air.start()
@@ -164,10 +165,20 @@ class World:
         pollen.now = lambda: _datetime.fromtimestamp(FROZEN, TZ).replace(tzinfo=None)
         await pollen.warm(True)
         self.sources = [eco, air, pollen, forecast]
+        for source in self.sources:   # a question's fetch of the newest readings while it is answered races the answer: not here
+            source.poke = lambda: None
         self.eco, self.air, self.pollen, self.forecast = eco, air, pollen, forecast
         self.composer = Composer(eco, air)
         history = await History.open(eco, air)
         self.tools = Tools([t for s in self.sources for t in s.tools] + self.composer.tools + history.tools)
+        from lib.service.context import Context
+        try:
+            from lib.service import Service
+        except ImportError:   # (before the switch, when the answers were recorded: the bot had no service)
+            self.service = None
+        else:
+            self.service = Service.of(await Context.open(eco=eco, air=air, composer=self.composer, forecast=forecast, pollen=pollen, tz=TZ,
+                                                         clock=lambda: FROZEN))
         self.tz, self.cfg = TZ, cfg
         return self
 
@@ -183,6 +194,7 @@ class World:
 
         def render(data, tz, times=None, dark=None):
             self.charts.append(summary_of(data))
+            self.drawn_by.append(data.get("drawn_by"))
             return b"png"
 
         def gauges(sheet):
@@ -190,7 +202,8 @@ class World:
             return b"gauges"
         monkeypatch.setattr(botmod, "render_data", render)
         monkeypatch.setattr(botmod.gauges, "render", gauges)
-        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), self.sources, alert_state)
+        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), self.sources, alert_state,
+                          **({"service": self.service} if self.service else {}))
 
     def message(self, message_id=50):
         world = self
@@ -234,16 +247,48 @@ def golden() -> dict:
     return json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
 
 
+def period_rows(sent: list) -> list:
+    """The period buttons under each message sent (None for a message with none, or with other buttons)."""
+    return [s[2] if s[2] and all(d.startswith("pd:") for row in s[2] for _, d in row) else None for s in sent]
+
+
+def without_period_rows(record: dict) -> dict:
+    """What was done, less the period buttons (deliberately changed: they come from the chart's drawn_by now)."""
+    record = json.loads(json.dumps(record, ensure_ascii=False))
+    for s, row in zip(record.get("sent", []), period_rows(record.get("sent", []))):
+        if row is not None:
+            s[2] = None
+    return record
+
+
 def pinned(name: str, got: dict):
-    """Compare what the bot did with the recording (or record it)."""
+    """Compare what the bot did with the recording (or record it), its period buttons aside (period_buttons_are_drawn_bys)."""
     if RECORD:
         data = golden()
         data[name] = got
         GOLDEN.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n")
         return
+    if dump := os.environ.get("ECOBOT_SWITCH_DUMP"):   # (a folder: what was done, to compare with the recording by hand)
+        Path(dump).mkdir(parents=True, exist_ok=True)
+        (Path(dump) / f"{hashlib.sha1(name.encode()).hexdigest()[:10]}.json").write_text(
+            json.dumps({"name": name, "got": got}, indent=1, ensure_ascii=False, sort_keys=True))
     want = golden().get(name)
     assert want is not None, f"{name} isn't recorded: run with ECOBOT_RECORD_SWITCH=1"
-    assert json.loads(json.dumps(got, ensure_ascii=False)) == want
+    assert without_period_rows(got) == without_period_rows(want)
+
+
+def period_buttons_are_drawn_bys(world, got: dict):
+    """The deliberate change: a single chart's buttons are its drawn_by's periods, each labelled as the service labels it (none when it
+    lists none: a count per month no longer offers 1D), each button's data the period alone, within Telegram's 64 bytes."""
+    rows = [row for row in period_rows(got["sent"]) if row is not None]
+    photos = [s for s in got["sent"] if s[0] == "photo"]
+    drawn = [d for d in world.drawn_by if d]
+    if len(photos) == 1 and len(world.charts) == 1 and drawn:
+        listed = drawn[0]["periods"]
+        assert rows == ([[[[p["label"], f"pd:{p['period']}"] for p in listed]]] if listed else [])
+        assert all(len(d.encode()) <= 64 for row in rows for r in row for _, d in r)
+    else:
+        assert rows == []
 
 
 async def asked(world, alert_state, monkeypatch, text) -> dict:
@@ -289,10 +334,13 @@ SHORTCUTS = [
 
 @pytest.mark.parametrize("text", KEYBOARD + SHORTCUTS)
 async def test_the_bots_own_answers_are_unchanged(world, alert_state, monkeypatch, text):
-    pinned(text, await asked(world, alert_state, monkeypatch, text))
+    got = await asked(world, alert_state, monkeypatch, text)
+    pinned(text, got)
+    if not RECORD:
+        period_buttons_are_drawn_bys(world, got)
 
 
-@pytest.mark.parametrize("question, press", [("Temperature chart 1d", "7"), ("Rain chart 1d", "30"), ("rain by month this year", "365")])
+@pytest.mark.parametrize("question, press", [("Temperature chart 1d", "7D"), ("Rain chart 1d", "1M"), ("rain by month this year", "1Y")])
 async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_state, monkeypatch, question, press):
     """A press on a period button under a chart: the chart over that period, put into the same message."""
     bot = world.bot(alert_state, monkeypatch)
@@ -302,7 +350,7 @@ async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_sta
     sent_id = 100 + len(world.sent)
     row = next((s[2] for s in world.sent if s[0] == "photo" and s[2]), None)
     assert row, "a single chart with its period buttons"
-    data = next(d for r in row for t, d in r if d.removeprefix("pd:").rstrip("dmy") == press or d == f"pd:{press}")
+    data = next(d for r in row for t, d in r if t == press)
     under = world.message(sent_id)
     under.reply_markup = NS(inline_keyboard=[[NS(text=t, callback_data=d) for t, d in r] for r in row])
     world.charts.clear()
@@ -312,7 +360,21 @@ async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_sta
     query = NS(data=data, message=under, answer=answer)
     await bot.on_period_button(NS(callback_query=query, effective_message=under, effective_chat=under.chat,
                                   effective_user=NS(username="rob", full_name="Rob", id=7)), CONTEXT)
-    pinned(f"press {press} under {question}", {"charts": world.charts, "edits": [e[:2] for e in world.edits]})
+    got = {"charts": world.charts, "edits": [e[:2] for e in world.edits]}
+    name = f"press {press} under {question}"
+    if RECORD or press != "1Y" or "month" not in question:
+        pinned(name, got)
+        return
+    # The deliberate change: a count per month's buttons are its drawn_by's periods, read by the service: "1y" is the 365 whole days to
+    # yesterday (the old 1Y asked "... 365d", which the bot read as 364 whole days and today). The chart is otherwise the same.
+    want = golden()[name]
+    (chart,), (old,) = got["charts"], want["charts"]
+    assert chart["period"] == ["2025-11-10", "2026-11-09"] and old["period"] == ["2025-11-11", "2026-11-09"]
+    assert chart["subtitle"] == old["subtitle"].replace("Tue 11 Nov 2025", "Mon 10 Nov 2025").replace("364 days", "365 days")
+    assert {k: v for k, v in chart.items() if k not in ("period", "subtitle", "sha", "panels")} == \
+        {k: v for k, v in old.items() if k not in ("period", "subtitle", "sha", "panels")}
+    assert got["edits"] == [["photo", "Total rain, Mon 10 Nov 2025 – Mon 9 Nov 2026\n\nTotal rain: 248 mm over 365 days (Mon 10 Nov 2025 – "
+                                      "Mon 9 Nov 2026)."]]
 
 
 @pytest.mark.parametrize("kind", ["gusts", "uv", "temps", "particulates"])
@@ -322,4 +384,17 @@ async def test_an_alerts_chart_is_the_same_as_before(world, monkeypatch, kind):
     monkeypatch.setattr(pictures, "render_data", lambda data, tz, *a, **k: captured.append(summary_of(data)) or b"png")
     source = world.air if kind == "particulates" else world.eco
     picture = await pictures.chart(source, pictures.CHARTS[kind], world.tz)
-    pinned(f"alert {kind}", {"title": picture.title, "newest": picture.newest, "charts": captured})
+    got = {"title": picture.title, "newest": picture.newest, "charts": captured}
+    if RECORD:
+        pinned(f"alert {kind}", got)
+        return
+    # The deliberate change: an alert's chart is the service's chart of its request, the very chart the keyboard's button draws ("Wind
+    # chart 1d"), so it names its source under it as that one does (the old drew it through the tool's handler, which named none).
+    want = golden()[f"alert {kind}"]
+    (chart,), (old,) = got["charts"], want["charts"]
+    assert old["source"] == "" and chart["source"] == ("AirGradient sensor" if kind == "particulates" else "Ecowitt weather station")
+    assert {k: v for k, v in chart.items() if k not in ("source", "sha")} == {k: v for k, v in old.items() if k not in ("source", "sha")}
+    assert {k: v for k, v in got.items() if k != "charts"} == {k: v for k, v in want.items() if k != "charts"}
+    keyboard = golden().get(pictures.CHARTS[kind])
+    if keyboard:   # (the UV chart is no button)
+        assert chart == keyboard["charts"][0]

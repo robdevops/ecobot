@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from lib.config import Config
-from lib.tools import Tools
 
 TZ = ZoneInfo("Australia/Melbourne")
 MAC = "AA:BB:CC:DD:EE:FF"
@@ -17,9 +16,41 @@ HISTORY_DAYS = 548  # the fake station is 18 months old: enough for every test, 
 STEP = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
 
 
-class StandInTools:
-    """A test's stand-in for lib.tools.Tools: it answers call(name, raw, turn) itself, and call_all is the real one over it."""
-    call_all = Tools.call_all
+class StandInService:
+    """A test's stand-in for the service's tools (lib.service.Service), as the bot calls them: `answers` is {tool: its answer}, each a
+    dict (sent as JSON) or a function (args, meta) -> dict; every call is kept in `calls` as (tool, args)."""
+
+    def __init__(self, **answers):
+        self.answers, self.calls = answers, []
+
+    def get(self, name):
+        if name not in self.answers:
+            return None
+        service = self
+
+        class Tool:
+            async def call(self, args=None, meta=None):
+                import json
+                service.calls.append((name, dict(args or {})))
+                answer = service.answers[name]
+                return json.dumps(answer(dict(args or {}), meta) if callable(answer) else answer, ensure_ascii=False)
+        return Tool()
+
+    def __getitem__(self, name):
+        return self.get(name)
+
+    def __contains__(self, name):
+        return name in self.answers
+
+    def held(self, names):
+        return list(names)
+
+
+def chart_data(title: str = "Temperature", drawn_by: dict | None = None) -> dict:
+    """A chart as a service tool gives it (specs.to_json), with its drawn_by."""
+    from lib.specs import Chart, Line, Panel, to_json
+    data = to_json(Chart(title, "", [Panel(title, "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]), TZ)
+    return {**data, "drawn_by": drawn_by or {"tool": "summary", "arguments": {"period": "7d"}, "periods": []}}
 
 
 def config(tmp_path, **over) -> Config:

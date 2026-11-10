@@ -164,7 +164,7 @@ async def test_out_of_season_nothing_is_fetched_not_even_at_start_with_an_empty_
 
 
 async def test_last_seasons_page_is_not_shown_and_the_report_leaves_the_block_out(tmp_path):
-    from lib import report
+    from tests import report_words as report
     pollen, _ = make_on(tmp_path, date(2026, 12, 20), html=lambda: page(grass="High", day=date(2026, 12, 20)))
     await pollen.start()
     assert pollen.lines()[0].startswith("Grass pollen forecast: 🔴 High")

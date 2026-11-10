@@ -37,7 +37,10 @@ from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
 from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
+from lib.service import Service
+from lib.service import about as service_about
 from lib.service import names as service_names
+from lib.service.context import Context
 from lib.compose import Composer
 from lib.history import History
 from lib.sources import Source
@@ -228,6 +231,8 @@ async def main():
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
     service_names.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like   # "all" (and "weather all week") draws these too
     service_names.VPD_IN_ALL = cfg.chart_all_vpd
+    service_about.RAIN_QUIET_HOURS = cfg.rain_quiet_hours            # what `about` says of the rain alert's quiet hours ...
+    service_about.ALERT_COOLDOWN_MINUTES = cfg.alert_cooldown_minutes   # ... and of the alerts' cooldown
     # Whatever starts is closed on the way out, the last started first, however the bot stops (a failure part-way included)
     async with contextlib.AsyncExitStack() as stack:
         app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
@@ -264,7 +269,12 @@ async def main():
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
         tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
-        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation, tasks)
+        # The service's ten tools over the sources that started (lib/service): the bot's own code paths call them (its shortcuts, lookups,
+        # report, alert charts and period buttons); the model is still offered the old tools above, until step 3
+        service = Service.of(await Context.open(eco=eco, air=air, composer=composer, forecast=by_name.get("Forecast"),
+                                                pollen=by_name.get("Pollen"), tz=cfg.tz))
+        log.info("Service tools: %s", ", ".join(t.name for t in service))
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation, tasks, service=service)
 
         bot.register(app)
         stop = asyncio.Event()
