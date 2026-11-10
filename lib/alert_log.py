@@ -10,6 +10,8 @@ An event is {id, kind, time, expires, title, text, data, [link: {label, url}], [
 Kept in its own SQLite file in DATA_DIR (alerts.sqlite), not the readings file: the log exists whatever sources are configured (the pollen
 and forecast alerts need no readings file), it is written from the event loop in tiny rows while the readings file is written in bulk from
 worker threads, and it can be looked at or removed on its own. Events older than KEEP_SECONDS are dropped when it opens; the ids carry on.
+A new file starts its ids at 1 again, so each file has a random `identity` (kept in its meta table) beside the ids: a reader that kept
+the last id it handled keeps the identity with it, and starts afresh when the file is another (lib/alerts/notify.AlertDelivery).
 
 A reader in the same process waits for new events with `wait(after)` (an asyncio notification on each append): the bot's delivery today,
 the MCP listen of step 5."""
@@ -17,6 +19,7 @@ the MCP listen of step 5."""
 import asyncio
 import json
 import logging
+import secrets
 import sqlite3
 import threading
 import time as clock
@@ -38,6 +41,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     link TEXT,
     chart TEXT
 );
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
@@ -54,7 +58,9 @@ class AlertLog:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         self.db.execute("DELETE FROM alerts WHERE time < ?", (self.now() - KEEP_SECONDS,))
+        self.db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('identity', ?)", (secrets.token_hex(8),))
         self.db.commit()
+        self.identity: str = self.db.execute("SELECT value FROM meta WHERE key='identity'").fetchone()[0]
         self._new = asyncio.Event()
 
     def close(self):

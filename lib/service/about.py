@@ -15,7 +15,7 @@ It takes no arguments and reads only what is held, so `fetch` and `priority` cha
 
 from datetime import datetime, tzinfo
 
-from ..alerts.forecast import BASELINE_HOUR, RAIN_FROM_PCT, TEMP_CHANGE_C
+from ..alerts.forecast import BASELINE_HOUR, DRY_BELOW_PCT, RAIN_FROM_PCT, TEMP_CHANGE_C
 from ..alerts.particulates import CHECK_SECONDS, MASK_PM10, MASK_PM25, SAFE_PM10, SAFE_PM25
 from ..alerts.pollen_and_asthma import ALERT_FROM, WARN_FROM
 from ..alerts.rules import CONFIRM_READINGS
@@ -184,9 +184,11 @@ def alert_rules() -> dict[str, tuple[str, dict]]:
                               f"{_clock(*ALERT_FROM)} while it stays there, and again when it rises. October to December only.",
                               {"from_level": LEVELS[WARN_FROM]}),
         "forecast": (f"Today's or tomorrow's forecast revised from the first one fetched after {_clock(BASELINE_HOUR)} that day: its highest "
-                     f"temperature by more than {TEMP_CHANGE_C:g}°C, or the chance of at least 1 mm of rain crossing {RAIN_FROM_PCT}%. The "
-                     "forecast alerted on is the one later forecasts are compared with.",
-                     {"max_change_c": TEMP_CHANGE_C, "rain_crossing_pct": RAIN_FROM_PCT, "baseline_from": f"{BASELINE_HOUR:02d}:00"}),
+                     f"temperature by more than {TEMP_CHANGE_C:g}°C, or the chance of at least 1 mm of rain rising from under {RAIN_FROM_PCT}% "
+                     f"to {RAIN_FROM_PCT}% or more (rain likely), or falling from {RAIN_FROM_PCT}% or more to {DRY_BELOW_PCT}% or less (rain "
+                     "unlikely). The forecast alerted on is the one later forecasts are compared with.",
+                     {"max_change_c": TEMP_CHANGE_C, "rain_likely_from_pct": RAIN_FROM_PCT, "rain_unlikely_at_pct": DRY_BELOW_PCT,
+                      "baseline_from": f"{BASELINE_HOUR:02d}:00"}),
     }
 
 

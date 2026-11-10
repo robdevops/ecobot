@@ -48,11 +48,13 @@ class AlertState:
         self.monitor: dict = data.get("monitor", {})   # the irrigation controller's (until it is a server of its own)
         self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
         self.read: int | None = data.get("alerts_read")       # the id of the last alert in the log the bot handled (AlertDelivery)
+        self.read_log: str | None = data.get("alerts_log")    # ... and that log's identity (AlertLog.identity): ids start again in a new one
 
     def save(self):
         """Written in full to a new file that then replaces the old one, on disk first, so a crash leaves one or the other whole."""
         write(self.path, {"chats": {str(k): v for k, v in self.chats.items()}, "monitor": self.monitor, "charts": self.charts,
-                          **({"alerts_read": self.read} if self.read is not None else {})})
+                          **({"alerts_read": self.read} if self.read is not None else {}),
+                          **({"alerts_log": self.read_log} if self.read_log is not None else {})})
 
     def add_chat(self, chat_id: int, title: str):
         """A message from this chat (or the bot added to it): known from now on, and back if it was gone."""
@@ -252,19 +254,29 @@ class AlertDelivery:
     Notifier does, to the chats subscribed to its kind, with its link, its chart drawn from the event's chart data (and the 🔄 that
     replays the chart's drawn_by) or the text alone. The id of the last event handled is kept in bot_state.json (AlertState.read), so a
     restart resumes after it; the events that expired meanwhile are skipped (the morning's rain is not news by the afternoon). With no id
-    kept (the first start) it begins after the newest event: what came before is not news either."""
+    kept (the first start) it begins after the newest event: what came before is not news either. So does a start on another log than the
+    one the id is from (alerts.sqlite removed or replaced: its ids start again at 1, and waiting for them to pass the old id would send
+    nothing for as long), noticed by the log's identity kept with the id, or by the id being past the log's newest."""
 
     def __init__(self, log, notify: "Notifier", state: AlertState, tz):
         self.log, self.notify, self.state, self.tz = log, notify, state, tz
+        newest = self.log.last_id()
         if self.state.read is None:
-            self._handled(self.log.last_id())
+            self._handled(newest)
+        elif (self.state.read_log not in (None, self.log.identity)) or self.state.read > newest:
+            logging.getLogger(__name__).warning(   # (`log` here is the alert log)
+                "Alerts: the alert log is not the one the last alert delivered (%s) is from; starting after its newest (%s)",
+                self.state.read, newest)
+            self._handled(newest)
+        elif self.state.read_log is None:   # (kept before the log had an identity: this one)
+            self._handled(self.state.read)
 
     @property
     def last(self) -> int:
         return self.state.read or 0
 
     def _handled(self, event_id: int):
-        self.state.read = event_id
+        self.state.read, self.state.read_log = event_id, self.log.identity
         try:
             self.state.save()
         except Exception as e:   # (the next one saved covers it; at worst a restart sends it again)

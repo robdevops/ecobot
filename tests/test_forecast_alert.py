@@ -1,5 +1,6 @@
 """The forecast alert, station-wide (docs/mcp-service.md 3.6): today's and tomorrow's forecast against the day's baseline (the first one
-fetched from 6 am), an alert when the high moves by more than 2°C or the chance of rain crosses 50%, the alerted forecast the new baseline."""
+fetched from 6 am), an alert when the high moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or
+less), the alerted forecast the new baseline."""
 
 from datetime import date, datetime, time as dtime, timedelta
 
@@ -43,11 +44,13 @@ def setup(tmp_path, days, **kw):
     return ForecastMonitor(forecast, store, log), forecast, Texts(log)
 
 
-def test_substantial_means_rain_crossing_50_or_a_max_temperature_over_2_degrees_different():
+def test_substantial_means_rain_becoming_likely_or_unlikely_or_a_max_temperature_over_2_degrees_different():
     base = day(0, max_c=20.0, pct=95)
     assert revised(base, day(0, max_c=20.0, pct=10)) and revised(day(0, pct=10), day(0, pct=80))
-    assert revised(base, day(0, pct=49)) and revised(day(0, pct=49), day(0, pct=50))                  # across 50, however little
-    assert not revised(base, day(0, pct=50)) and not revised(day(0, pct=20), day(0, pct=49))          # on one side of it
+    assert revised(day(0, pct=49), day(0, pct=50))                                                    # likely: up past 50, however little
+    assert revised(base, day(0, pct=30)) and not revised(base, day(0, pct=31))                        # unlikely: down to 30 or less
+    assert not revised(base, day(0, pct=49)) and not revised(day(0, pct=50), day(0, pct=45))          # into the band between: nothing
+    assert not revised(base, day(0, pct=50)) and not revised(day(0, pct=20), day(0, pct=49))          # on one side of 50
     assert not revised(day(0, max_c=20.0), day(0, max_c=22.0)) and not revised(day(0, max_c=20.0), day(0, max_c=18.0))
     assert revised(day(0, max_c=20.0), day(0, max_c=22.1)) and revised(day(0, max_c=20.0), day(0, max_c=17.9))
     assert not revised(day(0, max_c=None, pct=None), day(0, max_c=25.0, pct=90))          # nothing to compare
@@ -107,11 +110,26 @@ async def test_a_move_of_the_high_over_2_degrees_alerts_with_what_changed_and_be
 async def test_rain_crossing_50_alerts_each_way_and_today_and_tomorrow_are_separate_alerts(tmp_path):
     mon, forecast, sent = setup(tmp_path, [day(0, pct=40), day(1, pct=60), day(2)], hour=7)
     await mon.check()
-    forecast.fetch([day(0, pct=55), day(1, pct=45), day(2, pct=90)], hour=8)   # both cross; the day after tomorrow is not watched
+    forecast.fetch([day(0, pct=55), day(1, pct=30), day(2, pct=90)], hour=8)   # both cross; the day after tomorrow is not watched
     await mon.check()
     assert [t.split(":")[0] for t in sent] == ["🔄 The forecast for today has changed", "🔄 The forecast for tomorrow has changed"]
-    assert "rain is now likely (55%, was 40%)" in sent[0] and "rain is now unlikely (45%, was 60%)" in sent[1]
-    forecast.fetch([day(0, pct=60), day(1, pct=40), day(2, pct=90)], hour=9)   # further, on the same side: nothing
+    assert "rain is now likely (55%, was 40%)" in sent[0] and "rain is now unlikely (30%, was 60%)" in sent[1]
+    forecast.fetch([day(0, pct=60), day(1, pct=20), day(2, pct=90)], hour=9)   # further, on the same side: nothing
+    await mon.check()
+    assert len(sent) == 2
+
+
+async def test_a_chance_hovering_around_50_alerts_once_not_on_every_revision(tmp_path):
+    mon, forecast, sent = setup(tmp_path, [day(0), day(1, pct=45)], hour=6, minute=15)
+    await mon.check()                                                # the baseline: tomorrow 45%
+    for hour, pct in zip(range(7, 12), (50, 45, 50, 45, 55)):         # the ensemble's chance, rounded to 5%, between model runs
+        forecast.fetch([day(0), day(1, pct=pct)], hour=hour)
+        await mon.check()
+    assert len(sent) == 1 and "rain is now likely (50%, was 45%)" in sent[0]
+    forecast.fetch([day(0), day(1, pct=30)], hour=12)                # well down: unlikely, told once
+    await mon.check()
+    assert len(sent) == 2 and "rain is now unlikely (30%, was 50%)" in sent[1]
+    forecast.fetch([day(0), day(1, pct=45)], hour=13)                # back into the band: nothing
     await mon.check()
     assert len(sent) == 2
 

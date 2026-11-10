@@ -212,6 +212,53 @@ async def test_the_first_start_begins_after_the_newest_event(tmp_path):
     assert telegram.sent == []
 
 
+async def test_a_removed_log_is_noticed_and_delivery_starts_again_from_the_new_one(tmp_path, caplog):
+    d, log, state, telegram = delivery(tmp_path, chats=(1,))
+    for i in range(5):
+        log.append("rain", f"old {i}", "t")
+    await d.deliver_new()
+    assert state.read == 5
+    log.close()
+    (tmp_path / "alerts.sqlite").unlink()                                 # removed while the bot was down; bot_state.json kept
+    log = new_log(tmp_path)
+    restarted = AlertDelivery(log, Notifier(telegram, AlertState(state.path)), AlertState(state.path), TZ)
+    assert restarted.last == 0 and "not the one" in caplog.text
+    for i in range(3):
+        log.append("rain", f"new {i}", "t")
+    assert await restarted.deliver_new() == 3
+    assert await log.wait(restarted.last - 1, timeout=0.1)
+
+
+async def test_a_replaced_log_already_past_the_last_id_is_noticed_by_its_identity(tmp_path):
+    d, log, state, telegram = delivery(tmp_path, chats=(1,))
+    log.append("rain", "old", "t")
+    await d.deliver_new()
+    log.close()
+    (tmp_path / "alerts.sqlite").unlink()
+    log = new_log(tmp_path)
+    for i in range(3):
+        log.append("rain", f"before the restart {i}", "t")               # another file, its ids already past the old one
+    restarted = AlertDelivery(log, Notifier(telegram, AlertState(state.path)), AlertState(state.path), TZ)
+    assert restarted.last == 3                                             # its own newest: what came before is not news
+    log.append("rain", "after", "t")
+    await restarted.deliver_new()
+    assert [text for _, text, _, _ in telegram.sent] == ["old", "after"]
+    assert AlertState(state.path).read_log == log.identity == new_log(tmp_path).identity   # kept, and the file's own across opens
+
+
+async def test_a_kept_id_from_before_the_log_had_an_identity_is_resumed_from(tmp_path):
+    d, log, state, telegram = delivery(tmp_path, chats=(1,))
+    log.append("rain", "first", "t")
+    await d.deliver_new()
+    state.read_log = None
+    state.save()                                                           # as step 4 first kept it: the id alone
+    log.append("rain", "second", "t")
+    restarted = AlertDelivery(log, Notifier(telegram, AlertState(state.path)), AlertState(state.path), TZ)
+    assert restarted.last == 1
+    await restarted.deliver_new()
+    assert [text for _, text, _, _ in telegram.sent] == ["first", "second"]
+
+
 async def test_the_delivery_runs_on_the_logs_notification(tmp_path):
     d, log, state, telegram = delivery(tmp_path, chats=(1,))
     task = asyncio.create_task(d.run())

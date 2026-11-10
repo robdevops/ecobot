@@ -2,8 +2,10 @@
 
 Each day, the first forecast fetched after 6 am is the baseline for today and tomorrow. Every later fetch is compared with it, day by
 day, and a day that changed substantially is an alert, saying what changed:
-  - the chance of rain crosses 50% (it was under and is now at or over, or the other way round); the chance of at least 1 mm, or, for a
-    day with only Open-Meteo's older "chance of rain" figure on either side, that one;
+  - the chance of rain becomes likely (it was under 50% and is now 50% or over) or unlikely (it was 50% or over and is now 30% or
+    under); the chance of at least 1 mm, or, for a day with only Open-Meteo's older "chance of rain" figure on either side, that one.
+    The band between keeps a chance that hovers around 50% (the ensemble's, rounded to 5%, moving 45 / 50 / 45 between model runs) from
+    alerting likely, unlikely, likely on every refresh;
   - the highest temperature moves by more than 2 degrees.
 The forecast alerted on becomes that day's new baseline, so the same revision never repeats and a further one does. The forecast only
 refreshes from 6 am to 6 pm, so that is when this can fire. Each alert is an event in the alert log (lib/alert_log.py), news until the
@@ -19,7 +21,8 @@ from .menu import kinds_of
 
 log = logging.getLogger(__name__)
 
-RAIN_FROM_PCT = 50
+RAIN_FROM_PCT = 50   # rain is likely from this chance ...
+DRY_BELOW_PCT = 30   # ... and unlikely again only at or under this one (from likely)
 TEMP_CHANGE_C = 2.0
 BASELINE_HOUR = 6   # the first forecast fetched from this hour (local) is the day's baseline
 DAYS = 2            # today and tomorrow
@@ -37,8 +40,11 @@ def changes(old: dict, new: dict) -> list[str]:
         out.append(f"the high is now {hot_after:.0f}°C (was {hot_before:.0f}°C)")
     key = _chance_key(old, new)
     before, after = old.get(key), new.get(key)
-    if before is not None and after is not None and (before < RAIN_FROM_PCT) != (after < RAIN_FROM_PCT):
-        out.append(f"rain is now {'likely' if after >= RAIN_FROM_PCT else 'unlikely'} ({after}%, was {before}%)")
+    if before is not None and after is not None:
+        if before < RAIN_FROM_PCT <= after:
+            out.append(f"rain is now likely ({after}%, was {before}%)")
+        elif before >= RAIN_FROM_PCT and after <= DRY_BELOW_PCT:
+            out.append(f"rain is now unlikely ({after}%, was {before}%)")
     return out
 
 

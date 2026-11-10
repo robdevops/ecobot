@@ -335,7 +335,8 @@ every 60 seconds, particulates every 30 minutes and only then, since its two-rea
 - **Delivery is the client's.** A client listens, reads `ecobot://alerts?since=<last id it handled>`, and sends each alert to whoever
   it serves. Our bot does this for its subscribed chats until it is retired.
 - **The forecast alert is station-wide:** for today and tomorrow, it compares each new forecast with the first one fetched after 6am
-  that day (its baseline), alerts when the maximum moves by more than 2°C or the chance of rain crosses 50%, and makes the forecast it
+  that day (its baseline), alerts when the maximum moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or less: the band
+  keeps a chance hovering around 50% from alerting each way on every refresh), and makes the forecast it
   alerted on the new baseline. Its text says what changed ("The forecast for tomorrow has changed: was 24°C and dry, now 19°C with
   rain likely"), not "since I sent it", which only the bot could say.
 - **Only listening clients get alerts.** Most chat clients don't keep an MCP listen stream open; once the bot is retired, alerts reach
@@ -533,13 +534,16 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `about` reads, as no setting changes them today.
    - **The forecast alert is station-wide** (deliberate): the first forecast fetched from 6 am is the day's baseline for today and
      tomorrow (no alert); a later one alerts, one event per day, when the high moves by more than 2°C or the chance of at least 1 mm
-     crosses 50%, and becomes that day's baseline. The 30% band against flip-flopping goes with the per-chat baseline (3.6 says
-     "crosses 50%"). Its text says what changed: "🔄 The forecast for tomorrow has changed: the high is now 19°C (was 24°C) and rain is
+     rises from under 50% to 50% or more, or falls from 50% or more to 30% or less, and becomes that day's baseline. The 30% band is
+     kept: without it a chance hovering around 50% (rounded to 5%, refetched every 15 minutes) alerts likely, unlikely, likely through
+     the day. Its text says what changed: "🔄 The forecast for tomorrow has changed: the high is now 19°C (was 24°C) and rain is
      now likely (80%, was 10%).\nNow: 🌧️ Rain. 10–19°C, 80% chance of rain". The bot no longer records the forecast days each answer
      showed (`record_forecast`, `forecast_sent`, `shown` through the turn): nothing needs them, and the old record is dropped.
    - **The bot delivers** (`lib/alerts/notify.AlertDelivery`): it waits on the log in process, sends each unexpired event after the last
-     id it handled (kept in `bot_state.json` as `alerts_read`) through the Notifier as before (the chats subscribed to its kind, silent
-     unless the chat turned sound on, the bell, the link as the footer), with the chart drawn from the event's data, uploaded once. Its
+     id it handled (kept in `bot_state.json` as `alerts_read`, with the log's identity as `alerts_log`, so a log removed or replaced
+     starts it afresh after that log's newest, with a warning, rather than waiting for the new ids to pass the old) through the
+     Notifier as before (the chats subscribed to its kind, silent unless the chat turned sound on, the bell, the link as the footer),
+     with the chart drawn from the event's data, uploaded once. Its
      first start begins after the newest event; after a gap it skips what expired. The 🔄 under a chart names the event
      (`al:refresh:<kind>:<id>`) and replays the chart's `drawn_by` from the log (a chart drawn ahead since the message changed is still
      sent first); an alert sent before the log, or one dropped from it, draws its type's chart as before. Irrigation alerts are sent by
