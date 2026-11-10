@@ -254,7 +254,7 @@ temperature in October" `{hours: "15:00", stat: "avg", of: "temp_avg"}`.
 
 | Tool | Averages |
 |---|---|
-| `summary` | `average: true` adds each reading's average over the period, and one per day or month in its breakdown, and draws the chart as each day's average. The average is weighted by time: a part day at either end of the period counts for its hours, and an air day held only as hourly averages for its hours (today the station's average is the mean of its days' means, a part day counting as a whole one, and the air sensor's the mean of its stored readings, an hourly reading counting as one twelfth of a 5-minute hour: fixed in step 0). An air reading always has its average; its six air-quality readings also their `average_rating`, and PM2.5 its `average_aqi_us` and `average_band`; the air sensor's own temperature and humidity have no rating. Rain is a total, not an average; rain rate has an average (today `weather_history` leaves every rain reading out, though `days` has `rain_rate_avg`); wind direction has its most common direction instead. A chart's panels report each line's average beside the lowest and highest of its half-hour averages, a rain panel its total. |
+| `summary` | `average: true` adds each reading's average over the period, and one per day or month in its breakdown, and draws the chart as each day's average. The average is weighted by time: a part day at either end of the period counts for its hours, and an air day held only as hourly averages for its hours (until step 0 the station's average was the mean of its days' means, a part day counting as a whole one, and the air sensor's the mean of its stored readings, an hourly reading counting as one twelfth of a 5-minute hour). An air reading always has its average; its six air-quality readings also their `average_rating`, and PM2.5 its `average_aqi_us` and `average_band`; the air sensor's own temperature and humidity have no rating. Rain is a total, not an average; rain rate has an average (`weather_history` has given it one since step 0); wind direction has its most common direction instead. A chart's panels report each line's average beside the lowest and highest of its half-hour averages, a rain panel its total. |
 | `readings` | for a reading that is averaged, each row is its interval's average with its lowest and highest: hourly averages at `1hour`; at `1day` the day's average, lowest and highest, and when those two happened; at `1min` and `5min` the stored reading itself. Rain is the mm that fell in the interval (at `1day`, the day's total); gusts the interval's highest (at `1day`, with when); wind direction the reading at the interval's end (at `1day`, the day's last). Those three have no lowest and highest. |
 | `days` | a field for each day's average of every reading but rain, gusts and wind direction (`temp_avg`, `humidity_avg`, `pressure_avg`, `wind_speed_avg`, `rain_rate_avg`, `indoor_temp_avg` …; the air sensor's `pm2_5_avg`, `co2_avg` … for its six air-quality readings), and `stat: "avg"` over the matching days, overall or per month or year ("average humidity per year"). Rain is a day's total (`rain`), so "average daily rain in June" is `stat: "avg", of: "rain"`. With `hours`, the same over that part of each day (rain: the mm that fell in it). |
 
@@ -433,7 +433,7 @@ themselves; the charts' content.
 Each step ships on its own, with the tests and evals green and the bot working the whole way. The model's tool list changes once
 (step 3): old and new names are never offered together, and no tool interface is rewritten before it is replaced.
 
-0. **Fixes the service needs anyway**, in today's code:
+0. **Fixes the service needs anyway**, in today's code (done: `lib/partday.py`, the averages, `chart_answers_it`):
    - **Part of each day** (3.3): the engine (stretches through `Reader.part_days`, rain over a stretch, the coverage choice) with tests
      against stretches worked out by hand (a night across midnight, a clock-change day, a moment on a 5-minute and on a 30-minute day,
      a day held only as daily records, a night with rain in the evening only, an air glitch inside the stretch). The `hours` argument
@@ -444,8 +444,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
      reply (today's `report.chart_caption`) and the complete mark in the result, and the bot's early end of the turn on it; an eval pair
      (a question that is just the chart, where the model sets it; one with something else to answer, where it doesn't). Shipped on the
      live evals; the log's `LLM 2` lines show the calls it saves. It carries over to `summary` and `days` in step 2.
-1. **Charts as data, periods in words.** The chart builders return 3.7's JSON with its schema, and the bot's renderer reads the JSON
-   (at 500 points, so the golden images don't change). `lib/periods_text.py` reads the periods table, tested by hand against it at fixed
+1. **Charts as data, periods in words** (done: `specs.to_json`/`from_json`, `schemas/chart.json`, `lib/periods_text.py`). The chart
+   builders return 3.7's JSON with its schema, and the bot's renderer reads the JSON (at 500 points, so the golden images don't change). `lib/periods_text.py` reads the periods table, tested by hand against it at fixed
    times (a Monday, a Tuesday, the 1st of a month, 1 January, 29 February, 00:30, both clock-change days), with whole-day tools cut to
    yesterday and errors for phrases outside the table and for the future. No tool interface changes.
 2. **The ten tools, beside the twelve.** The tools of 3.3, built once with their arguments, periods, worded results (`day_look`, ready
@@ -461,7 +461,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the
    transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file) with the
    stdio bridge; the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the
-   alert log). Then the irrigation server is built in its own repository against it, the bot connects to both, and `lib/irrigation`
+   alert log; `schemas/` goes into the image, which `.dockerignore` keeps out today). Then the irrigation server is built in its own repository against it, the bot connects to both, and `lib/irrigation`
    goes from here. The service's scripts (`edit_readings`, `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`,
    `conditions`, `ecowitt_metrics`, `dump_specs`) stay; `show_request` and `report_inputs` become MCP clients.
 6. **The bot retired** (section 4), its code and tests deleted; the repository is the service.

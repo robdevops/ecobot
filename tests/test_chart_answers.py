@@ -93,6 +93,17 @@ async def test_the_flag_with_no_chart_or_a_failed_call_leaves_the_answer_to_the_
         assert reply == "The model's answer." and len(requests) == 2, result
 
 
+async def test_a_note_the_caption_would_leave_out_leaves_the_answer_to_the_model(alert_state):
+    flagged = [("weather_history", {**ASKED, "chart_answers_it": True})]
+    for note in ({"monthly_note": "Monthly figures for long periods come from daily data"}, {"note_resolution": "hourly averages"}):
+        tool, _ = stand_in(result={**PRESSURE, **note})
+        reply, requests, _, _ = await ask(alert_state, [flagged, "The model's answer."], [tool])
+        assert reply == "The model's answer." and len(requests) == 2, note
+    tool, _ = stand_in(result={**PRESSURE, "note_missing": "older days are downloading"})   # a note the caption writes itself
+    reply, requests, _, _ = await ask(alert_state, [flagged, "unused"], [tool])
+    assert len(requests) == 1 and "still downloading" in reply
+
+
 async def test_a_step_with_any_call_that_is_not_a_chart_answering_the_question_goes_back_to_the_model(alert_state):
     history, _ = stand_in()
     now, _ = stand_in("weather_now", result={"outdoor": {"temperature": "12 ℃"}}, draws=False)
@@ -169,7 +180,7 @@ async def test_the_whole_answer_goes_out_with_its_chart(alert_state, monkeypatch
 
     async def send_chat_action(*a, **k):
         pass
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
              chat=NS(type="supergroup", title="g"), from_user=NS(full_name="Rob"), reply_to_message=None)

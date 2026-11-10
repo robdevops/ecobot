@@ -175,6 +175,11 @@ def strip_chart_talk(text: str) -> str:
     return "\n".join(lines).strip() or text
 
 
+# The notes a caption written here passes on itself (report.chart_caption, report.lookup); any other note needs the model's words
+CAPTIONED_NOTES = {"weather_history": {"note_missing", "warning", "missing"}, "air_quality": {"note_missing", "warning", "missing"},
+                   **{tool: {"note_averaged"} for tool in DAY_TOOLS}}
+
+
 def _drew_chart(result: str) -> bool:
     """Does this tool result say it drew a chart (the "chart" note a tool adds when it does)?"""
     try:
@@ -182,6 +187,14 @@ def _drew_chart(result: str) -> bool:
     except ValueError:
         return False
     return isinstance(data, dict) and "chart" in data and "error" not in data
+
+
+def _needs_words(tool: str, result: str) -> bool:
+    """Does this result carry a note the person should hear that a caption written here would leave out (a month's figures without
+    dates, the older days held only as daily records or hourly averages, a rarer day that nearly counted ...)? Then the model answers."""
+    data = json.loads(result)
+    notes = {k for k in data if k.startswith("note") or k.endswith("_note") or k in ("warning", "missing", "exact_from", "trace_rain_days")}
+    return bool(notes - CAPTIONED_NOTES.get(tool, set()))
 
 
 def _as_drawn(tool: str, args: dict, turn: Turn) -> tuple[dict, Turn]:
@@ -1075,7 +1088,7 @@ class Bot:
         except ValueError:
             return None
         if (call["name"] not in ANSWERING_CHARTS or not isinstance(args, dict) or args.get("chart_answers_it") is not True
-                or not _drew_chart(result)):
+                or not _drew_chart(result) or _needs_words(call["name"], result)):
             return None
         if call["name"] in DAY_TOOLS:
             return report.lookup("days", result, [], [], now_local(self.cfg.tz).date())
