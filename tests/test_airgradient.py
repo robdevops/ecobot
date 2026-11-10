@@ -453,17 +453,18 @@ async def test_a_single_reading_spike_is_in_none_of_the_figures_either(tmp_path)
     from lib.timeutil import local_date
     from tests.fakes import TZ
     air, _ = await make(tmp_path)
-    start = air.now().replace(microsecond=0) - timedelta(hours=1)
-    t0 = int(start.replace(tzinfo=TZ).timestamp()) + 600
+    first = (int(air.now().replace(tzinfo=TZ).timestamp()) - 3600) // 1800 * 1800   # the start of a half hour, an hour or more ago
+    start = datetime.fromtimestamp(first, TZ).replace(tzinfo=None)
+    t0 = first + 600
     levels = [(1, 2, 3), (1, 2, 4), (15.3, 14.2, 28.7), (3, 8, 10), (2, 4, 5), (2, 3, 4)]
     rows = [{"ts": t0 + 300 * i, "pm1": a, "pm2_5": b, "pm10": c} for i, (a, b, c) in enumerate(levels)]
 
     async def day_rows(day, refresh=False):
         return [r for r in rows if local_date(r["ts"], TZ) == day]
     air._day_rows = day_rows
-    out = await air.history(start.strftime("%Y-%m-%d %H:%M:%S"), None)
+    out = await air.history(f"{start:%Y-%m-%d %H:%M:%S}", f"{start + timedelta(hours=1):%Y-%m-%d %H:%M:%S}")
     assert out["pm10"]["high"] == 10 and out["pm2_5"]["high"] == 8 and out["pm1"]["high"] == 3      # not 28.7, 14.2 and 15.3
-    assert out["pm10"]["average"] == round((3 + 4 + 10 + 5 + 4) / 5, 1)                                 # and not in the mean
+    assert out["pm10"]["average"] == round(((3 + 4 + 10) / 3 + (5 + 4) / 2) / 2, 1)                 # and not in the mean (by half hours)
     day = local_date(t0, TZ)
     await air.store.save_day(day, [r for r in rows if local_date(r["ts"], TZ) == day])   # the day rows take the same spikes out
     figures = await air.store.day_figures(day, day, ["pm10_max", "pm2_5_max", "pm10_avg"])

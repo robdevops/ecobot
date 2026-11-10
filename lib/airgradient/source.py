@@ -37,7 +37,7 @@ from ..sources import Source
 from ..ecowitt.homeassistant import HomeAssistant
 from ..ecowitt.live import BUCKET
 from ..ecowitt.query import KEEP_HOURS, MINUTE_HOURS
-from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line
+from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line, readings_mean
 from ..panels import panel_for
 from ..specs import AIR_SOURCE, Chart, Line
 from ..storage import Storage
@@ -691,9 +691,10 @@ class AirGradient(Source):
                "readings": len(rows)}
         units = {**{name: unit for name, (_, unit) in METRICS.items()},
                  **{name: EXTRA_UNITS[name] for name in metrics or [] if name in EXTRA}}   # the sensor's own temperature and humidity, only when asked for
+        span = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
         for name, unit in units.items():
             if pts := [(r["ts"], r[name]) for r in rows if name in r]:
-                out[name] = self._entry(name, pts, unit)
+                out[name] = self._entry(name, pts, unit, span)
         if trimmed:
             out["note_period"] = f"Only the last {MAX_DAYS} days can be covered per question; this covers {out['period']}."
         if hourly:
@@ -714,12 +715,14 @@ class AirGradient(Source):
                 out["chart"] = CHART_HINT
         return out
 
-    def _entry(self, name: str, pts: list[tuple[int, float]], unit: str) -> dict:
-        """A metric's lowest, highest and average over these readings ((ts, value)), with when the extremes happened; a rated metric
-        (METRICS) with the ratings of its high and average, and PM2.5 with their AQI and band too."""
+    def _entry(self, name: str, pts: list[tuple[int, float]], unit: str, span: tuple[int, int]) -> dict:
+        """A metric's lowest, highest and average over these readings ((ts, value)) of the period `span` (epochs), with when the extremes
+        happened; a rated metric (METRICS) with the ratings of its high and average, and PM2.5 with their AQI and band too. The average is
+        by time, as the day rows take a day's (lines.readings_mean): an hourly reading of the older history counts for its hour, not as one
+        reading among a 5-minute hour's twelve."""
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         entry = {"unit": unit, "low": lo[1], "low_time": when(lo[0], self.tz), "high": hi[1], "high_time": when(hi[0], self.tz),
-                 "average": round(statistics.fmean(v for _, v in pts), 1)}
+                 "average": round(readings_mean(pts, *span, self.tz), 1)}
         if name in METRICS:
             entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
             if name == "pm2_5":

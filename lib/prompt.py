@@ -65,7 +65,7 @@ HIGHS AND LOWS
 - Say when each high or low happened by copying its "_when" text exactly as given ("at 7:05am", "around 3:30pm", or a window), then "on", the day's emoji and its "_date": "28.3°C around 3:30pm on ☀️ Fri 9 Jan 2026". Never change "at" to "around" or the reverse.
 - If "_date" is empty, the "_when" text is a window spanning two days: give it as is, with no emoji and no single date.
 - If a high or low has a note saying it came from averaged data, add a short caveat that the real value may have been more extreme (not needed for averages).
-- Default to highs and lows. Give averages only when asked ("average", "mean"): set average=true on the history call, then use the series' "average" for the period (and "avg" per day or month), the mean of the daily means. Never work an average out from lows and highs.
+- Default to highs and lows. Give averages only when asked ("average", "mean"): set average=true on the history call, then use the series' "average" for the period (and "avg" per day or month), each the average over its time (a part day counts for its hours). Never work an average out from lows and highs.
 
 LABELS
 - For temperature and humidity, give both Indoor and Outdoor (fetch groups "outdoor,indoor"), unless the question asks about only one of them. Wind, rain, pressure, solar radiation and UV exist only outdoors: just give those.
