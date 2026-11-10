@@ -450,8 +450,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
    yesterday and errors for phrases outside the table and for the future. No tool interface changes.
 2. **The ten tools, beside the twelve.** The tools of 3.3, built once with their arguments, periods, worded results (`day_look`, ready
    lines, captions), charts, descriptions and errors, and `lib/outlook.py`; offered to no model yet. Contract tests; the evals run
-   against them with the tool list alone. The bot's own code paths move to them: its shortcuts, report, lookups, period buttons,
-   gauges and alert charts.
+   against them with the tool list alone. The bot's own code paths call them instead of the twelve: its shortcuts, report,
+   lookups, gauges and alert charts, and the calls behind its period buttons (a press calls `summary` again with a new `period`; the
+   buttons themselves, their keyboard and picture cache stay in the bot, and go with it). The service knows nothing of buttons.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.
