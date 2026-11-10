@@ -35,6 +35,8 @@ class Gauge:
     lowest: str | None = None             # ... whose lowest is its Min (none: no Min column)
     decimals: int = 1
     total: bool = False                   # rain: the Total column, the sum of the days' figures (its Max is the wettest day's)
+    counted: tuple[str, str] | None = None   # the live reading counted into its Max and Min, when not `live` (wind: the gust, as its
+                                             # Max is the highest gust: the speed now would stand in for it before a day row has one)
 
     @property
     def reading(self) -> str:
@@ -51,7 +53,8 @@ GAUGES = (
           "pressure_max", "pressure_min"),
     Gauge("Dew point", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
     Gauge("Feels like", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
-    Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0),
+    Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0,
+          counted=("wind", "wind_gust")),
     Gauge("Rain", "mm", "beaker", 0, 100, WATER, (100, 80, 60, 40, 20, 0), ("rainfall", "daily"), "rain", None, 1, True),
     Gauge("Rain rate", "mm/h", "dial", 0, 50, WATER, (0, 10, 20, 30, 40, 50), ("rainfall", "rain_rate"), "rain_rate_max"),
     Gauge("Solar radiation", "W/m²", "dial", 0, 1500, SUN, (0, 300, 600, 900, 1200, 1500), ("solar_and_uvi", "solar"), "solar_max", None, 0),

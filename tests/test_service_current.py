@@ -18,6 +18,7 @@ from lib.service.context import Context
 from lib.service.current import CurrentTool, heading
 from lib.service.names import AIR_DEVICE, STATION, Catalogue
 from lib.timeutil import clock_text, to_local
+from tests.clocks import pin
 from tests.fakes import TZ, air_transport, archived_station, config
 from tests import old_tools
 
@@ -166,8 +167,8 @@ async def test_named_readings_alone_each_once_in_the_order_named(tmp_path, archi
     await close(tool)
 
 
-async def test_a_reading_named_that_isnt_being_read_now_is_missing(tmp_path, archived_cache):
-    tool, station, _ = await world(tmp_path, archived_cache, live(time.time(), **{"indoor.temperature": None}))
+async def test_a_reading_named_that_isnt_being_read_now_is_missing(tmp_path, daytime_archive):
+    tool, station, _ = await world(tmp_path, daytime_archive, live(time.time(), **{"indoor.temperature": None}))
     got = await call(tool, readings=["indoor temperature", "pressure", "piezo rain"])
     assert got["missing"] == ["indoor.temperature", "rainfall_piezo.rain"] and list(got["sensors"]) == ["pressure"]
     with_context = await call(tool, readings=["indoor temperature"], context=True)   # a gauge with no reading now: its figures, dimmed
@@ -258,16 +259,16 @@ async def gauge_rows(eco, data: dict) -> dict:
     values, _ = await eco.storage.read(day_values_on, eco.mac, names, days["Yearly"])
     out = {}
     for g in GAUGES:
-        now = live_value(data, g.live)
+        now = live_value(data, g.counted or g.live)
         out[g.title] = {row: figures(g, values, days[row], None if g.total else now) for row in PERIODS}
         if g.total and now is not None:
             out[g.title]["Daily"] = (None, now)
     return out
 
 
-async def test_context_is_the_gauges_figures_with_when_each_happened(tmp_path, archived_cache):
+async def test_context_is_the_gauges_figures_with_when_each_happened(tmp_path, daytime_archive):
     data = live(time.time(), **DAY)
-    tool, _, _ = await world(tmp_path, archived_cache, data)
+    tool, _, _ = await world(tmp_path, daytime_archive, data)   # (a fixed day: a year so far with summer in it, a month of days)
     got = await call(tool, context=True)
     tiles = await gauge_rows(tool.ctx.eco, data)
     s = got["sensors"]
@@ -332,8 +333,24 @@ async def test_a_reading_named_in_full_that_the_file_hasnt_recorded_is_answered_
     await close(tool)
 
 
-async def test_a_high_or_low_is_the_day_rows_with_its_day_or_the_live_reading_when_it_beats_them(tmp_path, archived_cache):
-    tool, station, _ = await world(tmp_path, archived_cache)
+@pytest.mark.parametrize("when", [datetime(2026, 11, 11, 0, 5, tzinfo=TZ), datetime(2027, 1, 1, 0, 5, tzinfo=TZ)],
+                         ids=["12:05am", "12:05am on 1 Jan"])
+async def test_just_after_midnight_the_highest_gust_is_the_gust_now_not_the_wind_speed(tmp_path, pinned_archive, monkeypatch, when):
+    """Before today's row has a gust (and on 1 Jan, before any day of the year has), the Wind gauge's Max, its highest gust, was the
+    live wind speed counted in (14 km/h while it gusted 31): it is the live gust, as wind_gust's own figures are."""
+    cache = pinned_archive(when)
+    pin(monkeypatch, when)
+    tool, _, _ = await world(tmp_path, cache, live(time.time(), **DAY))   # (the speed now 14.0 km/h, the gust 31.0)
+    s = (await call(tool, readings=["wind speed", "wind gust"], context=True))["sensors"]["wind"]
+    rows = ("today", "month", "year") if when.month == 1 else ("today",)
+    for key in rows:
+        assert s["wind_speed"][key]["high_gust"] == s["wind_gust"][key]["high"] == 31.0, key
+        assert s["wind_speed"][key]["high_gust_when"] == f"at {clock_text(when, whole_hours=True)}"
+    await close(tool)
+
+
+async def test_a_high_or_low_is_the_day_rows_with_its_day_or_the_live_reading_when_it_beats_them(tmp_path, daytime_archive):
+    tool, station, _ = await world(tmp_path, daytime_archive)
     got = await call(tool, readings=["outdoor temperature"], context=True)
     year = got["sensors"]["outdoor"]["temperature"]["year"]
     on = datetime.strptime(year["high_date"], "%a %d %b %Y").date()

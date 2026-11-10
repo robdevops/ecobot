@@ -14,6 +14,16 @@ named for the hour and for the code that shapes it, so a change to `lib/storage`
 that pays about 15 s more. Tests of the archive itself use a station a few weeks old (`ecowitt_transport(history_days=...)`); the storage's reader
 and writer threads, and `asyncio.to_thread`, run inline in tests (the `threaded_storage` fixture puts the threads back for the tests of them).
 
+The clock: most tests run at the real time, so some answers (just after midnight, late in the evening, on the 1st of a month or of the year)
+are only tested when the suite happens to run then. To run the whole suite at such a time on purpose, set `ECOBOT_CLOCK` to a Melbourne
+wall-clock time: the clock starts there and runs on, for lib/ and the tests, the archive included (`tests/clocks.py`):
+```
+ECOBOT_CLOCK="2026-11-11 00:05" python -m pytest -q    # also 23:55 or 23:59, and 00:05 on the 1st of a month and on 1 Jan
+```
+A test whose answer depends on the time of day or the date pins its own clock instead: `daytime_archive` (2:05pm on Tue 10 Nov 2026) or
+`pinned_archive(when)` with `clocks.pin(monkeypatch, when)`, the fake station's archive as it was then, built once for the code that shapes
+it and kept (`ecobot-archive-pinned-*.sqlite`); a tool's answer to words alone can take `Context(clock=...)` (`clocks.yesterday_at`).
+
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
 ## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)

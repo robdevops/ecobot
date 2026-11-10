@@ -186,10 +186,13 @@ async def test_a_tie_is_not_reported_as_a_hotter_day(station):
 async def test_public_holidays_are_the_local_ones_not_the_models_guess(station):
     import holidays
     eco, _ = station
-    out = await ask(eco, start_date="2025-11-01", end_date="2026-02-28", only="public_holiday", sort_by="temp_max", limit=20)
+    today = datetime.now(TZ).date()
+    year = today.year - (1 if today >= today.replace(month=3, day=1) else 2)   # the last November to February that is over (and held)
+    first, last = datetime(year, 11, 1).date(), datetime(year + 1, 2, 28).date()
+    out = await ask(eco, start_date=str(first), end_date=str(last), only="public_holiday", sort_by="temp_max", limit=20)
     vic = holidays.country_holidays("AU", subdiv="VIC")
-    expected = {d for d in (datetime(2025, 11, 1).date() + timedelta(days=k) for k in range(120)) if d in vic}
-    assert out["days_checked"] == out["matching_days"] == len(expected) and len(expected) == 5   # Cup Day, Christmas, Boxing Day, New Year, Australia Day
+    expected = {d for d in (first + timedelta(days=k) for k in range((last - first).days + 1)) if d in vic}
+    assert out["days_checked"] == out["matching_days"] == len(expected) and len(expected) >= 5   # Cup Day, Christmas, Boxing Day, New Year, Australia Day (and a day in lieu)
     assert {r["date"] for r in out["days"]} == {label(d) for d in expected}
     names = {r["holiday"] for r in out["days"]}
     assert {"Melbourne Cup Day", "Christmas Day", "Boxing Day", "New Year's Day", "Australia Day"} <= names

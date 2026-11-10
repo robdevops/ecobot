@@ -78,8 +78,8 @@ async def current_of(eco, args: dict) -> dict:
     return json.loads(await cur.CurrentTool(Context(eco=eco)).tool().call(args, None))
 
 
-async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(tmp_path, archived_cache):
-    eco, _ = await archived_station(tmp_path, archived_cache)
+async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(tmp_path, daytime_archive):
+    eco, _ = await archived_station(tmp_path, daytime_archive)
     sheet = gauge_sheet.sheet(await current_of(eco, gauge_sheet.call()))
     temperature = next(t for t in sheet.tiles if t.title == "Temperature")
     assert temperature.value == 12.3                                       # the fake station's live reading
