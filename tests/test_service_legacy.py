@@ -81,3 +81,28 @@ def test_the_periods_a_chart_the_model_drew_is_worth_drawing_over_are_its_tools(
     assert legacy.periods_of("summary", {"start": "2026-11-09 06:00"}) == []                  # a time can't be swapped for a period
     assert [p["label"] for p in legacy.periods_of("days", {"group_by": "month"})] == ["3M", "1Y", "All"]
     assert legacy.periods_of("days", {"group_by": "year"}) == [] and legacy.translate("plot_chart", {}, now=NOW, tz=TZ) is None
+
+
+def test_the_models_own_arguments_that_change_its_chart_are_carried_as_the_old_tools_honour_them():
+    """weather_history's two_axes is the model's as much as the words' (query: turn.two_axes or args two_axes), with two readings."""
+    week = {"start_date": "2026-11-03 14:05:00", "end_date": "2026-11-10 14:05:00", "chart": True}
+    _, turn = read("plot uv and solar 7d")
+    assert not turn.two_axes
+    tool, args = legacy.translate("weather_history", {**week, "chart_fields": ["uv", "solar"], "two_axes": True}, turn, now=NOW, tz=TZ)
+    assert tool == "summary" and args["layout"] == "two_axes" and args["readings"] == ["solar_and_uvi.uvi", "solar_and_uvi.solar"]
+    tool, args = legacy.translate("weather_history", {**week, "chart_fields": ["uv", "solar", "temperature"], "two_axes": True},
+                                  Turn(text="plot those"), now=NOW, tz=TZ)
+    assert len(args["readings"]) == 4
+    assert "layout" not in args   # (three readings: a panel each, as the old tool drew them)
+
+
+def test_a_days_call_is_grouped_and_filtered_as_the_old_tool_read_it():
+    """weather_days and air_days put in group_by from the words when the model left it out, and weather_days drops a holiday or
+    weekend filter the words never asked for: both change the bars drawn."""
+    _, turn = read("days with uv over 9 per month this year")
+    days = {"start_date": "2026-01-01", "end_date": "2026-11-10", "where": [{"field": "uv_max", "op": ">", "value": 9}]}
+    for name in ("weather_days", "air_days"):
+        assert legacy.translate(name, days, turn, now=NOW, tz=TZ)[1].get("group_by") == "month", name
+    assert "only" not in legacy.translate("weather_days", {**days, "only": "weekend"}, turn, now=NOW, tz=TZ)[1]
+    _, turn = read("how many weekends had uv over 9 this year")
+    assert legacy.translate("weather_days", {**days, "only": "weekend"}, turn, now=NOW, tz=TZ)[1]["only"] == "weekend"

@@ -12,6 +12,8 @@ service's tools and the Turn goes, deletes this module whole.
 
 from datetime import datetime, timedelta, tzinfo
 
+from ..daytable import grouped_as_asked
+from ..ecowitt.days import HOLIDAY_WORDS
 from ..ecowitt.query import chart_field, stack_names
 from ..periods_text import PeriodError, read_period
 from ..series import INDOOR_READINGS, WEATHER
@@ -105,6 +107,9 @@ def translate(name: str, args: dict, turn=None, *, now: datetime, tz: tzinfo) ->
         return "summary", _flags(out, args)
     if name in ("weather_days", "air_days"):
         keep = ("where", "sort_by", "order", "count_only", "group_by", "stat", "of", "limit", "only", "chart_answers_it")
+        if name == "weather_days" and args.get("only") and text and not HOLIDAY_WORDS.search(text):
+            args.pop("only")   # (as the old tool: a holiday or weekend filter nobody asked for is dropped)
+        args = grouped_as_asked(args, turn)   # (and group_by from the words when the model left it out)
         out = {k: args[k] for k in keep if args.get(k) not in (None, "", [])}
         out.update(period(args.get("start_date"), args.get("end_date") or now.strftime("%Y-%m-%d"), [], now, tz, whole_days=True))
         return "days", out
@@ -141,7 +146,7 @@ def _history(args: dict, turn, now: datetime, tz: tzinfo) -> dict:
         out["average"] = True
     if turn.per_day:
         out["every_day"] = True
-    if turn.two_axes and len(names) == 2:
+    if (turn.two_axes or args.get("two_axes")) and len(names) == 2:   # (the words', else the model's: as the old tool drew it)
         out["layout"] = "two_axes"
     return _flags(out, args)
 

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from .logs import BUGS, QUOTES
@@ -17,6 +18,39 @@ SOURCE_PARAMETER = {"type": "string", "description": "With a chart: where its da
                                                      "Leave out to use the device the tool reads."}
 
 
+CALL: ContextVar[tuple[str, dict] | None] = ContextVar("tool_call", default=None)   # (tool, arguments) of the call being run
+
+
+class Charts(list):
+    """Turn.charts: the chart specs, each put down to the call that added it (CALL, read as it is added: the model's calls in one step
+    run together, so counting charts before and after a call would give one call's chart to another). Its `calls` are in the same order."""
+
+    def __init__(self, charts=()):
+        super().__init__(charts)
+        self.calls = [self._call() for _ in self]
+
+    @staticmethod
+    def _call() -> tuple:
+        return CALL.get() or (None, {})   # (a chart added another way has no call)
+
+    def append(self, chart):
+        super().append(chart)
+        self.calls.append(self._call())
+
+    def extend(self, charts):
+        charts = list(charts)
+        super().extend(charts)
+        self.calls += [self._call() for _ in charts]
+
+    def __iadd__(self, charts):
+        self.extend(charts)
+        return self
+
+    def insert(self, i, chart):
+        super().insert(i, chart)
+        self.calls.insert(i, self._call())
+
+
 def json_result(out) -> str:
     """A tool's result as the model is sent it: compact JSON, with °, ² and emoji written as they are, not escaped."""
     return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
@@ -25,8 +59,7 @@ def json_result(out) -> str:
 @dataclass
 class Turn:
     """What one question carries between the bot and the tools it calls (nothing is shared between questions)."""
-    charts: list = field(default_factory=list)   # chart specs the tools add; the bot renders them after the answer
-    chart_calls: list = field(default_factory=list)   # (tool, arguments) of the call that drew each chart, in the same order
+    charts: list = field(default_factory=Charts)   # chart specs the tools add; the bot renders them after the answer
     chart_asked: bool = False                    # the person's words asked for a chart ("plot"), whatever the model sets
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
@@ -45,6 +78,11 @@ class Turn:
     ahead: bool = False                          # a chart drawn ahead, nobody waiting: its requests wait their turn
     meta: dict = field(default_factory=dict)     # the request's metadata, all a service tool reads (lib/service/common.py: chart_points,
                                                  # fetch, priority); over MCP, the request's _meta
+
+    @property
+    def chart_calls(self) -> list:
+        """(tool, arguments) of the call that drew each chart, in the same order ((None, {}): added outside any call)."""
+        return getattr(self.charts, "calls", None) or [(None, {})] * len(self.charts)
 
     @classmethod
     def of(cls, read, text: str, **more) -> "Turn":
@@ -95,7 +133,7 @@ class Tools:
         log.debug("Tool call %s %s", name, raw_args, extra=QUOTES)
         sourced = CHART_SOURCE.set(source_text(args.get("source") if isinstance(args, dict) else None) or tool.source or "")   # the charts this call draws
         turn = turn or Turn()
-        before = len(turn.charts)
+        calling = CALL.set((name, args))   # (each call made together runs in a context of its own: llm gathers them)
         try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
             out = await tool.handler(args, turn)
         except Exception as e:
@@ -103,8 +141,7 @@ class Tools:
             return f"Error calling tool: {e}"
         finally:
             CHART_SOURCE.reset(sourced)
-            calls = (turn.chart_calls + [(None, {})] * before)[:before]   # (charts added another way have no call)
-            turn.chart_calls[:] = calls + [(name, args)] * max(0, len(turn.charts) - before)
+            CALL.reset(calling)
         out = out or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
