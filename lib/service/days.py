@@ -149,7 +149,7 @@ def parameters(fields: list[str]) -> dict:
                      "description": "What the period, or each month or year, gives: count (default: the matching days), or the max, min, "
                                     "avg or sum of `of` over the matching days (\"rain per month\": sum of rain; \"the hottest day each "
                                     "year\": max of temp_max; \"average humidity per year\": avg of humidity_avg)."},
-            "of": {**one, "description": "The field stat takes the max, min, avg or sum of (not needed for count)."},
+            "of": {**one, "description": "The field stat takes the max, min, avg or sum of; always with stat (not needed for count)."},
             "limit": {"type": "integer", "description": f"How many days to list (default 5, at most {MAX_LIMIT}). The total is always "
                                                        "counted."},
             "only": {"type": "string", "enum": list(ONLY),
@@ -279,6 +279,9 @@ class DaysTool:
         group_by = str(args["group_by"]).strip().lower() if args.get("group_by") else None
         if group_by not in (None, "month", "year"):
             raise Refusal(f"group_by is month or year, not {args['group_by']!r}.")
+        if args.get("of") and not args.get("stat"):   # (else it counts days and `of` is lost: "rain per month" as "313 of 313 days")
+            raise Refusal(f"`of` names the field `stat` works on: send `stat` too ({', '.join(s for s in STATS if s != 'count')}; "
+                          f"\"rain per month\": stat sum, of rain), or leave `of` out to count days.", stats=list(STATS))
         stat = str(args.get("stat") or "count").strip().lower()
         if stat not in STATS:
             raise Refusal(f"stat is one of {', '.join(STATS)}, not {args['stat']!r}.", stats=list(STATS))

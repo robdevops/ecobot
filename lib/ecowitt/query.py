@@ -451,6 +451,8 @@ class HistoryQuery:
             line = self._shaded(self.lines.get(k), self.lines.get(band) if band else None)
         elif how == "days":
             line = self._shaded(self._day_line(k, at), self._day_line(band, at) if band else None)
+        elif k not in self.store:   # its figures came from the day rows, but no readings in the window to draw (a quiet last hours)
+            return None
         else:
             line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES,
                               force_daily=self.turn.average_asked, until=now_local(self.tz).date())

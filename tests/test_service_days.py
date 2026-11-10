@@ -445,3 +445,13 @@ async def test_one_figure_over_months_says_how_to_get_one_per_month_or_year(worl
     assert "note_group_by" not in await ask(world, stat="sum", of="rain", period="last 7 days")   # (a week: one figure is the answer)
     counted = await ask(world, where=[{"field": "rain", "op": ">=", "value": 1}], count_only=True, period="last 90 days")
     assert counted["note_group_by"] == GROUP_BY_NOTE
+
+
+async def test_of_without_stat_is_refused_saying_to_send_stat_not_counted_as_days(world):
+    """`of` with no `stat` used to count the days and drop `of` ("rain per month" answered "313 of 313 days"); it is refused, saying
+    to send stat too, so a model corrects it in its next call."""
+    out = await ask(world, of="rain", group_by="month", period="this year")
+    assert "error" in out and "send `stat` too" in out["error"] and "sum" in out["error"]
+    fixed = await ask(world, stat="sum", of="rain", group_by="month", period="this year")
+    assert "error" not in fixed and fixed["answer"].startswith("Total rain")
+    assert "error" not in await ask(world, where=[{"field": "rain", "op": ">=", "value": 1}], period="this year")   # (a count: no `of`)

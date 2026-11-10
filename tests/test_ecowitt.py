@@ -1543,3 +1543,12 @@ async def test_the_wind_rose_s_failed_requests_are_reported_with_the_rest(tmp_pa
                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
     await eco.close()
     assert "HTTP 502" in " ".join(out.get("missing", [])) and "warning" in out
+
+
+def test_a_reading_with_figures_but_no_readings_in_the_window_draws_no_line_rather_than_failing():
+    """Late at night the last hours can hold no readings while today's day row still gives the reading's high and low: the chart leaves
+    that reading's line out (None) instead of a KeyError on its missing series (it broke summary's chart of the last 3 hours)."""
+    from lib.ecowitt.query import HistoryQuery
+    q = object.__new__(HistoryQuery)
+    q.drawing, q.store, q.units = ("raw", 0), {}, {"outdoor.temperature": "°C"}
+    assert q._series_entry("outdoor.temperature") is None

@@ -1778,6 +1778,13 @@
     "args": {
       "days": {
         "group_by": "month",
+        "stat": {
+          "one_of": [
+            "avg",
+            "max",
+            "min"
+          ]
+        },
         "of": {
           "regex": "^(pm2_5|co2)_",
           "e.g.": "pm2_5_avg"
@@ -1792,7 +1799,7 @@
         }
       }
     },
-    "note": "two readings by month: a days call for each (a figure per month), or summary of both (its breakdown is by month for a long period); the period is the model's choice"
+    "note": "two readings by month: a days call for each (a figure per month, with its stat), or summary of both (its breakdown is by month for a long period); the period is the model's choice"
   },
   "chart-weather-90d": {
     "tools": [
