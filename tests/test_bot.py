@@ -223,10 +223,8 @@ async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_mode
     class Agent:
         async def run(self, *a, **k):
             raise AssertionError("the model must not be asked for a report")
-    async def dashboard(titles=None):
-        return None   # the station has no gauges to draw: the report goes as text
-    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n, dashboard=dashboard) for n in ("Ecowitt", "AirGradient")]
-    service = StandInService(current={"lines": {"station": ["• Outdoor: 12.3 °C, 💦 94 %"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
+    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "AirGradient")]
+    service = StandInService(current={"lines": {"station": ["• Outdoor: 12.3 °C, 💦 94 %"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},   # (no gauges: as text)
                                       "headings": {"station": "Weather station", "air": "Air quality"}})
     agent, replies = Agent(), []
 
@@ -241,7 +239,8 @@ async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_mode
     bot = Bot(NS(tz=TZ), agent, sources, alert_state, service=service)
     await bot.respond(update, NS(bot=telegram(send_chat_action)), "report")
     await bot.respond(update, NS(bot=telegram(send_chat_action)), "weather now")
-    assert service.calls == [("current", {}), ("current", {})]
+    gauges = ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True})   # the report's
+    assert [c for c in service.calls if c != gauges] == [("current", {}), ("current", {})] and service.calls.count(gauges) == 1
     assert replies[0] == "Weather station\n• Outdoor: 12.3 °C, 💦 94 %\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"
     assert replies[1] == "• Outdoor: 12.3 °C, 💦 94 %"
     history = bot.chats[(1, None)].history

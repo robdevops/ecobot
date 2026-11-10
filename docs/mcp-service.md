@@ -75,7 +75,7 @@ All of this is what a client other than the bot would not know, so it has to mov
 
 | Stays (the service) | Leaves |
 |---|---|
-| `lib/storage`, `lib/ecowitt` (less the gauges' look), `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/snapshots.py`, `lib/warm.py`, `lib/history.py`, `lib/compose.py`, `lib/daytable.py`, `lib/analysis`, `lib/lines.py`, `lib/panels.py`, `lib/rain.py`, `lib/specs.py` (chart data), the alert rules (`lib/alerts/weather.py`, `particulates.py`, `forecast.py`, `pollen_and_asthma.py`, `rules.py`), and new: `lib/mcp_server.py`, `lib/periods_text.py` (3.2), `lib/service/` (the tools of 3.3 and what they share), `lib/outlook.py` (3.3), `lib/alert_log.py` (3.6) | **To each client:** Telegram, the model loop, the persona and style of answers, drawing (`lib/charts.py`, `lib/draw.py`, `lib/gauges.py`, and the gauges' layout and colours, `GAUGES` and `sheet()` from `lib/ecowitt/dashboard.py`), delivering alerts, per-chat state. **To the irrigation server's repository:** `lib/irrigation`, `lib/alerts/irrigation.py`. **Deleted with the bot:** `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`, `lib/report.py`, the menus and keyboards |
+| `lib/storage`, `lib/ecowitt` (less the gauges' look), `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/snapshots.py`, `lib/warm.py`, `lib/history.py`, `lib/compose.py`, `lib/daytable.py`, `lib/analysis`, `lib/lines.py`, `lib/panels.py`, `lib/rain.py`, `lib/specs.py` (chart data), the alert rules (`lib/alerts/weather.py`, `particulates.py`, `forecast.py`, `pollen_and_asthma.py`, `rules.py`), and new: `lib/mcp_server.py`, `lib/periods_text.py` (3.2), `lib/service/` (the tools of 3.3 and what they share), `lib/outlook.py` (3.3), `lib/alert_log.py` (3.6) | **To each client:** Telegram, the model loop, the persona and style of answers, drawing (`lib/charts.py`, `lib/draw.py`, `lib/gauges.py`, and the gauges' layout and colours, `GAUGES` from `lib/ecowitt/dashboard.py` and `lib/gauge_sheet.py`), delivering alerts, per-chat state. **To the irrigation server's repository:** `lib/irrigation`, `lib/alerts/irrigation.py`. **Deleted with the bot:** `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`, `lib/report.py`, the menus and keyboards |
 
 ### 3.2 An interface any model can use
 
@@ -206,7 +206,8 @@ rain is summarised.
 **`current`'s result:** `{as_of, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C", [emoji], [today: {low, low_text,
 low_when, high…}], [month…], [year…]}}, "rainfall": {"rain": {…, [today: {total}], [month: {total, wettest_day}], [year…]}}, "wind":
 {"wind_speed": {…, [today: {high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
-bot's gauges show (rain as totals and its wettest day, wind's highest gust).
+bot's gauges show (rain as totals and its wettest day, wind's highest gust); with `context` and no readings named, every gauge's reading
+the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them.
 
 **`outlook`'s result** is the prompt's outlook rules, worked out by the service (`lib/outlook.py`) from the reading now and the last 3
 hours: `{as_of, verdict: "likely"|"possible"|"unlikely", reason: "pressure down 2.4 hPa in 3 hours, humidity 91%", pressure: {change_hpa,
@@ -475,8 +476,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
    (`lib/service/__init__.py` `build`, `Service`), built in `ecobot.py` and handed to the bot; the bot's own code paths call them,
    through `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place, deleted whole in
    step 3), and quote their words; its answers pinned before and after (`tests/test_service_switch.py`). The bot asks for its charts
-   as drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500. Left
-   for later: the dashboard's gauges still read `Ecowitt.dashboard()` (its sheet is the client's layout, which `current` doesn't give).
+   as drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500. Its
+   gauges (the dashboard, the report's three) are `current` with `context`, laid out bot-side (`lib/gauge_sheet.py`: `GAUGES`' scales
+   and colours filled from the result; `Ecowitt.dashboard()` and `sheet()` are gone).
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.

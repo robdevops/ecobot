@@ -2,15 +2,16 @@
 named, and with `context` today's, this month's and this year's highs and lows beside each reading, as the gauges show them. It replaces
 weather_now and air_quality without dates (and the gauges' figures), on their engines:
 
-  - the station's reading is its live reading as Ecowitt.dashboard() and weather_now read it (Ecowitt._live_data: the kept reading while it
+  - the station's reading is its live reading as the gauges and weather_now read it (Ecowitt._live_data: the kept reading while it
     is fresh, else a request; raw {group: {field: {value, unit, time}}}), each reading with its value, unit, its text as weather_now writes
     it ("12.3 °C") and its glance emoji (lib/ecowitt/glance.py), when the reading is one to notice;
   - the air sensor's is AirGradient.latest(): value, unit, rating (held at the better level until two readings agree), PM2.5's US AQI and
     band, and its text as the report writes it;
-  - `context` is the gauges' figures (lib/ecowitt/dashboard.py figures(), over the day rows as dashboard() reads them,
+  - `context` is the gauges' figures (lib/ecowitt/dashboard.py figures(), over the day rows of the year so far,
     lib/ecowitt/days.day_values_on, the live reading counted in for today's highs and lows), each high and low with when it happened (the
     day row's own time of it, worded as weather_history words a record) and its day; rain as its totals and its wettest day, wind as its
-    highest gust.
+    highest gust. With no readings named, every gauge's reading the station sends now is there, those its file hasn't recorded yet (not
+    in the catalogue: unrecorded()) too, so a client lays out the gauges (lib/gauge_sheet.py) from this result alone.
 
 `lines` are each device's readings as bullets, worded as the bot's report, "weather now" and plain lookups word them today
 (lib/report.py weather_lines, air_lines, reading_lines, ported here with the same words): every reading (none named) in the report's
@@ -39,7 +40,7 @@ from ..storage.read import Reader
 from ..timeutil import clock_text, day_text, to_local
 from .common import BACKGROUND, Refusal, ServiceTool, answer
 from .context import Context
-from .names import AIR_DEVICE, STATION, Reading
+from .names import AIR_DEVICE, STATION, Catalogue, Reading
 
 log = logging.getLogger(__name__)
 
@@ -223,6 +224,15 @@ def now_shaped(live: dict, tz: tzinfo) -> tuple[dict, int]:
     return {**out, **({"emoji": emoji} if emoji else {})}, newest
 
 
+def unrecorded(live: dict, listed: set[str]) -> list[Reading]:
+    """The station's readings in its live reading that aren't among these names (the catalogue's: what its file has recorded), as the
+    catalogue would name them once recorded: a sensor sending, or a reading sent, since the file last took the station's fields."""
+    sent = {group: {name: obj.get("unit", "") for name, obj in fields.items() if isinstance(obj, dict) and "value" in obj}
+            for group, fields in live.items() if isinstance(fields, dict)}
+    return [r for r in Catalogue.of({g: f for g, f in sent.items() if f}, air=False)
+            if r.sensor in sent and r.name not in listed and live_field(live, r) is not None]
+
+
 def live_field(live: dict, reading: Reading) -> str | None:
     """The live reading's own name for a catalogue reading in its group ("daily" for rainfall.rain, "app_tempin" for indoor.app_temp),
     or None when the live reading lacks it."""
@@ -259,8 +269,7 @@ def gauge_of(name: str) -> Gauge | None:
     get the Wind gauge's highest, with the live gust counted in."""
     if name == "wind.wind_gust":
         return replace(next(g for g in GAUGES if g.live == ("wind", "wind_speed")), live=("wind", "wind_gust"))
-    group, reading = name.split(".", 1)
-    return next((g for g in GAUGES if g.live == (group, "daily" if reading == "rain" else reading)), None)
+    return next((g for g in GAUGES if g.reading == name), None)
 
 
 def _times_on(r: Reader, mac: str, names: list[str], days: list[date]) -> dict[str, dict[date, tuple[int, str]]]:
@@ -292,7 +301,7 @@ def _times_on(r: Reader, mac: str, names: list[str], days: list[date]) -> dict[s
 
 
 def context_on(r: Reader, mac: str, names: list[str], days: list[date]) -> tuple[dict, dict]:
-    """(the figures of these days as dashboard() reads them, day_values_on's {figure: {day: value}}; their times, _times_on's)."""
+    """(the figures of these days as the gauges show them, day_values_on's {figure: {day: value}}; their times, _times_on's)."""
     values, _ = day_values_on(r, mac, names, days)
     return values, _times_on(r, mac, names, days)
 
@@ -346,7 +355,7 @@ def context_of(name: str, live: dict, values: dict, times: dict, today: date, tz
     out = {}
     for row, key in PERIODS:
         got = figures(gauge, values, days[row], None if gauge.total else now.value)
-        if gauge.total and row == "Daily" and now.value is not None:   # today's rain is the gauge's own reading (dashboard.sheet)
+        if gauge.total and row == "Daily" and now.value is not None:   # today's rain is the gauge's own reading (as the gauge shows it)
             got = (None, now.value)
         entry: dict = {}
         if gauge.total:
@@ -435,6 +444,8 @@ class CurrentTool:
             return Part.down(STATION, UNAVAILABLE[STATION], today)
         now, newest = now_shaped(live, tz)
         at = to_local(newest, tz) if newest else None
+        if context and not named:   # every gauge, as it shows: a gauge's reading sent now that the file hasn't recorded yet too
+            station = station + [r for r in unrecorded(live, {r.name for r in station}) if gauge_of(r.name)]
         gauges = await self._context(station) if context else None
         part, shown = Part(STATION, at=at), []
         for r in station:
