@@ -21,6 +21,8 @@ CHARS_PER_TOKEN = 4
 # Tool results past twice a full query's data (10,000 tokens) get the chat a heads-up: that much input rides on every later step
 WARN_TOKENS = 2 * POINT_BUDGET * TOKENS_PER_POINT
 
+FALLBACK = "Sorry, I couldn't get an answer together - try a narrower question."   # the reply when the model's last answer is empty
+
 LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data already fetched, "
                 "and briefly say if anything is missing.)")
 
@@ -143,7 +145,7 @@ class Agent:
                     entry["tool_calls"] = [_tool_call(tc) for tc in tool_calls]
                 messages.append(entry)
                 if not tool_calls or final:
-                    return content.strip() or "Sorry, I couldn't get an answer together - try a narrower question."
+                    return content.strip() or FALLBACK
                 results = await run_calls(tool_calls)
                 if finish and (reply := finish(tool_calls, results)):
                     log.info("The turn ended on a complete result (%s): no LLM %d",

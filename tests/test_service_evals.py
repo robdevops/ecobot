@@ -395,7 +395,8 @@ def test_the_hottest_day_ranked_by_days_must_be_the_hottest():
 
 # ---------- the bot's live run over the frozen world, with a scripted model ----------
 # `--live` answers the bot's model from the real ten tools (evalworld.world), so a turn can take more than one round: it is scored over
-# the whole turn. These run it with a model that reads what its calls gave, over the same world (the module's archive, at EVAL_NOW).
+# the whole turn. These run it with a model that reads what its calls gave, over the same world (the module's archive, at EVAL_NOW,
+# copied fresh for each run).
 class Reacting:
     """An OpenAI-style client whose steps are scripted: each a text (the reply), a list of (tool, args), or a function of what the last
     step's calls gave (each result as the model was sent it, parsed) that returns one. Past the script it says "Done."."""
@@ -421,59 +422,58 @@ class Reacting:
 
 
 @pytest.fixture
-async def eval_service(tmp_path, eval_archive, monkeypatch):
-    """The ten tools over the frozen world (what evalworld.world gives a run), on the module's archive."""
-    from lib.service import Service
+def eval_world(tmp_path, eval_archive, monkeypatch):
+    """The frozen world (what evalworld.world gives a run: fresh tools over a new copy of the archive for each run), on the module's
+    archive."""
     at_eval_now(monkeypatch)
-    ctx = await real_context(tmp_path, eval_archive)
-    yield Service.of(ctx)
-    await evalworld.close(ctx)
+    return evalworld.World(tmp_path, eval_archive)
 
 
-async def bot_run(case_id: str, model: Reacting, service) -> tuple[int, str]:
+async def bot_run(case_id: str, model: Reacting, world) -> tuple[int, str]:
     lines = []
-    failed = await evalkit.run_service([case(case_id)], EXPECT, model, "m", bot=True, service=service, out=lines.append)
+    failed = await evalkit.run_service([case(case_id)], EXPECT, model, "m", bot=True, world=world, out=lines.append)
     return failed, "\n".join(lines)
 
 
-async def test_a_refused_call_then_a_corrected_one_passes_and_the_refusal_is_counted(eval_service):
+async def test_a_refused_call_then_a_corrected_one_passes_and_the_refusal_is_counted(eval_world):
     model = Reacting([("summary", {"readings": ["flux capacitor"], "period": "3m", "average": True})],
                      lambda given: [("summary", {"readings": ["temperature"], "period": "3m", "average": True})] if "error" in given[0]
                      else "gave up",
                      "Averaged 14.2 °C.")
-    failed, text = await bot_run("3m-average", model, eval_service)
+    failed, text = await bot_run("3m-average", model, eval_world)
     assert failed == 0, text
     assert "1/1  3m-average" in text and '2 calls, 1 refused: "Averaged 14.2 °C."' in text
     assert "isn't a reading this service knows" in model.seen[1][0]["error"]   # (the real refusal, as the model was sent it)
-    assert model.requests[0]["messages"][0]["content"] == evalkit.bot_system(ctx=eval_service.ctx)
+    async with eval_world.fresh() as service:
+        assert model.requests[0]["messages"][0]["content"] == evalkit.bot_system(ctx=service.ctx)
 
 
-async def test_a_second_call_made_on_a_note_passes(eval_service):
+async def test_a_second_call_made_on_a_note_passes(eval_world):
     """rain-per-month: one figure for the year comes back with days' note_group_by; the model acts on it and asks again by month."""
     asked = {"stat": "sum", "of": "rain", "period": "this year"}
     model = Reacting([("days", asked)],
                      lambda given: [("days", {**asked, "group_by": "month"})] if "note_group_by" in given[0] else "One figure.",
                      lambda given: f"{len(given[0]['by_month'])} months.")
-    failed, text = await bot_run("rain-per-month", model, eval_service)
+    failed, text = await bot_run("rain-per-month", model, eval_world)
     assert failed == 0, text
     assert '2 calls, 0 refused: "9 months."' in text   # (January to September: the real days, by month)
     without = Reacting([("days", asked)], lambda given: "One figure.")
-    failed, text = await bot_run("rain-per-month", without, eval_service)
+    failed, text = await bot_run("rain-per-month", without, eval_world)
     assert failed == 1 and "group_by" in text and '1 call, 0 refused: "One figure."' in text
 
 
-async def test_a_forbidden_tool_in_a_later_round_fails(eval_service):
+async def test_a_forbidden_tool_in_a_later_round_fails(eval_world):
     model = Reacting([("relate", {})], [("days", {"stat": "max", "of": "pressure_max", "group_by": "month"})], "Weak.")
-    failed, text = await bot_run("pressure-rain-correlation", model, eval_service)
+    failed, text = await bot_run("pressure-rain-correlation", model, eval_world)
     assert failed == 1 and "0/1 FAIL  pressure-rain-correlation" in text and "should not have called days" in text
     assert "2 calls, 0 refused" in text
 
 
-async def test_a_turn_of_more_than_eight_calls_has_run_away_and_fails(eval_service):
+async def test_a_turn_of_more_than_eight_calls_has_run_away_and_fails(eval_world):
     many = [[("days", {"stat": "sum", "of": "rain", "group_by": "month", "period": f"last {n} days"})] for n in range(40, 49)]
-    failed, text = await bot_run("rain-per-month", Reacting(*many, "Rain by month."), eval_service)
+    failed, text = await bot_run("rain-per-month", Reacting(*many, "Rain by month."), eval_world)
     assert failed == 1 and "ran away: 9 calls (more than 8)" in text and "9 calls, 0 refused" in text
-    failed, text = await bot_run("rain-per-month", Reacting(*many[:8], "Rain by month."), eval_service)
+    failed, text = await bot_run("rain-per-month", Reacting(*many[:8], "Rain by month."), eval_world)
     assert "ran away" not in text and '8 calls, 0 refused: "Rain by month."' in text
 
 
@@ -490,10 +490,61 @@ async def test_a_turn_is_capped_at_the_agents_steps():
 
 async def test_the_world_is_built_at_the_frozen_clock_and_its_tools_give_real_results_then_the_clock_is_put_back():
     import time
-    async with evalworld.world() as service:
+    async with evalworld.world() as world, world.fresh() as service:
         assert time.time() == EVAL_NOW
         out = json.loads(await service["days"].call({"stat": "sum", "of": "rain", "group_by": "month", "period": "this year"}))
         assert "error" not in out and out["period"]["text"] == "this year: Thu 1 Jan – Mon 28 Sep 2026"
         assert list(out["by_month"]) == [f"2026-{m:02d}" for m in range(1, 10)] and out["days_checked"]
         assert [t.name for t in service] == evalkit.service_tool_names()
     assert time.time() != EVAL_NOW
+
+
+async def test_each_run_has_its_own_copy_of_the_world_so_a_case_scores_the_same_whatever_ran_before(eval_world):
+    """A call can fill the station's file from the fakes (a day in 2023, fetched and stored, moves "on record" back to it): each run of
+    each case gets fresh tools over a new copy of the archive, so the same case run first and again after another gives the same."""
+    def holidays():
+        return Reacting([("days", {"only": "public_holiday", "sort_by": "temp_max"})], lambda given: given[0]["period"]["text"])
+    first = await bot_run("public-holidays", holidays(), eval_world)
+    assert first[0] == 0 and '"on record: Sat 29 Mar 2025 – Mon 28 Sep 2026"' in first[1]
+    old_day = {"readings": ["outdoor.temperature"], "start": "2023-11-10 11:00", "end": "2023-11-11 11:00"}
+    assert (await bot_run("a-day-in-2023", Reacting([("summary", old_day)], "Mild."), eval_world))[0] == 0
+    assert await bot_run("public-holidays", holidays(), eval_world) == first
+
+
+async def test_a_matching_call_that_was_refused_meets_nothing_and_a_forbidden_one_still_fails(eval_world):
+    """3m-average: the expected summary, with an argument it doesn't take, is refused; an answered call follows, then a give-up reply."""
+    refused = ("summary", {"readings": ["temperature"], "period": "3m", "average": True, "bogus": 1})
+    assert evalkit.check_calls([refused], EXPECT["3m-average"]) == []   # (its tool and arguments match: only its refusal tells)
+    failed, text = await bot_run("3m-average", Reacting([refused], [("about", {})], "Sorry, I can't average that."), eval_world)
+    assert failed == 1 and "did not call summary (called: about)" in text and "2 calls, 1 refused" in text
+    failed, text = await bot_run("pressure-rain-correlation",
+                                 Reacting([("relate", {})], [("days", {"stat": "max", "of": "pressure_max", "bogus": 1})],
+                                          [("about", {})], "Weak."), eval_world)
+    assert failed == 1 and "should not have called days" in text and "3 calls, 1 refused" in text
+
+
+async def test_a_turn_whose_reply_is_empty_or_the_fallback_or_that_ends_on_a_refusal_fails(eval_world):
+    from lib.llm import FALLBACK
+    asked = ("summary", {"readings": ["temperature"], "period": "3m", "average": True})
+    failed, text = await bot_run("3m-average", Reacting([asked], ""), eval_world)   # (the Agent replies FALLBACK)
+    assert failed == 1 and "the reply is the Agent's fallback" in text and f'1 call, 0 refused: "{FALLBACK}"' in text
+    bad = ("summary", {**asked[1], "bogus": 1})
+    failed, text = await bot_run("3m-average", Reacting([asked], [bad], "Averaged 14.2 °C."), eval_world)
+    assert failed == 1 and "the turn ended on a refused call (summary" in text and '2 calls, 1 refused: "Averaged 14.2 °C."' in text
+    failed, text = await bot_run("3m-average", Reacting([bad], [asked], "Averaged 14.2 °C."), eval_world)
+    assert failed == 0, text
+    assert evalkit.check_turn(evalkit.LiveTurn([asked], " ", [False]), EXPECT["3m-average"]) == ["the reply is empty"]
+    assert evalkit.check_turn(evalkit.LiveTurn([asked], "Averaged.", [False]), EXPECT["3m-average"]) == []
+
+
+async def test_the_tools_alone_answer_no_data_to_every_call_and_score_every_call_of_the_turn():
+    """--service: every call is answered CANNED and the model may call again (the Agent's loop): a call in its second round counts,
+    and the docs say so (not "the first round")."""
+    import ast
+    model = Reacting([("forecast", {})], lambda given: [("outlook", {})] if given == [json.loads(evalkit.CANNED)] else "?", "No data.")
+    lines = []
+    assert await evalkit.run_service([case("will-it-rain")], EXPECT, model, "m", out=lines.append) == 0, lines
+    assert len(model.requests) == 3
+    script_doc = ast.get_docstring(ast.parse((ROOT / "scripts" / "eval_prompts.py").read_text()))
+    for text in (script_doc, evalkit.run_service.__doc__, evalkit.__doc__, (ROOT / "docs" / "mcp-service.md").read_text()):
+        assert "first round" not in text and "(one round)" not in text

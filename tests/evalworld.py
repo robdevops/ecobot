@@ -1,13 +1,15 @@
 """The evals' frozen world: the service's ten tools over the fake station's archive, an AirGradient on the same file, Open-Meteo and the
 pollen page (all faked, nothing fetched), with the clock fixed at the evals' NOW (evalkit.NOW: Tue 29 Sep 2026 14:05, Melbourne) in
 lib/ and the engines. tests/test_service_evals.py calls the expected calls against it (at_eval_now, build_archive, real_context, with
-pytest's monkeypatch), and `scripts/eval_prompts.py --live` answers the bot's model from it (`world`: built once per run, outside
-pytest), so the model sees real results, notes and refusals and can take a second round."""
+pytest's monkeypatch), and `scripts/eval_prompts.py --live` answers the bot's model from it (`world`: the archive built once per
+run, outside pytest; each run of each case gets fresh tools over its own copy, World.fresh), so the model sees real results, notes
+and refusals and can take a second round."""
 
 import asyncio
 import datetime as _dt
 import importlib
 import pkgutil
+import shutil
 import sys
 import tempfile
 import time as _time
@@ -131,23 +133,42 @@ async def close(ctx):
     await ctx.eco.close()
 
 
+class World:
+    """The frozen world's archive, built once, and a fresh set of the ten tools over a new copy of it for each run (`fresh`): a tool call
+    can fill the station's file from the fakes (an old day asked for is fetched and stored, and "on record" then starts earlier), so a
+    run shares nothing with the one before it, whatever cases, --ids or --repeat came first. At the clock as it is (at_eval_now)."""
+
+    def __init__(self, root: Path, archive: Path):
+        self.root, self.archive, self.runs = root, archive, 0
+
+    @asynccontextmanager
+    async def fresh(self):
+        """The lib.service Service of the ten tools over real_context on a new copy of the archive, in a folder of its own; closed and
+        removed on leaving."""
+        from lib.service import Service
+        self.runs += 1
+        folder = self.root / f"run-{self.runs}"
+        folder.mkdir(parents=True)
+        ctx = await real_context(folder, self.archive)
+        try:
+            yield Service.of(ctx)
+        finally:
+            await close(ctx)
+            shutil.rmtree(folder, ignore_errors=True)
+
+
 @asynccontextmanager
 async def world(folder: Path | None = None):
-    """The frozen world for a whole run outside pytest: the clock fixed (at_eval_now), the archive built under it, and the lib.service
-    Service of the ten tools over real_context; everything put back on leaving. `folder`: where its files go (a temporary one)."""
-    from lib.service import Service
+    """The frozen world for a whole run outside pytest: the clock fixed (at_eval_now), the archive built under it once, and a World that
+    gives each run of each case its own tools over a fresh copy of it; everything put back on leaving. `folder`: where its files go (a
+    temporary one)."""
     patch = pytest.MonkeyPatch()
     with tempfile.TemporaryDirectory(prefix="ecobot-eval-") as tmp:
         root = Path(folder or tmp)
         (root / "archive").mkdir(parents=True, exist_ok=True)
-        (root / "world").mkdir(parents=True, exist_ok=True)
         try:
             at_eval_now(patch)
-            ctx = await real_context(root / "world", await build_archive(root / "archive"))
-            try:
-                yield Service.of(ctx)
-            finally:
-                await close(ctx)
+            yield World(root / "runs", await build_archive(root / "archive"))
         finally:
             patch.undo()
             _time.tzset()

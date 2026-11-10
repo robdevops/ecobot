@@ -9,11 +9,13 @@ which tools it called and with what. Nothing is fetched. The bot's own request i
 server's instructions, the date and time; lib/prompt.py), the ten tools as it offers them, its reasoning effort from the words, and a
 question it answers in code scored by its fixed calls without asking the model. Each call is answered by the real tool over the
 evals' frozen world (tests/evalworld.py: the fake station's archive, an AirGradient, forecast and pollen fakes, the clock at Tue 29 Sep
-2026 14:05 Melbourne; built once per run, about ten seconds), wrapped as the bot wraps it, so the model sees real results, notes and
+2026 14:05 Melbourne; the archive built once per run, about ten seconds, and each run of each case given fresh tools over its own
+copy of it, so no case's calls change another's answers), wrapped as the bot wraps it, so the model sees real results, notes and
 refusals and calls again until it replies (the turn ends on a complete result, as the bot's does; after 10 steps of calls the
-model is made to answer). A case is scored over the whole turn: an expected call passes if any call makes it (a refused call later
-corrected passes), a forbidden tool fails in any round, more than 8 calls fails ("ran away"); each run's number of calls, refusals and
-the reply's start are printed.
+model is made to answer). A case is scored over the whole turn: an expected call passes if any call that was not refused makes it (a
+refused call later corrected passes), a forbidden tool fails in any round, refused or not, more than 8 calls fails ("ran away"), and
+so does an empty reply, the Agent's fallback reply (the model's last answer was empty) or a turn that ends on a refused call with
+none answered after it; each run's number of calls, refusals and the reply's first 200 characters are printed.
 
     python scripts/eval_prompts.py                       # the decisions made in code, and the service expectations
     python scripts/eval_prompts.py --live                # and the model, as the bot asks it
@@ -21,8 +23,9 @@ the reply's start are printed.
     python scripts/eval_prompts.py --live --repeat 5 --ids 3m-average,public-holidays   # how reliable is one case?
 
 With --service: the ten tools alone (docs/mcp-service.md 7): the model is offered only their names, descriptions and parameters, with a
-neutral system line and the date, time and zone, and none of the bot's prompt or shortcuts; every call is answered "no data", so its
-first round is what is scored (what the descriptions lead a model to). --instructions adds the server's instructions
+neutral system line and the date, time and zone, and none of the bot's prompt or shortcuts; every call is answered "no data" (the
+model may call again or reply, up to the Agent's 10 steps), and every call of the turn is scored (what the descriptions lead a model
+to, with nothing real to react to). --instructions adds the server's instructions
 (lib/service/instructions.py) after the neutral line, as a client that passes them on would. Without --live it checks the expectations
 themselves.
 
@@ -79,9 +82,9 @@ async def main() -> int:
         failed = await evalkit.run_service(cases, expectations, repeat=args.repeat, effort=args.effort, bot=True)
         return 1 if failed or decided else 0
     from tests import evalworld
-    async with evalworld.world() as service:   # (built once: the frozen world the model's calls are answered from)
+    async with evalworld.world() as world:   # (the archive built once; each run of each case gets fresh tools over a copy of it)
         failed = await evalkit.run_service(cases, expectations, client, model, repeat=args.repeat, effort=args.effort, bot=True,
-                                           service=service)
+                                           world=world)
     return 1 if failed or decided else 0
 
 
