@@ -106,12 +106,12 @@ Nine tools in place of twelve, one per kind of question, each over both sensors 
 | Tool | Answers | Replaces | Arguments (default period) |
 |---|---|---|---|
 | `current` | how it is now; one reading now; the air now; with `context`, today's, this month's and this year's highs and lows beside each reading (the bot's gauges) | `weather_now`, `air_quality` without dates, the dashboard | `metrics` (default outdoor and indoor), `context` |
-| `summary` | a period's highs and lows with when; averages; day or month breakdown; wind direction; rain total; air ratings and AQI; a chart | `weather_history`, `air_quality` with dates | `metrics`, `period` (today), `average`, `every_day`, `chart`, `chart_metrics`, `layout`, `daily_means`, `rain_by` |
+| `summary` | a period's highs and lows with when; averages; day or month breakdown; wind direction; rain total; air ratings and AQI; a chart | `weather_history`, `air_quality` with dates | `metrics`, `period` (today), `average`, `every_day`, `chart`, `chart_metrics`, `layout`, `daily_means`, `rain_by`, `chart_answers_it` |
 | `readings` | values at an interval, each with its time | `readings` | `metric`, `period`, `interval` |
-| `days` | find, rank and count days; a figure per month or year; holidays and weekends; the same over part of each day (the 3pm temperature, the overnight low) | `weather_days`, `air_days` | today's day-tool arguments over one field list, `period` (the last 30 days), `hours` |
+| `days` | find, rank and count days; a figure per month or year; holidays and weekends; the same over part of each day (the 3pm temperature, the overnight low) | `weather_days`, `air_days` | today's day-tool arguments over one field list, `period` (the last 30 days), `hours`, `chart_answers_it` |
 | `relate` | rain against one reading: for pressure, humidity or wind, does rain follow a change in it; for PM2.5 or PM10, is the air cleaner after rain | `weather_link`, `air_link` | `metric`, `period` (90 days; 60 for air), `chart` |
 | `scan` | each air reading against every weather reading: which go together | `air_scan` | `metric` (or all), `period` (90 days, at most 400), `chart` |
-| `chart` | any readings from both sensors on one chart: a panel each, or two on one panel | `plot_chart` | `panels[{metric, style}]`, `period` (30 days), `layout`, `invert_second_axis` |
+| `chart` | any readings from both sensors on one chart: a panel each, or two on one panel | `plot_chart` | `panels[{metric, style}]`, `period` (30 days), `layout`, `invert_second_axis`, `chart_answers_it` |
 | `forecast` | today and the days ahead | `weather_forecast` | `days` |
 | `pollen` | grass pollen and thunderstorm asthma | `pollen_asthma` | none |
 
@@ -257,6 +257,16 @@ Charts are data: the client draws them, or its model does from the numbers.
   detail is `readings`. A JSON Schema for it is in the repository (`schemas/chart.json`) and at `ecobot://schema/chart`, versioned.
 - **The note to the model:** a result with a chart says so in one line (`chart_note`: the chart's data is in `charts`; draw it if you
   can, and keep the text to the figures; don't describe the chart), so a model neither ignores it nor repeats every point.
+- **When the chart is the answer, the reply comes ready.** `summary`, `days` and `chart` take `chart_answers_it`, described as "true
+  only when the question is just to see this chart and its figures: nothing else to answer" ("plot pressure this week", not "plot
+  pressure this week: is a storm coming?"). The model judges that; no regex does. When it is set and a chart is made, the result
+  carries a finished reply for the person (the period, each reading's high and low with when, any note about missing data) as a text
+  block annotated `audience: ["user"]` (MCP's mark for content meant for the person, not the model), and result `_meta`
+  `{"ecobot/complete": true}`. Only a client can save the model's second call, since it runs the model loop and MCP gives a server no
+  way to keep a result from a client's model; the service makes it one generic rule: *if a result is complete, send its user text and
+  its chart, and end the turn*. Our bot follows the rule while it lives, and any bot can; a client that doesn't (a desktop assistant)
+  gives the result to its model as usual, which then has the reply ready to repeat. A result with no chart, an error or a note that
+  needs the model's words is never complete.
 - **Our bot**, while it lives, draws `charts` with its renderer (`lib/charts.py`, reading the JSON) and sends the picture; the rain
   caption reads its bars. The renderer leaves with the bot.
 
@@ -300,6 +310,7 @@ The bot is the service's first client, and the measure of each step: it keeps an
 service. It gets no new features. While it lives it:
 - connects to the service over MCP and offers the model the service's tools and instructions as they are, adding only its persona
   (a friendly Telegram bot, plain text, bullets, the caption length a photo allows);
+- ends the turn on a complete result (3.7), sending the ready reply and the chart without a second model call;
 - keeps a few shortcuts for its buttons and commonest typed requests (a named reading's chart and a period, weather now, the report,
   the gauges), each a fixed call to a service tool whose result is already worded, so it writes nothing itself;
 - draws `charts` and the gauges (`current` with `context`) with its renderer;
@@ -321,6 +332,10 @@ Each step ships on its own, with the tests and evals green and the bot working t
 names together.
 
 0. **Fixes that belong to the service anyway**, in today's code:
+   - **The chart that answers itself** (3.7): `chart_answers_it` on `weather_history`, `air_quality` and the day tools, the finished
+     reply and the complete mark in the result, and the bot's early end of the turn on it; a pair of eval cases (a question that is
+     just the chart, where the model sets it; one with something else to answer, where it doesn't). Shipped on the live evals; the
+     log's `LLM 2` lines show the calls it saves.
    - **Part of each day** (3.3, `days.hours`): `hours` on `weather_days` and `air_days`, with tests against stretches worked out by hand
      (a night across midnight, a clock-change day, a moment on a 5-minute and on a 30-minute day, a day held only as daily records, a
      night with rain in the evening only, an air glitch inside the stretch) and eval cases ("average 3pm temperature in October",
@@ -375,6 +390,9 @@ names together.
 - **Models other than ours.** A client's model may be weaker, or tuned differently, than the one the evals were built on: the guidance
   in the server and the evals across models are the defence, and every answer still rests on figures the model quotes, not works out.
 - **Every question through a model.** Without the bot's shortcuts each question costs at least one model call; that is the client's
-  choice and cost.
+  choice and cost. A chart that answers the question costs only one where the client ends the turn on a complete result (3.7).
+- **A chart sent without the answer.** If a model sets `chart_answers_it` on a question that needed words, the person gets the chart
+  and its figures but not the answer: the description limits it to a question that is only the chart, the eval pair checks both
+  sides, and a follow-up goes to the model as usual.
 - **A protocol still settling.** `subscriptions/listen` is the 2026-07-28 revision; listening clients pin it, and the SDK is upgraded
   on both sides together.
