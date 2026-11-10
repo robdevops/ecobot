@@ -46,14 +46,15 @@ async def test_the_bots_live_run_is_its_own_request_and_its_shortcuts_ask_no_mod
     from tests.test_agent import FakeLLM
     from tests.test_service_evals import case
     client = FakeLLM([[("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})], "Done."])
-    calls, reply = await evalkit.run_live(case("3m-average"), client, "m")
-    assert calls == [("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})] and reply == "Done."
+    turn = await evalkit.run_live(case("3m-average"), client, "m")
+    assert turn.calls == [("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})]
+    assert turn.reply == "Done." and turn.refused == 0 and not turn.in_code
     first = client.requests[0]
     assert first["messages"][0] == {"role": "system", "content": evalkit.bot_system()}
     assert first["messages"][0]["content"].startswith("You are a friendly weather bot on Telegram") and first["tool_choice"] == "auto"
     assert [t["function"]["name"] for t in first["tools"]] == evalkit.service_tool_names()
     assert first["extra_body"]["reasoning"]["effort"] == evalkit.read(case("3m-average")).effort
-    assert await evalkit.run_live(case("report"), None, "m") == (
-        [("current", {}), ("pollen", {}), ("forecast", {"period": "next 3 days"})], "(answered in code)")
-    calls, _ = await evalkit.run_live(case("button-rain-chart"), None, "m")
-    assert calls == [("summary", {"readings": ["rain"], "period": "7d", "chart": True})]
+    assert await evalkit.run_live(case("report"), None, "m") == evalkit.LiveTurn(
+        [("current", {}), ("pollen", {}), ("forecast", {"period": "next 3 days"})], "(answered in code)", in_code=True)
+    turn = await evalkit.run_live(case("button-rain-chart"), None, "m")
+    assert turn.calls == [("summary", {"readings": ["rain"], "period": "7d", "chart": True})] and turn.in_code

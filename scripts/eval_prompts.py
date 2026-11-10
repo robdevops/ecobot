@@ -4,10 +4,18 @@ Without --live: no key needed. The decisions the bot still makes in code (the re
 report, the gauges, "weather now", a named reading's chart and a period) are checked over cases.json, and every service expectation
 is checked against the tools it names (each one they take).
 
-With --live: also asks the real model (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL in the environment) with recording
-stand-in tools, and checks which tool it called and with what. Nothing is fetched. The bot's own request is the default: its system
-prompt (the persona, the server's instructions, the date and time; lib/prompt.py), the ten tools as it offers them, its reasoning
-effort from the words, and a question it answers in code scored by its fixed calls without asking the model.
+With --live: also asks the real model (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL in the environment) and checks
+which tools it called and with what. Nothing is fetched. The bot's own request is the default: its system prompt (the persona, the
+server's instructions, the date and time; lib/prompt.py), the ten tools as it offers them, its reasoning effort from the words, and a
+question it answers in code scored by its fixed calls without asking the model. Each call is answered by the real tool over the
+evals' frozen world (tests/evalworld.py: the fake station's archive, an AirGradient, forecast and pollen fakes, the clock at Tue 29 Sep
+2026 14:05 Melbourne; the archive built once per run, about ten seconds, and each run of each case given fresh tools over its own
+copy of it, so no case's calls change another's answers), wrapped as the bot wraps it, so the model sees real results, notes and
+refusals and calls again until it replies (the turn ends on a complete result, as the bot's does; after 10 steps of calls the
+model is made to answer). A case is scored over the whole turn: an expected call passes if any call that was not refused makes it (a
+refused call later corrected passes), a forbidden tool fails in any round, refused or not, more than 8 calls fails ("ran away"), and
+so does an empty reply, the Agent's fallback reply (the model's last answer was empty) or a turn that ends on a refused call with
+none answered after it; each run's number of calls, refusals and the reply's first 200 characters are printed.
 
     python scripts/eval_prompts.py                       # the decisions made in code, and the service expectations
     python scripts/eval_prompts.py --live                # and the model, as the bot asks it
@@ -15,9 +23,11 @@ effort from the words, and a question it answers in code scored by its fixed cal
     python scripts/eval_prompts.py --live --repeat 5 --ids 3m-average,public-holidays   # how reliable is one case?
 
 With --service: the ten tools alone (docs/mcp-service.md 7): the model is offered only their names, descriptions and parameters, with a
-neutral system line and the date, time and zone, and none of the bot's prompt or shortcuts; --instructions adds the server's
-instructions (lib/service/instructions.py) after the neutral line, as a client that passes them on would. Without --live it checks the
-expectations themselves.
+neutral system line and the date, time and zone, and none of the bot's prompt or shortcuts; every call is answered "no data" (the
+model may call again or reply, up to the Agent's 10 steps), and every call of the turn is scored (what the descriptions lead a model
+to, with nothing real to react to). --instructions adds the server's instructions
+(lib/service/instructions.py) after the neutral line, as a client that passes them on would. Without --live it checks the expectations
+themselves.
 
     python scripts/eval_prompts.py --service             # every case has a service expectation, each one the tools take
     python scripts/eval_prompts.py --live --service      # and the model, with the ten tools alone
@@ -68,7 +78,13 @@ async def main() -> int:
             for p in problems:
                 print(f"            {p}")
     print(f"{len(cases) - decided} of {len(cases)} cases: the decisions made in code hold\n")
-    failed = await evalkit.run_service(cases, expectations, client, model, repeat=args.repeat, effort=args.effort, bot=True)
+    if not client:
+        failed = await evalkit.run_service(cases, expectations, repeat=args.repeat, effort=args.effort, bot=True)
+        return 1 if failed or decided else 0
+    from tests import evalworld
+    async with evalworld.world() as world:   # (the archive built once; each run of each case gets fresh tools over a copy of it)
+        failed = await evalkit.run_service(cases, expectations, client, model, repeat=args.repeat, effort=args.effort, bot=True,
+                                           world=world)
     return 1 if failed or decided else 0
 
 
