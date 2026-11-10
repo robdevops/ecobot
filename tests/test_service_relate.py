@@ -1,6 +1,7 @@
 """The service's `relate` tool (lib/service/relate.py): rain against one reading over whole days, with the findings of the bot's
 weather_link (pressure, humidity, wind) and air_link (PM2.5, PM10), and a chart that says how to draw it again."""
 
+import dataclasses
 import json
 import time
 from datetime import date, timedelta
@@ -14,6 +15,7 @@ from lib.service.common import CHART_NOTE
 from lib.service.context import Context
 from lib.timeutil import local_date
 from lib.tools import Tools, Turn
+from tests.clocks import yesterday_at
 from tests.fakes import TZ, archived_station
 from tests.test_chart_json import errors
 from tests.test_compose import StubAir
@@ -150,9 +152,14 @@ async def test_what_it_cant_relate_is_refused_with_what_it_can(tmp_path, archive
 
 async def test_a_period_that_isnt_whole_days_points_to_the_tools_that_read_one(tmp_path, archived_cache):
     ctx, eco = await world(tmp_path, archived_cache)
+    pinned = dataclasses.replace(ctx, clock=yesterday_at(14, 5, TZ).timestamp)   # (at 2:05pm: this morning is over)
     for period in ("today", "last 5 hours", "this morning"):
-        out = await ask(ctx, period=period)
+        out = await ask(pinned, period=period)
         assert "use summary or readings" in out["error"], period
+    midnight = dataclasses.replace(ctx, clock=yesterday_at(0, 5, TZ).timestamp)   # at 12:05am this morning is still ahead
+    assert "use summary or readings" in (await ask(midnight, period="today"))["error"]
+    ahead = (await ask(midnight, period="this morning"))["error"]
+    assert "'this morning' is in the future" in ahead and "use forecast" in ahead and ahead.endswith("12:05am.")
     assert "has a time" in (await ask(ctx, start="2026-09-01 10:00"))["error"]
     assert "use forecast" in (await ask(ctx, period="next week"))["error"]
     out = await ask(ctx, period="whenever")

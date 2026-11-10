@@ -85,7 +85,7 @@ async def test_a_history_is_cut_in_the_clouds_buckets_and_asks_home_assistant_a_
     now = local_now()
     data = await api.history("x", "30min", now - timedelta(days=3), now, "outdoor,wind")
     stamps = [int(t) for t in data["outdoor"]["temperature"]["list"]]
-    assert stamps == sorted(stamps) and all(t % 1800 == 0 for t in stamps) and 140 <= len(stamps) <= 146        # three days of half hours
+    assert stamps == sorted(stamps) and all(t % 1800 == 0 for t in stamps) and 140 <= len(stamps) <= 148        # three days of half hours (a 25-hour day among them in April)
     assert {"temperature", "temperature_low", "temperature_high", "humidity", "dew_point"} <= set(data["outdoor"]) and set(data) == {"outdoor", "wind"}
     asked = [c for c in fake.calls if c["path"].startswith("/api/history")]
     assert 3 <= len(asked) <= 5 and all("sensor.ws2900_rain_rate" not in c["filter_entity_id"] for c in asked)         # only the groups asked for

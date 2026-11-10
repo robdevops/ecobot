@@ -5,6 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ.setdefault("TZ", "Australia/Melbourne")
+from tests import clocks   # noqa: E402  (ECOBOT_CLOCK: the whole suite at another time; before anything of lib/ is imported)
+CLOCK = clocks.install()
 
 import pytest
 
@@ -32,10 +34,34 @@ def alert_state(tmp_path):
 def archived_cache(tmp_path_factory):
     """The bot's file (ecobot.sqlite) holding the fake station's whole archive, built once an hour and shared by every worker and run
     (under pytest's own temp folder, named for the hour and the code that shapes it). Tests copy it (archived_station)."""
-    import asyncio
+    from datetime import datetime
+    moved = "-moved" if CLOCK else ""   # (built at a clock ECOBOT_CLOCK moved: never shared with a run at the real one)
+    return _shared_archive(tmp_path_factory, f"{datetime.now():%Y%m%d%H}{moved}", None)
+
+
+@pytest.fixture(scope="session")
+def pinned_archive(tmp_path_factory):
+    """pinned_archive(when) -> the file holding the fake station's whole archive as it was at `when` (an aware datetime), built with
+    the clock pinned there (tests/clocks.pin) once for the code that shapes it, and shared by every worker and run after. A test pins
+    the clock at the same time (clocks.pin) and copies it (archived_station): the station at a fixed time of day, whatever the time."""
+    return lambda when: _shared_archive(tmp_path_factory, f"pinned-{when.timestamp():.0f}", when)
+
+
+@pytest.fixture
+def daytime_archive(pinned_archive, monkeypatch):
+    """The fake station's archive at a fixed time, 2:05pm on Tue 10 Nov 2026 (clocks.DAYTIME), the clock pinned there for the test: for
+    a test whose answer depends on the date or the time of day (a year so far with days in it, this morning over)."""
+    cache = pinned_archive(clocks.DAYTIME)
+    clocks.pin(monkeypatch, clocks.DAYTIME)
+    return cache
+
+
+def _shared_archive(tmp_path_factory, name: str, pinned) -> Path:
+    """The fake station's whole archive in a file under pytest's own temp folder, named for `name` and the code that shapes it: built by
+    the first worker that asks (the others wait and find it), at the clock as it is, or pinned at `pinned`."""
+    import concurrent.futures
     import fcntl
     import hashlib
-    from datetime import datetime
     from unittest import mock
 
     from lib.ecowitt import Archive, Ecowitt, api, archive
@@ -54,14 +80,18 @@ def archived_cache(tmp_path_factory):
     base = tmp_path_factory.getbasetemp()   # this run's folder under pytest-of-<user> (a worker's is a folder under that)
     while not base.parent.name.startswith("pytest-of-"):
         base = base.parent
-    shared = base.parent / f"ecobot-archive-{datetime.now():%Y%m%d%H}-{digest}.sqlite"
+    shared = base.parent / f"ecobot-archive-{name}-{digest}.sqlite"
     with open(shared.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)   # the first worker builds it; the others wait and find it
         if not shared.exists():
             path = tmp_path_factory.mktemp("archive")
-            with mock.patch.object(api, "MIN_GAP_SECONDS", 0), mock.patch.object(archive, "PACE_SECONDS", 0), \
-                    mock.patch.object(asyncio, "to_thread", _inline):
-                built = asyncio.run(build(path))
+            with pytest.MonkeyPatch.context() as patch:
+                if pinned is not None:
+                    clocks.pin(patch, pinned)
+                with mock.patch.object(api, "MIN_GAP_SECONDS", 0), mock.patch.object(archive, "PACE_SECONDS", 0), \
+                        mock.patch.object(asyncio, "to_thread", _inline):
+                    with concurrent.futures.ThreadPoolExecutor(1) as pool:   # (on a thread: an async test may be asking)
+                        built = pool.submit(asyncio.run, build(path)).result()
             os.replace(built, shared)
         return shared
 

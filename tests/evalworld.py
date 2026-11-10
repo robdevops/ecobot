@@ -25,7 +25,7 @@ from tests import evalkit
 EVAL_NOW = evalkit.NOW.replace(tzinfo=ZoneInfo(evalkit.NOW_TZ)).timestamp()
 
 
-class _DatetimeType(type):
+class _DatetimeType(type(_dt.datetime)):   # (type, unless ECOBOT_CLOCK moved the clock: tests/sweepclock.py)
     def __instancecheck__(cls, obj):
         return isinstance(obj, _dt.datetime)
 
@@ -43,7 +43,7 @@ class _EvalDatetime(_dt.datetime, metaclass=_DatetimeType):
         return _dt.datetime.fromtimestamp(EVAL_NOW)
 
 
-class _DateType(type):
+class _DateType(type(_dt.date)):
     def __instancecheck__(cls, obj):
         return isinstance(obj, _dt.date)
 

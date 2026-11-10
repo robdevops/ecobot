@@ -58,8 +58,8 @@ async def test_it_takes_an_air_reading_or_all_whole_days_and_a_chart(tmp_path, a
 
 
 # ---------- the findings ----------
-async def test_with_nothing_named_it_scans_every_air_reading_over_the_last_90_days_as_air_scan_does(tmp_path, archived_cache):
-    ctx, eco = await world(tmp_path, archived_cache)
+async def test_with_nothing_named_it_scans_every_air_reading_over_the_last_90_days_as_air_scan_does(tmp_path, daytime_archive):
+    ctx, eco = await world(tmp_path, daytime_archive)
     out = await ask(ctx)
     assert list(out)[:7] == ["period", "as_of", "fresh", "reading", "verdict", "how_to_read", "findings"]
     assert out["reading"] == "all" and out["period"]["asked"] == "last 90 days" and out["period"]["cut"].endswith("today isn't over")

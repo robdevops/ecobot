@@ -283,7 +283,7 @@ def gauge_of(name: str) -> Gauge | None:
     """The gauge a reading's context comes from: the one whose live reading it is (rainfall.rain: the Rain gauge's "daily"); the gusts
     get the Wind gauge's highest, with the live gust counted in."""
     if name == "wind.wind_gust":
-        return replace(next(g for g in GAUGES if g.live == ("wind", "wind_speed")), live=("wind", "wind_gust"))
+        return replace(next(g for g in GAUGES if g.live == ("wind", "wind_speed")), live=("wind", "wind_gust"), counted=None)
     return next((g for g in GAUGES if g.reading == name), None)
 
 
@@ -367,9 +367,10 @@ def context_of(name: str, live: dict, values: dict, times: dict, today: date, tz
         return {}
     days, unit = periods_of(today), gauge.unit
     now = Live(live, gauge)
+    counted = Live(live, replace(gauge, live=gauge.counted)) if gauge.counted else now   # (wind: the gust now, not the speed)
     out = {}
     for row, key in PERIODS:
-        got = figures(gauge, values, days[row], None if gauge.total else now.value)
+        got = figures(gauge, values, days[row], None if gauge.total else counted.value)
         if gauge.total and row == "Daily" and now.value is not None:   # today's rain is the gauge's own reading (as the gauge shows it)
             got = (None, now.value)
         entry: dict = {}
@@ -385,7 +386,8 @@ def context_of(name: str, live: dict, values: dict, times: dict, today: date, tz
             pairs = [(high, gauge.highest, got[0])] + ([("low", gauge.lowest, got[1])] if gauge.lowest else [])
             for key_, figure, value in pairs:
                 if value is not None:
-                    entry.update(_extreme(key_, value, figure, days[row], values, times, now, gauge, unit, tz, dated=row != "Daily"))
+                    entry.update(_extreme(key_, value, figure, days[row], values, times, counted, gauge, unit, tz,
+                                          dated=row != "Daily"))
         if entry:
             out[key] = entry
     return out

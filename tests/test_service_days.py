@@ -3,6 +3,7 @@
 (which it replaces) and lib/report.py's days lookup (whose words it keeps), on the fake station's archive with an air sensor added."""
 
 import copy
+import dataclasses
 import json
 import shutil
 from datetime import date, datetime, time, timedelta
@@ -21,6 +22,7 @@ from lib.storage import Storage
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import day_bounds, day_text, local_epoch, now_local
 from lib.tools import Turn
+from tests.clocks import yesterday_at
 from tests.fakes import TZ, archived_station, rain_day, temp
 from tests.test_chart_json import errors as schema_errors
 
@@ -247,8 +249,6 @@ async def test_a_call_it_cant_use_is_refused_with_what_to_send_instead(world):
     hours = await ask(world, hours="dawn")
     assert "isn't a part of the day" in hours["error"] or "not a part of the day" in hours["error"]
     assert "night (22:00-06:00)" in hours["hours"]
-    for words in ("today", "last 5 hours", "this morning"):   # whole days only: today isn't over
-        assert "use summary or readings" in (await ask(world, period=words))["error"], words
     assert "use forecast" in (await ask(world, period="next week"))["error"]
     forms = await ask(world, period="the other week")
     assert "isn't a period" in forms["error"] and "on record, all time, ever (from the first reading held)" in forms["forms"]
@@ -258,6 +258,23 @@ async def test_a_call_it_cant_use_is_refused_with_what_to_send_instead(world):
     no_air = days_tool.tools(Context(eco=world.eco))[0]
     refused = json.loads(await no_air.call({"where": [{"field": "pm2_5_max", "op": ">", "value": 1}]}))
     assert "this service has no air sensor" in refused["error"]
+
+
+async def test_a_part_of_today_is_refused_pointing_to_the_tools_that_read_one(world):
+    """Whole days only: today isn't over. At 2:05pm each part of today asked for points to summary or readings."""
+    ctx = dataclasses.replace(world, clock=yesterday_at(14, 5, TZ).timestamp)
+    for words in ("today", "last 5 hours", "this morning"):
+        assert "use summary or readings" in (await ask(ctx, period=words))["error"], words
+
+
+async def test_just_after_midnight_this_morning_is_still_ahead_and_points_to_forecast(world):
+    """At 12:05am "today" and "last 5 hours" still point to summary or readings, but this morning (6am to 12pm) hasn't begun: it is
+    refused as in the future, pointing to forecast, with the time now."""
+    ctx = dataclasses.replace(world, clock=yesterday_at(0, 5, TZ).timestamp)
+    for words in ("today", "last 5 hours"):
+        assert "use summary or readings" in (await ask(ctx, period=words))["error"], words
+    error = (await ask(ctx, period="this morning"))["error"]
+    assert "'this morning' is in the future" in error and "use forecast" in error and error.endswith("12:05am.")
 
 
 async def test_a_period_before_the_record_says_where_the_record_starts(world):
@@ -273,7 +290,7 @@ async def test_the_holiday_and_weekend_filter_is_the_models_own(world):
     days = [datetime.strptime(r["date"], "%a %d %b %Y").date() for r in out["days"]]
     assert out["days_checked"] == 16 and all(d.weekday() >= 5 for d in days)
     holidays = await ask(world, period="past year", only="public_holiday", sort_by="rain")
-    assert 5 <= holidays["days_checked"] <= 15 and all(r["holiday"] for r in holidays["days"])
+    assert 5 <= holidays["days_checked"] <= 18 and all(r["holiday"] for r in holidays["days"])   # (two Easters, some years)
 
 
 # ---------- both sensors ----------
@@ -450,8 +467,8 @@ async def test_one_figure_over_months_says_how_to_get_one_per_month_or_year(worl
 async def test_of_without_stat_is_refused_saying_to_send_stat_not_counted_as_days(world):
     """`of` with no `stat` used to count the days and drop `of` ("rain per month" answered "313 of 313 days"); it is refused, saying
     to send stat too, so a model corrects it in its next call."""
-    out = await ask(world, of="rain", group_by="month", period="this year")
+    out = await ask(world, of="rain", group_by="month", period="past year")
     assert "error" in out and "send `stat` too" in out["error"] and "sum" in out["error"]
-    fixed = await ask(world, stat="sum", of="rain", group_by="month", period="this year")
+    fixed = await ask(world, stat="sum", of="rain", group_by="month", period="past year")
     assert "error" not in fixed and fixed["answer"].startswith("Total rain")
-    assert "error" not in await ask(world, where=[{"field": "rain", "op": ">=", "value": 1}], period="this year")   # (a count: no `of`)
+    assert "error" not in await ask(world, where=[{"field": "rain", "op": ">=", "value": 1}], period="past year")   # (a count: no `of`)

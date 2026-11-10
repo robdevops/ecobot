@@ -12,6 +12,7 @@ from lib.ecowitt.source import LIVE_GROUPS
 from lib.service.common import FRESH
 from lib.service.context import Context
 from lib.service.outlook import DESCRIPTION, GROUPS, HOW_TO_READ, PARAMETERS, dew_point, read, tools
+from tests.clocks import pin
 from tests.fakes import TZ, archived_station
 
 NOW = datetime(2026, 11, 10, 14, 5, tzinfo=TZ)   # Tue 10 Nov 2026 2:05pm
@@ -290,8 +291,15 @@ async def test_with_no_readings_it_is_refused_pointing_to_the_forecast():
                             "from. Ask forecast for today's forecast."}
 
 
-async def test_on_the_fake_station_it_reads_the_last_3_hours_from_the_file_and_the_reading_now(tmp_path, archived_cache):
-    eco, fake = await archived_station(tmp_path, archived_cache)
+async def pinned_station(when, tmp_path, pinned_archive, monkeypatch):
+    """(Ecowitt, fake) over the fake station's archive as it was at `when`, with the clock pinned there."""
+    cache = pinned_archive(when)
+    pin(monkeypatch, when)
+    return await archived_station(tmp_path, cache)
+
+
+async def test_on_the_fake_station_it_reads_the_last_3_hours_from_the_file_and_the_reading_now(tmp_path, pinned_archive, monkeypatch):
+    eco, fake = await pinned_station(NOW, tmp_path, pinned_archive, monkeypatch)   # (2:05pm: the last 3 hours are all today's)
     try:
         ctx = Context(eco=eco)
         nothing = got(await tools(ctx)[0].call({}, {"fetch": False}))   # the archive holds no 5-minute readings of today yet
@@ -306,7 +314,28 @@ async def test_on_the_fake_station_it_reads_the_last_3_hours_from_the_file_and_t
         assert out["pressure"]["hpa"] == round(last["pressure.relative"], 1)   # (the reading now has no pressure: the newest 5 minutes')
         assert out["moisture"]["dew_point_spread"] == 0.0 and out["moisture"]["moist"]   # (the fake's dew point is its temperature)
         assert out["verdict"] in ("possible", "likely")
-        assert datetime.fromisoformat(out["as_of"]["time"]) > datetime.now(TZ) - timedelta(minutes=10)
+        assert datetime.fromisoformat(out["as_of"]["time"]) > NOW - timedelta(minutes=10)
+    finally:
+        await eco.close()
+
+
+async def test_just_after_midnight_the_last_3_hours_are_yesterdays_evening_read_from_the_file(tmp_path, pinned_archive, monkeypatch):
+    """At 12:05am the last 3 hours are yesterday's from 9:05pm, a finished day the archive holds (up to its settled edge, 10:50pm):
+    without fetching, the read is made from them (nothing asked of Ecowitt), as of its newest reading and warned about when that is
+    over half an hour old; fetching adds the rest and the reading now. (By day the archive holds nothing of the last 3 hours: the
+    test above.)"""
+    midnight = datetime(2026, 11, 11, 0, 5, tzinfo=TZ)
+    eco, fake = await pinned_station(midnight, tmp_path, pinned_archive, monkeypatch)
+    try:
+        ctx = Context(eco=eco)
+        held = got(await tools(ctx)[0].call({}, {"fetch": False}))
+        assert fake.calls == [] and "error" not in held and held["verdict"] in ("unlikely", "possible", "likely")
+        newest = datetime.fromisoformat(held["as_of"]["time"])
+        assert midnight - timedelta(hours=3) <= newest < midnight and newest.date() == midnight.date() - timedelta(days=1)
+        assert ("warning" in held) is (midnight - newest > timedelta(minutes=30))
+        out = got(await tools(ctx)[0].call({}))
+        assert {(c["path"], c.get("cycle_type")) for c in fake.calls} == {("history", "5min"), ("real_time", None)}
+        assert midnight - timedelta(minutes=10) < datetime.fromisoformat(out["as_of"]["time"]) <= midnight and "warning" not in out
     finally:
         await eco.close()
 

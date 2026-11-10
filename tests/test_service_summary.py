@@ -3,6 +3,7 @@ periods it reads, its charts with drawn_by (replayed, and over every period it l
 chart (lib/report.py), word for word."""
 
 import json
+import re
 from datetime import datetime, timedelta
 
 from tests import report_words as report   # (the bot's words before step 2: the oracle)
@@ -14,7 +15,8 @@ from lib.service.common import FRESH, ServiceTool
 from lib.service.context import Context
 from lib.service.daylook import FIGURES, day_look
 from lib.tools import Turn
-from tests.fakes import TZ, air_transport, archived_station, config
+from lib.timeutil import day_bounds
+from tests.fakes import TZ, air_transport, archived_station, config, rain_day
 from tests.test_chart_json import errors as schema_errors
 from tests import old_tools
 
@@ -98,7 +100,7 @@ async def test_each_record_comes_with_its_wording_its_day_and_that_days_look(tmp
     assert temp["unit"] == "°C" and isinstance(temp["low"], float) and temp["low"] <= temp["high"]
     for want in ("low", "high"):
         assert temp[f"{want}_text"] == f"{temp[want]} °C"
-        assert temp[f"{want}_when"].startswith(("at ", "around ")) and temp[f"{want}_date"].endswith(" 2026")
+        assert temp[f"{want}_when"].startswith(("at ", "around ")) and re.search(r" 20\d\d$", temp[f"{want}_date"])
         day = datetime.strptime(temp[f"{want}_date"], "%a %d %b %Y").date()
         assert temp.get(f"{want}_day_look") == looked(day)
     rows = temp["daily"]
@@ -106,7 +108,9 @@ async def test_each_record_comes_with_its_wording_its_day_and_that_days_look(tmp
     for label, row in rows.items():
         day = next(d for d in (today - timedelta(days=n) for n in range(7)) if f"{d:%a} {d.day} {d:%b}" == label)
         assert row.get("day_look") == looked(day) and row["low"] <= row["high"]
-    assert any(row.get("day_look", {}).get("word") == "wet" for row in rows.values())   # the fake's every 8th day is wet
+    # the fake's every 8th day of the year is wet (from 2pm): a week whose finished days hold one shows it (some weeks have none)
+    if any(rain_day(day_bounds(today - timedelta(days=n), TZ, last_second=True)[1]) >= 5 for n in range(1, 7)):
+        assert any(row.get("day_look", {}).get("word") == "wet" for row in rows.values())
     assert "average" not in temp
     await close(ctx)
 
@@ -150,7 +154,7 @@ async def test_rain_is_the_mm_that_fell_its_total_and_its_wettest_day(tmp_path, 
         "%Y-%m-%d %H:%M:%S"), "groups": "rainfall", "chart_field": "rain", "chart": True}, old_turn))
     assert drawn["rain_total_mm"] == old["rain_total_mm"] == rain["total"]
     long = await ask(tool, readings=["rain"], period="3m", chart=False)
-    assert list(long["series"]["rainfall.rain"]["monthly"])[0].endswith(" 2026")
+    assert re.fullmatch(r"[A-Z][a-z]{2} 20\d\d", list(long["series"]["rainfall.rain"]["monthly"])[0])
     await close(ctx)
 
 
