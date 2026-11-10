@@ -31,7 +31,7 @@ from typing import NamedTuple
 import httpx
 
 from .. import intent
-from ..captions import CHART_HINT, wants_chart
+from ..captions import CHART_ANSWERS_IT, CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
 from ..ecowitt.homeassistant import HomeAssistant
@@ -83,6 +83,7 @@ PARAMETERS = {
     "properties": {
         "chart": {"type": "boolean", "description": "Set true to send a chart (graph) with the answer. Without dates, "
                                                     "it covers the last 24 hours."},
+        "chart_answers_it": CHART_ANSWERS_IT,
         "metrics": {"type": "array", "items": {"type": "string", "enum": list(LABELS)},
                     "description": "Which metrics to chart (several are drawn as panels in one image; "
                                    "for 'all', list all six). Default: the reading the person named, else pm2_5."},

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, UTC
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..captions import CHART_ANSWERS_IT
 from ..config import Config
 from ..lines import RANGE_KEEP_DAYS
 from ..sources import Source
@@ -68,6 +69,7 @@ HISTORY_PARAMS = {
                                                          "Omit for temperature."},
         "chart": {"type": "boolean", "description": "Set true to send a chart with the answer: for trends over several "
                                                     "days or longer, or when a graph/chart is asked for."},
+        "chart_answers_it": CHART_ANSWERS_IT,
         "include_derived": {"type": "array", "items": {"type": "string", "enum": ["feels_like", "app_temp", "dew_point", "vpd"]},
                             "description": "Only when the question asks about feels-like, apparent temperature, dew point or "
                                            "VPD: which of them to include. Otherwise omit (they are left out by default)."},

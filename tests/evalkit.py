@@ -38,6 +38,7 @@ COVERAGE = {
     "q:command": "asking the bot to do something (alerts)", "q:chat": "thanks and small talk", "q:report": "status / report", "q:dashboard": "the station's gauges",
     "q:detail-level": "asking for a finer data resolution", "q:cross-source": "a question that needs both devices together",
     "q:scan": "which readings go with which (every pair)", "q:interval": "values at an interval (each hour, every 30 minutes)",
+    "q:chart-only": "a question that is only a chart (chart_answers_it), and one that asks something beside it",
     "m:temperature": "temperature", "m:humidity": "humidity", "m:pressure": "pressure", "m:wind-speed": "wind speed and gusts",
     "m:wind-direction": "wind direction", "m:rain": "rain", "m:air-quality": "air quality",
     "c:line": "a line chart of one reading", "c:daily-band": "a long chart: daily mean with its range",
