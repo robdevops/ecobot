@@ -346,6 +346,11 @@ Charts are data: the client draws them, or its model does from the numbers.
   readings' names resolved, every default filled in and the period stated, so the same call with only `period` changed draws the same
   chart over another period, and the same call again draws it with the latest readings. A client's period buttons, or an alert's 🔄,
   replay it; they need no knowledge of which tool or readings made the chart, and never the model.
+- **And the periods it makes sense over:** `drawn_by.periods: [{period, label}]`, decided by the service for that chart, so a client
+  offers only buttons that draw something worth having. A chart of readings over time: `1d` "1D", `7d` "7D", `1m` "1M", `3m` "3M",
+  `1y` "1Y". A count or total per month (`days` with `group_by`): `3m`, `1y`, `on record` "All"; per year: `on record` alone, so no
+  buttons. Rain against a reading (`relate`) and `scan`: `1m`, `3m`, `1y`. A chart that can't be redrawn over another period lists
+  none.
 - **Small enough for a model to read and redraw:** each line is bucketed to at most 150 points (the bands with it), so a model can turn
   it into a plot with its own tools and an application can draw it directly. An application that draws for itself asks for more with
   request `_meta` `chart_points` (at most 500, today's budget); the bot asks for 500, so its pictures and golden images don't change.
@@ -462,8 +467,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
    buttons. Everything the bot draws ahead replays a call too: the other periods preloaded after a chart is sent (`drawn_by` with
    `1d`, `7d`, `1m`, `3m`, `1y`), the keyboard's charts every 5 minutes (each button a fixed `summary` call), recent alerts' charts
    (their `drawn_by`). The picture cache and the pre-upload are keyed by the call (tool and arguments), not the question's words, so
-   two chats asking the same thing share a picture. Period buttons stay on single charts over time; a replay the service refuses
-   shows its error on the button.
+   two chats asking the same thing share a picture. A single chart gets a button for each of its `drawn_by.periods`, labelled as the
+   service labels them, and none when it lists none (today every single chart gets all five, so a count per month offers a 1D that
+   draws nothing); a replay the service still refuses shows its error on the button.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.
@@ -487,7 +493,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
   routing rule (a record or a day, a chart or a figure per month), `outlook`, `about` and `chart_answers_it`.
 - **The contract:** a test per tool and resource for the arguments it takes and the shape it returns (`test_contract`); the periods
   table at its fixed times (step 1); charts against their schema; every chart's `drawn_by`, replayed, draws the same chart,
-  and with only `period` changed, the same chart over that period; `day_look` against its rule.
+  and with only `period` changed to each of its `periods`, the same chart over that period, never an error; `day_look` against its rule.
 - `days.hours` gives, for a stretch that is the whole day ("00:00-24:00"), the same figures as its day row for every day held whole at
   5 or 30 minutes (the air sensor's at 5 minutes or an hour), a clock-change day included; a day from a daily record, or from whatever
   readings there were, is left out and counted.
