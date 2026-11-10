@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta, tzinfo
 from statistics import fmean
 
-from .captions import COUNT_CHART_HINT
+from .captions import CHART_ANSWERS_IT, COUNT_CHART_HINT
 from .series import AIR
 from .specs import Chart, Panel, calendar_bars
 from .timeutil import day_text, parse_period
@@ -52,6 +52,7 @@ def parameters(fields: list[str], what: str, extra: dict | None = None) -> dict:
             "order": {"type": "string", "enum": ["desc", "asc"], "description": "desc = highest first (default), asc = lowest first."},
             "count_only": {"type": "boolean", "description": "true for \"how many days\": returns just the counts, no list of days (much smaller). Use it whenever the days themselves aren't asked for."},
             "group_by": {"type": "string", "enum": ["month", "year"], "description": "Break the result down per month or year, months with none included. It is drawn as a bar chart."},
+            "chart_answers_it": CHART_ANSWERS_IT,
             "stat": {"type": "string", "enum": list(STATS), "description": "What each month or year (or the whole period, with no group_by) shows: count (default: matching days), or the max, min, avg or sum of the field `of` over the matching days. E.g. rain total per month: stat sum, of rain, group_by month."},
             "of": {"type": "string", "description": "The field to take max, min, avg or sum of (a field from the where.field list; not needed for count)."},
             "limit": {"type": "integer", "description": f"How many days to list (default 5, at most {MAX_LIMIT}). The total is always counted."},

@@ -13,7 +13,7 @@ import re
 import time
 from collections import defaultdict
 from collections.abc import Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, UTC
 from typing import NamedTuple
 
@@ -32,6 +32,7 @@ from . import gauges
 from .charts import render_data
 from .specs import to_json
 from .ecowitt.dashboard import STATUS
+from .ecowitt.query import chart_field, stack_names
 from .tools import Turn
 from .config import Config
 from .entities import utf16_len, with_link
@@ -46,6 +47,8 @@ log = logging.getLogger(__name__)
 TG_LIMIT = 4000
 CAPTION_LIMIT = 1024   # what Telegram lets a photo's caption hold
 MAX_CHARTS = 3
+DAY_TOOLS = ("weather_days", "air_days")
+ANSWERING_CHARTS = ("weather_history", "air_quality", *DAY_TOOLS)   # the tools whose chart can be the whole answer (chart_answers_it)
 RETRY_SECONDS = 60           # the second try, one reasoning step lower, after a question timed out
 PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down) is not answered: its moment has passed
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
@@ -170,6 +173,24 @@ def strip_chart_talk(text: str) -> str:
             cleaned = cleaned[0].upper() + cleaned[1:]
         lines.append(cleaned)
     return "\n".join(lines).strip() or text
+
+
+def _drew_chart(result: str) -> bool:
+    """Does this tool result say it drew a chart (the "chart" note a tool adds when it does)?"""
+    try:
+        data = json.loads(result)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and "chart" in data and "error" not in data
+
+
+def _as_drawn(tool: str, args: dict, turn: Turn) -> tuple[dict, Turn]:
+    """(args, turn) as the tool read them to draw its chart, so its caption speaks of what the chart shows: the readings the person's
+    words name, else the model's (air quality: its metrics, else those named, else PM2.5), and an average if either asked for one."""
+    if tool == "air_quality":
+        return {**args, "metrics": args.get("metrics") or turn.air_named or ["pm2_5"]}, turn
+    return args, replace(turn, chart_field=chart_field(args, turn), chart_fields=stack_names(args, turn),
+                         average_asked=turn.average_asked or bool(args.get("average")))
 
 
 def chat_tag(chat_id: int) -> str:
@@ -1034,16 +1055,44 @@ class Bot:
         result = await self.agent.tools.call(name, json.dumps(args), turn)
         return report.lookup(read.lookup, result, read.lookup_arg, read.sides, now_local(self.cfg.tz).date())
 
+    def _chart_answer(self, turn: Turn):
+        """The model loop's finish: when each call the model made in a step set chart_answers_it, drew its chart and can be captioned
+        here, their captions in order are the reply and the model is asked nothing more; else None, and the model answers as usual."""
+        def finish(calls: list[dict], results: list[str]) -> str | None:
+            try:
+                captions = [self._answer_caption(call, result, turn) for call, result in zip(calls, results)]
+            except Exception as e:   # the model answers instead
+                log.error("Couldn't caption a chart that answers the question (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
+                return None
+            return None if None in captions else "\n\n".join(captions)
+        return finish
+
+    def _answer_caption(self, call: dict, result: str, turn: Turn) -> str | None:
+        """One call's chart as the whole answer: its caption, written from the tool's result as for a chart made in code (the day tools:
+        as for a days lookup); None when the call didn't set chart_answers_it, drew no chart, failed or left nothing to caption."""
+        try:
+            args = json.loads(call["arguments"] or "{}")
+        except ValueError:
+            return None
+        if (call["name"] not in ANSWERING_CHARTS or not isinstance(args, dict) or args.get("chart_answers_it") is not True
+                or not _drew_chart(result)):
+            return None
+        if call["name"] in DAY_TOOLS:
+            return report.lookup("days", result, [], [], now_local(self.cfg.tz).date())
+        args, drawn = _as_drawn(call["name"], args, turn)
+        return report.chart_caption(call["name"], args, result, drawn, self.cfg.tz)
+
     async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, on_heavy=None) -> str:
         """The model's answer. If it has not answered in TURN_SECONDS, ask again once with one reasoning step less (medium > low >
-        none), for RETRY_SECONDS; a question already at no reasoning just times out."""
+        none), for RETRY_SECONDS; a question already at no reasoning just times out. A chart that answers the question by itself
+        ends the turn with its caption written here (_chart_answer)."""
         first = [*([read.fast[:2], *read.more] if read.fast else []), *read.extra] or None
         before, effort, budget, retried = list(working), read.effort, TURN_SECONDS, False
         while True:
             try:
                 return await asyncio.wait_for(
                     self.agent.run(working, system, effort, first_call=first, tool_choice=read.tool_choice, turn=turn,
-                                   on_heavy=on_heavy,
+                                   on_heavy=on_heavy, finish=self._chart_answer(turn),
                                    **({"on_text": lambda text: None if turn.chart_asked or turn.charts else draft.update(text)} if draft else {})),
                 budget)
             except TimeoutError:

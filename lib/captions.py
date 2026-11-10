@@ -34,3 +34,9 @@ DIRECTION_CHART_HINT = ("Your reply is sent as a message just before a chart of 
                         "most common direction and how steady it was. Don't mention or describe the chart.")
 COUNT_CHART_HINT = ("Your reply is sent as a message just before a bar chart of these counts, so keep it to one short line: how many of the days "
                     "matched (matching_days of days_checked) and the period. Don't list the bars or describe the chart.")
+
+# The argument that says the chart is the whole answer (weather_history, air_quality and the day tools offer it; their handlers ignore
+# it): the bot then sends the chart with a caption written in code and asks the model nothing more (bot.Bot._chart_answer)
+CHART_ANSWERS_IT = {"type": "boolean", "description": "true only when the question is just to see this chart and its figures: nothing "
+                                                      "else to answer (\"plot pressure this week\", not \"plot pressure this week: is a "
+                                                      "storm coming?\"). Then the chart and a ready caption are the whole answer."}

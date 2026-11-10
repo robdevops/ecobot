@@ -1553,5 +1553,52 @@
       "q:interval",
       "m:temperature"
     ]
+  },
+  {
+    "id": "chart-only-answers-itself",
+    "ask": "plot pressure since Sunday",
+    "note": "only the chart is asked for: the model says so (chart_answers_it) and the bot sends the chart with its caption written in code, with no second model call. A weekday keeps it off the fast path, so the model decides",
+    "expect": {
+      "fast": null,
+      "chart_in_code": false,
+      "tools": [
+        "weather_history"
+      ],
+      "args": {
+        "weather_history": {
+          "chart_answers_it": true
+        }
+      }
+    },
+    "covers": [
+      "q:chart-only",
+      "m:pressure"
+    ]
+  },
+  {
+    "id": "chart-and-a-question",
+    "ask": "plot pressure since Sunday, is a storm coming?",
+    "note": "the chart and something else to answer: the model writes the reply, so chart_answers_it stays unset",
+    "expect": {
+      "fast": null,
+      "chart_in_code": false,
+      "tools": [
+        "weather_history"
+      ],
+      "args": {
+        "weather_history": {
+          "chart_answers_it": {
+            "any_of": [
+              null,
+              false
+            ]
+          }
+        }
+      }
+    },
+    "covers": [
+      "q:chart-only",
+      "m:pressure"
+    ]
   }
 ]

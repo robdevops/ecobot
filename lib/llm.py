@@ -80,7 +80,7 @@ class Agent:
 
     async def run(self, messages: list[dict], system_prompt: str, effort: str, *,
                   first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, tool_choice: str = "required",
-                  turn: Turn | None = None, on_text=None, on_heavy=None) -> str:
+                  turn: Turn | None = None, on_text=None, on_heavy=None, finish=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
@@ -91,7 +91,9 @@ class Agent:
         on_text(text so far) is called as each answer streams in (private chats show it as a draft).
         on_heavy(tokens) is called once, before the model is sent a lot of
         data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
-        first. The work carries on; nothing waits for a reply."""
+        first. The work carries on; nothing waits for a reply.
+        finish(calls, results) is asked after each step of the model's own tool calls (never after first_call): text from it is
+        the reply, and the turn ends there with no further model call (the bot's chart that answers the question by itself)."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:
@@ -116,14 +118,14 @@ class Agent:
 
         llm_time = tool_time = 0.0
 
-        async def run_calls(calls: list[dict]):
-            """The calls ({"id", "name", "arguments"}), made together; their results join the messages."""
+        async def run_calls(calls: list[dict]) -> list[str]:
+            """The calls ({"id", "name", "arguments"}), made together; their results join the messages and are returned in order."""
             nonlocal tool_time
             t0 = time.monotonic()
             results = await asyncio.gather(*(call(c["name"], c["arguments"]) for c in calls))
             tool_time += time.monotonic() - t0
             messages.extend({"role": "tool", "tool_call_id": c["id"], "content": r} for c, r in zip(calls, results))
-            await heavy_check()
+            return results
 
         first_step = 0
         try:
@@ -132,6 +134,7 @@ class Agent:
                         for i, (n, a) in enumerate(first_call if isinstance(first_call, list) else [first_call], 1)]
                 messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call(c) for c in fast]})
                 await run_calls(fast)
+                await heavy_check()
                 first_step = 1  # data is in; the model just answers (and may still call tools)
             for step in range(first_step, MAX_STEPS + 1):
                 final = step == MAX_STEPS  # out of steps: force an answer from what we have
@@ -153,7 +156,13 @@ class Agent:
                 messages.append(entry)
                 if not tool_calls or final:
                     return content.strip() or "Sorry, I couldn't get an answer together - try a narrower question."
-                await run_calls(tool_calls)
+                results = await run_calls(tool_calls)
+                if finish and (reply := finish(tool_calls, results)):
+                    log.info("The turn ended on a chart that answers the question (%s): no LLM %d",
+                             ", ".join(c["name"] for c in tool_calls), step + 2)
+                    messages.append({"role": "assistant", "content": reply})
+                    return reply
+                await heavy_check()
         finally:
             log.info("Timing: LLM %.1fs, tools %.1fs", llm_time, tool_time)
 
