@@ -1,6 +1,8 @@
 holidays
 httpx
+mcp==2.3.0
 openai
 python-telegram-bot>=22.8
 pillow==13.0.0
+uvicorn==0.54.0
 zeroconf

@@ -26,6 +26,27 @@ it and kept (`ecobot-archive-pinned-*.sqlite`); a tool's answer to words alone c
 
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
+## The MCP service
+The service on its own ([docs/mcp-service.md](docs/mcp-service.md) 3.8, step 5): the sources and their syncers, the alert rules writing the
+alert log, and the MCP server (`lib/mcp_server.py`) at `http://MCP_BIND/mcp` (Streamable HTTP, protocol 2026-07-28 and the older one).
+It reads the bot's settings ([docs/configuration.md](docs/configuration.md)) less the bot's own, and `MCP_TOKENS`, `MCP_BIND`, `MCP_ALLOWED_HOSTS`:
+```
+set -a; . <(sudo cat /etc/ecobot.env); set +a          # the settings, as the bot reads them
+MCP_TOKENS=me:$(openssl rand -hex 16) python -m ecobot_service      # http://127.0.0.1:8765/mcp
+python -m ecobot_service.bridge                        # the same on stdio (WEATHER_MCP_URL, WEATHER_MCP_TOKEN), for a desktop client
+sudo docker compose --profile service up -d ecobot-service           # in Docker (compose.yaml), on 127.0.0.1:8765
+```
+Don't run it beside the bot on the same data folder yet: until the bot is its client, the bot runs the sources and the alert rules itself, and
+both would fetch twice and write each alert twice. A desktop client (Claude Desktop, Claude Code) starts the bridge as its command, with
+`WEATHER_MCP_TOKEN` in its environment, e.g. `claude mcp add ecobot -e WEATHER_MCP_TOKEN=... -- python -m ecobot_service.bridge` from the clone.
+To look at it by hand: `npx @modelcontextprotocol/inspector` against the URL with the header `Authorization: Bearer <token>`.
+
+Its tests: `tests/test_mcp_server.py` (the SDK's in-memory transport: every tool listed and answering as the ServiceTool does, each resource,
+the alerts' template, the prompts, the publishing, the tokens, the bridge in-process) and `tests/test_mcp_listen.py` (the real app under uvicorn
+on a free localhost port: a client that listens loses its listen when the service stops and reads what it missed when it is back; the
+token and Host checks over HTTP; the bridge as a subprocess on stdio; `python -m ecobot_service` with the fake sources, a tool call through
+a proxy's Host name).
+
 ## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)
 | Job | When | What |
 |---|---|---|

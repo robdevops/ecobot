@@ -294,9 +294,9 @@ For applications that keep an eye on the station rather than ask about it; a mod
 
 | URI | Holds | Pushed |
 |---|---|---|
-| `ecobot://station` | name, time zone, latitude and longitude, created; the sensors, their readings with labels, units and the words people use for them; each source's mode (HA, cloud, local) and retention; the alert kinds, what each means and its threshold; the AirGradient dashboard link | on change |
-| `ecobot://now/weather` | the live reading: `{as_of, group: {field: {value, unit, text, time}}}` | each new reading (5 s with HA, 60 s cloud only) |
-| `ecobot://now/air` | the latest air reading, its time, ratings and AQI | each new reading |
+| `ecobot://station` | name, time zone, latitude and longitude, created; the sensors, their readings with labels, units and the words people use for them; each source's mode (HA, cloud, local) and retention; the alert kinds, what each means and its threshold; the AirGradient dashboard link | when the catalogue gains a reading |
+| `ecobot://now/weather` | the live reading as kept, in the service's names (`current`'s, nothing fetched for it): `{as_of, sensors: {sensor: {reading: {value, unit, text, [emoji], [compass]}}}, lines, heading, [unavailable]}` | each new reading (5 s with HA, 60 s cloud only) |
+| `ecobot://now/air` | the latest air reading, the same shape: its time, each reading's rating, PM2.5's AQI and band | each new reading |
 | `ecobot://alerts` (in the resource list) and `ecobot://alerts{?since,expired}` (a template) | the alerts, newest last, kept 30 days; `since` an alert id: those after it; unexpired ones only unless `expired=true` (3.6) | each new alert, on the bare URI |
 | `ecobot://forecast` | the forecast days, structured (min and max, rain chance, chance of at least 1 mm, summary), with `fetched_at` and `place` | each new forecast |
 | `ecobot://pollen` | grass and asthma levels with their days, `fetched_at`, `in_season` | each new page |
@@ -560,6 +560,26 @@ Each step ships on its own, with the tests and evals green and the bot working t
    repository against it, the bot connects to both, and `lib/irrigation` goes from here. The service's scripts (`edit_readings`,
    `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`, `conditions`, `ecowitt_metrics`, `dump_specs`) stay;
    `show_request` and `report_inputs` become MCP clients.
+   - **The service side (done).** `lib/mcp_server.py` (`EcobotServer`): the SDK's low-level `Server` with the ten tools (their
+     hand-written schemas, `readOnlyHint` and `openWorldHint` from each ServiceTool, the list built from the current catalogue; a call
+     runs the ServiceTool with the request's `_meta` and answers its JSON unchanged as one text block, `isError` for a refusal, a
+     complete answer with its `reply` as a second block for `audience: ["user"]` and result `_meta` `{"ecobot/complete": true}`),
+     3.4's resources and the alerts' template, 3.5's prompts, the instructions, and `subscriptions/listen` (`InMemorySubscriptionBus`,
+     `ListenHandler`): `ResourceUpdated` for the live resources when what the sources keep changes (compared every 2 s, nothing fetched
+     for it; a reading asked for again and unchanged is not sent), the alerts on each new event (`AlertLog.wait`), the station and
+     `ToolsListChanged` when the file's catalogue gains a reading (read every minute; the tools and instructions are then built again).
+     `http_app`: `streamable_http_app` with `TransportSecuritySettings` over `MCP_ALLOWED_HOSTS` and the `TokenCheck` verifier over
+     `MCP_TOKENS` (`AuthSettings(issuer_url=…, resource_server_url=None)`). `ecobot_service/`: `core.py` is the service's startup
+     (`start_sources`, `Core`: the alert log, the tools, the alert rules, the keep-warm, and `warm_up`, the first fetch, the weather
+     rules, the live poll, the archive, the backfill and Home Assistant's imports, each loop's last success and failure kept for
+     `ecobot://health`), which `ecobot.py` now calls in-process, its behaviour unchanged; `__main__.py` runs it with the server under
+     uvicorn (`MCP_BIND`, refusing a non-loopback address without `MCP_TOKENS`); `bridge.py` is the stdio bridge, one supervised upstream
+     client pinned to 2026-07-28 that discovers by hand, listens and re-listens after a backoff. The image ships `ecobot_service/` and
+     `schemas/`; compose has `ecobot-service`, off unless its profile is asked for. Tests: `tests/test_mcp_server.py` (in memory) and
+     `tests/test_mcp_listen.py` (uvicorn on a localhost port: the lost listen and the reading after the last id, auth, hosts, the bridge
+     on stdio, the service started with the fakes and called through a proxy's Host name). Settings: `Config.from_env(bot=False)` needs
+     no Telegram token. Left: the bot as a client (the switch, the supervisor, `charts` from results, delivery from the listen), its
+     `warm_up` cut to its charts drawn ahead, the poke going, the irrigation server and the scripts as clients.
 6. **The bot retired** (section 4), its code and tests deleted; the repository is the service.
 
 ## 7. Testing

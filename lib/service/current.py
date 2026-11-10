@@ -38,7 +38,7 @@ from ..series import AIR, INDOOR_READINGS, WEATHER
 from ..storage.catalogue import BY_NAME, column_of, kind_of, text as written
 from ..storage.read import Reader
 from ..timeutil import clock_text, day_text, to_local
-from .common import BACKGROUND, Refusal, ServiceTool, answer
+from .common import BACKGROUND, Refusal, ServiceTool, answer, request_meta
 from .context import Context
 from .names import AIR_DEVICE, CATALOGUE, STATION, Catalogue, Reading, _split
 
@@ -447,6 +447,13 @@ class CurrentTool:
             fields["unavailable"] = unavailable
         times = [p.at for p in parts if p.at]
         return answer(period=None, as_of=max(times) if times else self.ctx.now() if sensors else None, **fields)
+
+    async def now_of(self, device: str, meta: dict | None = None) -> "Part":
+        """One device's part as `current` with no readings named gives it (its every reading now, its lines and heading), for the
+        service's resources (ecobot://now/weather, ecobot://now/air: lib/mcp_server.py). meta: the request's (request_meta)."""
+        readings = [r for r in self.ctx.readings() if r.device == device]
+        meta = request_meta(meta)
+        return await (self._station(readings, False, False, meta) if device == STATION else self._air(readings, False, meta))
 
     async def _station(self, station: list[Reading], named: bool, context: bool, meta: dict) -> "Part":
         """The weather station's part: each reading asked for now (with the gauges' figures beside it, with `context`), its lines and

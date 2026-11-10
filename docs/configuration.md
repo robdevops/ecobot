@@ -21,7 +21,7 @@ One `NAME=value` per line, no `export`; a line starting with `#` is a comment (n
 
 | Variable | Default | Description |
 |---|---|---|
-| `TELEGRAM_BOT_TOKEN` | – | Required. Bot token (@BotFather) |
+| `TELEGRAM_BOT_TOKEN` | – | Required by the bot (not the MCP service). Bot token (@BotFather) |
 | `OPENROUTER_API_KEY` | – | [OpenRouter](https://openrouter.ai/keys) API key. Unset → no model: `/report`, chart commands, plain lookups ("how hot is it?", "rain chart 7d", "forecast") and all alerts work; anything needing the model gets a "no model" reply |
 | `OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash-1017` | Model, by its OpenRouter name |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | API endpoint |
@@ -79,3 +79,15 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | State (`bot_state.json`) and SQLite caches. Relative paths from the working dir. Created if missing. |
 | `LOG_WIDTH` | `24` | Characters of a chat message kept in the log, then `…`; `0` keeps all. No other line is cut |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the bot's own lines (chart timings) |
+
+### The MCP service
+
+`python -m ecobot_service` ([mcp-service.md](mcp-service.md) 3.8, `DEVELOPMENT.md`) reads every setting above that is not the bot's own (it needs no `TELEGRAM_BOT_TOKEN`, model or chat setting), and these:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_TOKENS` | none | `name:token,name:token`: the bearer token each client sends (`Authorization: Bearer <token>`), one per client so one can be revoked alone (take it out and restart). Compared in constant time; a token is never logged, only its name. Unset → no auth, which the service allows only on a loopback `MCP_BIND` |
+| `MCP_BIND` | `127.0.0.1:8765` | `host:port` it listens on (`[::1]:8765` for IPv6). Serve it to other machines through TLS (a reverse proxy such as Caddy) |
+| `MCP_ALLOWED_HOSTS` | `127.0.0.1,localhost` | The `Host` names it answers, any port unless one is given (`weather.lan`, `192.168.1.5:8765`); any other is refused (421), against DNS rebinding. Add the name a proxy or a LAN client uses |
+
+The stdio bridge (`python -m ecobot_service.bridge`, for a desktop client) reads `WEATHER_MCP_URL` (default `http://127.0.0.1:8765/mcp`) and `WEATHER_MCP_TOKEN` (one of `MCP_TOKENS`' tokens).

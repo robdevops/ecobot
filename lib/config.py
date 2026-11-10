@@ -62,6 +62,42 @@ def _required(value: str, default: str, name: str) -> str:
     raise SystemExit(f"{name} is not set: the bot can't start without it (see docs/configuration.md)")
 
 
+REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: the service (python -m ecobot_service) runs without them
+
+
+def _tokens(value: str, default: tuple, name: str) -> tuple[tuple[str, str], ...]:
+    """"bot:s3cret, phone:t0ken" -> (("bot", "s3cret"), ("phone", "t0ken")): one token per client, each named, so one can be revoked
+    alone. An entry without a name or a token is ignored (and logged by its name, never its token); a name given twice keeps the last."""
+    found, bad = {}, []
+    for part in filter(None, (p.strip() for p in value.split(","))):
+        who, _, token = part.partition(":")
+        if who.strip() and token.strip():
+            found[who.strip()] = token.strip()
+        else:
+            bad.append(who.strip() if token.strip() == "" and who.strip() else "(no name)")
+    if bad:
+        log.warning("%s: ignoring %s (each entry is name:token)", name, ", ".join(bad))
+    return tuple(found.items()) or default
+
+
+def _bind(value: str, default: tuple[str, int], name: str) -> tuple[str, int]:
+    """"0.0.0.0:8765" -> ("0.0.0.0", 8765), "[::1]:8765" -> ("::1", 8765), "8765" -> (the default host, 8765); anything unreadable
+    keeps the default, with a warning."""
+    if not value:
+        return default
+    host, sep, port = value.rpartition(":")
+    host = host.strip().strip("[]") if sep else default[0]
+    if port.strip().isdecimal() and 0 < int(port) < 65536 and host:
+        return host, int(port)
+    log.warning("%s: %r is not host:port; keeping %s:%d", name, value, *default)
+    return default
+
+
+def _names(value: str, default: tuple[str, ...], name: str) -> tuple[str, ...]:
+    """"ecobot.lan, 192.168.1.5:8765" -> ("ecobot.lan", "192.168.1.5:8765"); unset or empty is the default."""
+    return tuple(filter(None, (p.strip() for p in value.split(",")))) or default
+
+
 def _url(value: str, default: str, name: str) -> str:
     return (value or default).rstrip("/")
 
@@ -211,7 +247,7 @@ class Config:
     tz: tzinfo
     state_path: Path
     storage_path: Path                                             # the bot's one file of readings, the pollen page and the forecast (lib/storage)
-    telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "", _required)
+    telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "")                       # the bot's (REQUIRED_BY_BOT: it stops without it)
     openrouter_api_key: str = _setting("OPENROUTER_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
     openrouter_base_url: str = _setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_model: str = _setting("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
@@ -247,6 +283,10 @@ class Config:
     antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
     log_width: int = _setting("LOG_WIDTH", 24, _whole)             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
+    # The MCP service (python -m ecobot_service: docs/mcp-service.md 3.8)
+    mcp_tokens: tuple[tuple[str, str], ...] = _setting("MCP_TOKENS", (), _tokens)   # "name:token,...", one per client; none: no auth, loopback only
+    mcp_bind: tuple[str, int] = _setting("MCP_BIND", ("127.0.0.1", 8765), _bind)    # host:port the service listens on
+    mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
 
     @property
     def alert_state_path(self) -> Path:
@@ -302,9 +342,9 @@ class Config:
         return self.airgradient_cloud or self.airgradient_local or self.airgradient_homeassistant
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls, bot: bool = True) -> "Config":
         """Every setting from its variable, the files in the data folder. Stops, saying why, when one the bot can't run without is
-        missing or the folder can't be written."""
+        missing or the folder can't be written. bot: False for the service (python -m ecobot_service), which has no Telegram token."""
         data = data_dir()
         try:
             data.mkdir(parents=True, exist_ok=True)
@@ -316,6 +356,9 @@ class Config:
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
         cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", storage_path=data / "ecobot.sqlite",
                   **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
+        for f in fields(cls):
+            if bot and f.name in REQUIRED_BY_BOT:
+                _required(getattr(cfg, f.name), f.default, f.metadata["env"])
         if not (cfg.ecowitt or cfg.airgradient):
             raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or HOMEASSISTANT_URL + HOMEASSISTANT_TOKEN and/or AIRGRADIENT_API_TOKEN + "
                              "AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")

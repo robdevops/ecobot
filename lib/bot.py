@@ -12,7 +12,6 @@ import random
 import re
 import time
 from collections import defaultdict
-from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import NamedTuple
@@ -43,6 +42,7 @@ from .sources import Source
 from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
+from .warm import Tasks   # (the service's too: ecobot_service)
 
 log = logging.getLogger(__name__)
 
@@ -385,29 +385,6 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
         went, sent = await _photos(msg, photos, titles, period_row or markup, not text)
         return Delivered(bool(markup) and not period_row and went, sent)
     return Delivered(on_text and bool(text), sent)
-
-
-class Tasks:
-    """The tasks the bot runs in the background: one that stops with an error is logged as it does, and close() cancels them."""
-
-    def __init__(self):
-        self.running: set[asyncio.Task] = set()
-
-    def start(self, work: Coroutine) -> asyncio.Task:
-        task = asyncio.create_task(work, name=getattr(work, "__qualname__", None))
-        self.running.add(task)
-        task.add_done_callback(self._ended)
-        return task
-
-    def _ended(self, task: asyncio.Task):
-        self.running.discard(task)
-        if not task.cancelled() and (error := task.exception()):
-            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error if isinstance(error, BUGS) else None)
-
-    async def close(self):
-        for task in self.running:
-            task.cancel()
-        await asyncio.gather(*self.running, return_exceptions=True)
 
 
 class Bot:

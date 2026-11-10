@@ -7,7 +7,7 @@ A source's `refresh(fresh)` fetches what questions usually need. A Warmer runs i
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime
 
 from .logs import BUGS
@@ -38,6 +38,30 @@ async def every(delay: float | Callable[[], float], fn: Callable[[], Awaitable])
     while True:
         await safely(fn)
         await asyncio.sleep(delay() if callable(delay) else delay)
+
+
+class Tasks:
+    """The tasks run in the background (the bot's, the service's): one that stops with an error is logged as it does, and close()
+    cancels them."""
+
+    def __init__(self):
+        self.running: set[asyncio.Task] = set()
+
+    def start(self, work: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(work, name=getattr(work, "__qualname__", None))
+        self.running.add(task)
+        task.add_done_callback(self._ended)
+        return task
+
+    def _ended(self, task: asyncio.Task):
+        self.running.discard(task)
+        if not task.cancelled() and (error := task.exception()):
+            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error if isinstance(error, BUGS) else None)
+
+    async def close(self):
+        for task in self.running:
+            task.cancel()
+        await asyncio.gather(*self.running, return_exceptions=True)
 
 
 class Warmer:

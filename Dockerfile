@@ -1,4 +1,4 @@
-# The bot as a small image: python:3.13-slim with the runtime packages in a venv that has no pip, no pip cache and no test suites,
+# The bot (and the MCP service, python -m ecobot_service) as a small image: python:3.13-slim with the runtime packages in a venv that has no pip, no pip cache and no test suites,
 # and bytecode for only what the bot imports at start (bytecode for everything is 48 MB more; none adds ~2 s to every start).
 #   docker build -t ecobot .
 #   docker compose up -d --build   (compose.yaml)
@@ -25,17 +25,20 @@ RUN groupadd --system --gid 10001 ecobot \
  && mkdir /data && chown 10001:10001 /data
 WORKDIR /app
 COPY ecobot.py ./
+COPY ecobot_service ecobot_service
 COPY lib lib
+COPY schemas schemas
 COPY scripts scripts
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
 # The bot reads the running commit for its start-up log line from .git (HEAD, the branch's ref, packed-refs: .dockerignore lets only these
 # through), so building from a clone needs nothing more; COMMIT, if given, is used instead (a build from files that are not a clone).
-# Importing the bot once writes the bytecode of every module it loads at start, and only those.
+# Importing the bot and the service once writes the bytecode of every module they load at start, and only those.
 COPY .git* .git/
 ARG COMMIT=
 RUN if [ -n "$COMMIT" ]; then echo "$COMMIT" > .git/HEAD; fi \
- && DATA_DIR=/tmp/build python -c "import lib.bot, ecobot" \
+ && DATA_DIR=/tmp/build python -c "import lib.bot, ecobot, ecobot_service.__main__, ecobot_service.bridge, lib.mcp_server" \
  && rm -rf /tmp/build
 ENV DATA_DIR=/data
 USER 10001:10001
+# The bot; the same image runs the MCP service with `python -m ecobot_service` (compose.yaml's ecobot-service)
 CMD ["python", "ecobot.py"]
