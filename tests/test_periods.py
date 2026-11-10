@@ -68,7 +68,7 @@ def make_bot(alert_state, monkeypatch):
 
         async def run(self, *a, **k):
             raise AssertionError("no model for a plain chart")
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     return Bot(NS(tz=TZ), Agent(), sources, alert_state)
 

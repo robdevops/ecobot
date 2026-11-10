@@ -29,7 +29,8 @@ from .alerts.notify import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
 from . import gauges
-from .charts import render as render_chart
+from .charts import render_data
+from .specs import to_json
 from .ecowitt.dashboard import STATUS
 from .tools import Turn
 from .config import Config
@@ -1065,7 +1066,7 @@ class Bot:
         caption = await asyncio.wait_for(self._chart_in_code(read, turn), TURN_SECONDS)
         if caption is None or len(turn.charts) != 1:
             raise ValueError("no chart came of it")
-        png = await asyncio.to_thread(render_chart, turn.charts[0], self.cfg.tz)
+        png = await asyncio.to_thread(render_data, to_json(turn.charts[0], self.cfg.tz), self.cfg.tz)
         return key, png, turn.charts[0].caption(now.date()), caption, turn.charts[0].newest
 
     def preload_soon(self, bot, question: str):
@@ -1202,9 +1203,9 @@ class Bot:
                                    | {intent.TOOL_TOPICS[t] for t in tools_used if t in intent.TOOL_TOPICS}
                                    | ({"air_extra"} if turn.air_extra_used else set()))
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
-                for spec in turn.charts[:MAX_CHARTS]:  # drawn while "typing..." is still showing
+                for spec in turn.charts[:MAX_CHARTS]:  # drawn (from its JSON, as a tool will hand it over) while "typing..." is still showing
                     try:
-                        answer.photos.append(await asyncio.to_thread(render_chart, spec, self.cfg.tz, turn.times))
+                        answer.photos.append(await asyncio.to_thread(render_data, to_json(spec, self.cfg.tz), self.cfg.tz, turn.times))
                         answer.titles.append(spec.caption(now.date()))
                     except Exception as e:
                         log.error("Chart failed (%s: %s); sending the answer without it", type(e).__name__, e, exc_info=isinstance(e, BUGS))

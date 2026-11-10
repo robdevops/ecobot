@@ -321,7 +321,7 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
 
     async def reply_photo(photo, caption=None, **kw):
         sent.append(caption)
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -359,7 +359,7 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
 
     async def reply(*a, **k):
         return NS(message_id=7)
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: pokes.append(1), describe=lambda: "Ecowitt")]
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply, reply_text=reply,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -613,7 +613,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
 
     async def reply_photo(photo, caption=None, **kw):
         sent.append(caption)
-    monkeypatch.setattr(botmod, "render_chart", lambda spec, tz, times=None: b"png")
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     for text, caption_wanted in (("ecowitt all week", True), ("temperature chart 7d", True)):
         sent.clear()

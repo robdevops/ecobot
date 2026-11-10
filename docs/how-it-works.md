@@ -22,9 +22,11 @@ lib/lines.py            the one rule that turns readings into a chart line (raw,
 lib/rain.py             rain per slot, spells and bars from the daily total
 lib/analysis/           pairs (rain vs a reading, rain vs air quality), scan (air quality vs everything)
 lib/compose.py          plot_chart / air_link / air_scan: any series on one time axis
-lib/specs.py            what a chart is (typed: Chart > Panel > Line/Bars/Shares), validated when built; stack() titles a stacked chart
+lib/specs.py            what a chart is (typed: Chart > Panel > Line/Bars/Shares), validated when built; stack() titles a stacked chart;
+                        to_json / from_json: the chart as JSON (schemas/chart.json, versioned), times local with their offset
 lib/panels.py           how a reading becomes a panel (title, unit, colour key, zones): every chart producer uses it
-lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading
+lib/charts.py           the one renderer: panels on a shared time axis, rain behind the lines, one colour per reading; the bot draws
+                        every chart from its JSON (render_data)
 lib/captions.py         when a chart is drawn, and the hint that makes the model's reply its caption
 lib/ecowitt/            api, fetch (what a job reads, from the storage or Ecowitt), reads and period (what a question reads of the storage:
                         its period's days, readings, lines), extremes, query (one history question), link (weather_link), days (rank/count

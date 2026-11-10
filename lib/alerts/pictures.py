@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from typing import Callable, NamedTuple
 
 from .. import intent
-from ..charts import render
+from ..charts import render_data
+from ..specs import to_json
 from ..timeutil import now_local
 from ..tools import Turn
 
@@ -37,7 +38,7 @@ async def chart(source, text: str, tz) -> Picture | None:
         handler = next(t for t in source.tools if t.name == tool).handler
         await handler(args, turn)
         spec = turn.charts[0]
-        return Picture(await asyncio.to_thread(render, spec, tz), spec.caption(now.date()), spec.newest)
+        return Picture(await asyncio.to_thread(render_data, to_json(spec, tz), tz), spec.caption(now.date()), spec.newest)
     except Exception as e:
         log.warning("The chart for the alert (%s) couldn't be made: %s: %s", text, type(e).__name__, e)
         return None
