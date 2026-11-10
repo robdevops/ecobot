@@ -268,6 +268,9 @@ as now, next to the reads that chose its resolution, its buckets and its rose. A
 
 ### 3.8 The bot's side of a tool call
 
+The model never reaches the service: it answers the bot with a tool call, the bot makes the call, and the service replies to the bot,
+which hands the result back to the model for its reply. Every call passes through the bot both ways, so:
+
 - **What it offers:** the service's tool list, except the air sensor's own temperature and humidity left out of the metric lists unless
   the words name them (the list only changes with the words, so the prompt cache holds, as now); a new list when the service says so.
   This narrows what the model can pick from; it never changes what the model picked.
@@ -278,6 +281,16 @@ as now, next to the reads that chose its resolution, its buckets and its rose. A
   only for one that still fails, in the bot, filling an argument the model left out, never overruling one it set, each with its case.
 - **Shortcuts** build the tools' arguments directly (`intent.fast_call` and the rest), so a shortcut and the model ask the same way; the
   report sends `_meta.fetch: false` as `cached` does now.
+- **When the chart is the answer, the model doesn't write the caption.** The bot adds one argument of its own to `summary` and to `days`
+  (the tools whose captions code already writes: `report.chart_caption`, and `report.lookup` for a count per month or year):
+  `chart_answers_it`, described as "true only when the question is just to see this chart and its figures: nothing else to answer". It
+  removes the argument before forwarding, so the service and other clients never see it. When every call of the model's step set it and
+  each result brings a chart, the bot draws them, writes the caption in code (the period, then each reading's high and low with when,
+  and any note about missing data) and sends them: the turn ends there, with no second call to the model, the one that reads the whole
+  result. A step without it, a result with no chart, an error, or a caption the code can't write goes back to the model as usual. The
+  model decides, because it reads the question better than a regex: "plot pressure this week" is just the chart; "plot pressure this
+  week: is a storm coming?" needs its words. A plain chart request the shortcuts recognise never reaches the model at all, as now. This
+  needs nothing from the split: it can ship first, in today's bot, on `weather_history`, `air_quality` and the day tools.
 - **The early cue:** today the bot pokes the sources the words concern as soon as a question arrives, so they refresh while the model
   thinks (a forecast question refreshes only that way). The bot sends the same cue at receipt as a request to the service's `warm` tool
   (`sources`), marked for applications (`_meta` `audience: "app"`), which the bot never offers the model. The sources lose `wants()`.
@@ -301,6 +314,11 @@ their state; the charts' look; the shortcuts' choices; Telegram.
 Each step ships on its own, with the tests and evals green and the bot working the whole way. The tool list never offers old and new
 names together.
 
+0. **The chart that answers itself** (3.8), in today's bot, independent of the rest: `chart_answers_it` on the chart tools, the bot's
+   early end of the turn with the caption written in code, and a pair of eval cases (a question that is just the chart, where the model
+   sets it; a question with something to answer beside the chart, where it doesn't). Shipped on the live evals; the log's `LLM 2` lines
+   show the calls it saves.
+
 1. **Explicit arguments, shared helpers.** The twelve tools take the `Turn`'s inputs as arguments and read nothing else about the
    question; they return their charts in the result instead of appending to `turn.charts`, and `weather_forecast` returns the days it
    shows. So that this step changes no answer, today's corrections from the words move out of the tools into the bot, which applies them
@@ -310,8 +328,8 @@ names together.
    rebuilt spec draws the same picture (the golden images).
 3. **The nine tools, in process.** The tools of 3.3 with their result shapes; the prompt, the shortcuts, `lib/report.py` (`report`,
    `weather_now`, `lookup`, `chart_caption`), the alert charts and the evals move to them together; the twelve go. The bot's corrections
-   from the words go too (3.8), and come back only for a case that then fails. Shipped only when the live evals (`--live`, all cases)
-   do as well as before.
+   from the words go too (3.8), and come back only for a case that then fails. `chart_answers_it` moves to `summary` and `days`.
+   Shipped only when the live evals (`--live`, all cases) do as well as before.
 4. **The data interface, in process.** A `Data` protocol with the tools and resources of section 3, and an in-process implementation
    over today's sources. The bot's direct reads move to it: the gauges (`sheet()` moves to the bot), the alerts (resources, clocks and an
    in-process stand-in for the listen stream in place of `Warmer.after` and `on_live`), irrigation, the prompt's lines and `by_name`
@@ -337,7 +355,8 @@ names together.
   depends on; a question asked while the service is down is answered as unreachable, and the next one after it is back is answered; an
   alert due during the gap is sent once.
 - A deploy check: a tool call through the proxy's name succeeds (the allowed hosts and the token).
-- The live evals run against the service's real tool list.
+- The live evals run against the service's real tool list, with `chart_answers_it` added as the bot offers it; the pair of cases for it
+  (set for a question that is only the chart, not set for one with more to answer) runs in every live run.
 
 ## 7. Risks
 
@@ -346,6 +365,9 @@ names together.
 - **The model and the new tools.** New names, arguments and shapes can change what the model picks, and without the corrections from
   the words it must make every choice itself: step 3 ships only on the live evals, in one process, before any network is involved; a
   correction that turns out to be needed comes back as a fill, never an override.
+- **A chart sent without the answer.** If the model sets `chart_answers_it` on a question that needed words, the person gets the chart
+  and its figures but not the answer. The description limits it to a question that is only the chart; the eval pair checks both sides,
+  and a follow-up ("but is a storm coming?") goes to the model as usual.
 - **A protocol still settling.** `subscriptions/listen` is the 2026-07-28 revision: the bot pins it, and both programs upgrade the SDK
   together.
 - **Two things to run.** More to deploy and watch; `ecobot://health` and the bot's "unreachable" answers make a failure visible.
