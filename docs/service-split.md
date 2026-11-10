@@ -140,8 +140,8 @@ Nine tools in place of twelve, one per kind of question, each over both sensors 
 **`summary`'s result** is one shape for both sensors:
 `{period, series: {"outdoor.temperature": {unit, low, low_time, low_when, low_date, [low_note], high…, [average], [daily|monthly]},
 "air.pm2_5": {unit, low…, high…, average, high_rating, average_rating, high_aqi_us, high_band}, "wind.wind_direction": {most_common,
-then, steadiness, [daily]}}, [rain_total_mm], [monthly_note], [notes: {sensor: {…}}], [chart_hint], [missing], [warning]}`. The breakdown and
-`monthly_note` are the station's; ratings, AQI and the 400-day cap (30 days fetched inline) the air sensor's; `rain_total_mm` whenever
+then, steadiness, [daily]}}, [rain_total_mm], [monthly_note], [notes: {sensor: {…}}], [chart_hint], [missing], [warning]}`.
+The breakdown and `monthly_note` are the station's; ratings, AQI and the 400-day cap (30 days fetched inline) the air sensor's; `rain_total_mm` whenever
 `rainfall.rain` is summarised. `current`'s result is `{time, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C",
 [emoji]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`.
 
@@ -335,8 +335,8 @@ names together.
    in-process stand-in for the listen stream in place of `Warmer.after` and `on_live`), irrigation, the prompt's lines and `by_name`
    (from the station resource). Nothing in the bot holds a source object after this step.
 5. **The MCP server and client.** `lib/mcp_server.py` serves `Data` (the bus, the low-level server, the transport settings, the token
-   check); `lib/mcp_client.py` implements `Data` over MCP (the supervisor, date parsing, charts from the result's `_meta`). The evals read a checked-in tool
-   list (`tests/evals/tools.json`), which a test keeps equal to the server's.
+   check); `lib/mcp_client.py` implements `Data` over MCP (the supervisor, date parsing, charts from the result's `_meta`). The evals
+   read a checked-in tool list (`tests/evals/tools.json`), which a test keeps equal to the server's.
 6. **Two programs.** `ecobot_service.py` starts the sources, the loops and the server; `ecobot.py` connects to `MCP_URL`. The import
    boundary test, both ways. Config split. One compose file per host, TLS and tokens. Scripts go where they work: on the service's host
    `edit_readings`, `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`, `conditions`, `ecowitt_metrics`; on the bot's
