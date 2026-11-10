@@ -4,15 +4,15 @@ The readings drawn are the period's at the resolution its length calls for: up t
 where the storage has it, else 30-minute: one request per week); longer, the 30-minute readings where the storage holds them all, else
 Ecowitt's daily records (10am to 10am in Melbourne: UTC days) and the newest days at 30 minutes. The records, the breakdown by day or by
 month and the averages come from the period's days instead (period.py): each whole day's row, worked out from the finest readings held
-for it, so a record's time is as close as those readings give it, and the part of a day at either end from its own readings.
+for it, so a record's time is as close as those readings give it, and the part of a day at either end from its own readings. An average
+weighs each of those days by the time of it the period holds.
 """
 
 import logging
 from datetime import date, datetime, time, timedelta
-from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
-from ..lines import DAY, Plotted, Sample, build_line, how_drawn, shaded_up_to
+from ..lines import DAY, Plotted, Sample, build_line, how_drawn, shaded_up_to, time_mean
 from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
 from ..timeutil import at_hour, day_bounds, day_text, local_date, now_local, parse_local, SLOT
@@ -301,7 +301,7 @@ class HistoryQuery:
                 if self.held:  # each month's low/high with when and date
                     for w, e in d.items():
                         _, row[f"{w}_when"], row[f"{w}_date"] = describe_time(e.ts, e.cycle, tz)
-        if (self.args.get("average") or self.turn.average_asked) and not key.startswith("rainfall"):  # a rain total has no mean
+        if (self.args.get("average") or self.turn.average_asked) and p.column.mode != "last":   # a rain counter (a total) has no mean; rain rate has
             self._add_averages(entry, {d.day: d.mean for d in p.days if d.mean is not None})
         return entry
 
@@ -337,21 +337,22 @@ class HistoryQuery:
         ("Oct 2026") when the period is broken down by month."""
         return day_text(day, year=False) if self.by_day else f"{day:%b %Y}"
 
-    def _add_averages(self, entry: dict, means: dict):
-        """The mean over the period, and per row of the breakdown (each day, or each month): the answer to "what was the average"."""
-        if not means:
+    def _add_averages(self, entry: dict, means: dict[date, float]):
+        """The mean over the period, and per row of the breakdown (each day, or each month): the answer to "what was the average". By
+        time, as a day row takes its own mean (lines.time_mean): each day's mean counts for the seconds of it the period holds, so the part
+        of a day at either end counts for its hours, not as a whole day, and a month for its time."""
+        span = self.f.epoch(self.start), self.f.epoch(self.end), self.tz
+        if (mean := time_mean(means, *span)) is None:
             return
         fmt = lambda v: f"{v:.1f}"
-        entry["average"] = fmt(fmean(means.values()))
-        table = entry.get("daily" if self.by_day else "monthly")
+        entry["average"] = fmt(mean)
+        table = entry.get("daily" if self.by_day else "monthly") or {}
+        rows: dict[str, dict[date, float]] = {}
         for d, v in means.items():
-            if table is not None and (label := self._label(d)) in table:
-                table[label].setdefault("_sum", []).append(v)
-        for table in (entry.get("daily"), entry.get("monthly")):
-            for row in (table or {}).values():
-                values = row.pop("_sum", None)
-                if values:
-                    row["avg"] = fmt(fmean(values))
+            if (label := self._label(d)) in table:
+                rows.setdefault(label, {})[d] = v
+        for label, days in rows.items():
+            table[label]["avg"] = fmt(time_mean(days, *span))
 
     def _chart_spec(self, series_out: dict, field: str | None = None) -> Chart | None:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
