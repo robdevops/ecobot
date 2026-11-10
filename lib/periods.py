@@ -4,10 +4,8 @@ A chart the service drew carries `drawn_by` (docs/mcp-service.md 3.7): the call 
 each with its label ("7d", "7D"). Its buttons are those periods, the chart's own shaded (the blue of an alert toggle that is on), and
 none when it lists none (but a 🔄, "pd:reload", that draws it again when its period runs to now); a button's data is the period
 ("pd:7d"), never the call, which Telegram's 64 bytes couldn't hold. Pressing one replays the call with that period
-(Bot.on_period_button); what drew each chart is remembered for that (Charted).
-
-A chart the model drew through the old tools whose call has no service equivalent keeps the old buttons, 1D / 7D / 1M / 3M / 1Y (1,
-7, 30, 90 and 365 days, "pd:7"), which ask its question again with that period."""
+(Bot.on_period_button); what drew each chart is remembered for that (Charted). A chart remembered by its question (sent before every
+chart carried its drawn_by) answers that it is out of date."""
 
 import json
 import time
@@ -21,27 +19,11 @@ from telegram.constants import KeyboardButtonStyle
 from . import charts
 from .buttons import button
 
-NAMES = {1: "1D", 7: "7D", 30: "1M", 90: "3M", 365: "1Y"}   # each period, in days, and what its button says (a question asked again)
-PERIODS = tuple(NAMES)
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose call is kept, newest first to stay
 WHOLE_DAY_TOOLS = ("days", "relate", "scan")   # the tools that read a period as whole days, up to yesterday
 REFRESHED = "1d"   # the period whose own shaded button draws the chart again with the latest readings (longer ones barely change)
 RELOAD = "reload"   # the 🔄 under a chart with no periods to offer whose period runs to now: its call replayed as it is ("pd:reload")
-
-
-def keyboard(current: int | None = None) -> InlineKeyboardMarkup:
-    """The old row of period buttons, for a question asked again; the one for the chart's own period (`current`, in days) is shaded."""
-    return InlineKeyboardMarkup([[button(NAMES[days], f"{PREFIX}{days}", KeyboardButtonStyle.PRIMARY if days == current else None)
-                                  for days in PERIODS]])
-
-
-def days_in(data: str | None) -> int | None:
-    """The period an old button's callback data asks for ("pd:7"), if it is one of ours."""
-    if not data or not data.startswith(PREFIX):
-        return None
-    days = data.removeprefix(PREFIX)
-    return int(days) if days.isdigit() and int(days) in PERIODS else None
 
 
 def period_in(data: str | None) -> str | None:

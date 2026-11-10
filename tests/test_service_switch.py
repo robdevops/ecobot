@@ -162,8 +162,6 @@ class World:
         from lib.compose import Composer
         from lib.ecowitt import Ecowitt
         from lib.forecast import Forecast
-        from lib.history import History
-        from lib.tools import Tools
         from tests.fakes import TZ, config, ecowitt_transport
         from tests.test_pollen import make as make_pollen, page
         from tests.test_service_current import Station, live
@@ -189,16 +187,12 @@ class World:
             source.poke = lambda: None
         self.eco, self.air, self.pollen, self.forecast = eco, air, pollen, forecast
         self.composer = Composer(eco, air)
-        history = await History.open(eco, air)
-        self.tools = Tools([t for s in self.sources for t in s.tools] + self.composer.tools + history.tools)
+        from lib import model_tools
+        from lib.service import Service
         from lib.service.context import Context
-        try:
-            from lib.service import Service
-        except ImportError:   # (before the switch, when the answers were recorded: the bot had no service)
-            self.service = None
-        else:
-            self.service = Service.of(await Context.open(eco=eco, air=air, composer=self.composer, forecast=forecast, pollen=pollen, tz=TZ,
-                                                         clock=lambda: FROZEN))
+        self.service = Service.of(await Context.open(eco=eco, air=air, composer=self.composer, forecast=forecast, pollen=pollen, tz=TZ,
+                                                     clock=lambda: FROZEN))
+        self.tools = model_tools.tools(self.service)
         self.tz, self.cfg = TZ, cfg
         return self
 
@@ -222,8 +216,7 @@ class World:
             return b"gauges"
         monkeypatch.setattr(botmod, "render_data", render)
         monkeypatch.setattr(botmod.gauges, "render", gauges)
-        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), self.sources, alert_state,
-                          **({"service": self.service} if self.service else {}))
+        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), self.sources, alert_state, service=self.service)
 
     def message(self, message_id=50):
         world = self
@@ -323,33 +316,41 @@ async def asked(world, alert_state, monkeypatch, text) -> dict:
 
 
 # Every question the bot answers in code: the keyboard's charts (templates.chart_sentences, the same with irrigation: only Wind goes),
-# then each of intent's shortcuts and plain lookups (bot._answer: a chart made in code, the dashboard, a lookup, the report and
-# "weather now")
+# then each of intent's shortcuts (bot._answer: a named reading's chart and a period, the dashboard, the report and "weather now")
 from lib import templates  # noqa: E402
 
 KEYBOARD = templates.chart_sentences(False)
 SHORTCUTS = [
-    # the report and "weather now" (written in code from weather_now, air_quality, pollen_asthma, weather_forecast)
+    # the report and "weather now" (written in code from current, pollen and forecast)
     "Report", "weather now", "status",
-    # a reading now (lookup "reading")
-    "how hot is it", "is it raining", "humidity", "wind", "indoor temperature", "uv", "pressure",
-    # the air now (fast path air_quality {}, lookup "air")
-    "air quality now", "co2", "how's the air",
-    # pollen, forecast, what the bot can do, the gauges
-    "pollen", "forecast", "what can you do", "dashboard",
-    # a days count and a figure per month or year (weather_days, lookup "days"; the per-month ones draw bars)
-    "how many days was the temperature over 18 this year", "how many days was humidity under 60 last month",
+    # the gauges
+    "dashboard",
+    # a named reading's chart and a period (summary with the words as they are; the caption goes with it)
+    "temperature chart 7d", "humidity 7d", "rain chart 7d", "pressure chart this month", "temperature and rain chart 7d",
+    "weather 30d", "indoor temperature chart 7d", "wind direction plot 3m", "temperature chart last month", "air quality chart 7d",
+    "pm2.5 chart 3d",
+]
+# What the bot answered in code until step 3 and the model answers now (with no model: NO_MODEL)
+TO_THE_MODEL = [
+    "how hot is it", "is it raining", "humidity", "wind", "indoor temperature", "uv", "pressure",          # a reading now
+    "air quality now", "co2", "how's the air",                                                             # the air now
+    "pollen", "forecast", "what can you do",
+    "how many days was the temperature over 18 this year", "how many days was humidity under 60 last month",   # days
     "how many days was pm2.5 over 15 this week", "days with uv over 9 per month this year",
     "rain by month this year", "average temperature per month this year",
-    # extremes of a short period (weather_history without a chart, lookup "extremes")
-    "highest temperature yesterday", "high and low today", "lowest humidity yesterday", "average pressure yesterday",
+    "highest temperature yesterday", "high and low today", "lowest humidity yesterday", "average pressure yesterday",   # extremes
     "strongest gust today", "temps today",
-    # a chart made in code (weather_history or air_quality with a chart, captioned in code)
-    "temperature chart 7d", "humidity 7d", "rain chart 7d", "pressure chart this month", "temperature and rain chart 7d",
-    "weather 30d", "weather all week", "average temperature 7d", "plot uv and solar on two axes 7d", "indoor temperature chart 7d",
-    "wind direction plot 3m", "temperature chart last month", "lowest temperature on record", "highest humidity this week",
-    "temps this week", "air quality chart 7d", "pm2.5 chart 3d", "chart weather",
+    "weather all week", "average temperature 7d", "plot uv and solar on two axes 7d", "lowest temperature on record",    # charts beside
+    "highest humidity this week", "temps this week", "chart weather",                                                   # a question
 ]
+CHANGED = {"air quality chart 7d"}   # a shortcut whose words the service reads as every air reading now (until step 3: PM2.5 alone)
+
+
+@pytest.mark.parametrize("text", TO_THE_MODEL)
+async def test_what_was_answered_in_code_goes_to_the_model(world, alert_state, monkeypatch, text):
+    from lib.bot import NO_MODEL
+    got = await asked(world, alert_state, monkeypatch, text)
+    assert got["history"] == NO_MODEL and got["charts"] == [] and got["gauges"] == []
 
 
 @pytest.mark.parametrize("text", KEYBOARD + SHORTCUTS)
@@ -360,7 +361,7 @@ async def test_the_bots_own_answers_are_unchanged(world, alert_state, monkeypatc
         period_buttons_are_drawn_bys(world, got)
 
 
-@pytest.mark.parametrize("question, press", [("Temperature chart 1d", "7D"), ("Rain chart 1d", "1M"), ("rain by month this year", "1Y")])
+@pytest.mark.parametrize("question, press", [("Temperature chart 1d", "7D"), ("Rain chart 1d", "1M"), ("humidity 7d", "1Y")])
 async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_state, monkeypatch, question, press):
     """A press on a period button under a chart: the chart over that period, put into the same message."""
     bot = world.bot(alert_state, monkeypatch)
@@ -381,20 +382,7 @@ async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_sta
     await bot.on_period_button(NS(callback_query=query, effective_message=under, effective_chat=under.chat,
                                   effective_user=NS(username="rob", full_name="Rob", id=7)), CONTEXT)
     got = {"charts": world.charts, "edits": [e[:2] for e in world.edits]}
-    name = f"press {press} under {question}"
-    if RECORD or press != "1Y" or "month" not in question:
-        pinned(name, got)
-        return
-    # The deliberate change: a count per month's buttons are its drawn_by's periods, read by the service: "1y" is the 365 whole days to
-    # yesterday (the old 1Y asked "... 365d", which the bot read as 364 whole days and today). The chart is otherwise the same.
-    want = golden()[name]
-    (chart,), (old,) = got["charts"], want["charts"]
-    assert chart["period"] == ["2025-11-10", "2026-11-09"] and old["period"] == ["2025-11-11", "2026-11-09"]
-    assert chart["subtitle"] == old["subtitle"].replace("Tue 11 Nov 2025", "Mon 10 Nov 2025").replace("364 days", "365 days")
-    assert {k: v for k, v in chart.items() if k not in ("period", "subtitle", "sha", "panels")} == \
-        {k: v for k, v in old.items() if k not in ("period", "subtitle", "sha", "panels")}
-    assert got["edits"] == [["photo", "Total rain, Mon 10 Nov 2025 – Mon 9 Nov 2026\n\nTotal rain: 248 mm over 365 days (Mon 10 Nov 2025 – "
-                                      "Mon 9 Nov 2026)."]]
+    pinned(f"press {press} under {question}", got)
 
 
 @pytest.mark.parametrize("kind", ["gusts", "uv", "temps", "particulates"])
@@ -418,3 +406,78 @@ async def test_an_alerts_chart_is_the_same_as_before(world, monkeypatch, kind):
     keyboard = golden().get(pictures.CHARTS[kind])
     if keyboard:   # (the UV chart is no button)
         assert chart == keyboard["charts"][0]
+
+
+# ---------- what follows from the model's calls ----------
+class Scripted:
+    """A model that makes these steps' calls ([(tool, arguments)] each), then answers `reply` (an exception: raised instead)."""
+
+    def __init__(self, steps: list[list[tuple[str, dict]]], reply):
+        self.steps, self.reply = list(steps), reply
+        self.chat = NS(completions=self)
+
+    async def create(self, **kw):
+        if self.steps:
+            calls = [NS(id=f"c{i}", function=NS(name=name, arguments=json.dumps(args))) for i, (name, args) in enumerate(self.steps.pop(0))]
+            return NS(choices=[NS(message=NS(content="", tool_calls=calls))], usage=None)
+        if isinstance(self.reply, BaseException):
+            raise self.reply
+        return NS(choices=[NS(message=NS(content=self.reply, tool_calls=None))], usage=None)
+
+
+async def asked_the_model(world, alert_state, monkeypatch, text, steps, reply="ok") -> list:
+    """Ask the bot `text` with a scripted model (Scripted), the air sensor's live-chart link configured: the text or caption of each
+    message it sent."""
+    from lib.llm import Agent
+    bot = world.bot(alert_state, monkeypatch)
+    bot.agent = Agent(Scripted(steps, reply), "m", world.tools)
+    world.air.link = ("live chart", "https://air.example")
+    msg = world.message()
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
+    await bot.respond(update, CONTEXT, text)
+    return [s[1] for s in world.sent]
+
+
+LINK_CASES = [   # (question, the model's steps, does the live-chart link go under the reply)
+    ("what's the temperature outside", [[("current", {})]], False),                        # every sensor read: not an air answer
+    ("what's it like out", [[("current", {"readings": ["all"]})]], False),
+    ("how much rain this week", [[("summary", {"readings": ["rainfall total"]})],         # a refusal lists every reading's words
+                                 [("summary", {"readings": ["rain"], "period": "7d"})]], False),
+    ("temperature readings", [[("readings", {"readings": ["temperature"], "period": "today"})]], False),   # refused (bad arguments)
+    ("hottest days", [[("days", {"sort_by": "temp_max", "period": "this month"})]], False),
+    ("how's the air", [[("current", {"readings": ["air"]})]], True),
+    ("pm2.5 and temperature now", [[("current", {"readings": ["pm2.5", "temperature"]})]], True),
+    ("how was the air this week?", [[("summary", {"readings": ["pm2.5"], "period": "7d"})]], True),
+    ("smoky days", [[("days", {"where": [{"field": "pm2_5_max", "op": ">", "value": 15}], "period": "this month"})]], True),
+]
+
+
+@pytest.mark.parametrize("text, steps, link", LINK_CASES)
+async def test_the_air_link_goes_under_an_answer_that_read_the_air_and_no_other(world, alert_state, monkeypatch, text, steps, link):
+    """The live-chart link follows what was read (as before the swap, when air_quality's call brought it), never a key or a word
+    anywhere in a result: not `current` of every sensor, nor a refusal's catalogue of readings."""
+    said = await asked_the_model(world, alert_state, monkeypatch, text, steps)
+    assert said and all(("live chart" in s) is link for s in said), said
+
+
+async def test_an_error_reply_gets_no_air_link(world, alert_state, monkeypatch):
+    """The air was read, then the model timed out: the apology goes alone."""
+    said = await asked_the_model(world, alert_state, monkeypatch, "how's the air", [[("current", {"readings": ["air"]})]], TimeoutError())
+    assert said == ["Sorry, that took too long. Please try again in a moment."]
+
+
+async def test_the_forecast_days_an_outlook_shows_are_recorded_for_the_forecast_alert(world, alert_state, monkeypatch):
+    """outlook's result carries Open-Meteo's lines for today and tomorrow, for the model to copy: once sent, a revision of those days is
+    worth telling the chat, as for forecast's."""
+    from datetime import timedelta
+    await asked_the_model(world, alert_state, monkeypatch, "will it rain later?", [[("outlook", {})]], "Possibly.")
+    today = FrozenDate.today()
+    assert sorted(alert_state.forecast_sent(-5)) == [today, today + timedelta(days=1)]
+
+
+@pytest.mark.parametrize("text", ["temperature 1d", "co2 1d", "pm2.5 1d"])
+async def test_a_bare_reading_and_1d_is_still_its_chart_without_the_model(world, alert_state, monkeypatch, text):
+    """As before the swap: "temperature 1d" is the chart of the last day, drawn in code (no model needed)."""
+    from lib.bot import NO_MODEL
+    got = await asked(world, alert_state, monkeypatch, text)
+    assert got["history"] != NO_MODEL and len(got["charts"]) == 1

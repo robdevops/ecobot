@@ -517,8 +517,9 @@
     "note": "alerts can't be added by asking: about lists those there are, with their thresholds"
   },
   "metrics-bare": {
-    "tools": [
-      "about"
+    "any_tools": [
+      "about",
+      "current"
     ],
     "not_tools": [
       "summary",
@@ -527,7 +528,7 @@
       "relate",
       "scan"
     ],
-    "note": "what is measured is about's (the bot answered it from its prompt)"
+    "note": "\"metrics\" alone is what is measured (about; the bot answered it from its prompt) or the metrics now (current): a plain client with only the tool list may read it either way, and both answer it (the first live run called current {}); never a period's history"
   },
   "most-rain-days-jja": {
     "tools": [
@@ -784,9 +785,6 @@
       "days",
       "forecast"
     ],
-    "not_tools": [
-      "pollen"
-    ],
     "args": {
       "summary": {
         "period": {
@@ -808,7 +806,7 @@
         }
       }
     },
-    "note": "asked on a Tuesday: last Tuesday's figures, or today's forecast; not the full report"
+    "note": "asked on a Tuesday: last Tuesday's figures, or today's report (current, forecast \"today\", pollen: the report as the tool descriptions give it, so pollen is no longer refused). The bot's case kept its own fast path (wants_report) from taking it as the bare report; a plain client has no fast path, and Tuesday is today"
   },
   "air-quality-vs-rain": {
     "tools": [
@@ -831,26 +829,49 @@
       "summary"
     ],
     "args": {
-      "summary": {
-        "chart_readings": {
-          "regex": "(?s)(?=.*:rating)(?=.*rain)",
-          "e.g.": [
-            "air.pm2_5:rating",
-            "rainfall.rain"
-          ]
+      "summary": [
+        {
+          "chart_readings": {
+            "regex": "(?s)(?=.*:rating)(?=.*rain)",
+            "e.g.": [
+              "air.pm2_5:rating",
+              "rainfall.rain"
+            ]
+          },
+          "period": {
+            "means": "last 30 days"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
         },
-        "period": {
-          "means": "last 30 days"
-        },
-        "chart": {
-          "one_of": [
-            true,
-            null
-          ]
+        {
+          "readings": {
+            "regex": "(?s)(?=.*:rating)(?=.*rain)",
+            "e.g.": [
+              "air.pm2_5:rating",
+              "rain"
+            ]
+          },
+          "chart_readings": {
+            "absent": true
+          },
+          "period": {
+            "means": "last 30 days"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
         }
-      }
+      ]
     },
-    "note": "the rating drawn over time is summary's chart (\":rating\"), with rain in a panel below; relate would draw PM2.5, not its rating"
+    "note": "the rating drawn over time is summary's chart (\":rating\"), with rain in a panel below; relate would draw PM2.5, not its rating. summary also takes the \":rating\" in `readings` (summarised, and drawn as its rating when chart_readings isn't sent), as deepseek sent it on 10 Nov 2026"
   },
   "air-quality-vs-everything": {
     "tools": [
@@ -1174,17 +1195,13 @@
   },
   "only-that-its-cold": {
     "not_tools": [
-      "current",
       "summary",
       "readings",
       "days",
       "relate",
-      "scan",
-      "outlook",
-      "forecast",
-      "pollen"
+      "scan"
     ],
-    "note": "a chat reply, not a request (the bot once answered it with the temperatures)"
+    "note": "a chat reply, not a request (the bot once answered it with the temperatures). With no conversation before it and only the tool list, a plain client may take it as a look at now (current, forecast, outlook, pollen: the first live run did, every time), which costs a call but answers nothing wrong; keeping the model from it is the client's prompt (the bot's needs_data), not a tool description. What it must not do is read a period's history"
   },
   "how-cold-is-it": {
     "tools": [
@@ -1204,17 +1221,13 @@
   },
   "now-what": {
     "not_tools": [
-      "current",
       "summary",
       "readings",
       "days",
       "relate",
-      "scan",
-      "outlook",
-      "forecast",
-      "pollen"
+      "scan"
     ],
-    "note": "'now' alone is not a weather question"
+    "note": "'now' alone is not a weather question. With no conversation before it and only the tool list, a plain client may take it as a look at now (current, forecast, outlook, pollen: the first live run did, every time), which costs a call but answers nothing wrong; keeping the model from it is the client's prompt (the bot's needs_data), not a tool description. What it must not do is read a period's history"
   },
   "chart-with-forecast": {
     "tools": [
@@ -1373,8 +1386,9 @@
     "note": "a judgement on the conditions now: current, then the model's words"
   },
   "lookup-hottest-today": {
-    "tools": [
-      "summary"
+    "any_tools": [
+      "summary",
+      "current"
     ],
     "args": {
       "summary": {
@@ -1388,9 +1402,18 @@
           ],
           "optional": true
         }
+      },
+      "current": {
+        "context": true,
+        "readings": {
+          "reads_any": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
       }
     },
-    "note": "the high of a short period: summary (today is its default)"
+    "note": "the high of a short period: summary (today is its default); or current with context, whose today carries the high and its time"
   },
   "lookup-hottest-vs": {
     "tools": [

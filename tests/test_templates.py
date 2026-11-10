@@ -18,22 +18,26 @@ def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left
 
 
 def test_every_button_asks_something_the_bot_understands():
+    """Status is the report; each chart button is a named reading's chart over a day: summary with the readings the service reads its
+    words as. (Help & Alerts never reaches intent: bot.on_message answers it.)"""
+    from zoneinfo import ZoneInfo
+    from lib.service.names import CATALOGUE
+    tz = ZoneInfo("Australia/Melbourne")
+    now = NOW.replace(tzinfo=tz)
+
     def read(label):
-        return intent.read(templates.sentence(label), NOW)
+        return intent.read(templates.sentence(label), now, ("Ecowitt", "AirGradient"), tz)
     assert read("\U0001f4cb Status").report
-    weather = read("\U0001f326️ Weather")
-    assert intent.wants_chart_all(templates.sentence("\U0001f326️ Weather")) and weather.chart_in_code
-    assert weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
-    for label, groups in (("\U0001f327️ Rain", "rainfall"), ("\U0001f4c8 Temperature", "outdoor,indoor"),
-                          ("\U0001f4a7 Humidity", "outdoor,indoor"), ("\U0001f4a8 Wind", "wind")):
-        name, args, _ = read(label).fast
-        assert name == "weather_history" and args["chart"] is True and args["groups"] == groups and read(label).chart_in_code
-    assert read("\U0001f4a7 Humidity").chart_field == "humidity" and read("\U0001f327️ Rain").rain_caption
-    name, args, _ = read("\U0001f3ed Air Quality").fast
-    assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10", "co2", "voc_index", "nox_index"}
-    name, args, _ = read("\U0001f52c Particulates").fast
-    assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
-    assert read(templates.CAPABILITIES).about_the_bot
+    for label, names in (("\U0001f327️ Rain", ["rainfall.rain"]), ("\U0001f4c8 Temperature", ["outdoor.temperature", "indoor.temperature"]),
+                         ("\U0001f4a7 Humidity", ["outdoor.humidity", "indoor.humidity"]), ("\U0001f4a8 Wind", ["wind.wind_speed", "wind.wind_direction"]),
+                         ("\U0001f3ed Air Quality", ["air.pm2_5", "air.pm10", "air.pm1", "air.co2", "air.voc_index", "air.nox_index"]),
+                         ("\U0001f52c Particulates", ["air.pm2_5", "air.pm10", "air.pm1"])):
+        tool, args = read(label).chart
+        assert tool == "summary" and args["chart"] is True and args["period"] == "1d", label
+        assert [r.name for r in CATALOGUE.resolve(args["readings"], default=None)] == names, label
+    tool, args = read("\U0001f326️ Weather").chart
+    readings = [r.name for r in CATALOGUE.resolve(args["readings"], default=None)]
+    assert readings[0] == "outdoor.temperature" and readings[-1] == "wind.wind_direction"
 
 
 def test_the_keyboard_is_persistent_and_has_every_button():

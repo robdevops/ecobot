@@ -7,6 +7,7 @@ import pytest
 from lib.forecast import Forecast
 from lib.forecast.source import WMO, day_label, describe_day, temps
 from tests.fakes import TZ, config
+from tests import old_tools
 
 
 def ensemble_body(per_day):
@@ -82,7 +83,7 @@ async def test_today_and_the_next_days_come_from_open_meteo_by_local_date(tmp_pa
     today = datetime.now(TZ).date()
     assert forecast.lines() == ["Today: 🌧️ Rain. 11–16°C, 50% chance of at least 1 mm",
                                 f"{today + timedelta(days=1):%A}: ☀️ Clear. 12–20°C, 0% chance of at least 1 mm"]
-    out = json.loads(await forecast.handle({"days": 3}))
+    out = json.loads(await old_tools.forecast(forecast, {"days": 3}))
     assert len(out["lines"]) == 3 and out["lines"][2] == f"{today + timedelta(days=2):%A}: ⛈️ Thunderstorm. 9–14°C, 75% chance of at least 1 mm"
     assert out["place"] == "Melbourne" and out["source"] == "Open-Meteo" and "Tomorrow" not in " ".join(out["lines"])
     assert "tag" not in out and {c for c in calls if isinstance(c, str)} == {"api.open-meteo.com", "ensemble-api.open-meteo.com"}
@@ -92,8 +93,8 @@ async def test_today_and_the_next_days_come_from_open_meteo_by_local_date(tmp_pa
 async def test_the_place_is_the_configured_name(tmp_path):
     forecast, _ = make(tmp_path, place="Geelong")
     await forecast.start()
-    assert json.loads(await forecast.handle({}))["place"] == "Geelong"
-    assert json.loads(await forecast.handle({}))["time"]                    # when it was fetched, for the report's heading
+    assert json.loads(await old_tools.forecast(forecast, {}))["place"] == "Geelong"
+    assert json.loads(await old_tools.forecast(forecast, {}))["time"]                    # when it was fetched, for the report's heading
     await forecast.close()
 
 
@@ -126,10 +127,10 @@ async def test_the_station_location_is_used_when_none_is_configured_and_without_
 async def test_a_direct_forecast_question_shows_the_whole_week_unless_fewer_days_are_asked_for(tmp_path):
     forecast, _ = make(tmp_path)
     await forecast.start()
-    assert len(json.loads(await forecast.handle({}))["lines"]) == 3          # every day Open-Meteo gave (the test data has three)
-    assert len(json.loads(await forecast.handle({"days": 2}))["lines"]) == 2
-    assert len(json.loads(await forecast.handle({"days": "nonsense"}))["lines"]) == 3
-    assert len(json.loads(await forecast.handle({"days": 30}))["lines"]) == 3
+    assert len(json.loads(await old_tools.forecast(forecast, {}))["lines"]) == 3          # every day Open-Meteo gave (the test data has three)
+    assert len(json.loads(await old_tools.forecast(forecast, {"days": 2}))["lines"]) == 2
+    assert len(json.loads(await old_tools.forecast(forecast, {"days": "nonsense"}))["lines"]) == 3
+    assert len(json.loads(await old_tools.forecast(forecast, {"days": 30}))["lines"]) == 3
     await forecast.close()
 
 

@@ -1,4 +1,4 @@
-"""weather_link: does rain come with a change in another reading (pressure by default)? Both series are read together
+"""Does rain come with a change in another reading (pressure by default)? Both series are read together
 from the 30-minute readings held, so it is about WHEN the rain fell, not what a day's extremes were. Nothing here
 calls Ecowitt: it works from what the archive holds.
 
@@ -7,44 +7,23 @@ the reading had changed over the previous 3 hours. From those: how much of the r
 falling, steady or rising; the reading's average level in wet and dry slots; a correlation between the change
 before and the rain after; and the biggest rain spells with the change that preceded each."""
 
-import asyncio
 import logging
-from datetime import date, datetime, time, tzinfo
+from datetime import date, datetime, tzinfo
 
 from ..analysis.pairs import analyse
-from ..captions import LINK_CHART_HINT, wants_chart
 from ..lines import build_line, shaded_up_to, slot_readings
 from ..rain import rain_bars, rain_slots
 from ..panels import panel_for
 from ..series import WEATHER
 from ..specs import Chart, Line, stack
-from ..storage import Storage
 from ..storage.read import Reader
-from ..timeutil import day_bounds, day_text, local_date, now_local, parse_period, period_parameters
-from ..tools import json_result
+from ..timeutil import day_bounds, day_text, local_date, parse_period
 from .reads import slot_values_on
 
 log = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 90
 DRIVERS = {"pressure": 1.0, "humidity": 5.0, "wind": 5.0}   # a reading (series) -> the change over 3 hours that counts as falling or rising
-
-PARAMETERS = {
-    "type": "object",
-    "properties": {
-        **period_parameters(DEFAULT_DAYS),
-        "driver": {"type": "string", "enum": list(DRIVERS),
-                   "description": "The reading to relate to rain. Default pressure (relative)."},
-        "chart": {"type": "boolean", "description": "Set true for a chart: the reading as a line, rain as bars behind it."},
-    },
-}
-DESCRIPTION = ("Does rain come WITH a change in pressure (or humidity or wind)? Reads both together at 30-minute "
-               "resolution from the cache and reports how much rain fell while the reading was falling, steady or "
-               "rising over the previous 3 hours, the reading's level in wet and dry periods, a correlation, and the "
-               "biggest rain spells with the change before each. Use it for 'is there a correlation between pressure and "
-               "rainfall', 'did the rain come with the pressure drop' and 'plot pressure against rainfall'. Up to the "
-               "whole record; never averaged to days.")
-
 
 def reading_slots(r: Reader, mac: str, name: str, start: int, end: int) -> tuple[dict, dict, dict]:
     """(values, lows, highs) per 30-minute slot of a reading (series), as every chart of it shades them: the band is the row's (Ecowitt's
@@ -114,11 +93,3 @@ def link(read, mac: str, tz: tzinfo, args: dict, now: datetime) -> tuple[dict, C
     out["days_with_data"] = len({local_date(t, tz) for t in rain})
     spec = chart_spec(driver, rain, tz, first, last, name, lows, highs)
     return out, spec, first, last
-
-
-async def link_tool(storage: Storage, mac: str, tz: tzinfo, args: dict, turn) -> str:
-    out, spec, first, last = await asyncio.to_thread(link, storage.read_now, mac, tz, args, now_local(tz))
-    if spec and wants_chart(args, turn, datetime.combine(first, time()), datetime.combine(last, time())):
-        turn.charts.append(spec)
-        out["chart"] = LINK_CHART_HINT
-    return json_result(out)

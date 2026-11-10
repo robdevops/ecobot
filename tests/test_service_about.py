@@ -6,7 +6,7 @@ import time
 from datetime import timedelta
 from types import SimpleNamespace as NS
 
-from lib import prompt, templates
+from lib import templates
 from lib.airgradient import AirGradient
 from lib.alerts import forecast as forecast_alert, menu, particulates, weather
 from lib.ecowitt.glance import UVI_ALERT
@@ -62,7 +62,7 @@ async def test_arguments_are_refused_with_how_to_call_it():
 
 
 def test_the_lists_are_the_ones_the_bots_prompt_menu_and_help_had():
-    assert ab.NEVER_AVAILABLE == prompt.NEVER_AVAILABLE and ab.WITHOUT == prompt.WITHOUT and ab.ALERT_WORDS == prompt.ALERT_WORDS
+    assert "lightning" in ab.NEVER_AVAILABLE and set(ab.WITHOUT) == {"Pollen", "Forecast"} and "gusts" in ab.ALERT_WORDS   # (the old prompt's lists, kept here)
     assert ab.TYPES == {kind: v for kind, v in menu.TYPES.items() if v[1] != "Irrigation"}   # (irrigation: a server of its own)
     assert ab.MEASURES == templates.MEASURES
     for sources in (EVERY, ["Ecowitt"], ["AirGradient", "Pollen"], []):
@@ -90,7 +90,7 @@ async def test_what_it_measures_and_doesnt_for_the_sources_there_are(tmp_path, a
     alone = await world(tmp_path / "alone", archived_cache, air=False, others=False)
     got = await call(alone)
     assert list(got["measures"]) == [STATION]
-    assert got["not_available"] == [*ab.NEVER_AVAILABLE, *prompt.WITHOUT.values(), "air quality"]
+    assert got["not_available"] == [*ab.NEVER_AVAILABLE, *ab.WITHOUT.values(), "air quality"]
     assert [a["kind"] for a in got["alerts"]] == ["rain", "gusts", "uv", "temps"]       # the station's alerts alone
     assert "scan" not in got["tools"] and "forecast" not in got["tools"] and "outlook" in got["tools"]
     await close(alone)
@@ -110,7 +110,7 @@ def test_each_alert_has_its_rule_and_the_thresholds_the_rules_use(monkeypatch):
     assert rules["pollen_and_asthma"]["thresholds"] == {"from_level": "High"} and "from 7:30am" in rules["pollen_and_asthma"]["rule"]
     assert rules["rain"]["thresholds"] == {"dry_minutes": 60, "quiet_hours": "00:00-06:00"}
     assert rules["rain"]["rule"].endswith("None from 12am to 6am: one summary of the rain in those hours after them.")
-    assert all(a["what"] == prompt.ALERT_WORDS[a["kind"]] and a["name"] == menu.LABELS[a["kind"]] for a in rules.values())
+    assert all(a["what"] == ab.ALERT_WORDS[a["kind"]] and a["name"] == menu.LABELS[a["kind"]] for a in rules.values())
     monkeypatch.setattr(ab, "RAIN_QUIET_HOURS", None)            # the service's settings, as the config sets them
     monkeypatch.setattr(ab, "ALERT_COOLDOWN_MINUTES", 90)
     rules = {a["kind"]: a for a in ab.alerts(EVERY)}

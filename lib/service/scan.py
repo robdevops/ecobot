@@ -35,7 +35,7 @@ DESCRIPTION = (
     "other readings?\" {reading: \"co2\"}; \"what goes with PM2.5 over the past year? show me\" {reading: \"pm2.5\", period: \"past "
     "year\", chart: true}. "
     f"At most {SCAN_MAX_DAYS} days: a longer period is cut to its latest {SCAN_MAX_DAYS}, and the result says so. "
-    "Not for: whether rain clears the air, or rain against any one reading (relate); a chart of readings over time (summary); the air "
+    "Not for: air quality against rain or precipitation, whether rain clears the air, or rain against any one reading (relate); a chart of readings over time (summary); the air "
     "now (current). "
     "Result: open with `verdict`, then the relationships in `findings`, strongest first, as `how_to_read` says: they go together, "
     "they don't cause each other. With `chart`, the strongest pair over time (none when nothing stands out).")

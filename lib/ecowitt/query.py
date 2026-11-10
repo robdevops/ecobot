@@ -13,7 +13,6 @@ from datetime import date, datetime, time, timedelta
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
 from ..lines import DAY, Plotted, Sample, build_line, how_drawn, shaded_up_to, time_mean
-from ..daytable import grouping_in
 from ..rain import rain_bars, rain_slots
 from ..timeutil import at_hour, day_bounds, day_text, local_date, now_local, parse_local, SLOT
 from ..storage.catalogue import text
@@ -476,8 +475,7 @@ class HistoryQuery:
             if day not in days and self.start.date() <= day <= self.end.date():
                 rain[day_bounds(day, self.tz)[0] + 12 * 3600] = mm
                 self.rain_from_daily = True
-        by = None if self.by_day else grouping_in(self.turn.text)
-        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, by=by, since=lo)
+        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, since=lo)
 
     def _stack_spec(self, names: list[str]) -> Chart | None:
         """The readings asked for, one panel each on a shared time axis (rain behind the first line); None if fewer than

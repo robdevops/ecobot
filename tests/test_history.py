@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from lib.history import MAX_ROWS, History, finest_fit, interval_starts
+from lib.history import MAX_ROWS, finest_fit, interval_starts
+from tests.old_tools import History
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import local_epoch, when
@@ -59,17 +60,16 @@ async def ask(history: History, **args) -> dict:
     return json.loads(await history.handle(args, Turn()))
 
 
-def offered(history: History, turn: Turn | None = None) -> list[str]:
-    return history.tools[0].schema(turn)["function"]["parameters"]["properties"]["metric"]["enum"]
+def offered(history: History) -> list[str]:
+    return list(history.metrics)
 
 
 def test_each_sensor_offers_what_it_has_sent_and_rain_as_the_mm_that_fell(storage):
     names = offered(tool(storage))
     assert {"outdoor.temperature", "outdoor.humidity", "indoor.temperature", "indoor.app_temp", "wind.wind_gust", "rainfall.rain",
             "rainfall.rain_rate", "air.pm2_5", "air.co2"} <= set(names)
-    assert not {"outdoor.dew_point", "indoor.humidity", "rainfall.event", "rainfall.daily", "air.air_temperature"} & set(names)
-    assert {"rainfall_piezo.rain", "solar_and_uvi.uvi"} <= set(names)   # (groups with nothing recorded yet offer their whole kind)
-    assert "air.air_temperature" in offered(tool(storage), Turn(air_extra=True))   # the air sensor's own: only when the words name it
+    assert not {"outdoor.dew_point", "indoor.humidity", "rainfall.event", "rainfall.daily"} & set(names)
+    assert {"rainfall_piezo.rain", "solar_and_uvi.uvi", "air.air_temperature"} <= set(names)   # (groups with nothing recorded yet: their whole kind)
     assert [n for n in offered(tool(storage, eco=False)) if not n.startswith("air.")] == []
     assert [n for n in offered(tool(storage, air=False)) if n.startswith("air.")] == []
 

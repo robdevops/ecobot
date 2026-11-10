@@ -85,7 +85,7 @@ answer the question right in one round of calls? Section 7's evals ask exactly t
 - **The tool descriptions and the results are the contract.** Every rule a choice of tool or the reading of a result depends on is in
   that tool's description (which questions it answers, an example call for each, how to read what comes back) or in the result itself
   (`value_is`, `how_to_read`, `note_*`, `missing`, `warning`). The server's `instructions` repeat a short summary (the devices and their
-  nicknames, Indoor and Outdoor, units), but nothing depends on them: on the 2026-07-28 protocol a client only gets them by asking
+  nicknames, Indoor and Outdoor, the readings' names, units, and that every question, a follow-up or a challenge too, is fetched afresh: a client may drop earlier tool turns, and with them `fresh`), but nothing depends on them: on the 2026-07-28 protocol a client only gets them by asking
   (`server/discover`), and many don't pass them to their model. The persona (a friendly Telegram bot, plain text, bullets) is the
   client's.
 - **Periods in words, worked out by the service.** Every tool that takes a period takes `period`, the person's own words for it, passed
@@ -149,8 +149,13 @@ and no falling back to a default: anything else is an error that lists the forms
 | `since 6am`, `since Monday` | from the latest such time (or that day's 00:00) to now |
 | `on record`, `all time`, `ever` | from the first reading held, for the sensors asked about, to now |
 
-- **`period` or `start`**, never both (both is an error). `start` and `end` are the station's local time, `YYYY-MM-DD` or `YYYY-MM-DD
-  HH:MM`; one with an offset or `Z` is moved into local time. An `end` that is a date includes that whole day; one with a time stops at
+- **`period` or `start`**: models fill in every argument they see, sometimes with junk, so when both are sent: `start` and `end` that
+  aren't dates or times (`count_only`), or that read as the same span as the period (within 15 minutes at each end), are set aside, the
+  period is read and the result's `period.note` says so; dates that read as another span are refused, naming both spans as read ("`period`
+  'on record' is Sat 1 Oct 2022 – Mon 9 Nov 2026 but `start`/`end` say Wed 1 Jan 2025 – now: send one of them"), since real dates are the
+  person's; a period that can't be read beside readable dates is refused with its forms, saying the dates were set aside because `period`
+  was sent and to send them without it to use them. A note on the period keeps a chart from being complete (3.7): the model reads it.
+  `start` and `end` are the station's local time, `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`; one with an offset or `Z` is moved into local time. An `end` that is a date includes that whole day; one with a time stops at
   it. No `end` means to now; `end` without `start` is an error.
 - **Whole-day tools** (`days`, `relate`, `scan`) take whole days ending yesterday, because today is still settling: a rolling phrase is
   that many whole days to yesterday (`last 7 days`: Tue 3 – Mon 9 Nov), a calendar one runs to yesterday, and the result's `period`
@@ -190,7 +195,8 @@ Ten tools in place of twelve: one per kind of question, each over both sensors w
 - `layout`: `auto` draws one reading as a line for each sensor that has it, plus the compass rose when wind direction is among them;
   more than one reading as panels, one each, on one time axis; `two_axes` puts two on one panel with a scale each; `same_axis` two of
   one unit over each other; `invert_second_axis` modifies `two_axes`. A reading can be drawn as its traffic-light rating
-  (`air.pm2_5:rating`). `all` draws every reading in the station's usual order (temperature, humidity, solar, pressure, rain, dew point,
+  (`air.pm2_5:rating`), in `chart_readings` or in `readings` (summarised as the reading, and drawn as its rating when
+  `chart_readings` isn't sent; a model sends it either way). `all` draws every reading in the station's usual order (temperature, humidity, solar, pressure, rain, dew point,
   then feels-like and VPD where configured, then wind), as "weather all week" does today.
 - `chart` defaults to on for periods of 3 days or more. `average: true` adds each reading's average to the figures and draws the chart
   as each day's average.
@@ -466,8 +472,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
    `ecobot.py` and handed to the bot; offered to no model yet. Contract tests per tool; every chart validates against
    `schemas/chart.json`, `drawn_by` included, and replays to the same chart and over each of its `periods` without a refusal. The
    evals have the service's expectations (`tests/evals/service_cases.json`, every case) and `scripts/eval_prompts.py --service` checks
-   offline that the tools accept each expected call; `--live --service` asks a model with the tool list alone (not yet run: it needs
-   the OpenRouter key). The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and
+   offline that the tools accept each expected call; `--live --service` asks a model with the tool list alone, and `--instructions`
+   adds the server's instructions (`lib/service/instructions.py`) after the neutral line. First full runs (10 Nov 2026, one run each):
+   deepseek-v4.1-flash 92/94 alone and 92/94 with the instructions, gpt-6-luna 89/94 alone. The gate's second round (the same day, after the period rule and the descriptions above): deepseek 90/94 alone and 90/94 with the instructions, gpt-6-luna 90/94 and 87/94; each failure asked 3 times more, those that failed 2 of 3 or worse fixed in the descriptions (wind 3m, a rating against rain, lowest and highest, air quality against rain, today against yesterday) and then passing 3 of 3. The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and
    alert charts, through `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place,
    deleted whole in step 3), quoting their words; its answers pinned before and after (`tests/test_service_switch.py`), unchanged but
    for the deliberate changes below. Its gauges (the dashboard, the report's three) are `current` with `context` and the gauges'
@@ -486,9 +493,24 @@ Each step ships on its own, with the tests and evals green and the bot working t
    links and the scan, a period given as times) its buttons ask its question again, as before. Left for later: `current` and `outlook`
    read the sources' kept live readings through private members (`Ecowitt._live`, `AirGradient._current`); `fetch: false` doesn't stop
    the air sensor's inline fetch; `tests/report_words.py` keeps the old report's words as the tests' reference, deleted with the bot.
-3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
-   instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
-   hints, the prefetch and the corrections from the words go.
+3. **The swap** (done), gated on the live evals (all cases, the production model and one other, with the tool list alone and with
+   the instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the
+   period hints, the prefetch and the corrections from the words go. The bot offers the ten as they are (`lib/model_tools.py`: each
+   result kept whole for drawing and its buttons, the model sent it with each chart as its title and period and the bot's own
+   `chart_note`: the bot sends the chart, the reply its caption), with its persona, the server's instructions and the time
+   (`lib/prompt.py`); tool_choice is the model's own, the reasoning effort still comes from the words. Its shortcuts (`lib/intent.py`)
+   are fixed calls built directly: a named reading's chart and a period (summary with the person's words for both, the keyboard's and
+   the alerts' sentences among them; with no chart word, over more than a day or a day given as a number, "co2 1d"), weather now, the
+   report (current, pollen, the next 3 days' forecast) and the gauges; everything else it answered in code goes to the model. The turn
+   ends on a step whose every result is complete. The live-chart link goes under an answer whose calls read the air (`bot.reads_air`),
+   and the forecast days shown, by `forecast` or `outlook`, are recorded for the forecast alert. `lib/service/legacy.py` is gone; the
+   `Turn` is only the engines' options, set by the service from its arguments. `--live` asks the model as the bot does (its prompt,
+   the ten tools; a question answered in code is scored by its fixed calls). The gate, one run each of 94 cases (DeepSeek v4.1 flash,
+   the production model, and gpt-6-luna): the bot as it runs 90 and 92 (today's bot with the twelve: 90); the tool list alone 91 and
+   92; with the instructions 91 and 93. What fails is mostly a model leaving `group_by` out of a figure per month or year (the twelve
+   had it filled in from the words): `days` says so in its result (`note_group_by`) and the model calls again; the rest are one-off or
+   refusals a model corrects in its next call. Expectations are widened where another call answers as well, not the descriptions
+   tightened. The instructions say every question is fetched afresh, a follow-up or a challenge too.
 4. **Alerts in the service.** The rules, their state and config move service-side and append events to the alert log, with `expires`,
    `link` and `chart` (with its `drawn_by`); the forecast alert gets its station-wide baseline. The bot delivers from the log.
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the

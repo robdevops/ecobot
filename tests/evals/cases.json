@@ -4,22 +4,7 @@
     "ask": "average temp 3m",
     "note": "3m was read as 3 days",
     "expect": {
-      "hints": [
-        "\"3m\" = last 3 months: 2026-07-01"
-      ],
-      "effort": "none",
-      "chart_fields": [],
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "start_date": {
-            "regex": "^2026-07-0[1-2]"
-          },
-          "average": true
-        }
-      }
+      "effort": "none"
     },
     "covers": [
       "q:average",
@@ -31,15 +16,12 @@
     "ask": "wind direction plot 3m",
     "note": "fast path: a plain wind chart request with a short-form period",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "wind",
-          "chart": true,
-          "start_date": {
-            "regex": "^2026-07-01"
-          }
-        }
+      "chart": {
+        "readings": [
+          "wind direction"
+        ],
+        "period": "3m",
+        "chart": true
       }
     },
     "covers": [
@@ -52,18 +34,7 @@
     "ask": "plot temperature and rain",
     "note": "only temperature was charted",
     "expect": {
-      "chart_fields": [
-        "temperature",
-        "rain"
-      ],
-      "chart_in_code": true,
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "rainfall,outdoor,indoor",
-          "chart": true
-        }
-      }
+      "chart": null
     },
     "covers": [
       "c:stack",
@@ -76,10 +47,7 @@
     "ask": "lowest and highest humidity",
     "note": "plotted temperature on a humidity question",
     "expect": {
-      "chart_field": "humidity",
-      "tools": [
-        "weather_history"
-      ]
+      "chart": null
     },
     "covers": [
       "m:humidity",
@@ -91,13 +59,7 @@
     "ask": "Is there a correlation between pressure and rainfall",
     "note": "answered from monthly extremes",
     "expect": {
-      "effort": "medium",
-      "tools": [
-        "weather_link"
-      ],
-      "not_tools": [
-        "weather_days"
-      ]
+      "effort": "medium"
     },
     "covers": [
       "q:correlation",
@@ -109,9 +71,7 @@
     "id": "pressure-vs-rain-graph",
     "ask": "plot a graph of pressure against rainfall",
     "expect": {
-      "tools": [
-        "weather_link"
-      ]
+      "chart": null
     },
     "covers": [
       "c:link",
@@ -123,20 +83,7 @@
     "id": "public-holidays",
     "ask": "hottest public holidays",
     "expect": {
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "only": "public_holiday",
-          "sort_by": {
-            "any_of": [
-              "temp_max",
-              null
-            ]
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:rank-days",
@@ -147,21 +94,7 @@
     "id": "hottest-day-that-rained",
     "ask": "what was the hottest day that also rained",
     "expect": {
-      "effort": "low",
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "sort_by": "temp_max",
-          "order": {
-            "any_of": [
-              "desc",
-              null
-            ]
-          }
-        }
-      }
+      "effort": "low"
     },
     "covers": [
       "q:rank-days",
@@ -173,16 +106,7 @@
     "id": "wind-direction-week",
     "ask": "most common wind direction this week",
     "expect": {
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "groups": {
-            "regex": "wind"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "m:wind-direction"
@@ -192,10 +116,7 @@
     "id": "will-it-rain",
     "ask": "will it rain later?",
     "expect": {
-      "effort": "low",
-      "tools": [
-        "weather_now"
-      ]
+      "effort": "low"
     },
     "covers": [
       "q:forecast",
@@ -206,9 +127,7 @@
     "id": "air-now",
     "ask": "how's the air?",
     "expect": {
-      "fast": {
-        "tool": "air_quality"
-      }
+      "chart": null
     },
     "covers": [
       "q:current",
@@ -219,14 +138,12 @@
     "id": "weather-week",
     "ask": "weather week",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "chart": true,
-          "start_date": {
-            "regex": "^2026-09-23"
-          }
-        }
+      "chart": {
+        "readings": [
+          "weather"
+        ],
+        "period": "week",
+        "chart": true
       }
     },
     "covers": [
@@ -238,14 +155,7 @@
     "id": "hello",
     "ask": "thanks, that's great",
     "expect": {
-      "fast": null,
-      "not_tools": [
-        "weather_now",
-        "weather_history",
-        "weather_days",
-        "weather_link",
-        "air_quality"
-      ]
+      "chart": null
     },
     "covers": [
       "q:chat"
@@ -255,15 +165,7 @@
     "id": "chart-pm10-week",
     "ask": "chart PM10 from the past week",
     "expect": {
-      "fast": {
-        "tool": "air_quality",
-        "args": {
-          "chart": true,
-          "metrics": [
-            "pm10"
-          ]
-        }
-      }
+      "chart": null
     },
     "covers": [
       "c:air-single",
@@ -275,14 +177,12 @@
     "ask": "weather 4 months",
     "note": "4 months was read as the last 7 days",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "chart": true,
-          "start_date": {
-            "regex": "^2026-05-31"
-          }
-        }
+      "chart": {
+        "readings": [
+          "weather"
+        ],
+        "period": "4 months",
+        "chart": true
       }
     },
     "covers": [
@@ -295,13 +195,7 @@
     "id": "chart-indoors",
     "ask": "chart the past week indoors",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "indoor",
-          "chart": true
-        }
-      }
+      "chart": null
     },
     "covers": [
       "c:line",
@@ -313,17 +207,13 @@
     "ask": "pressure week",
     "note": "a bare 'pressure week' is a chart of the pressure group, sent with no model call",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "pressure",
-          "chart": true
-        }
-      },
-      "chart_field": "relative",
-      "hints": [
-        "\"week\" = last 7 days"
-      ]
+      "chart": {
+        "readings": [
+          "pressure"
+        ],
+        "period": "week",
+        "chart": true
+      }
     },
     "covers": [
       "m:pressure",
@@ -335,19 +225,13 @@
     "ask": "wind 3m",
     "note": "wind 3m was read as 3 days; a bare reading and period is a chart",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "wind",
-          "chart": true,
-          "start_date": {
-            "regex": "^2026-07-0[1-2]"
-          }
-        }
-      },
-      "hints": [
-        "\"3m\" = last 3 months: 2026-07-01"
-      ]
+      "chart": {
+        "readings": [
+          "wind"
+        ],
+        "period": "3m",
+        "chart": true
+      }
     },
     "covers": [
       "m:wind-speed",
@@ -358,20 +242,7 @@
     "id": "hottest-weekends",
     "ask": "hottest weekends",
     "expect": {
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "only": "weekend",
-          "sort_by": {
-            "any_of": [
-              "temp_max",
-              null
-            ]
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:rank-days"
@@ -381,17 +252,7 @@
     "id": "windiest-day-on-record",
     "ask": "Windiest day on record",
     "expect": {
-      "hints": [
-        "\"on record\" = on record"
-      ],
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "sort_by": "wind_gust"
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:rank-days",
@@ -403,17 +264,7 @@
     "id": "rainy-days-in-september",
     "ask": "list rainy days in september",
     "expect": {
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "start_date": "2026-09-01",
-          "where": {
-            "regex": "rain"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:rank-days",
@@ -425,23 +276,7 @@
     "ask": "give me the outdoor high between 11am Fri 10 Nov 2023 and 11am Sat 11 Nov 2023",
     "note": "a particular window, not a whole period",
     "expect": {
-      "fast": null,
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "start_date": {
-            "regex": "^2023-11-10 11:00"
-          },
-          "end_date": {
-            "regex": "^2023-11-11 11:00"
-          },
-          "groups": {
-            "regex": "outdoor"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:known-day",
@@ -452,16 +287,7 @@
     "id": "weather-on-june-11",
     "ask": "what kind of weather was June 11",
     "expect": {
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "start_date": {
-            "regex": "^2026-06-11"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:describe-day"
@@ -471,17 +297,7 @@
     "id": "what-it-would-have-been-like",
     "ask": "what would it have been like if we were alive on Mon 10 Aug",
     "expect": {
-      "effort": "low",
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "start_date": {
-            "regex": "^2026-08-10"
-          }
-        }
-      }
+      "effort": "low"
     },
     "covers": [
       "q:describe-day"
@@ -492,14 +308,7 @@
     "ask": "add an alert for if winds reach 100 km hour",
     "note": "a request to change the bot, not for readings: it was forced to fetch the weather",
     "expect": {
-      "needs_data": false,
-      "not_tools": [
-        "weather_now",
-        "weather_history",
-        "weather_days",
-        "weather_link",
-        "air_quality"
-      ]
+      "chart": null
     },
     "covers": [
       "q:command"
@@ -509,15 +318,7 @@
     "id": "metrics-bare",
     "ask": "metrics",
     "expect": {
-      "needs_data": false,
-      "about_the_bot": true,
-      "not_tools": [
-        "weather_now",
-        "weather_history",
-        "weather_days",
-        "weather_link",
-        "air_quality"
-      ]
+      "chart": null
     },
     "covers": [
       "q:about-the-bot"
@@ -527,16 +328,7 @@
     "id": "most-rain-days-jja",
     "ask": "Days with most rain in June, July, August 2026",
     "expect": {
-      "tools": [
-        "weather_days"
-      ],
-      "args": {
-        "weather_days": {
-          "sort_by": "rain",
-          "start_date": "2026-06-01",
-          "end_date": "2026-08-31"
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:rank-days",
@@ -547,10 +339,7 @@
     "id": "fastest-gust",
     "ask": "fastest gust recorded",
     "expect": {
-      "any_tools": [
-        "weather_history",
-        "weather_days"
-      ]
+      "chart": null
     },
     "covers": [
       "q:record",
@@ -561,12 +350,7 @@
     "id": "chart-all-airgradient-week",
     "ask": "chart all airgradient past week",
     "expect": {
-      "fast": {
-        "tool": "air_quality",
-        "args": {
-          "chart": true
-        }
-      }
+      "chart": null
     },
     "covers": [
       "c:air-panels",
@@ -578,24 +362,7 @@
     "ask": "did it rain on Sat 5 Sep",
     "note": "one known day: its figures, not a search of the month",
     "expect": {
-      "any_tools": [
-        "weather_days",
-        "weather_history"
-      ],
-      "args": {
-        "weather_days": {
-          "start_date": "2026-09-05",
-          "end_date": "2026-09-05"
-        },
-        "weather_history": {
-          "start_date": {
-            "regex": "^2026-09-05"
-          },
-          "end_date": {
-            "regex": "^2026-09-05"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:known-day",
@@ -617,16 +384,7 @@
     ],
     "note": "a pushback: fetch again, don't defend or agree from memory",
     "expect": {
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "start_date": {
-            "regex": "^2026-09-23"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:correction"
@@ -646,19 +404,7 @@
       }
     ],
     "expect": {
-      "hints": [
-        "\"all time\" = on record"
-      ],
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "start_date": {
-            "regex": "^2022-10"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:follow-up"
@@ -669,20 +415,7 @@
     "ask": "win direction 3 months",
     "note": "a typo: the model path handles it",
     "expect": {
-      "fast": null,
-      "hints": [
-        "\"3 months\" = last 3 months: 2026-07-01"
-      ],
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "groups": {
-            "regex": "wind"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "m:wind-direction"
@@ -692,14 +425,7 @@
     "id": "hottest-coldest-this-month",
     "ask": "hottest/coldest day this month",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "start_date": {
-            "regex": "^2026-09-01"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:summary",
@@ -710,14 +436,7 @@
     "id": "high-low-all-time",
     "ask": "high and low all time",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "start_date": {
-            "regex": "^2022-10"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:record",
@@ -739,9 +458,7 @@
     ],
     "note": "the resolution is chosen automatically and extremes are refined to 5-minute windows: fetch again and say so",
     "expect": {
-      "tools": [
-        "weather_history"
-      ]
+      "chart": null
     },
     "covers": [
       "q:detail-level",
@@ -755,16 +472,7 @@
     "note": "only the weather station was fetched; the older answer listed everything from both devices",
     "expect": {
       "report": true,
-      "tools": [
-        "weather_now",
-        "air_quality"
-      ],
-      "fast": {
-        "tool": "weather_now",
-        "args": {
-          "groups": "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:report"
@@ -775,8 +483,8 @@
     "ask": "dashboard",
     "note": "the station's gauges, drawn in code with no model; it used to mean the report",
     "expect": {
-      "dashboard": true,
-      "report": false
+      "report": false,
+      "dashboard": true
     },
     "covers": [
       "q:dashboard"
@@ -798,10 +506,7 @@
     "note": "AirGradient and Ecowitt are separate tools: needs the cross-source link",
     "expect": {
       "effort": "medium",
-      "fast": null,
-      "tools": [
-        "air_link"
-      ]
+      "chart": null
     },
     "covers": [
       "q:cross-source",
@@ -814,10 +519,7 @@
     "ask": "plot the traffic light rating of air quality against rainfall for the last 30 days",
     "note": "a new kind of chart: the rating over rain",
     "expect": {
-      "fast": null,
-      "tools": [
-        "plot_chart"
-      ]
+      "chart": null
     },
     "covers": [
       "c:rating-strip",
@@ -830,13 +532,7 @@
     "note": "needs a scan of every pair, not one lookup",
     "expect": {
       "effort": "medium",
-      "fast": null,
-      "tools": [
-        "air_scan"
-      ],
-      "not_tools": [
-        "air_link"
-      ]
+      "chart": null
     },
     "covers": [
       "q:scan",
@@ -848,14 +544,12 @@
     "ask": "ecowitt week",
     "note": "ecowitt is a synonym of weather",
     "expect": {
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "chart": true,
-          "start_date": {
-            "regex": "^2026-09-23"
-          }
-        }
+      "chart": {
+        "readings": [
+          "ecowitt"
+        ],
+        "period": "week",
+        "chart": true
       }
     },
     "covers": [
@@ -868,11 +562,12 @@
     "ask": "ag 7d",
     "note": "ag is a synonym of air quality",
     "expect": {
-      "fast": {
-        "tool": "air_quality",
-        "args": {
-          "chart": true
-        }
+      "chart": {
+        "readings": [
+          "ag"
+        ],
+        "period": "7d",
+        "chart": true
       }
     },
     "covers": [
@@ -885,10 +580,7 @@
     "ask": "air gradient",
     "note": "air gradient is a synonym of air quality",
     "expect": {
-      "fast": {
-        "tool": "air_quality",
-        "args": {}
-      }
+      "chart": null
     },
     "covers": [
       "q:current",
@@ -900,15 +592,7 @@
     "ask": "ecowitt all week",
     "note": "every reading stacked (solar third, wind last), except UV, feels like and VPD (unless configured)",
     "expect": {
-      "chart_fields": [
-        "temperature",
-        "humidity",
-        "solar",
-        "pressure",
-        "rain",
-        "dew_point",
-        "wind"
-      ]
+      "chart": null
     },
     "covers": [
       "q:summary",
@@ -920,11 +604,7 @@
     "ask": "sitrep",
     "note": "sitrep is a synonym of status: the full current report",
     "expect": {
-      "report": true,
-      "tools": [
-        "weather_now",
-        "air_quality"
-      ]
+      "report": true
     },
     "covers": [
       "q:report"
@@ -935,10 +615,7 @@
     "ask": "think: hottest day this week",
     "note": "asking to think gives medium reasoning to a lookup; the hottest day of a period with when it was is weather_history (a record), not weather_days",
     "expect": {
-      "effort": "medium",
-      "tools": [
-        "weather_history"
-      ]
+      "effort": "medium"
     },
     "covers": [
       "q:record",
@@ -950,15 +627,12 @@
     "ask": "Rain chart 7d",
     "note": "the Rain chart button",
     "expect": {
-      "chart_field": "daily",
-      "rain_caption": true,
-      "chart_in_code": true,
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "rainfall",
-          "chart": true
-        }
+      "chart": {
+        "readings": [
+          "rain"
+        ],
+        "period": "7d",
+        "chart": true
       }
     },
     "covers": [
@@ -971,14 +645,12 @@
     "ask": "Humidity chart 7d",
     "note": "the Humidity chart button",
     "expect": {
-      "chart_field": "humidity",
-      "chart_in_code": true,
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "outdoor,indoor",
-          "chart": true
-        }
+      "chart": {
+        "readings": [
+          "humidity"
+        ],
+        "period": "7d",
+        "chart": true
       }
     },
     "covers": [
@@ -991,12 +663,7 @@
     "ask": "AQ all week",
     "note": "the AQ all week button",
     "expect": {
-      "fast": {
-        "tool": "air_quality",
-        "args": {
-          "chart": true
-        }
-      }
+      "chart": null
     },
     "covers": [
       "c:air-panels",
@@ -1008,13 +675,8 @@
     "ask": "weather now",
     "note": "every reading the station has, in the report's layout",
     "expect": {
-      "fast": {
-        "tool": "weather_now",
-        "args": {
-          "groups": "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
-        }
-      },
-      "weather_now": true
+      "weather_now": true,
+      "chart": null
     },
     "covers": [
       "q:report",
@@ -1026,9 +688,7 @@
     "ask": "pollen",
     "note": "pollen and thunderstorm asthma are fetched without the model",
     "expect": {
-      "fast": {
-        "tool": "pollen_asthma"
-      }
+      "chart": null
     },
     "covers": [
       "q:pollen"
@@ -1039,10 +699,7 @@
     "ask": "is the pollen bad today?",
     "note": "a plain pollen question is answered in code",
     "expect": {
-      "fast": {
-        "tool": "pollen_asthma"
-      },
-      "lookup": "pollen"
+      "chart": null
     },
     "covers": [
       "q:pollen"
@@ -1053,11 +710,7 @@
     "ask": "what's the forecast for tomorrow?",
     "note": "the forecast tool, not the station's own pressure trend",
     "expect": {
-      "fast": null,
-      "needs_data": true,
-      "tools": [
-        "weather_forecast"
-      ]
+      "chart": null
     },
     "covers": [
       "q:forecast"
@@ -1068,7 +721,6 @@
     "ask": "what do you think of weather in general, from a philosophical perspective?",
     "note": "an opinion, not a lookup: no tool is forced (the model still thinks a little)",
     "expect": {
-      "needs_data": false,
       "effort": "medium"
     },
     "covers": [
@@ -1080,7 +732,7 @@
     "ask": "only that it's cold",
     "note": "a chat reply, not a request: it replaced the bot's answer with the temperatures",
     "expect": {
-      "needs_data": false
+      "chart": null
     },
     "covers": [
       "q:chat"
@@ -1091,11 +743,7 @@
     "ask": "how cold is it",
     "note": "a plain current-temperature question",
     "expect": {
-      "needs_data": true,
-      "any_tools": [
-        "weather_now",
-        "weather_history"
-      ]
+      "chart": null
     },
     "covers": [
       "q:current",
@@ -1107,7 +755,7 @@
     "ask": "ok now what?",
     "note": "'now' alone is not a weather question",
     "expect": {
-      "needs_data": false
+      "chart": null
     },
     "covers": [
       "q:chat"
@@ -1118,7 +766,7 @@
     "ask": "plot rain this week and will it rain tomorrow",
     "note": "a forecast question goes to the model",
     "expect": {
-      "chart_in_code": false
+      "chart": null
     }
   },
   {
@@ -1126,7 +774,7 @@
     "ask": "graph humidity and say if it relates to rain",
     "note": "correlation goes to the model",
     "expect": {
-      "chart_in_code": false
+      "chart": null
     }
   },
   {
@@ -1134,13 +782,12 @@
     "ask": "pressure graph 30d",
     "note": "a plain chart of a named reading",
     "expect": {
-      "chart_in_code": true,
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "groups": "pressure",
-          "chart": true
-        }
+      "chart": {
+        "readings": [
+          "pressure"
+        ],
+        "period": "30d",
+        "chart": true
       }
     }
   },
@@ -1149,35 +796,35 @@
     "ask": "how hot is it",
     "note": "a plain reading question",
     "expect": {
-      "lookup": "reading"
+      "chart": null
     }
   },
   {
     "id": "lookup-raining",
     "ask": "is it raining",
     "expect": {
-      "lookup": "reading"
+      "chart": null
     }
   },
   {
     "id": "lookup-air",
     "ask": "how's the air",
     "expect": {
-      "lookup": "air"
+      "chart": null
     }
   },
   {
     "id": "lookup-forecast",
     "ask": "forecast",
     "expect": {
-      "lookup": "forecast"
+      "chart": null
     }
   },
   {
     "id": "lookup-about",
     "ask": "what can you do",
     "expect": {
-      "lookup": "about"
+      "chart": null
     }
   },
   {
@@ -1185,7 +832,7 @@
     "ask": "is it too cold to run",
     "note": "judgement stays with the model",
     "expect": {
-      "lookup": ""
+      "chart": null
     }
   },
   {
@@ -1193,14 +840,14 @@
     "ask": "hottest today",
     "note": "highs and lows of a short period",
     "expect": {
-      "lookup": "extremes"
+      "chart": null
     }
   },
   {
     "id": "lookup-hottest-vs",
     "ask": "is today hotter than yesterday",
     "expect": {
-      "lookup": ""
+      "chart": null
     }
   },
   {
@@ -1208,21 +855,14 @@
     "ask": "average temp yesterday",
     "note": "a plain average is answered in code",
     "expect": {
-      "lookup": "extremes",
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "average": true,
-          "chart": false
-        }
-      }
+      "chart": null
     }
   },
   {
     "id": "highest-humidity-yesterday",
     "ask": "highest humidity yesterday",
     "expect": {
-      "lookup": "extremes"
+      "chart": null
     }
   },
   {
@@ -1230,7 +870,7 @@
     "ask": "will the pollen be bad tomorrow",
     "note": "looking ahead stays with the model",
     "expect": {
-      "lookup": ""
+      "chart": null
     }
   },
   {
@@ -1238,7 +878,7 @@
     "ask": "average rain last week",
     "note": "a rain total has no average: the model explains",
     "expect": {
-      "lookup": ""
+      "chart": null
     }
   },
   {
@@ -1246,13 +886,7 @@
     "ask": "how many times was UV 9 or more in the past two years?",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "count_only": true
-        }
-      }
+      "chart": null
     }
   },
   {
@@ -1260,14 +894,7 @@
     "ask": "days over UVI 10 per year",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "count_only": true,
-          "group_by": "year"
-        }
-      }
+      "chart": null
     }
   },
   {
@@ -1275,16 +902,7 @@
     "ask": "rain total per month this year",
     "note": "a total per month is counted in code and drawn as bars",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "stat": "sum",
-          "of": "rain",
-          "group_by": "month",
-          "count_only": true
-        }
-      }
+      "chart": null
     }
   },
   {
@@ -1292,16 +910,7 @@
     "ask": "hottest day each year",
     "note": "the highest daily maximum per year is counted in code and drawn as bars",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "stat": "max",
-          "of": "temp_max",
-          "group_by": "year",
-          "count_only": true
-        }
-      }
+      "chart": null
     }
   },
   {
@@ -1309,14 +918,7 @@
     "ask": "days PM2.5 over 25 per year",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "air_days",
-        "args": {
-          "count_only": true,
-          "group_by": "year"
-        }
-      }
+      "chart": null
     }
   },
   {
@@ -1324,14 +926,7 @@
     "ask": "count days over PM2.5 of 90 per year",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "air_days",
-        "args": {
-          "count_only": true,
-          "group_by": "year"
-        }
-      }
+      "chart": null
     }
   },
   {
@@ -1339,31 +934,14 @@
     "ask": "days over UVI 10 by year",
     "note": "the model once answered with one overall count and no chart; now counted in code, per year, whole record",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "group_by": "year",
-          "count_only": true,
-          "where": {
-            "has": [
-              {
-                "field": "uv_max",
-                "op": ">=",
-                "value": 10
-              }
-            ]
-          }
-        }
-      }
+      "chart": null
     }
   },
   {
     "id": "days-two-readings-go-to-the-model",
     "ask": "days over 35 and also rained",
     "expect": {
-      "lookup": "",
-      "fast": null
+      "chart": null
     }
   },
   {
@@ -1371,56 +949,28 @@
     "ask": "rain by month for 2 years",
     "note": "the model answered with monthly text under a chart of daily bars: now monthly bars, one per line",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "stat": "sum",
-          "of": "rain",
-          "group_by": "month",
-          "start_date": {
-            "regex": "^2024-(09|10)-"
-          }
-        }
-      }
+      "chart": null
     }
   },
   {
     "id": "avg-temp-per-year",
     "ask": "average temperature per year",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "weather_days",
-        "args": {
-          "stat": "avg",
-          "of": "temp_avg",
-          "group_by": "year"
-        }
-      }
+      "chart": null
     }
   },
   {
     "id": "highest-pm25-by-month",
     "ask": "highest PM2.5 by month",
     "expect": {
-      "lookup": "days",
-      "fast": {
-        "tool": "air_days",
-        "args": {
-          "stat": "max",
-          "of": "pm2_5_max",
-          "group_by": "month"
-        }
-      }
+      "chart": null
     }
   },
   {
     "id": "two-readings-by-month-go-to-the-model",
     "ask": "pm2.5 and co2 by month",
     "expect": {
-      "lookup": "",
-      "fast": null
+      "chart": null
     }
   },
   {
@@ -1428,15 +978,13 @@
     "ask": "weather chart 90d",
     "note": "a chart naming no reading is every reading, a panel each",
     "expect": {
-      "chart_fields": [
-        "temperature",
-        "humidity",
-        "solar",
-        "pressure",
-        "rain",
-        "dew_point",
-        "wind"
-      ]
+      "chart": {
+        "readings": [
+          "weather"
+        ],
+        "period": "90d",
+        "chart": true
+      }
     },
     "covers": [
       "c:line",
@@ -1448,15 +996,13 @@
     "ask": "chart all 90d",
     "note": "a chart naming no reading is every reading, a panel each",
     "expect": {
-      "chart_fields": [
-        "temperature",
-        "humidity",
-        "solar",
-        "pressure",
-        "rain",
-        "dew_point",
-        "wind"
-      ]
+      "chart": {
+        "readings": [
+          "all"
+        ],
+        "period": "90d",
+        "chart": true
+      }
     },
     "covers": [
       "c:line",
@@ -1468,19 +1014,7 @@
     "ask": "graph combine uvi and solar radiation on two axis",
     "note": "two readings with different scales on one panel: fast path, drawn in code with the second on a right-hand axis",
     "expect": {
-      "chart_fields": [
-        "uv",
-        "solar"
-      ],
-      "two_axes": true,
-      "chart_in_code": true,
-      "fast": {
-        "tool": "weather_history",
-        "args": {
-          "chart": true,
-          "groups": "solar_and_uvi"
-        }
-      }
+      "chart": null
     },
     "covers": [
       "c:two-axes"
@@ -1491,8 +1025,7 @@
     "ask": "plot airgradient humidity over ecowitt outdoor humidity",
     "note": "the air sensor's own humidity is offered to the model only when the AirGradient is named with it; the chart is the model's (plot_chart)",
     "expect": {
-      "air_extra": true,
-      "fast": null
+      "chart": null
     },
     "covers": []
   },
@@ -1501,27 +1034,7 @@
     "ask": "What was the humidity each hour for the last 5 hours",
     "note": "the bot said its tool only gave extremes: the readings tool gives a value per hour",
     "expect": {
-      "fast": null,
-      "hints": [
-        "\"5 hours\" = last 5 hours"
-      ],
-      "tools": [
-        "readings"
-      ],
-      "not_tools": [
-        "weather_history"
-      ],
-      "args": {
-        "readings": {
-          "metric": {
-            "regex": "humidity$"
-          },
-          "interval": "1hour",
-          "start": {
-            "regex": "^2026-09-29 (08|09)"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:interval",
@@ -1533,21 +1046,7 @@
     "ask": "temperature every 30 minutes today",
     "note": "took the fast path to a highs-and-lows summary of today",
     "expect": {
-      "fast": null,
-      "tools": [
-        "readings"
-      ],
-      "args": {
-        "readings": {
-          "metric": {
-            "regex": "temperature$"
-          },
-          "interval": "30min",
-          "start": {
-            "regex": "^2026-09-29 00:00"
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:interval",
@@ -1559,15 +1058,12 @@
     "ask": "plot pressure since Sunday",
     "note": "only the chart is asked for: the model says so (chart_answers_it) and the bot sends the chart with its caption written in code, with no second model call. A weekday keeps it off the fast path, so the model decides",
     "expect": {
-      "fast": null,
-      "chart_in_code": false,
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "chart_answers_it": true
-        }
+      "chart": {
+        "readings": [
+          "pressure"
+        ],
+        "period": "since Sunday",
+        "chart": true
       }
     },
     "covers": [
@@ -1580,21 +1076,7 @@
     "ask": "plot pressure since Sunday, is a storm coming?",
     "note": "the chart and something else to answer: the model writes the reply, so chart_answers_it stays unset",
     "expect": {
-      "fast": null,
-      "chart_in_code": false,
-      "tools": [
-        "weather_history"
-      ],
-      "args": {
-        "weather_history": {
-          "chart_answers_it": {
-            "any_of": [
-              null,
-              false
-            ]
-          }
-        }
-      }
+      "chart": null
     },
     "covers": [
       "q:chart-only",

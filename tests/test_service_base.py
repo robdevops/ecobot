@@ -6,9 +6,7 @@ from datetime import date, datetime
 
 import pytest
 
-from lib import intent
 from lib.periods_text import PeriodError
-from lib.prompt import PROMPT
 from lib.service import common, daylook, names
 from lib.service.common import (CHART_NOTE, FRESH, Refusal, ServiceTool, answer, charts_field, period_properties, read_period, refuse,
                                 refuse_period, request_meta, with_charts)
@@ -59,7 +57,7 @@ async def test_a_service_tool_is_sent_its_arguments_and_the_requests_metadata_an
     tool = ServiceTool("probe", "A probe.", {"type": "object", "properties": {}}, handler, open_world=True)
     assert tool.annotations == {"readOnlyHint": True, "openWorldHint": True}
     tools = Tools([tool.tool()])
-    assert got(await tools.call("probe", '{"x": 1}', Turn(text="plot it", chart_asked=True, meta={"chart_points": 500}))) == {"ok": True}
+    assert got(await tools.call("probe", '{"x": 1}', Turn(chart_asked=True, meta={"chart_points": 500}))) == {"ok": True}
     assert seen[-1] == ({"x": 1}, {"chart_points": 500, "fetch": True, "priority": "normal"})   # the Turn's words never reach it
     await tools.call("probe", "{}", Turn(ahead=True))                       # a chart drawn ahead is a background request
     assert seen[-1][1]["priority"] == "background"
@@ -136,9 +134,57 @@ def test_words_that_are_no_form_are_refused_with_every_form_and_what_it_means_no
     with pytest.raises(Refusal) as e:
         read_period({"period": "next week"}, tz=TZ, now=NOW, default="today")
     assert "use forecast" in e.value.message and "forms" not in got(e.value.text)
+
+
+def test_a_period_sent_beside_start_and_end_that_are_junk_or_the_same_span_is_read_with_a_note():
+    # a model may fill in every argument it sees: the live evals' uv-days-two-years sent period with start 'count_only', end 'cancel',
+    # and most-rain-days-jja 'June to August 2026' with start 2026-06-01, end 2026-08-31 (the same span)
+    for dates in ({"start": "count_only", "end": "cancel"}, {"start": "count_only"}, {"start": "2026-11-04", "end": "cancel"}):
+        read = read_period({"period": "this week", **dates}, tz=TZ, now=NOW, default="today")
+        assert read.text == "the last 7 days: Wed 4 – Tue 10 Nov 2026" and read.note == common.IGNORED_DATES, dates
+        assert common.period_field(read)["note"] == common.IGNORED_DATES
+    for dates in ({"start": "2026-11-04"}, {"start": "2026-11-04", "end": "2026-11-10"}, {"start": "2026-11-04 00:10"}):
+        read = read_period({"period": "this week", **dates}, tz=TZ, now=NOW, default="today")
+        assert read.asked == "this week" and read.note == common.SAME_DATES, dates
+    jja = read_period({"period": "June to August 2026", "start": "2026-06-01", "end": "2026-08-31"}, tz=TZ, now=NOW,
+                      default="on record", whole_days=True)
+    assert jja.text == "June 2026 to August 2026: Mon 1 Jun – Mon 31 Aug 2026" and jja.note == common.SAME_DATES
+    held = read_period({"period": "on record", "start": "2020-01-01"}, tz=TZ, now=NOW, default="on record", whole_days=True,
+                       first_held=date(2022, 10, 1))   # before the first reading held: the same span as on record
+    assert held.note == common.SAME_DATES
+    alone = read_period({"period": "this week", "start": "", "end": None}, tz=TZ, now=NOW, default="today")
+    assert alone.note is None and "note" not in common.period_field(alone)
+
+
+def test_a_period_and_dates_that_read_as_different_spans_are_refused_naming_both():
+    # the live evals' use-five-minute-data sent days {period: "on record", start: "2025-01-01", end: "2026-09-28"}
     with pytest.raises(Refusal) as e:
-        read_period({"period": "this week", "start": "2026-11-01"}, tz=TZ, now=NOW, default="today")
-    assert "not both" in e.value.message
+        read_period({"period": "on record", "start": "2025-01-01"}, tz=TZ, now=NOW, default="on record", whole_days=True,
+                    first_held=date(2022, 10, 1))
+    assert e.value.message == ("`period` 'on record' is Sat 1 Oct 2022 – Mon 9 Nov 2026 but `start`/`end` say Wed 1 Jan 2025 – "
+                               "Mon 9 Nov 2026: send one of them (`period` alone, or `start` and `end` without it).")
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "on record", "start": "2025-01-01"}, tz=TZ, now=NOW, default="today", first_held=date(2022, 10, 1))
+    assert "is Sat 1 Oct 2022 – Tue 10 Nov 2026 but `start`/`end` say Wed 1 Jan 2025 – now: send one of them" in e.value.message
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "this week", "start": "2026-06-01", "end": "2026-08-31"}, tz=TZ, now=NOW, default="today")
+    assert "`period` 'this week' is Wed 4 – Tue 10 Nov 2026 but `start`/`end` say Mon 1 Jun – Mon 31 Aug 2026" in e.value.message
+    with pytest.raises(Refusal) as e:   # dates this tool can't take (a time, to a whole-day tool): refused too, not set aside
+        read_period({"period": "on record", "start": "2025-01-01 06:00"}, tz=TZ, now=NOW, default="on record", whole_days=True,
+                    first_held=date(2022, 10, 1))
+    assert "can't be read as this tool takes them" in e.value.message and "has a time" in e.value.message
+
+
+def test_a_period_that_cant_be_read_beside_dates_says_the_dates_were_set_aside_and_how_to_use_them():
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "JJA 2026", "start": "2026-06-01", "end": "2026-08-31"}, tz=TZ, now=NOW, default="on record",
+                    whole_days=True)
+    out = got(e.value.text)
+    assert "'JJA 2026' isn't a period" in out["error"] and out["error"].endswith(common.SET_ASIDE) and out["forms"]
+    assert "send them without `period` to use them" in common.SET_ASIDE
+    with pytest.raises(Refusal) as e:   # junk beside it: the plain refusal of the words
+        read_period({"period": "the other week", "start": "count_only"}, tz=TZ, now=NOW, default="today")
+    assert "'the other week' isn't a period" in e.value.message and common.SET_ASIDE not in e.value.message
 
 
 def test_a_whole_day_tool_refuses_what_leaves_no_whole_day_and_points_elsewhere():
@@ -254,8 +300,6 @@ def test_all_is_every_station_reading_in_the_usual_chart_order_with_the_settings
     monkeypatch.setattr(names, "FEELS_LIKE_IN_ALL", True)
     monkeypatch.setattr(names, "VPD_IN_ALL", True)
     assert named("all") == [*usual[:8], "outdoor.feels_like", "outdoor.vpd", *usual[8:]]
-    assert intent.chart_fields("weather all week") == ["temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like",
-                                                       "vpd", "wind"]   # the bot's "weather all week" reads the same settings
     held = Catalogue.of({"outdoor": {"temperature": "℃"}, "indoor": {"temperature": "℃"}, "pressure": {"relative": "hPa"},
                          "wind": {"wind_speed": "km/h"}, "rainfall": {"daily": "mm"}, "rainfall_piezo": {"daily": "mm"},
                          "solar_and_uvi": {"uvi": ""}}, air=False)
@@ -369,8 +413,8 @@ def test_a_day_with_no_solar_radiation_has_no_cloud_step():
     assert day_look(today | {"temp_max": 36.0}, latitude=MELBOURNE, day=SUMMER, so_far=True)["word"] == "very hot"
 
 
-def test_a_days_look_uses_only_the_prompts_weather_emojis():
-    allowed = next(line for line in PROMPT.splitlines() if "Use only these" in line)
+def test_a_days_look_uses_only_the_weather_emojis_the_bot_always_used():
+    allowed = "☀️ 🌤️ ⛅ ☁️ 🌦️ 🌧️ ⛈️ 💨 🥵 🥶 🌫️"   # (the old prompt's list)
     assert all(emoji in allowed for emoji in LOOKS.values())
     assert daylook.FIGURES == ("rain", "wind_gust", "temp_max", "temp_min", "solar_avg")   # the days tool's names
 
@@ -386,3 +430,23 @@ def test_a_clear_sky_follows_the_season_and_the_latitude():
 def test_the_service_modules_say_what_they_offer():
     for module in (common, names, daylook):
         assert all(hasattr(module, name) for name in module.__all__), module.__name__
+
+
+def test_the_ten_are_built_in_order_each_where_its_source_is_and_found_by_name():
+    from lib.service.context import Context
+    from types import SimpleNamespace as NS
+    from lib.service import ORDER, Service, build
+    from tests.fakes import TZ
+    station = NS(name="Ecowitt", tz=TZ, storage=None, latitude=-37.8)
+    everything = build(Context(eco=station, air=NS(name="AirGradient", tz=TZ), forecast=NS(), pollen=NS(), tz=TZ))
+    assert [t.name for t in everything] == list(ORDER)
+    assert [t.name for t in build(Context(tz=TZ))] == ["summary", "readings", "relate", "scan", "about"]   # no source: what needs none
+    service = Service(everything)
+    assert service["summary"] is service.get("summary") and "days" in service and service.get("nothing") is None
+    assert [t.name for t in service] == list(ORDER) and service.held(["a"]) == ["a"]   # (no context: every name is held)
+
+
+def test_the_bot_asks_for_its_charts_as_drawn():
+    from lib.service.common import AS_DRAWN, MAX_CHART_POINTS, request_meta
+    assert request_meta({"chart_points": AS_DRAWN})["chart_points"] == AS_DRAWN
+    assert request_meta({"chart_points": 10_000})["chart_points"] == MAX_CHART_POINTS

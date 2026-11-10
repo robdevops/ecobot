@@ -39,7 +39,7 @@ from ..storage.catalogue import column_of
 from ..storage.read import Reader
 from ..timeutil import day_text
 from ..tools import Turn
-from .common import Refusal, ServiceTool, answer, complete, period_properties, read_period, with_charts
+from .common import Refusal, ServiceTool, answer, complete, period_properties, read_period, sends_period, with_charts
 from .context import Context
 from .daylook import FIGURES as LOOK_FIGURES, day_look
 from .names import AIR_DEVICE, STATION
@@ -54,6 +54,8 @@ DEVICES = (STATION, AIR_DEVICE)
 ONLY = {"public_holiday": "public holidays only", "weekend": "weekends only"}   # (the chart's subtitle says which)
 ORDERS = ("desc", "asc")
 OP_WORDS = {"==": "=", "≥": ">=", "≤": "<=", "=>": ">=", "=<": "<="}   # ops written another way
+GROUP_BY_NOTE = ("One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", "
+                 "\"each year\"), call again with group_by \"month\" or \"year\".")
 ARGUMENTS = ("where", "sort_by", "order", "count_only", "group_by", "stat", "of", "limit", "only", "hours", "period", "start", "end",
              "chart_answers_it")
 OLD_NAMES = {"start_date": "start", "end_date": "end"}   # weather_days' and air_days' names
@@ -89,18 +91,19 @@ LEFT_OUT = {NOT_HELD: "not held finely enough", CLOCK_CHANGE: CLOCK_CHANGE, NOT_
 
 # ---------- the description and the input schema ----------
 DESCRIPTION = (
-    "Days found, ranked, counted or totalled by their figures, from the weather station's and the air sensor's (AirGradient's) days, "
-    "midnight to midnight. The wettest day: {sort_by: \"rain\"}. The hottest day it also rained: {where: [{field: \"rain\", op: \">=\", "
-    "value: 1}], sort_by: \"temp_max\"}. How many days over 35°C this year: {where: [{field: \"temp_max\", op: \">\", value: 35}], "
-    "period: \"this year\", count_only: true}. Rain per month: {stat: \"sum\", of: \"rain\", group_by: \"month\", period: \"past "
-    "year\"}. Days PM2.5 passed 25: {where: [{field: \"pm2_5_max\", op: \">\", value: 25}]}. The windiest weekend day: {sort_by: "
-    "\"wind_gust\", only: \"weekend\"}. One day's figures: {period: \"5 Sep\"}. Part of each day, with hours: nights below 5°C "
-    "{hours: \"night\", where: [{field: \"temp_min\", op: \"<\", value: 5}]}; the average 3pm temperature in October {hours: "
-    "\"15:00\", stat: \"avg\", of: \"temp_avg\", period: \"October\"}. No period: every day on record (with hours, the last 30 "
-    "days). Not for: a period's highest or lowest reading with when it happened, or a chart over time (summary); values at set "
-    "times (readings); rain against a reading (relate). Result: answer, a line ready to pass on; matching_days of days_checked; "
-    "days, the top ones, each with its day_look (the day's weather word and emoji: put it before the day); by_month or by_year, a "
-    "figure each, drawn as bars (charts); note_*: mention briefly. A rainy day is rain >= 1; above 0 is only a trace.")
+    "Days found, ranked, counted or totalled by their figures, from the weather station's and the air sensor's days, midnight to "
+    "midnight. sort_by is the field the days are ranked by: the wettest days, most rain {sort_by: \"rain\"}; the hottest "
+    "day it rained {where: [{field: \"rain\", op: \">=\", value: 1}], sort_by: \"temp_max\"}. Days over 35°C this year: {where: "
+    "[{field: \"temp_max\", op: \">\", value: 35}], period: \"this year\", count_only: true}. Per month or year (\"per year\", \"each "
+    "year\", \"by month\"), group_by: rain per month {stat: \"sum\", of: \"rain\", group_by: \"month\"}; average temperature per "
+    "year {stat: \"avg\", of: \"temp_avg\", group_by: \"year\"}. PM2.5 over 25: {where: [{field: \"pm2_5_max\", op: \">\", value: "
+    "25}]}. The windiest weekend day: {sort_by: \"wind_gust\", only: \"weekend\"}. One day: {period: \"5 Sep\"}. Part of each day, "
+    "hours: nights below 5°C {hours: \"night\", where: [{field: \"temp_min\", op: \"<\", value: 5}]}; 3pm in October {hours: "
+    "\"15:00\", stat: \"avg\", of: \"temp_avg\", period: \"October\"}. No period: every day on record (with hours, 30 days). Not "
+    "for: a period's highest or lowest reading with when, a record (\"hottest ever\"), wind direction or a chart over time (summary); values at set times (readings); rain "
+    "against a reading (relate). Result: answer, a line to pass on; matching_days of days_checked; days, the top ones, each with "
+    "day_look (word and emoji: put it before the day); by_month or by_year, drawn as bars (charts); note_*: mention "
+    "briefly. A rainy day is rain >= 1.")
 
 STATION_WHERE = ("Weather station: temp_max, temp_min, temp_avg (outdoor °C), rain (mm that fell), wind_gust (km/h, the highest); a "
                  "day's highest (_max), lowest (_min) and mean (_avg) of humidity, pressure, dew_point, feels_like, vpd, indoor_temp, "
@@ -132,14 +135,16 @@ def parameters(fields: list[str]) -> dict:
                       "items": {"type": "object", "properties": {"field": one, "op": {"type": "string", "enum": list(OPS)},
                                                                  "value": {"type": "number"}},
                                 "required": ["field", "op", "value"]}},
-            "sort_by": {**one, "description": "Rank the days by this field. Default: the first condition's field, else `of`, else "
+            "sort_by": {**one, "description": "The field the days are ranked by (\"most rain\", \"wettest\": rain; \"hottest\": temp_max; "
+                                                "\"windiest\": wind_gust). Default: the first condition's field, else `of`, else "
                                                 f"{default_sort}" + (" (pm2_5_max when only air fields are named)."
                                                                      if len(devices) > 1 else ".")},
             "order": {"type": "string", "enum": list(ORDERS), "description": "desc: highest first (default); asc: lowest first."},
             "count_only": {"type": "boolean", "description": "true for \"how many days\": the counts alone, no days listed."},
             "group_by": {"type": "string", "enum": ["month", "year"],
-                         "description": "A figure per month or year (those with none included), drawn as a bar chart: \"rain per "
-                                        "month\", \"days over 35°C per year\"."},
+                         "description": "A figure per month or year (those with none included), drawn as a bar chart, whenever the "
+                                        "question asks per month or per year (\"rain per month\", \"by month\", \"days over 35°C "
+                                        "per year\", \"each year\", \"average temperature per year\")."},
             "stat": {"type": "string", "enum": list(STATS),
                      "description": "What the period, or each month or year, gives: count (default: the matching days), or the max, min, "
                                     "avg or sum of `of` over the matching days (\"rain per month\": sum of rain; \"the hottest day each "
@@ -454,6 +459,8 @@ class DaysTool:
         engine_period = out.pop("period")
         out.pop("chart", None)   # (the bot's hint: chart_note says what to do with a chart)
         out.update(self._notes(call, asked, held, got, checked, days, daily_out, devices, merged, first_held))
+        if (call.stat or call.count_only) and not call.group_by and (last - first).days >= 31:   # one figure over months: was a breakdown meant?
+            out["note_group_by"] = GROUP_BY_NOTE
         line = answer_line(out, engine_period, call.stretch)
         fields = {"answer": line, **({"hours": {"text": call.stretch.text, "how_to_read": HOURS_HOW}} if call.stretch else {}), **out}
         charts = with_charts(turn.charts, tz, meta)
@@ -461,7 +468,7 @@ class DaysTool:
             drawn = self.drawn_by(call, args, period, first, last, first_held, now.date())
             for chart in charts["charts"]:
                 chart["drawn_by"] = drawn
-        finished = complete(line) if call.chart_answers_it and charts and not needs_words(out) else {}
+        finished = complete(line) if call.chart_answers_it and charts and not needs_words(out) and not period.note else {}
         return answer(period=period, as_of=now, **fields, **charts, **finished)
 
     def _notes(self, call: Call, asked, held: "Held", got, checked: list[date], days: list[date], daily_out: set[date],
@@ -521,7 +528,7 @@ class DaysTool:
         worth drawing over: per month, 3 months, a year and the whole record (with hours, only while that is within its 400 days); per
         year, none."""
         words = period.asked
-        if args.get("start"):   # dates as words; one that runs to today or later as "to now", so a replay moves on with the clock
+        if args.get("start") and not sends_period(args):   # dates as words; one that runs to today or later as "to now", so a replay moves on with the clock
             open_ended = not args.get("end") or str(args["end"])[:10] >= today.isoformat()
             words = f"{first.isoformat()} to {'now' if open_ended else last.isoformat()}"
         arguments = {"where": call.where, "sort_by": self.sort_of(call), "order": call.order, "count_only": call.count_only,

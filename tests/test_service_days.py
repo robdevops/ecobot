@@ -10,9 +10,8 @@ from datetime import date, datetime, time, timedelta
 import pytest
 
 from tests import report_words as report   # (the bot's words before step 2: the oracle)
-from lib.airgradient.days import find_air_days
+from tests.old_tools import find_air_days, find_days   # (weather_days' and air_days' engines: the oracle)
 from lib.airgradient.readings import AirReadings
-from lib.ecowitt.days import find_days
 from lib.partday import over, parse_stretch
 from lib.service import days as days_tool
 from lib.service.common import CHART_NOTE, FRESH
@@ -106,7 +105,7 @@ def truth(d: date) -> tuple[float, float]:
 def engine_part(out: dict) -> dict:
     """A days result as weather_days and air_days had it: without the service's head, its answer line, charts, looks and sources."""
     out = {k: v for k, v in out.items() if k not in ("period", "as_of", "fresh", "answer", "chart_note", "charts", "reply", "complete",
-                                                    "note", "chart")}
+                                                    "note", "chart", "note_group_by")}
     for key in ("days", "trace_rain_days"):
         if key in out:
             out[key] = [{k: v for k, v in row.items() if k not in ("day_look", "source")} for row in out[key]]
@@ -126,6 +125,11 @@ async def test_the_tool_offers_the_fields_of_the_sensors_there_are_and_says_what
     assert "Whole days only" in props["period"]["description"] and "night (22:00-06:00" in props["hours"]["description"]
     d = t.description
     assert len(d) < 1500 and all(word in d for word in ("summary", "readings", "relate", "day_look", "hours", "only", "count_only"))
+    # the live evals: "days with most rain" sent no sort_by (ranked by temp_max), "average temperature per year" no group_by
+    assert 'a record ("hottest ever"), wind direction or a chart over time (summary)' in d
+    assert 'sort_by is the field the days are ranked by: the wettest days, most rain {sort_by: "rain"}' in d
+    assert '"per year", "each year", "by month"), group_by' in d and '{stat: "avg", of: "temp_avg", group_by: "year"}' in d
+    assert '"most rain"' in props["sort_by"]["description"] and '"each year"' in props["group_by"]["description"]
     station_only = days_tool.tools(Context(eco=world.eco))[0].parameters["properties"]
     assert "pm2_5_max" not in station_only["where"]["items"]["properties"]["field"]["enum"]
     assert "Air sensor" not in station_only["where"]["description"]
@@ -383,6 +387,19 @@ async def test_a_chart_drawn_with_dates_names_them_as_its_period_and_per_year_it
         assert drawn["arguments"]["period"] == f"{ago(200).isoformat()} to now"
 
 
+async def test_a_period_sent_with_start_and_end_beside_it_wins_and_its_chart_is_drawn_by_the_words(world):
+    # the live evals: period with start 'count_only', end 'cancel' (a model filling in every argument)
+    out = await ask(world, period="last 30 days", start="count_only", end="cancel", where=[{"field": "rain", "op": ">=", "value": 1}],
+                    group_by="month")
+    assert "error" not in out and out["period"]["asked"] == "last 30 days" and "were ignored" in out["period"]["note"]
+    assert chart_of(out)["drawn_by"]["arguments"]["period"] == "last 30 days"
+    noted = await ask(world, period="last 30 days", start="count_only", where=[{"field": "rain", "op": ">=", "value": 1}],
+                      group_by="month", chart_answers_it=True)
+    assert "charts" in noted and noted["period"]["note"] and "complete" not in noted and "reply" not in noted   # the model reads it
+    other = await ask(world, period="on record", start=str(ago(20)), sort_by="rain")
+    assert "but `start`/`end` say" in other["error"]   # real dates that disagree: refused, naming both
+
+
 async def test_a_chart_is_not_the_whole_answer_when_a_note_needs_the_models_words(world):
     out = await ask(world, period="on record", stat="max", of="temp_max", group_by="month", chart_answers_it=True)
     assert "charts" in out and "note_daily" in out and "complete" not in out and "reply" not in out
@@ -416,3 +433,15 @@ async def test_charts_are_sent_to_the_requests_budget(world):
     assert chart_of(both)["source"] == "Ecowitt weather station and AirGradient sensor"
     replay = copy.deepcopy(chart_of(both)["drawn_by"]["arguments"])
     assert chart_of(await ask(world, **replay)) == chart_of(both)
+
+
+async def test_one_figure_over_months_says_how_to_get_one_per_month_or_year(world):
+    """A stat or a count over more than a month with no group_by is one figure; the result says how to get one per month or year, so a
+    model that left group_by out ("rain per month") calls again, and it is never the whole answer."""
+    from lib.service.days import GROUP_BY_NOTE
+    whole = await ask(world, stat="sum", of="rain", period="last 90 days", chart_answers_it=True)
+    assert whole["note_group_by"] == GROUP_BY_NOTE and "complete" not in whole
+    assert "note_group_by" not in await ask(world, stat="sum", of="rain", period="last 90 days", group_by="month")
+    assert "note_group_by" not in await ask(world, stat="sum", of="rain", period="last 7 days")   # (a week: one figure is the answer)
+    counted = await ask(world, where=[{"field": "rain", "op": ">=", "value": 1}], count_only=True, period="last 90 days")
+    assert counted["note_group_by"] == GROUP_BY_NOTE

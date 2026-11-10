@@ -74,6 +74,7 @@ async def test_it_takes_a_reading_whole_days_and_a_chart_and_says_what_it_is_not
     assert "Whole days only, up to yesterday" in props["period"]["description"] and "the last 90 days" in props["period"]["description"]
     assert all(name in props["reading"]["description"] for name in ("pressure.relative", "outdoor.humidity", "wind.wind_speed", "air.pm2_5", "air.pm10"))
     assert len(made.description) < 1500 and "\"X against rain\" is this tool" in made.description
+    assert '"plot the traffic light rating against rainfall": summary' in made.description   # (a live run sent it here)
     assert all(f"({tool})" in made.description for tool in ("scan", "summary", "days")) and made.description.count("{reading:") >= 3
     assert made.annotations == {"readOnlyHint": True, "openWorldHint": True}   # the air sensor's missing days are fetched
     (station_only,) = relate.tools(Context(eco=eco, tz=TZ))
@@ -218,6 +219,14 @@ async def test_a_chart_is_sent_in_the_points_the_request_asks_for_and_only_when_
     lines = [s for p in small["charts"][0]["panels"] for s in p["series"] if s["kind"] in ("line", "band")]
     assert lines and all(len(s["points"]) <= 20 for s in lines)
     (made,) = relate.tools(ctx)
-    asked = json.loads(await Tools([made.tool()]).call("relate", "{}", Turn(text="plot pressure against rain", chart_asked=True)))
+    asked = json.loads(await Tools([made.tool()]).call("relate", "{}", Turn(chart_asked=True)))
     assert "charts" not in asked                                     # the words of the question never reach it: only `chart` draws
     await eco.close()
+
+
+def test_a_period_sent_beside_start_and_end_is_the_words_a_replay_is_drawn_by():
+    from datetime import datetime
+    from lib.periods_text import Period
+    period = Period("this week", datetime(2026, 11, 3), datetime(2026, 11, 10), "the last 7 days")
+    assert relate.whole_day_words({"period": "this week", "start": "2026-11-01", "end": "2026-11-02"}, period) == "this week"
+    assert relate.whole_day_words({"start": "2026-11-03"}, period) == "2026-11-03 to 2026-11-09"

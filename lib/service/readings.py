@@ -25,20 +25,21 @@ NOTHING_STORED = "Nothing is stored for this sensor yet."
 NO_ROWS = "No readings are stored for this period at this interval: say so; never fill the gap."
 
 DESCRIPTION = (
-    "The stored values of ONE reading at a fixed interval, a row per interval with its time: for values at set times or per interval, "
-    "or a table of values. Examples: \"humidity each hour for the last 5 hours\" {reading: \"outdoor.humidity\", period: \"last 5 "
+    "The stored values of ONE reading at a fixed interval, a row per interval with its time: values at set times or per interval. "
+    "Examples: \"humidity each hour for the last 5 hours\" {reading: \"outdoor.humidity\", period: \"last 5 "
     "hours\", interval: \"1hour\"}; \"PM2.5 every 30 minutes this morning\" {reading: \"pm2.5\", period: \"this morning\", interval: "
     "\"30min\"}; \"rain each hour today\" {reading: \"rain\", period: \"today\", interval: \"1hour\"}; \"the temperature at 3pm "
     "yesterday\" {reading: \"outdoor.temperature\", period: \"yesterday afternoon\", interval: \"5min\"}, then its 3:00pm row. One "
-    "reading a call: outdoor and indoor are two calls, made together. "
+    "reading a call: outdoor and indoor are two calls. "
     f"At most {MAX_ROWS} rows: 5min for up to a day, 30min up to 6 days, 1hour up to 12 days, 4hour up to 7 weeks, 1day up to 300 "
     "days; more is refused with the interval that fits (`fits`). "
-    "Not for: a period's highs and lows with when, averages, totals or a chart (summary); days ranked, counted or totalled, a figure "
+    "Not for: a period's highs and lows with when, a record (\"hottest ever\", even \"use 5 minute data\": summary, period \"on "
+    "record\"), averages, totals or a chart (summary); days ranked, counted or totalled, a figure "
     "per month or year (days); how it is now (current). "
     "Result: `columns` names each row's values and `value_is` what `value` is: an interval's average with its lowest and highest; rain "
     "the mm that fell in it; gusts the highest; wind direction the reading at its end; at 1day the day's figures and when its lowest "
     "and highest happened. Only what is stored is read, nothing is fetched: an empty row is `missing` (say so, never fill it), and "
-    "`note_coarser` with `fits` names the interval those times are held at.")
+    "`note_coarser` with `fits` names the interval held.")
 
 
 def parameters(catalogue: Catalogue) -> dict:

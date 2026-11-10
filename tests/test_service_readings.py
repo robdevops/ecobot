@@ -7,12 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from lib.history import INTERVALS, MAX_ROWS, History
+from lib.history import INTERVALS, MAX_ROWS
 from lib.service import readings
 from lib.service.common import FRESH
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.storage import Storage
+from tests.old_tools import History
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import local_epoch
 from lib.tools import Tools, Turn
@@ -92,6 +93,8 @@ def test_it_takes_one_reading_a_period_in_words_and_an_interval(storage):
     assert "Default: last 24 hours" in props["period"]["description"] and "this week" in props["period"]["description"]
     assert "outdoor.humidity" in props["reading"]["description"] and "ONE reading" in props["reading"]["description"]
     assert len(made.description) < 1500 and all(f"({tool})" in made.description for tool in ("summary", "days", "current"))
+    assert 'a record ("hottest ever", even "use 5 minute data": summary, period "on record")' in made.description
+    assert '"past week" (the last 7 days) is never sent as "last week"' in props["period"]["description"]
     assert made.description.count("{reading:") >= 3 and "`value_is`" in made.description and "`fits`" in made.description
     assert made.annotations == {"readOnlyHint": True, "openWorldHint": False}   # it reads the file only
 
@@ -172,7 +175,10 @@ async def test_a_period_it_cant_read_says_what_it_can(storage):
     assert "isn't a period" in out["error"] and any(form.startswith("last N hours") for form in out["forms"])
     assert "It is now Mon 9 Nov 2026 1:47am." in out["error"]
     assert "use forecast" in (await ask(storage, reading="humidity", period="tomorrow", interval="1hour"))["error"]
-    assert "not both" in (await ask(storage, reading="humidity", period="today", start="2026-11-08", interval="1hour"))["error"]
+    both = await ask(storage, reading="humidity", period="today", start="2026-11-08", interval="1hour")   # two spans: refused
+    assert "`period` 'today' is Mon 9 Nov 2026 but `start`/`end` say Sun 8 Nov 2026 – now: send one of them" in both["error"]
+    junk = await ask(storage, reading="humidity", period="today", start="count_only", interval="1hour")   # junk: the period, said so
+    assert "error" not in junk and junk["period"]["asked"] == "today" and "were ignored" in junk["period"]["note"]
     out = await ask(storage, reading="humidity", period="on record", interval="1day")
     assert "Nothing is held yet" in out["error"]
 
@@ -209,6 +215,6 @@ async def test_only_the_arguments_reach_it_and_its_metadata_changes_nothing(stor
     put(storage, "outdoor", "5min", [{"ts": at(9, 1, 5 * i), "humidity": 80 + i} for i in range(9)])
     args = {"reading": "outdoor.humidity", "period": "last hour", "interval": "5min"}
     direct = await tool(storage).call(args)
-    via_bot = await Tools([tool(storage).tool()]).call("readings", json.dumps(args), Turn(text="humidity every 30 minutes", per_day=True))
+    via_bot = await Tools([tool(storage).tool()]).call("readings", json.dumps(args), Turn(per_day=True))
     assert via_bot == direct and json.loads(direct)["interval"] == "5min"
     assert await tool(storage).call(args, {"fetch": False, "priority": "background"}) == direct   # nothing is fetched here anyway

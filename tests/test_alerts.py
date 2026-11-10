@@ -11,6 +11,7 @@ from lib.alerts.particulates import ParticulatesMonitor
 from lib.alerts.weather import WeatherMonitor
 from lib.entities import with_link
 from tests.fakes import TZ
+from tests import old_tools
 
 T0 = int(datetime(2026, 9, 29, 13, 0, tzinfo=TZ).timestamp())  # 1pm Melbourne, a settled day
 
@@ -813,17 +814,14 @@ async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sou
 
 
 async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path):
-    from lib import intent
     from lib.airgradient import AirGradient
-    from lib.timeutil import now_local
     from lib.tools import Turn
     from tests.fakes import air_transport, config
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     air = AirGradient(config(tmp_path), transport=transport)
     await air.start()
-    read = intent.read("Particulates chart 1d", now_local(TZ))
-    turn = Turn(chart_asked=read.chart_asked, text="Particulates chart 1d")
-    await air.handle(read.fast[1], turn)
+    turn = Turn(chart_asked=True)
+    await old_tools.air_quality(air, {"chart": True, "metrics": ["pm2_5", "pm10", "pm1"]}, turn)
     (panel,) = turn.charts[0].panels
     assert sorted(line.label for line in panel.lines) == ["PM1", "PM10", "PM2.5"]
     await air.close()

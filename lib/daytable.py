@@ -7,13 +7,12 @@ reading per month or year. A count or figure per month or year is drawn as a bar
 
 import logging
 import operator
-import re
 from dataclasses import dataclass, field
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, tzinfo
 from statistics import fmean
 
-from .captions import CHART_ANSWERS_IT, COUNT_CHART_HINT
+from .captions import COUNT_CHART_HINT
 from .series import AIR
 from .specs import Chart, Panel, calendar_bars
 from .timeutil import day_text, parse_period
@@ -34,55 +33,6 @@ def noun(name: str) -> str:
     """"uv_max" -> "UV index", "rain" -> "rain"."""
     base = name[:-4] if name.endswith(SUFFIXES) else name
     return PRETTY.get(base, base.replace("_", " "))
-
-
-def parameters(fields: list[str], what: str, extra: dict | None = None) -> dict:
-    """The tool's JSON schema for these fields (`what` names the unit of a day's figure for the descriptions)."""
-    return {
-        "type": "object",
-        "properties": {
-            "start_date": {"type": "string", "description": "First day, 'YYYY-MM-DD'. Use the start of the 'on record' range for all time."},
-            "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (today's readings aren't final, so up to yesterday)."},
-            "where": {"type": "array", "description": f"Conditions that must ALL hold on the same day, e.g. {what}.",
-                      "items": {"type": "object", "properties": {
-                          "field": {"type": "string", "enum": fields},
-                          "op": {"type": "string", "enum": list(OPS)},
-                          "value": {"type": "number"}}, "required": ["field", "op", "value"]}},
-            "sort_by": {"type": "string", "description": "Rank matching days by this: a field from the where.field list. Default: the first condition's field."},
-            "order": {"type": "string", "enum": ["desc", "asc"], "description": "desc = highest first (default), asc = lowest first."},
-            "count_only": {"type": "boolean", "description": "true for \"how many days\": returns just the counts, no list of days (much smaller). Use it whenever the days themselves aren't asked for."},
-            "group_by": {"type": "string", "enum": ["month", "year"], "description": "Break the result down per month or year, months with none included. It is drawn as a bar chart."},
-            "chart_answers_it": CHART_ANSWERS_IT,
-            "stat": {"type": "string", "enum": list(STATS), "description": "What each month or year (or the whole period, with no group_by) shows: count (default: matching days), or the max, min, avg or sum of the field `of` over the matching days. E.g. rain total per month: stat sum, of rain, group_by month."},
-            "of": {"type": "string", "description": "The field to take max, min, avg or sum of (a field from the where.field list; not needed for count)."},
-            "limit": {"type": "integer", "description": f"How many days to list (default 5, at most {MAX_LIMIT}). The total is always counted."},
-            **(extra or {}),
-        },
-        "required": ["start_date", "end_date"],
-    }
-
-
-GROUPING = re.compile(r"\b(?:per|by|each|every)\s+(year|month)\b|\b(yearly|annual\w*)\b|\b(monthly)\b", re.I)
-
-
-def grouping_in(text: str) -> str | None:
-    """"month" or "year" when the words ask for figures by or per month or year, else None."""
-    found = GROUPING.search(text or "")
-    if not found:
-        return None
-    return "month" if (found.group(1) or "").lower() == "month" or found.group(3) else "year"
-
-
-def grouped_as_asked(args: dict, turn) -> dict:
-    """The arguments with group_by filled in from the person's words when the model left it out ("... by year", "per month"):
-    a count by year or month is a bar chart, never one overall number."""
-    if args.get("group_by") or turn is None or not getattr(turn, "text", ""):
-        return args
-    by = grouping_in(turn.text)
-    if not by:
-        return args
-    log.info("group_by %s added: the question asks for figures by %s", by, by)
-    return {**args, "group_by": by}
 
 
 def validate(args: dict, fields: dict[str, str]) -> str | None:

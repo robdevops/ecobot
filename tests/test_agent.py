@@ -34,17 +34,6 @@ def tools():
     return Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)]), seen
 
 
-async def test_fast_path_calls_the_model_only_at_the_end():
-    t, seen = tools()
-    client = FakeLLM(["Sunny."])
-    agent = llm.Agent(client, "m", t)
-    msgs = [{"role": "user", "content": "highs today"}]
-    reply = await agent.run(msgs, "sys", "none", first_call=("weather_now", {"groups": "outdoor"}))
-    assert reply == "Sunny." and len(client.requests) == 1 and seen == [{"groups": "outdoor"}]
-    assert client.requests[0]["tool_choice"] == "auto" and client.requests[0]["extra_body"] == {"reasoning": {"effort": "none"}}
-    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "assistant"]
-
-
 async def test_weather_questions_must_fetch_first_and_reasoning_is_passed_through():
     t, seen = tools()
     client = FakeLLM([[("weather_now", {})], "Rain unlikely."])
@@ -130,79 +119,6 @@ async def test_reset_forgets_only_that_chat(alert_state):
     assert (1, 7) not in bot.chats and bot.chats[(2, None)].history
 
 
-def test_the_prompt_defines_a_rainy_day_and_how_to_phrase_the_count():
-    from datetime import datetime
-    from lib import prompt
-    from lib.ecowitt import days
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt"})
-    assert "rain >= 1" in text and "any rain" in text and "It rained on 507 of 1,454 days" in text
-    assert "1 mm or more" in days.DESCRIPTION
-
-
-def test_the_prompt_asks_for_a_footnote_about_hotter_trace_days():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt"})
-    assert "trace_rain_days" in text and "footnote" in text
-
-
-def test_the_day_tool_schema_agrees_with_the_prompt_about_a_rainy_day():
-    from lib.ecowitt import days
-    where = days.PARAMETERS["properties"]["where"]["description"]
-    assert "rain >= 1" in where and "rain > 0" not in where
-
-
-def test_the_day_tool_rules_are_short_separate_bullets():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt"})
-    block = text[text.index("- For questions that rank, compare or count DAYS"):text.index("- To ask whether rain comes WITH")]
-    bullets = [line for line in block.splitlines() if line.startswith("  - ")]
-    assert len(bullets) == 9 and all(len(b) < 300 for b in bullets)
-    for needle in ("sort_by", "rain >= 1", "It rained on 507 of 1,454 days", "trace_rain_days", "note_daily", "on record", "public_holiday", "known day", "RECORD"):
-        assert sum(needle in b for b in bullets) == 1, needle   # each rule lives in exactly one bullet
-
-
-def test_the_system_prompt_carries_the_period_hints_only_when_there_are_some():
-    from datetime import datetime
-    from lib import intent, prompt
-    now = datetime(2026, 9, 29, 14, 5)
-    with_hint = prompt.build(now, {"Ecowitt": "Ecowitt"}, intent.period_hints("average temp 3m", now))
-    assert "THE PERSON'S WORDS NAME THESE PERIODS" in with_hint and '"3m" = last 3 months: 2026-07-01' in with_hint
-    assert "THE PERSON'S WORDS NAME" not in prompt.build(now, {"Ecowitt": "Ecowitt"}, intent.period_hints("hello", now))
-
-
-def test_the_prompt_says_what_the_bot_can_and_cannot_do_for_the_sources_it_has():
-    from datetime import datetime
-    from lib import prompt
-    now = datetime(2026, 9, 29, 14, 5)
-    both = prompt.build(now, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor sensor"})
-    assert "WHAT THIS BOT CAN AND CAN'T DO" in both and "PM2.5 (µg/m³)" in both and "weather_link" in both
-    assert "Custom alerts" in both and "solar radiation and UV index" in both and "Not available: lightning" in both and "correct the call once" in both
-    weather_only = prompt.build(now, {"Ecowitt": "Ecowitt weather station"})
-    assert "Weather station:" in weather_only and "Air quality (outdoor AirGradient)" not in weather_only
-    assert "Weather station:" not in prompt.build(now, {"AirGradient": "AirGradient outdoor sensor"})
-
-
-async def test_a_question_about_the_bot_itself_gets_no_tools_and_the_hint():
-    from datetime import datetime
-    from lib import prompt
-    t, seen = tools()
-    client = FakeLLM(["I track temperature, humidity..."])
-    reply = await llm.Agent(client, "m", t).run([{"role": "user", "content": "list our metrics"}], "sys", "none",
-                                                tool_choice="none")
-    assert reply.startswith("I track") and client.requests[0]["tool_choice"] == "none" and seen == []
-    now = datetime(2026, 9, 29, 14, 5)
-    assert "ABOUT THE BOT ITSELF" in prompt.build(now, {"Ecowitt": "Ecowitt"}, [], True) and "ABOUT THE BOT ITSELF" not in prompt.build(now, {"Ecowitt": "Ecowitt"})
-
-
-def test_the_prompt_never_shows_a_temperature_emoji_to_copy_and_says_no_entry_means_no_emoji():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"})
-    assert '"outdoor.temperature": "' not in text and "a reading with no entry gets NO emoji" in text
-
-
 def chunk(content=None, calls=None, usage=None):
     delta = NS(content=content, tool_calls=calls)
     return NS(choices=[NS(delta=delta)] if (content is not None or calls) else [], usage=usage)
@@ -244,77 +160,6 @@ async def test_streamed_answers_give_the_same_result_and_report_the_text_so_far(
     assert msgs[1]["tool_calls"][0]["function"] == {"name": "weather_now", "arguments": '{"groups": "outdoor"}'}
 
 
-def test_a_rain_chart_caption_is_only_the_least_and_most_rain():
-    from datetime import datetime
-    from lib import prompt
-    now = datetime(2026, 9, 29, 14, 5)
-    text = prompt.build(now, {"Ecowitt": "Ecowitt weather station"}, rain_caption=True)
-    assert "THIS IS A RAIN CHART" in text and "rain_outlook" not in text
-    assert "THIS IS A RAIN CHART" not in prompt.build(now, {"Ecowitt": "Ecowitt weather station"})
-
-
-def test_questions_about_the_bot_are_answered_as_simple_bullet_points():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"}, about_bot=True)
-    assert "simple bullet points" in text and "no sub-bullets" in text and "7 at most" in text and "No dates" in text
-
-
-def test_the_capabilities_mention_the_new_sources_only_when_they_are_on():
-    from lib import prompt
-    base = prompt.capabilities(["Ecowitt"])
-    assert "pollen and thunderstorm asthma" in base.split("Not available:")[1] and "forecasts (only a short read" in base
-    both = prompt.capabilities(["Ecowitt", "Pollen", "Forecast"])
-    assert "tool pollen_asthma" in both and "tool weather_forecast" in both and "thunderstorm asthma risk reaching High" in both
-    assert "pollen" not in both.split("Not available:")[1] and "forecasts" not in both.split("Not available:")[1]
-
-
-async def test_several_fast_calls_run_together_before_the_model():
-    seen = []
-
-    async def handler(args, turn=None):
-        seen.append(args)
-        return json.dumps({"ok": True})
-    t = Tools([Tool("weather_now", "d", {"type": "object", "properties": {}}, handler),
-               Tool("air_quality", "d", {"type": "object", "properties": {}}, handler)])
-    client = FakeLLM(["The report."])
-    msgs = [{"role": "user", "content": "report"}]
-    reply = await llm.Agent(client, "m", t).run(msgs, "sys", "none", first_call=[("weather_now", {"groups": "outdoor"}), ("air_quality", {})])
-    assert reply == "The report." and len(client.requests) == 1 and seen == [{"groups": "outdoor"}, {}]
-    assert [m["role"] for m in msgs] == ["user", "assistant", "tool", "tool", "assistant"]
-    assert [tc["id"] for tc in msgs[1]["tool_calls"]] == ["fast_1", "fast_2"] and [m["tool_call_id"] for m in msgs[2:4]] == ["fast_1", "fast_2"]
-
-
-
-
-
-def test_the_capabilities_mention_forecast_revision_alerts_only_with_the_forecast_source():
-    from lib import prompt
-    assert "revised" not in prompt.capabilities(["Ecowitt"])
-    assert "a forecast it sent being revised" in prompt.capabilities(["Ecowitt", "Forecast"])
-
-
-def test_the_capabilities_list_only_the_alerts_the_sources_send_with_their_own_thresholds():
-    from lib import prompt
-    from lib.alerts.weather import GUST_ALERT_KMH
-    station, air = prompt.capabilities(["Ecowitt"]), prompt.capabilities(["AirGradient"])
-    assert f"wind gusts over {GUST_ALERT_KMH} km/h" in station and "mask alerts" not in station
-    assert "mask alerts" in air and "rain starting" not in air and "Alerts, sent" not in prompt.capabilities([])
-
-
-def test_the_capabilities_say_pollen_only_runs_october_to_december():
-    from lib import prompt
-    assert "only run from October to December" in prompt.capabilities(["Ecowitt", "Pollen"])
-
-
-def test_the_prompt_leaves_the_heads_up_to_the_bot_and_points_at_the_count_tool():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"})
-    assert "the bot warns the chat by itself" in text and "\u26a0" not in text and "decline" not in text.lower()
-    assert "uv_max >= 9" in text and "count_only" in text
-
-
 async def test_the_chat_is_warned_once_before_the_model_is_sent_more_than_twice_a_500_point_querys_data():
     from lib.llm import CHARS_PER_TOKEN, WARN_TOKENS
     from lib.tools import Turn
@@ -341,13 +186,6 @@ async def test_the_chat_is_warned_once_before_the_model_is_sent_more_than_twice_
     assert warned == []
 
 
-def test_the_prompt_says_to_use_the_whole_record_without_a_period_and_holidays_only_when_asked():
-    from datetime import datetime
-    from lib import prompt
-    text = prompt.build(datetime(2026, 9, 29, 14, 5), {"Ecowitt": "Ecowitt weather station"})
-    assert "use the whole record" in text and "only when the person's words say holidays or weekends" in text
-
-
 async def test_the_reasoning_effort_goes_to_openrouter_in_its_own_form():
     t, _ = tools()
     client = FakeLLM([[("weather_now", {})], "Done."])
@@ -372,22 +210,6 @@ def test_older_answers_are_cut_to_their_first_lines_but_the_last_answer_and_ever
     assert len(llm.shorten_old(one_line)[0]["content"]) <= llm.OLD_ANSWER_CHARS + 2
 
 
-async def test_a_question_that_asks_for_the_air_sensors_own_readings_is_sent_the_tools_that_offer_them():
-    from lib.tools import Turn
-
-    async def handler(args, turn=None):
-        return json.dumps({"ok": True})
-    base = {"type": "object", "properties": {"series": {"enum": ["humidity"]}}}
-    wider = {"type": "object", "properties": {"series": {"enum": ["humidity", "air_humidity"]}}}
-    t = Tools([Tool("plot_chart", "d", base, handler, asked=lambda: ("d+", wider)), Tool("weather_now", "d", {"type": "object", "properties": {}}, handler)])
-    plain, asked = FakeLLM(["a"]), FakeLLM(["b"])
-    await llm.Agent(plain, "m", t).run([{"role": "user", "content": "x"}], "sys", "none", turn=Turn())
-    await llm.Agent(asked, "m", t).run([{"role": "user", "content": "x"}], "sys", "none", turn=Turn(air_extra=True))
-    assert plain.requests[0]["tools"] == t.schemas and "air_humidity" not in json.dumps(plain.requests[0]["tools"])
-    names = [s["function"]["name"] for s in asked.requests[0]["tools"]]
-    assert names == ["plot_chart", "weather_now"] and "air_humidity" in json.dumps(asked.requests[0]["tools"])
-
-
 async def test_a_tool_that_fails_answers_the_model_with_the_error_and_only_a_bug_logs_its_traceback(caplog):
     import logging
 
@@ -403,3 +225,19 @@ async def test_a_tool_that_fails_answers_the_model_with_the_error_and_only_a_bug
         assert await t.call("weather_history", "{}") == "Error calling tool: 'missing'"
     down, bug = caplog.records
     assert not down.exc_info and bug.exc_info                        # a failure is a line; a bug in the code keeps its traceback
+
+
+def test_the_prompt_is_the_persona_then_the_servers_instructions_then_the_time():
+    """docs/mcp-service.md 4: the bot adds only its persona (a friendly Telegram bot, plain text, bullets, the caption a photo allows)
+    to the server's instructions; nothing about the tools, the periods or the data."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from lib import prompt
+    from lib.service.instructions import INSTRUCTIONS
+    now = datetime(2026, 11, 10, 14, 5, tzinfo=ZoneInfo("Australia/Melbourne"))
+    text = prompt.build(now, INSTRUCTIONS)
+    assert text.startswith("You are a friendly weather bot on Telegram") and INSTRUCTIONS in text
+    assert text.rstrip().endswith("Now: Tuesday 10 November 2026, 14:05 (Australia/Melbourne time).")
+    assert "900 characters" in text and "•" in text and "Plain text only" in text
+    for gone in ("weather_history", "weather_now", "RIGHT NOW", "start_date", "chart_field", "TIME PERIODS", "Fahrenheit"):
+        assert gone not in text, gone

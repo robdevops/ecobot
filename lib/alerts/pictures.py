@@ -1,6 +1,6 @@
 """The chart that goes with an alert: the same picture a typed request for it would give ("Wind chart 1d" is what the Wind button sends), so what an
-alert shows is defined once, by the button sentences, which the bot reads as a service call (lib/intent, lib/service/legacy.py: "Wind chart 1d" is
-summary over the wind for the last 24 hours) and the service draws. AlertCharts keeps those charts with the bot's other charts (the ImageCache,
+alert shows is defined once, by the button sentences, each a fixed service call (lib/intent.chart_call: "Wind chart 1d" is summary
+{readings: ["wind"], period: "1d", chart: true}), which the service draws. AlertCharts keeps those charts with the bot's other charts (the ImageCache,
 by call), so one is drawn once and uploaded once however many times it is sent."""
 
 import asyncio
@@ -15,7 +15,6 @@ from ..charts import render_data
 from ..periods import call_key
 from ..specs import from_json
 from ..timeutil import now_local
-from ..tools import Turn
 
 log = logging.getLogger(__name__)
 
@@ -34,13 +33,7 @@ class Picture(NamedTuple):
 
 def call_of(text: str, now: datetime, tz: tzinfo) -> tuple[str, dict] | None:
     """The service call a chart's request is read as (`now`: the station's local time), or None."""
-    from ..service import legacy
-    if now.tzinfo is not None:
-        now = now.astimezone(tz).replace(tzinfo=None)
-    read = intent.read(text, now)
-    if not read.fast:
-        return None
-    return legacy.translate(read.fast[0], read.fast[1], Turn.of(read, text), now=now, tz=tz)
+    return intent.chart_call(text, now, tz)
 
 
 def _service_of(source, tz):
@@ -57,8 +50,6 @@ async def chart(source, text: str, tz, service=None) -> Picture | None:
     try:
         tool, args = call_of(text, now_local(tz), tz)
         service = service or _service_of(source, tz)
-        if isinstance(args.get("readings"), list):   # (those the service holds: a side the station has nothing of is left out)
-            args = {**args, "readings": service.held(args["readings"]) or args["readings"]}
         out = json.loads(await service[tool].call(args, {"chart_points": CHART_POINTS}))
         if "error" in out:
             raise ValueError(out["error"])

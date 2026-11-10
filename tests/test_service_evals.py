@@ -154,9 +154,6 @@ def test_the_tool_list_is_the_ten_service_tools_with_their_own_descriptions_and_
     assert [t.name for t in built] == evalkit.service_tool_names()
     offered = evalkit.make_service_tools([])
     assert set(offered.by_name) == set(evalkit.service_tool_names())
-    # (the two lists are never offered together; the one name they share is the service's own `readings`, not the bot's)
-    assert set(offered.by_name) & set(evalkit.tool_names()) == {"readings"}
-    assert offered.by_name["readings"].parameters != evalkit.make_tools([]).by_name["readings"].parameters
     for tool, schema in zip(built, offered.schemas):
         assert schema == {"type": "function", "function": {"name": tool.name, "description": tool.description,
                                                           "parameters": tool.parameters}}
@@ -377,6 +374,20 @@ async def test_a_live_service_run_offers_the_ten_tools_alone_with_no_prompt_of_o
     assert first["messages"][1:] == [{"role": "user", "content": "average temp 3m"}]
     follow_up = next(r for r in model.requests if r["messages"][-1].get("content") == "Wrong. It was cooler this week")
     assert [m["role"] for m in follow_up["messages"]] == ["system", "user", "assistant", "user"]   # (the case's history, as it was)
+    assert 'called: forecast {}' in text   # a run that fails shows what was called
+
+
+async def test_with_the_instructions_the_system_line_carries_the_servers_instructions_after_the_neutral_line():
+    from lib.service.instructions import instructions
+    model = ScriptedModel({"average temp 3m": [("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})]})
+    lines = []
+    told = evalkit.service_instructions()
+    assert told == instructions(evalkit.eval_context()) and "AirGradient" in told and "Australia/Melbourne" in told
+    assert await evalkit.run_service([case("3m-average")], EXPECT, model, "m", instructions=told, out=lines.append) == 0
+    system = model.requests[0]["messages"][0]["content"]
+    assert system == evalkit.service_system(instructions=told) == f"{evalkit.service_system()}\n\n{told}"
+    assert system.startswith(evalkit.SERVICE_SYSTEM) and lines[-1].endswith("(the service's ten tools alone, with its instructions)")
+    assert [t["function"]["name"] for t in model.requests[0]["tools"]] == evalkit.service_tool_names()   # (the same tools)
 
 
 async def test_without_a_model_the_service_run_checks_only_the_expectations():
@@ -399,6 +410,10 @@ def test_the_script_runs_the_service_evals_offline_and_needs_a_key_to_ask_a_mode
     assert run.returncode == 0 and "2 of 2 cases pass (the service's ten tools alone)" in run.stdout
     run = script("--live", "--service")
     assert run.returncode != 0 and "--live needs OPENROUTER_API_KEY" in run.stderr
+    run = script("--service", "--instructions", "--ids", "hello")   # (offline it checks the expectations, as without)
+    assert run.returncode == 0 and "1 of 1 cases pass (the service's ten tools alone, with its instructions)" in run.stdout
+    run = script("--instructions")
+    assert run.returncode != 0 and "--instructions goes with --service" in run.stderr
 
 
 def test_a_rolling_period_in_words_is_not_a_month_that_its_days_happen_to_cover():
@@ -410,6 +425,48 @@ def test_a_rolling_period_in_words_is_not_a_month_that_its_days_happen_to_cover(
         assert ek._means({"period": words}, "this month", "days") is not None
     assert ek._means({"period": "September"}, "September", "days") is None
     assert ek._means({"start": "2026-09-01"}, "September", "days") is None
+
+
+def test_what_a_plain_client_fairly_reads_into_a_bare_word_or_a_chat_line_passes_and_history_does_not():
+    """The calls the first live run made that answer the question as a client with only the tool list reads it (each case's note says
+    why): "metrics" as the readings now, a weather report for today (Tuesday) as the report, a chat line with nothing before it as a
+    look at now. A period's history is still wrong for all of them."""
+    check = evalkit.check_calls
+    assert check([("current", {})], EXPECT["metrics-bare"]) == [] and check([("about", {})], EXPECT["metrics-bare"]) == []
+    report = [("current", {}), ("forecast", {"period": "today"}), ("pollen", {})]
+    assert check(report, EXPECT["weather-report-for-a-day"]) == []
+    for cid in ("only-that-its-cold", "now-what"):
+        assert check(report, EXPECT[cid]) == [] and check([("current", {"readings": ["temperature"]})], EXPECT[cid]) == [], cid
+        assert check([], EXPECT[cid]) == [], cid
+        assert check([("summary", {"period": "today"})], EXPECT[cid]), cid
+    assert check([("summary", {})], EXPECT["metrics-bare"])
+
+
+def test_a_period_sent_with_start_and_end_beside_it_is_scored_as_the_tools_read_it():
+    """common.read_period: beside junk start and end, or dates that read as the same span, the period is read, so the checker scores
+    the period (the live run's uv-days-two-years sent period with start 'count_only', end 'cancel'; most-rain-days-jja sent 'June to
+    August 2026' with the matching start 2026-06-01, end 2026-08-31). Dates that read as another span are refused by the tools, so the
+    checker fails them (use-five-minute-data sent days {period: "on record", start: "2025-01-01", end: "2026-09-28"})."""
+    from tests import evalkit as ek
+    assert ek._means({"period": "June to August", "start": "count_only", "end": "cancel"}, "June to August", "days") is None
+    assert ek._means({"period": "June to August 2026", "start": "2026-06-01", "end": "2026-08-31"}, "June to August", "days") is None
+    assert ek._means({"period": "this week", "start": "2026-06-01", "end": "2026-08-31"}, "June to August", "days") is not None
+    disagree = ek._means({"period": "on record", "start": "2025-01-01", "end": "2026-09-28"}, "on record", "days")
+    assert disagree and "refused" in disagree and "but `start`/`end` say" in disagree
+    call = ("days", {"sort_by": "rain", "period": "June to August", "start": "count_only", "end": "cancel"})
+    assert ek.check_calls([call], EXPECT["most-rain-days-jja"]) == []
+
+
+def test_a_rating_with_rain_passes_in_chart_readings_or_in_readings_but_not_as_pm25_alone():
+    """rating-against-rainfall: deepseek put "air.pm2_5:rating" in `readings` (10 Nov 2026); summary takes it there too (summarised,
+    drawn as its rating), so the case takes either place, but not a rating dropped by chart_readings sent without it."""
+    from tests import evalkit as ek
+    want = EXPECT["rating-against-rainfall"]
+    base = {"period": "last 30 days", "chart": True}
+    assert ek.check_calls([("summary", {**base, "chart_readings": ["air.pm2_5:rating", "rainfall.rain"]})], want) == []
+    assert ek.check_calls([("summary", {**base, "readings": ["air.pm2_5:rating", "rain"]})], want) == []
+    assert ek.check_calls([("summary", {**base, "readings": ["air.pm2_5:rating", "rain"], "chart_readings": ["pm2.5", "rain"]})], want)
+    assert ek.check_calls([("summary", {**base, "readings": ["pm2.5", "rain"]})], want)
 
 
 def test_the_hottest_day_ranked_by_days_must_be_the_hottest():

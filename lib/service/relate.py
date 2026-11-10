@@ -23,7 +23,7 @@ from ..periods_text import Period
 from ..specs import ECOWITT_SOURCE, Chart
 from ..timeutil import local_date, local_epoch
 from ..tools import Turn
-from .common import Refusal, ServiceTool, answer, period_properties, read_period, with_charts
+from .common import Refusal, ServiceTool, answer, period_properties, read_period, sends_period, with_charts
 from .context import Context
 from .names import Catalogue, Reading
 from .readings import first_day
@@ -43,9 +43,10 @@ DESCRIPTION = (
     "PM10: is the air cleaner after rain (the 6 hours after each rain against the 6 before, wet days against dry). Any \"X against "
     "rain\" is this tool. Examples: \"does rain follow a pressure drop?\", \"is there a correlation between pressure and rainfall?\" "
     "{reading: \"pressure\"}; \"does humidity go with rain over the past year?\" {reading: \"humidity\", period: \"past year\"}; "
-    "\"does rain clear the air?\" {reading: \"pm2.5\"}; \"plot pressure against rainfall\" {reading: \"pressure\", chart: true}. "
+    "\"does rain clear the air?\", \"is there a correlation between air quality and precipitation?\" {reading: \"pm2.5\"}; \"plot pressure against rainfall\" {reading: \"pressure\", chart: true}. "
     "Not for: each air reading against every weather reading (scan); a chart of readings over time with no question of rain "
-    "(summary); rain totals, wet days or rain per month (days). "
+    "(summary); an air-quality rating drawn beside rain (\"plot the traffic light rating against rainfall\": summary {readings: "
+    "[\"pm2.5:rating\", \"rain\"]}); rain totals, wet days or rain per month (days). "
     "Result: open with `verdict` (yes, no or weak) in your own words, then the evidence in `findings`, as `how_to_read` says; "
     "say the two go together or not, never that one causes the other. `note` when there was nothing to compare: say exactly that.")
 
@@ -78,7 +79,7 @@ def drawn_charts(charts: list[Chart], ctx: Context, meta: dict, tool: str, argum
 def whole_day_words(args: dict, period: Period) -> str:
     """The period of a whole-day call as words a replay reads the same: the words asked (or the default), or, for one made with
     `start` and `end`, "<first day> to <last day>"."""
-    if str(args.get("start") or "").strip():
+    if str(args.get("start") or "").strip() and not sends_period(args):   # (`period` wins: common.read_period)
         return f"{period.first_day.isoformat()} to {period.last_day.isoformat()}"
     return period.asked
 

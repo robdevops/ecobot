@@ -11,7 +11,7 @@ import pytest
 from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient import AirGradient
 from lib.ecowitt.days import day_values_on
-from lib.intent import NOW_GROUPS
+from tests.old_tools import NOW_GROUPS
 from lib.service import current as cur
 from lib.service.common import FRESH
 from lib.service.context import Context
@@ -19,6 +19,7 @@ from lib.service.current import CurrentTool, heading
 from lib.service.names import AIR_DEVICE, STATION, Catalogue
 from lib.timeutil import clock_text, to_local
 from tests.fakes import TZ, air_transport, archived_station, config
+from tests import old_tools
 
 WHEN = re.compile(r"^(at|around) \d{1,2}(:\d\d)?[ap]m$|^sometime between ")
 
@@ -105,7 +106,7 @@ def test_the_description_says_what_it_answers_with_an_example_each_and_where_the
     d = cur.DESCRIPTION
     assert len(d) < 1500
     for said in ("{}", "{readings: [\"temperature\"]}", "{readings: [\"rain\"]}", "{context: true}", "report, status or sitrep",
-                 "forecast", "pollen", "will it rain (outlook)", "(summary)", "(readings)", "lines", "missing", "unavailable"):
+                 "forecast", "pollen", "will it rain (outlook)", "(summary)", "\"ecowitt week\", \"weather week\" (summary)", "(readings)", "lines", "missing", "unavailable"):
         assert said in d, said
     schema = cur.parameters("Readings, as `sensor.reading`.")
     assert set(schema["properties"]) == {"readings", "context"} and "required" not in schema
@@ -138,7 +139,7 @@ async def test_every_reading_now_with_its_value_unit_words_and_emoji(tmp_path, a
     assert s["pressure"]["absolute"]["text"] == "1009.5 hPa"
     assert "rainfall_piezo" not in s                                     # every reading the sensors have now: this station has no piezo gauge
     pm = s["air"]["pm2_5"]
-    assert pm["value"] == 12.0 and pm["unit"] == "µg/m³" and pm["text"] == "12.0 µg/m³" and 51 <= pm["aqi_us"] <= 100 and pm["band"] == "moderate"
+    assert pm["value"] == 12.0 and pm["unit"] == "µg/m³" and pm["text"] == "12.0 µg/m³" and pm["band"] == ("good" if pm["aqi_us"] <= 50 else "moderate" if pm["aqi_us"] <= 100 else pm["band"])   # (moves with the clock)
     assert pm["rating"].endswith(("good", "poor"))
     assert s["air"]["co2"]["text"] == "450 ppm" and s["air"]["nox_index"]["text"] == "1.0" and s["air"]["voc_index"]["text"] == "100"
     assert s["air"]["temperature"]["unit"] == "°C" and "rating" not in s["air"]["temperature"]   # the sensor's own: no rating
@@ -189,7 +190,7 @@ async def test_the_lines_are_the_reports_and_weather_nows_words(tmp_path, archiv
     tool, _, air = await world(tmp_path, archived_cache, live(time.time(), **changes))
     got = await call(tool)
     eco, today = tool.ctx.eco, tool.ctx.now().date()
-    weather_now, air_quality = await eco._realtime({"groups": NOW_GROUPS}), await air.handle({})   # today's tools, on the same readings
+    weather_now, air_quality = await old_tools.weather_now(eco, {"groups": NOW_GROUPS}), await old_tools.air_quality(air, {})   # today's tools, on the same readings
     written = "\n\n".join(f"{got['headings'][d]}\n" + "\n".join(got["lines"][d]) for d in (STATION, AIR_DEVICE))
     assert written == report.report({"weather_now": weather_now, "air_quality": air_quality}, today)
     assert "\n".join(got["lines"][STATION]) == report.weather_now(weather_now)
@@ -216,11 +217,11 @@ LOOKUPS = [(["temperature"], ["outdoor", "indoor"], ["temperature"]),           
 async def test_named_readings_are_worded_as_the_bots_plain_lookups(tmp_path, archived_cache, changes):
     tool, _, air = await world(tmp_path, archived_cache, live(time.time(), **changes))
     eco, today = tool.ctx.eco, tool.ctx.now().date()
-    weather_now = await eco._realtime({"groups": NOW_GROUPS})
+    weather_now = await old_tools.weather_now(eco, {"groups": NOW_GROUPS})
     for names, sides, asked in LOOKUPS:
         got = await call(tool, readings=asked)
         assert "\n".join(got["lines"][STATION]) == report.lookup("reading", weather_now, names, sides, today), asked
-    air_quality = await air.handle({})
+    air_quality = await old_tools.air_quality(air, {})
     for names, asked in ((["pm10"], ["pm10"]), (["co2", "pm2_5"], ["co2", "pm2.5"]), ([], ["air"]), ([], ["airgradient"])):
         got = await call(tool, readings=asked)
         assert "\n".join(got["lines"][AIR_DEVICE]) == report.lookup("air", air_quality, names, [], today), asked
@@ -377,7 +378,7 @@ async def test_a_device_that_doesnt_answer_is_said_so_and_the_other_still_answer
     assert got["lines"][STATION] == ["• not available right now"] and got["headings"][STATION] == "Weather station"
     assert list(got["sensors"]) == ["air"] and got["as_of"]
     written = "\n\n".join(f"{got['headings'][d]}\n" + "\n".join(got["lines"][d]) for d in (STATION, AIR_DEVICE))
-    assert written == report.report({"weather_now": "Error calling tool: busy", "air_quality": await air.handle({})},
+    assert written == report.report({"weather_now": "Error calling tool: busy", "air_quality": await old_tools.air_quality(air, {})},
                                     tool.ctx.now().date())                                 # the report's words for it
 
     async def down(extras=()):

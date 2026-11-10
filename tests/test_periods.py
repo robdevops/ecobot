@@ -25,15 +25,6 @@ def shaded(markup):
     return [b.text for row in markup.inline_keyboard for b in row if b.style == "primary"]
 
 
-def test_the_old_row_is_always_week_month_quarter_and_year():
-    """(The buttons of a chart the service can't replay, which ask its question again.)"""
-    assert labels(periods.keyboard()) == [[("1D", "pd:1"), ("7D", "pd:7"), ("1M", "pd:30"), ("3M", "pd:90"), ("1Y", "pd:365")]]
-    assert [t for t, _ in labels(periods.keyboard(30))[0]] == ["1D", "7D", "1M", "3M", "1Y"] and shaded(periods.keyboard(30)) == ["1M"]   # the chart's own period is shaded
-    assert shaded(periods.keyboard(61)) == [] and shaded(periods.keyboard()) == []
-    assert shaded(periods.keyboard(365)) == ["1Y"]
-    assert periods.days_in("pd:1") == 1 and periods.days_in("pd:90") == 90 and periods.days_in("pd:365") == 365 and periods.days_in("pd:30000") is None and periods.days_in("al:on:x") is None
-
-
 def test_a_charts_buttons_are_its_drawn_bys_periods_labelled_as_the_service_labels_them_its_own_shaded():
     drawn_by = {"tool": "summary", "arguments": {"readings": ["outdoor.temperature"], "period": "last 30 days", "chart": True},
                 "periods": list(OVER_TIME)}
@@ -45,15 +36,6 @@ def test_a_charts_buttons_are_its_drawn_bys_periods_labelled_as_the_service_labe
     assert labels(periods.periods_keyboard(months)) == [[("3M", "pd:3m"), ("1Y", "pd:1y"), ("All", "pd:on record")]]   # no 1D for a count per month
     assert periods.period_in("pd:on record") == "on record" and periods.with_period(months, "1y") == {"group_by": "month", "period": "1y"}
     assert periods.call_key("summary", {"b": 1, "a": [2]}) == periods.call_key("summary", {"a": [2], "b": 1}) == 'summary {"a":[2],"b":1}'
-
-
-def test_a_question_keeps_its_words_and_swaps_its_period():
-    for ask, expected in (("Temperature chart 30d", "Temperature chart 90d"), ("chart air quality last month", "chart air quality 90d"),
-                          ("rain chart for the last week", "rain chart 90d"), ("weather chart", "weather chart 90d"),
-                          ("plot humidity and rain 3m", "plot humidity and rain 90d")):
-        assert intent.with_period(ask, 90, NOW) == expected
-    assert intent.period_days("Temperature chart 30d", NOW) == 30 and intent.period_days("weather chart", NOW) == 1
-    assert intent.period_days("chart 24h", NOW) == 1 and intent.period_days("chart 365d", NOW) == 365
 
 
 def test_only_the_newest_charts_are_remembered():
@@ -149,9 +131,9 @@ async def test_a_chart_is_sent_with_its_periods_under_it_and_its_call_is_remembe
     await bot.respond(update, CONTEXT, "Temperature chart 30d")
     caption, markup = sent[0]
     assert caption == "Temperature" and labels(markup) == [ROW] and shaded(markup) == ["1M"]
-    assert calls(bot) == [{"readings": ["outdoor.temperature", "indoor.temperature"], "period": "last 30 days", "chart": True}]
+    assert calls(bot) == [{"readings": ["temperature"], "period": "30d", "chart": True}]   # the words as they are
     record = bot.charted.get(1, 101)
-    assert record["drawn_by"]["arguments"]["period"] == "last 30 days" and record["words"] is False
+    assert record["drawn_by"]["arguments"]["period"] == "30d" and record["words"] is False
 
 
 async def test_pressing_a_period_replays_the_charts_call_with_that_period_in_place(alert_state, monkeypatch):
@@ -236,7 +218,8 @@ async def test_a_reply_with_period_buttons_leaves_the_persistent_keyboard_for_th
         async def reply_photo(self, photo, **kw):
             sent.append(kw["reply_markup"])
             return NS(message_id=7)
-    got = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=periods.keyboard())
+    row = periods.periods_keyboard({"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]})
+    got = await botmod.deliver(Replies(), "", [b"p"], markup=keyboard(), titles=["T"], period_row=row)
     assert got.carried is False and labels(sent[0])[0][0][0] == "1D" and got.photo.message_id == 7
 
 
@@ -274,7 +257,7 @@ async def test_two_wordings_of_one_chart_share_one_picture(alert_state, monkeypa
     bot, sent = make_bot(alert_state, monkeypatch), []
     update = pressed(bot, sent)
     await bot.respond(update, CONTEXT, "Temperature chart 7d")
-    await bot.respond(update, CONTEXT, "temperature chart for the last 7 days")
+    await bot.respond(update, CONTEXT, "temperature chart 7d?")
     assert len(calls(bot)) == 1 and sent[1][0] == "copy 1"                               # the same call: drawn once, sent as Telegram's copy
 
 
@@ -297,26 +280,7 @@ async def test_a_chart_once_sent_goes_again_as_telegrams_copy_not_a_new_upload(a
         pass
     for period in ("1m", "7d", "1m"):
         await bot.on_period_button(press(msg, f"pd:{period}", answer), CONTEXT)
-    assert uploads == [b"last 7 days"] and edits == ["upload", "7d", "edit 1"]   # 1M drawn and uploaded once; then both by Telegram's copy
-
-
-async def test_redrawing_a_chart_from_a_button_shows_no_typing_or_thinking(alert_state, monkeypatch):
-    bot = make_bot(alert_state, monkeypatch)
-    actions = []
-
-    async def chat_action(*a, **k):
-        actions.append(a)
-    drafts = []
-
-    async def draft(*a, **k):
-        drafts.append(a)
-    context = NS(bot=NS(send_chat_action=chat_action, send_message_draft=draft, id=99))
-    msg = chat_message([], [])
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    await bot.respond(update, context, "Temperature chart 30d", redraw=msg)
-    assert actions == [] and drafts == []
-    await bot.respond(update, context, "Temperature chart 7d")          # a question of its own still does
-    assert actions
+    assert uploads == [b"7d"] and edits == ["upload", "7d", "edit 1"]   # 1M drawn and uploaded once; then both by Telegram's copy
 
 
 def pressed(bot, sent):
@@ -334,7 +298,7 @@ async def test_a_chart_just_drawn_is_sent_again_at_once_and_then_as_telegrams_co
     update = pressed(bot, sent)
     await bot.respond(update, CONTEXT, "Temperature chart 1d")
     asked = len(calls(bot))
-    assert asked == 1 and sent == [(b"last 24 hours", "Temperature")]
+    assert asked == 1 and sent == [(b"1d", "Temperature")]
     await bot.respond(update, CONTEXT, "Temperature chart 1d")
     assert len(calls(bot)) == asked and sent[-1] == ("copy 1", "Temperature")             # drawn lately: no new call, Telegram's copy
     history = bot.chats[(1, None)].history
@@ -395,7 +359,7 @@ async def test_the_other_periods_of_a_chart_are_uploaded_ahead_and_a_press_edits
                       context, "Temperature chart 7d")
     await settle(bot)
     assert sorted(uploads) == uploads_of("1d", "1m", "3m", "1y")                          # 1D, 1M, 3M, 1Y: not the 7D just sent
-    assert all(c["period"] in ("last 7 days", "1d", "1m", "3m", "1y") for c in calls(bot))
+    assert all(c["period"] in ("7d", "1d", "1m", "3m", "1y") for c in calls(bot))
     asked = len(calls(bot))
 
     async def answer(text=None):
@@ -447,8 +411,7 @@ async def test_a_period_that_cannot_be_drawn_is_left_out_and_the_others_are_uplo
     await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
     await settle(bot)
     assert sorted(uploads) == uploads_of("1d", "1m", "1y")
-    drawn_by = bot.images.held(periods.call_key("summary", {"readings": ["outdoor.temperature", "indoor.temperature"],
-                                                            "period": "last 7 days", "chart": True})).drawn_by
+    drawn_by = bot.images.held(periods.call_key("summary", {"readings": ["temperature"], "period": "7d", "chart": True})).drawn_by
     key = lambda p: periods.call_key("summary", periods.with_period(drawn_by, p))
     assert bot.images.has_copy(key("1m")) and not bot.images.has_copy(key("3m"))
 
@@ -478,7 +441,7 @@ async def test_a_chart_uploaded_ahead_is_used_for_30_minutes_and_then_drawn_afre
     bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
     await bot.respond(pressed(bot, []), context, "Temperature chart 7d")
     await settle(bot)
-    key = periods.call_key("summary", {"readings": ["outdoor.temperature", "indoor.temperature"], "period": "1m", "chart": True})
+    key = periods.call_key("summary", {"readings": ["temperature"], "period": "1m", "chart": True})
     clock[0] = 29 * 60
     assert bot.images.has_copy(key) and isinstance(bot.images.get(key)[0], str)
     clock[0] = 31 * 60
@@ -492,60 +455,11 @@ async def test_a_redrawn_chart_carries_a_short_answer_in_its_caption_and_a_long_
     async def reply_text(text, **kw):
         replies.append(text)
     msg.reply_text = reply_text
-    assert await bot._redraw(msg, "Last 7 days: 72% avg.", b"png", "Humidity", periods.keyboard(7), "q")
+    row = periods.periods_keyboard({"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]})
+    assert await bot._redraw(msg, "Last 7 days: 72% avg.", b"png", "Humidity", row, {})
     assert edits[0][0] == "Humidity\n\nLast 7 days: 72% avg." and replies == []                  # one message, as when the chart was first sent
-    assert await bot._redraw(msg, "x" * botmod.CAPTION_LIMIT, b"png", "Humidity", periods.keyboard(7), "q")
+    assert await bot._redraw(msg, "x" * botmod.CAPTION_LIMIT, b"png", "Humidity", row, {})
     assert edits[1][0] == "Humidity" and replies == ["x" * botmod.CAPTION_LIMIT]                  # too long for a caption: its own message
-
-
-async def test_pressing_a_period_under_a_chart_the_model_drew_keeps_its_answer_in_the_caption(alert_state, monkeypatch):
-    """A chart the model drew with a call the service has no equivalent of: its question is asked again, as before."""
-    bot, edits, replies = make_bot(alert_state, monkeypatch), [], []
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
-
-    class Agent:
-        ready = True
-
-        async def run(self, working, system, effort, turn=None, **kw):
-            turn.charts.append(Chart("Humidity and Temperature", "", [Panel("Humidity", "%", [Line("Ecowitt", [1, 2], [1.0, 2.0])])]))
-            return "Last 7 days (21-27 Oct):\nHumidity: Ecowitt 72.1% avg."
-    bot.agent = Agent()
-    msg = chat_message([], edits)
-
-    async def reply_text(text, **kw):
-        replies.append(text)
-    msg.reply_text = reply_text
-    bot.charted.remember(1, 50, "overlay ecowitt outdoor humidity with airgradient humidity, on another axis the temperatures")
-
-    async def answer(text=None):
-        pass
-    await bot.on_period_button(press(msg, "pd:7", answer), CONTEXT)
-    assert replies == [] and edits and "Humidity: Ecowitt 72.1% avg." in edits[0][0]
-
-
-async def test_a_chart_the_model_drew_through_an_old_tool_gets_a_drawn_by_and_its_buttons_replay_it(alert_state, monkeypatch):
-    from lib.tools import Tool, Tools
-    bot, sent = make_bot(alert_state, monkeypatch), []
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
-
-    async def weather_history(args, turn):
-        turn.charts.append(Chart("Pressure", "", [Panel("Pressure", "hPa", [Line("Pressure", [1, 2], [1.0, 2.0])])]))
-        return json.dumps({"period": "Fri 25 Sep 2026 - Thu 1 Oct 2026"})
-    tools = Tools([Tool("weather_history", "", {"type": "object", "properties": {}}, weather_history)])
-
-    class Agent:
-        ready = True
-
-        async def run(self, working, system, effort, turn=None, **kw):
-            await tools.call("weather_history", json.dumps({"groups": "pressure", "chart": True, "chart_field": "pressure",
-                                                            "start_date": "2026-09-25 00:00:00", "end_date": "2026-10-01 23:59:59"}), turn)
-            return "Pressure fell all week."
-    bot.agent = Agent()
-    await bot.respond(pressed(bot, sent), CONTEXT, "how did the pressure change from 25 Sep to 1 Oct, and why?")
-    record = bot.charted.get(1, 101)
-    assert record["drawn_by"] == {"tool": "summary", "arguments": {"readings": ["pressure.relative"], "period": "2026-09-25 to 2026-10-01",
-                                                                 "chart": True}, "periods": [dict(p) for p in OVER_TIME]}
-    assert record["words"] is True
 
 
 async def test_the_keyboards_charts_are_drawn_ahead_and_a_press_is_answered_from_them(alert_state, monkeypatch):
@@ -559,14 +473,14 @@ async def test_the_keyboards_charts_are_drawn_ahead_and_a_press_is_answered_from
     assert bot._sentence_call("Air quality all metrics 1d", now) is None                     # no air sensor here: nothing to draw
     asked, sent = len(calls(bot)), []
     await bot.respond(pressed(bot, sent), context, "Temperature chart 1d")
-    assert len(calls(bot)) == asked and sent[0][0] == b"last 24 hours"                       # the one drawn ahead: no new call
+    assert len(calls(bot)) == asked and sent[0][0] == b"1d"                       # the one drawn ahead: no new call
     clock[0] += 400                                                                          # too old to answer with: the press draws afresh
     await bot.respond(pressed(bot, sent), context, "Temperature chart 1d")
     assert len(calls(bot)) == asked + 1
     asked = len(calls(bot))
     await bot.draw_buttons_ahead(context.bot)
     drawn = [c["readings"] for c in calls(bot)[asked:]]
-    assert ["outdoor.humidity", "indoor.humidity"] in drawn and ["outdoor.temperature", "indoor.temperature"] not in drawn   # just drawn: left alone
+    assert ["humidity"] in drawn and ["temperature"] not in drawn   # just drawn: left alone
 
 
 async def test_the_keyboards_charts_are_drawn_ahead_as_background_requests(alert_state, monkeypatch):
@@ -592,10 +506,10 @@ async def test_the_keyboards_charts_are_uploaded_ahead_only_while_the_bot_is_in_
     bot.noticed()
     clock[0] += 120
     await bot.draw_buttons_ahead(context.bot)
-    assert (-1001, b"last 24 hours", True) in uploads
+    assert (-1001, b"1d", True) in uploads
     sent = []
     await bot.respond(pressed(bot, sent), context, "Temperature chart 1d")
-    assert sent[0][0] == "file last 24 hours"                                                # a press sends Telegram's copy
+    assert sent[0][0] == "file 1d"                                                # a press sends Telegram's copy
     await settle(bot)                                                                        # (the press's other periods, uploaded ahead)
     uploads.clear()
     clock[0] += 120
@@ -615,7 +529,7 @@ async def test_the_chart_of_an_alert_sent_lately_is_drawn_ahead_with_the_keyboar
     clock = [0.0]
     bot, uploads, context = preloading_bot(alert_state, monkeypatch, clock=clock)
     bot.alert_charts.clock = lambda: clock[0]
-    uv, temperature = ["solar_and_uvi.uvi"], ["outdoor.temperature", "indoor.temperature"]
+    uv, temperature = ["uv"], ["temperature"]
     drawn = lambda since: [c["readings"] for c in calls(bot)[since:]]
     await bot.draw_buttons_ahead(context.bot)
     assert uv not in drawn(0) and temperature in drawn(0)                                # UV is no button: not drawn until an alert

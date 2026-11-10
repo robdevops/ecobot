@@ -16,8 +16,8 @@ class RaisingAgent:
 
 
 class AnsweringAgent:
-    async def run(self, messages, system, effort, *, first_call=None, turn=None, **k):
-        self.first_call = first_call
+    async def run(self, messages, system, effort, *, turn=None, **k):
+        self.system = system
         return "It is 12 degrees."
 
 
@@ -62,16 +62,35 @@ async def test_without_a_model_a_question_for_it_is_told_so_and_what_works_still
     replies = await ask(alert_state, NoModel(), "will it rain tomorrow, do you think?")
     assert len(replies) == 1 and "needs the AI model" in replies[0] and "/report" in replies[0] and "/air_quality" in replies[0]
     replies = await ask(alert_state, NoModel(), "what can you do")
-    assert len(replies) == 1 and "needs the AI model" not in replies[0]               # answered in code, as before
+    assert len(replies) == 1 and "needs the AI model" in replies[0]                   # the model's: it calls `about`
 
 
 async def test_a_failing_shortcut_falls_back_to_the_model(alert_state, monkeypatch):
     def boom(*a, **k):
         raise OverflowError("date value out of range")
-    monkeypatch.setattr(intent, "fast_call", boom)
+    monkeypatch.setattr(intent, "chart_call", boom)
     agent = AnsweringAgent()
-    assert await ask(alert_state, agent, "weather last 99999 years") == ["It is 12 degrees."]
-    assert agent.first_call is None
+    replies = []
+
+    async def reply_text(body, **kw):
+        replies.append(body)
+
+    async def send_chat_action(*a, **k):
+        pass
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None)]
+    await Bot(NS(tz=TZ), agent, sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "humidity 7d")
+    assert replies == ["It is 12 degrees."]
+
+
+async def test_the_model_is_sent_the_persona_the_servers_instructions_and_the_time(alert_state):
+    from lib.prompt import PERSONA
+    agent = AnsweringAgent()
+    assert await ask(alert_state, agent, "is it too cold to run?") == ["It is 12 degrees."]
+    assert agent.system.startswith(PERSONA.rstrip()) and "\n\nThe devices: " in agent.system   # (lib/service/instructions.py)
+    assert agent.system.rstrip().splitlines()[-1].startswith("Now: ") and "RIGHT NOW" not in agent.system
 
 
 def test_a_reply_carries_the_message_it_replies_to_in_private_chats_too(alert_state):
@@ -142,7 +161,11 @@ async def ask_private(alert_state, agent, bot, chat_type="private", text="how ho
 
     async def reply_text(body, **kw):
         replies.append(body)
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
+
+    async def reply_photo(photo, caption=None, **kw):
+        replies.append(caption.split("\n\n", 1)[-1])
+        return NS(message_id=5)
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text, reply_photo=reply_photo,
              chat=NS(type=chat_type, title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await Bot(NS(tz=TZ), agent, [], alert_state).respond(update, NS(bot=bot), text)
@@ -307,12 +330,8 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
         pass
     service = chart_service()
     await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service).respond(update, NS(bot=telegram(send_chat_action)), "Humidity chart 7d")
-    assert service.calls == [("summary", {"readings": ["outdoor.humidity", "indoor.humidity"], "period": "last 7 days", "chart": True})]
+    assert service.calls == [("summary", {"readings": ["humidity"], "period": "7d", "chart": True})]   # the words, as they are
     assert sent == ["Humidity"]    # the chart's title is its whole caption
-    sent.clear()
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service).respond(update, NS(bot=telegram(send_chat_action)),
-                                                                                 "when was humidity highest this week")
-    assert "high 60 %, Sat 26 Sep" in sent[0]    # a record asked for: its figures, with when, go with the chart
 
 
 async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(alert_state, monkeypatch):
@@ -402,23 +421,11 @@ async def _ask_with(alert_state, answer, text, monkeypatch=None):
     return replies, bool(asked)
 
 
-async def test_a_plain_reading_question_is_answered_in_code_without_the_model(alert_state):
-    answer = {"lines": {"station": ["• Outdoor: 12.3 °C, feels like 11.0 °C", "• Indoor: 18.3 °C"]}}
-    replies, asked = await _ask_with(alert_state, answer, "how hot is it")
-    assert not asked and replies == ["• Outdoor: 12.3 °C, feels like 11.0 °C\n• Indoor: 18.3 °C"]
-
-
-async def test_a_lookup_that_cannot_be_written_falls_back_to_the_model(alert_state):
-    replies, asked = await _ask_with(alert_state, {"error": "station not answering"}, "how hot is it")
+async def test_a_chart_shortcut_the_service_cant_draw_falls_back_to_the_model(alert_state):
+    replies, asked = await _ask_with(alert_state, {"error": "station not answering"}, "humidity 7d")
     assert asked and replies == ["from the model"]
-    replies, asked = await _ask_with(alert_state, {"lines": {"station": ["• not available right now"]},
-                                                   "unavailable": {"station": "The weather station isn't answering right now."}}, "how hot is it")
+    replies, asked = await _ask_with(alert_state, {"text": "no chart"}, "humidity chart 7d")
     assert asked and replies == ["from the model"]
-
-
-async def test_about_the_bot_is_answered_in_code_without_the_model(alert_state):
-    replies, asked = await _ask_with(alert_state, {"lines": ["• Temperature, humidity (indoor, outdoor)", "• History charts"]}, "what can you do")
-    assert not asked and replies[0].startswith("• Temperature, humidity")
 
 
 async def test_typing_starts_before_the_model_is_asked_and_runs_alongside_the_draft(alert_state):
@@ -432,28 +439,6 @@ async def test_typing_starts_before_the_model_is_asked_and_runs_alongside_the_dr
     bot = DraftBot()
     assert await ask_private(alert_state, Agent(), bot) == ["ok"]
     assert seen["typing_when_asked"] >= 1 and bot.drafts
-
-
-async def test_the_forecast_is_fetched_with_the_first_step_of_a_rain_ahead_question(alert_state):
-    got = []
-
-    class Agent:
-        async def run(self, messages, system, effort, first_call=None, **k):
-            got.append(first_call)
-            return "Possibly."
-    sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n) for n in ("Ecowitt", "Forecast")]
-    replies = []
-
-    async def reply_text(body, **kw):
-        replies.append(body)
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-
-    async def send_chat_action(*a, **k):
-        pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "will it rain?")
-    assert [name for name, _ in got[0]] == ["weather_now", "weather_history", "weather_forecast"] and replies == ["Possibly."]
 
 
 async def _message_aged(alert_state, seconds):
@@ -518,19 +503,7 @@ async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_an
     assert replies == ["\u26a0\ufe0f That's pulling in about 24k tokens of data, so it will take a little longer. Working on it...", "The answer."]
 
 
-async def test_a_days_over_a_limit_question_is_counted_in_code_with_no_model(alert_state):
-    answer = {"answer": "137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026).", "days_checked": 1454, "matching_days": 137}
-    replies, asked = await _ask_with(alert_state, answer, "days over UVI 10 by year")
-    assert not asked and replies == ["137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."]
-
-
-async def test_rain_by_month_is_worked_out_in_code_with_no_model(alert_state):
-    answer = {"answer": "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026).", "value": 1234.5}
-    replies, asked = await _ask_with(alert_state, answer, "rain by month for 2 years")
-    assert not asked and replies == ["Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."]
-
-
-async def test_the_model_is_asked_with_the_tool_choice_the_message_calls_for(alert_state):
+async def test_the_model_chooses_its_own_tools_whatever_the_message(alert_state):
     seen = []
 
     class Agent:
@@ -550,7 +523,7 @@ async def test_the_model_is_asked_with_the_tool_choice_the_message_calls_for(ale
         async def send_chat_action(*a, **k):
             pass
         await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), text)
-    assert seen == ["required", "auto"]
+    assert seen == ["auto", "auto"]
 
 
 async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title(alert_state, monkeypatch):
@@ -565,7 +538,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
         sent.append(caption)
     monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
-    for text in ("ecowitt all week", "temperature chart 7d"):
+    for text in ("weather 30d", "temperature chart 7d"):
         sent.clear()
         msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
                  chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -648,132 +621,19 @@ async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_
         await answer_query(Query(BadRequest("Message is not modified")))
 
 
-async def test_the_air_sensors_own_readings_stay_offered_in_a_chat_until_two_runs_go_by_without_the_model_using_them(alert_state):
-    seen = []
-    uses = iter([True, True, False, False, False])      # what the model does with the series when it has them: used, used, then not
+class ChartingAgent(StreamingAgent):
+    """The model's first step drew a chart (a result with `charts` kept on the Turn); then it streams its answer."""
 
-    class Capturing:
-        async def run(self, messages, system, effort, *, turn=None, **k):
-            seen.append((turn.air_extra, "AIRGRADIENT'S OWN TEMPERATURE AND HUMIDITY" in system))
-            if turn.air_extra and next(uses):
-                turn.air_extra_used = True              # a tool served them
-            return "ok"
-    replies = []
-
-    async def reply_text(body, **kw):
-        replies.append(body)
-
-    async def send_chat_action(*a, **k):
-        pass
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=telegram(send_chat_action))
-    bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
-    for said in ("what is the weather like", "overlay ecowitt humidity with airgradient humidity", "do that again but for temperature",
-                 "and the wind?", "and the rain?", "and the pressure?", "and the uv?"):
-        await bot.respond(update, context, said)
-    assert seen == [(False, False),                       # nothing about the air sensor yet
-                    (True, True), (True, True),           # named, used; the follow-up (no AirGradient in it) still offered, used again
-                    (True, True), (True, True),           # two runs the model did not use them in ...
-                    (False, False), (False, False)]       # ... and they are no longer offered, nor mentioned in the prompt
-
-
-async def test_either_side_naming_the_air_sensors_readings_keeps_them_offered(alert_state):
-    seen = []
-    replies_by_question = {"what is the weather like": "It is mild.", "tell me about airgradient humidity": "The AirGradient humidity is 61%.",
-                           "and tomorrow?": "Sunny.", "and the day after?": "Cloudy.", "what about the wind?": "Calm."}
-
-    class Capturing:
-        async def run(self, messages, system, effort, *, turn=None, **k):
-            seen.append(turn.air_extra)
-            return replies_by_question[messages[-1]["content"]]
-    sent = []
-
-    async def reply_text(body, **kw):
-        sent.append(body)
-
-    async def send_chat_action(*a, **k):
-        pass
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=telegram(send_chat_action))
-    bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
-    for said in replies_by_question:
-        await bot.respond(update, context, said)
-    # the person's words named it (offered) and the reply did too (still offered for the next two runs); then they stop
-    assert seen == [False, True, True, True, False]
-
-
-async def test_the_air_sensors_own_readings_are_offered_to_a_follow_up_when_the_last_messages_named_them_whatever_the_count(alert_state):
-    seen = []
-
-    class Capturing:
-        async def run(self, messages, system, effort, *, turn=None, **k):
-            seen.append(turn.air_extra)
-            return "ok"
-    sent = []
-
-    async def reply_text(body, **kw):
-        sent.append(body)
-
-    async def send_chat_action(*a, **k):
-        pass
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=telegram(send_chat_action))
-    for earlier in (
-            [{"role": "user", "content": "plot airgradient humidity"}, {"role": "assistant", "content": "Done."}],     # the person named it
-            [{"role": "user", "content": "plot humidity"}, {"role": "assistant", "content": "Here is AirGradient humidity over Ecowitt."}],   # the reply did
-            [{"role": "user", "content": "plot humidity"}, {"role": "assistant", "content": "Done."}]):                # neither did
-        bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
-        bot.chats[bot._key(msg)].history = list(earlier)                   # a chat whose count has run out: only the messages are left
-        await bot.respond(update, context, "do that again but for temperature")
-    assert seen == [True, True, False]
-
-
-async def test_every_guidance_topic_stays_on_in_a_chat_while_either_side_names_it_or_its_tools_are_used_then_goes_after_two_quiet_runs(alert_state):
-    seen = []
-    script = {"how many days was uv over 9": ("ok", "weather_days"),       # the person names days, and its tool is used
-              "and for solar": ("ok", None), "thanks": ("ok", None), "right": ("ok", None),
-              "tell me something": ("The pressure is steady and the wind was strong.", None),   # the reply names wind
-              "and the pressure": ("ok", None), "and humidity": ("ok", None), "fine": ("ok", None), "good": ("ok", None)}
-
-    class Capturing:
-        async def run(self, messages, system, effort, *, turn=None, **k):
-            seen.append((messages[-1]["content"], sorted(turn.topics & {"days", "wind"})))
-            reply, tool = script[messages[-1]["content"]]
-            if tool:
-                messages.append({"role": "assistant", "content": None, "tool_calls": [{"function": {"name": tool}}]})
-            return reply
-    sent = []
-
-    async def reply_text(body, **kw):
-        sent.append(body)
-
-    async def send_chat_action(*a, **k):
-        pass
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    context = NS(bot=telegram(send_chat_action))
-    bot = Bot(NS(tz=TZ), Capturing(), [], alert_state)
-    for said in script:
-        await bot.respond(update, context, said)
-    got = dict(seen)
-    assert got["how many days was uv over 9"] == ["days"]
-    assert got["and for solar"] == ["days"] and got["thanks"] == ["days"]            # no word of it, but its tool was just used
-    assert got["right"] == []                                                          # two quiet runs: gone
-    assert got["and the pressure"] == ["wind"]                                         # the reply to the question before named the wind
-    assert got["and humidity"] == ["wind"] and got["fine"] == [] and got["good"] == []   # and that goes too, after two quiet runs
+    async def run(self, messages, system, effort, *, turn=None, **k):
+        turn.results.append(("summary", {"readings": ["humidity"]}, {"caption": "c", "charts": [{"title": "Humidity"}]}))
+        return await super().run(messages, system, effort, turn=turn, **k)
 
 
 async def test_an_answer_that_comes_with_a_chart_is_not_streamed_into_the_draft(alert_state, monkeypatch):
     monkeypatch.setattr("lib.bot.DRAFT_MIN_GAP", 0.01)
+    monkeypatch.setattr("lib.bot.Bot._draw", lambda self, chart, times=None: (b"png", "Humidity", 0))
     bot = DraftBot()
-    assert await ask_private(alert_state, StreamingAgent(), bot, text="plot humidity for a week") == ["It is 12 degrees."]
+    assert await ask_private(alert_state, ChartingAgent(), bot, text="plot humidity for a week") == ["It is 12 degrees."]
     assert bot.drafts and all(t is None for _, t in bot.drafts)         # only "Thinking...": no text to be followed by a picture and a second message
     bot = DraftBot()
     await ask_private(alert_state, StreamingAgent(), bot, text="how hot is it")
@@ -787,18 +647,69 @@ def chart_service(caption="Fri 25 Sep – Thu 1 Oct 2026\nHumidity: low 50 %, Fr
     return StandInService(summary=lambda args, meta: {"caption": caption, "charts": [chart_data(title)]})
 
 
-def test_a_chart_the_model_drew_over_a_period_the_service_cant_word_keeps_its_old_buttons(alert_state):
-    """Until step 3, every chart the model draws has period buttons: one whose call the service lists no periods for (the last 48 hours as
-    times) gets no drawn_by, so its question is asked again on a press, as before."""
-    from lib.tools import CALL
+async def test_a_chart_kept_by_its_question_from_before_the_swap_is_out_of_date(alert_state):
+    """Before step 3 a chart the model drew through a call the service had no equivalent of was remembered by its question; its buttons
+    are out of date now."""
     from tests.fakes import StandInService
     bot = Bot(NS(tz=TZ), None, [], alert_state, service=StandInService())
-    now = datetime(2026, 11, 10, 14, 5)
-    turn = Turn(text="how warm was it")
-    for start in ("2026-11-09 14:05:00", "2026-11-08 14:05:00"):
-        called = CALL.set(("weather_history", {"start_date": start, "end_date": "2026-11-10 14:05:00", "chart": True}))
-        turn.charts.append("chart")
-        CALL.reset(called)
-    day = bot._model_drawn_by(turn, 0, now)
-    assert day["tool"] == "summary" and day["arguments"]["period"] == "last 24 hours" and day["periods"]
-    assert bot._model_drawn_by(turn, 1, now) is None
+    bot.charted.remember(1, 7, "how warm was it")
+    answers = []
+
+    async def answer(text=None, **k):
+        answers.append(text)
+    query = NS(data="pd:7", message=NS(chat_id=1, message_id=7), answer=answer)
+    await bot.on_period_button(NS(callback_query=query), None)
+    assert answers == ["That chart is out of date, please ask again"]
+
+
+async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_sent_their_titles_alone(alert_state, monkeypatch):
+    """The model's call drew a chart: the model sees its title and period (no points); the bot draws it from the whole result, with
+    the period buttons its drawn_by lists, and keeps the call behind them."""
+    import json
+    from lib import model_tools
+    from lib.llm import Agent
+    from tests.fakes import chart_data
+    drawn_by = {"tool": "summary", "arguments": {"readings": ["humidity"], "period": "7d", "chart": True},
+                "periods": [{"period": "1d", "label": "1D"}, {"period": "7d", "label": "7D"}]}
+    chart = {**chart_data("Humidity"), "drawn_by": drawn_by}
+
+    class Summary:
+        name, description, parameters = "summary", "Summary.", {"type": "object", "properties": {}}
+
+        async def call(self, args, meta):
+            assert meta["chart_points"] == "drawn"
+            return json.dumps({"caption": "c", "charts": [chart], "chart_note": "note"})
+    seen, sent = [], []
+
+    class Model:
+        """A model that calls summary, then answers."""
+        def __init__(self):
+            self.chat = self
+
+        async def create(self, **kw):
+            seen.append(kw["messages"][-1])
+            if len(seen) == 1:
+                call = NS(id="1", function=NS(name="summary", arguments="{}"))
+                return NS(choices=[NS(message=NS(content="", tool_calls=[call]))], usage=None)
+            return NS(choices=[NS(message=NS(content="Humid all week.", tool_calls=None))], usage=None)
+
+    client = NS(chat=NS(completions=Model()))
+    monkeypatch.setattr("lib.bot.Bot._draw", lambda self, c, times=None: (b"png", c["title"], 0))
+
+    async def reply_photo(photo, caption=None, reply_markup=None, **kw):
+        sent.append((caption, reply_markup))
+        return NS(message_id=9)
+    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
+             chat=NS(type="group", title="g"), from_user=NS(full_name="Rob"), reply_to_message=None)
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
+
+    async def send_chat_action(*a, **k):
+        pass
+    bot = Bot(NS(tz=TZ), Agent(client, "m", model_tools.tools([Summary()])), [], alert_state)
+    await bot.respond(update, NS(bot=telegram(send_chat_action)), "how humid was it this week?")
+    told = json.loads(seen[-1]["content"])
+    assert told["charts"] == [{"title": "Humidity", "period": chart["period"]}] and told["chart_note"] == model_tools.BOT_CHART_NOTE
+    (caption, markup), = sent
+    assert caption.startswith("Humidity") and "Humid all week." in caption
+    assert [b.callback_data for b in markup.inline_keyboard[0]] == ["pd:1d", "pd:7d"]
+    assert bot.charted.get(1, 9)["drawn_by"] == drawn_by

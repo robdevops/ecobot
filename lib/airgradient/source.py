@@ -20,7 +20,6 @@ where available, plus a US EPA AQI and band for PM2.5.
 """
 
 import asyncio
-import copy
 import statistics
 import logging
 import time
@@ -31,7 +30,7 @@ from typing import NamedTuple
 import httpx
 
 from .. import intent
-from ..captions import CHART_ANSWERS_IT, CHART_HINT, wants_chart
+from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
 from ..ecowitt.homeassistant import HomeAssistant
@@ -39,13 +38,12 @@ from ..ecowitt.live import BUCKET
 from ..ecowitt.query import KEEP_HOURS, MINUTE_HOURS
 from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line, readings_mean
 from ..panels import panel_for
-from ..specs import AIR_SOURCE, Chart, Line
+from ..specs import Chart, Line
 from ..storage import Storage
 from ..storage.catalogue import BOT, CLOUD, HOME_ASSISTANT
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
-from ..tools import Tool, Turn, json_result
+from ..tools import Turn
 from ..warm import Warmer
-from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
 from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
 from .homeassistant import (ANCHORS, MIN_COMPARED, checked, entity_ids, find_prefix, live as ha_live, minutes as ha_minutes, ranges as ha_ranges,
@@ -78,37 +76,8 @@ BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a 
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
 
-PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "chart": {"type": "boolean", "description": "Set true to send a chart (graph) with the answer. Without dates, "
-                                                    "it covers the last 24 hours."},
-        "chart_answers_it": CHART_ANSWERS_IT,
-        "metrics": {"type": "array", "items": {"type": "string", "enum": list(LABELS)},
-                    "description": "Which metrics to chart (several are drawn as panels in one image; "
-                                   "for 'all', list all six). Default: the reading the person named, else pm2_5."},
-        "start_date": {"type": "string", "description": "Start of a past period, 'YYYY-MM-DD HH:MM:SS' local time. "
-                                                        "Omit (with end_date) for the current reading."},
-        "end_date": {"type": "string", "description": "End of the past period, 'YYYY-MM-DD HH:MM:SS' local time."},
-    },
-}
-DESCRIPTION = ("Air quality from the owner's AirGradient outdoor sensor: PM2.5 (with US AQI and band), PM10, "
-               "PM1, CO2, VOC and NOx indexes, each with a traffic-light rating. No dates: the current reading. "
-               "With start_date/end_date (up to about a year): lowest, highest and average of each, with when they "
-               "happened. chart=true sends a graph.")
-
-
-def asked() -> tuple[str, dict]:
-    """air_quality as a question about the sensor's own temperature or humidity is offered it: those two as metrics too."""
-    parameters = copy.deepcopy(PARAMETERS)
-    parameters["properties"]["metrics"]["items"]["enum"] = [*LABELS, *EXTRA]
-    parameters["properties"]["metrics"]["description"] += " air_temperature and air_humidity are the sensor's own temperature and humidity."
-    return (DESCRIPTION + " With metrics air_temperature / air_humidity it gives the sensor's own temperature (°C) and humidity (%), only "
-            "when the question names the AirGradient's.", parameters)
-
-
 class Latest(NamedTuple):
-    """The latest reading as the air_quality tool gives it, and what the particulates alert also needs."""
+    """The latest reading (as the service's current reads it), and what the particulates alert also needs."""
     reading: dict                  # the sensor, the time, and each metric's value, unit and rating
     at: datetime | None            # when it was taken (UTC)
     sustained: dict[str, float]    # each metric's lowest over the last REQUIRE_CONSECUTIVE readings: what the air has been that long
@@ -153,8 +122,6 @@ class AirGradient(Source):
         self._ha_said: set[str] = set()                       # what was said once about it: no sensor, a metric that is another variant
         self._verdict: dict[int, dict[str, tuple[int, int]]] = {HOME_ASSISTANT: {}, CLOUD: {}}   # per source, per metric: (five minutes compared, agreed)
         self._correction: str | None = None                   # how the monitor corrects its PM2.5, from its own configuration
-        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle, asked=asked, source=AIR_SOURCE),
-                      Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days, source=AIR_SOURCE)]
 
     async def start(self):
         try:
@@ -306,9 +273,6 @@ class AirGradient(Source):
                 log.warning("AirGradient: %s's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes), so it fills no gaps: %s",
                             SOURCE_NAMES[src], label, v[1], v[0], FIX.get(name, "check the correction each applies"))
         return [row for r in rows if len(row := self._allowed(r, src)) > 1]
-
-    def describe(self) -> str:
-        return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"
 
     def wants(self, text: str) -> bool:
         """Should a question start refreshing this source? Only air-quality questions."""
@@ -577,25 +541,6 @@ class AirGradient(Source):
                     return fetched, failed, total
         return fetched, failed, total
 
-    # ---------- the tool ----------
-    async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        """The air_quality tool: current reading, or a summary of a past period."""
-        turn = turn or Turn()
-        try:
-            turn.air_extra_used = turn.air_extra_used or any(m in EXTRA for m in args.get("metrics") or [])
-            chart = wants_chart(args, turn)
-            if args.get("start_date") or args.get("end_date") or chart:
-                return json_result(await self.history(args.get("start_date"), args.get("end_date"),
-                                                      chart=chart, metrics=args.get("metrics"), turn=turn))
-            return json_result(await self.current([m for m in args.get("metrics") or [] if m in EXTRA]))
-        except Exception as e:
-            log.warning("AirGradient request failed: %s", e)
-            return f"Error: couldn't read the air-quality sensor ({e})"
-
-    async def _days(self, args: dict, turn: Turn | None = None) -> str:
-        """The air_days tool: count, rank and total days from the stored readings."""
-        return await air_days_tool(self.store, self.tz, args, turn)
-
     async def _previous_rows(self, ts: int, count: int) -> list[dict]:
         """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first."""
         today = to_local(ts, self.tz).date()
@@ -639,10 +584,6 @@ class AirGradient(Source):
             if name in EXTRA and (v := value_of(row, name)) is not None:
                 reading[name] = {"value": v, "unit": EXTRA_UNITS[name]}
         return Latest(reading, at, sustained)
-
-    async def current(self, extras: list[str] = ()) -> dict:
-        """The latest reading as the air_quality tool gives it (see latest); `extras`: the sensor's own temperature and humidity, if asked."""
-        return (await self.latest(extras)).reading
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
         """(readings in [t0, t1] (naive local times), days that only exist as hourly averages, older days still waiting for
