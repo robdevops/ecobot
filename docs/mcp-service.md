@@ -474,7 +474,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
    evals have the service's expectations (`tests/evals/service_cases.json`, every case) and `scripts/eval_prompts.py --service` checks
    offline that the tools accept each expected call; `--live --service` asks a model with the tool list alone, and `--instructions`
    adds the server's instructions (`lib/service/instructions.py`) after the neutral line. First full runs (10 Nov 2026, one run each):
-   deepseek-v4.1-flash 92/94 alone and 92/94 with the instructions, gpt-6-luna 89/94 alone. The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and
+   deepseek-v4.1-flash 92/94 alone and 92/94 with the instructions, gpt-6-luna 89/94 alone. The gate's second round (the same day, after the period rule and the descriptions above): deepseek 90/94 alone and 90/94 with the instructions, gpt-6-luna 90/94 and 87/94; each failure asked 3 times more, those that failed 2 of 3 or worse fixed in the descriptions (wind 3m, a rating against rain, lowest and highest, air quality against rain, today against yesterday) and then passing 3 of 3. The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and
    alert charts, through `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place,
    deleted whole in step 3), quoting their words; its answers pinned before and after (`tests/test_service_switch.py`), unchanged but
    for the deliberate changes below. Its gauges (the dashboard, the report's three) are `current` with `context` and the gauges'

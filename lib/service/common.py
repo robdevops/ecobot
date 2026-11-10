@@ -145,11 +145,12 @@ class ServiceTool:
 
 
 # ---------- periods ----------
-PERIOD_FORMS = ("today, yesterday, last N hours/days/weeks/months/years (or Nh, Nd, Nw, Nm, Ny), this week, last week, week to date, "
+PERIOD_FORMS = ("today, yesterday, last N minutes (N min), last N hours/days/weeks/months/years (or Nh, Nd, Nw, Nm, Ny: 3m is 3 "
+                "months, never minutes), this week, last week, week to date, "
                 "this month, last month, this year, last year, a month or a year (October, October 2025, 2025), a date (5 Sep, "
                 "2026-09-05), a weekday (Saturday), this morning, yesterday afternoon, last night, since 6am, a public holiday "
                 "(Christmas Day), on record, A to B (June to August)")
-WHOLE_DAY_FORMS = ("yesterday, last N days/weeks/months/years (or Nd, Nw, Nm, Ny), this week, last week, week to date, this month, "
+WHOLE_DAY_FORMS = ("yesterday, last N days/weeks/months/years (or Nd, Nw, Nm, Ny: 3m is 3 months), this week, last week, week to date, this month, "
                    "last month, this year, last year, a month or a year (October, October 2025, 2025), a date (5 Sep, 2026-09-05), "
                    "a weekday (Saturday), a public holiday (Christmas Day), on record, A to B (June to August)")
 

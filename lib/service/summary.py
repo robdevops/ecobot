@@ -60,21 +60,21 @@ AIR_CAPTIONED = {"missing"}
 DATE = re.compile(r"\d{4}-\d\d-\d\d")
 
 DESCRIPTION = (
-    "What was measured over a period (Ecowitt weather station, AirGradient air sensor): each reading's low and high with "
-    "when, averages, a by-day or by-month breakdown, the most common wind direction, rain that fell, air ratings "
-    "and AQI; and a chart of any readings.\n"
-    "Examples: \"how hot did it get this week\" {readings: [\"temperature\"], period: \"this week\"}; a record with when (\"hottest "
-    "record\", \"highest ever\", \"use 5 minute data\": records are 5-minute where held) {readings: [\"outdoor.temperature\"], "
-    "period: \"on record\"}; \"average humidity last month\" {readings: [\"humidity\"], period: \"last month\", average: true}; \"plot "
-    "pressure this week\" {readings: [\"pressure\"], period: \"this week\", chart: true, chart_answers_it: true}; a device or reading "
-    "and a period (\"weather week\", \"ecowitt week\"): the past, charted {readings: [\"all\"], period: \"week\", chart: true}; a "
-    "rating and rain {readings: [\"pm2.5:rating\", \"rain\"]}.\n"
-    "`period` is the person's words unchanged: \"past week\" is the last 7 days, \"last week\" the previous Monday to Sunday: never "
-    "one for the other.\n"
-    "Not for: days ranked, counted or filtered by a day's figures (wettest day, days over 35°C, rain per month): days. "
-    "Values at set times: readings. Rain against a reading: relate. Now: current. Ahead: forecast.\n"
-    "Reading it: `series` by name; quote low_text and high_text with low_when and low_date, and day_look's emoji. rain_total_mm: rain "
-    "that fell. A chart's `caption` is ready; with complete: true, `reply` is the answer.")
+    "What was measured over a period: each reading's lowest and highest with when, "
+    "averages, a by-day or by-month breakdown, wind direction, rain that fell, air ratings and AQI; a chart of any.\n"
+    "Examples: \"how hot did it get this week\" {readings: [\"temperature\"], period: \"this week\"}; \"lowest and highest humidity\" "
+    "{readings: [\"humidity\"]} (today); \"is today hotter than yesterday\" {readings: [\"temperature\"], period: \"yesterday to "
+    "today\", every_day: true}; a record with when (\"hottest record\", \"highest ever\", \"use 5 minute data\") {readings: "
+    "[\"outdoor.temperature\"], period: \"on record\"}; average {readings: [\"humidity\"], period: \"last "
+    "month\", average: true}; \"plot pressure this week\" {readings: [\"pressure\"], period: \"this week\", chart: true, "
+    "chart_answers_it: true}; a device or reading and a period is the past, charted: \"weather week\", \"ecowitt week\" {readings: "
+    "[\"all\"], period: \"week\", chart: true}, \"wind 3m\" {readings: [\"wind\"], period: \"3m\", chart: true}; a rating and rain "
+    "{readings: [\"pm2.5:rating\", \"rain\"]}.\n"
+    "`period` is the person's words unchanged: \"past week\" is the last 7 days, \"last week\" the previous Monday to Sunday.\n"
+    "Not for: days ranked, counted or filtered (wettest day, days over 35°C, rain per month): days. Values at set times: readings. "
+    "A reading against rain: relate. Now: current. Ahead: forecast.\n"
+    "Result: `series` by name; quote low_text, high_text with low_when, low_date, and day_look's emoji. A chart's `caption` is "
+    "ready; with complete: true, `reply` is the answer.")
 
 
 def _boolean(description: str) -> dict:

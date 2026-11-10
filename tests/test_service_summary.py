@@ -58,11 +58,12 @@ async def test_the_tool_says_what_it_answers_what_it_is_not_for_and_how_to_read_
     text = tool.description
     assert len(text) <= 1500
     for words in ("{readings: [\"temperature\"], period: \"this week\"}", "chart_answers_it: true", "average: true", "\"all\"", "pm2.5",
-                  ": days", ": readings", ": relate", ": current", ": forecast", "low_text", "day_look", "rain_total_mm", "complete"):
+                  ": days", ": readings", ": relate", ": current", ": forecast", "low_text", "day_look", "complete"):
         assert words in text, words
     # what the live runs got wrong: a device and a period is the past; "past week" isn't "last week"; a record with when is summary's
     for words in ('"weather week"', '"ecowitt week"', 'the past, charted', '"past week" is the last 7 days',
-                  '"last week" the previous Monday to Sunday', '"use 5 minute data"', 'period: "on record"', '"pm2.5:rating"'):
+                  '"last week" the previous Monday to Sunday', '"use 5 minute data"', 'period: "on record"', '"pm2.5:rating"',
+                  '"wind 3m" {readings: ["wind"], period: "3m", chart: true}', '"lowest and highest humidity"', 'period: "yesterday to today"'):
         assert words in text, words
     readings = tool.parameters["properties"]["readings"]["description"]
     assert "outdoor.temperature" in readings and "air.pm2_5" not in readings and readings.endswith(   # (what this station holds)

@@ -43,9 +43,10 @@ DESCRIPTION = (
     "PM10: is the air cleaner after rain (the 6 hours after each rain against the 6 before, wet days against dry). Any \"X against "
     "rain\" is this tool. Examples: \"does rain follow a pressure drop?\", \"is there a correlation between pressure and rainfall?\" "
     "{reading: \"pressure\"}; \"does humidity go with rain over the past year?\" {reading: \"humidity\", period: \"past year\"}; "
-    "\"does rain clear the air?\" {reading: \"pm2.5\"}; \"plot pressure against rainfall\" {reading: \"pressure\", chart: true}. "
+    "\"does rain clear the air?\", \"is there a correlation between air quality and precipitation?\" {reading: \"pm2.5\"}; \"plot pressure against rainfall\" {reading: \"pressure\", chart: true}. "
     "Not for: each air reading against every weather reading (scan); a chart of readings over time with no question of rain "
-    "(summary); rain totals, wet days or rain per month (days). "
+    "(summary); an air-quality rating drawn beside rain (\"plot the traffic light rating against rainfall\": summary {readings: "
+    "[\"pm2.5:rating\", \"rain\"]}); rain totals, wet days or rain per month (days). "
     "Result: open with `verdict` (yes, no or weak) in your own words, then the evidence in `findings`, as `how_to_read` says; "
     "say the two go together or not, never that one causes the other. `note` when there was nothing to compare: say exactly that.")
 
