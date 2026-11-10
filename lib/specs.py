@@ -6,11 +6,15 @@ A Panel draws one of:
   - shares (the traffic-light share of each bar's time in good, poor and very poor).
 A Line is a series of points, each optionally with the low and high it stands for (drawn as a band around the line), and
 optionally the true records (lowest and highest reading, with when). Anything malformed raises here, when the chart is
-built, not when it is drawn."""
+built, not when it is drawn.
 
+A chart also goes as JSON (to_json, from_json; its schema is schemas/chart.json): what a tool hands over, for whoever draws it."""
+
+import math
 from contextvars import ContextVar
-from dataclasses import dataclass, field
-from datetime import date, tzinfo
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, tzinfo
+from statistics import fmean
 
 from .series import RAIN_WITH, WEATHER
 from .timeutil import day_bounds, day_text
@@ -242,3 +246,141 @@ class Dashboard:
     """The gauges of the weather station, left to right and top to bottom, three to a row."""
     tiles: list[Tile]
     per_row: int = 3
+
+
+# ---------- a chart as JSON ----------
+# How a chart is handed over (schemas/chart.json): its title, subtitle, period, source and the time of its newest reading, then each
+# panel with its series. A series is a "line" ("band" when each point carries the low and high shaded around it), rain-style "bars",
+# or a "rating" (each bar's share of time in good, poor and very poor). Times are ISO local times with their UTC offset, so each gives
+# its epoch back exactly, even in the hour that happens twice when the clocks go back.
+CHART_VERSION = 1
+COLUMNS = {"line": 2, "band": 4, "bars": 2, "rating": 4}   # a point of each kind: [time, value], [time, value, low, high],
+                                                            # [time, value] and [time, good, poor, very poor] (percent)
+
+
+def to_json(chart: Chart, tz: tzinfo, max_points: int | None = None) -> dict:
+    """The chart as JSON, with everything the renderer reads, so from_json gives the same chart back. Times are local to `tz`.
+    max_points: each line in at most that many buckets of time (for a model to read), each the mean with the bucket's lowest
+    and highest as its band, so the true extremes stay; None keeps the points as drawn (the bot's own charts, already within
+    lines.POINT_BUDGET)."""
+    if max_points is not None and max_points < 2:
+        raise ValueError("max_points: a line needs at least two points")
+    when = lambda t: datetime.fromtimestamp(t, tz).isoformat()
+
+    def line(s: Line) -> dict:
+        s = _bucketed(s, max_points) if max_points else s
+        band = s.low is not None
+        return {"name": s.label, "kind": "band" if band else "line",
+                "points": [[when(t), *v] for t, *v in zip(s.x, s.y, *((s.low, s.high) if band else ()))],
+                "records": {k: [when(t), v] for k, (t, v) in s.records.items()},
+                "reading": s.reading, "smoothed": s.smoothed, "indoor": s.indoor, "right": s.right, "on_line": s.on_line}
+
+    def panel(p: Panel, compass: Compass | None) -> dict:
+        series = [line(s) for s in p.lines]
+        if b := p.bars:
+            series.append({"name": b.label, "kind": "bars", "unit": b.unit, "width": b.width, "per": b.per, "values": b.values,
+                           "points": [[when(t), v] for t, v in zip(b.x, b.y)]})
+        if r := p.shares:
+            series.append({"name": r.label, "kind": "rating", "width": r.width, "per": r.per,
+                           "points": [[when(t), *v] for t, *v in zip(r.x, r.good, r.poor, r.very_poor)]})
+        out = {"label": p.label, "unit": p.unit, "reading": p.reading, "series": series, "flip_right": p.flip_right, "peaks": p.peaks}
+        if p.zones is not None:
+            out["zones"] = list(p.zones)
+        if compass:
+            out["compass"] = {"rose": [list(row) for row in compass.rose], "speeds": compass.speeds,
+                              "speed_steps": list(compass.speed_steps)}
+        return out
+    return {"version": CHART_VERSION, "title": chart.title, "subtitle": chart.subtitle,
+            "period": [d.isoformat() for d in chart.period] if chart.period else None, "source": chart.source,
+            "newest": when(chart.newest), "panels": [panel(p, chart.compass if i == 0 else None) for i, p in enumerate(chart.panels)]}
+
+
+def _bucketed(line: Line, most: int) -> Line:
+    """The line in at most `most` buckets of equal time, each the mean of its points at their mean time, with the lowest low and
+    highest high among them as its band (the true extremes stay). A line of no more points is left as it is."""
+    if len(line.x) <= most:
+        return line
+    start, width = line.x[0], (line.x[-1] - line.x[0]) // most + 1   # so the last point falls in bucket `most - 1` at the latest
+    buckets: dict = {}
+    for i, t in enumerate(line.x):
+        buckets.setdefault((t - start) // width, []).append(i)
+    if len(buckets) < 2:
+        return line
+    lows, highs, groups = line.low or line.y, line.high or line.y, list(buckets.values())
+    return replace(line, x=[round(fmean(line.x[i] for i in g)) for g in groups], y=[fmean(line.y[i] for i in g) for g in groups],
+                   low=[min(lows[i] for i in g) for g in groups], high=[max(highs[i] for i in g) for g in groups])
+
+
+def from_json(data: dict) -> Chart:
+    """The Chart to_json wrote, built the way any chart is: anything malformed raises ValueError here."""
+    if not isinstance(data, dict) or data.get("version") != CHART_VERSION:
+        raise ValueError(f"not a chart of version {CHART_VERSION}")
+    try:
+        panels, compass, recordless = [], None, []
+        for p in data["panels"]:
+            built = [_series(s) for s in p["series"]]
+            lines = [s for s in built if isinstance(s, Line)]
+            bars = [s for s in built if isinstance(s, Bars)]
+            shares = [s for s in built if isinstance(s, Shares)]
+            if len(bars) > 1 or len(shares) > 1:
+                raise ValueError(f"panel {p['label']!r}: one series of bars and one rating at most")
+            recordless += [s for s in lines if not s.records]
+            panels.append(Panel(p["label"], p["unit"], lines, bars[0] if bars else None, shares[0] if shares else None,
+                                _pair(p["zones"]) if "zones" in p else None, p["reading"], p["flip_right"], p["peaks"]))
+            if "compass" in p:
+                compass = _compass(p["compass"])
+        period = None if data["period"] is None else _pair(data["period"], date.fromisoformat)
+        chart = Chart(data["title"], data["subtitle"], panels, compass, period)
+        chart.source = source_text(data["source"])   # as written (not the CHART_SOURCE of whatever call this is)
+    except (KeyError, TypeError, IndexError, AttributeError) as e:
+        raise ValueError(f"not a chart: {type(e).__name__}: {e}") from None
+    for line in recordless:   # drawn without records (a reading with no low, and no high given): a chart would give it its own
+        line.records = {}
+    return chart
+
+
+def _series(s: dict) -> Line | Bars | Shares:
+    """One series of a panel's JSON as what draws it."""
+    kind, points = s["kind"], s["points"]
+    if kind not in COLUMNS:
+        raise ValueError(f"series {s['name']!r}: its kind is one of {', '.join(COLUMNS)}, not {kind!r}")
+    if any(len(point) != COLUMNS[kind] for point in points):
+        raise ValueError(f"series {s['name']!r}: a point of a {kind} is {COLUMNS[kind]} values")
+    x = [_epoch(point[0]) for point in points]
+    columns = [[_number(point[i]) for point in points] for i in range(1, COLUMNS[kind])]
+    if kind == "bars":
+        return Bars(s["name"], s["unit"], x, columns[0], s["width"], s["per"], s["values"])
+    if kind == "rating":
+        return Shares(s["name"], x, s["width"], *columns, s["per"])
+    low, high = columns[1:] if kind == "band" else (None, None)
+    records = {k: (_epoch(t), _number(v)) for k, (t, v) in s["records"].items()}
+    return Line(s["name"], x, columns[0], low, high, s["smoothed"], records, s["reading"], s["indoor"], s["right"], s["on_line"])
+
+
+def _compass(c: dict) -> Compass:
+    if len(c["rose"]) != 16 or any(len(row) != 3 for row in c["rose"]):
+        raise ValueError("a wind rose is 16 compass points of 3 speed steps")
+    return Compass([[_number(v) for v in row] for row in c["rose"]], c["speeds"], _pair(c["speed_steps"]))
+
+
+def _pair(values: list, read=None) -> tuple:
+    """Two values (zones, a period, speed steps) as a tuple, each read by `read` (else checked to be a number)."""
+    if len(values) != 2:
+        raise ValueError(f"two values, not {values!r}")
+    return tuple(map(read or _number, values))
+
+
+def _epoch(text: str) -> int | float:
+    """An ISO time with its UTC offset as epoch seconds (an int when whole, as the charts hold them)."""
+    t = datetime.fromisoformat(text)
+    if t.tzinfo is None:
+        raise ValueError(f"a time needs its UTC offset: {text!r}")
+    seconds = t.timestamp()
+    return int(seconds) if seconds.is_integer() else seconds
+
+
+def _number(v) -> float:
+    """A value as given, checked to be a finite number (not a string, a bool or None)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+        raise ValueError(f"not a number: {v!r}")
+    return v

@@ -110,3 +110,42 @@ def no_request_spacing(monkeypatch):
     yield
     for db in opened:
         db.close()
+
+
+@pytest.fixture(autouse=True)
+def charts_come_back_from_json(monkeypatch):
+    """Every chart a test builds is also written as JSON and read back (specs.to_json, from_json), and must come back the same: the
+    bot draws each chart from its JSON. A chart that doesn't fails the test when it ends (a tool that drew it may catch the error)."""
+    import json
+    from lib import specs
+    from tests.fakes import TZ
+    built, wrong, busy = specs.Chart.__post_init__, [], []
+
+    def checked(chart):
+        built(chart)
+        if busy:   # the chart from_json is building
+            return
+        busy.append(chart)
+        try:
+            back = specs.from_json(json.loads(json.dumps(specs.to_json(chart, TZ))))
+            if back != chart:
+                wrong.append(f"{chart.title!r} came back from its JSON changed: {difference(chart, back)}")
+        except Exception as e:
+            wrong.append(f"{chart.title!r} couldn't go through JSON: {type(e).__name__}: {e}")
+        finally:
+            busy.pop()
+    monkeypatch.setattr(specs.Chart, "__post_init__", checked)
+    yield
+    assert not wrong, wrong[0]
+
+
+def difference(a, b, path: str = "chart") -> str:
+    """Where two charts (or parts of them) first differ, "chart.panels[0].lines[1].x[0]: 1 != 2", rather than both whole."""
+    from dataclasses import fields, is_dataclass
+    if is_dataclass(a) and type(a) is type(b):
+        name = next(f.name for f in fields(a) if getattr(a, f.name) != getattr(b, f.name))
+        return difference(getattr(a, name), getattr(b, name), f"{path}.{name}")
+    if type(a) is type(b) and isinstance(a, (list, tuple)) and len(a) == len(b):
+        i = next(i for i, (x, y) in enumerate(zip(a, b)) if x != y)
+        return difference(a[i], b[i], f"{path}[{i}]")
+    return f"{path}: {a!r} != {b!r}"

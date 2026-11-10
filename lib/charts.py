@@ -1,7 +1,8 @@
 """Charts sent alongside history answers, for both Ecowitt and AirGradient.
 
 A history tool adds a specs.Chart to turn.charts (the question's Turn, made by the bot) when a chart was asked for; the
-bot renders them after the answer is written and sends them with it. Every chart is one or more panels on a shared time
+bot renders them after the answer is written and sends them with it, drawing each from its JSON (specs.to_json, then
+render_data here), as any client draws the charts a tool hands over. Every chart is one or more panels on a shared time
 axis (see specs.py):
   - one panel of lines is drawn large, with the records marked as pills, an end dot and (for wind) the compass beside it,
     at exactly 1280x720, the size Telegram displays photos at, so nothing is rescaled;
@@ -22,7 +23,7 @@ from statistics import fmean
 
 from . import draw
 from .draw import DPI, PT, Canvas, blend, nice_ticks, rgb
-from .specs import Chart, Compass, Line, Panel
+from .specs import Chart, Compass, Line, Panel, from_json
 
 # Palette. Slate neutrals for the furniture; one hue per reading (weather and air quality, kept clear of the green/yellow/red
 # rating zones); the same reading indoors is its complementary hue (opposite on the colour wheel, as a painter pairs them).
@@ -898,6 +899,12 @@ def render(chart: Chart, tz: tzinfo, times: dict | None = None, dark: bool | Non
         times["draw"] = times.get("draw", 0.0) + drawn - started
         times["png"] = times.get("png", 0.0) + time.perf_counter() - drawn
     return png
+
+
+def render_data(data: dict, tz: tzinfo, times: dict | None = None, dark: bool | None = None) -> bytes:
+    """PNG bytes for a chart given as its JSON (specs.to_json, schemas/chart.json): how the bot draws every chart, as a client
+    draws the charts a tool hands over. Raises ValueError for JSON that isn't a chart; otherwise as render."""
+    return render(from_json(data), tz, times, dark)
 
 
 def draw_texts(chart: Chart, tz: tzinfo, dark: bool = False) -> list[draw.Text]:
