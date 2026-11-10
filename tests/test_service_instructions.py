@@ -24,6 +24,14 @@ def test_the_default_names_every_device_its_nicknames_indoor_and_outdoor_and_the
     assert "rainfall and rainfall_piezo: rain_rate, rain" in text and "air: pm2_5, pm10" in text
 
 
+def test_every_question_is_fetched_afresh_a_follow_up_and_a_challenge_too():
+    # the results say so (common.FRESH), but the bot drops tool turns from its history: the model decides a follow-up without them
+    for text in (INSTRUCTIONS, instructions(Context(eco=object(), tz=MELBOURNE)), instructions(Context(air=object(), tz=MELBOURNE))):
+        last = text.splitlines()[-1]
+        assert "every question" in last and "never reuse earlier figures" in last
+        assert "follow-up" in last and "challenge" in last and "at once, unasked" in last
+
+
 def test_names_list_each_sensor_with_its_readings_sensors_alike_together():
     listed = names(CATALOGUE)
     assert listed.startswith("outdoor and indoor: temperature, humidity") and "; pressure: relative, absolute; " in listed

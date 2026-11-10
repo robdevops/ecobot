@@ -85,7 +85,7 @@ answer the question right in one round of calls? Section 7's evals ask exactly t
 - **The tool descriptions and the results are the contract.** Every rule a choice of tool or the reading of a result depends on is in
   that tool's description (which questions it answers, an example call for each, how to read what comes back) or in the result itself
   (`value_is`, `how_to_read`, `note_*`, `missing`, `warning`). The server's `instructions` repeat a short summary (the devices and their
-  nicknames, Indoor and Outdoor, the readings' names, units), but nothing depends on them: on the 2026-07-28 protocol a client only gets them by asking
+  nicknames, Indoor and Outdoor, the readings' names, units, and that every question, a follow-up or a challenge too, is fetched afresh: a client may drop earlier tool turns, and with them `fresh`), but nothing depends on them: on the 2026-07-28 protocol a client only gets them by asking
   (`server/discover`), and many don't pass them to their model. The persona (a friendly Telegram bot, plain text, bullets) is the
   client's.
 - **Periods in words, worked out by the service.** Every tool that takes a period takes `period`, the person's own words for it, passed
