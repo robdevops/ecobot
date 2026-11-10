@@ -378,7 +378,7 @@ class History:
 
     def _sensor(self, m: Metric) -> int | None:
         if m.air:
-            s = self.air.store.sensor() if self.air else None
+            s = self.air.store.sensor if self.air else None
         else:
             s = self.storage.sensors.find(self.eco.mac, m.sensor) if self.eco else None
         return s.id if s else None

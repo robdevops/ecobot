@@ -59,10 +59,6 @@ def days_of(out: dict) -> tuple[date, date]:
     return start, end - timedelta(days=1)
 
 
-def without_drawn_by(chart: dict) -> dict:
-    return {k: v for k, v in chart.items() if k != "drawn_by"}
-
-
 async def replays(ctx, chart: dict, **swap) -> dict:
     """The call a chart says drew it, made again (with `swap` in its arguments)."""
     drawn = chart["drawn_by"]
@@ -177,7 +173,7 @@ async def test_a_chart_when_asked_carries_the_call_that_draws_it_again(tmp_path,
     out = await ask(ctx, reading="pressure", chart=True)
     (chart,) = out["charts"]
     assert out["chart_note"] == CHART_NOTE and chart["title"] == "Pressure, Rain" and chart["source"] == "Ecowitt weather station"
-    assert errors(without_drawn_by(chart)) == []
+    assert errors(chart) == []
     assert chart["drawn_by"] == {"tool": "relate", "arguments": {"reading": "pressure.relative", "period": "last 90 days", "chart": True},
                                  "periods": [{"period": "1m", "label": "1M"}, {"period": "3m", "label": "3M"}, {"period": "1y", "label": "1Y"}]}
     assert await replays(ctx, chart) == out                                                # the same call again: the same answer
@@ -207,7 +203,7 @@ async def test_the_air_against_rain_is_drawn_with_its_zones_and_drawn_again_over
     out = await ask(ctx, reading="pm2.5", chart=True)
     (chart,) = out["charts"]
     assert chart["title"] == "PM2.5, Rain" and chart["source"] == "Ecowitt weather station and AirGradient sensor"
-    assert chart["panels"][0]["zones"] == [9.0, 55.4] and errors(without_drawn_by(chart)) == []
+    assert chart["panels"][0]["zones"] == [9.0, 55.4] and errors(chart) == []
     assert chart["drawn_by"]["arguments"] == {"reading": "air.pm2_5", "period": "last 60 days", "chart": True}
     assert await replays(ctx, chart) == out
     for each in chart["drawn_by"]["periods"]:

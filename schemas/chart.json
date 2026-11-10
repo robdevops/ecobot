@@ -18,6 +18,15 @@
       "minItems": 2
     },
     "source": {"type": "string", "description": "Where the data came from (\"Ecowitt weather station\"), written small in the corner; \"\" for none."},
+    "drawn_by": {"type": "object", "description": "The call that drew this chart, to draw it again: the same tool with these arguments, `period` swapped for one of `periods` to draw it over another stretch. Absent on a chart no tool call drew.",
+                 "required": ["tool", "arguments", "periods"], "additionalProperties": false,
+                 "properties": {
+                   "tool": {"type": "string", "description": "The tool's name (\"summary\")."},
+                   "arguments": {"type": "object", "description": "Every argument the call was given, filled in: readings fully named, the period in words."},
+                   "periods": {"type": "array", "description": "The periods it can be redrawn over, in order; [] when it can't be (a chart over set times).",
+                               "items": {"type": "object", "required": ["period", "label"], "additionalProperties": false,
+                                         "properties": {"period": {"type": "string", "description": "The `period` argument to send (\"7d\")."},
+                                                        "label": {"type": "string", "description": "What to call it on a button (\"7 days\")."}}}}}},
     "newest": {"$ref": "#/$defs/time", "description": "The time of the newest reading drawn: a line's last point or the start of the last bar."},
     "panels": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/panel"}}
   },

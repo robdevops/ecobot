@@ -357,7 +357,7 @@ async def test_a_figure_per_month_is_drawn_and_its_drawn_by_redraws_it_over_each
     chart = chart_of(out)
     assert out["chart_note"] == CHART_NOTE and "chart" not in out and out["by_month"]
     assert chart["title"] == "Total rain" and chart["source"] == "Ecowitt weather station"
-    assert schema_errors({k: v for k, v in chart.items() if k != "drawn_by"}) == []
+    assert schema_errors(chart) == []
     drawn = chart["drawn_by"]
     assert drawn == {"tool": "days", "arguments": {"where": [], "sort_by": "rain", "order": "desc", "count_only": False, "group_by": "month",
                                                    "stat": "sum", "of": "rain", "limit": 5, "period": "last 6 months", "chart_answers_it": True},

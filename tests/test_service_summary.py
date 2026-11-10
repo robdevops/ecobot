@@ -221,7 +221,7 @@ async def replays(tool: ServiceTool, out: dict) -> dict:
     (chart,) = out["charts"]
     by = chart["drawn_by"]
     assert by["tool"] == "summary" and set(by) == {"tool", "arguments", "periods"}
-    assert schema_errors(without_drawn_by(chart)) == []   # the chart is schemas/chart.json's, with drawn_by beside it
+    assert schema_errors(chart) == []   # drawn_by and all
     again = await ask(tool, **by["arguments"])
     assert [without_drawn_by(c) for c in again["charts"]] == [without_drawn_by(chart)] and again["charts"][0]["drawn_by"] == by
     for period in by["periods"]:

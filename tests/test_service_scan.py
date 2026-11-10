@@ -12,7 +12,7 @@ from lib.service.context import Context
 from lib.tools import Turn
 from tests.fakes import TZ, archived_station, pressure
 from tests.test_chart_json import errors
-from tests.test_service_relate import HeldStubAir, days_of, without_drawn_by
+from tests.test_service_relate import HeldStubAir, days_of
 
 
 class PressureAir(HeldStubAir):
@@ -140,7 +140,7 @@ async def test_a_chart_of_the_strongest_pair_carries_the_call_that_draws_it_agai
     ctx, eco = await world(tmp_path, archived_cache)
     out = await ask(ctx, chart=True)
     (chart,) = out["charts"]
-    assert out["chart_note"] == CHART_NOTE and chart["title"] == "PM2.5, Pressure" and errors(without_drawn_by(chart)) == []
+    assert out["chart_note"] == CHART_NOTE and chart["title"] == "PM2.5, Pressure" and errors(chart) == []
     assert chart["source"] == "Ecowitt weather station and AirGradient sensor"
     assert chart["drawn_by"] == {"tool": "scan", "arguments": {"reading": "all", "period": "last 90 days", "chart": True},
                                  "periods": [{"period": "1m", "label": "1M"}, {"period": "3m", "label": "3M"}, {"period": "1y", "label": "1Y"}]}

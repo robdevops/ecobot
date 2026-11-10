@@ -30,6 +30,17 @@ def storage(tmp_path):
     s.close()
 
 
+class AirStore:
+    """The air sensor's store as History reads it: its file, and its sensor a property (AirReadings.sensor)."""
+
+    def __init__(self, storage):
+        self.storage = storage
+
+    @property
+    def sensor(self):
+        return self.storage.air_sensor(LOC)
+
+
 def put(storage, sensor: str, res: str, rows: list[dict]):
     """Readings written as a source writes them: an Ecowitt group's, or the air sensor's ("air")."""
     def write(w):
@@ -40,7 +51,7 @@ def put(storage, sensor: str, res: str, rows: list[dict]):
 
 def tool(storage, eco: bool = True, air: bool = True, sent: dict | None = SENT) -> History:
     station = SimpleNamespace(storage=storage, mac=MAC, tz=TZ) if eco else None
-    sensor = SimpleNamespace(store=SimpleNamespace(storage=storage, sensor=lambda: storage.air_sensor(LOC)), tz=TZ) if air else None
+    sensor = SimpleNamespace(store=AirStore(storage), tz=TZ) if air else None
     return History(station, sensor, sent if eco else None, now=lambda: NOW)
 
 

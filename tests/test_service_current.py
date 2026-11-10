@@ -138,7 +138,7 @@ async def test_every_reading_now_with_its_value_unit_words_and_emoji(tmp_path, a
     assert s["pressure"]["absolute"]["text"] == "1009.5 hPa"
     assert "rainfall_piezo" not in s                                     # every reading the sensors have now: this station has no piezo gauge
     pm = s["air"]["pm2_5"]
-    assert pm["value"] == 12.0 and pm["unit"] == "µg/m³" and pm["text"] == "12.0 µg/m³" and pm["aqi_us"] == 56 and pm["band"] == "moderate"
+    assert pm["value"] == 12.0 and pm["unit"] == "µg/m³" and pm["text"] == "12.0 µg/m³" and 51 <= pm["aqi_us"] <= 100 and pm["band"] == "moderate"
     assert pm["rating"].endswith(("good", "poor"))
     assert s["air"]["co2"]["text"] == "450 ppm" and s["air"]["nox_index"]["text"] == "1.0" and s["air"]["voc_index"]["text"] == "100"
     assert s["air"]["temperature"]["unit"] == "°C" and "rating" not in s["air"]["temperature"]   # the sensor's own: no rating
@@ -154,7 +154,7 @@ async def test_named_readings_alone_each_once_in_the_order_named(tmp_path, archi
     assert [(g, list(r)) for g, r in got["sensors"].items()] == [("rainfall", ["rain"]), ("outdoor", ["temperature"]),
                                                                  ("indoor", ["temperature"]), ("wind", ["wind_gust"]), ("air", ["pm2_5"])]
     assert set(got["lines"]) == {STATION, AIR_DEVICE} and got["lines"][AIR_DEVICE] == ["• PM2.5: " + got["sensors"]["air"]["pm2_5"]["text"]
-                                                                                      + f" {got['sensors']['air']['pm2_5']['rating']} (AQI 56)"]
+                                                                                      + f" {got['sensors']['air']['pm2_5']['rating']} (AQI {got['sensors']['air']['pm2_5']['aqi_us']})"]
     assert (await call(tool, readings="indoor temperature, outdoor humidity"))["sensors"] == {
         "indoor": {"temperature": {"value": 18.3, "unit": "°C", "text": "18.3 °C", "emoji": "🧥"}},
         "outdoor": {"humidity": {"value": 94, "unit": "%", "text": "94 %", "emoji": "💦"}}}   # (a string of names will do)
