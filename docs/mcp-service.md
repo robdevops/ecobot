@@ -459,7 +459,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
    against them with the tool list alone. The bot's own code paths call them instead of the twelve: its shortcuts, report,
    lookups, gauges and alert charts, and the calls behind its period buttons (a press replays the chart's `drawn_by` with a new
    `period`; the buttons themselves, their keyboard and picture cache stay in the bot, and go with it). The service knows nothing of
-   buttons.
+   buttons. Everything the bot draws ahead replays a call too: the other periods preloaded after a chart is sent (`drawn_by` with
+   `1d`, `7d`, `1m`, `3m`, `1y`), the keyboard's charts every 5 minutes (each button a fixed `summary` call), recent alerts' charts
+   (their `drawn_by`). The picture cache and the pre-upload are keyed by the call (tool and arguments), not the question's words, so
+   two chats asking the same thing share a picture. Period buttons stay on single charts over time; a replay the service refuses
+   shows its error on the button.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.
