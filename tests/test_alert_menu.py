@@ -260,17 +260,14 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     from lib.alerts.particulates import ParticulatesMonitor
     from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
     from lib.alerts.weather import WeatherMonitor
-    from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, gusts, rain, uv
-    from tests.test_forecast_alert import TODAY, FakeForecast, day
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(1, "chat")
-    kinds = []
-
-    async def notify(text, link=None, kind=None, **more):
-        kinds.append(kind)
+    from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, asking, gusts, rain, store_and_log, uv
+    from tests.test_forecast_alert import FakeForecast, day
+    state, log, sent = store_and_log(tmp_path)
+    kinds = lambda: [e["kind"] for e in sent.events]
 
     async def weather(first, then):
-        mon = WeatherMonitor(FakeStation(first), state, notify)
+        mon = WeatherMonitor(FakeStation(first), state, log)
+        asking(mon, photo=None)
         await mon.check()
         mon.station.data = then
         await mon.check()
@@ -278,26 +275,21 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     await weather(rain(0, 0, 1, 1), rain(0, 0, 1, 1, *[0] * 13))
     await weather(gusts(10, 12), gusts(10, 12, 60))
     await weather(uv(3, 5, start=T0 + 86400), uv(3, 5, 10, 10, start=T0 + 86400))   # later than the readings above: the monitors share one state
-    assert kinds == ["rain", "rain", "gusts", "uv"]
-    kinds.clear()
-    mask = ParticulatesMonitor(NS(tz=TZ, link=None), state, notify)
+    assert kinds() == ["rain", "rain", "gusts", "uv"]
+    mask = ParticulatesMonitor(NS(tz=TZ, link=None), state, log)
+    asking(mask, photo=None)
     for pm in (80, 80, 20, 20):
         await mask.check(air_reading(pm))
-    assert kinds == ["particulates", "particulates"]
-    kinds.clear()
+    assert kinds()[4:] == ["particulates", "particulates"]
     pollen = FakePollen()
     pollen.grass = "High"
-    await PollenAndAsthmaMonitor(pollen, state, notify).check()
-    assert kinds == ["pollen_and_asthma"]
-    seen = []
-    notifier = Notifier(Sent(), state)
-
-    async def spy(text, **kw):
-        seen.append(kw["kind"])
-        return await notifier(text, **kw)
-    state.record_forecast(1, [day(0, pct=90)], TODAY)
-    await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, spy).check()
-    assert seen == ["forecast"]
+    await PollenAndAsthmaMonitor(pollen, state, log).check()
+    assert kinds()[6:] == ["pollen_and_asthma"]
+    forecast = ForecastMonitor(FakeForecast([day(0, pct=90)]), state, log)
+    await forecast.check()
+    forecast.forecast.fetch([day(0, pct=5)])
+    await forecast.check()
+    assert kinds()[7:] == ["forecast"]
 
 
 def test_under_an_alert_one_bell_opens_the_alert_toggle_and_then_the_sound_toggle():
@@ -436,9 +428,10 @@ def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_s
     from lib.alerts.weather import WeatherMonitor
     monitors = [WeatherMonitor, ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, IrrigationMonitor]
     assert sorted(k for m in monitors for k in m.KINDS) == sorted(LABELS)       # every type has exactly one monitor
-    for m in monitors:
-        sent = set(re.findall(r'kind="(\w+)"', Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()))
-        assert sent == set(m.KINDS), m.__name__
+    for m in monitors:   # each kind named where it is appended to the log (the irrigation controller's: where it is sent)
+        text = Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()
+        sent = set(re.findall(r'kind="(\w+)"|_emit\("(\w+)"|append\("(\w+)"', text))
+        assert {k for found in sent for k in found if k} == set(m.KINDS), m.__name__
 
 
 class SentWithPhotos(Sent):

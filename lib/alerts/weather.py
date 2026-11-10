@@ -12,6 +12,8 @@
     sensor noise flip-flopping.
   The crossing has a back-off rule (rules.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
+Each alert is an event appended to the alert log (lib/alert_log.py), news for a while (rain RAIN_EXPIRES_SECONDS, gusts and UV their
+rearm time, the crossing its cooldown); gusts, UV and the crossing carry their chart as data, with the call that draws it again.
 """
 
 import asyncio
@@ -32,6 +34,7 @@ CROSS_MARGIN = 1.0
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600
 UV_REARM_SECONDS = 3600
+RAIN_EXPIRES_SECONDS = 3600   # a rain alert is news for about an hour (the overnight summary too)
 
 
 def side(r: dict) -> str | None:
@@ -45,8 +48,11 @@ def side(r: dict) -> str | None:
 class WeatherMonitor:
     KINDS = kinds_of("Ecowitt")
 
-    def __init__(self, station, state, notify, cooldown_seconds: int = ALERT_COOLDOWN_SECONDS, quiet: tuple[int, int] | None = None):
-        self.station, self.state, self.notify = station, state, notify
+    def __init__(self, station, state, alerts, cooldown_seconds: int = ALERT_COOLDOWN_SECONDS, quiet: tuple[int, int] | None = None,
+                 service=None):
+        """state: the rules' store (AlertStore). alerts: the alert log the alerts are appended to. service: the service's tools (the
+        charts' calls), else built over the station."""
+        self.station, self.state, self.alerts, self.service = station, state, alerts, service
         self.cooldown = cooldown_seconds
         self.quiet = quiet   # (from hour, to hour) local, no rain alerts in between; None: always on
         self._rain_lock = asyncio.Lock()   # the minute's check and the live reading's look at the rain are one at a time
@@ -132,7 +138,8 @@ class WeatherMonitor:
             m["since"] = next(ts for ts in wet_times if latest_ts - ts < self.cooldown)
             rate = next(r for ts, w, r in reversed(wet) if w)
             if not quiet:
-                await self.notify("\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), kind="rain")
+                self._emit("rain", "\U0001f327️ It's started raining" + (f" ({rate:g} mm/h)." if rate > 0 else "."), "Rain started",
+                           {"rate_mm_h": rate, "since": self._iso(m["since"])}, RAIN_EXPIRES_SECONDS)
         elif m["alerted_state"] == "raining":
             if last_wet is None:  # nothing in the last 3 hours (e.g. the bot was down): close it quietly
                 log.info("Alerts: rain ended while not watching; no alert")
@@ -144,7 +151,8 @@ class WeatherMonitor:
                 fell = await self._fell(rows, since, last_wet)
                 amount = f"{fell:.1f} mm fell" if fell else "Only a trace fell"
                 took = duration(last_wet + 300 - since)
-                await self.notify(f"\U0001f324️ The rain has stopped. {amount} over {took}.", kind="rain")
+                self._emit("rain", f"\U0001f324️ The rain has stopped. {amount} over {took}.", "Rain stopped",
+                           {"fell_mm": fell, "from": self._iso(since), "to": self._iso(last_wet + 300)}, RAIN_EXPIRES_SECONDS)
             m["since"] = None
         remember(m, state, latest_ts, alerted=not quiet)
 
@@ -172,7 +180,9 @@ class WeatherMonitor:
         fell = await self._fell(rows, night["first"], night["last"])
         amount = f"{fell:.1f} mm" if fell else "a trace"
         still = " It's still raining." if self.state.monitor.get("rain", {}).get("alerted_state") == "raining" else ""
-        await self.notify(f"\U0001f327️ Overnight rain: {amount}, from about {clock(night['first'])} to {clock(night['last'] + 300)}.{still}", kind="rain")
+        self._emit("rain", f"\U0001f327️ Overnight rain: {amount}, from about {clock(night['first'])} to {clock(night['last'] + 300)}.{still}",
+                   "Overnight rain", {"fell_mm": fell, "from": self._iso(night["first"]), "to": self._iso(night["last"] + 300),
+                                      "still_raining": bool(still)}, RAIN_EXPIRES_SECONDS)
 
     async def _gusts(self, rows: Rows):
         """Only readings since the last check count, so a restart doesn't re-announce an old gust."""
@@ -184,9 +194,10 @@ class WeatherMonitor:
         if over and not m["active"]:
             m["active"] = True
             gust, ts = max(over)
-            await self.notify(f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {clock_text(to_local(ts, self.tz))}"
-                              f" (alerts above {GUST_ALERT_KMH} km/h).", kind="gusts", chart=lambda: self._picture(pictures.CHARTS["gusts"]),
-                              since=latest_ts)
+            self._emit("gusts", f"\U0001f4a8 Strong gusts: {gust:.0f} km/h at {clock_text(to_local(ts, self.tz))}"
+                                f" (alerts above {GUST_ALERT_KMH} km/h).", "Strong gusts",
+                       {"gust_kmh": gust, "at": self._iso(ts), "threshold_kmh": GUST_ALERT_KMH}, GUST_REARM_SECONDS,
+                       await self._chart(pictures.CHARTS["gusts"]))
 
     async def _uv(self, rows: Rows):
         """One alert per spell at or above UVI_ALERT, once it holds for two readings in a row (rules.py); only readings newer than the last
@@ -208,9 +219,9 @@ class WeatherMonitor:
         if m.get("streak", 0) >= rules.CONFIRM_READINGS and not m["active"]:
             m["active"] = True
             uv, ts = m["peak"]
-            await self.notify(f"\U0001f9f4 UV index {uv:g} at {clock_text(to_local(ts, self.tz))}"
-                              f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", kind="uv",
-                              chart=lambda: self._picture(pictures.CHARTS["uv"]), since=latest_ts)
+            self._emit("uv", f"\U0001f9f4 UV index {uv:g} at {clock_text(to_local(ts, self.tz))}"
+                             f": very high. Sunscreen, a hat and shade (alerts at {UVI_ALERT} and above).", "Very high UV",
+                       {"uv_index": uv, "at": self._iso(ts), "threshold": UVI_ALERT}, UV_REARM_SECONDS, await self._chart(pictures.CHARTS["uv"]))
 
     async def _cross(self, rows: Rows):
         ts, r = rows[-1]
@@ -226,9 +237,11 @@ class WeatherMonitor:
             held = ts - c["alerted_time"]   # how long the side we last told about has stood
             was = f"{int(held // 86400)} days" if held >= 2 * 86400 else duration(held)
             icon = "\U0001f321️" if current == "warmer" else "\u2744\ufe0f"   # a thermometer for warmer, a snowflake for cooler
-            await self.notify(f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
-                              f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.", kind="temps",
-                              chart=lambda: self._picture(pictures.CHARTS["temps"]), since=ts)
+            chart = await self._chart(pictures.CHARTS["temps"])
+            self._emit("temps", f"{icon} It's now {abs(o - i):.1f}°C {current} outside than inside "
+                                f"({o:.1f}°C vs {i:.1f}°C). It had been {'cooler' if current == 'warmer' else 'warmer'} for {was}.",
+                       f"{current.capitalize()} outside than inside", {"side": current, "outdoor_c": o, "indoor_c": i, "had_been_seconds": held},
+                       self.cooldown, chart)
             remember(c, current, ts)
 
     async def _fell(self, rows: Rows, since: int, until: int) -> float | None:
@@ -238,6 +251,13 @@ class WeatherMonitor:
             rows = await self.station.recent((rows[-1][0] - since) / 3600 + 0.25)
         return rain_amount(rows, since, until)
 
-    async def _picture(self, text: str) -> pictures.Picture | None:
-        """The chart a typed `text` ("Wind chart 1d") would give, for an alert; None when it cannot be made."""
-        return await pictures.chart(self.station, text, self.tz)
+    def _emit(self, kind: str, text: str, title: str, data: dict, lasts: float, chart: dict | None = None):
+        """An alert, appended to the log: news for `lasts` seconds."""
+        self.alerts.append(kind, text, title, data, expires=self.alerts.now() + lasts, chart=chart)
+
+    def _iso(self, ts: int | None) -> str | None:
+        return None if ts is None else to_local(ts, self.tz).isoformat(timespec="seconds")
+
+    async def _chart(self, text: str) -> dict | None:
+        """The chart a typed `text` ("Wind chart 1d") would give, as data with its drawn_by, for an alert; None when it cannot be made."""
+        return await pictures.chart_data(self.station, text, self.tz, self.service)

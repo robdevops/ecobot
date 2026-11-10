@@ -11,7 +11,9 @@ bot.on_alert_button:
   al:on|off:<kind>:alerts       al:snd:<kind>:on|off           a type's alerts, or its sound, on or off
   al:open:bell:<kind>           al:close:<kind>                the bell under an alert of that type
   al:on|off:<kind>:bell:<kind>  al:snd:<kind>:on|off:<kind>    its two toggles
-  al:refresh:<kind>                                            the chart of an alert of that type, drawn again
+  al:refresh:<kind>[:<id>]                                     the chart of an alert of that type, drawn again: the alert <id>'s
+                                                               (in the alert log), its chart's drawn_by replayed; without one (an
+                                                               alert sent before the log), the type's chart
 """
 
 from itertools import batched
@@ -48,12 +50,14 @@ def _verb(on: bool) -> str:
     return "on" if on else "off"
 
 
-def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None, refresh: bool = False) -> InlineKeyboardMarkup:
+def alert_keyboard(kind: str, muted: set[str], loud: set[str] | None, open: str | None = None, refresh: bool = False,
+                   event: int | None = None) -> InlineKeyboardMarkup:
     """The buttons under an alert of type `kind`: one bell (🔔 ▸, ▾ once `open` is BELL) that opens up to two toggles, Alert (this type's
     alerts in this chat) and, only while that is on and in a private chat (`loud` is not None), Sound (whether they make a notification
-    sound). refresh (the alert carries a chart): 🔄 beside the bell, which draws the chart again."""
+    sound). refresh (the alert carries a chart): 🔄 beside the bell, which draws the chart again (event: the alert's id in the log, whose
+    chart's drawn_by it replays)."""
     is_open = open == BELL
-    rows = [[opener("🔔", is_open, f"al:open:{BELL}:{kind}", f"al:close:{kind}"), *([button("🔄", f"al:refresh:{kind}")] if refresh else [])]]
+    rows = [[opener("🔔", is_open, f"al:open:{BELL}:{kind}", f"al:close:{kind}"), *([button("🔄", f"al:refresh:{kind}" + (f":{event}" if event is not None else ""))] if refresh else [])]]
     if is_open:
         on = kind not in muted
         rows.append([toggle_button("Alert", on, lambda turn_on: f"al:{_verb(turn_on)}:{kind}:{BELL}:{kind}")])

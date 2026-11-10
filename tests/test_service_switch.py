@@ -466,15 +466,6 @@ async def test_an_error_reply_gets_no_air_link(world, alert_state, monkeypatch):
     assert said == ["Sorry, that took too long. Please try again in a moment."]
 
 
-async def test_the_forecast_days_an_outlook_shows_are_recorded_for_the_forecast_alert(world, alert_state, monkeypatch):
-    """outlook's result carries Open-Meteo's lines for today and tomorrow, for the model to copy: once sent, a revision of those days is
-    worth telling the chat, as for forecast's."""
-    from datetime import timedelta
-    await asked_the_model(world, alert_state, monkeypatch, "will it rain later?", [[("outlook", {})]], "Possibly.")
-    today = FrozenDate.today()
-    assert sorted(alert_state.forecast_sent(-5)) == [today, today + timedelta(days=1)]
-
-
 @pytest.mark.parametrize("text", ["temperature 1d", "co2 1d", "pm2.5 1d"])
 async def test_a_bare_reading_and_1d_is_still_its_chart_without_the_model(world, alert_state, monkeypatch, text):
     """As before the swap: "temperature 1d" is the chart of the last day, drawn in code (no model needed)."""

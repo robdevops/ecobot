@@ -1,6 +1,7 @@
 """The chart that goes with an alert: the same picture a typed request for it would give ("Wind chart 1d" is what the Wind button sends), so what an
 alert shows is defined once, by the button sentences, each a fixed service call (lib/intent.chart_call: "Wind chart 1d" is summary
-{readings: ["wind"], period: "1d", chart: true}), which the service draws. AlertCharts keeps those charts with the bot's other charts (the ImageCache,
+{readings: ["wind"], period: "1d", chart: true}), which the service draws: the rule puts the chart's data, with its drawn_by, in the alert's
+event (chart_data), and the bot draws it (picture_of). AlertCharts keeps those charts with the bot's other charts (the ImageCache,
 by call), so one is drawn once and uploaded once however many times it is sent."""
 
 import asyncio
@@ -44,21 +45,36 @@ def _service_of(source, tz):
     return Service.of(Context(eco=source if name == "Ecowitt" else None, air=source if name == "AirGradient" else None, tz=tz))
 
 
-async def chart(source, text: str, tz, service=None) -> Picture | None:
-    """The chart for the request `text`, drawn by the service the way the bot would answer it; None when it cannot be made (the alert then
-    goes out as text). `source` is the station or the air sensor; `service` the service's tools (the bot's), else built over `source`."""
+async def chart_data(source, text: str, tz, service=None) -> dict | None:
+    """The chart for the request `text` as data (3.7's JSON, with the `drawn_by` that draws it again), as the service gives it (every point,
+    as drawn): what an alert event carries. None when it cannot be made (the alert then goes out as text). `source` is the station or the air
+    sensor; `service` the service's tools, else built over `source`."""
     try:
         tool, args = call_of(text, now_local(tz), tz)
         service = service or _service_of(source, tz)
         out = json.loads(await service[tool].call(args, {"chart_points": CHART_POINTS}))
         if "error" in out:
             raise ValueError(out["error"])
-        data = out["charts"][0]
-        spec = from_json(data)
-        return Picture(await asyncio.to_thread(render_data, data, tz), spec.caption(now_local(tz).date()), spec.newest, data.get("drawn_by"))
+        return out["charts"][0]
     except Exception as e:
         log.warning("The chart for the alert (%s) couldn't be made: %s: %s", text, type(e).__name__, e)
         return None
+
+
+async def picture_of(data: dict, tz) -> Picture | None:
+    """A chart given as data, drawn (by the bot's renderer); None when it cannot be."""
+    try:
+        spec = from_json(data)
+        return Picture(await asyncio.to_thread(render_data, data, tz), spec.caption(now_local(tz).date()), spec.newest, data.get("drawn_by"))
+    except Exception as e:
+        log.warning("The alert's chart couldn't be drawn: %s: %s", type(e).__name__, e)
+        return None
+
+
+async def chart(source, text: str, tz, service=None) -> Picture | None:
+    """The chart for the request `text`, drawn by the service the way the bot would answer it; None when it cannot be made."""
+    data = await chart_data(source, text, tz, service)
+    return await picture_of(data, tz) if data else None
 
 
 class AlertCharts:

@@ -511,8 +511,41 @@ Each step ships on its own, with the tests and evals green and the bot working t
    had it filled in from the words): `days` says so in its result (`note_group_by`) and the model calls again; the rest are one-off or
    refusals a model corrects in its next call. Expectations are widened where another call answers as well, not the descriptions
    tightened. The instructions say every question is fetched afresh, a follow-up or a challenge too.
-4. **Alerts in the service.** The rules, their state and config move service-side and append events to the alert log, with `expires`,
-   `link` and `chart` (with its `drawn_by`); the forecast alert gets its station-wide baseline. The bot delivers from the log.
+4. **Alerts in the service** (done). The rules, their state and config move service-side and append events to the alert log, with
+   `expires`, `link` and `chart` (with its `drawn_by`); the forecast alert gets its station-wide baseline. The bot delivers from the log.
+   - **The log** (`lib/alert_log.py`): 3.6's events, `since(id, expired=False)`, `get(id)`, `last_id()`, and `wait(after)`, an asyncio
+     notification on each append that step 5's listen will use. Its own SQLite file in `DATA_DIR` (`alerts.sqlite`), not the readings
+     file: it must exist whatever sources run (pollen and the forecast need no readings file), it is written in tiny rows from the event
+     loop while the readings file takes bulk writes from worker threads, and it can be looked at or deleted alone. Ids are
+     AUTOINCREMENT, so they never go back; events older than 30 days are dropped when it opens. Times are ISO local with their offset.
+   - **The rules** (`lib/alerts/`: weather, particulates, pollen and asthma, forecast) append events and know nothing of chats or
+     Telegram; `lib/service/alerts.py` (`AlertRules`) starts them on today's triggers. Their texts are today's, byte for byte, but the
+     forecast's. `expires`: rain (started, stopped, the overnight summary) an hour, gusts and UV their rearm time (an hour), the
+     temperature crossing its cooldown, particulates the next check (30 minutes), pollen the end of the day it is about, a forecast the
+     end of the day it is about. `link`: the AirGradient dashboard (particulates), the pollen site. `chart`: the alert chart as the
+     service gives it (`pictures.chart_data`: the button sentence's `summary` call, every point as drawn, as the bot's pictures were),
+     `drawn_by` included; made when the alert fires, whoever is listening (before, only when some chat got the alert). `data`: the
+     figures behind each.
+   - **Their state** is the service's (`lib/alerts/store.py`, `alert_state.json` beside `bot_state.json`): the first start with no
+     `alert_state.json` moves the rules' keys out of `bot_state.json`'s `monitor` (once), so nothing re-fires after the upgrade; the
+     irrigation controller's stay in the bot's file. **Config**: the quiet hours and the cooldown stay `RAIN_QUIET_HOURS` and
+     `ALERT_COOLDOWN_MINUTES`, handed to the rules (and `about`) by the service; the thresholds stay the rules' own constants, which
+     `about` reads, as no setting changes them today.
+   - **The forecast alert is station-wide** (deliberate): the first forecast fetched from 6 am is the day's baseline for today and
+     tomorrow (no alert); a later one alerts, one event per day, when the high moves by more than 2°C or the chance of at least 1 mm
+     crosses 50%, and becomes that day's baseline. The 30% band against flip-flopping goes with the per-chat baseline (3.6 says
+     "crosses 50%"). Its text says what changed: "🔄 The forecast for tomorrow has changed: the high is now 19°C (was 24°C) and rain is
+     now likely (80%, was 10%).\nNow: 🌧️ Rain. 10–19°C, 80% chance of rain". The bot no longer records the forecast days each answer
+     showed (`record_forecast`, `forecast_sent`, `shown` through the turn): nothing needs them, and the old record is dropped.
+   - **The bot delivers** (`lib/alerts/notify.AlertDelivery`): it waits on the log in process, sends each unexpired event after the last
+     id it handled (kept in `bot_state.json` as `alerts_read`) through the Notifier as before (the chats subscribed to its kind, silent
+     unless the chat turned sound on, the bell, the link as the footer), with the chart drawn from the event's data, uploaded once. Its
+     first start begins after the newest event; after a gap it skips what expired. The 🔄 under a chart names the event
+     (`al:refresh:<kind>:<id>`) and replays the chart's `drawn_by` from the log (a chart drawn ahead since the message changed is still
+     sent first); an alert sent before the log, or one dropped from it, draws its type's chart as before. Irrigation alerts are sent by
+     the bot as before.
+   - Tests: the rules' tests assert events appended (`tests/test_alerts.py`), the log and the delivery (`tests/test_alert_log.py`), the
+     forecast baseline (`tests/test_forecast_alert.py`).
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the
    transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file) with the
    stdio bridge; the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the

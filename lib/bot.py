@@ -412,13 +412,15 @@ class Tasks:
 
 class Bot:
     def __init__(self, cfg: Config, agent: Agent, sources: list[Source], state: AlertState, irrigation=None, tasks: Tasks | None = None,
-                 service: Service | None = None):
+                 service: Service | None = None, alert_log=None):
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
         its own when none is given. service: the service's tools (lib/service), which the bot's own code paths call (its shortcuts,
         report, gauges, alert charts and period buttons); built over `sources` when none is given. The model is offered the same tools
-        (agent.tools: lib/model_tools.py), with the server's instructions (instructions(service.ctx)) after the bot's persona."""
+        (agent.tools: lib/model_tools.py), with the server's instructions (instructions(service.ctx)) after the bot's persona. alert_log:
+        the service's alert log (lib/alert_log.py), whose events the 🔄 under an alert's chart finds its chart's drawn_by in."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
+        self.alert_log = alert_log
         self._service = service
         self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
@@ -678,8 +680,8 @@ class Bot:
         query = update.callback_query
         action, *rest = (query.data or "").split(":")[1:] or [""]   # the grammar is in alerts/menu.py
         kind = parent = opened = None
-        if action == "refresh" and len(rest) == 1:
-            await self._redraw_alert(query, rest[0])
+        if action == "refresh" and (len(rest) == 1 or len(rest) == 2 and rest[1].isdigit()):   # al:refresh:<kind>[:<id>]
+            await self._redraw_alert(query, rest[0], int(rest[1]) if len(rest) == 2 else None)
             return
         if action == "open" and len(rest) in (1, 2):              # al:open:<menu>[:<parent>]
             opened, parent = rest[0], rest[1] if len(rest) == 2 else None
@@ -717,7 +719,8 @@ class Bot:
         loud = self.state.loud(chat.id) if private else None
         await answer_query(query, toast)
         if parent:   # an alert: only its buttons change
-            await self._edit(query, None, menu.alert_keyboard(parent, muted, loud, opened, refresh=self._redrawable(message, parent)))
+            await self._edit(query, None, menu.alert_keyboard(parent, muted, loud, opened, refresh=self._redrawable(message, parent),
+                                                              event=self._alert_event(message)))
         else:        # the /alerts message: its on/off summary is kept current too
             await self._edit(query, menu.title(muted, kinds), menu.keyboard(muted, kinds, opened, loud))
 
@@ -726,10 +729,29 @@ class Bot:
         """Does this alert carry a chart its Refresh can draw again (it went out as a picture)?"""
         return kind in pictures.CHARTS and bool(getattr(message, "photo", None))
 
-    async def _redraw_alert(self, query, kind: str):
+    @staticmethod
+    def _alert_event(message) -> int | None:
+        """The alert-log id the 🔄 under this alert names (al:refresh:<kind>:<id>), so its buttons keep it when they are redrawn."""
+        markup = getattr(message, "reply_markup", None)
+        for row in getattr(markup, "inline_keyboard", None) or ():
+            for b in row:
+                parts = (getattr(b, "callback_data", None) or "").split(":")
+                if parts[:2] == ["al", "refresh"] and len(parts) == 4 and parts[3].isdigit():
+                    return int(parts[3])
+        return None
+
+    def _alert_call(self, kind: str, event: int | None) -> tuple[str, dict] | None:
+        """The call that draws an alert's chart again: its chart's drawn_by, from the alert log (`event`: its id); None without one (an
+        alert sent before the log, or one dropped from it), when the type's own chart is drawn."""
+        found = self.alert_log.get(event) if event is not None and self.alert_log is not None else None
+        drawn_by = (found or {}).get("chart", {}).get("drawn_by") if found and found.get("kind") == kind else None
+        return (drawn_by["tool"], drawn_by["arguments"]) if drawn_by else None
+
+    async def _redraw_alert(self, query, kind: str, event: int | None = None):
         """A press on Refresh under an alert's chart: the chart with the latest readings, in the same message: the one drawn ahead since the
-        message was last changed (AlertCharts.newer_than; Telegram's copy when it was uploaded ahead), else drawn now and kept. The alert's
-        text (what happened, as it was sent) and its buttons stay as they are."""
+        message was last changed (AlertCharts.newer_than; Telegram's copy when it was uploaded ahead), else drawn now (the alert's chart's
+        drawn_by replayed, found in the alert log by its id `event`; the type's chart for an alert from before the log) and kept. The
+        alert's text (what happened, as it was sent) and its buttons stay as they are."""
         message = query.message
         source = self.by_name.get(menu.TYPES[kind][1]) if kind in menu.TYPES else None
         if source is None or not self._redrawable(message, kind):   # an alert of a type, or from a source, the bot no longer has
@@ -738,7 +760,11 @@ class Bot:
         photo, drawn = self.alert_charts.newer_than(kind, message), False
         if photo is None:
             try:
-                picture = await asyncio.wait_for(pictures.chart(source, pictures.CHARTS[kind], source.tz, self.service), TURN_SECONDS)
+                if call := self._alert_call(kind, event):
+                    made = await asyncio.wait_for(self._draw_call(*call, ahead=False), TURN_SECONDS)
+                    picture = pictures.Picture(made[0], made[1], made[3], made[4]) if made else None
+                else:
+                    picture = await asyncio.wait_for(pictures.chart(source, pictures.CHARTS[kind], source.tz, self.service), TURN_SECONDS)
             except TimeoutError:
                 picture = None
             if picture is None:   # (pictures.chart has said why) the message stays as it was
@@ -876,7 +902,7 @@ class Bot:
             return
         pictured = bool(getattr(getattr(query, "message", None), "photo", None))   # the report is the caption of its gauges: they are drawn again too
         try:
-            text, gauge = await self._report(True, [], pictured)
+            text, gauge = await self._report(True, pictured)
         except Exception as e:   # the message stays as it was
             log.warning("Report refresh failed: %s", e)
             await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
@@ -1141,10 +1167,9 @@ class Bot:
         sender = msg.from_user.full_name if msg.from_user else "Someone"
         return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
 
-    async def _written_in_code(self, report: bool, shown: list, ahead: bool = False) -> str:
+    async def _written_in_code(self, report: bool, ahead: bool = False) -> str:
         """The report, or "weather now", in the service's words: the readings now (current: each device's heading and lines), then the
-        pollen's and the forecast's own text, the calls made together (intent.report_calls; "weather now": current {}). The forecast
-        days it shows go into `shown`."""
+        pollen's and the forecast's own text, the calls made together (intent.report_calls; "weather now": current {})."""
         calls = intent.report_calls(self.by_name) if report else [intent.WEATHER_NOW_CALL]
         results = await asyncio.gather(*(self._service_call(name, args, ahead=ahead) for name, args in calls))
         by_tool = {name: out for (name, _), out in zip(calls, results)}
@@ -1156,31 +1181,12 @@ class Bot:
         sections = [] if "error" in now else [
             "\n".join([now["headings"][device], *now["lines"][device]]) for device in ("station", "air") if device in now.get("lines", {})]
         sections += [out["text"] for name in ("pollen", "forecast") if (out := by_tool.get(name)) and out.get("text")]
-        shown.extend(self._shown_forecast(by_tool.get("forecast")))
         return "\n\n".join(sections) or "No readings are available right now."
 
-    def _shown_forecast(self, out: dict | None, tool: str = "forecast") -> list:
-        """The forecast days a forecast result shows (the Forecast source's own), remembered for the chat once the answer is sent (a later
-        revision of them is worth telling it). An `outlook` result shows today's and tomorrow's lines in `forecast` (its description has
-        the model copy them): those days, as many as it has lines."""
-        source = self.by_name.get("Forecast")
-        if source is None or not out or "error" in out:
-            return []
-        if tool == "outlook":
-            lines = out.get("forecast")
-            if not isinstance(lines, list) or not lines:
-                return []
-            today = now_local(self.cfg.tz).date()
-            return [d for d in source.days or [] if 0 <= (d["date"] - today).days <= 1][:len(lines)]
-        if not out.get("days"):
-            return []
-        shown = {day.get("date") for day in out["days"] if isinstance(day, dict)}
-        return [d for d in source.days or [] if d["date"].isoformat() in shown]
-
-    async def _report(self, report: bool, shown: list, gauges: bool) -> tuple[str, bytes | None]:
+    async def _report(self, report: bool, gauges: bool) -> tuple[str, bytes | None]:
         """The report (or "weather now") written in code and, with `gauges`, its picture drawn alongside (None without one), in
-        TURN_SECONDS. The forecast days it shows go into `shown`."""
-        written = self._written_in_code(report, shown)
+        TURN_SECONDS."""
+        written = self._written_in_code(report)
         if gauges:
             return tuple(await asyncio.wait_for(asyncio.gather(written, self._status_gauges()), TURN_SECONDS))
         return await asyncio.wait_for(written, TURN_SECONDS), None
@@ -1370,14 +1376,14 @@ class Bot:
 
         chat = self.chats[self._key(msg)]
         started = time.monotonic()
-        turn, shown = Turn(), []   # (shown: the forecast days the answer shows)
+        turn = Turn()
         async with chat.lock:
             draft = Draft(context.bot, msg.chat_id, self._thread(msg)) if msg.chat.type == ChatType.PRIVATE else None
             drafting = asyncio.create_task(draft.run(stop_typing)) if draft else None   # a private chat also gets the "Thinking..." draft
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             try:
-                answer = await self._answer(msg, read, turn, shown, working, draft)
+                answer = await self._answer(msg, read, turn, working, draft)
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for chart in answer.charts[:MAX_CHARTS]:   # the charts, drawn from their data while "typing..." is still showing
                     try:
@@ -1397,9 +1403,9 @@ class Bot:
             finally:
                 stop_typing.set()
                 await asyncio.gather(*[t for t in (typing, drafting) if t])  # wait for any in-flight "typing" or draft so none is sent after the reply
-        await self._send(msg, context.bot, read, turn, shown, answer, working[new_from:], now, started)
+        await self._send(msg, context.bot, read, turn, answer, working[new_from:], now, started)
 
-    async def _answer(self, msg: Message, read, turn: Turn, shown: list, working: list[dict], draft) -> Answer:
+    async def _answer(self, msg: Message, read, turn: Turn, working: list[dict], draft) -> Answer:
         """The answer, from the first way that gives one: a chart drawn moments ago, a named reading's chart drawn by the service, the
         gauges, the report or "weather now" written in code, else the model with the service's tools. `working` is the conversation, the
         question last; the answer joins it."""
@@ -1413,7 +1419,7 @@ class Bot:
         elif read.dashboard:
             answer = await asyncio.wait_for(self._dashboard(), TURN_SECONDS)
         elif read.report or read.weather_now:   # written in code from the service's results, no model (the report: with its gauges)
-            text, gauge = await self._report(read.report, shown, read.report)
+            text, gauge = await self._report(read.report, read.report)
             answer = Answer(text, [gauge] if gauge else [], [""] if gauge else [])
         else:
             answer = Answer()
@@ -1428,16 +1434,12 @@ class Bot:
         answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens))
         kept = [r for r in turn.results if r]
         answer.charts = [chart for _, _, out in kept for chart in out.get("charts") or [] if isinstance(chart, dict)]
-        for name, _, out in kept:
-            if name in ("forecast", "outlook"):
-                shown.extend(self._shown_forecast(out, name))
         return answer
 
-    async def _send(self, msg: Message, bot, read, turn: Turn, shown: list, answer: Answer, added: list[dict], now: datetime,
-                    started: float):
+    async def _send(self, msg: Message, bot, read, turn: Turn, answer: Answer, added: list[dict], now: datetime, started: float):
         """Send the answer, a single chart with the period buttons under it, the keyboard if the chat's is out of date; then keep what
-        follows from it: the chart for its period buttons and the next to ask, its other periods drawn ahead, the forecast days shown
-        (`shown`). `added`: the messages the answer added to the conversation."""
+        follows from it: the chart for its period buttons and the next to ask, its other periods drawn ahead. `added`: the messages the
+        answer added to the conversation."""
         reply, photos, titles = answer.reply, answer.photos, answer.titles
         caption = reply if answer.silent else None   # a chart made in code: its text, kept with the chart for the next to ask the same
         if answer.silent and photos:
@@ -1482,8 +1484,6 @@ class Bot:
                 self.images.sent(kept, sent.photo)
             if kept and row is not None and drawn_by:   # its other periods are uploaded ahead
                 self.preload_soon(bot, drawn_by)
-            if answer.ok and shown:   # it was sent: a later revision of these days is worth telling this chat
-                self.state.record_forecast(msg.chat_id, shown, now_local(self.cfg.tz).date())
             if carried_keyboard:
                 log.info("Buttons: sent keyboard %s to chat %s (it had %s)", self.keyboard_version, msg.chat_id, self.state.keyboard(msg.chat_id))
                 self.state.set_keyboard(msg.chat_id, self.keyboard_version)
