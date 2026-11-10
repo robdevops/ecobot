@@ -155,12 +155,13 @@
           ]
         },
         "where": {
-          "regex": "'field': 'rain', 'op': '>=?'",
-          "e.g.": [
+          "conditions": [
             {
               "field": "rain",
-              "op": ">=",
-              "value": 1
+              "op": [
+                ">=",
+                ">"
+              ]
             }
           ]
         }
@@ -418,36 +419,22 @@
       "days"
     ],
     "args": {
-      "days": [
-        {
-          "where": {
-            "regex": "'field': 'rain', 'op': '>=?'",
-            "e.g.": [
-              {
-                "field": "rain",
-                "op": ">=",
-                "value": 1
-              }
-            ]
-          },
-          "period": {
-            "means": "September"
-          }
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": "rain",
+              "op": [
+                ">=",
+                ">"
+              ]
+            }
+          ]
         },
-        {
-          "where": {
-            "regex": "'field': 'rain', 'op': '>=?'",
-            "e.g.": [
-              {
-                "field": "rain",
-                "op": ">=",
-                "value": 1
-              }
-            ]
-          },
-          "start": "2026-09-01"
+        "period": {
+          "means": "September"
         }
-      ]
+      }
     },
     "note": "days found by a condition, over September (this month: to yesterday)"
   },
@@ -480,32 +467,16 @@
       "days"
     ],
     "args": {
-      "summary": [
-        {
-          "period": {
-            "means": "11 June"
-          }
-        },
-        {
-          "start": {
-            "regex": "^2026-06-11",
-            "e.g.": "2026-06-11"
-          }
+      "summary": {
+        "period": {
+          "means": "11 June"
         }
-      ],
-      "days": [
-        {
-          "period": {
-            "means": "11 June"
-          }
-        },
-        {
-          "start": {
-            "regex": "^2026-06-11",
-            "e.g.": "2026-06-11"
-          }
+      },
+      "days": {
+        "period": {
+          "means": "11 June"
         }
-      ]
+      }
     },
     "note": "one known day: its figures and its look (summary), or its day row (days {period: \"5 Sep\"})"
   },
@@ -515,32 +486,16 @@
       "days"
     ],
     "args": {
-      "summary": [
-        {
-          "period": {
-            "means": "10 Aug"
-          }
-        },
-        {
-          "start": {
-            "regex": "^2026-08-10",
-            "e.g.": "2026-08-10"
-          }
+      "summary": {
+        "period": {
+          "means": "10 Aug"
         }
-      ],
-      "days": [
-        {
-          "period": {
-            "means": "10 Aug"
-          }
-        },
-        {
-          "start": {
-            "regex": "^2026-08-10",
-            "e.g.": "2026-08-10"
-          }
+      },
+      "days": {
+        "period": {
+          "means": "10 Aug"
         }
-      ]
+      }
     },
     "note": "a hypothetical about one day: that day's figures"
   },
@@ -579,21 +534,14 @@
       "days"
     ],
     "args": {
-      "days": [
-        {
-          "sort_by": "rain",
-          "period": {
-            "means": "June to August 2026"
-          }
-        },
-        {
-          "sort_by": "rain",
-          "start": "2026-06-01",
-          "end": "2026-08-31"
+      "days": {
+        "sort_by": "rain",
+        "period": {
+          "means": "June to August 2026"
         }
-      ]
+      }
     },
-    "note": "days ranked by rain over three months: \"June to August 2026\", or start and end"
+    "note": "days ranked by rain over three months: \"June to August 2026\", or the same as start and end"
   },
   "fastest-gust": {
     "any_tools": [
@@ -671,29 +619,16 @@
       "summary"
     ],
     "args": {
-      "days": [
-        {
-          "period": {
-            "means": "5 Sep"
-          }
-        },
-        {
-          "start": "2026-09-05"
+      "days": {
+        "period": {
+          "means": "5 Sep"
         }
-      ],
-      "summary": [
-        {
-          "period": {
-            "means": "5 Sep"
-          }
-        },
-        {
-          "start": {
-            "regex": "^2026-09-05",
-            "e.g.": "2026-09-05"
-          }
+      },
+      "summary": {
+        "period": {
+          "means": "5 Sep"
         }
-      ]
+      }
     },
     "note": "one known day: its figures, not a search of the month"
   },
@@ -1064,8 +999,9 @@
     "note": "sitrep is a report: current, forecast (today) and pollen"
   },
   "think-hottest-week": {
-    "tools": [
-      "summary"
+    "any_tools": [
+      "summary",
+      "days"
     ],
     "args": {
       "summary": {
@@ -1078,9 +1014,20 @@
           ],
           "optional": true
         }
+      },
+      "days": {
+        "sort_by": {
+          "one_of": [
+            "temp_max",
+            null
+          ]
+        },
+        "period": {
+          "means": "this week"
+        }
       }
     },
-    "note": "the hottest of a period with when it was is summary (a record), not days"
+    "note": "the hottest of a period with when it was is summary's; the hottest day found by ranking its days is days' (as hottest-coldest-this-month)"
   },
   "button-rain-chart": {
     "tools": [
@@ -1525,11 +1472,12 @@
     "args": {
       "days": {
         "where": {
-          "regex": "'field': 'uv_max', 'op': '>=', 'value': '?9(\\.0)?'?\\}",
-          "e.g.": [
+          "conditions": [
             {
               "field": "uv_max",
-              "op": ">=",
+              "op": [
+                ">="
+              ],
               "value": 9
             }
           ]
@@ -1554,11 +1502,13 @@
     "args": {
       "days": {
         "where": {
-          "regex": "'field': 'uv_max', 'op': '>=?', 'value': '?10(\\.0)?'?\\}",
-          "e.g.": [
+          "conditions": [
             {
               "field": "uv_max",
-              "op": ">",
+              "op": [
+                ">",
+                ">="
+              ],
               "value": 10
             }
           ]
@@ -1612,11 +1562,16 @@
     "args": {
       "days": {
         "where": {
-          "regex": "'field': 'pm2_5_(max|avg)', 'op': '>=?', 'value': '?25(\\.0)?'?\\}",
-          "e.g.": [
+          "conditions": [
             {
-              "field": "pm2_5_max",
-              "op": ">",
+              "field": [
+                "pm2_5_max",
+                "pm2_5_avg"
+              ],
+              "op": [
+                ">",
+                ">="
+              ],
               "value": 25
             }
           ]
@@ -1637,11 +1592,16 @@
     "args": {
       "days": {
         "where": {
-          "regex": "'field': 'pm2_5_(max|avg)', 'op': '>=?', 'value': '?90(\\.0)?'?\\}",
-          "e.g.": [
+          "conditions": [
             {
-              "field": "pm2_5_max",
-              "op": ">",
+              "field": [
+                "pm2_5_max",
+                "pm2_5_avg"
+              ],
+              "op": [
+                ">",
+                ">="
+              ],
               "value": 90
             }
           ]
@@ -1662,11 +1622,13 @@
     "args": {
       "days": {
         "where": {
-          "regex": "'field': 'uv_max', 'op': '>=?', 'value': '?10(\\.0)?'?\\}",
-          "e.g.": [
+          "conditions": [
             {
               "field": "uv_max",
-              "op": ">",
+              "op": [
+                ">",
+                ">="
+              ],
               "value": 10
             }
           ]
@@ -1687,17 +1649,21 @@
     "args": {
       "days": {
         "where": {
-          "regex": "(?s)(?=.*'field': 'temp_max', 'op': '>=?', 'value': '?35)(?=.*'field': 'rain', 'op': '>=?')",
-          "e.g.": [
+          "conditions": [
             {
               "field": "temp_max",
-              "op": ">",
+              "op": [
+                ">",
+                ">="
+              ],
               "value": 35
             },
             {
               "field": "rain",
-              "op": ">=",
-              "value": 1
+              "op": [
+                ">=",
+                ">"
+              ]
             }
           ]
         }
@@ -2014,36 +1980,17 @@
       "readings"
     ],
     "args": {
-      "readings": [
-        {
-          "reading": {
-            "reads": [
-              "outdoor.temperature"
-            ]
-          },
-          "interval": "30min",
-          "period": {
-            "means": "today"
-          }
+      "readings": {
+        "reading": {
+          "reads": [
+            "outdoor.temperature"
+          ]
         },
-        {
-          "reading": {
-            "reads": [
-              "outdoor.temperature"
-            ]
-          },
-          "interval": "30min",
-          "start": {
-            "regex": "^2026-09-29( 00:00)?$",
-            "e.g.": "2026-09-29"
-          },
-          "end": {
-            "regex": "^2026-09-29",
-            "e.g.": "2026-09-29 14:05",
-            "optional": true
-          }
+        "interval": "30min",
+        "period": {
+          "means": "today"
         }
-      ]
+      }
     },
     "note": "values every 30 minutes, not a highs-and-lows summary"
   },

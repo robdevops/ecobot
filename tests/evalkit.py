@@ -100,16 +100,22 @@ def content(case: Case) -> str:
     return f'(replying to your earlier message: "{case.reply_to}") {case.ask}' if case.reply_to else case.ask
 
 
-def _matches(actual, want) -> str | None:
+def _matches(actual, want, args: dict | None = None, tool: str | None = None) -> str | None:
     """None if `actual` satisfies `want`, else why not. want: a value, {"regex"}, {"absent"}, {"has"}, {"any_of"} (or "one_of"), or
-    the service's {"reads"} / {"reads_any"} (_reads). Any of them with "optional": true also takes no value at all."""
+    the service's {"reads"} / {"reads_any"} (_reads), {"means"} (_means: over the whole call, `args`, as `tool` reads a period) and
+    {"conditions"} (_conditions). Any of them with "optional": true also takes no value at all."""
     if isinstance(want, dict):
+        if "means" in want:   # (the period may be sent as start and end instead: an optional one is absent only if neither is)
+            sent = {k: (args or {}).get(k) for k in ("period", "start", "end")} if args is not None else {"period": actual}
+            if want.get("optional") and not any(v not in (None, "") for v in sent.values()):
+                return None
+            return _means(sent, want["means"], tool)
         if want.get("optional") and actual in (None, "", [], {}):
             return None
         if "reads" in want or "reads_any" in want:
             return _reads(actual, want)
-        if "means" in want:
-            return _means(actual, want["means"])
+        if "conditions" in want:
+            return _conditions(actual, want["conditions"])
         if "one_of" in want:
             return None if actual in want["one_of"] else f"{actual!r} not one of {want['one_of']}"
         if "absent" in want:
@@ -123,8 +129,10 @@ def _matches(actual, want) -> str | None:
     return None if actual == want else f"expected {want!r}, got {actual!r}"
 
 
-def check_args(args: dict, want: dict) -> list[str]:
-    return [f"{k}: {why}" for k, w in want.items() if (why := _matches(args.get(k), w))]
+def check_args(args: dict, want: dict, tool: str | None = None) -> list[str]:
+    """Failures of one call's arguments against one alternative of its expected arguments; `tool` is the tool called (a period is
+    read as that tool reads it)."""
+    return [f"{k}: {why}" for k, w in want.items() if (why := _matches(args.get(k), w, args, tool))]
 
 
 def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
@@ -145,8 +153,8 @@ def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
     for tool, want in expect.get("args", {}).items():
         made = [a for n, a in calls if n == tool]
         alternatives = want if isinstance(want, list) else [want]
-        if made and not any(not check_args(a, w) for a in made for w in alternatives):
-            fails.append(f"{tool} arguments: " + " | or: ".join("; ".join(check_args(made[0], w)) for w in alternatives))
+        if made and not any(not check_args(a, w, tool) for a in made for w in alternatives):
+            fails.append(f"{tool} arguments: " + " | or: ".join("; ".join(check_args(made[0], w, tool)) for w in alternatives))
     return fails
 
 
@@ -286,31 +294,98 @@ def _reads(actual, want: dict) -> str | None:
 FIRST_HELD = date(2022, 10, 1)   # where "on record" starts when a case's period is read (the station's record, as the cases have it)
 
 
-def _period_span(words) -> tuple | str:
-    """(start, end) of a `period` as the service reads it at NOW in the station's zone (lib/periods_text.py), or why it can't."""
+WHOLE_DAY_TOOLS = {"days", "relate", "scan"}   # the tools that read a period as whole days to yesterday (read_period's whole_days)
+
+
+def _period_span(period, start=None, end=None, whole_days: bool = False) -> tuple | str:
+    """(start, end) of a `period` in words, or of `start` and `end`, as the service reads them at NOW in the station's zone
+    (lib/periods_text.py; whole_days as a whole-day tool reads them), or why they can't be read."""
     from zoneinfo import ZoneInfo
 
     from lib.periods_text import PeriodError, read_period
-    if not isinstance(words, str) or not words.strip():
-        return f"{words!r} is not a period in words"
+    if period is not None and (not isinstance(period, str) or not period.strip()):
+        return f"{period!r} is not a period in words"
+    if period is None and start in (None, ""):
+        return "no period sent (neither `period` nor `start`)"
+    what = repr(period) if period is not None else f"start {start!r}" + (f", end {end!r}" if end else "")
     try:
-        p = read_period(words, None, None, now=NOW.replace(tzinfo=ZoneInfo(NOW_TZ)), tz=ZoneInfo(NOW_TZ), default="today",
-                        first_held=FIRST_HELD)
+        p = read_period(period, start, end, now=NOW.replace(tzinfo=ZoneInfo(NOW_TZ)), tz=ZoneInfo(NOW_TZ), default="today",
+                        whole_days=whole_days, first_held=FIRST_HELD)
     except PeriodError as e:
-        return f"{words!r} can't be read: {e.message.split('. ')[0]}"
+        return f"{what} can't be read: {e.message.split('. ')[0]}"
     return p.start, p.end
 
 
-def _means(actual, refs) -> str | None:
-    """{"means": words or [words]}: the `period` sent reads, at NOW, as the same span as (one of) these words: "past week", "this week"
-    and "7d" are the same period, "last week" is another."""
-    got = _period_span(actual)
+def _means(sent, refs, tool: str | None = None) -> str | None:
+    """{"means": words or [words]}: the period sent ({"period", "start", "end"} of the call; a bare value is a `period`) reads, at NOW
+    and as `tool` reads it (whole days for WHOLE_DAY_TOOLS), as the same span as (one of) these words: "past week", "this week" and
+    "7d" are the same period, "last week" is another; to days, start "2026-09-01" is "September" (to yesterday)."""
+    sent = sent if isinstance(sent, dict) else {"period": sent}
+    whole = tool in WHOLE_DAY_TOOLS
+    if sent.get("period") is not None and str(sent["period"]).strip() == "":
+        sent = {**sent, "period": None}
+    got = _period_span(sent.get("period"), sent.get("start"), sent.get("end"), whole)
     if isinstance(got, str):
         return got
     refs = refs if isinstance(refs, list) else [refs]
-    if any(_period_span(r) == got for r in refs):
+    if any(_period_span(r, whole_days=whole) == got for r in refs):
         return None
-    return f"{actual!r} ({got[0]:%a %d %b %Y %H:%M} to {got[1]:%a %d %b %Y %H:%M}) is not the period of {' or '.join(map(repr, refs))}"
+    what = repr(sent["period"]) if sent.get("period") is not None else f"start {sent.get('start')!r}, end {sent.get('end')!r}"
+    return f"{what} ({got[0]:%a %d %b %Y %H:%M} to {got[1]:%a %d %b %Y %H:%M}) is not the period of {' or '.join(map(repr, refs))}"
+
+
+def _op(op) -> str:
+    """An op as lib/service/days.py reads it (OP_WORDS: "≥" and "=>" are ">=")."""
+    from lib.service.days import OP_WORDS
+    return OP_WORDS.get(str(op).strip(), str(op).strip())
+
+
+def _number(value) -> float | None:
+    """A condition's value as days.py reads it (a number, or a string of one), else None."""
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            return None
+    return None if isinstance(value, bool) or not isinstance(value, int | float) else float(value)
+
+
+def _condition_fails(c, want: dict) -> str | None:
+    if not isinstance(c, dict):
+        return f"{c!r} is not a condition"
+    fields = want["field"] if isinstance(want["field"], list) else [want["field"]]
+    ops = [_op(o) for o in (want["op"] if isinstance(want.get("op"), list) else [want["op"]] if "op" in want else [])]
+    if str(c.get("field", "")).strip() not in fields:
+        return f"field {c.get('field')!r} is not {' or '.join(fields)}"
+    if ops and _op(c.get("op")) not in ops:
+        return f"op {c.get('op')!r} is not {' or '.join(ops)}"
+    if (n := _number(c.get("value"))) is None:
+        return f"value {c.get('value')!r} is not a number"
+    if "value" in want and n != float(want["value"]):
+        return f"value {c.get('value')!r} is not {want['value']:g}"
+    return None
+
+
+def _conditions(actual, want: list[dict]) -> str | None:
+    """{"conditions": [{"field": name or [names], "op": [ops], "value": number}]}: the `where` sent (a list of conditions, or one) is
+    these conditions, each once, in any order, compared by their keys as days.py reads them: a value as a number (9, 9.0 and "9" are
+    the same), an op by its meaning (">=", "≥", "=>"), any other key ignored. With no "op" any op will do, with no "value" any number."""
+    sent = [actual] if isinstance(actual, dict) else actual
+    if not isinstance(sent, list):
+        return f"{actual!r} is not a list of conditions"
+    left = list(sent)
+    for w in want:
+        hit = next((c for c in left if _condition_fails(c, w) is None), None)
+        if hit is None:
+            why = "; ".join(f"{c!r}: {_condition_fails(c, w)}" for c in left) or "none left"
+            return f"no condition on {w['field']} as {w} ({why})"
+        left.remove(hit)
+    return f"conditions not asked for: {left!r}" if left else None
+
+
+def _example_conditions(want: list[dict]) -> list[dict]:
+    return [{"field": w["field"][0] if isinstance(w["field"], list) else w["field"],
+             "op": (w["op"][0] if isinstance(w["op"], list) else w["op"]) if "op" in w else ">=", "value": w.get("value", 1)} for w in want]
 
 
 ABSENT = object()   # (example_value: the argument is best left out)
@@ -318,7 +393,7 @@ ABSENT = object()   # (example_value: the argument is best left out)
 
 def example_value(want):
     """A concrete value that satisfies `want` (_matches), to call the tool with: a matcher's own "e.g.", else the first of any_of /
-    one_of, the names of reads / has; ABSENT where the argument is best left out."""
+    one_of, the names of reads / has, the conditions given; ABSENT where the argument is best left out."""
     if not isinstance(want, dict):
         return want
     if "e.g." in want:
@@ -332,6 +407,8 @@ def example_value(want):
         return list(want.get("reads") or want["reads_any"][:1])
     if "means" in want:
         return want["means"][0] if isinstance(want["means"], list) else want["means"]
+    if "conditions" in want:
+        return _example_conditions(want["conditions"])
     if "has" in want:
         return list(want["has"])
     raise ValueError(f"no example for {want!r}: give it an \"e.g.\"")
@@ -372,7 +449,7 @@ def service_problems(expect: dict | None) -> list[str]:
                 except ValueError as e:
                     fails.append(f"{tool}.{k}: {e}")
                     continue
-                if v is not ABSENT and (why := _matches(v, w)):
+                if v is not ABSENT and (why := _matches(v, w, {k: v}, tool)):
                     fails.append(f"{tool}.{k}: its example doesn't satisfy it ({why})")
     return fails
 
