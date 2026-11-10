@@ -485,7 +485,10 @@ Each step ships on its own, with the tests and evals green and the bot working t
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the
    transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file) with the
    stdio bridge; the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the
-   alert log; `schemas/` goes into the image, which `.dockerignore` keeps out today). Then the irrigation server is built in its own
+   alert log; `schemas/` goes into the image, which `.dockerignore` keeps out today). `ecobot.py`'s `warm_up()` is split: the first
+   fetch, the archive, the backfill, the Home Assistant imports and the startup line go to the service; the bot keeps only its charts
+   drawn ahead, as `summary` calls at background priority, failing quietly until the service has warmed. The bot's poke of the sources
+   when a question arrives goes: the service's keep-warm and the tools' own fetches cover it. Then the irrigation server is built in its own
    repository against it, the bot connects to both, and `lib/irrigation` goes from here. The service's scripts (`edit_readings`,
    `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`, `conditions`, `ecowitt_metrics`, `dump_specs`) stay;
    `show_request` and `report_inputs` become MCP clients.
