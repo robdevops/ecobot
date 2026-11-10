@@ -42,6 +42,8 @@ class Turn:
     forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
     times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
     ahead: bool = False                          # a chart drawn ahead, nobody waiting: its requests wait their turn
+    meta: dict = field(default_factory=dict)     # the request's metadata, all a service tool reads (lib/service/common.py: chart_points,
+                                                 # fetch, priority); over MCP, the request's _meta
 
     @classmethod
     def of(cls, read, text: str, **more) -> "Turn":

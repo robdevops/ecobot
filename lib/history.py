@@ -104,6 +104,12 @@ def station_metrics(sent: dict[str, dict[str, str]] | None = None) -> list[Metri
     return out
 
 
+async def station_fields(eco) -> dict[str, dict[str, str]]:
+    """The fields the station (an Ecowitt source, started) has sent, as the file's `fields` table has them: {group: {field: unit}}, the
+    `sent` station_metrics reads."""
+    return await eco.storage.read(lambda r: {s.external: r.fields(s.id) for s in r.sensors(device=eco.mac) if s.kind != AIR_SENSOR})
+
+
 def air_metrics(extra: bool = False) -> list[Metric]:
     """The air sensor's readings, with its own temperature and humidity when `extra` (offered only when a question names them)."""
     names = [*AIR, *(AIR_EXTRA if extra else ())]
@@ -354,8 +360,7 @@ class History:
     @classmethod
     async def open(cls, eco=None, air=None) -> "History":
         """The tool, with the readings the station has sent read from the file."""
-        sent = await eco.storage.read(lambda r: {s.external: r.fields(s.id) for s in r.sensors(device=eco.mac) if s.kind != AIR_SENSOR}) if eco else None
-        return cls(eco, air, sent)
+        return cls(eco, air, await station_fields(eco) if eco else None)
 
     def find(self, name: str) -> Metric | None:
         """The metric a name means: its own name, else a reading's ("humidity", "uv", "pm2_5", "rain") on the sensor that has it. A sensor
@@ -432,4 +437,5 @@ class History:
         return json_result(out)
 
 
-__all__ = ["DESCRIPTION", "History", "INTERVALS", "MAX_ROWS", "PARAMETERS", "air_metrics", "interval_starts", "parameters", "station_metrics"]
+__all__ = ["DESCRIPTION", "History", "INTERVALS", "MAX_ROWS", "PARAMETERS", "air_metrics", "interval_starts", "parameters", "station_fields",
+           "station_metrics"]

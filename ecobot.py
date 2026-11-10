@@ -18,7 +18,7 @@ from telegram import Update
 from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
-from lib import charts, intent
+from lib import charts
 from lib.airgradient import AirGradient
 from lib.airgradient import metrics as air_metrics
 from lib.alerts.forecast import ForecastMonitor
@@ -37,6 +37,7 @@ from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
 from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
 from lib.pollen import Pollen
+from lib.service import names as service_names
 from lib.compose import Composer
 from lib.history import History
 from lib.sources import Source
@@ -225,8 +226,8 @@ async def main():
     for name in ("ecobot", "lib"):   # the bot's own lines: the libraries keep theirs
         logging.getLogger(name).setLevel(cfg.log_level)
     air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
-    intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
-    intent.VPD_IN_ALL = cfg.chart_all_vpd
+    service_names.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like   # "all" (and "weather all week") draws these too
+    service_names.VPD_IN_ALL = cfg.chart_all_vpd
     # Whatever starts is closed on the way out, the last started first, however the bot stops (a failure part-way included)
     async with contextlib.AsyncExitStack() as stack:
         app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)

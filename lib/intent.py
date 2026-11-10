@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 from .logs import BUGS
 from .daytable import GROUPING, grouping_in
 from .series import AIR as AIR_TABLE, INDOOR_READINGS, PRESSURE_WORDS, READING_GROUPS, SPECIFIC, WEATHER as WEATHER_READINGS
+from .service import names as service_names
 
 log = logging.getLogger(__name__)
 
@@ -416,12 +417,6 @@ def _named(text: str) -> dict[str, int]:
     return found
 
 
-FEELS_LIKE_IN_ALL = False   # CHART_ALL_FEELS_LIKE=on puts the feels-like panel in "weather all week" (set from the config at startup)
-VPD_IN_ALL = False          # CHART_ALL_VPD=on puts the vapour pressure deficit panel in "weather all week" (it is temperature and humidity combined)
-ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")   # the panels of "weather all week", top to bottom
-LEFT_OUT_OF_ALL = ("uv",)   # "weather all week" leaves these out: the UV index has the same shape as solar radiation
-
-
 # "on two axes", "dual axis", "2 axes", "secondary axis", "overlay": two readings on one panel, each with a scale of its own
 TWO_AXES = re.compile(r"\b(?:(?:two|2|dual|twin|double|secondary|second)[- ](?:y[- ]?)?ax[ie]s|overla(?:y(?:ed|ing|s)?|id))\b", I)
 
@@ -441,8 +436,7 @@ def chart_fields(text: str) -> list[str]:
     found = _named(text)
     if wants_chart_all(text):   # "weather all week", "chart all 90d", "weather chart 90d": every reading, a panel each
         indoors = _sides(text) == ["indoor"]   # the indoor sensor only has these
-        return [n for n in ALL_ORDER if n not in LEFT_OUT_OF_ALL and (FEELS_LIKE_IN_ALL or n != "feels_like")
-                and (VPD_IN_ALL or n != "vpd") and (not indoors or n in INDOOR_READINGS)]   # naming one still works
+        return [n for n in service_names.in_all() if not indoors or n in INDOOR_READINGS]   # the service's order and settings; naming one still works
     return sorted(found, key=found.get) if len(found) >= 2 else []
 
 
