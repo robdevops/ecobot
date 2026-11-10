@@ -786,3 +786,20 @@ def chart_service(caption="Fri 25 Sep – Thu 1 Oct 2026\nHumidity: low 50 %, Fr
     """A stand-in service whose summary draws a chart titled `title` and captions it."""
     from tests.fakes import StandInService, chart_data
     return StandInService(summary=lambda args, meta: {"caption": caption, "charts": [chart_data(title)]})
+
+
+def test_a_chart_the_model_drew_over_a_period_the_service_cant_word_keeps_its_old_buttons(alert_state):
+    """Until step 3, every chart the model draws has period buttons: one whose call the service lists no periods for (the last 48 hours as
+    times) gets no drawn_by, so its question is asked again on a press, as before."""
+    from lib.tools import CALL
+    from tests.fakes import StandInService
+    bot = Bot(NS(tz=TZ), None, [], alert_state, service=StandInService())
+    now = datetime(2026, 11, 10, 14, 5)
+    turn = Turn(text="how warm was it")
+    for start in ("2026-11-09 14:05:00", "2026-11-08 14:05:00"):
+        called = CALL.set(("weather_history", {"start_date": start, "end_date": "2026-11-10 14:05:00", "chart": True}))
+        turn.charts.append("chart")
+        CALL.reset(called)
+    day = bot._model_drawn_by(turn, 0, now)
+    assert day["tool"] == "summary" and day["arguments"]["period"] == "last 24 hours" and day["periods"]
+    assert bot._model_drawn_by(turn, 1, now) is None

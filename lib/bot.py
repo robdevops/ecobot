@@ -65,6 +65,7 @@ IRRIGATION_SETTLE_SECONDS = 3   # after any irrigation action, the controller is
 NOT_ADMIN = "Sorry, only group admins can use this bot."
 NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
+CHART_FAILED = "Sorry, I couldn't draw that chart, please ask again"   # a period button's chart that couldn't be drawn or sent
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
 TOAST_LIMIT = 200             # ... and on the text a button's answer shows
 
@@ -475,7 +476,8 @@ class Bot:
 
     def _model_drawn_by(self, turn: Turn, i: int, now: datetime) -> dict | None:
         """A drawn_by for the i-th chart the model drew through the old tools (it has none of its own until step 3): its call read as the
-        service's, with the periods that tool would list; None when the call has no service equivalent (its question is asked again)."""
+        service's, with the periods that tool would list; None when the call has no service equivalent or lists no periods (its question
+        is asked again)."""
         if i >= len(turn.chart_calls):
             return None
         name, args = turn.chart_calls[i]
@@ -489,7 +491,10 @@ class Bot:
         tool, arguments = call[0], {k: v for k, v in call[1].items() if k != "chart_answers_it"}
         if tool == "summary":
             arguments["chart"] = True
-        return {"tool": tool, "arguments": arguments, "periods": legacy.periods_of(tool, arguments)}
+        listed = legacy.periods_of(tool, arguments)
+        if not listed:   # a period the service can't word (times...): its question is asked again, so the chart keeps its buttons
+            return None
+        return {"tool": tool, "arguments": arguments, "periods": listed}
 
     def _sentence_call(self, text: str, now: datetime) -> tuple[str, dict] | None:
         """The call a question is read as when it is a chart made in code ("Wind chart 1d"); None for any other."""
@@ -944,7 +949,11 @@ class Bot:
         message = query.message
         record = self.charted.get(message.chat_id, message.message_id) if message else None
         if isinstance(record, dict) and record.get("drawn_by"):
-            await self._replay(query, message, record, context.bot)
+            try:
+                await self._replay(query, message, record, context.bot)
+            except Exception as e:   # (a chart that fails to draw, Telegram failing): said on the button, never raised
+                log.error("Couldn't redraw a chart for its period button (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
+                await toast_quietly(query, CHART_FAILED)
             return
         days = periods.days_in(query.data)
         question = record if isinstance(record, str) and days else None
@@ -993,8 +1002,8 @@ class Bot:
         if "error" in out or not charts:
             await toast_quietly(query, fit(str(out.get("error") or "No chart came of it for that period"), TOAST_LIMIT))
             return
+        png, title, newest = await asyncio.to_thread(self._draw, charts[0])   # (drawn before the toast, so a failure can be toasted)
         await answer_query(query, f"Drawing {listed[period]}...")
-        png, title, newest = await asyncio.to_thread(self._draw, charts[0])
         drawn = charts[0].get("drawn_by") or {"tool": tool, "arguments": args, "periods": drawn_by.get("periods")}
         text = out.get("caption") or out.get("answer") or ""
         self.images.put(key, png, title, text or None, newest=newest, drawn_by=drawn)

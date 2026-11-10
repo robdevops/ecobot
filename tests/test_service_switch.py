@@ -29,15 +29,16 @@ import pytest
 GOLDEN = Path(__file__).with_name("service_switch.json")
 RECORD = os.environ.get("ECOBOT_RECORD_SWITCH") == "1"
 FROZEN = _datetime(2026, 11, 10, 14, 5, tzinfo=ZoneInfo("Australia/Melbourne")).timestamp()
+_REAL = (_datetime, _date)   # the real classes, where freeze() can't rebind them (it rebinds module globals, never a tuple's items)
 
 
 # ---------- the clock, fixed ----------
 class _DatetimeType(type):
     def __instancecheck__(cls, obj):
-        return isinstance(obj, _datetime)
+        return isinstance(obj, _REAL[0])
 
     def __subclasscheck__(cls, sub):
-        return issubclass(sub, _datetime)
+        return issubclass(sub, _REAL[0])
 
 
 class FrozenDatetime(_datetime, metaclass=_DatetimeType):
@@ -45,25 +46,25 @@ class FrozenDatetime(_datetime, metaclass=_DatetimeType):
 
     @classmethod
     def now(cls, tz=None):
-        return _datetime.fromtimestamp(FROZEN, tz)
+        return _REAL[0].fromtimestamp(FROZEN, tz)
 
     @classmethod
     def today(cls):
-        return _datetime.fromtimestamp(FROZEN)
+        return _REAL[0].fromtimestamp(FROZEN)
 
 
 class _DateType(type):
     def __instancecheck__(cls, obj):
-        return isinstance(obj, _date)
+        return isinstance(obj, _REAL[1])
 
     def __subclasscheck__(cls, sub):
-        return issubclass(sub, _date)
+        return issubclass(sub, _REAL[1])
 
 
 class FrozenDate(_date, metaclass=_DateType):
     @classmethod
     def today(cls):
-        return _datetime.fromtimestamp(FROZEN).date()
+        return _REAL[0].fromtimestamp(FROZEN).date()
 
 
 def freeze(patch):
@@ -75,12 +76,31 @@ def freeze(patch):
     for name, module in list(sys.modules.items()):
         if module is None or not (name == "lib" or name.startswith(("lib.", "tests.")) or name == "ecobot"):
             continue
+        if vars(module) is globals():   # (this module keeps the real classes, whatever it is loaded as: the frozen ones are built on them)
+            continue
         for attr, value in list(vars(module).items()):
-            if value is _datetime:
+            if value is _REAL[0]:
                 patch.setattr(module, attr, FrozenDatetime)
-            elif value is _date:
+            elif value is _REAL[1]:
                 patch.setattr(module, attr, FrozenDate)
     patch.setattr(sys.modules["lib.ecowitt.archive"], "epoch_now", lambda: FROZEN)
+
+
+def test_the_clock_is_fixed_in_every_module_whatever_order_they_were_loaded_in(monkeypatch):
+    """freeze() reaches a module loaded after this one too (it keeps its own names for the real classes, and leaves this module be),
+    and the frozen classes still tell real dates and times apart."""
+    import datetime as real
+    import types
+    late = types.ModuleType("tests._loaded_late")
+    late.datetime, late.date = real.datetime, real.date
+    monkeypatch.setitem(sys.modules, "tests.test_service_switch", sys.modules[__name__])   # (as --import-mode=importlib names it)
+    monkeypatch.setitem(sys.modules, late.__name__, late)   # (after this module in sys.modules)
+    freeze(monkeypatch)
+    assert late.datetime is FrozenDatetime and late.date is FrozenDate
+    assert sys.modules[__name__]._datetime is real.datetime and sys.modules[__name__]._date is real.date
+    now = FrozenDatetime.now(ZoneInfo("Australia/Melbourne"))
+    assert now.timestamp() == FROZEN and isinstance(now, FrozenDatetime) and isinstance(FrozenDate.today(), FrozenDate)
+    assert issubclass(real.datetime, FrozenDatetime) and not isinstance(now.date(), FrozenDatetime)
 
 
 async def _inline(func, /, *args, **kwargs):

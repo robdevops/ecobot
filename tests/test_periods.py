@@ -12,6 +12,7 @@ from lib.specs import Chart, Line, Panel, to_json
 from tests.fakes import TZ
 
 NOW = datetime(2026, 10, 2, 12, 0)
+SORRY = "Sorry, I couldn't draw that chart, please ask again"
 ROW = [("1D", "pd:1d"), ("7D", "pd:7d"), ("1M", "pd:1m"), ("3M", "pd:3m"), ("1Y", "pd:1y")]   # summary's periods, as its drawn_by lists them
 
 
@@ -179,6 +180,31 @@ async def test_a_replay_the_service_refuses_shows_its_refusal_on_the_button(aler
     assert answers == ["Nothing is held for 1y."] and edits == []
     await bot.on_period_button(press(msg, "pd:2y", answer), CONTEXT)                    # a period the chart doesn't list
     assert answers[-1] == "That chart is out of date, please ask again"
+
+
+async def test_a_replayed_chart_that_cannot_be_drawn_or_sent_says_sorry_on_the_button_and_raises_nothing(alert_state, monkeypatch):
+    from telegram.error import NetworkError
+    bot, edits = make_bot(alert_state, monkeypatch), []
+    msg = chat_message([], edits)
+    record = {"drawn_by": {"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]}, "words": False}
+    bot.charted.remember(1, 50, record)
+    answers = []
+
+    async def answer(text=None, **k):
+        answers.append(text)
+
+    def broken(data, tz, times=None):
+        raise ValueError("no panels")
+    monkeypatch.setattr(botmod, "render_data", broken)
+    await bot.on_period_button(press(msg, "pd:3m", answer), CONTEXT)   # a chart that fails to render
+    assert answers == [SORRY] and edits == []
+
+    async def offline(media, reply_markup=None):
+        raise NetworkError("connection reset")
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
+    msg.edit_media, answers[:] = offline, []
+    await bot.on_period_button(press(msg, "pd:1y", answer), CONTEXT)   # Telegram failing other than refusing the edit
+    assert answers == ["Drawing 1Y...", SORRY]
 
 
 async def test_a_button_on_a_chart_from_before_a_restart_says_so(alert_state, monkeypatch):
