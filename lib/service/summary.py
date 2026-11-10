@@ -561,6 +561,15 @@ class Summary:
             fields.update(complete(caption))
         return answer(period=call.period, as_of=ctx.now(), **fields)
 
+    def _span(self, call: Call) -> tuple[str, str]:
+        """The period as the engines take it ('YYYY-MM-DD HH:MM:SS', both ends included): to its last second, or, for a period that runs
+        to now, to now itself (the reading of this very minute is in it, as it always was)."""
+        start, end = call.period.as_naive_strings()
+        now = self.ctx.now().replace(microsecond=0)
+        if call.period.end >= now:
+            end = f"{now.astimezone(self.ctx.zone):%Y-%m-%d %H:%M:%S}"
+        return start, end
+
     async def _station(self, call: Call, station: list[Reading], drawn: list[Reading], here: bool, background: bool, fetch: bool,
                        charts: list[Chart], found: dict) -> tuple[_Query | None, dict | None]:
         """HistoryQuery over the station's readings summarised and drawn, drawing its chart when `here`."""
@@ -572,7 +581,7 @@ class Summary:
         turn = Turn(chart_asked=here, chart_field=named[0] if len(named) == 1 else None, chart_fields=named if len(named) > 1 else [],
                     two_axes=here and call.layout == "two_axes", average_asked=call.average, per_day=call.every_day,
                     readings=series_names, text="", ahead=background)
-        start, end = call.period.as_naive_strings()
+        start, end = self._span(call)
         args = {"start_date": start, "end_date": end, "average": call.average,
                 "include_derived": sorted({r.column for r in every if r.column in DERIVED})}
         make = Fetcher if fetch else _HeldOnly
@@ -607,7 +616,7 @@ class Summary:
         """AirGradient.history over the air readings whose figures are wanted (and drawn, when the chart is the air sensor's alone). Its
         `metrics` are what it draws, and bring in its own temperature and humidity: a reading summarised but not drawn that is one of
         those takes a call of its own."""
-        start, end = call.period.as_naive_strings()
+        start, end = self._span(call)
         metrics = [r.column for r in drawn]
         wanted = [r.column for r in figures]
         out: dict = {}

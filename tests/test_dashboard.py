@@ -180,30 +180,26 @@ async def test_the_dashboard_reads_the_years_day_rows_in_one_go_and_only_what_it
 
 
 def report_bot(alert_state, sheet):
-    """A bot whose station gives the report's tool results and, through dashboard(), its gauges (`sheet()`: a Dashboard, or raises)."""
-    import json
-
-    from tests.fakes import StandInTools
-
-    class Tools(StandInTools):
-        reading = "12.3 ℃"
-
-        async def call(self, name, raw, turn=None):
-            return {"weather_now": json.dumps({"outdoor": {"temperature": self.reading}}),
-                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
+    """A bot whose service gives the report's readings now (its `reading`, the outdoor temperature, which a test may change) and whose
+    station gives, through dashboard(), its gauges (`sheet()`: a Dashboard, or raises)."""
+    from tests.fakes import StandInService
+    now = NS(reading="12.3 °C")
+    service = StandInService(current=lambda args, meta: {
+        "lines": {"station": [f"• Outdoor: {now.reading}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
+        "headings": {"station": "Weather station", "air": "Air quality"}})
 
     class Agent:
-        tools = Tools()
+        pass
 
     async def dashboard(titles=None):
         assert titles in (dash.STATUS, None)   # the report's three gauges, or the whole dashboard
         return sheet()
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt", dashboard=dashboard),
                NS(name="AirGradient", wants=lambda t: True, poke=lambda: None, describe=lambda: "AirGradient")]
-    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state)
+    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service)
     alert_state.add_chat(1, "Rob")
     alert_state.set_keyboard(1, bot.keyboard_version)
-    return bot, Agent.tools
+    return bot, now
 
 
 def three_tiles():
@@ -256,7 +252,7 @@ async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_ref
 
         async def edit_message_caption(self, caption=None, caption_entities=None, reply_markup=None):
             edits.append(("caption", caption, caption_entities, reply_markup))
-    tools.reading = "13.0 ℃"
+    tools.reading = "13.0 °C"
     await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
     what, caption, entities, markup = edits[-1]
     assert what == "media" and "13.0 °C" in caption and [e.type for e in entities] == ["bold", "bold"]
@@ -265,7 +261,7 @@ async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_ref
     async def failing(titles=None):
         raise RuntimeError("cache gone")
     bot.by_name["Ecowitt"].dashboard = failing
-    tools.reading = "14.0 ℃"
+    tools.reading = "14.0 °C"
     await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
     assert edits[-1][0] == "caption" and "14.0 °C" in edits[-1][1]                                             # no new picture: the caption alone
 

@@ -7,7 +7,7 @@ from types import SimpleNamespace as NS
 from lib import intent
 from lib.bot import Bot
 from lib.tools import Turn
-from tests.fakes import TZ, StandInTools
+from tests.fakes import TZ
 
 
 class RaisingAgent:
@@ -218,25 +218,16 @@ async def test_one_chart_and_a_short_answer_are_one_message_otherwise_the_answer
 
 
 async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_model_is_not_asked(alert_state):
-    import json
-
-    class Tools(StandInTools):
-        def __init__(self):
-            self.called = []
-
-        async def call(self, name, raw, turn=None):
-            self.called.append(name)
-            return {"weather_now": json.dumps({"outdoor": {"temperature": "12.3 ℃", "humidity": "94 %"}, "emoji": {"outdoor.humidity": "💦"}}),
-                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
+    from tests.fakes import StandInService
 
     class Agent:
-        tools = Tools()
-
         async def run(self, *a, **k):
             raise AssertionError("the model must not be asked for a report")
     async def dashboard(titles=None):
         return None   # the station has no gauges to draw: the report goes as text
     sources = [NS(name=n, wants=lambda t: True, poke=lambda: None, describe=lambda n=n: n, dashboard=dashboard) for n in ("Ecowitt", "AirGradient")]
+    service = StandInService(current={"lines": {"station": ["• Outdoor: 12.3 °C, 💦 94 %"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
+                                      "headings": {"station": "Weather station", "air": "Air quality"}})
     agent, replies = Agent(), []
 
     async def reply_text(body, **kw):
@@ -247,10 +238,10 @@ async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_mode
 
     async def send_chat_action(*a, **k):
         pass
-    bot = Bot(NS(tz=TZ), agent, sources, alert_state)
+    bot = Bot(NS(tz=TZ), agent, sources, alert_state, service=service)
     await bot.respond(update, NS(bot=telegram(send_chat_action)), "report")
     await bot.respond(update, NS(bot=telegram(send_chat_action)), "weather now")
-    assert agent.tools.called == ["weather_now", "air_quality", "weather_now"]
+    assert service.calls == [("current", {}), ("current", {})]
     assert replies[0] == "Weather station\n• Outdoor: 12.3 °C, 💦 94 %\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"
     assert replies[1] == "• Outdoor: 12.3 °C, 💦 94 %"
     history = bot.chats[(1, None)].history
@@ -298,23 +289,9 @@ async def test_a_question_with_no_lower_step_or_a_second_timeout_gives_up(alert_
 
 
 async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_model_is_not_asked(alert_state, monkeypatch):
-    import json
     from lib import bot as botmod
-    from lib.specs import Chart, Line, Panel
-
-    class Tools(StandInTools):
-        calls = []
-
-        async def call(self, name, raw, turn=None):
-            self.calls.append((name, json.loads(raw)))
-            turn.charts.append(Chart("Humidity", "", [Panel("Humidity", "%", [Line("Outdoor", [1, 2], [50.0, 60.0])])]))
-            return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
-                "outdoor.humidity": {"unit": "%", "low": "50", "high": "60", "low_when": "at 5am", "low_date": "Fri 25 Sep 2026",
-                                     "high_when": "at 3pm", "high_date": "Sat 26 Sep 2026"}}})
 
     class Agent:
-        tools = Tools()
-
         async def run(self, *a, **k):
             raise AssertionError("the model must not be asked for a plain chart")
     sent = []
@@ -329,31 +306,22 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "Humidity chart 7d")
-    name, args = Agent.tools.calls[0]
-    assert name == "weather_history" and args["chart"] and args["groups"] == "outdoor,indoor"
+    service = chart_service()
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service).respond(update, NS(bot=telegram(send_chat_action)), "Humidity chart 7d")
+    assert service.calls == [("summary", {"readings": ["outdoor.humidity", "indoor.humidity"], "period": "last 7 days", "chart": True})]
     assert sent == ["Humidity"]    # the chart's title is its whole caption
     sent.clear()
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), "when was humidity highest this week")
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service).respond(update, NS(bot=telegram(send_chat_action)),
+                                                                                 "when was humidity highest this week")
     assert "high 60 %, Sat 26 Sep" in sent[0]    # a record asked for: its figures, with when, go with the chart
 
 
 async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(alert_state, monkeypatch):
     """The chart's own reads go first in line; a refresh started beside them would only queue requests ahead of the next ones."""
-    import json
     from lib import bot as botmod
-    from lib.specs import Chart, Line, Panel
     pokes = []
 
-    class Tools(StandInTools):
-        async def call(self, name, raw, turn=None):
-            turn.charts.append(Chart("t", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]))
-            return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
-                "outdoor.temperature": {"unit": "℃", "low": "1", "high": "2"}}})
-
     class Agent:
-        tools = Tools()
-
         async def run(self, *a, **k):
             return "It is 12 degrees."
 
@@ -367,7 +335,7 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
 
     async def send_chat_action(*a, **k):
         pass
-    bot, context = Bot(NS(tz=TZ), Agent(), sources, alert_state), NS(bot=telegram(send_chat_action))
+    bot, context = Bot(NS(tz=TZ), Agent(), sources, alert_state, service=chart_service()), NS(bot=telegram(send_chat_action))
     await bot.respond(update, context, "Temperature chart 7d")
     assert pokes == []
     await bot.respond(update, context, "what do you think about the weather today?")
@@ -375,18 +343,17 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
 
 
 async def test_a_chart_reply_logs_how_long_each_step_took(alert_state, tmp_path, monkeypatch, caplog):
-    """One line per chart reply: reading the data, the calculation, drawing, the PNG (and its size) and sending it."""
+    """One line per chart reply: the calculation (the service's call), drawing, the PNG (and its size) and sending it."""
     import re
     from lib.ecowitt import Ecowitt, api
-    from lib.tools import Tools
+    from lib.service import Service
+    from lib.service.context import Context
     from tests.fakes import config, ecowitt_transport
     monkeypatch.setattr(api, "MIN_GAP_SECONDS", 0)
     eco = Ecowitt(config(tmp_path), transport=ecowitt_transport()[0])
     await eco.start()
 
     class Agent:
-        tools = Tools(eco.tools)
-
         async def run(self, *a, **k):
             raise AssertionError("no model for a plain chart")
     sent = []
@@ -402,26 +369,21 @@ async def test_a_chart_reply_logs_how_long_each_step_took(alert_state, tmp_path,
     async def send_chat_action(*a, **k):
         pass
     with caplog.at_level("DEBUG"):
-        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)),
-                                                             "Temperature chart 1d")
+        await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=Service.of(Context(eco=eco, tz=TZ))).respond(
+            update, NS(bot=telegram(send_chat_action)), "Temperature chart 1d")
     await eco.close()
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
     assert len(sent) == 1 and len(lines) == 1, lines
     kb = round(len(sent[0]) / 1024)
-    assert re.fullmatch(rf"Chart ms: data \d+, calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
+    assert re.fullmatch(rf"Chart ms: calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
 
 
-async def _ask_with(alert_state, tool_result, text, monkeypatch=None):
-    """Ask `text` of a bot whose one tool returns `tool_result`; returns (replies, whether the model was asked)."""
+async def _ask_with(alert_state, answer, text, monkeypatch=None):
+    """Ask `text` of a bot whose service tools all give `answer`; returns (replies, whether the model was asked)."""
+    from tests.fakes import StandInService
     asked = []
 
-    class Tools(StandInTools):
-        async def call(self, name, raw, turn=None):
-            return tool_result
-
     class Agent:
-        tools = Tools()
-
         async def run(self, messages, *a, **k):
             asked.append(True)
             return "from the model"
@@ -436,25 +398,27 @@ async def _ask_with(alert_state, tool_result, text, monkeypatch=None):
 
     async def send_chat_action(*a, **k):
         pass
-    await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), text)
+    service = StandInService(**{name: answer for name in ("current", "summary", "days", "about", "pollen", "forecast")})
+    await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service).respond(update, NS(bot=telegram(send_chat_action)), text)
     return replies, bool(asked)
 
 
 async def test_a_plain_reading_question_is_answered_in_code_without_the_model(alert_state):
-    import json
-    result = json.dumps({"outdoor": {"temperature": "12.3 ℃", "feels_like": "11.0 ℃"}, "indoor": {"temperature": "18.3 ℃"}})
-    replies, asked = await _ask_with(alert_state, result, "how hot is it")
+    answer = {"lines": {"station": ["• Outdoor: 12.3 °C, feels like 11.0 °C", "• Indoor: 18.3 °C"]}}
+    replies, asked = await _ask_with(alert_state, answer, "how hot is it")
     assert not asked and replies == ["• Outdoor: 12.3 °C, feels like 11.0 °C\n• Indoor: 18.3 °C"]
 
 
 async def test_a_lookup_that_cannot_be_written_falls_back_to_the_model(alert_state):
-    import json
-    replies, asked = await _ask_with(alert_state, json.dumps({"error": "station not answering"}), "how hot is it")
+    replies, asked = await _ask_with(alert_state, {"error": "station not answering"}, "how hot is it")
+    assert asked and replies == ["from the model"]
+    replies, asked = await _ask_with(alert_state, {"lines": {"station": ["• not available right now"]},
+                                                   "unavailable": {"station": "The weather station isn't answering right now."}}, "how hot is it")
     assert asked and replies == ["from the model"]
 
 
 async def test_about_the_bot_is_answered_in_code_without_the_model(alert_state):
-    replies, asked = await _ask_with(alert_state, "{}", "what can you do")
+    replies, asked = await _ask_with(alert_state, {"lines": ["• Temperature, humidity (indoor, outdoor)", "• History charts"]}, "what can you do")
     assert not asked and replies[0].startswith("• Temperature, humidity")
 
 
@@ -556,17 +520,14 @@ async def test_a_heavy_question_gets_a_heads_up_in_the_chat_before_the_answer_an
 
 
 async def test_a_days_over_a_limit_question_is_counted_in_code_with_no_model(alert_state):
-    import json
-    result = json.dumps({"period": "Wed 5 Oct 2022 - Sat 3 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"})
-    replies, asked = await _ask_with(alert_state, result, "days over UVI 10 by year")
+    answer = {"answer": "137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026).", "days_checked": 1454, "matching_days": 137}
+    replies, asked = await _ask_with(alert_state, answer, "days over UVI 10 by year")
     assert not asked and replies == ["137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."]
 
 
 async def test_rain_by_month_is_worked_out_in_code_with_no_model(alert_state):
-    import json
-    result = json.dumps({"period": "Fri 4 Oct 2024 - Sat 3 Oct 2026", "days_checked": 731, "matching_days": 731,
-                         "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 1234.5})
-    replies, asked = await _ask_with(alert_state, result, "rain by month for 2 years")
+    answer = {"answer": "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026).", "value": 1234.5}
+    replies, asked = await _ask_with(alert_state, answer, "rain by month for 2 years")
     assert not asked and replies == ["Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."]
 
 
@@ -594,19 +555,9 @@ async def test_the_model_is_asked_with_the_tool_choice_the_message_calls_for(ale
 
 
 async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title(alert_state, monkeypatch):
-    import json
     from lib import bot as botmod
-    from lib.specs import Chart, Line, Panel
-
-    class Tools(StandInTools):
-        async def call(self, name, raw, turn=None):
-            turn.charts.append(Chart("t", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]))
-            return json.dumps({"period": "Fri 25 Sep 2026 - Thu 01 Oct 2026", "series": {
-                "outdoor.temperature": {"unit": "℃", "low": "1", "high": "2"}}})
 
     class Agent:
-        tools = Tools()
-
         async def run(self, *a, **k):
             raise AssertionError("no model for a chart")
     sent = []
@@ -615,7 +566,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
         sent.append(caption)
     monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
-    for text, caption_wanted in (("ecowitt all week", True), ("temperature chart 7d", True)):
+    for text in ("ecowitt all week", "temperature chart 7d"):
         sent.clear()
         msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
                  chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -623,23 +574,20 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
 
         async def send_chat_action(*a, **k):
             pass
-        await Bot(NS(tz=TZ), Agent(), sources, alert_state).respond(update, NS(bot=telegram(send_chat_action)), text)
+        await Bot(NS(tz=TZ), Agent(), sources, alert_state, service=chart_service(title="t")).respond(update, NS(bot=telegram(send_chat_action)), text)
         assert sent == ["t"], text
 
 
 async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(alert_state):
-    import json
     from lib import report_menu
-
-    class Tools(StandInTools):
-        reading = "12.3 ℃"
-
-        async def call(self, name, raw, turn=None):
-            return {"weather_now": json.dumps({"outdoor": {"temperature": self.reading}}),
-                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
+    from tests.fakes import StandInService
+    reading = ["12.3 °C"]
+    service = StandInService(current=lambda args, meta: {
+        "lines": {"station": [f"• Outdoor: {reading[0]}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
+        "headings": {"station": "Weather station", "air": "Air quality"}})
 
     class Agent:
-        tools = Tools()
+        pass
 
     class Query:
         data, edits, toast = report_menu.REFRESH, [], None
@@ -662,14 +610,14 @@ async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(aler
     async def send_chat_action(*a, **k):
         pass
     context = NS(bot=telegram(send_chat_action))
-    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state)
+    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service)
     alert_state.add_chat(1, "Rob")
     alert_state.set_keyboard(1, bot.keyboard_version)   # its buttons are current, so a reply carries only its own
     await bot.respond(update, context, "report")
     await bot.respond(update, context, "weather now")
     assert [b.callback_data for b in sent[0][1].inline_keyboard[0]] == [report_menu.REFRESH] and sent[1][1] is None
     assert [e.type for e in sent[0][2]] == ["bold", "bold"] and sent[1][2] is None            # the report's headings are bold; "weather now" has none
-    Tools.reading = "13.0 ℃"
+    reading[0] = "13.0 °C"
     query = Query()
     await bot.on_report_button(NS(callback_query=query), context)
     assert query.toast is None and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH
@@ -831,3 +779,10 @@ async def test_an_answer_that_comes_with_a_chart_is_not_streamed_into_the_draft(
     bot = DraftBot()
     await ask_private(alert_state, StreamingAgent(), bot, text="how hot is it")
     assert [t for _, t in bot.drafts][-1] == "It is 12 degrees."         # a plain answer still streams
+
+
+def chart_service(caption="Fri 25 Sep – Thu 1 Oct 2026\nHumidity: low 50 %, Fri 25 Sep at 5am · high 60 %, Sat 26 Sep at 3pm",
+                  title="Humidity"):
+    """A stand-in service whose summary draws a chart titled `title` and captions it."""
+    from tests.fakes import StandInService, chart_data
+    return StandInService(summary=lambda args, meta: {"caption": caption, "charts": [chart_data(title)]})

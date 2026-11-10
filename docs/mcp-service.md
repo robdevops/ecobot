@@ -471,7 +471,12 @@ Each step ships on its own, with the tests and evals green and the bot working t
    service labels them, and none when it lists none (today every single chart gets all five, so a count per month offers a 1D that
    draws nothing); a replay the service still refuses shows its error on the button.
    Begun: what the tools share, in `lib/service/` (`common.py`: a tool and its request metadata, answers, refusals, periods, chart
-   data; `names.py`: the reading names and the words for them; `daylook.py`: a day's look by its rule).
+   data; `names.py`: the reading names and the words for them; `daylook.py`: a day's look by its rule). Done: the ten, registered
+   (`lib/service/__init__.py` `build`, `Service`), built in `ecobot.py` and handed to the bot; the bot's own code paths call them,
+   through `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place, deleted whole in
+   step 3), and quote their words; its answers pinned before and after (`tests/test_service_switch.py`). The bot asks for its charts
+   as drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500. Left
+   for later: the dashboard's gauges still read `Ecowitt.dashboard()` (its sheet is the client's layout, which `current` doesn't give).
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.

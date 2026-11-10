@@ -7,7 +7,7 @@ from datetime import date, datetime, time as dtime, timedelta
 import httpx
 import pytest
 
-from lib import report
+from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.forecast import Forecast
 from lib.service.common import FRESH, Refusal
 from lib.service.context import Context

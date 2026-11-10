@@ -26,6 +26,7 @@ def json_result(out) -> str:
 class Turn:
     """What one question carries between the bot and the tools it calls (nothing is shared between questions)."""
     charts: list = field(default_factory=list)   # chart specs the tools add; the bot renders them after the answer
+    chart_calls: list = field(default_factory=list)   # (tool, arguments) of the call that drew each chart, in the same order
     chart_asked: bool = False                    # the person's words asked for a chart ("plot"), whatever the model sets
     chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
     chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
@@ -93,13 +94,17 @@ class Tools:
             return f"Error: tool arguments were not valid JSON ({e})"
         log.debug("Tool call %s %s", name, raw_args, extra=QUOTES)
         sourced = CHART_SOURCE.set(source_text(args.get("source") if isinstance(args, dict) else None) or tool.source or "")   # the charts this call draws
+        turn = turn or Turn()
+        before = len(turn.charts)
         try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
-            out = await tool.handler(args, turn or Turn())
+            out = await tool.handler(args, turn)
         except Exception as e:
             log.error("Tool %s failed: %s: %s", name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return f"Error calling tool: {e}"
         finally:
             CHART_SOURCE.reset(sourced)
+            calls = (turn.chart_calls + [(None, {})] * before)[:before]   # (charts added another way have no call)
+            turn.chart_calls[:] = calls + [(name, args)] * max(0, len(turn.charts) - before)
         out = out or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
