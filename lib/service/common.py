@@ -16,7 +16,7 @@ Every answer is compact JSON (`answer`), and starts the same way:
 
   - `period`: how the words were read (lib/periods_text.Period): `asked` the words (or "start/end"), `text` how they were read, ready
     to pass on, `start` and `end` ISO local times with their offset (the end not included), `cut` only when a whole-day tool cut
-    today off, and `note` only when `start` and `end` were sent beside `period` and ignored (read_period). Left out by a tool that takes no period.
+    today off, and `note` only when `start` and `end` were sent beside `period` and set aside (read_period). Left out by a tool that takes no period.
   - `as_of`: the time of the figures, `text` written as the tools write a time (timeutil.when), `time` ISO.
   - `fresh`: one fixed line for the model: the figures are as of `as_of`, and a follow-up or a challenge needs the tool called again.
   - `chart_note` and `charts` (`with_charts`): the charts as data (specs.to_json, bucketed to the request's `chart_points`), and the
@@ -30,7 +30,7 @@ answers with its JSON. A period that isn't one of the forms is refused with each
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import date, datetime, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 
 from .. import specs
 from ..periods_text import Period, PeriodError, read_period as read_words
@@ -162,11 +162,11 @@ def period_properties(default: str, whole_days: bool = False) -> dict:
     if whole_days:
         forms, days = WHOLE_DAY_FORMS, (" Whole days only, up to yesterday, as today isn't over: a rolling period is that many whole days "
                                         "to yesterday (\"last 7 days\" is the 7 days before today).")
-        start = "Instead of `period` (ignored when `period` is sent): the first day, 'YYYY-MM-DD'."
+        start = "Instead of `period`, never with it: the first day, 'YYYY-MM-DD'."
         end = "With `start`: the last day, 'YYYY-MM-DD', up to yesterday. Default: yesterday."
     else:
         forms, days = PERIOD_FORMS, ""
-        start = ("Instead of `period` (ignored when `period` is sent): when it starts, the station's local time, 'YYYY-MM-DD' (from midnight) or "
+        start = ("Instead of `period`, never with it: when it starts, the station's local time, 'YYYY-MM-DD' (from midnight) or "
                  "'YYYY-MM-DD HH:MM'.")
         end = "With `start`: when it ends, local time, 'YYYY-MM-DD' (to the end of that day) or 'YYYY-MM-DD HH:MM'. Default: now."
     return {
@@ -178,30 +178,92 @@ def period_properties(default: str, whole_days: bool = False) -> dict:
     }
 
 
-IGNORED_DATES = "`start` and `end` were ignored: `period` was sent too, and the period is read from it."
+IGNORED_DATES = ("`start` and `end` were ignored: `period` was sent too, and they can't be read as dates or times. The period is read "
+                 "from `period`.")
+SAME_DATES = "`start` and `end` were set aside: `period` was sent too, and they read as the same span. The period is read from `period`."
+SET_ASIDE = ("`start` and `end` were set aside because `period` was sent too: send them without `period` to use them, or send a "
+             "`period` in one of the forms.")
+SAME_WITHIN = timedelta(minutes=15)   # start/end this close to the period's span at both ends read as the same span
 
 
 def sends_period(args: dict) -> bool:
-    """Whether the call sends `period` (words, not empty): it then wins over any `start` and `end` sent beside it (read_period)."""
+    """Whether the call sends `period` (words, not empty): a call read at all then reads its period from it (read_period)."""
     return args.get("period") is not None and str(args["period"]).strip() != ""
+
+
+def _sent(x) -> str | None:
+    return str(x).strip() if x is not None and str(x).strip() else None
+
+
+def _a_moment(text: str | None) -> bool:
+    """Is it readable as a date or a time ('YYYY-MM-DD', 'YYYY-MM-DD HH:MM', ISO with an offset)?"""
+    try:
+        datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _moment_text(t: datetime, whole_days: bool, words: bool = False) -> str:
+    """A start as a call sends it ('YYYY-MM-DD', or with ' HH:MM' when it isn't midnight and the tool takes times), or in words."""
+    at_midnight = t.time() == datetime.min.time()
+    if words:
+        return day_text(t) if at_midnight else f"{day_text(t)} {clock_text(t)}"
+    return f"{t:%Y-%m-%d}" if whole_days or at_midnight else f"{t:%Y-%m-%d %H:%M}"
+
+
+def _span(text: str) -> str:
+    """A Period's text without its label: "the last 7 days: Wed 4 – Tue 10 Nov 2026" -> "Wed 4 – Tue 10 Nov 2026"."""
+    return text.rsplit(": ", 1)[-1]
 
 
 def read_period(args: dict, *, tz: tzinfo, now: datetime, default: str, whole_days: bool = False,
                 first_held: date | datetime | None = None) -> Period:
     """The period a call asks for, from its `period`, or `start` and `end`, else `default` (words), read by lib/periods_text.py at `now`
     (aware, or naive on the station's clock) in the station's zone. `first_held`: the first reading held for the readings asked about
-    ("on record"). When `period` is sent, it wins: any `start` and `end` beside it are ignored (a model may fill in every argument it
-    sees), and the Period's `note` says so (IGNORED_DATES; the result's `period.note`). Raises Refusal (refuse_period) when the period
-    can't be read."""
-    period, start, end = args.get("period"), args.get("start"), args.get("end")
-    ignored = sends_period(args) and any(x is not None and str(x).strip() for x in (start, end))
-    if ignored:
-        start = end = None
+    ("on record"). Raises Refusal (refuse_period) when the period can't be read.
+
+    `period` with `start`/`end` beside it (a model may fill in every argument it sees, sometimes with junk such as 'count_only'):
+    - start/end that aren't dates or times (each sent one read by datetime.fromisoformat): the period is read, its `note` says the
+      dates were ignored (IGNORED_DATES);
+    - start/end that read as the same span as the period (within SAME_WITHIN at each end; "on record" from the first reading held):
+      the period is read, with the note SAME_DATES;
+    - start/end that read as another span: refused, naming both spans as read, so the model sends the one it meant;
+    - a period that can't be read beside readable start/end: refused, its forms listed and SET_ASIDE added.
+    A note on the period keeps a chart from answering the question by itself (summary, days: the model reads the note)."""
+    period, start, end = (_sent(args.get(k)) for k in ("period", "start", "end"))
+    both = period is not None and (start is not None or end is not None)
+    dates = both and all(_a_moment(x) for x in (start, end) if x is not None)
+
+    def read(p, s, e) -> Period:
+        return read_words(p, s, e, now=now, tz=tz, default=default, whole_days=whole_days, first_held=first_held)
+
     try:
-        read = read_words(period, start, end, now=now, tz=tz, default=default, whole_days=whole_days, first_held=first_held)
+        words = read(period, None, None) if both else read(period, start, end)
     except PeriodError as e:
+        if dates and e.forms:   # the words aren't a form: say why the dates weren't used
+            raise Refusal(f"{e.message} {SET_ASIDE}", forms=dict(e.forms)) from None
         raise Refusal.of_period(e) from None
-    return replace(read, note=IGNORED_DATES) if ignored else read
+    if not both:
+        return words
+    if not dates:
+        return replace(words, note=IGNORED_DATES)
+    try:
+        as_dates = read(None, start or _moment_text(words.start, whole_days), end)   # (`end` alone: from the period's start)
+    except PeriodError as e:
+        why = e.message if start else f"`end` {end!r} is before the period's start."
+        raise Refusal(f"`period` {period!r} is {_span(words.text)}, and `start`/`end` can't be read as this tool takes them: "
+                      f"{why} Send one of them.") from None
+    floor = None if first_held is None else first_held if isinstance(first_held, datetime) else \
+        datetime.combine(first_held, datetime.min.time(), tzinfo=tz)
+    if floor is not None and floor.tzinfo is None:
+        floor = floor.replace(tzinfo=tz)
+    starts = [p.start if floor is None else max(p.start, floor) for p in (words, as_dates)]
+    if abs(starts[0] - starts[1]) <= SAME_WITHIN and abs(words.end - as_dates.end) <= SAME_WITHIN:
+        return replace(words, note=SAME_DATES)
+    said = f"{_moment_text(as_dates.start, False, words=True)} – now" if not end and not whole_days else _span(as_dates.text)
+    raise Refusal(f"`period` {period!r} is {_span(words.text)} but `start`/`end` say {said}: send one of them (`period` alone, or "
+                  f"`start` and `end` without it).")
 
 
 # ---------- an answer ----------
@@ -274,6 +336,6 @@ def complete(reply: str) -> dict:
     return {"reply": reply, "complete": True}
 
 
-__all__ = ["AS_DRAWN", "BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "IGNORED_DATES", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
+__all__ = ["AS_DRAWN", "BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "IGNORED_DATES", "SAME_DATES", "SET_ASIDE", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
            "ServiceTool", "WHOLE_DAY_FORMS", "answer", "as_of_field", "charts_field", "complete", "iso", "period_field", "period_properties",
            "read_period", "refuse", "sends_period", "refuse_period", "request_meta", "turn_meta", "with_charts"]

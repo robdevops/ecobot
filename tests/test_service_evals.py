@@ -445,12 +445,17 @@ def test_what_a_plain_client_fairly_reads_into_a_bare_word_or_a_chat_line_passes
     assert check([("summary", {})], EXPECT["metrics-bare"])
 
 
-def test_a_period_sent_with_start_and_end_beside_it_is_scored_by_the_period_as_the_tools_read_it():
-    """common.read_period: `period` wins and start and end are ignored, so the checker scores the period (the live run's
-    most-rain-days-jja sent period with start 'count_only', end 'cancel')."""
+def test_a_period_sent_with_start_and_end_beside_it_is_scored_as_the_tools_read_it():
+    """common.read_period: beside junk start and end, or dates that read as the same span, the period is read, so the checker scores
+    the period (the live run's uv-days-two-years sent period with start 'count_only', end 'cancel'; most-rain-days-jja sent 'June to
+    August 2026' with the matching start 2026-06-01, end 2026-08-31). Dates that read as another span are refused by the tools, so the
+    checker fails them (use-five-minute-data sent days {period: "on record", start: "2025-01-01", end: "2026-09-28"})."""
     from tests import evalkit as ek
     assert ek._means({"period": "June to August", "start": "count_only", "end": "cancel"}, "June to August", "days") is None
+    assert ek._means({"period": "June to August 2026", "start": "2026-06-01", "end": "2026-08-31"}, "June to August", "days") is None
     assert ek._means({"period": "this week", "start": "2026-06-01", "end": "2026-08-31"}, "June to August", "days") is not None
+    disagree = ek._means({"period": "on record", "start": "2025-01-01", "end": "2026-09-28"}, "on record", "days")
+    assert disagree and "refused" in disagree and "but `start`/`end` say" in disagree
     call = ("days", {"sort_by": "rain", "period": "June to August", "start": "count_only", "end": "cancel"})
     assert ek.check_calls([call], EXPECT["most-rain-days-jja"]) == []
 

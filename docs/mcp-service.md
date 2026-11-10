@@ -149,9 +149,13 @@ and no falling back to a default: anything else is an error that lists the forms
 | `since 6am`, `since Monday` | from the latest such time (or that day's 00:00) to now |
 | `on record`, `all time`, `ever` | from the first reading held, for the sensors asked about, to now |
 
-- **`period` or `start`**: when both are sent, `period` wins, `start` and `end` are ignored, and the result's `period.note` says so
-  (models fill in every argument they see, sometimes with junk). `start` and `end` are the station's local time, `YYYY-MM-DD` or `YYYY-MM-DD
-  HH:MM`; one with an offset or `Z` is moved into local time. An `end` that is a date includes that whole day; one with a time stops at
+- **`period` or `start`**: models fill in every argument they see, sometimes with junk, so when both are sent: `start` and `end` that
+  aren't dates or times (`count_only`), or that read as the same span as the period (within 15 minutes at each end), are set aside, the
+  period is read and the result's `period.note` says so; dates that read as another span are refused, naming both spans as read ("`period`
+  'on record' is Sat 1 Oct 2022 – Mon 9 Nov 2026 but `start`/`end` say Wed 1 Jan 2025 – now: send one of them"), since real dates are the
+  person's; a period that can't be read beside readable dates is refused with its forms, saying the dates were set aside because `period`
+  was sent and to send them without it to use them. A note on the period keeps a chart from being complete (3.7): the model reads it.
+  `start` and `end` are the station's local time, `YYYY-MM-DD` or `YYYY-MM-DD HH:MM`; one with an offset or `Z` is moved into local time. An `end` that is a date includes that whole day; one with a time stops at
   it. No `end` means to now; `end` without `start` is an error.
 - **Whole-day tools** (`days`, `relate`, `scan`) take whole days ending yesterday, because today is still settling: a rolling phrase is
   that many whole days to yesterday (`last 7 days`: Tue 3 – Mon 9 Nov), a calendar one runs to yesterday, and the result's `period`

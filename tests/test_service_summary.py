@@ -206,8 +206,10 @@ async def test_whole_days_sent_as_dates_are_drawn_by_as_words_and_a_time_lists_n
     assert [p["period"] for p in words["periods"]] == ["1d", "7d", "1m", "3m", "1y"]
     again = await ask(tool, **words["arguments"])
     assert without_drawn_by(again["charts"][0]) == without_drawn_by(dated["charts"][0]) and again["period"]["text"] == dated["period"]["text"]
-    beside = await ask(tool, readings=["pressure"], period="this week", start=days_ago(9), end=days_ago(5), chart=True)   # period wins
+    beside = await ask(tool, readings=["pressure"], period="this week", start="count_only", end="cancel", chart=True)   # junk dates
     assert "were ignored" in beside["period"]["note"] and beside["charts"][0]["drawn_by"]["arguments"]["period"] == "this week"
+    other = await ask(tool, readings=["pressure"], period="this week", start=days_ago(30), end=days_ago(20), chart=True)
+    assert "send one of them" in other["error"] and "charts" not in other   # dates that disagree with the period: refused
     since = await ask(tool, readings=["pressure"], start=days_ago(4))
     assert since["charts"][0]["drawn_by"]["arguments"]["period"] == f"{days_ago(4)} to now"
     timed = await ask(tool, readings=["pressure"], start=f"{days_ago(4)} 06:00", chart=True)
@@ -384,6 +386,8 @@ async def test_a_chart_that_answers_the_question_comes_with_its_reply_unless_a_n
     assert out["charts"][0]["drawn_by"]["arguments"]["chart_answers_it"] is True
     assert "complete" not in await ask(tool, readings=["pressure"], period="this week")              # not asked
     assert "complete" not in await ask(tool, readings=["pressure"], period="yesterday", chart_answers_it=True)   # no chart
+    noted = await ask(tool, readings=["pressure"], period="this week", start="count_only", chart_answers_it=True)
+    assert noted["period"]["note"] and "caption" in noted and "complete" not in noted and "reply" not in noted   # the model reads it
     hourly = await ask(tool, readings=["pm2.5"], period="last 7 days", chart_answers_it=True)
     assert "resolution" in hourly["notes"]["air"] and "caption" in hourly and "complete" not in hourly   # the model words the note
     assert summary.Summary._needs_words({"warning": "x", "missing": ["y"], "notes": {"air": {"missing": "z"}, "chart": "c"}}) is False

@@ -555,7 +555,7 @@ class Summary:
             fields["caption"] = caption
         elif not charts and (text := self._text(call, q, out, air_out)):
             fields["text"] = text
-        finished = call.answers and charts and caption and not self._needs_words(fields)
+        finished = call.answers and charts and caption and not self._needs_words(fields) and not call.period.note   # (the model reads it)
         fields.update(self._charts(call, route, charts, meta))
         if finished:
             fields.update(complete(caption))

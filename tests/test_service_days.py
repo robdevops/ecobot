@@ -393,6 +393,11 @@ async def test_a_period_sent_with_start_and_end_beside_it_wins_and_its_chart_is_
                     group_by="month")
     assert "error" not in out and out["period"]["asked"] == "last 30 days" and "were ignored" in out["period"]["note"]
     assert chart_of(out)["drawn_by"]["arguments"]["period"] == "last 30 days"
+    noted = await ask(world, period="last 30 days", start="count_only", where=[{"field": "rain", "op": ">=", "value": 1}],
+                      group_by="month", chart_answers_it=True)
+    assert "charts" in noted and noted["period"]["note"] and "complete" not in noted and "reply" not in noted   # the model reads it
+    other = await ask(world, period="on record", start=str(ago(20)), sort_by="rain")
+    assert "but `start`/`end` say" in other["error"]   # real dates that disagree: refused, naming both
 
 
 async def test_a_chart_is_not_the_whole_answer_when_a_note_needs_the_models_words(world):

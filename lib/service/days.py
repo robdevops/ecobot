@@ -464,7 +464,7 @@ class DaysTool:
             drawn = self.drawn_by(call, args, period, first, last, first_held, now.date())
             for chart in charts["charts"]:
                 chart["drawn_by"] = drawn
-        finished = complete(line) if call.chart_answers_it and charts and not needs_words(out) else {}
+        finished = complete(line) if call.chart_answers_it and charts and not needs_words(out) and not period.note else {}
         return answer(period=period, as_of=now, **fields, **charts, **finished)
 
     def _notes(self, call: Call, asked, held: "Held", got, checked: list[date], days: list[date], daily_out: set[date],
