@@ -326,6 +326,20 @@ def _period_span(period, start=None, end=None, whole_days: bool = False) -> tupl
     return p.start, p.end
 
 
+def _disagree(sent: dict, tool: str | None) -> str | None:
+    """Why `period` with `start`/`end` beside it is refused as `tool` reads them at NOW (common.read_period): dates that read as
+    another span than the period's, or a period that can't be read; None when the period is read (the dates junk or the same span)."""
+    from zoneinfo import ZoneInfo
+
+    from lib.service.common import Refusal, read_period
+    try:
+        read_period(sent, tz=ZoneInfo(NOW_TZ), now=NOW.replace(tzinfo=ZoneInfo(NOW_TZ)), default="today",
+                    whole_days=tool in WHOLE_DAY_TOOLS, first_held=FIRST_HELD)
+    except Refusal as e:
+        return f"`period` with `start`/`end` beside it is refused: {e.message.split(chr(10))[0]}"
+    return None
+
+
 def _means(sent, refs, tool: str | None = None) -> str | None:
     """{"means": words or [words]}: the period sent ({"period", "start", "end"} of the call; a bare value is a `period`) reads, at NOW,
     as the same span as (one of) these words (a period in words as words; start and end as `tool` reads them, whole days for
@@ -334,7 +348,9 @@ def _means(sent, refs, tool: str | None = None) -> str | None:
     sent = sent if isinstance(sent, dict) else {"period": sent}
     if sent.get("period") is not None and str(sent["period"]).strip() == "":
         sent = {**sent, "period": None}
-    if sent.get("period") is not None:   # the period wins over start and end sent beside it, as the tools read it (common.read_period)
+    if sent.get("period") is not None:   # beside start and end, the period is read if they are junk or the same span (common.read_period)
+        if any(str(sent.get(k) or "").strip() for k in ("start", "end")) and (why := _disagree(sent, tool)):
+            return why
         sent = {"period": sent["period"]}
     # words are compared as words (whole days would make "last 28 days" September on the 29th); dates as the tool reads them
     whole = tool in WHOLE_DAY_TOOLS and sent.get("period") is None

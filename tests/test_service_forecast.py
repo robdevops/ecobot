@@ -222,4 +222,5 @@ async def test_refusals_teach_the_call_that_works(tmp_path):
 def test_it_is_offered_only_with_a_forecast_and_its_description_carries_the_rules():
     assert tools(Context(tz=TZ)) == []
     assert len(DESCRIPTION) < 1500 and "outlook" in DESCRIPTION and "summary" in DESCRIPTION and '{"period": "tomorrow"}' in DESCRIPTION
+    assert '"weather week", "ecowitt week": the past week, summary' in DESCRIPTION and "Only what is ahead is forecast." in DESCRIPTION
     assert list(PARAMETERS["properties"]) == ["period"] and "Default: the next 7 days." in PARAMETERS["properties"]["period"]["description"]

@@ -58,7 +58,12 @@ async def test_the_tool_says_what_it_answers_what_it_is_not_for_and_how_to_read_
     text = tool.description
     assert len(text) <= 1500
     for words in ("{readings: [\"temperature\"], period: \"this week\"}", "chart_answers_it: true", "average: true", "\"all\"", "pm2.5",
-                  ": days", ": readings", ": relate", ": current", ": forecast", "low_text", "day_look", "rain_total_mm", "complete"):
+                  ": days", ": readings", ": relate", ": current", ": forecast", "low_text", "day_look", "complete"):
+        assert words in text, words
+    # what the live runs got wrong: a device and a period is the past; "past week" isn't "last week"; a record with when is summary's
+    for words in ('"weather week"', '"ecowitt week"', 'the past, charted', '"past week" is the last 7 days',
+                  '"last week" the previous Monday to Sunday', '"use 5 minute data"', 'period: "on record"', '"pm2.5:rating"',
+                  '"wind 3m" {readings: ["wind"], period: "3m", chart: true}', '"lowest and highest humidity"', 'period: "yesterday to today"'):
         assert words in text, words
     readings = tool.parameters["properties"]["readings"]["description"]
     assert "outdoor.temperature" in readings and "air.pm2_5" not in readings and readings.endswith(   # (what this station holds)
@@ -206,8 +211,10 @@ async def test_whole_days_sent_as_dates_are_drawn_by_as_words_and_a_time_lists_n
     assert [p["period"] for p in words["periods"]] == ["1d", "7d", "1m", "3m", "1y"]
     again = await ask(tool, **words["arguments"])
     assert without_drawn_by(again["charts"][0]) == without_drawn_by(dated["charts"][0]) and again["period"]["text"] == dated["period"]["text"]
-    beside = await ask(tool, readings=["pressure"], period="this week", start=days_ago(9), end=days_ago(5), chart=True)   # period wins
+    beside = await ask(tool, readings=["pressure"], period="this week", start="count_only", end="cancel", chart=True)   # junk dates
     assert "were ignored" in beside["period"]["note"] and beside["charts"][0]["drawn_by"]["arguments"]["period"] == "this week"
+    other = await ask(tool, readings=["pressure"], period="this week", start=days_ago(30), end=days_ago(20), chart=True)
+    assert "send one of them" in other["error"] and "charts" not in other   # dates that disagree with the period: refused
     since = await ask(tool, readings=["pressure"], start=days_ago(4))
     assert since["charts"][0]["drawn_by"]["arguments"]["period"] == f"{days_ago(4)} to now"
     timed = await ask(tool, readings=["pressure"], start=f"{days_ago(4)} 06:00", chart=True)
@@ -312,6 +319,13 @@ async def test_a_chart_of_both_sensors_or_a_rating_is_drawn_over_whole_days_and_
     assert list(out["series"]) == ["air.pm2_5", "rainfall.rain"] and out["rain_total_mm"] >= 0
     by = await replays(tool, out)
     assert by["arguments"]["chart_readings"] == ["air.pm2_5:rating", "rainfall.rain"]
+    # the live evals' rating-against-rainfall put the rating in `readings`: summarised as the reading, drawn as its rating
+    sent = await ask(tool, readings=["air.pm2_5:rating", "rain"], period="this week")
+    assert list(sent["series"]) == ["air.pm2_5", "rainfall.rain"] and sent["charts"][0]["panels"][0]["series"][0]["kind"] == "rating"
+    assert sent["charts"][0]["drawn_by"]["arguments"]["chart_readings"] == ["air.pm2_5:rating", "rainfall.rain"]
+    assert sent["charts"][0]["drawn_by"]["arguments"]["readings"] == ["air.pm2_5", "rainfall.rain"]
+    short = await ask(tool, readings=["pm2.5:rating"], period="yesterday")   # a rating is only ever drawn: chart on
+    assert short["charts"][0]["panels"][0]["series"][0]["kind"] == "rating"
     await close(ctx)
 
 
@@ -383,6 +397,8 @@ async def test_a_chart_that_answers_the_question_comes_with_its_reply_unless_a_n
     assert out["charts"][0]["drawn_by"]["arguments"]["chart_answers_it"] is True
     assert "complete" not in await ask(tool, readings=["pressure"], period="this week")              # not asked
     assert "complete" not in await ask(tool, readings=["pressure"], period="yesterday", chart_answers_it=True)   # no chart
+    noted = await ask(tool, readings=["pressure"], period="this week", start="count_only", chart_answers_it=True)
+    assert noted["period"]["note"] and "caption" in noted and "complete" not in noted and "reply" not in noted   # the model reads it
     hourly = await ask(tool, readings=["pm2.5"], period="last 7 days", chart_answers_it=True)
     assert "resolution" in hourly["notes"]["air"] and "caption" in hourly and "complete" not in hourly   # the model words the note
     assert summary.Summary._needs_words({"warning": "x", "missing": ["y"], "notes": {"air": {"missing": "z"}, "chart": "c"}}) is False

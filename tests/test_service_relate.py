@@ -74,6 +74,7 @@ async def test_it_takes_a_reading_whole_days_and_a_chart_and_says_what_it_is_not
     assert "Whole days only, up to yesterday" in props["period"]["description"] and "the last 90 days" in props["period"]["description"]
     assert all(name in props["reading"]["description"] for name in ("pressure.relative", "outdoor.humidity", "wind.wind_speed", "air.pm2_5", "air.pm10"))
     assert len(made.description) < 1500 and "\"X against rain\" is this tool" in made.description
+    assert '"plot the traffic light rating against rainfall": summary' in made.description   # (a live run sent it here)
     assert all(f"({tool})" in made.description for tool in ("scan", "summary", "days")) and made.description.count("{reading:") >= 3
     assert made.annotations == {"readOnlyHint": True, "openWorldHint": True}   # the air sensor's missing days are fetched
     (station_only,) = relate.tools(Context(eco=eco, tz=TZ))

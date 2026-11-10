@@ -4,7 +4,7 @@ depends on is in the tool's description or in the result, and the evals are run 
 --instructions`, docs 7).
 
 It says: the devices there are (the Context's sources) and the nicknames people use for them, which readings are Indoor and Outdoor,
-the units each reading comes in (from the catalogue: only the readings held), the station's time zone, and that a period is passed on
+the readings' names, the units each reading comes in (from the catalogue: only the readings held), the station's time zone, and that a period is passed on
 in the person's own words. `instructions(ctx)` builds it; INSTRUCTIONS is it for every device and every reading the service knows.
 """
 
@@ -34,6 +34,19 @@ def units(catalogue: Catalogue) -> str:
     return "; ".join(listed)
 
 
+def names(catalogue: Catalogue) -> str:
+    """"outdoor and indoor: temperature, humidity …; pressure: relative, absolute; …": each sensor with its readings' names, in the
+    catalogue's order, sensors with the same readings together (a model must not make up a name: rain.rain_rate)."""
+    by_sensor: dict[str, list[str]] = {}
+    for r in catalogue:
+        sensor, _, reading = r.name.partition(".")
+        by_sensor.setdefault(sensor, []).append(reading)
+    alike: dict[tuple[str, ...], list[str]] = {}
+    for sensor, readings in by_sensor.items():
+        alike.setdefault(tuple(readings), []).append(sensor)
+    return "; ".join(f"{' and '.join(sensors)}: {', '.join(readings)}" for readings, sensors in alike.items())
+
+
 def instructions(ctx=None) -> str:
     """The instructions for the service over this Context (lib/service/context.py): its sources, the readings its catalogue holds and
     its zone. With no ctx: every source, every reading the service knows, no zone named."""
@@ -47,30 +60,31 @@ def instructions(ctx=None) -> str:
 
     devices = []
     if station:
-        devices.append("the weather station (Ecowitt; people call it \"ecowitt\", \"the weather station\" or \"the station\"), "
-                       "outdoors, with an indoor sensor in the house")
+        devices.append("the weather station (Ecowitt; \"ecowitt\", \"the weather station\", \"the station\"), outdoors, with an "
+                       "indoor sensor")
     if air:
-        devices.append("the outdoor air-quality sensor (AirGradient; \"ag\", \"airgradient\", \"air gradient\", \"the air sensor\")")
-    extra = [*(["the weather forecast for the station's location (Open-Meteo)"] if forecast else []),
+        devices.append("the air-quality sensor (AirGradient; \"ag\", \"airgradient\", \"air gradient\", \"the air sensor\")")
+    extra = [*(["the forecast for the station's place (Open-Meteo)"] if forecast else []),
              *(["Melbourne's grass pollen and thunderstorm asthma forecast (October to December)"] if pollen else [])]
     lines = [f"The devices: {'; '.join(devices) or 'none'}." + (f" Also: {'; '.join(extra)}." if extra else "")]
     if station:
-        sides = ("Indoor and Outdoor: a reading named bare is the weather station's, and temperature and humidity mean both its outdoor "
-                 "and its indoor sensor (outdoor.temperature, indoor.temperature); dew point, feels like and the rest are outdoor's.")
+        sides = ("Indoor and Outdoor: a bare reading is the weather station's: temperature and humidity are both outdoor and indoor "
+                 "(outdoor.temperature, indoor.temperature); dew point, feels like and the rest outdoor.")
         if air:
-            sides += (" The air sensor is outdoors: its own temperature and humidity are only ever air.temperature and air.humidity, "
-                      "and there is no indoor air quality.")
+            sides += (" The air sensor is outdoors: its own temperature and humidity are only air.temperature and air.humidity; "
+                      "no indoor air quality.")
         lines.append(sides)
     held = Catalogue(r for r in catalogue if (r.device == STATION and station) or (r.device == AIR_DEVICE and air))
     if held.names:
+        lines.append(f"Names (sensor.reading): {names(held)}.")
         lines.append(f"Units: {units(held)}. Rain is the mm that fell.")
     zone = getattr(ctx.zone, "key", None) if ctx is not None and (ctx.tz or ctx.eco or ctx.air) else None
     when = f"The station's clock is {zone} time; " if zone else "Times are the station's local time; "
-    lines.append(when + "pass a period on in the person's own words (`period`: \"this week\", \"yesterday afternoon\"): the tools "
-                        "read it and say how. Each tool's description says what it answers.")
+    lines.append(when + "pass a period on in the person's own words (`period`: \"past week\", \"since 6am\"): the tools "
+                        "read it and say how.")
     return "\n".join(lines)
 
 
 INSTRUCTIONS = instructions()   # every device and every reading the service knows (the evals; a server that hasn't read its file)
 
-__all__ = ["INSTRUCTIONS", "instructions", "units"]
+__all__ = ["INSTRUCTIONS", "instructions", "names", "units"]

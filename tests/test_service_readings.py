@@ -93,6 +93,8 @@ def test_it_takes_one_reading_a_period_in_words_and_an_interval(storage):
     assert "Default: last 24 hours" in props["period"]["description"] and "this week" in props["period"]["description"]
     assert "outdoor.humidity" in props["reading"]["description"] and "ONE reading" in props["reading"]["description"]
     assert len(made.description) < 1500 and all(f"({tool})" in made.description for tool in ("summary", "days", "current"))
+    assert 'a record ("hottest ever", even "use 5 minute data": summary, period "on record")' in made.description
+    assert '"past week" (the last 7 days) is never sent as "last week"' in props["period"]["description"]
     assert made.description.count("{reading:") >= 3 and "`value_is`" in made.description and "`fits`" in made.description
     assert made.annotations == {"readOnlyHint": True, "openWorldHint": False}   # it reads the file only
 
@@ -173,8 +175,10 @@ async def test_a_period_it_cant_read_says_what_it_can(storage):
     assert "isn't a period" in out["error"] and any(form.startswith("last N hours") for form in out["forms"])
     assert "It is now Mon 9 Nov 2026 1:47am." in out["error"]
     assert "use forecast" in (await ask(storage, reading="humidity", period="tomorrow", interval="1hour"))["error"]
-    both = await ask(storage, reading="humidity", period="today", start="2026-11-08", interval="1hour")   # period wins, said so
-    assert "error" not in both and both["period"]["asked"] == "today" and "were ignored" in both["period"]["note"]
+    both = await ask(storage, reading="humidity", period="today", start="2026-11-08", interval="1hour")   # two spans: refused
+    assert "`period` 'today' is Mon 9 Nov 2026 but `start`/`end` say Sun 8 Nov 2026 – now: send one of them" in both["error"]
+    junk = await ask(storage, reading="humidity", period="today", start="count_only", interval="1hour")   # junk: the period, said so
+    assert "error" not in junk and junk["period"]["asked"] == "today" and "were ignored" in junk["period"]["note"]
     out = await ask(storage, reading="humidity", period="on record", interval="1day")
     assert "Nothing is held yet" in out["error"]
 

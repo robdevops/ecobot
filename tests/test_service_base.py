@@ -136,17 +136,55 @@ def test_words_that_are_no_form_are_refused_with_every_form_and_what_it_means_no
     assert "use forecast" in e.value.message and "forms" not in got(e.value.text)
 
 
-def test_a_period_sent_beside_start_and_end_wins_and_the_result_says_they_were_ignored():
-    # a model may fill in every argument it sees: the live evals sent period with start 'count_only', end 'cancel'
-    for dates in ({"start": "2026-11-01"}, {"end": "2026-11-03"}, {"start": "count_only", "end": "cancel"}):
+def test_a_period_sent_beside_start_and_end_that_are_junk_or_the_same_span_is_read_with_a_note():
+    # a model may fill in every argument it sees: the live evals' uv-days-two-years sent period with start 'count_only', end 'cancel',
+    # and most-rain-days-jja 'June to August 2026' with start 2026-06-01, end 2026-08-31 (the same span)
+    for dates in ({"start": "count_only", "end": "cancel"}, {"start": "count_only"}, {"start": "2026-11-04", "end": "cancel"}):
         read = read_period({"period": "this week", **dates}, tz=TZ, now=NOW, default="today")
         assert read.text == "the last 7 days: Wed 4 – Tue 10 Nov 2026" and read.note == common.IGNORED_DATES, dates
         assert common.period_field(read)["note"] == common.IGNORED_DATES
+    for dates in ({"start": "2026-11-04"}, {"start": "2026-11-04", "end": "2026-11-10"}, {"start": "2026-11-04 00:10"}):
+        read = read_period({"period": "this week", **dates}, tz=TZ, now=NOW, default="today")
+        assert read.asked == "this week" and read.note == common.SAME_DATES, dates
+    jja = read_period({"period": "June to August 2026", "start": "2026-06-01", "end": "2026-08-31"}, tz=TZ, now=NOW,
+                      default="on record", whole_days=True)
+    assert jja.text == "June 2026 to August 2026: Mon 1 Jun – Mon 31 Aug 2026" and jja.note == common.SAME_DATES
+    held = read_period({"period": "on record", "start": "2020-01-01"}, tz=TZ, now=NOW, default="on record", whole_days=True,
+                       first_held=date(2022, 10, 1))   # before the first reading held: the same span as on record
+    assert held.note == common.SAME_DATES
     alone = read_period({"period": "this week", "start": "", "end": None}, tz=TZ, now=NOW, default="today")
     assert alone.note is None and "note" not in common.period_field(alone)
-    with pytest.raises(Refusal) as e:   # the period itself can't be read: still refused, as words
-        read_period({"period": "the other week", "start": "2026-11-01"}, tz=TZ, now=NOW, default="today")
-    assert "'the other week' isn't a period" in e.value.message
+
+
+def test_a_period_and_dates_that_read_as_different_spans_are_refused_naming_both():
+    # the live evals' use-five-minute-data sent days {period: "on record", start: "2025-01-01", end: "2026-09-28"}
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "on record", "start": "2025-01-01"}, tz=TZ, now=NOW, default="on record", whole_days=True,
+                    first_held=date(2022, 10, 1))
+    assert e.value.message == ("`period` 'on record' is Sat 1 Oct 2022 – Mon 9 Nov 2026 but `start`/`end` say Wed 1 Jan 2025 – "
+                               "Mon 9 Nov 2026: send one of them (`period` alone, or `start` and `end` without it).")
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "on record", "start": "2025-01-01"}, tz=TZ, now=NOW, default="today", first_held=date(2022, 10, 1))
+    assert "is Sat 1 Oct 2022 – Tue 10 Nov 2026 but `start`/`end` say Wed 1 Jan 2025 – now: send one of them" in e.value.message
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "this week", "start": "2026-06-01", "end": "2026-08-31"}, tz=TZ, now=NOW, default="today")
+    assert "`period` 'this week' is Wed 4 – Tue 10 Nov 2026 but `start`/`end` say Mon 1 Jun – Mon 31 Aug 2026" in e.value.message
+    with pytest.raises(Refusal) as e:   # dates this tool can't take (a time, to a whole-day tool): refused too, not set aside
+        read_period({"period": "on record", "start": "2025-01-01 06:00"}, tz=TZ, now=NOW, default="on record", whole_days=True,
+                    first_held=date(2022, 10, 1))
+    assert "can't be read as this tool takes them" in e.value.message and "has a time" in e.value.message
+
+
+def test_a_period_that_cant_be_read_beside_dates_says_the_dates_were_set_aside_and_how_to_use_them():
+    with pytest.raises(Refusal) as e:
+        read_period({"period": "JJA 2026", "start": "2026-06-01", "end": "2026-08-31"}, tz=TZ, now=NOW, default="on record",
+                    whole_days=True)
+    out = got(e.value.text)
+    assert "'JJA 2026' isn't a period" in out["error"] and out["error"].endswith(common.SET_ASIDE) and out["forms"]
+    assert "send them without `period` to use them" in common.SET_ASIDE
+    with pytest.raises(Refusal) as e:   # junk beside it: the plain refusal of the words
+        read_period({"period": "the other week", "start": "count_only"}, tz=TZ, now=NOW, default="today")
+    assert "'the other week' isn't a period" in e.value.message and common.SET_ASIDE not in e.value.message
 
 
 def test_a_whole_day_tool_refuses_what_leaves_no_whole_day_and_points_elsewhere():
@@ -170,7 +208,7 @@ def test_the_period_properties_tell_a_model_the_forms_the_dates_and_the_default(
                  "yesterday afternoon", "last night", "since 6am", "Christmas Day", "on record", "A to B"):
         assert form in words, form
     assert "own words" in words and "unchanged" in words and words.endswith("Default: last 24 hours.")
-    assert "'YYYY-MM-DD HH:MM'" in props["start"]["description"] and "ignored when `period` is sent" in props["start"]["description"]
+    assert "'YYYY-MM-DD HH:MM'" in props["start"]["description"] and "never with it" in props["start"]["description"]
     assert "Default: now." in props["end"]["description"]
     whole = period_properties("on record", whole_days=True)
     assert "yesterday" in whole["period"]["description"] and whole["period"]["description"].endswith("Default: on record.")
