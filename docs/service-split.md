@@ -119,7 +119,7 @@ Nine tools in place of twelve, one per kind of question, each over both sensors 
 | `current` | how it is now; one reading now; the air now | `weather_now`, `air_quality` without dates | `metrics` (default outdoor and indoor) |
 | `summary` | a period's highs and lows with when; averages; day or month breakdown; wind direction; rain total; air ratings and AQI; charts | `weather_history`, `air_quality` with dates | `metrics`, `start`, `end` (today so far), `average`, `every_day`, `chart`, `chart_metrics`, `layout`, `daily_means`, `rain_by`, `source` |
 | `readings` | values at an interval, each with its time | `readings` | `metric`, `start`, `end`, `interval` |
-| `days` | find, rank and count days; a figure per month or year; holidays and weekends | `weather_days`, `air_days` | today's day-tool arguments over one field list (the last 30 days to yesterday) |
+| `days` | find, rank and count days; a figure per month or year; holidays and weekends; the same over part of each day (the 3pm temperature, the overnight low) | `weather_days`, `air_days` | today's day-tool arguments over one field list, and `hours` (the last 30 days to yesterday) |
 | `relate` | rain against one reading: for pressure, humidity or wind, does rain follow a change in it; for PM2.5 or PM10, is the air cleaner after rain | `weather_link`, `air_link` | `metric` (`pressure.relative`, `outdoor.humidity`, `wind.wind_speed`, `air.pm2_5`, `air.pm10`), `start`, `end` (90 days; 60 for air), `chart` |
 | `scan` | each air reading against every weather reading: which go together | `air_scan` | `metric` (or all), `start`, `end` (90 days, at most 400), `chart` |
 | `chart` | any readings from both sensors on one chart: a panel each, or two on one panel | `plot_chart` | `panels[{metric, style}]`, `start`, `end` (30 days), `layout`, `invert_second_axis`, `source` |
@@ -150,6 +150,25 @@ shows and ranks by `pm2_5_max`); `days_checked` counts the days on which every s
 sensor's source; the result keeps both sensors' notes (`note_daily`, `exact_from`, `note_trace`, `note_averaged`; `note_hourly`,
 `note_missing`). A condition mixing the two sensors leaves out the days whose station figures come from Ecowitt's daily records (10am
 to 10am, not the air sensor's midnight to midnight) and says how many.
+
+**Part of each day (`days.hours`, new):** `hours: "15:00-16:00"` works out each day's figures over that stretch of local time instead
+of the whole day, and everything else in `days` then works on those figures: "the average 3pm temperature in October" is
+`{hours: "15:00-16:00", stat: "avg", of: "temp_avg"}`, "the typical overnight low this month" `{hours: "22:00-06:00", stat: "avg", of:
+"temp_min"}`, "nights below 5°C" `{hours: "22:00-06:00", where: temp_min < 5}`. A moment is a short stretch ("15:00-15:05"). The
+figures come from the same SQL as the day rows, over one window a day (`Reader.part_days`, which `lib/ecowitt/period.py` already uses
+for a period's partial first and last days), so a part of a day is worked out exactly as a whole one is: the finest readings held, the
+air sensor's glitches taken out. A stretch that crosses midnight belongs to the day it ends on (Monday 22:00 to Tuesday 06:00 is
+Tuesday's night), and the result says so. Days held only as Ecowitt's daily or 4-hour records have nothing finer to cut a stretch from:
+they are left out and counted in a note. No such question can be answered today, by any tool.
+
+**Averages**, wherever the question asks for one:
+
+| Tool | Averages |
+|---|---|
+| `summary` | `average: true` adds each reading's average over the period, and one per day or month in its breakdown; an air reading always has its average and `average_rating`. Rain has a total, not an average. `daily_means` draws the chart as each day's average. |
+| `readings` | each row's value is its interval's average, with the interval's lowest and highest: hourly averages at `1hour`, daily at `1day` |
+| `days` | each day's average as a field (`temp_avg`, `humidity_avg`, `co2_avg` …), and `stat: "avg"` over the matching days, overall or per month or year ("average humidity per year", "average daily rain in June"); with `hours`, over that part of each day |
+| `chart` | each panel's average over the period, beside its lowest and highest |
 
 **Charts in a result** (3.6): for a client that asked for them, the chart data in the result's `_meta` (`ecobot/charts`, a list: a
 history can add a wind rose beside its chart) and one line for the model, `chart_hint`: that a chart goes with its reply, so the reply
@@ -314,10 +333,13 @@ their state; the charts' look; the shortcuts' choices; Telegram.
 Each step ships on its own, with the tests and evals green and the bot working the whole way. The tool list never offers old and new
 names together.
 
-0. **The chart that answers itself** (3.8), in today's bot, independent of the rest: `chart_answers_it` on the chart tools, the bot's
-   early end of the turn with the caption written in code, and a pair of eval cases (a question that is just the chart, where the model
-   sets it; a question with something to answer beside the chart, where it doesn't). Shipped on the live evals; the log's `LLM 2` lines
-   show the calls it saves.
+0. **Before the split**, in today's bot, each on its own:
+   - **The chart that answers itself** (3.8): `chart_answers_it` on the chart tools, the bot's early end of the turn with the caption
+     written in code, and a pair of eval cases (a question that is just the chart, where the model sets it; a question with something
+     to answer beside the chart, where it doesn't). Shipped on the live evals; the log's `LLM 2` lines show the calls it saves.
+   - **Part of each day** (3.3, `days.hours`): `hours` on `weather_days` and `air_days`, with tests against windows worked out by hand
+     (a midnight-crossing night, a day held only as daily records, an air glitch inside the window) and eval cases ("average 3pm
+     temperature in October", "typical overnight low this month").
 
 1. **Explicit arguments, shared helpers.** The twelve tools take the `Turn`'s inputs as arguments and read nothing else about the
    question; they return their charts in the result instead of appending to `turn.charts`, and `weather_forecast` returns the days it
@@ -348,6 +370,7 @@ names together.
 - The suite splits along the boundary: the service's tests (storage, sources, tools, resources, the server) and the bot's (intent,
   report, alerts, drawing, the client), the bot's running against a fake `Data`, or against the real server in memory over an
   archived file.
+- `days.hours` gives, for a stretch that is the whole day ("00:00-24:00"), the same figures as the day rows.
 - A wire test per tool and resource: the arguments it takes, the shape it returns (`test_contract`), dates that come back as `date`s, chart
   data in the result's `_meta` that reads back as a spec for a client that asks, and no chart and no `chart_hint` for one that doesn't.
 - A reconnect test against the real app under uvicorn on a localhost port the test stops and starts (not in memory: a connection can't
