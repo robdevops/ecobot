@@ -4,12 +4,14 @@ tests/evals/cases.json holds the questions (real ones from the logs). Two kinds 
   - decisions made in code (fast path, period hints, reasoning effort, which readings a chart combines): run by pytest;
   - what the model does with them (which tool, which arguments): `python scripts/eval_prompts.py --live`, against the
     real model with recording stand-in tools (nothing is fetched).
+tests/evals/service_cases.json holds, for the same case ids, what a model offered only the service's ten tools (lib/service) should
+call: checked offline by tests/test_service_evals.py, and asked of the model by `python scripts/eval_prompts.py --live --service`.
 """
 
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from lib import compose, history, intent, prompt
@@ -99,8 +101,17 @@ def content(case: Case) -> str:
 
 
 def _matches(actual, want) -> str | None:
-    """None if `actual` satisfies `want`, else why not. want: a value, {"regex"}, {"absent"}, {"has"}, {"any_of"}."""
+    """None if `actual` satisfies `want`, else why not. want: a value, {"regex"}, {"absent"}, {"has"}, {"any_of"} (or "one_of"), or
+    the service's {"reads"} / {"reads_any"} (_reads). Any of them with "optional": true also takes no value at all."""
     if isinstance(want, dict):
+        if want.get("optional") and actual in (None, "", [], {}):
+            return None
+        if "reads" in want or "reads_any" in want:
+            return _reads(actual, want)
+        if "means" in want:
+            return _means(actual, want["means"])
+        if "one_of" in want:
+            return None if actual in want["one_of"] else f"{actual!r} not one of {want['one_of']}"
         if "absent" in want:
             return None if actual in (None, "", [], {}) else f"expected no value, got {actual!r}"
         if "regex" in want:
@@ -117,7 +128,8 @@ def check_args(args: dict, want: dict) -> list[str]:
 
 
 def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
-    """Failures of what the model called against the case's expectations."""
+    """Failures of what the model called against the case's expectations. A tool's expected arguments may be a list of alternatives
+    (the service's cases: `period` in words, or `start` and `end`): a call matching any one of them passes."""
     fails = []
     names = [n for n, _ in calls]
     for tool in expect.get("tools", []):
@@ -132,8 +144,9 @@ def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
         fails.append(f"first tool was {names[:1]}, expected {expect['first_tool']}")
     for tool, want in expect.get("args", {}).items():
         made = [a for n, a in calls if n == tool]
-        if made and not any(not check_args(a, want) for a in made):
-            fails.append(f"{tool} arguments: " + "; ".join(check_args(made[0], want)))
+        alternatives = want if isinstance(want, list) else [want]
+        if made and not any(not check_args(a, w) for a in made for w in alternatives):
+            fails.append(f"{tool} arguments: " + " | or: ".join("; ".join(check_args(made[0], w)) for w in alternatives))
     return fails
 
 
@@ -186,3 +199,215 @@ async def run_live(case: Case, client, model: str, effort: str | None = None) ->
     if fast or r.extra:
         calls[0:0] = [*([(fast[0], fast[1]), *r.more] if fast else []), *r.extra]  # the bot ran them itself, before the model
     return calls, reply
+
+
+# ---------- the service's ten tools, offered alone (docs/mcp-service.md 6, step 2; 7) ----------
+# The same questions asked of a model given only the service's tool list: no prompt of ours (a neutral line, the date, time and zone),
+# no hints, no fast path, nothing filled in from the words. tests/evals/service_cases.json says, for every case id in cases.json, which
+# of the ten tools answers it and with which arguments, as a client that has never seen this repository would call them.
+SERVICE_CASES = CASES.parent / "service_cases.json"
+SERVICE_SYSTEM = "You answer questions about a home weather station and air sensor using the tools."
+SERVICE_EFFORT = "low"   # one reasoning level for every case: there is no intent.read to choose one
+NOW_TZ = "Australia/Melbourne"
+EXPECT_KEYS = {"tools", "any_tools", "not_tools", "first_tool", "args", "note"}
+
+
+def service_modules():
+    from lib.service import about, current, days, forecast, outlook, pollen, readings, relate, scan, summary
+    return (current, summary, readings, days, relate, scan, outlook, forecast, pollen, about)
+
+
+def service_tool_names() -> list[str]:
+    return ["current", "summary", "readings", "days", "relate", "scan", "outlook", "forecast", "pollen", "about"]
+
+
+def service_tools(ctx=None) -> list:
+    """The ten ServiceTools, each module's tools(ctx). With no ctx: over stand-ins for every source (nothing behind them: the tools are
+    built, never run), the catalogue of every reading the service knows, the station's zone and NOW."""
+    if ctx is None:
+        from zoneinfo import ZoneInfo
+
+        from lib.service.context import Context
+        tz = ZoneInfo(NOW_TZ)
+        ctx = Context(eco=object(), air=object(), composer=object(), forecast=object(), pollen=object(), tz=tz,
+                      clock=lambda: NOW.replace(tzinfo=tz).timestamp())
+    return [t for module in service_modules() for t in module.tools(ctx)]
+
+
+def make_service_tools(calls: list) -> Tools:
+    """The ten tools as a model is offered them (name, description, parameters from lib/service), with handlers that record the call."""
+    def recorder(name):
+        async def handler(args, turn=None):
+            calls.append((name, args))
+            return CANNED
+        return handler
+    return Tools([Tool(t.name, t.description, t.parameters, recorder(t.name)) for t in service_tools()])
+
+
+def service_system(now: datetime = NOW) -> str:
+    """The whole system prompt of a service run: the neutral line, and the date, time and zone now."""
+    return f"{SERVICE_SYSTEM}\nNow: {now:%A} {now.day} {now:%B %Y}, {now:%H:%M} ({NOW_TZ} time)."
+
+
+def load_service_cases(path: Path = SERVICE_CASES) -> dict[str, dict]:
+    """{case id: its expectation in service terms ({"tools", "any_tools", "not_tools", "first_tool", "args", "note"})}."""
+    return json.loads(path.read_text())
+
+
+def _resolved(names) -> list[str] | str:
+    """The service names these readings stand for (lib/service/names.py; ":rating" set aside), or why they can't be read."""
+    from lib.service.names import CATALOGUE, UnknownReading
+    words = [names] if isinstance(names, str) else names
+    if not isinstance(words, list):
+        return f"{names!r} is not a reading or a list of them"
+    try:
+        return [r.name for r in CATALOGUE.resolve([str(w).split(":", 1)[0] for w in words], default=None)]
+    except UnknownReading as e:
+        return f"{names!r}: {e.message}"
+
+
+def _reads(actual, want: dict) -> str | None:
+    """{"reads": [names]}: the readings sent stand for every one of these; {"reads_any": [names]}: for at least one; "not": [names]: for
+    none of these. What was sent is read as the service reads it (names or words)."""
+    if actual in (None, "", []):
+        return "no readings sent"
+    got = _resolved(actual)
+    if isinstance(got, str):
+        return got
+    if need := [n for n in want.get("reads", []) if n not in got]:
+        return f"{actual!r} ({', '.join(got)}) lacks {', '.join(need)}"
+    if "reads_any" in want and not set(want["reads_any"]) & set(got):
+        return f"{actual!r} ({', '.join(got)}) has none of {', '.join(want['reads_any'])}"
+    if extra := [n for n in want.get("not", []) if n in got]:
+        return f"{actual!r} ({', '.join(got)}) should not have {', '.join(extra)}"
+    return None
+
+
+FIRST_HELD = date(2022, 10, 1)   # where "on record" starts when a case's period is read (the station's record, as the cases have it)
+
+
+def _period_span(words) -> tuple | str:
+    """(start, end) of a `period` as the service reads it at NOW in the station's zone (lib/periods_text.py), or why it can't."""
+    from zoneinfo import ZoneInfo
+
+    from lib.periods_text import PeriodError, read_period
+    if not isinstance(words, str) or not words.strip():
+        return f"{words!r} is not a period in words"
+    try:
+        p = read_period(words, None, None, now=NOW.replace(tzinfo=ZoneInfo(NOW_TZ)), tz=ZoneInfo(NOW_TZ), default="today",
+                        first_held=FIRST_HELD)
+    except PeriodError as e:
+        return f"{words!r} can't be read: {e.message.split('. ')[0]}"
+    return p.start, p.end
+
+
+def _means(actual, refs) -> str | None:
+    """{"means": words or [words]}: the `period` sent reads, at NOW, as the same span as (one of) these words: "past week", "this week"
+    and "7d" are the same period, "last week" is another."""
+    got = _period_span(actual)
+    if isinstance(got, str):
+        return got
+    refs = refs if isinstance(refs, list) else [refs]
+    if any(_period_span(r) == got for r in refs):
+        return None
+    return f"{actual!r} ({got[0]:%a %d %b %Y %H:%M} to {got[1]:%a %d %b %Y %H:%M}) is not the period of {' or '.join(map(repr, refs))}"
+
+
+ABSENT = object()   # (example_value: the argument is best left out)
+
+
+def example_value(want):
+    """A concrete value that satisfies `want` (_matches), to call the tool with: a matcher's own "e.g.", else the first of any_of /
+    one_of, the names of reads / has; ABSENT where the argument is best left out."""
+    if not isinstance(want, dict):
+        return want
+    if "e.g." in want:
+        return want["e.g."]
+    if "absent" in want:
+        return ABSENT
+    for key in ("one_of", "any_of"):
+        if key in want:
+            return ABSENT if want[key][0] is None else want[key][0]
+    if "reads" in want or "reads_any" in want:
+        return list(want.get("reads") or want["reads_any"][:1])
+    if "means" in want:
+        return want["means"][0] if isinstance(want["means"], list) else want["means"]
+    if "has" in want:
+        return list(want["has"])
+    raise ValueError(f"no example for {want!r}: give it an \"e.g.\"")
+
+
+def expected_tools(expect: dict) -> list[str]:
+    """The tools an expectation would have called (tools, any_tools, first_tool, and those it gives arguments for), each once."""
+    return list(dict.fromkeys([*expect.get("tools", []), *expect.get("any_tools", []),
+                               *([expect["first_tool"]] if "first_tool" in expect else []), *expect.get("args", {})]))
+
+
+def example_calls(expect: dict) -> list[tuple[str, dict]]:
+    """Every call a service expectation describes, made concrete: (tool, arguments) for each tool and each alternative of its arguments
+    (example_value); a tool expected with no arguments named is called with {}."""
+    out = []
+    for tool in expected_tools(expect):
+        want = expect.get("args", {}).get(tool, {})
+        for alternative in (want if isinstance(want, list) else [want]):
+            out.append((tool, {k: v for k, w in alternative.items() if (v := example_value(w)) is not ABSENT}))
+    return out
+
+
+def service_problems(expect: dict | None) -> list[str]:
+    """What is wrong with a case's service expectation itself (no model): missing, an unknown key or tool, an argument the tool doesn't
+    take, an example that doesn't satisfy its own matcher."""
+    if expect is None:
+        return ["no service expectation (tests/evals/service_cases.json)"]
+    fails = [f"unknown keys {sorted(extra)}"] if (extra := set(expect) - EXPECT_KEYS) else []
+    tools = {t.name: t for t in service_tools()}
+    fails += [f"unknown tool {n!r}" for n in dict.fromkeys([*expected_tools(expect), *expect.get("not_tools", [])]) if n not in tools]
+    for tool, want in expect.get("args", {}).items():
+        known = tools[tool].parameters.get("properties", {}) if tool in tools else {}
+        for alternative in (want if isinstance(want, list) else [want]):
+            fails += [f"{tool} takes no argument {k!r}" for k in alternative if tool in tools and k not in known]
+            for k, w in alternative.items():
+                try:
+                    v = example_value(w)
+                except ValueError as e:
+                    fails.append(f"{tool}.{k}: {e}")
+                    continue
+                if v is not ABSENT and (why := _matches(v, w)):
+                    fails.append(f"{tool}.{k}: its example doesn't satisfy it ({why})")
+    return fails
+
+
+async def run_live_service(case: Case, client, model: str, effort: str | None = None) -> tuple[list[tuple[str, dict]], str]:
+    """Ask the model with the ten tools alone and the neutral system line; returns the tool calls it made and its final reply. It may
+    answer with no tool at all (tool_choice auto): a plain client forces nothing."""
+    calls: list[tuple[str, dict]] = []
+    messages = [*case.history, {"role": "user", "content": content(case)}]
+    reply = await Agent(client, model, make_service_tools(calls)).run(messages, service_system(), effort or SERVICE_EFFORT,
+                                                                      tool_choice="auto")
+    return calls, reply
+
+
+async def run_service(cases: list[Case], expectations: dict[str, dict], client=None, model: str = "", *, repeat: int = 1,
+                      effort: str | None = None, out=print) -> int:
+    """The service's evals: each case's expectation checked (service_problems) and, with a client, the model asked `repeat` times with
+    the ten tools alone and its calls scored against it (check_calls), as `--live` scores cases.json. Prints a line per case (`out`);
+    returns how many cases fail."""
+    failed = 0
+    for case in cases:
+        expect = expectations.get(case.id)
+        problems = service_problems(expect)
+        line = "ok" if not problems else "FAIL"
+        if client and not problems:
+            passes = 0
+            for _ in range(repeat):
+                calls, _reply = await run_live_service(case, client, model, effort)
+                why = check_calls(calls, expect)
+                passes += not why
+                problems += [f"  run: {w}" for w in why[:3]] if why else []
+            line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL")
+        out(f"{line:>10}  {case.id}  ({case.ask})")
+        for p in problems:
+            out(f"            {p}")
+        failed += bool(problems)
+    out(f"\n{len(cases) - failed} of {len(cases)} cases pass (the service's ten tools alone)")
+    return failed

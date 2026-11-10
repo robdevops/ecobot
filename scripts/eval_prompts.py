@@ -8,6 +8,13 @@ tools, and checks which tool it called and with what. Nothing is fetched.
     python scripts/eval_prompts.py --live                # and the model
     python scripts/eval_prompts.py --live --effort low   # force a reasoning level to see what it fixes
     python scripts/eval_prompts.py --live --repeat 5 --ids 3m-average,public-holidays   # how reliable is one case?
+
+With --service: the same questions against the service's ten tools alone (lib/service; docs/mcp-service.md, step 2), scored against
+tests/evals/service_cases.json: the model is offered only their names, descriptions and parameters, with a neutral system line and the
+date, time and zone, and none of the bot's prompt, hints or fast path. Without --live it checks the expectations themselves.
+
+    python scripts/eval_prompts.py --service             # every case has a service expectation, each one the tools take
+    python scripts/eval_prompts.py --live --service      # and the model, with the ten tools alone
 """
 
 import asyncio
@@ -25,6 +32,7 @@ async def main() -> int:
     ap.add_argument("--ids", help="comma-separated case ids")
     ap.add_argument("--repeat", type=int, default=1, help="ask the model this many times per case")
     ap.add_argument("--effort", choices=["none", "low", "medium"], help="force this reasoning effort for every case")
+    ap.add_argument("--service", action="store_true", help="the service's ten tools alone, scored against tests/evals/service_cases.json")
     args = ap.parse_args()
     cases = evalkit.load_cases()
     if args.ids:
@@ -37,6 +45,9 @@ async def main() -> int:
             sys.exit("--live needs OPENROUTER_API_KEY (and OPENROUTER_BASE_URL, OPENROUTER_MODEL) in the environment")
         client = AsyncOpenAI(api_key=os.environ["OPENROUTER_API_KEY"], base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
         model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
+    if args.service:
+        failed = await evalkit.run_service(cases, evalkit.load_service_cases(), client, model, repeat=args.repeat, effort=args.effort)
+        return 1 if failed else 0
     failed = 0
     for case in cases:
         problems = evalkit.deterministic(case)
