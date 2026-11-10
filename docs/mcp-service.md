@@ -317,11 +317,11 @@ crossings, particulates (mask on, safe again), pollen and thunderstorm asthma, a
 cooldowns are the service's config, and their state its own store (`alert_state.json`, out of the bot's `bot_state.json`). Each runs
 on the triggers it has today: a new live reading or 5-minute row, a new forecast or pollen page, and its own clock (the weather alerts
 every 60 seconds, particulates every 30 minutes and only then, since its two-readings rule counts readings across checks).
-- **An alert is an event:** `{id, kind, time, expires, title, text, data, [link: {label, url}], [chart], [refresh: {tool, arguments}]}`.
-  `text` is ready to send ("🌧️ It's started raining: 0.4 mm so far"); `data` the figures behind it; `link` the page that goes with it
-  (the AirGradient dashboard for particulates, the pollen site for pollen); `chart` its chart data when it has one (gusts, UV,
-  temperature, particulates); `refresh` the call that draws that chart again with the latest readings (gusts:
-  `summary{readings: ["wind"], period: "last 24 hours", chart: true}`), so a client's 🔄 needs no knowledge of the kinds.
+- **An alert is an event:** `{id, kind, time, expires, title, text, data, [link: {label, url}], [chart]}`. `text` is ready to send
+  ("🌧️ It's started raining: 0.4 mm so far"); `data` the figures behind it; `link` the page that goes with it (the AirGradient
+  dashboard for particulates, the pollen site for pollen); `chart` its chart data when it has one (gusts, UV, temperature,
+  particulates), which like every chart carries the call that drew it (`drawn_by`, 3.7), so a client's 🔄 calls it again for the
+  latest readings with no knowledge of the kinds.
 - **Alerts go stale:** `expires` is set by the rule (rain and gusts about an hour, UV its rearm time, particulates the next check,
   pollen the end of its day, a forecast the day it is about), and `ecobot://alerts?since=` returns only unexpired alerts unless asked.
   A client back after a gap sends what is still true, never the morning's rain as news.
@@ -338,10 +338,14 @@ every 60 seconds, particulates every 30 minutes and only then, since its two-rea
 
 Charts are data: the client draws them, or its model does from the numbers.
 - **`summary` and `days` (with `group_by`) draw** (and `relate` and `scan` when asked); they build the chart as now (`specs.Chart`), next
-  to the reads that chose its resolution, buckets and rose, and return it in the result: `charts: [{title, period, source, panels:
-  [{unit, [label], series: [{name, kind: "line"|"band"|"bars"|"rating", points: [[time, value, (low, high)]]}], [zones], [compass]}]}]`.
-  Times are ISO local times; `source` names the devices ("Ecowitt weather station and AirGradient sensor"). The JSON Schema is in the
-  repository (`schemas/chart.json`) and at `ecobot://schema/chart`, versioned.
+  to the reads that chose its resolution, buckets and rose, and return it in the result: `charts: [{title, period, source, drawn_by,
+  panels: [{unit, [label], series: [{name, kind: "line"|"band"|"bars"|"rating", points: [[time, value, (low, high)]]}], [zones],
+  [compass]}]}]`. Times are ISO local times; `source` names the devices ("Ecowitt weather station and AirGradient sensor"). The JSON
+  Schema is in the repository (`schemas/chart.json`) and at `ecobot://schema/chart`, versioned.
+- **Every chart says how to draw it again:** `drawn_by: {tool, arguments}` is the call that drew it as the service read it, with the
+  readings' names resolved, every default filled in and the period stated, so the same call with only `period` changed draws the same
+  chart over another period, and the same call again draws it with the latest readings. A client's period buttons, or an alert's 🔄,
+  replay it; they need no knowledge of which tool or readings made the chart, and never the model.
 - **Small enough for a model to read and redraw:** each line is bucketed to at most 150 points (the bands with it), so a model can turn
   it into a plot with its own tools and an application can draw it directly. An application that draws for itself asks for more with
   request `_meta` `chart_points` (at most 500, today's budget); the bot asks for 500, so its pictures and golden images don't change.
@@ -415,9 +419,10 @@ service. Beyond what the steps need, it gets no new features. While it lives it:
   the gauges), each a fixed call to a service tool whose result is already worded, so it writes nothing itself;
 - draws `charts` and the gauges (`current` with `context`) with its renderer;
 - listens to `ecobot://alerts` (and, from step 5, `irrigation://alerts`) and sends each alert to the chats subscribed to its kind, with
-  its chart, its link and a 🔄 that calls its `refresh`;
+  its chart, its link and a 🔄 that replays its chart's `drawn_by`;
 - builds `/usage`, Help and its alert menu from `ecobot://station` (and whether an irrigation server is configured);
-- keeps per-chat state: subscriptions, admins, the chart questions behind its period buttons.
+- keeps per-chat state: subscriptions, admins, and each chart's `drawn_by` behind its period buttons (a press replays it with a new
+  `period`).
 
 It is retired when a replacement does what you use it for: another client for questions (any MCP-capable assistant), and, for alerts,
 a client that listens. Its code is then deleted from this repository: `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`,
@@ -452,13 +457,14 @@ Each step ships on its own, with the tests and evals green and the bot working t
 2. **The ten tools, beside the twelve.** The tools of 3.3, built once with their arguments, periods, worded results (`day_look`, ready
    lines, captions), charts, descriptions and errors, and `lib/outlook.py`; offered to no model yet. Contract tests; the evals run
    against them with the tool list alone. The bot's own code paths call them instead of the twelve: its shortcuts, report,
-   lookups, gauges and alert charts, and the calls behind its period buttons (a press calls `summary` again with a new `period`; the
-   buttons themselves, their keyboard and picture cache stay in the bot, and go with it). The service knows nothing of buttons.
+   lookups, gauges and alert charts, and the calls behind its period buttons (a press replays the chart's `drawn_by` with a new
+   `period`; the buttons themselves, their keyboard and picture cache stay in the bot, and go with it). The service knows nothing of
+   buttons.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.
 4. **Alerts in the service.** The rules, their state and config move service-side and append events to the alert log, with `expires`,
-   `link`, `chart` and `refresh`; the forecast alert gets its station-wide baseline. The bot delivers from the log.
+   `link` and `chart` (with its `drawn_by`); the forecast alert gets its station-wide baseline. The bot delivers from the log.
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the
    transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file) with the
    stdio bridge; the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the
@@ -476,7 +482,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
   over from `tests/evals/cases.json`, with their periods checked as the service reads them, and gain one for each periods form, each
   routing rule (a record or a day, a chart or a figure per month), `outlook`, `about` and `chart_answers_it`.
 - **The contract:** a test per tool and resource for the arguments it takes and the shape it returns (`test_contract`); the periods
-  table at its fixed times (step 1); charts against their schema; `day_look` against its rule.
+  table at its fixed times (step 1); charts against their schema; every chart's `drawn_by`, replayed, draws the same chart,
+  and with only `period` changed, the same chart over that period; `day_look` against its rule.
 - `days.hours` gives, for a stretch that is the whole day ("00:00-24:00"), the same figures as its day row for every day held whole at
   5 or 30 minutes (the air sensor's at 5 minutes or an hour), a clock-change day included; a day from a daily record, or from whatever
   readings there were, is left out and counted.
