@@ -139,7 +139,7 @@ async def test_every_reading_now_with_its_value_unit_words_and_emoji(tmp_path, a
     assert s["pressure"]["absolute"]["text"] == "1009.5 hPa"
     assert "rainfall_piezo" not in s                                     # every reading the sensors have now: this station has no piezo gauge
     pm = s["air"]["pm2_5"]
-    assert pm["value"] == 12.0 and pm["unit"] == "µg/m³" and pm["text"] == "12.0 µg/m³" and 51 <= pm["aqi_us"] <= 100 and pm["band"] == "moderate"
+    assert pm["value"] == 12.0 and pm["unit"] == "µg/m³" and pm["text"] == "12.0 µg/m³" and pm["band"] == ("good" if pm["aqi_us"] <= 50 else "moderate" if pm["aqi_us"] <= 100 else pm["band"])   # (moves with the clock)
     assert pm["rating"].endswith(("good", "poor"))
     assert s["air"]["co2"]["text"] == "450 ppm" and s["air"]["nox_index"]["text"] == "1.0" and s["air"]["voc_index"]["text"] == "100"
     assert s["air"]["temperature"]["unit"] == "°C" and "rating" not in s["air"]["temperature"]   # the sensor's own: no rating

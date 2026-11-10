@@ -1386,8 +1386,9 @@
     "note": "a judgement on the conditions now: current, then the model's words"
   },
   "lookup-hottest-today": {
-    "tools": [
-      "summary"
+    "any_tools": [
+      "summary",
+      "current"
     ],
     "args": {
       "summary": {
@@ -1401,9 +1402,18 @@
           ],
           "optional": true
         }
+      },
+      "current": {
+        "context": true,
+        "readings": {
+          "reads_any": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
       }
     },
-    "note": "the high of a short period: summary (today is its default)"
+    "note": "the high of a short period: summary (today is its default); or current with context, whose today carries the high and its time"
   },
   "lookup-hottest-vs": {
     "tools": [

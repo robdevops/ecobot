@@ -105,7 +105,7 @@ def truth(d: date) -> tuple[float, float]:
 def engine_part(out: dict) -> dict:
     """A days result as weather_days and air_days had it: without the service's head, its answer line, charts, looks and sources."""
     out = {k: v for k, v in out.items() if k not in ("period", "as_of", "fresh", "answer", "chart_note", "charts", "reply", "complete",
-                                                    "note", "chart")}
+                                                    "note", "chart", "note_group_by")}
     for key in ("days", "trace_rain_days"):
         if key in out:
             out[key] = [{k: v for k, v in row.items() if k not in ("day_look", "source")} for row in out[key]]
@@ -433,3 +433,15 @@ async def test_charts_are_sent_to_the_requests_budget(world):
     assert chart_of(both)["source"] == "Ecowitt weather station and AirGradient sensor"
     replay = copy.deepcopy(chart_of(both)["drawn_by"]["arguments"])
     assert chart_of(await ask(world, **replay)) == chart_of(both)
+
+
+async def test_one_figure_over_months_says_how_to_get_one_per_month_or_year(world):
+    """A stat or a count over more than a month with no group_by is one figure; the result says how to get one per month or year, so a
+    model that left group_by out ("rain per month") calls again, and it is never the whole answer."""
+    from lib.service.days import GROUP_BY_NOTE
+    whole = await ask(world, stat="sum", of="rain", period="last 90 days", chart_answers_it=True)
+    assert whole["note_group_by"] == GROUP_BY_NOTE and "complete" not in whole
+    assert "note_group_by" not in await ask(world, stat="sum", of="rain", period="last 90 days", group_by="month")
+    assert "note_group_by" not in await ask(world, stat="sum", of="rain", period="last 7 days")   # (a week: one figure is the answer)
+    counted = await ask(world, where=[{"field": "rain", "op": ">=", "value": 1}], count_only=True, period="last 90 days")
+    assert counted["note_group_by"] == GROUP_BY_NOTE

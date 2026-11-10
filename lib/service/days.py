@@ -54,6 +54,8 @@ DEVICES = (STATION, AIR_DEVICE)
 ONLY = {"public_holiday": "public holidays only", "weekend": "weekends only"}   # (the chart's subtitle says which)
 ORDERS = ("desc", "asc")
 OP_WORDS = {"==": "=", "≥": ">=", "≤": "<=", "=>": ">=", "=<": "<="}   # ops written another way
+GROUP_BY_NOTE = ("One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", "
+                 "\"each year\"), call again with group_by \"month\" or \"year\".")
 ARGUMENTS = ("where", "sort_by", "order", "count_only", "group_by", "stat", "of", "limit", "only", "hours", "period", "start", "end",
              "chart_answers_it")
 OLD_NAMES = {"start_date": "start", "end_date": "end"}   # weather_days' and air_days' names
@@ -457,6 +459,8 @@ class DaysTool:
         engine_period = out.pop("period")
         out.pop("chart", None)   # (the bot's hint: chart_note says what to do with a chart)
         out.update(self._notes(call, asked, held, got, checked, days, daily_out, devices, merged, first_held))
+        if (call.stat or call.count_only) and not call.group_by and (last - first).days >= 31:   # one figure over months: was a breakdown meant?
+            out["note_group_by"] = GROUP_BY_NOTE
         line = answer_line(out, engine_period, call.stretch)
         fields = {"answer": line, **({"hours": {"text": call.stretch.text, "how_to_read": HOURS_HOW}} if call.stretch else {}), **out}
         charts = with_charts(turn.charts, tz, meta)
