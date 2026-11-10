@@ -15,7 +15,7 @@ It takes no arguments and reads only what is held, so `fetch` and `priority` cha
 
 from datetime import datetime, tzinfo
 
-from ..alerts.forecast import DRY_BELOW_PCT, RAIN_FROM_PCT, TEMP_CHANGE_C
+from ..alerts.forecast import BASELINE_HOUR, DRY_BELOW_PCT, RAIN_FROM_PCT, TEMP_CHANGE_C
 from ..alerts.particulates import CHECK_SECONDS, MASK_PM10, MASK_PM25, SAFE_PM10, SAFE_PM25
 from ..alerts.pollen_and_asthma import ALERT_FROM, WARN_FROM
 from ..alerts.rules import CONFIRM_READINGS
@@ -47,7 +47,7 @@ WITHOUT = {"Pollen": "pollen and thunderstorm asthma", "Forecast": "forecasts (o
 ALERT_WORDS = {"rain": "rain starting or stopping", "gusts": f"wind gusts over {GUST_ALERT_KMH} km/h",
                "uv": f"UV index of {UVI_ALERT} or more", "temps": "indoor/outdoor temperature crossing",
                "particulates": "air-quality mask alerts", "pollen_and_asthma": "pollen or thunderstorm asthma risk reaching High",
-               "forecast": f"a forecast it sent being revised (rain, or max temperature over {TEMP_CHANGE_C:g} degrees)"}
+               "forecast": f"today's or tomorrow's forecast changing (rain becoming likely or unlikely, or the high moving over {TEMP_CHANGE_C:g} degrees)"}
 # The alert kinds (lib/alerts/menu.py TYPES, copied, without the irrigation controller's: that is a server of its own): kind -> (its name,
 # the source that sends it)
 TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV", "Ecowitt"), "temps": ("temperature crossing", "Ecowitt"),
@@ -183,9 +183,12 @@ def alert_rules() -> dict[str, tuple[str, dict]]:
         "pollen_and_asthma": (f"Grass pollen or the thunderstorm asthma risk forecast {' or '.join(LEVELS[WARN_FROM:])}: once a day from "
                               f"{_clock(*ALERT_FROM)} while it stays there, and again when it rises. October to December only.",
                               {"from_level": LEVELS[WARN_FROM]}),
-        "forecast": (f"A day's forecast revised: its highest temperature by more than {TEMP_CHANGE_C:g}°C, or rain turning likely (a "
-                     f"chance of at least 1 mm of {RAIN_FROM_PCT}% or more) from unlikely ({DRY_BELOW_PCT}% or less), or the reverse.",
-                     {"max_change_c": TEMP_CHANGE_C, "rain_from_pct": RAIN_FROM_PCT, "dry_below_pct": DRY_BELOW_PCT}),
+        "forecast": (f"Today's or tomorrow's forecast revised from the first one fetched after {_clock(BASELINE_HOUR)} that day: its highest "
+                     f"temperature by more than {TEMP_CHANGE_C:g}°C, or the chance of at least 1 mm of rain rising from under {RAIN_FROM_PCT}% "
+                     f"to {RAIN_FROM_PCT}% or more (rain likely), or falling from {RAIN_FROM_PCT}% or more to {DRY_BELOW_PCT}% or less (rain "
+                     "unlikely). The forecast alerted on is the one later forecasts are compared with.",
+                     {"max_change_c": TEMP_CHANGE_C, "rain_likely_from_pct": RAIN_FROM_PCT, "rain_unlikely_at_pct": DRY_BELOW_PCT,
+                      "baseline_from": f"{BASELINE_HOUR:02d}:00"}),
     }
 
 

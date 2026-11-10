@@ -21,13 +21,12 @@ from telegram.ext import Application, Defaults
 from lib import charts
 from lib.airgradient import AirGradient
 from lib.airgradient import metrics as air_metrics
-from lib.alerts.forecast import ForecastMonitor
+from lib.alert_log import AlertLog
 from lib.alerts.irrigation import IrrigationMonitor
 from lib.alerts.menu import LABELS, available_kinds
-from lib.alerts.notify import AlertState, Notifier
-from lib.alerts.particulates import CHECK_SECONDS as PARTICULATES_CHECK_SECONDS, ParticulatesMonitor
-from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
-from lib.alerts.weather import WeatherMonitor
+from lib.alerts.notify import AlertDelivery, AlertState, Notifier
+from lib.alerts.store import AlertStore
+from lib.alerts.weather import WeatherMonitor   # (the weather rules, started by AlertRules; named here for the startup tests)
 from lib.bot import AHEAD_SECONDS, TURN_SECONDS, Bot, Tasks, polling_error
 from lib.ecowitt import Archive, Ecowitt
 from lib.ecowitt.source import HA_IMPORT_SECONDS
@@ -40,6 +39,7 @@ from lib.pollen import Pollen
 from lib.service import Service
 from lib.service import about as service_about
 from lib.service import names as service_names
+from lib.service.alerts import AlertRules
 from lib.service.context import Context
 from lib.compose import Composer
 from lib.sources import Source
@@ -109,29 +109,23 @@ async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
     return sources, cfg
 
 
-def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks) -> tuple[list[str], WeatherMonitor | None]:
-    """Hook up the alert monitor of every source that started and of the irrigation controller. The weather alerts start in
-    warm_up, once the station has been read. Returns the alert types now running, and the weather monitor."""
-    eco, air, pollen, forecast = (bot.by_name.get(name) for name in ("Ecowitt", "AirGradient", "Pollen", "Forecast"))
-    running: list[str] = []
-    weather = WeatherMonitor(eco, bot.state, notify, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours) if eco else None
-    if air:
-        tasks.start(every(PARTICULATES_CHECK_SECONDS, ParticulatesMonitor(air, bot.state, notify).check))
-        running += ParticulatesMonitor.KINDS
-    if forecast:
-        forecast.warmer.after.append(ForecastMonitor(forecast, bot.state, notify).check)   # after each refresh (in the day)
-        running += ForecastMonitor.KINDS
-    if pollen:
-        pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, bot.state, notify).check)  # after each refresh (in the day)
-        running += PollenAndAsthmaMonitor.KINDS
+def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, alert_log: AlertLog) -> tuple[list[str], AlertRules]:
+    """Hook up the service's alert rules over every source that started (lib/service/alerts.py: they append to the alert log, which the
+    bot delivers from, AlertDelivery) and the irrigation controller's (sent by the bot itself until it is a server of its own). The
+    weather rules start in warm_up, once the station has been read. Returns the alert types now running, and the rules."""
+    store = AlertStore(cfg.alert_state_path, moved_from=bot.state)   # (the first start moves the rules' state out of bot_state.json)
+    rules = AlertRules(bot.by_name, store, alert_log, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours, bot.service)
+    tasks.start(AlertDelivery(alert_log, notify, bot.state, cfg.tz).run())
+    running = rules.start(tasks)
     if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, eco, forecast).run())
+        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, bot.by_name.get("Ecowitt"),
+                                      bot.by_name.get("Forecast")).run())
         tasks.start(every(VALVE_CHECK_SECONDS, bot.watchdog.check))
         running += IrrigationMonitor.KINDS
-    return running, weather
+    return running, rules
 
 
-async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], tasks: Tasks, tg_bot=None):
+async def warm_up(bot: Bot, rules: AlertRules | None, running: list[str], tasks: Tasks, tg_bot=None):
     """Fetch everything once, together, and log one summary line; then start what waited for it: the weather alerts, the
     archives (copying each source's history into its cache), the keyboard's charts drawn ahead every few minutes."""
     eco, air = bot.by_name.get("Ecowitt"), bot.by_name.get("AirGradient")
@@ -141,12 +135,8 @@ async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], 
         # from what was just fetched. A failed first refresh must not stop the alerts or the archive: safely() logs it
         await safely(eco.warm, True)
         try:
-            await weather.init()
-            eco.warmer.after.append(weather.check)  # checked on every fresh refresh
-            running[:0] = WeatherMonitor.KINDS
-            await weather.check()
-            if eco.fast is not None:   # Home Assistant: the rain alert looks at each new reading as it comes in, not only at the minute's refresh
-                eco.on_live.append(weather.check_rain)
+            if rules is not None:
+                await rules.start_weather(running)
         except Exception as e:
             log.error("Weather alerts couldn't start (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
         if eco.fast is not None:
@@ -259,6 +249,8 @@ async def main():
         else:
             log.warning("OPENROUTER_API_KEY is not set: running without the model, so answers are limited")
         state = AlertState(cfg.state_path)
+        alert_log = AlertLog(cfg.alert_log_path, cfg.tz)   # the alerts the rules decide, which the bot delivers
+        stack.callback(alert_log.close)
         if cfg.admin_only and not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
             log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                         "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
@@ -271,7 +263,8 @@ async def main():
         service = Service.of(await Context.open(eco=eco, air=air, composer=composer, forecast=by_name.get("Forecast"),
                                                 pollen=by_name.get("Pollen"), tz=cfg.tz))
         log.info("Service tools: %s", ", ".join(t.name for t in service))
-        bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(service)), sources, state, irrigation, tasks, service=service)
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(service)), sources, state, irrigation, tasks, service=service,
+                  alert_log=alert_log)
 
         bot.register(app)
         stop = asyncio.Event()
@@ -299,10 +292,10 @@ async def main():
                 log.info("%s", line)
         notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
         await bot.publish_commands(app.bot)   # the / menu
-        running, weather = start_alerts(cfg, bot, notify, tasks)
+        running, rules = start_alerts(cfg, bot, notify, tasks, alert_log)
         for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
             tasks.start(source.warmer.run())
-        tasks.start(warm_up(bot, weather, running, tasks, app.bot))
+        tasks.start(warm_up(bot, rules, running, tasks, app.bot))
         await stop.wait()
 
 

@@ -1,13 +1,14 @@
-import json
+"""The forecast alert, station-wide (docs/mcp-service.md 3.6): today's and tomorrow's forecast against the day's baseline (the first one
+fetched from 6 am), an alert when the high moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or
+less), the alerted forecast the new baseline."""
+
 from datetime import date, datetime, time as dtime, timedelta
 
-from lib.alerts.forecast import ForecastMonitor, revised
-from lib.alerts.notify import AlertState, Notifier
-from lib.forecast import Forecast
-from lib.tools import Turn
-from tests.fakes import TZ, config
-from tests.test_forecast import make
-from tests import old_tools
+from lib.alert_log import AlertLog
+from lib.alerts.forecast import ForecastMonitor, changes, revised
+from lib.alerts.store import AlertStore
+from tests.fakes import TZ
+from tests.test_alerts import Texts
 
 TODAY = date(2026, 10, 3)
 
@@ -17,195 +18,143 @@ def day(offset, max_c=20.0, pct=10, summary="☀️ Clear.", min_c=10.0):
 
 
 class FakeForecast:
-    """Just what the monitor reads: today and the current days."""
+    """Just what the monitor reads: the time, the days, when they were fetched."""
+    tz = TZ
 
-    def __init__(self, days):
-        self.days = days
+    def __init__(self, days, hour=12, minute=0, today=TODAY):
+        self.days, self.today, self.hour, self.minute = days, today, hour, minute
+        self.fetched_at = self.at(hour, minute)
+
+    def at(self, hour, minute=0) -> float:
+        return datetime.combine(self.today, dtime(hour, minute), TZ).timestamp()
 
     def now(self):
-        return datetime.combine(TODAY, dtime(12, 0))
+        return datetime.combine(self.today, dtime(self.hour, self.minute))
+
+    def fetch(self, days, hour=None, minute=0):
+        """A refresh: these days, fetched now (or at `hour`)."""
+        if hour is not None:
+            self.hour, self.minute = hour, minute
+        self.days, self.fetched_at = days, self.at(self.hour, self.minute)
 
 
-class FakeBot:
-    def __init__(self):
-        self.sent = []
-
-    async def send_message(self, chat_id, text, **kw):
-        self.sent.append((chat_id, text))
+def setup(tmp_path, days, **kw):
+    store, log = AlertStore(tmp_path / "alert_state.json"), AlertLog(tmp_path / "alerts.sqlite", TZ)
+    forecast = FakeForecast(days, **kw)
+    return ForecastMonitor(forecast, store, log), forecast, Texts(log)
 
 
-def setup(tmp_path, days):
-    state, bot = AlertState(tmp_path / "s.json"), FakeBot()
-    for chat in (1, 2):
-        state.add_chat(chat, f"chat {chat}")
-    forecast = FakeForecast(days)
-    return ForecastMonitor(forecast, state, Notifier(bot, state)), forecast, state, bot
-
-
-def test_substantial_means_rain_flips_or_a_max_temperature_over_2_degrees_different():
+def test_substantial_means_rain_becoming_likely_or_unlikely_or_a_max_temperature_over_2_degrees_different():
     base = day(0, max_c=20.0, pct=95)
     assert revised(base, day(0, max_c=20.0, pct=10)) and revised(day(0, pct=10), day(0, pct=80))
-    assert not revised(base, day(0, pct=60)) and not revised(base, day(0, pct=35)) and not revised(day(0, pct=20), day(0, pct=40))
+    assert revised(day(0, pct=49), day(0, pct=50))                                                    # likely: up past 50, however little
+    assert revised(base, day(0, pct=30)) and not revised(base, day(0, pct=31))                        # unlikely: down to 30 or less
+    assert not revised(base, day(0, pct=49)) and not revised(day(0, pct=50), day(0, pct=45))          # into the band between: nothing
+    assert not revised(base, day(0, pct=50)) and not revised(day(0, pct=20), day(0, pct=49))          # on one side of 50
     assert not revised(day(0, max_c=20.0), day(0, max_c=22.0)) and not revised(day(0, max_c=20.0), day(0, max_c=18.0))
     assert revised(day(0, max_c=20.0), day(0, max_c=22.1)) and revised(day(0, max_c=20.0), day(0, max_c=17.9))
     assert not revised(day(0, max_c=None, pct=None), day(0, max_c=25.0, pct=90))          # nothing to compare
-
-
-async def test_a_day_sent_as_rainy_that_turns_dry_is_told_once_to_that_chat(tmp_path):
-    mon, forecast, state, bot = setup(tmp_path, [day(0, pct=95, summary="⛈️ Thunderstorm."), day(1)])
-    state.record_forecast(1, [day(0, pct=95, summary="⛈️ Thunderstorm."), day(1)], TODAY)
-    await mon.check()
-    assert bot.sent == []                                            # unchanged
-    forecast.days = [day(0, pct=10, summary="☀️ Clear."), day(1)]
-    await mon.check()
-    await mon.check()                                                # the same revision does not repeat
-    assert len(bot.sent) == 1 and bot.sent[0][0] == 1
-    text = bot.sent[0][1]
-    assert text.startswith("🔄 The forecast has changed since I sent it:\n• Today: was ⛈️ Thunderstorm. 10–20°C, 95% chance of rain\n  now ☀️ Clear. 10–20°C, 10% chance of rain")
-    assert state.forecast_sent(1)[TODAY]["rain_chance_pct"] == 10    # the new baseline
-
-
-async def test_dry_to_rain_and_max_temperature_changes_alert_and_a_further_change_alerts_again(tmp_path):
-    mon, forecast, state, bot = setup(tmp_path, [day(0), day(1, max_c=20.0)])
-    state.record_forecast(1, [day(0), day(1, max_c=20.0)], TODAY)
-    forecast.days = [day(0, pct=80, summary="🌦️ Showers."), day(1, max_c=22.1)]
-    await mon.check()
-    assert len(bot.sent) == 1                                        # two changed days: one message
-    assert "• Today: was" in bot.sent[0][1] and "• Sunday: was" in bot.sent[0][1]
-    forecast.days = [day(0, pct=80, summary="🌦️ Showers."), day(1, max_c=24.3)]    # 2.2 from the new baseline
-    await mon.check()
-    assert len(bot.sent) == 2 and bot.sent[1][1].count("• ") == 1
-
-
-async def test_small_changes_past_days_muted_chats_and_chats_never_sent_a_forecast_are_left_alone(tmp_path):
-    mon, forecast, state, bot = setup(tmp_path, [day(0), day(1)])
-    state.record_forecast(1, [day(0), day(1)], TODAY)
-    forecast.days = [day(0, max_c=21.9, pct=40), day(1, max_c=18.5)]
-    await mon.check()
-    assert bot.sent == []                                            # inside the thresholds
-    state.record_forecast(1, [day(-1, pct=90), day(0), day(1)], TODAY)
-    forecast.days = [day(0, pct=70), day(1)]                         # yesterday is not in the forecast any more; today flips
-    await mon.check()
-    assert len(bot.sent) == 1 and "Yesterday" not in bot.sent[0][1] and bot.sent[0][1].count("• ") == 1
-    state.record_forecast(2, [day(0, pct=90)], TODAY)
-    state.set_alerts(2, False)
-    forecast.days = [day(0, pct=5), day(1)]
-    await mon.check()
-    assert [chat for chat, _ in bot.sent] == [1, 1] and state.forecast_sent(2)[TODAY]["rain_chance_pct"] == 90   # muted: not told, not reset
-
-
-async def test_a_revised_day_leaves_the_other_days_sent_with_it_to_be_told(tmp_path):
-    week = [day(i) for i in range(7)]
-    mon, forecast, state, bot = setup(tmp_path, week)
-    state.record_forecast(1, week, TODAY)
-    forecast.days = [*week[:2], day(2, pct=80), *week[3:]]          # Monday turns rainy
-    await mon.check()
-    forecast.days = [week[0], day(1, pct=80), day(2, pct=80), *week[3:]]   # then Sunday does
-    await mon.check()
-    assert len(bot.sent) == 2 and "• Monday: was" in bot.sent[0][1] and "• Sunday: was" in bot.sent[1][1]
-    assert sorted(state.forecast_sent(1)) == [d["date"] for d in week]
-
-
-async def test_an_answer_about_later_days_leaves_today_to_be_told(tmp_path):
-    mon, forecast, state, bot = setup(tmp_path, [day(0, pct=90), day(1)])
-    state.record_forecast(1, [day(0, pct=90), day(1)], TODAY)       # the morning report
-    state.record_forecast(1, [day(1)], TODAY)                        # "what about tomorrow?"
-    forecast.days = [day(0, pct=5), day(1)]
-    await mon.check()
-    assert len(bot.sent) == 1 and "• Today: was" in bot.sent[0][1]
-
-
-async def test_what_was_sent_survives_a_restart_and_is_not_repeated(tmp_path):
-    mon, forecast, state, bot = setup(tmp_path, [day(0, pct=90)])
-    state.record_forecast(1, [day(0, pct=90)], TODAY)
-    again = AlertState(tmp_path / "s.json")
-    assert again.forecast_sent(1)[TODAY]["rain_chance_pct"] == 90
-    forecast.days = [day(0, pct=5)]
-    mon2 = ForecastMonitor(forecast, again, Notifier(bot, again))
-    await mon2.check()
-    assert len(bot.sent) == 1
-    await ForecastMonitor(forecast, AlertState(tmp_path / "s.json"), Notifier(bot, again)).check()
-    assert len(bot.sent) == 1                                        # the new baseline was saved too
-
-
-async def forecast_result(forecast, period="next 2 days") -> dict:
-    """What the service's forecast answers the model."""
-    from lib.service import Service
-    from lib.service.context import Context
-    return json.loads(await Service.of(Context(forecast=forecast, tz=TZ))["forecast"].call({"period": period}))
-
-
-async def test_the_forecast_days_a_result_shows_are_noted_for_the_chat_and_a_failure_notes_none(tmp_path):
-    from types import SimpleNamespace as NS
-    from lib.bot import Bot
-    forecast, _ = make(tmp_path)
-    await forecast.start()
-    bot = Bot(NS(tz=TZ), None, [forecast], AlertState(tmp_path / "s.json"))
-    shown = bot._shown_forecast(await forecast_result(forecast))
-    assert [d["date"] for d in shown] == [forecast.now().date(), forecast.now().date() + timedelta(days=1)]
-    assert shown[0]["max_c"] == 16 and shown[0]["rain_chance_pct"] == 40
-    assert bot._shown_forecast({"error": "No forecast is available right now."}) == [] and bot._shown_forecast(None) == []
-    await forecast.close()
-
-
-async def test_a_delivered_answer_records_the_forecast_for_its_chat_and_an_undelivered_one_does_not(tmp_path):
-    from types import SimpleNamespace as NS
-    from telegram.error import TelegramError
-    from lib.bot import Bot
-    forecast, _ = make(tmp_path)
-    await forecast.start()
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(1, "chat")
-
-    class Agent:
-        tools = None
-
-        async def run(self, messages, system, effort, turn=None, **k):
-            turn.results.append(("forecast", {"period": "next 2 days"}, await forecast_result(forecast)))   # (as lib/model_tools.py keeps it)
-            return "Today: showers"
-    bot = Bot(NS(tz=TZ), Agent(), [forecast], state)
-
-    def update(fail):
-        async def reply_text(body, **kw):
-            if fail:
-                raise TelegramError("down")
-        msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-                 chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-        return NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-
-    async def send_chat_action(*a, **k):
-        pass
-    ctx = NS(bot=NS(send_chat_action=send_chat_action, id=99))
-    await bot.respond(update(True), ctx, "what's the forecast")
-    assert state.forecast_sent(1) == {}                              # not delivered: not "sent"
-    await bot.respond(update(False), ctx, "what's the forecast")
-    assert sorted(state.forecast_sent(1)) == [forecast.now().date(), forecast.now().date() + timedelta(days=1)]
-    await forecast.close()
-
-
-async def test_an_alert_for_one_chat_goes_to_it_alone_and_a_blocked_one_is_marked_gone(tmp_path):
-    from telegram.error import Forbidden
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(1, "a")
-    state.add_chat(2, "b")
-    sent = []
-
-    class Bot:
-        async def send_message(self, chat_id, text, **kw):
-            if chat_id == 2:
-                raise Forbidden("bot was blocked by the user")
-            sent.append((chat_id, text))
-    notifier = Notifier(Bot(), state)
-    assert await notifier("hello", kind="forecast", chats=[1]) == 1 and [c for c, _ in sent] == [1] and sent[0][1] == "hello"
-    assert await notifier("hello", kind="forecast", chats=[2]) == 0 and state.chats[2]["gone"]
+    assert changes(day(0, max_c=24.0, pct=10), day(0, max_c=19.0, pct=80)) == ["the high is now 19°C (was 24°C)",
+                                                                               "rain is now likely (80%, was 10%)"]
 
 
 def test_a_revision_compares_the_one_millimetre_chance_when_both_days_have_it_and_the_older_figure_otherwise():
-    from lib.alerts.forecast import revised
     day = lambda **k: {"max_c": 18, **k}
     assert revised(day(rain_1mm_pct=60), day(rain_1mm_pct=25))                       # rainy -> dry
     assert revised(day(rain_1mm_pct=20), day(rain_1mm_pct=55))                       # dry -> rainy
-    assert not revised(day(rain_1mm_pct=45), day(rain_1mm_pct=35))                   # a wobble in between
+    assert not revised(day(rain_1mm_pct=45), day(rain_1mm_pct=35))                   # under 50 both times
     assert not revised(day(rain_chance_pct=94, rain_1mm_pct=95), day(rain_chance_pct=20, rain_1mm_pct=90))   # the new figure decides
     assert revised(day(rain_chance_pct=90), day(rain_chance_pct=10))                 # only the older figure on either side: as before
     assert not revised(day(rain_chance_pct=94), day(rain_1mm_pct=50))                # an old baseline vs a new figure: not compared
+
+
+async def test_the_first_forecast_fetched_from_6am_is_the_baseline_and_alerts_nothing(tmp_path):
+    mon, forecast, sent = setup(tmp_path, [day(0, pct=90), day(1)], hour=5, minute=50)
+    await mon.check()                                                # before 6 am: no baseline yet
+    assert mon.state.monitor.get("forecast") is None
+    forecast.fetch([day(0, pct=90), day(1)], hour=6, minute=5)
+    forecast.hour, forecast.fetched_at = 6, forecast.at(5, 55)       # (6 am, but the forecast held was fetched before it)
+    await mon.check()
+    assert mon.state.monitor.get("forecast") is None
+    forecast.fetch([day(0, pct=90), day(1), day(2)], hour=6, minute=15)
+    await mon.check()
+    m = mon.state.monitor["forecast"]
+    assert m["day"] == "2026-10-03" and sorted(m["baseline"]) == ["2026-10-03", "2026-10-04"] and sent == []   # today and tomorrow
+    assert m["baseline"]["2026-10-03"]["rain_chance_pct"] == 90
+
+
+async def test_a_move_of_the_high_over_2_degrees_alerts_with_what_changed_and_becomes_the_baseline(tmp_path):
+    mon, forecast, sent = setup(tmp_path, [day(0), day(1, max_c=24.0)], hour=6, minute=15)
+    await mon.check()                                                # the baseline
+    forecast.fetch([day(0), day(1, max_c=22.5)], hour=9)
+    await mon.check()
+    assert sent == []                                                # 1.5 degrees: inside the threshold
+    forecast.fetch([day(0), day(1, max_c=19.0, pct=80, summary="🌧️ Rain.")], hour=10)
+    await mon.check()
+    assert sent == ["🔄 The forecast for tomorrow has changed: the high is now 19°C (was 24°C) and rain is now likely (80%, was 10%).\n"
+                    "Now: 🌧️ Rain. 10–19°C, 80% chance of rain"]
+    (event,) = sent.events
+    assert event["kind"] == "forecast" and event["title"] == "The forecast for tomorrow changed"
+    assert event["data"] == {"date": "2026-10-04", "was": {"max_c": 24.0, "rain_chance_pct": 10, "summary": "☀️ Clear."},
+                             "now": {"max_c": 19.0, "rain_chance_pct": 80, "summary": "🌧️ Rain."}}
+    assert event["expires"] == "2026-10-05T00:00:00+11:00"          # news until the end of the day it is about
+    assert mon.state.monitor["forecast"]["baseline"]["2026-10-04"]["max_c"] == 19.0   # the new baseline
+    forecast.fetch([day(0), day(1, max_c=20.5, pct=80, summary="🌧️ Rain.")], hour=11)
+    await mon.check()
+    assert len(sent) == 1                                            # 1.5 from the new baseline: nothing
+    forecast.fetch([day(0), day(1, max_c=21.5, pct=80, summary="🌧️ Rain.")], hour=12)
+    await mon.check()
+    assert len(sent) == 2 and "the high is now 22°C (was 19°C)" in sent[1]   # 2.5 from it: told
+
+
+async def test_rain_crossing_50_alerts_each_way_and_today_and_tomorrow_are_separate_alerts(tmp_path):
+    mon, forecast, sent = setup(tmp_path, [day(0, pct=40), day(1, pct=60), day(2)], hour=7)
+    await mon.check()
+    forecast.fetch([day(0, pct=55), day(1, pct=30), day(2, pct=90)], hour=8)   # both cross; the day after tomorrow is not watched
+    await mon.check()
+    assert [t.split(":")[0] for t in sent] == ["🔄 The forecast for today has changed", "🔄 The forecast for tomorrow has changed"]
+    assert "rain is now likely (55%, was 40%)" in sent[0] and "rain is now unlikely (30%, was 60%)" in sent[1]
+    forecast.fetch([day(0, pct=60), day(1, pct=20), day(2, pct=90)], hour=9)   # further, on the same side: nothing
+    await mon.check()
+    assert len(sent) == 2
+
+
+async def test_a_chance_hovering_around_50_alerts_once_not_on_every_revision(tmp_path):
+    mon, forecast, sent = setup(tmp_path, [day(0), day(1, pct=45)], hour=6, minute=15)
+    await mon.check()                                                # the baseline: tomorrow 45%
+    for hour, pct in zip(range(7, 12), (50, 45, 50, 45, 55)):         # the ensemble's chance, rounded to 5%, between model runs
+        forecast.fetch([day(0), day(1, pct=pct)], hour=hour)
+        await mon.check()
+    assert len(sent) == 1 and "rain is now likely (50%, was 45%)" in sent[0]
+    forecast.fetch([day(0), day(1, pct=30)], hour=12)                # well down: unlikely, told once
+    await mon.check()
+    assert len(sent) == 2 and "rain is now unlikely (30%, was 50%)" in sent[1]
+    forecast.fetch([day(0), day(1, pct=45)], hour=13)                # back into the band: nothing
+    await mon.check()
+    assert len(sent) == 2
+
+
+async def test_a_new_day_starts_a_new_baseline_and_a_restart_keeps_it(tmp_path):
+    mon, forecast, sent = setup(tmp_path, [day(0), day(1)], hour=7)
+    await mon.check()
+    again = ForecastMonitor(forecast, AlertStore(mon.state.path), mon.alerts)        # a restart: the baseline is in the store
+    forecast.fetch([day(0, pct=80), day(1)], hour=8)
+    await again.check()
+    assert len(sent) == 1 and "today" in sent[0]
+    forecast.today += timedelta(days=1)                                               # the next day: its first forecast is the baseline
+    forecast.fetch([day(1, max_c=30.0), day(2)], hour=6, minute=10)
+    await again.check()
+    assert len(sent) == 1 and again.state.monitor["forecast"]["day"] == "2026-10-04"
+
+
+async def test_the_old_per_chat_forecast_record_is_dropped_and_nothing_fires_after_the_upgrade(tmp_path):
+    from lib.alerts.notify import AlertState
+    bot_state = AlertState(tmp_path / "bot_state.json")
+    bot_state.add_chat(1, "chat")
+    bot_state.monitor["forecast_sent"] = {"1": {TODAY.isoformat(): {**day(0, pct=90), "date": TODAY.isoformat()}}}
+    bot_state.save()
+    store = AlertStore(tmp_path / "alert_state.json", moved_from=AlertState(bot_state.path))
+    assert "forecast_sent" not in AlertState(bot_state.path).monitor and "forecast_sent" not in store.monitor
+    mon = ForecastMonitor(FakeForecast([day(0, pct=5)], hour=14), store, AlertLog(tmp_path / "alerts.sqlite", TZ))
+    await mon.check()                                                 # the first look after the upgrade: the baseline, no alert
+    assert Texts(mon.alerts) == []

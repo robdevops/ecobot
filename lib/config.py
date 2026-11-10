@@ -249,6 +249,16 @@ class Config:
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
 
     @property
+    def alert_state_path(self) -> Path:
+        """The alert rules' own state (lib/alerts/store.py), beside the bot's."""
+        return self.state_path.parent / "alert_state.json"
+
+    @property
+    def alert_log_path(self) -> Path:
+        """The alert log (lib/alert_log.py), beside the bot's state."""
+        return self.state_path.parent / "alerts.sqlite"
+
+    @property
     def homeassistant(self) -> bool:
         return bool(self.homeassistant_url and self.homeassistant_token)
 
