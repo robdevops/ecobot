@@ -311,6 +311,26 @@ async def test_with_context_every_gauge_the_station_sends_is_there_though_its_fi
     await close(tool)
 
 
+async def test_a_reading_named_in_full_that_the_file_hasnt_recorded_is_answered_from_the_reading_now(tmp_path, archived_cache):
+    """current is about now: a reading the service knows, named in full, that the station sends but the file hasn't recorded yet (a new
+    station's first minutes) is answered, not refused; a word still reads the file's catalogue. So the gauges name their readings and
+    only the station is read: the air sensor isn't asked (a slow one doesn't hold up the dashboard)."""
+    from lib import gauge_sheet
+    tool, _, sensor = await world(tmp_path, archived_cache, catalogue="file")
+    assert "outdoor.feels_like" not in tool.ctx.readings()
+    got = await call(tool, readings=["outdoor.feels_like", "rainfall.rain_rate", "temperature"])
+    assert got["sensors"]["outdoor"]["feels_like"]["text"] == "12.3 °C" and got["sensors"]["rainfall"]["rain_rate"]["value"] == 1.8
+    assert got["sensors"]["outdoor"]["temperature"]["value"] == 12.3 and "error" not in got
+
+    async def no_air(*a, **k):
+        raise AssertionError("the gauges don't read the air sensor")
+    sensor.latest = no_air
+    gauges = await call(tool, **gauge_sheet.call())
+    assert "air" not in gauges["sensors"] and gauges["sensors"]["outdoor"]["feels_like"]["today"]["high"] == 12.3
+    assert gauge_sheet.sheet(gauges) is not None
+    await close(tool)
+
+
 async def test_a_high_or_low_is_the_day_rows_with_its_day_or_the_live_reading_when_it_beats_them(tmp_path, archived_cache):
     tool, station, _ = await world(tmp_path, archived_cache)
     got = await call(tool, readings=["outdoor temperature"], context=True)

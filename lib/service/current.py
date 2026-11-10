@@ -40,7 +40,7 @@ from ..storage.read import Reader
 from ..timeutil import clock_text, day_text, to_local
 from .common import BACKGROUND, Refusal, ServiceTool, answer
 from .context import Context
-from .names import AIR_DEVICE, STATION, Catalogue, Reading
+from .names import AIR_DEVICE, CATALOGUE, STATION, Catalogue, Reading, _split
 
 log = logging.getLogger(__name__)
 
@@ -222,6 +222,20 @@ def now_shaped(live: dict, tz: tzinfo) -> tuple[dict, int]:
                 except (TypeError, ValueError):
                     pass
     return {**out, **({"emoji": emoji} if emoji else {})}, newest
+
+
+def _resolve(catalogue, names, *, default) -> list[Reading]:
+    """The readings named, as the catalogue reads them; a reading's full name that the file hasn't recorded yet but the service knows
+    (names.CATALOGUE) counts too, since current answers from the reading now (a new station's first minutes, a gauge's reading)."""
+    known = [w for w in _split(names) if " ".join(w.lower().split()) not in catalogue and " ".join(w.lower().split()) in CATALOGUE]
+    if not known:
+        return catalogue.resolve(names, default=default)
+    out: dict[str, Reading] = {}
+    for word in _split(names):
+        exact = " ".join(word.lower().split())
+        for r in [CATALOGUE.get(exact)] if word in known else catalogue.resolve(word, default=[]):
+            out.setdefault(r.name, r)
+    return list(out.values())
 
 
 def unrecorded(live: dict, listed: set[str]) -> list[Reading]:
@@ -406,7 +420,7 @@ class CurrentTool:
         catalogue = self.ctx.readings()
         here = [r for r in catalogue if r.device in self.devices]
         named = args.get("readings") not in (None, "", [])
-        asked = catalogue.resolve(args.get("readings"), default=[r.name for r in here])
+        asked = _resolve(catalogue, args.get("readings"), default=[r.name for r in here])
         if named and (absent := [r for r in asked if r.device not in self.devices]):
             device = "weather station" if absent[0].device == STATION else "air sensor"
             raise Refusal(f"{absent[0].name} is the {device}'s, and this service has no {device}.", names=[r.name for r in here])

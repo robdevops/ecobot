@@ -1022,6 +1022,21 @@
             null
           ]
         },
+        "order": {
+          "one_of": [
+            "desc",
+            null
+          ]
+        },
+        "count_only": {
+          "one_of": [
+            false,
+            null
+          ]
+        },
+        "stat": {
+          "absent": true
+        },
         "period": {
           "means": "this week"
         }

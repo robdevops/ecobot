@@ -190,7 +190,9 @@ async def test_a_replayed_chart_that_cannot_be_drawn_or_sent_says_sorry_on_the_b
     bot.charted.remember(1, 50, record)
     answers = []
 
-    async def answer(text=None, **k):
+    async def answer(text=None, **k):   # Telegram takes one answer per press
+        if answers:
+            raise BadRequest("Query is too old and response timeout expired or query id is invalid")
         answers.append(text)
 
     def broken(data, tz, times=None):
@@ -202,9 +204,13 @@ async def test_a_replayed_chart_that_cannot_be_drawn_or_sent_says_sorry_on_the_b
     async def offline(media, reply_markup=None):
         raise NetworkError("connection reset")
     monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
-    msg.edit_media, answers[:] = offline, []
-    await bot.on_period_button(press(msg, "pd:1y", answer), CONTEXT)   # Telegram failing other than refusing the edit
-    assert answers == ["Drawing 1Y...", SORRY]
+    said = []
+
+    async def reply_text(text, **k):
+        said.append(text)
+    msg.edit_media, msg.reply_text, answers[:] = offline, reply_text, []
+    await bot.on_period_button(press(msg, "pd:1y", answer), CONTEXT)   # Telegram failing other than refusing the edit, after "Drawing"
+    assert answers == ["Drawing 1Y..."] and said == [SORRY]            # (the press is answered once: the sorry goes in the chat)
 
 
 async def test_a_button_on_a_chart_from_before_a_restart_says_so(alert_state, monkeypatch):

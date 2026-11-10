@@ -399,3 +399,27 @@ def test_the_script_runs_the_service_evals_offline_and_needs_a_key_to_ask_a_mode
     assert run.returncode == 0 and "2 of 2 cases pass (the service's ten tools alone)" in run.stdout
     run = script("--live", "--service")
     assert run.returncode != 0 and "--live needs OPENROUTER_API_KEY" in run.stderr
+
+
+def test_a_rolling_period_in_words_is_not_a_month_that_its_days_happen_to_cover():
+    """A period sent in words is read as words: "last 28 days" is not "September", though on the 29th its whole days to yesterday are
+    1 to 28 September; start and end are still read in whole days as days reads them."""
+    from tests import evalkit as ek
+    for words in ("last 28 days", "4w", "past 4 weeks"):
+        assert ek._means({"period": words}, "September", "days") is not None
+        assert ek._means({"period": words}, "this month", "days") is not None
+    assert ek._means({"period": "September"}, "September", "days") is None
+    assert ek._means({"start": "2026-09-01"}, "September", "days") is None
+
+
+def test_the_hottest_day_ranked_by_days_must_be_the_hottest():
+    """think-hottest-week's days call ranks the hottest first: the coldest (order asc), a count or a statistic isn't the answer."""
+    from tests import evalkit as ek
+    want = ek.load_service_cases()["think-hottest-week"]["args"]["days"]
+
+    def fails(args):
+        return [k for k, w in want.items() if k != "period" and ek._matches(args.get(k), w)]
+    assert fails({"sort_by": "temp_max", "period": "this week"}) == []
+    assert fails({"sort_by": "temp_max", "order": "asc"}) == ["order"]
+    assert fails({"sort_by": "temp_max", "count_only": True}) == ["count_only"]
+    assert fails({"stat": "avg", "of": "temp_avg"}) == ["stat"]

@@ -75,7 +75,7 @@ All of this is what a client other than the bot would not know, so it has to mov
 
 | Stays (the service) | Leaves |
 |---|---|
-| `lib/storage`, `lib/ecowitt` (less the gauges' look), `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/snapshots.py`, `lib/warm.py`, `lib/history.py`, `lib/compose.py`, `lib/daytable.py`, `lib/analysis`, `lib/lines.py`, `lib/panels.py`, `lib/rain.py`, `lib/specs.py` (chart data), the alert rules (`lib/alerts/weather.py`, `particulates.py`, `forecast.py`, `pollen_and_asthma.py`, `rules.py`), and new: `lib/mcp_server.py`, `lib/periods_text.py` (3.2), `lib/service/` (the tools of 3.3 and what they share), `lib/outlook.py` (3.3), `lib/alert_log.py` (3.6) | **To each client:** Telegram, the model loop, the persona and style of answers, drawing (`lib/charts.py`, `lib/draw.py`, `lib/gauges.py`, and the gauges' layout and colours, `GAUGES` from `lib/ecowitt/dashboard.py` and `lib/gauge_sheet.py`), delivering alerts, per-chat state. **To the irrigation server's repository:** `lib/irrigation`, `lib/alerts/irrigation.py`. **Deleted with the bot:** `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`, `lib/report.py`, the menus and keyboards |
+| `lib/storage`, `lib/ecowitt` (less the gauges' look), `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/snapshots.py`, `lib/warm.py`, `lib/history.py`, `lib/compose.py`, `lib/daytable.py`, `lib/analysis`, `lib/lines.py`, `lib/panels.py`, `lib/rain.py`, `lib/specs.py` (chart data), the alert rules (`lib/alerts/weather.py`, `particulates.py`, `forecast.py`, `pollen_and_asthma.py`, `rules.py`), and new: `lib/mcp_server.py`, `lib/periods_text.py` (3.2), `lib/service/` (the tools of 3.3 and what they share), `lib/service/outlook.py` (3.3), `lib/alert_log.py` (3.6) | **To each client:** Telegram, the model loop, the persona and style of answers, drawing (`lib/charts.py`, `lib/draw.py`, `lib/gauges.py`, and the gauges' layout and colours, `GAUGES` from `lib/ecowitt/dashboard.py` and `lib/gauge_sheet.py`), delivering alerts, per-chat state. **To the irrigation server's repository:** `lib/irrigation`, `lib/alerts/irrigation.py`. **Deleted with the bot:** `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`, `lib/report.py`, the menus and keyboards |
 
 ### 3.2 An interface any model can use
 
@@ -209,10 +209,10 @@ low_when, high…}], [month…], [year…]}}, "rainfall": {"rain": {…, [today:
 bot's gauges show (rain as totals and its wettest day, wind's highest gust); with `context` and no readings named, every gauge's reading
 the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them.
 
-**`outlook`'s result** is the prompt's outlook rules, worked out by the service (`lib/outlook.py`) from the reading now and the last 3
-hours: `{as_of, verdict: "likely"|"possible"|"unlikely", reason: "pressure down 2.4 hPa in 3 hours, humidity 91%", pressure: {change_hpa,
-tendency, level, text}, moisture: {humidity, dew_point_spread}, recent_rain, wind_trend, forecast: [today's and tomorrow's lines, when
-the forecast is on]}`. With the forecast off, the station's read is the whole answer.
+**`outlook`'s result** is the prompt's outlook rules, worked out by the service (`lib/service/outlook.py`) from the reading now and
+the last 3 hours: `{as_of, verdict: "likely"|"possible"|"unlikely", reason: "pressure down 2.4 hPa in 3 hours, humidity 91%",
+pressure: {change_hpa, tendency, level, text}, moisture: {humidity, dew_point_spread}, recent_rain, wind_trend, forecast: [today's and
+tomorrow's lines, when the forecast is on]}`. With the forecast off, the station's read is the whole answer.
 
 **`days` over both sensors:** the fields shown and the default sort come from the sensor of the fields named (an air-only question
 shows and ranks by `pm2_5_max`); `days_checked` counts the days on which every sensor named has a day row; each listed day carries each
@@ -460,25 +460,30 @@ Each step ships on its own, with the tests and evals green and the bot working t
    `lib/periods_text.py` reads the periods table, tested by hand against it at fixed times (a Monday, a Tuesday, the 1st of a month, 1
    January, 29 February, 00:30, both clock-change days), with whole-day tools cut to yesterday and errors for phrases outside the table
    and for the future. No tool interface changes.
-2. **The ten tools, beside the twelve.** The tools of 3.3, built once with their arguments, periods, worded results (`day_look`, ready
-   lines, captions), charts, descriptions and errors, and `lib/outlook.py`; offered to no model yet. Contract tests; the evals run
-   against them with the tool list alone. The bot's own code paths call them instead of the twelve: its shortcuts, report,
-   lookups, gauges and alert charts, and the calls behind its period buttons (a press replays the chart's `drawn_by` with a new
-   `period`; the buttons themselves, their keyboard and picture cache stay in the bot, and go with it). The service knows nothing of
-   buttons. Everything the bot draws ahead replays a call too: the other periods preloaded after a chart is sent (`drawn_by` with
-   `1d`, `7d`, `1m`, `3m`, `1y`), the keyboard's charts every 5 minutes (each button a fixed `summary` call), recent alerts' charts
-   (their `drawn_by`). The picture cache and the pre-upload are keyed by the call (tool and arguments), not the question's words, so
-   two chats asking the same thing share a picture. A single chart gets a button for each of its `drawn_by.periods`, labelled as the
-   service labels them, and none when it lists none (today every single chart gets all five, so a count per month offers a 1D that
-   draws nothing); a replay the service still refuses shows its error on the button.
-   Begun: what the tools share, in `lib/service/` (`common.py`: a tool and its request metadata, answers, refusals, periods, chart
-   data; `names.py`: the reading names and the words for them; `daylook.py`: a day's look by its rule). Done: the ten, registered
-   (`lib/service/__init__.py` `build`, `Service`), built in `ecobot.py` and handed to the bot; the bot's own code paths call them,
-   through `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place, deleted whole in
-   step 3), and quote their words; its answers pinned before and after (`tests/test_service_switch.py`). The bot asks for its charts
-   as drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500. Its
-   gauges (the dashboard, the report's three) are `current` with `context`, laid out bot-side (`lib/gauge_sheet.py`: `GAUGES`' scales
-   and colours filled from the result; `Ecowitt.dashboard()` and `sheet()` are gone).
+2. **The ten tools, beside the twelve** (done). The tools of 3.3, built once with their arguments, periods, worded results (`day_look`,
+   ready lines, captions), charts, descriptions and errors, in `lib/service/` (what they share: `common.py`, `names.py`, `daylook.py`,
+   `context.py`; the outlook's rules in `outlook.py`), registered (`__init__.py`: `build`, `Service`), built in `ecobot.py` and handed
+   to the bot; offered to no model yet. Contract tests per tool; every chart validates against `schemas/chart.json`, `drawn_by`
+   included, and replays to the same chart and over each of its `periods` without a refusal. The evals have the service's
+   expectations (`tests/evals/service_cases.json`, every case) and `scripts/eval_prompts.py --service` checks offline that the tools
+   accept each expected call; `--live --service` asks a model with the tool list alone (not yet run: it needs the OpenRouter key).
+   The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and alert charts, through
+   `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place, deleted whole in step 3),
+   quoting their words; its answers pinned before and after (`tests/test_service_switch.py`), unchanged but for the deliberate changes
+   below. Its gauges (the dashboard, the report's three) are `current` with `context` and the gauges' readings named (the air sensor
+   isn't read), laid out bot-side (`lib/gauge_sheet.py`); `Ecowitt.dashboard()` and `sheet()` are gone. It asks for its charts as
+   drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500.
+   Period buttons replay the chart's `drawn_by` with a new `period` (the buttons, their keyboard and the picture cache stay in the
+   bot; the service knows nothing of buttons), one button per `drawn_by.periods` entry with the service's label, none when it lists
+   none; a replay the service refuses shows its refusal on the button, and one that fails after "Drawing ..." says so in the chat.
+   What the bot draws ahead replays calls at background priority: the other periods after a chart is sent, the keyboard's charts
+   every 5 minutes, recent alerts' charts. The picture cache and the pre-upload are keyed by the call, so two wordings or two chats
+   share a picture. Deliberate changes: a count per month offers 3M, 1Y and All (never 1D), per year none; whole-day `1y` is the 365
+   days to yesterday (364 and today before); alert charts name their source. Until step 3, a chart the model draws through the
+   twelve gets a `drawn_by` from `legacy.py` when its call translates and lists periods; otherwise (`plot_chart`, the links and the
+   scan, a period given as times) its buttons ask its question again, as before. Left for later: `current` and `outlook` read the
+   sources' kept live readings through private members (`Ecowitt._live`, `AirGradient._current`); `fetch: false` doesn't stop the
+   air sensor's inline fetch; `tests/report_words.py` keeps the old report's words as the tests' reference, deleted with the bot.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.

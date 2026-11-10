@@ -117,7 +117,7 @@ async def test_the_dashboard_command_sends_one_picture_with_no_period_buttons_an
     context = CONTEXT
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
     await bot.respond(update, context, "Dashboard")
-    assert service.calls == [("current", {"context": True})] and len(sent) == 1
+    assert service.calls == [("current", gauge_sheet.call())] and len(sent) == 1
     photo, caption, markup = sent[0]
     assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ")
     assert not isinstance(markup, InlineKeyboardMarkup)                         # a chat whose keyboard is out of date gets that instead
@@ -195,7 +195,7 @@ def report_bot(alert_state, gauges_now):
 
     def current(args, meta):
         if args.get("context"):
-            assert args.get("readings") in (gauge_sheet.call(dash.STATUS)["readings"], None)   # the report's three gauges, or all
+            assert args.get("readings") in (gauge_sheet.call(dash.STATUS)["readings"], gauge_sheet.call()["readings"])   # the report's three gauges, or all
             return now.gauges()
         return {"lines": {"station": [f"• Outdoor: {now.reading}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
                 "headings": {"station": "Weather station", "air": "Air quality"}}
@@ -399,7 +399,7 @@ async def test_the_dashboard_and_the_reports_gauges_are_the_services_current_wit
     assert [k for k, *_ in sent] == ["photo"] and sent[0][2].startswith("Weather station dashboard, ")
     from lib import gauge_sheet
     assert drawn[-1] == gauge_sheet.sheet(GAUGE_RESULT)
-    assert ("current", {"context": True}) in service.calls                                        # every reading, the air's aside
+    assert ("current", {"readings": [g.reading for g in dash.GAUGES], "context": True}) in service.calls   # every gauge's: the air isn't asked
     await bot.respond(update, CONTEXT, "report")
     assert sent[-1][0] == "photo" and [t.title for t in drawn[-1].tiles] == list(STATUS_TITLES)
     assert ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True}) in service.calls

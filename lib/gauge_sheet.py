@@ -14,9 +14,9 @@ STATION = "station"
 
 
 def call(titles=None) -> dict:
-    """current's arguments for the gauges of these titles, with context: their readings named; all of them (titles None), every reading,
-    so that those the station sends but its file hasn't recorded yet are there too (as the station's own dashboard drew them)."""
-    return {"context": True} if titles is None else {"readings": [g.reading for g in gauges_of(titles)], "context": True}
+    """current's arguments for the gauges of these titles (all when None), with context: their readings named, so only the weather
+    station is read (the air sensor isn't asked), and those the station sends but its file hasn't recorded yet are there too."""
+    return {"readings": [g.reading for g in gauges_of(titles)], "context": True}
 
 
 def _row(gauge: Gauge, figures: dict) -> tuple[float | None, ...]:

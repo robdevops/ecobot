@@ -949,11 +949,16 @@ class Bot:
         message = query.message
         record = self.charted.get(message.chat_id, message.message_id) if message else None
         if isinstance(record, dict) and record.get("drawn_by"):
+            answered: list[str] = []   # what the press was answered with (Telegram takes one answer per press)
             try:
-                await self._replay(query, message, record, context.bot)
-            except Exception as e:   # (a chart that fails to draw, Telegram failing): said on the button, never raised
+                await self._replay(query, message, record, context.bot, answered)
+            except Exception as e:   # (a chart that fails to draw, Telegram failing): said, never raised
                 log.error("Couldn't redraw a chart for its period button (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
-                await toast_quietly(query, CHART_FAILED)
+                if not answered:   # on the button
+                    await toast_quietly(query, CHART_FAILED)
+                else:   # the button already said "Drawing ...": a second answer would be refused, so in the chat
+                    with contextlib.suppress(TelegramError):
+                        await message.reply_text(CHART_FAILED)
             return
         days = periods.days_in(query.data)
         question = record if isinstance(record, str) and days else None
@@ -969,8 +974,17 @@ class Bot:
         log.debug("Period button %s: %s", periods.NAMES[days], question, extra=QUOTES)
         await self.respond(update, context, asked, redraw=message)
 
-    async def _replay(self, query, message: Message, record: dict, bot):
-        """A period button under a chart the service drew: its drawn_by replayed with the period pressed, into the same message."""
+    async def _replay(self, query, message: Message, record: dict, bot, answered: list[str] | None = None):
+        """A period button under a chart the service drew: its drawn_by replayed with the period pressed, into the same message.
+        answered: given the "Drawing ..." toast once it is sent (the press is answered once, even when the cached chart can't be put
+        in and it is drawn again)."""
+        answered = [] if answered is None else answered
+
+        async def drawing(label: str):
+            if not answered:
+                await answer_query(query, f"Drawing {label}...")
+                answered.append(label)
+
         drawn_by, words = record["drawn_by"], bool(record.get("words"))
         period = periods.period_in(query.data)
         listed = {p["period"]: p["label"] for p in drawn_by.get("periods") or ()}
@@ -985,7 +999,7 @@ class Bot:
         key = periods.call_key(tool, args)
         log.debug("Period button %s: %s", listed[period], key, extra=QUOTES)
         if (held := self.images.held(key)) is not None and held.drawn_by:   # drawn lately: nothing is asked again
-            await answer_query(query, f"Drawing {listed[period]}...")
+            await drawing(listed[period])
             began = time.monotonic()
             row = periods.periods_keyboard(held.drawn_by, period)
             if await self._redraw(message, (held.caption or "") if words else "", held.photo, held.title, row,
@@ -1003,7 +1017,7 @@ class Bot:
             await toast_quietly(query, fit(str(out.get("error") or "No chart came of it for that period"), TOAST_LIMIT))
             return
         png, title, newest = await asyncio.to_thread(self._draw, charts[0])   # (drawn before the toast, so a failure can be toasted)
-        await answer_query(query, f"Drawing {listed[period]}...")
+        await drawing(listed[period])
         drawn = charts[0].get("drawn_by") or {"tool": tool, "arguments": args, "periods": drawn_by.get("periods")}
         text = out.get("caption") or out.get("answer") or ""
         self.images.put(key, png, title, text or None, newest=newest, drawn_by=drawn)
@@ -1218,14 +1232,9 @@ class Bot:
         return Made(text, charts) if "error" not in out and charts and text else None
 
     async def _gauge_sheet(self, titles=None):
-        """The gauges of these titles (all when None) laid out from the service's current with context (lib/gauge_sheet.py), their
-        readings named those the service holds; None when the station gives nothing."""
-        args = gauge_sheet.call(titles)
-        if "readings" in args:
-            args["readings"] = self.service.held(args["readings"])
-            if not args["readings"]:
-                return None
-        return gauge_sheet.sheet(await self._service_call("current", args), titles)
+        """The gauges of these titles (all when None) laid out from the service's current with context (lib/gauge_sheet.py); None when
+        the station gives nothing."""
+        return gauge_sheet.sheet(await self._service_call("current", gauge_sheet.call(titles)), titles)
 
     async def _dashboard(self) -> Answer:
         """The station's gauges as one picture, sent with just its title (no period buttons: it is the state now)."""

@@ -317,13 +317,15 @@ def _period_span(period, start=None, end=None, whole_days: bool = False) -> tupl
 
 
 def _means(sent, refs, tool: str | None = None) -> str | None:
-    """{"means": words or [words]}: the period sent ({"period", "start", "end"} of the call; a bare value is a `period`) reads, at NOW
-    and as `tool` reads it (whole days for WHOLE_DAY_TOOLS), as the same span as (one of) these words: "past week", "this week" and
+    """{"means": words or [words]}: the period sent ({"period", "start", "end"} of the call; a bare value is a `period`) reads, at NOW,
+    as the same span as (one of) these words (a period in words as words; start and end as `tool` reads them, whole days for
+    WHOLE_DAY_TOOLS): "past week", "this week" and
     "7d" are the same period, "last week" is another; to days, start "2026-09-01" is "September" (to yesterday)."""
     sent = sent if isinstance(sent, dict) else {"period": sent}
-    whole = tool in WHOLE_DAY_TOOLS
     if sent.get("period") is not None and str(sent["period"]).strip() == "":
         sent = {**sent, "period": None}
+    # words are compared as words (whole days would make "last 28 days" September on the 29th); dates as the tool reads them
+    whole = tool in WHOLE_DAY_TOOLS and sent.get("period") is None
     got = _period_span(sent.get("period"), sent.get("start"), sent.get("end"), whole)
     if isinstance(got, str):
         return got
