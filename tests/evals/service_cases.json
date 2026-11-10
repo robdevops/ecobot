@@ -1195,13 +1195,17 @@
   },
   "only-that-its-cold": {
     "not_tools": [
+      "current",
       "summary",
       "readings",
       "days",
       "relate",
-      "scan"
+      "scan",
+      "outlook",
+      "forecast",
+      "pollen"
     ],
-    "note": "a chat reply, not a request (the bot once answered it with the temperatures). With no conversation before it and only the tool list, a plain client may take it as a look at now (current, forecast, outlook, pollen: the first live run did, every time), which costs a call but answers nothing wrong; keeping the model from it is the client's prompt (the bot's needs_data), not a tool description. What it must not do is read a period's history"
+    "note": "a chat reply, not a request (the bot once answered it with the temperatures)"
   },
   "how-cold-is-it": {
     "tools": [
@@ -1221,13 +1225,17 @@
   },
   "now-what": {
     "not_tools": [
+      "current",
       "summary",
       "readings",
       "days",
       "relate",
-      "scan"
+      "scan",
+      "outlook",
+      "forecast",
+      "pollen"
     ],
-    "note": "'now' alone is not a weather question. With no conversation before it and only the tool list, a plain client may take it as a look at now (current, forecast, outlook, pollen: the first live run did, every time), which costs a call but answers nothing wrong; keeping the model from it is the client's prompt (the bot's needs_data), not a tool description. What it must not do is read a period's history"
+    "note": "'now' alone is not a weather question"
   },
   "chart-with-forecast": {
     "tools": [

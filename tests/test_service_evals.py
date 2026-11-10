@@ -427,18 +427,18 @@ def test_a_rolling_period_in_words_is_not_a_month_that_its_days_happen_to_cover(
     assert ek._means({"start": "2026-09-01"}, "September", "days") is None
 
 
-def test_what_a_plain_client_fairly_reads_into_a_bare_word_or_a_chat_line_passes_and_history_does_not():
+def test_a_bare_word_read_fairly_passes_and_a_chat_line_with_any_call_fails():
     """The calls the first live run made that answer the question as a client with only the tool list reads it (each case's note says
-    why): "metrics" as the readings now, a weather report for today (Tuesday) as the report, a chat line with nothing before it as a
-    look at now. A period's history is still wrong for all of them."""
+    why): "metrics" as the readings now, a weather report for today (Tuesday) as the report. A chat line ("only that it's cold", "ok
+    now what?") is not a request: any call fails it, so the eval shows a model that fetches readings for small talk."""
     check = evalkit.check_calls
     assert check([("current", {})], EXPECT["metrics-bare"]) == [] and check([("about", {})], EXPECT["metrics-bare"]) == []
     report = [("current", {}), ("forecast", {"period": "today"}), ("pollen", {})]
     assert check(report, EXPECT["weather-report-for-a-day"]) == []
     for cid in ("only-that-its-cold", "now-what"):
-        assert check(report, EXPECT[cid]) == [] and check([("current", {"readings": ["temperature"]})], EXPECT[cid]) == [], cid
         assert check([], EXPECT[cid]) == [], cid
-        assert check([("summary", {"period": "today"})], EXPECT[cid]), cid
+        for call in (report, [("current", {"readings": ["temperature"]})], [("summary", {"period": "today"})]):
+            assert check(call, EXPECT[cid]), (cid, call)
     assert check([("summary", {})], EXPECT["metrics-bare"])
 
 
