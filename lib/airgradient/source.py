@@ -670,7 +670,8 @@ class AirGradient(Source):
         return [{**r, "_range": {**ranges[r["ts"]], **r.get("_range", {})}} if r["ts"] in ranges else r for r in rows]
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,
-                      metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
+                      metrics: list[str] | None = None, turn: Turn | None = None, daily: bool = False) -> dict:
+        """daily: the chart draws each whole day's average, one point a day (an average was asked for: the summary tool's `average`)."""
         turn = turn or Turn()
         now = self.now()
         try:   # a date the model sends, with or without an offset; a bad one is its mistake, not the sensor's
@@ -710,7 +711,7 @@ class AirGradient(Source):
         if chart and rows:
             asked = metrics or turn.air_named or ["pm2_5"]   # unnamed: the reading the person is asking about
             chart_spec = self._chart([m for m in (*ALL_METRICS, *EXTRA) if m in asked] or ["pm2_5"], rows, out["period"],
-                                     (t0.date(), t1.date()))
+                                     (t0.date(), t1.date()), daily)
             if chart_spec:
                 turn.charts.append(chart_spec)
                 out["chart"] = CHART_HINT
@@ -731,7 +732,7 @@ class AirGradient(Source):
                 entry["average_aqi_us"], entry["average_band"] = pm25_aqi(entry["average"])
         return entry
 
-    def _line(self, name: str, rows: list[dict]) -> tuple[Line, Plotted] | None:
+    def _line(self, name: str, rows: list[dict], daily: bool = False) -> tuple[Line, Plotted] | None:
         """One metric as a chart line, in its own units, and how it was drawn. The record high/low are the true readings.
         The readings themselves while they fit the point budget; more than that are bucketed (30 minutes ... a day): each
         bucket's mean, its range shaded."""
@@ -741,19 +742,21 @@ class AirGradient(Source):
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
         spread = {r["ts"]: r["_range"][name] for r in rows if name in r and name in r.get("_range", {})}   # what the bot saw in a bucket it recorded
         plotted = build_line([Sample(t, v, *(((min(spread[t][0], v), max(spread[t][1], v)) if t in spread else (None, None))), gap)
-                              for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+                              for t, v in pts], self.tz, pts[-1][0] - pts[0][0], force_daily=daily,
+                             until=self.now().date() if daily else None)
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         line = plotted.spec(LABELS.get(name) or EXTRA_LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name)
-        line.on_line = True   # the readings themselves marked where they peak, as the answer gives them, not the top of the shading (one sample inside a reading)
+        line.on_line = not daily   # the readings themselves marked where they peak, as the answer gives them, not the top of the shading (one sample inside a reading); a day's average has the day's range as its band
         return line, plotted
 
-    def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None) -> Chart | None:
+    def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None,
+               daily: bool = False) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
         shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone). `period` is the subtitle's
         text for it, `days` its first and last day (for the caption)."""
-        drawn = {n: got for n in names if (got := self._line(n, rows))}
+        drawn = {n: got for n in names if (got := self._line(n, rows, daily))}
         if not drawn:
             return None
         if len(drawn) == 1:
