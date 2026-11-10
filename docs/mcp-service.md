@@ -445,9 +445,10 @@ Each step ships on its own, with the tests and evals green and the bot working t
      (a question that is just the chart, where the model sets it; one with something else to answer, where it doesn't). Shipped on the
      live evals; the log's `LLM 2` lines show the calls it saves. It carries over to `summary` and `days` in step 2.
 1. **Charts as data, periods in words** (done: `specs.to_json`/`from_json`, `schemas/chart.json`, `lib/periods_text.py`). The chart
-   builders return 3.7's JSON with its schema, and the bot's renderer reads the JSON (at 500 points, so the golden images don't change). `lib/periods_text.py` reads the periods table, tested by hand against it at fixed
-   times (a Monday, a Tuesday, the 1st of a month, 1 January, 29 February, 00:30, both clock-change days), with whole-day tools cut to
-   yesterday and errors for phrases outside the table and for the future. No tool interface changes.
+   builders return 3.7's JSON with its schema, and the bot's renderer reads the JSON (at 500 points, so the golden images don't change).
+   `lib/periods_text.py` reads the periods table, tested by hand against it at fixed times (a Monday, a Tuesday, the 1st of a month, 1
+   January, 29 February, 00:30, both clock-change days), with whole-day tools cut to yesterday and errors for phrases outside the table
+   and for the future. No tool interface changes.
 2. **The ten tools, beside the twelve.** The tools of 3.3, built once with their arguments, periods, worded results (`day_look`, ready
    lines, captions), charts, descriptions and errors, and `lib/outlook.py`; offered to no model yet. Contract tests; the evals run
    against them with the tool list alone. The bot's own code paths call them instead of the twelve: its shortcuts, report,
@@ -461,9 +462,10 @@ Each step ships on its own, with the tests and evals green and the bot working t
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the
    transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file) with the
    stdio bridge; the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the
-   alert log; `schemas/` goes into the image, which `.dockerignore` keeps out today). Then the irrigation server is built in its own repository against it, the bot connects to both, and `lib/irrigation`
-   goes from here. The service's scripts (`edit_readings`, `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`,
-   `conditions`, `ecowitt_metrics`, `dump_specs`) stay; `show_request` and `report_inputs` become MCP clients.
+   alert log; `schemas/` goes into the image, which `.dockerignore` keeps out today). Then the irrigation server is built in its own
+   repository against it, the bot connects to both, and `lib/irrigation` goes from here. The service's scripts (`edit_readings`,
+   `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`, `conditions`, `ecowitt_metrics`, `dump_specs`) stay;
+   `show_request` and `report_inputs` become MCP clients.
 6. **The bot retired** (section 4), its code and tests deleted; the repository is the service.
 
 ## 7. Testing
