@@ -105,7 +105,7 @@ def test_the_description_says_what_it_answers_with_an_example_each_and_where_the
     d = cur.DESCRIPTION
     assert len(d) < 1500
     for said in ("{}", "{readings: [\"temperature\"]}", "{readings: [\"rain\"]}", "{context: true}", "report, status or sitrep",
-                 "forecast", "pollen", "will it rain (outlook)", "(summary)", "(readings)", "lines", "missing", "unavailable"):
+                 "forecast", "pollen", "will it rain (outlook)", "(summary)", "\"ecowitt week\", \"weather week\" (summary)", "(readings)", "lines", "missing", "unavailable"):
         assert said in d, said
     schema = cur.parameters("Readings, as `sensor.reading`.")
     assert set(schema["properties"]) == {"readings", "context"} and "required" not in schema

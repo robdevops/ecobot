@@ -127,6 +127,7 @@ async def test_the_tool_offers_the_fields_of_the_sensors_there_are_and_says_what
     d = t.description
     assert len(d) < 1500 and all(word in d for word in ("summary", "readings", "relate", "day_look", "hours", "only", "count_only"))
     # the live evals: "days with most rain" sent no sort_by (ranked by temp_max), "average temperature per year" no group_by
+    assert 'a record ("hottest ever"), wind direction or a chart over time (summary)' in d
     assert 'sort_by is the field the days are ranked by: the wettest days, most rain {sort_by: "rain"}' in d
     assert '"per year", "each year", "by month"), group_by' in d and '{stat: "avg", of: "temp_avg", group_by: "year"}' in d
     assert '"most rain"' in props["sort_by"]["description"] and '"each year"' in props["group_by"]["description"]

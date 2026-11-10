@@ -92,6 +92,8 @@ def test_it_takes_one_reading_a_period_in_words_and_an_interval(storage):
     assert "Default: last 24 hours" in props["period"]["description"] and "this week" in props["period"]["description"]
     assert "outdoor.humidity" in props["reading"]["description"] and "ONE reading" in props["reading"]["description"]
     assert len(made.description) < 1500 and all(f"({tool})" in made.description for tool in ("summary", "days", "current"))
+    assert 'a record ("hottest ever", even "use 5 minute data": summary, period "on record")' in made.description
+    assert '"past week" (the last 7 days) is never sent as "last week"' in props["period"]["description"]
     assert made.description.count("{reading:") >= 3 and "`value_is`" in made.description and "`fits`" in made.description
     assert made.annotations == {"readOnlyHint": True, "openWorldHint": False}   # it reads the file only
 

@@ -829,26 +829,49 @@
       "summary"
     ],
     "args": {
-      "summary": {
-        "chart_readings": {
-          "regex": "(?s)(?=.*:rating)(?=.*rain)",
-          "e.g.": [
-            "air.pm2_5:rating",
-            "rainfall.rain"
-          ]
+      "summary": [
+        {
+          "chart_readings": {
+            "regex": "(?s)(?=.*:rating)(?=.*rain)",
+            "e.g.": [
+              "air.pm2_5:rating",
+              "rainfall.rain"
+            ]
+          },
+          "period": {
+            "means": "last 30 days"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
         },
-        "period": {
-          "means": "last 30 days"
-        },
-        "chart": {
-          "one_of": [
-            true,
-            null
-          ]
+        {
+          "readings": {
+            "regex": "(?s)(?=.*:rating)(?=.*rain)",
+            "e.g.": [
+              "air.pm2_5:rating",
+              "rain"
+            ]
+          },
+          "chart_readings": {
+            "absent": true
+          },
+          "period": {
+            "means": "last 30 days"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
         }
-      }
+      ]
     },
-    "note": "the rating drawn over time is summary's chart (\":rating\"), with rain in a panel below; relate would draw PM2.5, not its rating"
+    "note": "the rating drawn over time is summary's chart (\":rating\"), with rain in a panel below; relate would draw PM2.5, not its rating. summary also takes the \":rating\" in `readings` (summarised, and drawn as its rating when chart_readings isn't sent), as deepseek sent it on 10 Nov 2026"
   },
   "air-quality-vs-everything": {
     "tools": [

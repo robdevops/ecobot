@@ -85,7 +85,7 @@ answer the question right in one round of calls? Section 7's evals ask exactly t
 - **The tool descriptions and the results are the contract.** Every rule a choice of tool or the reading of a result depends on is in
   that tool's description (which questions it answers, an example call for each, how to read what comes back) or in the result itself
   (`value_is`, `how_to_read`, `note_*`, `missing`, `warning`). The server's `instructions` repeat a short summary (the devices and their
-  nicknames, Indoor and Outdoor, units), but nothing depends on them: on the 2026-07-28 protocol a client only gets them by asking
+  nicknames, Indoor and Outdoor, the readings' names, units), but nothing depends on them: on the 2026-07-28 protocol a client only gets them by asking
   (`server/discover`), and many don't pass them to their model. The persona (a friendly Telegram bot, plain text, bullets) is the
   client's.
 - **Periods in words, worked out by the service.** Every tool that takes a period takes `period`, the person's own words for it, passed
@@ -195,7 +195,8 @@ Ten tools in place of twelve: one per kind of question, each over both sensors w
 - `layout`: `auto` draws one reading as a line for each sensor that has it, plus the compass rose when wind direction is among them;
   more than one reading as panels, one each, on one time axis; `two_axes` puts two on one panel with a scale each; `same_axis` two of
   one unit over each other; `invert_second_axis` modifies `two_axes`. A reading can be drawn as its traffic-light rating
-  (`air.pm2_5:rating`). `all` draws every reading in the station's usual order (temperature, humidity, solar, pressure, rain, dew point,
+  (`air.pm2_5:rating`), in `chart_readings` or in `readings` (summarised as the reading, and drawn as its rating when
+  `chart_readings` isn't sent; a model sends it either way). `all` draws every reading in the station's usual order (temperature, humidity, solar, pressure, rain, dew point,
   then feels-like and VPD where configured, then wind), as "weather all week" does today.
 - `chart` defaults to on for periods of 3 days or more. `average: true` adds each reading's average to the figures and draws the chart
   as each day's average.

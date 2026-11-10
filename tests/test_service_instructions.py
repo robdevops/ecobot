@@ -4,7 +4,7 @@ the units, built from the Context's sources and the catalogue."""
 from zoneinfo import ZoneInfo
 
 from lib.service.context import Context
-from lib.service.instructions import INSTRUCTIONS, instructions, units
+from lib.service.instructions import INSTRUCTIONS, instructions, names, units
 from lib.service.names import CATALOGUE, Catalogue
 
 MELBOURNE = ZoneInfo("Australia/Melbourne")
@@ -19,6 +19,15 @@ def test_the_default_names_every_device_its_nicknames_indoor_and_outdoor_and_the
                   "person's own words"):
         assert words in text, words
     assert len(text) < 1500 and text == instructions()
+    # every reading's name (a live run made up rain.rain_rate for rainfall.rain_rate)
+    assert "Names (sensor.reading): outdoor and indoor: temperature, humidity, dew_point" in text
+    assert "rainfall and rainfall_piezo: rain_rate, rain" in text and "air: pm2_5, pm10" in text
+
+
+def test_names_list_each_sensor_with_its_readings_sensors_alike_together():
+    listed = names(CATALOGUE)
+    assert listed.startswith("outdoor and indoor: temperature, humidity") and "; pressure: relative, absolute; " in listed
+    assert all(n.partition(".")[2] in listed for n in CATALOGUE.names)
 
 
 def test_units_list_each_unit_once_with_its_readings_sides_and_devices_aside():

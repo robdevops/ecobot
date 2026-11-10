@@ -60,6 +60,10 @@ async def test_the_tool_says_what_it_answers_what_it_is_not_for_and_how_to_read_
     for words in ("{readings: [\"temperature\"], period: \"this week\"}", "chart_answers_it: true", "average: true", "\"all\"", "pm2.5",
                   ": days", ": readings", ": relate", ": current", ": forecast", "low_text", "day_look", "rain_total_mm", "complete"):
         assert words in text, words
+    # what the live runs got wrong: a device and a period is the past; "past week" isn't "last week"; a record with when is summary's
+    for words in ('"weather week"', '"ecowitt week"', 'the past, charted', '"past week" is the last 7 days',
+                  '"last week" the previous Monday to Sunday', '"use 5 minute data"', 'period: "on record"', '"pm2.5:rating"'):
+        assert words in text, words
     readings = tool.parameters["properties"]["readings"]["description"]
     assert "outdoor.temperature" in readings and "air.pm2_5" not in readings and readings.endswith(   # (what this station holds)
         "Default: outdoor and indoor temperature and humidity.")
@@ -314,6 +318,13 @@ async def test_a_chart_of_both_sensors_or_a_rating_is_drawn_over_whole_days_and_
     assert list(out["series"]) == ["air.pm2_5", "rainfall.rain"] and out["rain_total_mm"] >= 0
     by = await replays(tool, out)
     assert by["arguments"]["chart_readings"] == ["air.pm2_5:rating", "rainfall.rain"]
+    # the live evals' rating-against-rainfall put the rating in `readings`: summarised as the reading, drawn as its rating
+    sent = await ask(tool, readings=["air.pm2_5:rating", "rain"], period="this week")
+    assert list(sent["series"]) == ["air.pm2_5", "rainfall.rain"] and sent["charts"][0]["panels"][0]["series"][0]["kind"] == "rating"
+    assert sent["charts"][0]["drawn_by"]["arguments"]["chart_readings"] == ["air.pm2_5:rating", "rainfall.rain"]
+    assert sent["charts"][0]["drawn_by"]["arguments"]["readings"] == ["air.pm2_5", "rainfall.rain"]
+    short = await ask(tool, readings=["pm2.5:rating"], period="yesterday")   # a rating is only ever drawn: chart on
+    assert short["charts"][0]["panels"][0]["series"][0]["kind"] == "rating"
     await close(ctx)
 
 

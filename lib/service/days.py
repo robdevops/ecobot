@@ -89,8 +89,8 @@ LEFT_OUT = {NOT_HELD: "not held finely enough", CLOCK_CHANGE: CLOCK_CHANGE, NOT_
 
 # ---------- the description and the input schema ----------
 DESCRIPTION = (
-    "Days found, ranked, counted or totalled by their figures, from the weather station's and the air sensor's (AirGradient's) days, "
-    "midnight to midnight. sort_by is the field the days are ranked by: the wettest days, most rain {sort_by: \"rain\"}; the hottest "
+    "Days found, ranked, counted or totalled by their figures, from the weather station's and the air sensor's days, midnight to "
+    "midnight. sort_by is the field the days are ranked by: the wettest days, most rain {sort_by: \"rain\"}; the hottest "
     "day it rained {where: [{field: \"rain\", op: \">=\", value: 1}], sort_by: \"temp_max\"}. Days over 35°C this year: {where: "
     "[{field: \"temp_max\", op: \">\", value: 35}], period: \"this year\", count_only: true}. Per month or year (\"per year\", \"each "
     "year\", \"by month\"), group_by: rain per month {stat: \"sum\", of: \"rain\", group_by: \"month\"}; average temperature per "
@@ -98,9 +98,9 @@ DESCRIPTION = (
     "25}]}. The windiest weekend day: {sort_by: \"wind_gust\", only: \"weekend\"}. One day: {period: \"5 Sep\"}. Part of each day, "
     "hours: nights below 5°C {hours: \"night\", where: [{field: \"temp_min\", op: \"<\", value: 5}]}; 3pm in October {hours: "
     "\"15:00\", stat: \"avg\", of: \"temp_avg\", period: \"October\"}. No period: every day on record (with hours, 30 days). Not "
-    "for: a period's highest or lowest reading with when, or a chart over time (summary); values at set times (readings); rain "
+    "for: a period's highest or lowest reading with when, a record (\"hottest ever\"), wind direction or a chart over time (summary); values at set times (readings); rain "
     "against a reading (relate). Result: answer, a line to pass on; matching_days of days_checked; days, the top ones, each with "
-    "day_look (weather word and emoji: put it before the day); by_month or by_year, drawn as bars (charts); note_*: mention "
+    "day_look (word and emoji: put it before the day); by_month or by_year, drawn as bars (charts); note_*: mention "
     "briefly. A rainy day is rain >= 1.")
 
 STATION_WHERE = ("Weather station: temp_max, temp_min, temp_avg (outdoor °C), rain (mm that fell), wind_gust (km/h, the highest); a "

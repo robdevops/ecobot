@@ -60,20 +60,21 @@ AIR_CAPTIONED = {"missing"}
 DATE = re.compile(r"\d{4}-\d\d-\d\d")
 
 DESCRIPTION = (
-    "A period's figures from the Ecowitt weather station and the AirGradient air sensor: each reading's lowest and highest with "
-    "when they happened and that day's look, averages, a breakdown by day (up to 31 days) or by month, wind direction, the rain "
-    "that fell, air ratings and AQI; and a chart of any readings from either sensor or both.\n"
-    "Examples: \"how hot did it get this week\" {readings: [\"temperature\"], period: \"this week\"}; \"coldest on record\" "
-    "{readings: [\"outdoor.temperature\"], period: \"on record\"}; \"average humidity last month\" {readings: [\"humidity\"], "
-    "period: \"last month\", average: true}; \"rain since Monday\" {readings: [\"rain\"], period: \"since Monday\"}; \"plot "
-    "pressure this week\" {readings: [\"pressure\"], period: \"this week\", chart: true, chart_answers_it: true}; \"PM2.5 and rain, "
-    "3 months\" {readings: [\"pm2.5\", \"rain\"], period: \"3m\", chart: true}; \"weather all week\" {readings: [\"all\"], period: "
-    "\"this week\", chart: true}.\n"
-    "Not for: days ranked, counted or filtered by a day's figures (the wettest day, days over 35°C, rain per month): days. "
+    "What was measured over a period (Ecowitt weather station, AirGradient air sensor): each reading's low and high with "
+    "when, averages, a by-day or by-month breakdown, the most common wind direction, rain that fell, air ratings "
+    "and AQI; and a chart of any readings.\n"
+    "Examples: \"how hot did it get this week\" {readings: [\"temperature\"], period: \"this week\"}; a record with when (\"hottest "
+    "record\", \"highest ever\", \"use 5 minute data\": records are 5-minute where held) {readings: [\"outdoor.temperature\"], "
+    "period: \"on record\"}; \"average humidity last month\" {readings: [\"humidity\"], period: \"last month\", average: true}; \"plot "
+    "pressure this week\" {readings: [\"pressure\"], period: \"this week\", chart: true, chart_answers_it: true}; a device or reading "
+    "and a period (\"weather week\", \"ecowitt week\"): the past, charted {readings: [\"all\"], period: \"week\", chart: true}; a "
+    "rating and rain {readings: [\"pm2.5:rating\", \"rain\"]}.\n"
+    "`period` is the person's words unchanged: \"past week\" is the last 7 days, \"last week\" the previous Monday to Sunday: never "
+    "one for the other.\n"
+    "Not for: days ranked, counted or filtered by a day's figures (wettest day, days over 35°C, rain per month): days. "
     "Values at set times: readings. Rain against a reading: relate. Now: current. Ahead: forecast.\n"
-    "Reading it: `series` by reading name; quote low_text and high_text with their low_when and low_date as given, and a day's "
-    "day_look emoji beside it. rain_total_mm is the rain that fell. A note says what the figures lack. With a chart, `caption` is "
-    "its caption, ready; with complete: true, `reply` is the whole answer.")
+    "Reading it: `series` by name; quote low_text and high_text with low_when and low_date, and day_look's emoji. rain_total_mm: rain "
+    "that fell. A chart's `caption` is ready; with complete: true, `reply` is the answer.")
 
 
 def _boolean(description: str) -> dict:
@@ -376,9 +377,11 @@ class Summary:
 
     def parameters(self) -> dict:
         names = self.ctx.readings().description()
+        rating = (" An air-quality reading with \":rating\" (\"air.pm2_5:rating\") is summarised and drawn as its traffic-light "
+                  "rating.") if self.ctx.air is not None else ""
         return {"type": "object", "properties": {
             "readings": {"type": "array", "items": {"type": "string"},
-                         "description": f"What to summarise. {names} Default: outdoor and indoor temperature and humidity."},
+                         "description": f"What to summarise. {names}{rating} Default: outdoor and indoor temperature and humidity."},
             **period_properties("today; with chart true and no period, the last 24 hours"),
             **ARGUMENTS}}
 
@@ -393,8 +396,11 @@ class Summary:
             raise Refusal(f"summary doesn't take {', '.join(map(repr, unknown))}.{hint}", arguments=list(props))
         catalogue = ctx.readings()
         default = list(DEFAULT_READINGS) if ctx.eco else "air"
-        readings = catalogue.resolve(args.get("readings"), default=default)
-        drawn = self._drawn(args.get("chart_readings"), readings)
+        sent = _words(args.get("readings"))
+        rated = any(w.lower().endswith(RATING) for w in sent)   # "air.pm2_5:rating" in readings: summarised, and drawn as its rating
+        plain = [w[:-len(RATING)].strip() if w.lower().endswith(RATING) else w for w in sent]
+        readings = catalogue.resolve(plain if rated else args.get("readings"), default=default)
+        drawn = self._drawn(args.get("chart_readings") if _words(args.get("chart_readings")) or not rated else sent, readings)
         for r in {r for r in [*readings, *(r for r, _ in drawn)]}:
             if (r.device == STATION and ctx.eco is None) or (r.device == AIR_DEVICE and ctx.air is None):
                 device = "weather station" if r.device == STATION else "air sensor"
@@ -403,6 +409,8 @@ class Summary:
         if layout not in LAYOUTS:
             raise Refusal(f"`layout` is one of {', '.join(LAYOUTS)}, not {args.get('layout')!r}.", layouts=list(LAYOUTS))
         chart = _flag(args, "chart")
+        if chart is None and any(rating for _, rating in drawn):   # a rating is only ever drawn
+            chart = True
         asked = any(str(args.get(k) or "").strip() for k in ("period", "start", "end"))
         period = read_period(args, tz=ctx.zone, now=ctx.now(), default="last 24 hours" if chart and not asked else "today",
                              first_held=await self._first_held([*readings, *(r for r, _ in drawn)]))
