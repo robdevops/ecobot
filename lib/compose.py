@@ -273,7 +273,7 @@ class Composer:
         origin, days = day_bounds(first, self.tz)[0], (last - first).days + 1
         result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days, self.tz)
         summary = scan.summarise(result, air_names, weather_names)
-        strongest = summary.pop("strongest")
+        strongest = summary.pop("strongest", None)   # (none when there was nothing to scan)
         out = {"period": f"{first} to {last}", "resolution": "30-minute slots; each pair compared within the day and day to day",
                "how_to_read": ("Open with `verdict`, then the relationships in `findings`, strongest first. These go together; they "
                                "do not cause each other (shared weather and season). If nothing stands out, say so and that the "
