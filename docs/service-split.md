@@ -139,7 +139,8 @@ Nine tools in place of twelve, one per kind of question, each over both sensors 
 
 **`summary`'s result** is one shape for both sensors:
 `{period, series: {"outdoor.temperature": {unit, low, low_time, low_when, low_date, [low_note], high…, [average], [daily|monthly]},
-"air.pm2_5": {unit, low…, high…, average, high_rating, average_rating, high_aqi_us, high_band}, "wind.wind_direction": {most_common,
+"air.pm2_5": {unit, low…, high…, average, high_rating, average_rating, high_aqi_us, high_band, average_aqi_us, average_band},
+"wind.wind_direction": {most_common,
 then, steadiness, [daily]}}, [rain_total_mm], [monthly_note], [notes: {sensor: {…}}], [chart_hint], [missing], [warning]}`.
 The breakdown and `monthly_note` are the station's; ratings, AQI and the 400-day cap (30 days fetched inline) the air sensor's;
 `rain_total_mm` whenever `rainfall.rain` is summarised. `current`'s result is
@@ -151,24 +152,42 @@ sensor's source; the result keeps both sensors' notes (`note_daily`, `exact_from
 `note_missing`). A condition mixing the two sensors leaves out the days whose station figures come from Ecowitt's daily records (10am
 to 10am, not the air sensor's midnight to midnight) and says how many.
 
-**Part of each day (`days.hours`, new):** `hours: "15:00-16:00"` works out each day's figures over that stretch of local time instead
-of the whole day, and everything else in `days` then works on those figures: "the average 3pm temperature in October" is
-`{hours: "15:00-16:00", stat: "avg", of: "temp_avg"}`, "the typical overnight low this month" `{hours: "22:00-06:00", stat: "avg", of:
-"temp_min"}`, "nights below 5°C" `{hours: "22:00-06:00", where: temp_min < 5}`. A moment is a short stretch ("15:00-15:05"). The
-figures come from the same SQL as the day rows, over one window a day (`Reader.part_days`, which `lib/ecowitt/period.py` already uses
-for a period's partial first and last days), so a part of a day is worked out exactly as a whole one is: the finest readings held, the
-air sensor's glitches taken out. A stretch that crosses midnight belongs to the day it ends on (Monday 22:00 to Tuesday 06:00 is
-Tuesday's night), and the result says so. Days held only as Ecowitt's daily or 4-hour records have nothing finer to cut a stretch from:
-they are left out and counted in a note. No such question can be answered today, by any tool.
+**Part of each day (`days.hours`, new; no tool can answer these today).** `hours` works out each day's figures over a stretch of local
+time instead of the whole day, and the rest of `days` then works on those figures: "the typical overnight low this month" is
+`{hours: "22:00-06:00", stat: "avg", of: "temp_min"}`, "nights below 5°C" `{hours: "22:00-06:00", where: temp_min < 5}`, "the average
+3pm temperature in October" `{hours: "15:00-15:05", stat: "avg", of: "temp_avg"}`.
+- **Times on the half hour.** A stretch starts and ends on the half hour ("15:00-16:00", "22:30-06:00"): the figures take each
+  half hour's mean, and a 30-minute reading's own lowest and highest run to the end of its half hour, so part of a half hour would be
+  counted as all of it. Any other time is refused, but for one exception: a moment, five minutes from the hour or half hour
+  ("15:00-15:05"). On a day held at 5 minutes a moment is that reading; on a day held only at 30 minutes it is the half hour from it
+  (on the air sensor's hourly days, the hour), and the result says so.
+- **Which stretch.** `[start, end)` in local wall time, read as `start` to `end - 1` (the SQL's `BETWEEN` includes the end). "24:00" is
+  the next local midnight, so a whole day is 23 or 25 hours on a clock-change day. A stretch that crosses midnight starts the evening
+  before and belongs to the day it ends on (Monday 22:00 to Tuesday 06:00 is Tuesday's night): one stretch per sensor and day. A
+  stretch the clock change removes (02:00-03:00 on the first Sunday of October) is left out and counted.
+- **Which readings.** Each sensor's stretch is read at the first of the day rows' own resolutions that holds all of it, by the
+  coverage (`Reader.held`): the station's 5-minute, then 30-minute readings; the air sensor's 5-minute, then hourly ones; never the
+  minutes. A stretch held at neither (a day held only as Ecowitt's daily or 4-hour records, a night whose evening is before the
+  30-minute archive) is left out and counted in a note; one that is held but has no readings (the station was off) counts as missing.
+  This is not `lib/ecowitt/period.py`'s choice for a period's part days, which falls back to whatever readings there are.
+- **The figures** come from the day rows' own SQL over one window a day (`Reader.part_days`), so a stretch's mean, lowest, highest and
+  their times are worked out as a whole day's are, the air sensor's glitches taken out. Except rain: the day's `rain` is the highest
+  of the running daily total, which over a stretch would be the rain since midnight up to its end. Over a stretch, `rain` is the mm
+  that fell in it, the total's rise from the last reading before the stretch to its last reading in it, a fall counted as the midnight
+  reset (`lib/rain.rain_slots`, as `readings` works it out), computed beside `part_days`.
+- **The period.** As `days`' (to yesterday), except that today counts once today's stretch is over and held: asked this morning,
+  "nights below 5°C this week" includes last night. At most 400 days, as `scan`'s: the stretches cost far more than day rows (over
+  four years of 5-minute readings a night takes about 1 s for a climate sensor, 3.4 s for the air sensor with its glitch rule, against
+  0.01 s for the day rows; the default 30 days under 0.1 s), and a stretch that is the whole day reads the day rows.
 
 **Averages**, wherever the question asks for one:
 
 | Tool | Averages |
 |---|---|
-| `summary` | `average: true` adds each reading's average over the period, and one per day or month in its breakdown; an air reading always has its average and `average_rating`. Rain has a total, not an average. `daily_means` draws the chart as each day's average. |
-| `readings` | each row's value is its interval's average, with the interval's lowest and highest: hourly averages at `1hour`, daily at `1day` |
-| `days` | each day's average as a field (`temp_avg`, `humidity_avg`, `co2_avg` …), and `stat: "avg"` over the matching days, overall or per month or year ("average humidity per year", "average daily rain in June"); with `hours`, over that part of each day |
-| `chart` | each panel's average over the period, beside its lowest and highest |
+| `summary` | `average: true` adds each reading's average over the period, and one per day or month in its breakdown. The average is weighted by time: a part day at either end of the period counts for its hours, and an air day held only as hourly averages for its hours (today the station's average is the mean of its days' means, a part day counting as a whole one, and the air sensor's the mean of its stored readings, an hourly reading counting as one twelfth of a 5-minute hour: fixed in step 0). An air reading always has its average; its six air-quality readings also their `average_rating`, and PM2.5 its `average_aqi_us` and `average_band`; the air sensor's own temperature and humidity have no rating. Rain is a total, not an average; rain rate has an average (today `weather_history` leaves every rain reading out, though `days` has `rain_rate_avg`); wind direction has its most common direction instead. `daily_means` draws the chart as each day's average. |
+| `readings` | for a reading that is averaged, each row is its interval's average with its lowest and highest: hourly averages at `1hour`; at `1day` the day's average, lowest and highest, and when those two happened; at `1min` and `5min` the stored reading itself. Rain is the mm that fell in the interval (at `1day`, the day's total); gusts the interval's highest (at `1day`, with when); wind direction the reading at the interval's end (at `1day`, the day's last). Those three have no lowest and highest. |
+| `days` | a field for each day's average of every reading but rain, gusts and wind direction (`temp_avg`, `humidity_avg`, `pressure_avg`, `wind_speed_avg`, `rain_rate_avg`, `indoor_temp_avg` …; the air sensor's `pm2_5_avg`, `co2_avg` … for its six air-quality readings), and `stat: "avg"` over the matching days, overall or per month or year ("average humidity per year"). Rain is a day's total (`rain`), so "average daily rain in June" is `stat: "avg", of: "rain"`. With `hours`, the same over that part of each day (rain: the mm that fell in it). |
+| `chart` | each line's average over the period (`mean`), beside the lowest and highest of its half-hour averages (`min`, `max`: not the true extremes, which `summary` gives with their times). A rain panel has its total (`total_mm`) instead, a rating panel the share of time in each rating. With `two_axes` or `same_axis`, each series keeps its own figures. |
 
 **Charts in a result** (3.6): for a client that asked for them, the chart data in the result's `_meta` (`ecobot/charts`, a list: a
 history can add a wind rose beside its chart) and one line for the model, `chart_hint`: that a chart goes with its reply, so the reply
@@ -337,9 +356,12 @@ names together.
    - **The chart that answers itself** (3.8): `chart_answers_it` on the chart tools, the bot's early end of the turn with the caption
      written in code, and a pair of eval cases (a question that is just the chart, where the model sets it; a question with something
      to answer beside the chart, where it doesn't). Shipped on the live evals; the log's `LLM 2` lines show the calls it saves.
-   - **Part of each day** (3.3, `days.hours`): `hours` on `weather_days` and `air_days`, with tests against windows worked out by hand
-     (a midnight-crossing night, a day held only as daily records, an air glitch inside the window) and eval cases ("average 3pm
-     temperature in October", "typical overnight low this month").
+   - **Part of each day** (3.3, `days.hours`): `hours` on `weather_days` and `air_days`, with tests against stretches worked out by hand
+     (a night across midnight, a clock-change day, a moment on a 5-minute and on a 30-minute day, a day held only as daily records, a
+     night with rain in the evening only, an air glitch inside the stretch) and eval cases ("average 3pm temperature in October",
+     "typical overnight low this month", "nights below 5°C this week").
+   - **Averages weighted by time** (3.3): `weather_history`'s and `air_quality`'s averages over the period's time, not its days or its
+     rows, and rain rate's average; tests with a part day at each end and an air period across its hourly history.
 
 1. **Explicit arguments, shared helpers.** The twelve tools take the `Turn`'s inputs as arguments and read nothing else about the
    question; they return their charts in the result instead of appending to `turn.charts`, and `weather_forecast` returns the days it
@@ -370,7 +392,9 @@ names together.
 - The suite splits along the boundary: the service's tests (storage, sources, tools, resources, the server) and the bot's (intent,
   report, alerts, drawing, the client), the bot's running against a fake `Data`, or against the real server in memory over an
   archived file.
-- `days.hours` gives, for a stretch that is the whole day ("00:00-24:00"), the same figures as the day rows.
+- `days.hours` gives, for a stretch that is the whole day ("00:00-24:00"), the same figures as its day row (mean, lowest and highest,
+  and their times) for every day held whole at 5 or 30 minutes (the air sensor's at 5 minutes or an hour), a clock-change day included;
+  a day whose row comes from a daily record, or from whatever readings there were, is left out and counted.
 - A wire test per tool and resource: the arguments it takes, the shape it returns (`test_contract`), dates that come back as `date`s, chart
   data in the result's `_meta` that reads back as a spec for a client that asks, and no chart and no `chart_hint` for one that doesn't.
 - A reconnect test against the real app under uvicorn on a localhost port the test stops and starts (not in memory: a connection can't
