@@ -200,12 +200,11 @@ async def test_public_holidays_are_the_local_ones_not_the_models_guess(station):
 async def test_weekends_and_unknown_places(station):
     from zoneinfo import ZoneInfo
 
-    from lib.ecowitt import days
     eco, _ = station
     out = await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="weekend", limit=10)   # two weekends
     assert out["days_checked"] == 4 and all(r["date"].startswith(("Sat", "Sun")) for r in out["days"])
     assert "error" in await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="bank_holiday")
-    elsewhere = await days.find_days(eco.storage, eco.mac, ZoneInfo("Europe/Paris"),
+    elsewhere = await old_tools.find_days(eco.storage, eco.mac, ZoneInfo("Europe/Paris"),
                                      {"start_date": "2026-08-03", "end_date": "2026-08-16", "only": "public_holiday"},
                                      datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None))
     assert "aren't known for this time zone" in elsewhere["error"]      # says so instead of guessing
@@ -360,3 +359,12 @@ async def test_a_figure_per_month_with_no_matching_day_promises_no_chart(station
     out = json.loads(await old_tools.weather_days(eco, dict(start_date=str(first), end_date=str(last), count_only=True, group_by="month",
                                                      stat="max", of="temp_max", where=[{"field": "temp_max", "op": ">", "value": 99}]), turn))
     assert out["by_month"] and all(v is None for v in out["by_month"].values()) and "chart" not in out and turn.charts == []
+
+
+def test_the_old_day_tools_engines_are_the_tests_oracle_alone():
+    """weather_days' and air_days' engines answer no one since the swap (the service's days reads the day rows itself): they live with
+    the old tools' handlers in tests/old_tools.py, not in lib."""
+    from lib.airgradient import days as air_days
+    from lib.ecowitt import days as station_days
+    assert not hasattr(station_days, "find_days") and not hasattr(air_days, "find_air_days")
+    assert callable(old_tools.find_days) and callable(old_tools.find_air_days)

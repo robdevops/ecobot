@@ -202,15 +202,29 @@ def complete_reply(results: list[str]) -> str | None:
     return "\n\n".join(replies) if replies else None
 
 
-def reads_air(result: dict) -> bool:
-    """Did this result read the air sensor (a reading of it, or a chart or a day from it)?"""
-    def walk(value) -> bool:
-        if isinstance(value, dict):
-            return any(str(k).startswith("air.") or k == "air" or walk(v) for k, v in value.items())
-        if isinstance(value, list):
-            return any(walk(v) for v in value)
-        return isinstance(value, str) and "AirGradient" in value
-    return walk(result)
+def reads_air(name: str, args: dict, result: dict, catalogue) -> bool:
+    """Is this call's answer about the air (its live-chart link goes under the reply)? Read from what the call read, never from a
+    refusal (its `words` and `names` list every reading): `current` when a reading it was asked for is the air sensor's alone ("pm2.5",
+    "air"; not every sensor, as for "how warm is it", nor "all"); `summary` when a series is the air's; `readings` and `relate` when
+    their reading is; `days` when a field named is the air sensor's; `scan` always (the air against the weather)."""
+    from .service.days import AIR_DEVICE as DAYS_AIR, DEVICE_OF
+    from .service.names import AIR_DEVICE, _split
+    if not isinstance(result, dict) or "error" in result:
+        return False
+    if name == "current":
+        for word in _split(args.get("readings")):
+            found = catalogue._lookup(word)
+            if not isinstance(found, str) and found and all(r.device == AIR_DEVICE for r in found):
+                return True
+        return False
+    if name == "summary":
+        return any(str(k).startswith("air.") for k in result.get("series") or {})
+    if name in ("readings", "relate"):
+        return str(result.get("reading") or "").startswith("air.")
+    if name == "days":
+        fields = [c.get("field") for c in args.get("where") or [] if isinstance(c, dict)] + [args.get("sort_by"), args.get("of")]
+        return any(DEVICE_OF.get(f) == DAYS_AIR for f in fields if isinstance(f, str))
+    return name == "scan"
 
 
 def chat_tag(chat_id: int) -> str:
@@ -1145,11 +1159,20 @@ class Bot:
         shown.extend(self._shown_forecast(by_tool.get("forecast")))
         return "\n\n".join(sections) or "No readings are available right now."
 
-    def _shown_forecast(self, out: dict | None) -> list:
+    def _shown_forecast(self, out: dict | None, tool: str = "forecast") -> list:
         """The forecast days a forecast result shows (the Forecast source's own), remembered for the chat once the answer is sent (a later
-        revision of them is worth telling it)."""
+        revision of them is worth telling it). An `outlook` result shows today's and tomorrow's lines in `forecast` (its description has
+        the model copy them): those days, as many as it has lines."""
         source = self.by_name.get("Forecast")
-        if source is None or not out or "error" in out or not out.get("days"):
+        if source is None or not out or "error" in out:
+            return []
+        if tool == "outlook":
+            lines = out.get("forecast")
+            if not isinstance(lines, list) or not lines:
+                return []
+            today = now_local(self.cfg.tz).date()
+            return [d for d in source.days or [] if 0 <= (d["date"] - today).days <= 1][:len(lines)]
+        if not out.get("days"):
             return []
         shown = {day.get("date") for day in out["days"] if isinstance(day, dict)}
         return [d for d in source.days or [] if d["date"].isoformat() in shown]
@@ -1406,8 +1429,8 @@ class Bot:
         kept = [r for r in turn.results if r]
         answer.charts = [chart for _, _, out in kept for chart in out.get("charts") or [] if isinstance(chart, dict)]
         for name, _, out in kept:
-            if name == "forecast":
-                shown.extend(self._shown_forecast(out))
+            if name in ("forecast", "outlook"):
+                shown.extend(self._shown_forecast(out, name))
         return answer
 
     async def _send(self, msg: Message, bot, read, turn: Turn, shown: list, answer: Answer, added: list[dict], now: datetime,
@@ -1424,7 +1447,8 @@ class Bot:
         used = [m for m in added if m["role"] == "tool"]
         log.info("%s: %s in %.1fs, tools %d, charts %d, %d chars", chat_tag(msg.chat_id), "Replied" if answer.ok else "Error reply",
                  time.monotonic() - started, len(used), len(photos), len(reply))
-        used_air = any(r and r[0] in ("current", "summary", "readings", "days", "relate", "scan") and reads_air(r[2]) for r in turn.results)
+        catalogue = self._catalogue()
+        used_air = answer.ok and any(r and reads_air(*r, catalogue) for r in turn.results)   # (an error reply gets no link)
         air = self.by_name.get("AirGradient")
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         refresh = answer.ok and read.report and 0 < len(reply) <= TG_LIMIT and not markup   # the report, to be refreshed in place

@@ -708,7 +708,7 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
     bot = Bot(NS(tz=TZ), Agent(client, "m", model_tools.tools([Summary()])), [], alert_state)
     await bot.respond(update, NS(bot=telegram(send_chat_action)), "how humid was it this week?")
     told = json.loads(seen[-1]["content"])
-    assert told["charts"] == [{"title": "Humidity", "period": chart["period"]}] and told["chart_note"] == "note"
+    assert told["charts"] == [{"title": "Humidity", "period": chart["period"]}] and told["chart_note"] == model_tools.BOT_CHART_NOTE
     (caption, markup), = sent
     assert caption.startswith("Humidity") and "Humid all week." in caption
     assert [b.callback_data for b in markup.inline_keyboard[0]] == ["pd:1d", "pd:7d"]

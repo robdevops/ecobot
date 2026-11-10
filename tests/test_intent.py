@@ -106,10 +106,21 @@ def test_a_named_readings_chart_and_a_period_is_summary_with_the_words_as_they_a
 def test_anything_beside_the_chart_is_the_models():
     for text in ("average temperature 7d", "plot uv and solar on two axes 7d", "lowest temperature on record", "highest humidity this week",
                  "temps this week", "chart weather", "humidity chart", "plot pressure this week: is a storm coming?", "weather all week",
-                 "how hot is it", "rain today", "humidity 1d", "humidity chart next week", "chart chart 7d", "rain chart 7d vs last week",
+                 "how hot is it", "rain today", "rain yesterday", "humidity past day", "temperature 12h", "humidity chart next week", "chart chart 7d", "rain chart 7d vs last week",
                  "temperature chart 99999 years ago", "hello", "what can you do", "pollen", "forecast"):
         assert chart(text) is None, text
     assert intent.read("humidity chart 7d", NOW, ["Pollen", "Forecast"]).chart is None   # (nothing to draw from)
+
+
+def test_a_bare_reading_and_a_day_given_as_a_number_is_its_chart_as_before_the_swap():
+    """"temperature 1d", "co2 24h": the chart of the last day (step 3 gate's intent drew these); a day in words ("yesterday", "past day")
+    or less than a day ("12h", "today") is a figure to read, the model's."""
+    for text, readings, period in (("temperature 1d", ["temperature"], "1d"), ("co2 1d", ["co2"], "1d"), ("pm2.5 1d", ["pm2.5"], "1d"),
+                                   ("humidity 1d", ["humidity"], "1d"), ("temperature 24h", ["temperature"], "24h"),
+                                   ("co2 1 day", ["co2"], "1 day")):
+        assert chart(text) == ("summary", {"readings": readings, "period": period, "chart": True}), text
+    for text in ("temperature yesterday", "temperature today", "co2 12h", "humidity past day", "pm2.5 last 24 hours"):
+        assert chart(text) is None, text
 
 
 def test_the_words_are_read_against_the_readings_the_service_holds():

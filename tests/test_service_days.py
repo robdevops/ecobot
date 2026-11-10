@@ -10,9 +10,8 @@ from datetime import date, datetime, time, timedelta
 import pytest
 
 from tests import report_words as report   # (the bot's words before step 2: the oracle)
-from lib.airgradient.days import find_air_days
+from tests.old_tools import find_air_days, find_days   # (weather_days' and air_days' engines: the oracle)
 from lib.airgradient.readings import AirReadings
-from lib.ecowitt.days import find_days
 from lib.partday import over, parse_stretch
 from lib.service import days as days_tool
 from lib.service.common import CHART_NOTE, FRESH

@@ -406,3 +406,78 @@ async def test_an_alerts_chart_is_the_same_as_before(world, monkeypatch, kind):
     keyboard = golden().get(pictures.CHARTS[kind])
     if keyboard:   # (the UV chart is no button)
         assert chart == keyboard["charts"][0]
+
+
+# ---------- what follows from the model's calls ----------
+class Scripted:
+    """A model that makes these steps' calls ([(tool, arguments)] each), then answers `reply` (an exception: raised instead)."""
+
+    def __init__(self, steps: list[list[tuple[str, dict]]], reply):
+        self.steps, self.reply = list(steps), reply
+        self.chat = NS(completions=self)
+
+    async def create(self, **kw):
+        if self.steps:
+            calls = [NS(id=f"c{i}", function=NS(name=name, arguments=json.dumps(args))) for i, (name, args) in enumerate(self.steps.pop(0))]
+            return NS(choices=[NS(message=NS(content="", tool_calls=calls))], usage=None)
+        if isinstance(self.reply, BaseException):
+            raise self.reply
+        return NS(choices=[NS(message=NS(content=self.reply, tool_calls=None))], usage=None)
+
+
+async def asked_the_model(world, alert_state, monkeypatch, text, steps, reply="ok") -> list:
+    """Ask the bot `text` with a scripted model (Scripted), the air sensor's live-chart link configured: the text or caption of each
+    message it sent."""
+    from lib.llm import Agent
+    bot = world.bot(alert_state, monkeypatch)
+    bot.agent = Agent(Scripted(steps, reply), "m", world.tools)
+    world.air.link = ("live chart", "https://air.example")
+    msg = world.message()
+    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
+    await bot.respond(update, CONTEXT, text)
+    return [s[1] for s in world.sent]
+
+
+LINK_CASES = [   # (question, the model's steps, does the live-chart link go under the reply)
+    ("what's the temperature outside", [[("current", {})]], False),                        # every sensor read: not an air answer
+    ("what's it like out", [[("current", {"readings": ["all"]})]], False),
+    ("how much rain this week", [[("summary", {"readings": ["rainfall total"]})],         # a refusal lists every reading's words
+                                 [("summary", {"readings": ["rain"], "period": "7d"})]], False),
+    ("temperature readings", [[("readings", {"readings": ["temperature"], "period": "today"})]], False),   # refused (bad arguments)
+    ("hottest days", [[("days", {"sort_by": "temp_max", "period": "this month"})]], False),
+    ("how's the air", [[("current", {"readings": ["air"]})]], True),
+    ("pm2.5 and temperature now", [[("current", {"readings": ["pm2.5", "temperature"]})]], True),
+    ("how was the air this week?", [[("summary", {"readings": ["pm2.5"], "period": "7d"})]], True),
+    ("smoky days", [[("days", {"where": [{"field": "pm2_5_max", "op": ">", "value": 15}], "period": "this month"})]], True),
+]
+
+
+@pytest.mark.parametrize("text, steps, link", LINK_CASES)
+async def test_the_air_link_goes_under_an_answer_that_read_the_air_and_no_other(world, alert_state, monkeypatch, text, steps, link):
+    """The live-chart link follows what was read (as before the swap, when air_quality's call brought it), never a key or a word
+    anywhere in a result: not `current` of every sensor, nor a refusal's catalogue of readings."""
+    said = await asked_the_model(world, alert_state, monkeypatch, text, steps)
+    assert said and all(("live chart" in s) is link for s in said), said
+
+
+async def test_an_error_reply_gets_no_air_link(world, alert_state, monkeypatch):
+    """The air was read, then the model timed out: the apology goes alone."""
+    said = await asked_the_model(world, alert_state, monkeypatch, "how's the air", [[("current", {"readings": ["air"]})]], TimeoutError())
+    assert said == ["Sorry, that took too long. Please try again in a moment."]
+
+
+async def test_the_forecast_days_an_outlook_shows_are_recorded_for_the_forecast_alert(world, alert_state, monkeypatch):
+    """outlook's result carries Open-Meteo's lines for today and tomorrow, for the model to copy: once sent, a revision of those days is
+    worth telling the chat, as for forecast's."""
+    from datetime import timedelta
+    await asked_the_model(world, alert_state, monkeypatch, "will it rain later?", [[("outlook", {})]], "Possibly.")
+    today = FrozenDate.today()
+    assert sorted(alert_state.forecast_sent(-5)) == [today, today + timedelta(days=1)]
+
+
+@pytest.mark.parametrize("text", ["temperature 1d", "co2 1d", "pm2.5 1d"])
+async def test_a_bare_reading_and_1d_is_still_its_chart_without_the_model(world, alert_state, monkeypatch, text):
+    """As before the swap: "temperature 1d" is the chart of the last day, drawn in code (no model needed)."""
+    from lib.bot import NO_MODEL
+    got = await asked(world, alert_state, monkeypatch, text)
+    assert got["history"] != NO_MODEL and len(got["charts"]) == 1

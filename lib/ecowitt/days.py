@@ -1,4 +1,5 @@
-"""Find, rank and count days by what the station read, from the storage alone (never asks Ecowitt).
+"""The station's day fields and how a day's figures are read from storage (never asks Ecowitt), for the service's `days` and `current`
+and `summary` (lib/service). (weather_days' own engine, find_days, is the tests' oracle now: tests/old_tools.py.)
 
 Questions like "the hottest day it also rained" or "how many days over 35" compare readings on the
 same day across a long period, which the history tool's summaries can't answer. Each day's figures are
@@ -10,17 +11,11 @@ The exact range grows by itself as the archive keeps more sub-daily data.
 """
 
 import logging
-import operator
-from datetime import date, datetime, tzinfo
+from datetime import date
 
-from ..daytable import analyse, lists_days, prepare
 from ..series import WEATHER
-from ..storage import Storage
 from ..storage.catalogue import column_of
 from ..storage.read import Reader
-from ..timeutil import day_text
-from .api import daily_run
-from .calendar import PublicHolidays
 
 log = logging.getLogger(__name__)
 
@@ -81,63 +76,3 @@ def day_values_on(r: Reader, mac: str, shown: list[str], days) -> tuple[dict[str
                 values[name][d] = v
                 source[d] = max(source.get(d, src), src, key=COARSER.get)
     return values, {d: "daily" if s == "1day" else s for d, s in source.items()}
-
-
-async def find_days(storage: Storage, mac: str, tz: tzinfo, args: dict, now: datetime, turn=None) -> dict:
-    asked = prepare(args, FIELD_UNITS, ALWAYS_SHOWN, now.date())
-    if isinstance(asked, str):
-        return {"error": asked}
-    only = args.get("only")
-    if only not in (None, "public_holiday", "weekend"):
-        return {"error": "only must be public_holiday or weekend"}
-    calendar = PublicHolidays(tz)
-    if only == "public_holiday" and not calendar.available:
-        return {"error": calendar.problem()}
-    kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
-            "public_holiday": lambda d: calendar.name(d) is not None}[only]
-    first, last, shown, where, sort_by = asked.first, asked.last, asked.shown, asked.where, asked.sort_by
-    days = asked.days
-    values, source = await storage.read(day_values_on, mac, shown, days)
-
-    checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
-    got = analyse(values, asked, checked, tz, turn,
-                  lambda d: {**({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
-                             "source": "daily" if source.get(d) == "daily" else "exact"},
-                  {"public_holiday": "public holidays only", "weekend": "weekends only"}.get(only, ""))
-    out, matches, ranked, rank, holds, row = got.out, got.matches, got.ranked, got.rank, got.holds, got.row
-
-    # Days that would have ranked higher had a trace of rain counted: the answer should mention them
-    trace: list[date] = []
-    rain_cond = next((c for c in where if c["field"] == "rain" and c["op"] in (">", ">=") and c["value"] > 0), None)
-    if rain_cond:
-        relaxed = [{"field": "rain", "op": ">", "value": 0} if c is rain_cond else c for c in where]
-        matched = set(matches)
-        better = operator.lt if args.get("order", "desc") == "asc" else operator.gt
-        for d in rank(d for d in checked if holds(d, relaxed)):
-            if d in matched:
-                break  # from here on the real matches rank at least as high
-            if not ranked or better(values[sort_by][d], values[sort_by][ranked[0]]):  # strictly ahead, not a tie
-                trace.append(d)
-            if len(trace) == 2:
-                break
-
-    exact_days = sorted(d for d in checked if source.get(d) != "daily")
-    if not lists_days(args):
-        trace = []   # just the figures
-    if trace:
-        out["trace_rain_days"] = [row(d) for d in trace]
-        out["note_trace"] = (f"These days rank higher but had less than {rain_cond['value']:g} mm of rain (a trace), so they "
-                             "are not in \"days\". Mention the first as a short footnote.")
-    if any(source.get(d) == "daily" for d in checked):
-        out["exact_from"] = day_text(exact_days[0]) if exact_days else None
-        out["note_daily"] = (f"Days marked \"daily\" come from daily readings that run {daily_run(tz, first, last)}, so their rain and dates "
-                             "are approximate (a morning shower can be counted on the day before). Say so briefly if any "
-                             "listed day is marked daily, or if the period reaches back before exact_from.")
-    if AVERAGED & set(shown) and any(source.get(d) != "5min" for d in checked):
-        out["note_averaged"] = ("For these readings, days from 30-minute or daily data use each interval's average, so a day's true peak "
-                                "(or low) may be a little beyond what is listed: a count of days at or past a limit can fall slightly short "
-                                "near the limit. Say so briefly.")
-    if not checked:
-        out["note"] = "No cached readings for this period yet (the bot may still be downloading history)."
-    log.info("Days %s to %s: %d checked, %d match, %d exact", first, last, len(checked), len(matches), len(exact_days))
-    return out

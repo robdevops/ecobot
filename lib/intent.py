@@ -143,7 +143,9 @@ CHART_WORDS = ("chart", "charts", "graph", "plot")
 # their readings, as the service's words
 SENTENCE_READINGS = {"air quality all metrics": ["air"], "particulates": ["pm2.5", "pm10", "pm1"]}
 BARE_MIN = timedelta(days=1)   # "<reading> <period>" with no chart word is a chart only over more than a day ("humidity 7d"; not
-                               # "rain today": a figure to read)
+                               # "rain today" or "rain yesterday": a figure to read), or over a day given as a number ("temperature 1d",
+                               # "co2 24h": the chart's own 1D, as before step 3)
+NUMERIC = re.compile(r"\d+\s*(d|h|days?|hours?|hrs?)", I)
 APOSTROPHES = str.maketrans("’‘", "''")   # a phone's typographic apostrophes ("what’s"), read as the plain one every pattern uses
 
 
@@ -162,7 +164,7 @@ def _readings(words: list[str], catalogue) -> list[str] | None:
 
 def _period(words: list[str], now: datetime, tz: tzinfo, bare: bool) -> str | None:
     """These words as a period the service reads (summary's, not whole days), passed on as they are; None when it can't read them (or,
-    bare: when they are a day or less)."""
+    bare: when they are a day or less, but for a day given as a number: "1d", "24h")."""
     from .periods_text import PeriodError, read_period
     said = " ".join(words)
     if not said:
@@ -171,12 +173,13 @@ def _period(words: list[str], now: datetime, tz: tzinfo, bare: bool) -> str | No
         read = read_period(said, None, None, now=now, tz=tz, default=said)
     except (PeriodError, ValueError):
         return None
-    return said if not bare or read.end - read.start > BARE_MIN else None
+    span = read.end - read.start
+    return said if not bare or span > BARE_MIN or span == BARE_MIN and NUMERIC.fullmatch(said) else None
 
 
 def chart_call(text: str, now: datetime, tz: tzinfo, catalogue=None) -> tuple[str, dict] | None:
     """The service call of a message that is only a named reading's chart and a period: "<readings> chart <period>", "chart <readings>
-    <period>" or "<readings> <period>" (over more than a day): summary {readings: the words, period: the words, chart: true}; None
+    <period>" or "<readings> <period>" (over more than a day, or "1d"): summary {readings: the words, period: the words, chart: true}; None
     for anything else (a question beside it, an average, two axes, no period: the model's). `catalogue`: the service's readings (default:
     every reading it knows)."""
     if catalogue is None:

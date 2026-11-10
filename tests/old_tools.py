@@ -1,20 +1,23 @@
 """The bot's twelve old tools' handlers, as they answered before the model got the service's tools (docs/mcp-service.md 6, step 3), kept
-for the tests only: they drive the engines the service wraps the way the old tools did (HistoryQuery, AirGradient.history, find_days,
-link, the readings), and they are the oracle the service's words were ported against (with tests/report_words.py). The corrections
+for the tests only: they drive the engines the service wraps the way the old tools did (HistoryQuery, AirGradient.history, the day
+rows, link, the readings), and they are the oracle the service's words were ported against (with tests/report_words.py). The corrections
 from the person's words are gone with step 3. Deleted with the bot (step 6)."""
 
 import asyncio
 import logging
+import operator
 import time as clock
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, time
+from datetime import date, datetime, time
 
-from lib.airgradient.days import find_air_days
+from lib.airgradient.days import ALWAYS_SHOWN as AIR_SHOWN, FIELDS as AIR_FIELDS
 from lib.airgradient.metrics import EXTRA
 from lib.captions import wants_chart
-from lib.ecowitt.api import GROUPS
-from lib.ecowitt.days import find_days
+from lib.daytable import analyse, lists_days, prepare
+from lib.ecowitt.api import GROUPS, daily_run
+from lib.ecowitt.calendar import PublicHolidays
+from lib.ecowitt.days import ALWAYS_SHOWN, AVERAGED, FIELD_UNITS, day_values_on
 from lib.ecowitt.glance import glance
 from lib.ecowitt.link import link
 from lib.ecowitt.query import HistoryQuery, chart_field, stack_names
@@ -23,7 +26,7 @@ from lib.history import (AIR_SENSOR, ALIASES, DAY_VALUE_IS, INTERVALS, MAX_ROWS,
                          interval_starts, read_days, read_intervals, row_count, station_fields, station_metrics)
 from lib.pollen.source import OFF_SEASON
 from lib.series import READING_GROUPS, WEATHER, find
-from lib.timeutil import local_date, local_epoch, now_local, parse_local, when
+from lib.timeutil import day_text, local_date, local_epoch, now_local, parse_local, when
 from lib.tools import Turn, json_result
 
 log = logging.getLogger(__name__)
@@ -253,5 +256,93 @@ class History:
         return json_result(out)
 
 
-__all__ = ["History", "NOW_GROUPS", "air_current", "as_drawn", "air_days", "air_quality", "forecast", "parse_groups", "pollen", "weather_days",
+
+# ---------- the day tools' engines (the service's days reads the day rows itself: lib/service/days.py) ----------
+async def find_days(storage, mac: str, tz, args: dict, now: datetime, turn=None) -> dict:
+    """weather_days' engine: the station's days from its day rows (lib/ecowitt/days.py day_values_on), counted and ranked by
+    lib/daytable.py, with the old tool's notes."""
+    asked = prepare(args, FIELD_UNITS, ALWAYS_SHOWN, now.date())
+    if isinstance(asked, str):
+        return {"error": asked}
+    only = args.get("only")
+    if only not in (None, "public_holiday", "weekend"):
+        return {"error": "only must be public_holiday or weekend"}
+    calendar = PublicHolidays(tz)
+    if only == "public_holiday" and not calendar.available:
+        return {"error": calendar.problem()}
+    kind = {None: lambda d: True, "weekend": lambda d: d.weekday() >= 5,
+            "public_holiday": lambda d: calendar.name(d) is not None}[only]
+    first, last, shown, where, sort_by = asked.first, asked.last, asked.shown, asked.where, asked.sort_by
+    days = asked.days
+    values, source = await storage.read(day_values_on, mac, shown, days)
+
+    checked = [d for d in days if kind(d) and any(d in values[n] for n in shown)]
+    got = analyse(values, asked, checked, tz, turn,
+                  lambda d: {**({"holiday": calendar.name(d)} if only == "public_holiday" else {}),
+                             "source": "daily" if source.get(d) == "daily" else "exact"},
+                  {"public_holiday": "public holidays only", "weekend": "weekends only"}.get(only, ""))
+    out, matches, ranked, rank, holds, row = got.out, got.matches, got.ranked, got.rank, got.holds, got.row
+
+    # Days that would have ranked higher had a trace of rain counted: the answer should mention them
+    trace: list[date] = []
+    rain_cond = next((c for c in where if c["field"] == "rain" and c["op"] in (">", ">=") and c["value"] > 0), None)
+    if rain_cond:
+        relaxed = [{"field": "rain", "op": ">", "value": 0} if c is rain_cond else c for c in where]
+        matched = set(matches)
+        better = operator.lt if args.get("order", "desc") == "asc" else operator.gt
+        for d in rank(d for d in checked if holds(d, relaxed)):
+            if d in matched:
+                break  # from here on the real matches rank at least as high
+            if not ranked or better(values[sort_by][d], values[sort_by][ranked[0]]):  # strictly ahead, not a tie
+                trace.append(d)
+            if len(trace) == 2:
+                break
+
+    exact_days = sorted(d for d in checked if source.get(d) != "daily")
+    if not lists_days(args):
+        trace = []   # just the figures
+    if trace:
+        out["trace_rain_days"] = [row(d) for d in trace]
+        out["note_trace"] = (f"These days rank higher but had less than {rain_cond['value']:g} mm of rain (a trace), so they "
+                             "are not in \"days\". Mention the first as a short footnote.")
+    if any(source.get(d) == "daily" for d in checked):
+        out["exact_from"] = day_text(exact_days[0]) if exact_days else None
+        out["note_daily"] = (f"Days marked \"daily\" come from daily readings that run {daily_run(tz, first, last)}, so their rain and dates "
+                             "are approximate (a morning shower can be counted on the day before). Say so briefly if any "
+                             "listed day is marked daily, or if the period reaches back before exact_from.")
+    if AVERAGED & set(shown) and any(source.get(d) != "5min" for d in checked):
+        out["note_averaged"] = ("For these readings, days from 30-minute or daily data use each interval's average, so a day's true peak "
+                                "(or low) may be a little beyond what is listed: a count of days at or past a limit can fall slightly short "
+                                "near the limit. Say so briefly.")
+    if not checked:
+        out["note"] = "No cached readings for this period yet (the bot may still be downloading history)."
+    log.info("Days %s to %s: %d checked, %d match, %d exact", first, last, len(checked), len(matches), len(exact_days))
+    return out
+
+
+async def find_air_days(store, tz, args: dict, now: datetime, turn=None) -> dict:
+    """air_days' engine: the answer, from one read of the air sensor's day rows (readings.AirReadings.day_figures)."""
+    asked = prepare(args, AIR_FIELDS, AIR_SHOWN, now.date())
+    if isinstance(asked, str):
+        return {"error": asked}
+    days, shown = asked.days, asked.shown
+    figures = await store.day_figures(asked.first, asked.last, shown)
+    values, counts = figures.values, figures.counts
+    checked = [d for d in days if any(d in values[n] for n in shown)]
+    got = analyse(values, asked, checked, tz, turn)
+    out = got.out
+    hourly = [d for d in checked if d in figures.hourly]
+    if hourly and any(n.endswith(("_max", "_min")) for n in shown):
+        out["note_hourly"] = (f"{len(hourly)} of these days only exist as hourly averages, so their highs and lows are hourly "
+                              "averages and a short spike is smoothed. Say so briefly if it matters.")
+    missing = sum(1 for d in days if not counts.get(d))
+    if missing:
+        out["note_missing"] = f"{missing} day(s) in this period have no stored readings (not downloaded yet, or the sensor was off) and are not counted."
+    if not checked:
+        out["note"] = "No stored readings for this period yet (the bot may still be downloading history)."
+    log.info("Air days %s to %s: %d checked, %d match", asked.first, asked.last, len(checked), len(got.matches))
+    return out
+
+
+__all__ = ["History", "find_air_days", "find_days", "NOW_GROUPS", "air_current", "as_drawn", "air_days", "air_quality", "forecast", "parse_groups", "pollen", "weather_days",
            "weather_history", "weather_link", "weather_now"]
