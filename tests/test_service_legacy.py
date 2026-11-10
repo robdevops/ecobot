@@ -43,7 +43,7 @@ def test_a_chart_asked_for_plainly_is_summarys_call_with_its_period_in_the_servi
                        ("plot uv and solar on two axes 7d", {"readings": ["solar_and_uvi.uvi", "solar_and_uvi.solar"], "period": "last 7 days",
                                                              "chart": True, "layout": "two_axes"}),
                        ("lowest temperature on record", {"readings": ["outdoor.temperature", "indoor.temperature"],   # (the bot's "on record")
-                                                         "period": "2022-11-12 to 2026-11-10", "chart": True}),
+                                                         "period": "2022-11-12 to now", "chart": True}),
                        ("Particulates chart 1d", {"readings": ["air.pm2_5", "air.pm10", "air.pm1"], "period": "last 24 hours", "chart": True})):
         r, turn = read(text)
         assert legacy.translate(*r.fast[:2], turn, now=NOW, tz=TZ) == ("summary", want), text
@@ -59,7 +59,7 @@ def test_the_lookups_are_the_tools_that_word_them():
                        ("highest temperature yesterday", ("summary", {"readings": ["outdoor.temperature", "indoor.temperature"],
                                                                        "period": "yesterday", "chart": False})),
                        ("rain by month this year", ("days", {"count_only": True, "group_by": "month", "stat": "sum", "of": "rain",
-                                                             "period": "2026-01-01 to 2026-11-10"}))):
+                                                             "period": "2026-01-01 to now"}))):
         r, turn = read(text)
         assert legacy.lookup(r) is None and legacy.translate(*r.fast[:2], turn, now=NOW, tz=TZ) == want, text
     assert legacy.report(("Ecowitt", "AirGradient", "Pollen", "Forecast")) == [("current", {}), ("pollen", {}),
@@ -69,10 +69,11 @@ def test_the_lookups_are_the_tools_that_word_them():
 def test_a_period_is_words_the_service_reads_as_the_same_span_else_whole_days_else_times():
     assert legacy.period("2026-11-09 14:05:00", "2026-11-10 14:05:00", ["last 24 hours"], NOW, TZ) == {"period": "last 24 hours"}
     assert legacy.period("2026-11-04 00:00:00", "2026-11-10 23:59:59", ["this week"], NOW, TZ) == {"period": "this week"}
-    assert legacy.period("2026-11-04 00:00:00", "2026-11-10 23:59:59", ["this month"], NOW, TZ) == {"period": "2026-11-04 to 2026-11-10"}
+    assert legacy.period("2026-11-04 00:00:00", "2026-11-10 23:59:59", ["this month"], NOW, TZ) == {"period": "2026-11-04 to now"}
     assert legacy.period("2026-11-01 00:00:00", None, [], NOW, TZ) == {"period": "2026-11-01 to now"}
     assert legacy.period("2026-11-09 06:00:00", "2026-11-09 11:59:59", [], NOW, TZ) == {"start": "2026-11-09 06:00", "end": "2026-11-09 12:00"}
-    assert legacy.period("2026-01-01", "2026-11-10", [], NOW, TZ, whole_days=True) == {"period": "2026-01-01 to 2026-11-10"}
+    assert legacy.period("2026-01-01", "2026-11-10", [], NOW, TZ, whole_days=True) == {"period": "2026-01-01 to now"}
+    assert legacy.period("2026-01-01", "2026-10-31", [], NOW, TZ, whole_days=True) == {"period": "2026-01-01 to 2026-10-31"}   # past: fixed
 
 
 def test_the_periods_a_chart_the_model_drew_is_worth_drawing_over_are_its_tools():

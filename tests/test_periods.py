@@ -660,7 +660,9 @@ def test_a_chart_with_no_periods_to_offer_gets_a_reload_when_its_period_runs_to_
     assert row("summary", period="today") == reload and row("summary", period="yesterday") is None
     assert row("days", group_by="year", period="on record") == reload                                      # through yesterday
     assert row("days", group_by="year", period="2024-01-01 to 2025-12-31") is None
-    assert row("days", group_by="year", period="2025-01-01 to 2026-12-31") == reload                       # (cut to yesterday)
+    assert row("days", group_by="year", period="2025-01-01 to now") == reload
+    for fixed in ("2026-09-01 to 2026-10-01", "September", "last month", "2025"):   # fixed dates, even ending yesterday: never more
+        assert row("days", group_by="year", period=fixed) is None, fixed
     assert periods.periods_keyboard({"tool": "summary", "arguments": {"start": "2026-10-02 09:00"}, "periods": []}) is None   # no clock: none
     listed = {"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]}
     assert labels(periods.periods_keyboard(listed, "7d", NOW, TZ)) == [ROW]                                # periods listed: those

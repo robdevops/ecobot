@@ -378,6 +378,9 @@ async def test_a_chart_drawn_with_dates_names_them_as_its_period_and_per_year_it
     assert drawn["arguments"]["period"] == f"{ago(200).isoformat()} to {ago(2).isoformat()}" and drawn["periods"] == []
     assert chart_of(await ask(world, **drawn["arguments"])) == chart_of(out)
     assert "complete" not in out   # (chart_answers_it wasn't set)
+    for end in ({}, {"end": str(ago(-3))}):   # a start with no end, or an end today or later: "to now", so a replay moves on with the clock
+        drawn = chart_of(await ask(world, start=str(ago(200)), where=[{"field": "rain", "op": ">=", "value": 1}], group_by="year", **end))["drawn_by"]
+        assert drawn["arguments"]["period"] == f"{ago(200).isoformat()} to now"
 
 
 async def test_a_chart_is_not_the_whole_answer_when_a_note_needs_the_models_words(world):

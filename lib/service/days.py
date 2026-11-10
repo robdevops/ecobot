@@ -520,7 +520,10 @@ class DaysTool:
         """The call that drew the chart as the tool read it (3.7), every default filled in, the period in words, and the periods it is
         worth drawing over: per month, 3 months, a year and the whole record (with hours, only while that is within its 400 days); per
         year, none."""
-        words = f"{first.isoformat()} to {last.isoformat()}" if args.get("start") else period.asked
+        words = period.asked
+        if args.get("start"):   # dates as words; one that runs to today or later as "to now", so a replay moves on with the clock
+            open_ended = not args.get("end") or str(args["end"])[:10] >= today.isoformat()
+            words = f"{first.isoformat()} to {'now' if open_ended else last.isoformat()}"
         arguments = {"where": call.where, "sort_by": self.sort_of(call), "order": call.order, "count_only": call.count_only,
                      "group_by": call.group_by, "stat": call.stat, **({"of": call.of} if call.of else {}), "limit": call.limit,
                      **({"only": call.only} if call.only else {}), **({"hours": _stretch_words(call.stretch)} if call.stretch else {}),

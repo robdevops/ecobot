@@ -101,11 +101,14 @@ def _span(drawn_by: dict, now: datetime, tz: tzinfo):
 
 
 def ends_now(drawn_by: dict | None, now: datetime, tz: tzinfo) -> bool:
-    """Whether the chart's period runs to the present, so drawing it again can show more: to now, or (a tool of whole days) through
-    yesterday, the last whole day. "Yesterday" on a chart of readings, or a range of past dates, doesn't."""
+    """Whether the chart's period runs to the present and moves on with the clock, so drawing it again can show more: to now, or (a
+    tool of whole days) through yesterday, the last whole day. Fixed dates don't ("October", "2026-11-01 to 2026-11-09", even on the
+    10th), nor does "yesterday" on a chart of readings."""
     span = _span(drawn_by, now, tz) if drawn_by else None
-    if span is None:
+    later = _span(drawn_by, now + timedelta(days=1), tz) if span else None
+    if span is None or later is None or later[1] <= span[1]:   # fixed dates ("October", "2026-11-01 to 2026-11-09"): never more
         return False
+
     def aware(t: datetime) -> datetime:   # (naive: the station's clock)
         return t if t.tzinfo else t.replace(tzinfo=tz)
     end, now = aware(span[1]), aware(now).astimezone(aware(span[1]).tzinfo)

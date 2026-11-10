@@ -62,8 +62,9 @@ def period(start: str | None, end: str | None, words: list[str], now: datetime, 
     first, last = _when(start) if start else None, _when(end) if end else None
     if first is None:
         return {}
+    open_ended = last is None or last.date() >= now.date()   # (to today or later: to now, so a replay moves on with the clock)
     if whole_days:
-        return {"period": f"{first:%Y-%m-%d} to {last:%Y-%m-%d}" if last else f"{first:%Y-%m-%d} to now"}
+        return {"period": f"{first:%Y-%m-%d} to now" if open_ended else f"{first:%Y-%m-%d} to {last:%Y-%m-%d}"}
     now = now.replace(tzinfo=None, microsecond=0)
     until = min(last, now) if last else now
     for said in words:
@@ -75,7 +76,7 @@ def period(start: str | None, end: str | None, words: list[str], now: datetime, 
             return {"period": said}
     whole_end = last is None or last >= now or last.strftime("%H:%M:%S") == "23:59:59"
     if first.time() == datetime.min.time() and whole_end:   # whole days, as words the service can swap for another period
-        return {"period": f"{first:%Y-%m-%d} to {last:%Y-%m-%d}" if last else f"{first:%Y-%m-%d} to now"}
+        return {"period": f"{first:%Y-%m-%d} to now" if open_ended else f"{first:%Y-%m-%d} to {last:%Y-%m-%d}"}
     out = {"start": first.strftime("%Y-%m-%d") if first.time() == datetime.min.time() else first.strftime("%Y-%m-%d %H:%M")}
     if last is not None and last < now:
         out["end"] = last.strftime("%Y-%m-%d") if last.strftime("%H:%M:%S") == "23:59:59" else \
