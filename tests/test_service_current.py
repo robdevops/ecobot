@@ -248,10 +248,27 @@ def test_the_heading_has_the_time_of_the_reading_with_its_day_when_that_isnt_tod
 
 
 # ---------- context: the gauges' figures ----------
+async def gauge_rows(eco, data: dict) -> dict:
+    """{title: {row: figures}}: each gauge's rows as the station's own dashboard drew them before step 2 (dashboard.figures over the
+    year's day rows, the live reading counted in; today's rain the gauge's own reading)."""
+    from lib.ecowitt.dashboard import GAUGES, PERIODS, figures, live_value, periods_of
+    days = periods_of(eco.now().date())
+    names = sorted({n for g in GAUGES for n in (g.highest, g.lowest) if n})
+    values, _ = await eco.storage.read(day_values_on, eco.mac, names, days["Yearly"])
+    out = {}
+    for g in GAUGES:
+        now = live_value(data, g.live)
+        out[g.title] = {row: figures(g, values, days[row], None if g.total else now) for row in PERIODS}
+        if g.total and now is not None:
+            out[g.title]["Daily"] = (None, now)
+    return out
+
+
 async def test_context_is_the_gauges_figures_with_when_each_happened(tmp_path, archived_cache):
-    tool, _, _ = await world(tmp_path, archived_cache, live(time.time(), **DAY))
+    data = live(time.time(), **DAY)
+    tool, _, _ = await world(tmp_path, archived_cache, data)
     got = await call(tool, context=True)
-    tiles = {t.title: t.rows for t in (await tool.ctx.eco.dashboard()).tiles}
+    tiles = await gauge_rows(tool.ctx.eco, data)
     s = got["sensors"]
     for title, (sensor, reading) in (("Temperature", ("outdoor", "temperature")), ("Humidity", ("outdoor", "humidity")),
                                      ("Atmospheric pressure", ("pressure", "relative")), ("Dew point", ("outdoor", "dew_point")),
@@ -273,6 +290,24 @@ async def test_context_is_the_gauges_figures_with_when_each_happened(tmp_path, a
         assert rain[key]["total"] == total and rain[key]["wettest_day"]["rain"] == wettest
     assert s["solar_and_uvi"]["uvi"]["year"]["high_text"] == "11"                         # written as the station writes it
     assert "today" not in s["outdoor"]["vpd"] and "today" not in s["air"]["pm2_5"]       # no gauge, no context
+    await close(tool)
+
+
+async def test_with_context_every_gauge_the_station_sends_is_there_though_its_file_hasnt_recorded_it_yet(tmp_path, archived_cache):
+    """The catalogue is what the file has recorded; with context, a gauge's reading the station sends now but the file doesn't hold yet
+    (the archived fake has no feels like, rain rate nor indoor humidity) is there too, with its figures (the reading now alone), as the
+    gauges show every reading the station sends. Without context, or with readings named, only the catalogue's."""
+    tool, _, _ = await world(tmp_path, archived_cache, catalogue="file")
+    held = tool.ctx.readings()
+    assert not {"outdoor.feels_like", "rainfall.rain_rate", "indoor.humidity"} & set(held.names)
+    s = (await call(tool, context=True))["sensors"]
+    feels, rate, inside = s["outdoor"]["feels_like"], s["rainfall"]["rain_rate"], s["indoor"]["humidity"]
+    assert (feels["value"], feels["text"]) == (12.3, "12.3 °C") and rate["value"] == 1.8 and inside["value"] == 63
+    assert feels["today"]["high"] == feels["today"]["low"] == 12.3 and rate["year"]["high"] == 1.8
+    assert "app_temp" not in s["outdoor"] and "vpd" not in s["outdoor"]             # (no gauge: only the catalogue's)
+    assert "feels_like" not in (await call(tool))["sensors"]["outdoor"]
+    named = (await call(tool, readings=["outdoor temperature"], context=True))["sensors"]
+    assert list(named) == ["outdoor"] and list(named["outdoor"]) == ["temperature"]   # named: just those
     await close(tool)
 
 

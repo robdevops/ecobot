@@ -11,6 +11,7 @@ and paste the table it prints.
 
 import asyncio
 import dataclasses
+import json
 import logging
 import os
 import sqlite3
@@ -148,7 +149,14 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
                  ("The alerts' last 3 hours", lambda: eco.recent(3))]
         for label, run in work:
             rows.append((label, *await measured(run, repeat, lambda: eco.api.asked)))
-        rows.append(("/dashboard", *await measured(eco.dashboard, repeat, lambda: eco.api.asked)))
+        from lib.gauge_sheet import call as gauges_call, sheet
+        from lib.service.context import Context
+        from lib.service.current import CurrentTool
+        current = CurrentTool(Context(eco=eco)).tool()   # (the bot's gauges: current with context, laid out bot-side)
+
+        async def dashboard():
+            return sheet(json.loads(await current.call(gauges_call(), None)))
+        rows.append(("/dashboard", *await measured(dashboard, repeat, lambda: eco.api.asked)))
         await eco.close()
     if cfg.airgradient_location and cfg.storage_path.exists():
         asked = [0]

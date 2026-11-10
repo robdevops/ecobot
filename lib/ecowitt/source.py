@@ -22,7 +22,6 @@ from .api import FINE_CYCLES, EcowittAPI, GROUPS, unit_text
 from .calendar import PublicHolidays
 from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
 from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
-from .dashboard import dashboard
 from .glance import glance
 from .fetch import Fetcher, Recent
 from .fallback import FallbackAPI, newest
@@ -306,11 +305,6 @@ class Ecowitt(Source):
                 await self.storage.write(lambda w: w.put_ranges(self.mac, found))
         except Exception as e:
             log.warning("Couldn't keep the live readings' ranges: %s", e)
-
-    async def dashboard(self, titles=None):
-        """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
-        lows today, this month and this year; None when the station has no reading."""
-        return await dashboard(await self._live_data(LIVE_GROUPS), self.storage, self.mac, self.now().date(), titles)
 
     async def watch_live(self):
         """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather

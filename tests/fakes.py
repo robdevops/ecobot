@@ -46,6 +46,21 @@ class StandInService:
         return list(names)
 
 
+def gauges_result(live: dict, values: dict, today) -> dict:
+    """current's result with context, as the bot reads it for its gauges, for a live reading ({group: {field: {value, unit}}}) and the
+    days' figures (days.day_values_on's): each gauge's reading now and its figures (lib/service/current.py context_of), through JSON."""
+    import json
+    from lib.ecowitt.dashboard import GAUGES, live_value
+    from lib.service.current import context_of
+    sensors: dict = {}
+    for gauge in GAUGES:
+        value, beside = live_value(live, gauge.live), context_of(gauge.reading, live, values, {}, today, TZ)
+        if value is not None or beside:
+            group, name = gauge.reading.split(".", 1)
+            sensors.setdefault(group, {})[name] = {"value": value, "unit": gauge.unit, **beside}
+    return json.loads(json.dumps({"sensors": sensors}))
+
+
 def chart_data(title: str = "Temperature", drawn_by: dict | None = None) -> dict:
     """A chart as a service tool gives it (specs.to_json), with its drawn_by."""
     from lib.specs import Chart, Line, Panel, to_json

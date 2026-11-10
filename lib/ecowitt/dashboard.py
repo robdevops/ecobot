@@ -1,17 +1,16 @@
-"""The dashboard's gauges from the station: each reading as it is now, with its highest and lowest today, this month and this year.
+"""The station's gauges: what each shows (GAUGES: its reading, its scale and colours, the day figures beside it) and their figures, each
+reading as it is now with its highest and lowest today, this month and this year (figures()).
 
 Now is the live reading. The extremes are the day rows' (days.day_values_on: exact days from the 5- or 30-minute readings where they hold
 the day, else the daily buckets; today from what there is so far), which take in the bands the bot and Home Assistant saw between the
-5-minute readings, with the live reading counted in, so the day's figures are never behind the gauge. A tile is left out when the station
-has no such reading at all (no indoor sensor), and drawn dimmed when it has one but not now.
+5-minute readings, with the live reading counted in, so the day's figures are never behind the gauge.
+
+The service's `current` with `context` gives these figures (lib/service/current.py context_of); the bot lays its sheet of gauges out
+from that result (lib/gauge_sheet.py), with GAUGES' scales and colours.
 """
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-
-from ..specs import Dashboard, Tile
-from ..storage import Storage
-from .days import day_values_on
 
 COLD_TO_HOT = ("#7DE7FF", "#B2EEFA", "#F7C9C9", "#EE7070", "#D32F27")
 WATER = ("#DFFBFF", "#B2EEFA", "#80E5FA", "#4FB3D6", "#2C7592")
@@ -36,6 +35,13 @@ class Gauge:
     lowest: str | None = None             # ... whose lowest is its Min (none: no Min column)
     decimals: int = 1
     total: bool = False                   # rain: the Total column, the sum of the days' figures (its Max is the wettest day's)
+
+    @property
+    def reading(self) -> str:
+        """The service's name of the reading it shows (lib/service/names.py): its live reading's, the rain gauge's "daily" being
+        rainfall.rain."""
+        group, field = self.live
+        return f"{group}.{'rain' if field == 'daily' else field}"
 
 
 GAUGES = (
@@ -88,28 +94,3 @@ def figures(gauge: Gauge, values: dict, days: list[date], now: float | None) -> 
         lows = [values[gauge.lowest][d] for d in days if d in values.get(gauge.lowest, {})] + ([now] if now is not None else [])
         row.append(min(lows) if lows else None)
     return tuple(row)
-
-
-def sheet(live: dict, values: dict, today: date, titles=None) -> Dashboard | None:
-    """The dashboard from a live reading and the days' figures, with the gauges of these titles only (all when None); None when the
-    station has none of the readings."""
-    tiles = []
-    days = periods_of(today)
-    for gauge in gauges_of(titles):
-        now = live_value(live, gauge.live)
-        if now is None and not any(values.get(name) for name in (gauge.highest, gauge.lowest) if name):
-            continue
-        rows = {name: figures(gauge, values, days[name], None if gauge.total else now) for name in PERIODS}
-        if gauge.total and now is not None:   # today's rain is the gauge's own reading, whatever the day's cached figure lags behind
-            rows["Daily"] = (None, now)
-        columns = ("Max", "Total") if gauge.total else ("Max", "Min") if gauge.lowest else ("Max",)
-        tiles.append(Tile(gauge.title, gauge.unit, now, gauge.kind, gauge.low, gauge.high, gauge.colours, columns, rows, gauge.ticks, gauge.decimals))
-    return Dashboard(tiles) if tiles else None
-
-
-async def dashboard(live: dict, storage: Storage, mac: str, today: date, titles=None) -> Dashboard | None:
-    """The gauges (of these titles; all when None) for a live reading ({group: {field: {value, unit}}}, as Ecowitt's real_time gives
-    it), the extremes from the day rows of the year so far: one read."""
-    names = sorted({n for g in gauges_of(titles) for n in (g.highest, g.lowest) if n})
-    values, _ = await storage.read(day_values_on, mac, names, periods_of(today)["Yearly"])
-    return sheet(live, values, today, titles)

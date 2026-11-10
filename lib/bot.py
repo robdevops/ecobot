@@ -35,7 +35,7 @@ from .service import legacy
 from .service.common import AS_DRAWN, BACKGROUND
 from .service.context import Context
 from .specs import from_json, to_json
-from .ecowitt.dashboard import STATUS
+from . import gauge_sheet
 from .ecowitt.query import chart_field, stack_names
 from .tools import Turn
 from .config import Config
@@ -914,7 +914,7 @@ class Bot:
             await answer_query(query, STALE_BUTTON)
             return
         try:
-            answer = await asyncio.wait_for(self._dashboard(eco), TURN_SECONDS)
+            answer = await asyncio.wait_for(self._dashboard(), TURN_SECONDS)
         except Exception as e:
             log.warning("Dashboard refresh failed: %s: %s", type(e).__name__, e)
             answer = None
@@ -1181,13 +1181,12 @@ class Bot:
         return await asyncio.wait_for(written, TURN_SECONDS), None
 
     async def _status_gauges(self) -> bytes | None:
-        """The report's picture: the weather station's temperature, humidity and rain gauges (ecowitt.dashboard.STATUS). None without the
-        station, or when they can't be drawn (the report then goes as text alone)."""
-        station = self.by_name.get("Ecowitt")
-        if station is None:
+        """The report's picture: the weather station's temperature, humidity and rain gauges (gauge_sheet.STATUS), from the service's
+        current with context. None without the station, or when they can't be drawn (the report then goes as text alone)."""
+        if "Ecowitt" not in self.by_name:
             return None
         try:
-            sheet = await station.dashboard(STATUS)
+            sheet = await self._gauge_sheet(gauge_sheet.STATUS)
             return await asyncio.to_thread(gauges.render, sheet) if sheet else None
         except Exception as e:
             log.error("The report's gauges failed (%s: %s); sending it without them", type(e).__name__, e, exc_info=isinstance(e, BUGS))
@@ -1209,9 +1208,19 @@ class Bot:
         text, charts = out.get("caption") or out.get("answer"), out.get("charts") or []
         return Made(text, charts) if "error" not in out and charts and text else None
 
-    async def _dashboard(self, ecowitt) -> Answer:
+    async def _gauge_sheet(self, titles=None):
+        """The gauges of these titles (all when None) laid out from the service's current with context (lib/gauge_sheet.py), their
+        readings named those the service holds; None when the station gives nothing."""
+        args = gauge_sheet.call(titles)
+        if "readings" in args:
+            args["readings"] = self.service.held(args["readings"])
+            if not args["readings"]:
+                return None
+        return gauge_sheet.sheet(await self._service_call("current", args), titles)
+
+    async def _dashboard(self) -> Answer:
         """The station's gauges as one picture, sent with just its title (no period buttons: it is the state now)."""
-        sheet = await ecowitt.dashboard()
+        sheet = await self._gauge_sheet()
         if sheet is None:
             return Answer("The weather station isn't answering right now.", ok=False)
         now = now_local(self.cfg.tz)
@@ -1466,7 +1475,7 @@ class Bot:
             made = await asyncio.wait_for(self._chart_in_code(call, turn), TURN_SECONDS)
             answer = Answer(made.text, silent=not shown, made=time.monotonic() - began, charts=made.charts, key=key) if made else Answer()
         elif read.dashboard and "Ecowitt" in self.by_name:
-            answer = await asyncio.wait_for(self._dashboard(self.by_name["Ecowitt"]), TURN_SECONDS)
+            answer = await asyncio.wait_for(self._dashboard(), TURN_SECONDS)
         elif read.lookup:
             made = await asyncio.wait_for(self._lookup_in_code(read, turn, now), TURN_SECONDS)
             answer = Answer(made.text, charts=made.charts) if made and made.text else Answer()

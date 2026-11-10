@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta
 
 import lib.airgradient  # noqa: F401  (imported first: lib.panels and the air package import each other)
 from lib.panels import panel_for, two_axes
-from lib.ecowitt.dashboard import STATUS, sheet
+from lib.gauge_sheet import STATUS, sheet
+from tests.fakes import gauges_result
 from lib.specs import Bars, Chart, Compass, Line, Panel, stack
 from tests.fakes import TZ
 
@@ -134,12 +135,12 @@ def _station() -> tuple[dict, dict, date]:
 
 def dashboard():
     """The station's gauges: thermometers, dials and the rain beaker."""
-    return sheet(*_station())
+    return sheet(gauges_result(*_station()))
 
 
 def status():
     """The report's picture: the temperature, humidity and rain gauges in a row."""
-    return sheet(*_station(), STATUS)
+    return sheet(gauges_result(*_station()), STATUS)
 
 
 SAMPLES = {"temperature": temperature, "humidity_rain": humidity_rain, "all_week": all_week, "quarter": quarter, "air": air,
