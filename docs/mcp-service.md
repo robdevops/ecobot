@@ -460,30 +460,32 @@ Each step ships on its own, with the tests and evals green and the bot working t
    `lib/periods_text.py` reads the periods table, tested by hand against it at fixed times (a Monday, a Tuesday, the 1st of a month, 1
    January, 29 February, 00:30, both clock-change days), with whole-day tools cut to yesterday and errors for phrases outside the table
    and for the future. No tool interface changes.
-2. **The ten tools, beside the twelve** (done). The tools of 3.3, built once with their arguments, periods, worded results (`day_look`,
-   ready lines, captions), charts, descriptions and errors, in `lib/service/` (what they share: `common.py`, `names.py`, `daylook.py`,
-   `context.py`; the outlook's rules in `outlook.py`), registered (`__init__.py`: `build`, `Service`), built in `ecobot.py` and handed
-   to the bot; offered to no model yet. Contract tests per tool; every chart validates against `schemas/chart.json`, `drawn_by`
-   included, and replays to the same chart and over each of its `periods` without a refusal. The evals have the service's
-   expectations (`tests/evals/service_cases.json`, every case) and `scripts/eval_prompts.py --service` checks offline that the tools
-   accept each expected call; `--live --service` asks a model with the tool list alone (not yet run: it needs the OpenRouter key).
-   The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and alert charts, through
-   `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place, deleted whole in step 3),
-   quoting their words; its answers pinned before and after (`tests/test_service_switch.py`), unchanged but for the deliberate changes
-   below. Its gauges (the dashboard, the report's three) are `current` with `context` and the gauges' readings named (the air sensor
-   isn't read), laid out bot-side (`lib/gauge_sheet.py`); `Ecowitt.dashboard()` and `sheet()` are gone. It asks for its charts as
-   drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500.
-   Period buttons replay the chart's `drawn_by` with a new `period` (the buttons, their keyboard and the picture cache stay in the
-   bot; the service knows nothing of buttons), one button per `drawn_by.periods` entry with the service's label; when it lists
-   none, a 🔄 that replays the call as it is if its period runs to now (through yesterday for a whole-day tool), else nothing; a replay the service refuses shows its refusal on the button, and one that fails after "Drawing ..." says so in the chat.
-   What the bot draws ahead replays calls at background priority: the other periods after a chart is sent, the keyboard's charts
-   every 5 minutes, recent alerts' charts. The picture cache and the pre-upload are keyed by the call, so two wordings or two chats
-   share a picture. Deliberate changes: a count per month offers 3M, 1Y and All (never 1D), per year none; whole-day `1y` is the 365
-   days to yesterday (364 and today before); alert charts name their source. Until step 3, a chart the model draws through the
-   twelve gets a `drawn_by` from `legacy.py` when its call translates and lists periods; otherwise (`plot_chart`, the links and the
-   scan, a period given as times) its buttons ask its question again, as before. Left for later: `current` and `outlook` read the
-   sources' kept live readings through private members (`Ecowitt._live`, `AirGradient._current`); `fetch: false` doesn't stop the
-   air sensor's inline fetch; `tests/report_words.py` keeps the old report's words as the tests' reference, deleted with the bot.
+2. **The ten tools, beside the twelve** (done). The tools of 3.3, built once with their arguments, periods, worded results
+   (`day_look`, ready lines, captions), charts, descriptions and errors, in `lib/service/` (what they share: `common.py`, `names.py`,
+   `daylook.py`, `context.py`; the outlook's rules in `outlook.py`), registered (`__init__.py`: `build`, `Service`), built in
+   `ecobot.py` and handed to the bot; offered to no model yet. Contract tests per tool; every chart validates against
+   `schemas/chart.json`, `drawn_by` included, and replays to the same chart and over each of its `periods` without a refusal. The
+   evals have the service's expectations (`tests/evals/service_cases.json`, every case) and `scripts/eval_prompts.py --service` checks
+   offline that the tools accept each expected call; `--live --service` asks a model with the tool list alone (not yet run: it needs
+   the OpenRouter key). The bot's own code paths call the ten instead of the twelve: its shortcuts, report, lookups, Help, gauges and
+   alert charts, through `lib/service/legacy.py` (the old call and the `Turn`'s inputs read as the service's call, in one place,
+   deleted whole in step 3), quoting their words; its answers pinned before and after (`tests/test_service_switch.py`), unchanged but
+   for the deliberate changes below. Its gauges (the dashboard, the report's three) are `current` with `context` and the gauges'
+   readings named (the air sensor isn't read), laid out bot-side (`lib/gauge_sheet.py`); `Ecowitt.dashboard()` and `sheet()` are gone.
+   It asks for its charts as drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more
+   points than 500. Period buttons replay the chart's `drawn_by` with a new `period` (the buttons, their keyboard and the picture
+   cache stay in the bot; the service knows nothing of buttons), one button per `drawn_by.periods` entry with the service's label;
+   when it lists none, a 🔄 that replays the call as it is if its period runs to now (through yesterday for a whole-day tool), else
+   nothing; the chart's own shaded 1D, when it runs to now, draws it again with the latest readings (a longer period's does nothing);
+   a replay the service refuses shows its refusal on the button, and one that fails after "Drawing ..." says so in the chat. What the
+   bot draws ahead replays calls at background priority: the other periods after a chart is sent, the keyboard's charts every 5
+   minutes, recent alerts' charts. The picture cache and the pre-upload are keyed by the call, so two wordings or two chats share a
+   picture. Deliberate changes: a count per month offers 3M, 1Y and All (never 1D), per year a 🔄 (its period runs to now); whole-day
+   `1y` is the 365 days to yesterday (364 and today before); alert charts name their source. Until step 3, a chart the model draws
+   through the twelve gets a `drawn_by` from `legacy.py` when its call translates and lists periods; otherwise (`plot_chart`, the
+   links and the scan, a period given as times) its buttons ask its question again, as before. Left for later: `current` and `outlook`
+   read the sources' kept live readings through private members (`Ecowitt._live`, `AirGradient._current`); `fetch: false` doesn't stop
+   the air sensor's inline fetch; `tests/report_words.py` keeps the old report's words as the tests' reference, deleted with the bot.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
    hints, the prefetch and the corrections from the words go.

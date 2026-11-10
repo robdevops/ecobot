@@ -689,3 +689,32 @@ async def test_pressing_reload_draws_the_same_call_again_in_place_with_the_reloa
     bot.charted.remember(1, 50, {"drawn_by": listed, "words": False})
     await bot.on_period_button(press(msg, "pd:reload", answer), CONTEXT)          # a chart with periods has no 🔄
     assert answers[-1] == "That chart is out of date, please ask again" and len(calls(bot)) == 1
+
+
+async def test_pressing_a_1d_charts_own_button_draws_it_again_and_a_longer_ones_does_nothing(alert_state, monkeypatch):
+    """The shaded 1D under a chart that runs to now draws it again, past the picture cache, with the latest readings; the shaded
+    button of a longer period changes nothing (a few minutes more barely show on a week)."""
+    bot, edits = make_bot(alert_state, monkeypatch), []
+    msg = chat_message([], edits)
+    day = {"tool": "summary", "arguments": {"readings": ["outdoor.temperature"], "period": "last 24 hours", "chart": True},
+           "periods": [dict(p) for p in OVER_TIME]}
+    bot.charted.remember(1, 50, {"drawn_by": day, "words": False})
+    key = periods.call_key("summary", day["arguments"])
+    bot.images.put(key, b"old picture", "Temperature", drawn_by=day)
+    answers = []
+
+    async def answer(text=None, **k):
+        answers.append(text)
+    await bot.on_period_button(press(msg, "pd:1d", answer), CONTEXT)
+    assert calls(bot) == [day["arguments"]] and answers == ["Drawing 1D..."]
+    caption, markup = edits[0]
+    assert labels(markup) == [ROW] and shaded(markup) == ["1D"] and bot.images.held(key).png == b"last 24 hours"
+    week = {**day, "arguments": {**day["arguments"], "period": "7d"}}
+    bot.charted.remember(1, 50, {"drawn_by": week, "words": False})
+    await bot.on_period_button(press(msg, "pd:7d", answer), CONTEXT)
+    assert len(calls(bot)) == 1 and answers[-1] is None and len(edits) == 1
+    yesterday = {**day, "arguments": {**day["arguments"], "period": "yesterday"}}   # (a 1D over a day that is over: nothing new)
+    bot.charted.remember(1, 50, {"drawn_by": yesterday, "words": False})
+    if periods.own_period(yesterday, botmod.now_local(TZ), TZ) == "1d":
+        await bot.on_period_button(press(msg, "pd:1d", answer), CONTEXT)
+        assert len(calls(bot)) == 1

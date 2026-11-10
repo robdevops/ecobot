@@ -993,15 +993,18 @@ class Bot:
             await answer_query(query, "That chart is out of date, please ask again")
             return
         now = now_local(self.cfg.tz)
+        refresh = False   # the chart's own shaded 1D pressed: drawn again with the latest readings
         if not reload and periods.own_period(drawn_by, now, self.cfg.tz) == period:   # the chart already shows this period
-            await answer_query(query)
-            return
+            if period != periods.REFRESHED or not periods.ends_now(drawn_by, now, self.cfg.tz):   # (longer: a few minutes more barely show)
+                await answer_query(query)
+                return
+            refresh = True
         tool = drawn_by["tool"]
-        args = dict(drawn_by["arguments"]) if reload else periods.with_period(drawn_by, period)
+        args = dict(drawn_by["arguments"]) if reload or refresh else periods.with_period(drawn_by, period)
         label = "again" if reload else listed[period]
         key = periods.call_key(tool, args)
         log.debug("Period button %s: %s", label, key, extra=QUOTES)
-        if not reload and (held := self.images.held(key)) is not None and held.drawn_by:   # drawn lately: nothing is asked again
+        if not (reload or refresh) and (held := self.images.held(key)) is not None and held.drawn_by:   # drawn lately: not asked again
             await drawing(label)
             began = time.monotonic()
             row = periods.periods_keyboard(held.drawn_by, period, now, self.cfg.tz)

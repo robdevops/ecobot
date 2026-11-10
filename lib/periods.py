@@ -26,6 +26,7 @@ PERIODS = tuple(NAMES)
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose call is kept, newest first to stay
 WHOLE_DAY_TOOLS = ("days", "relate", "scan")   # the tools that read a period as whole days, up to yesterday
+REFRESHED = "1d"   # the period whose own shaded button draws the chart again with the latest readings (longer ones barely change)
 RELOAD = "reload"   # the 🔄 under a chart with no periods to offer whose period runs to now: its call replayed as it is ("pd:reload")
 
 
