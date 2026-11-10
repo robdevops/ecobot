@@ -2,8 +2,9 @@
 
 A chart the service drew carries `drawn_by` (docs/mcp-service.md 3.7): the call that drew it and the periods it is worth drawing over,
 each with its label ("7d", "7D"). Its buttons are those periods, the chart's own shaded (the blue of an alert toggle that is on), and
-none when it lists none; a button's data is the period ("pd:7d"), never the call, which Telegram's 64 bytes couldn't hold. Pressing one
-replays the call with that period (Bot.on_period_button); what drew each chart is remembered for that (Charted).
+none when it lists none (but a 🔄, "pd:reload", that draws it again when its period runs to now); a button's data is the period
+("pd:7d"), never the call, which Telegram's 64 bytes couldn't hold. Pressing one replays the call with that period
+(Bot.on_period_button); what drew each chart is remembered for that (Charted).
 
 A chart the model drew through the old tools whose call has no service equivalent keeps the old buttons, 1D / 7D / 1M / 3M / 1Y (1,
 7, 30, 90 and 365 days, "pd:7"), which ask its question again with that period."""
@@ -12,7 +13,7 @@ import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 
 from telegram import InlineKeyboardMarkup
 from telegram.constants import KeyboardButtonStyle
@@ -25,6 +26,7 @@ PERIODS = tuple(NAMES)
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose call is kept, newest first to stay
 WHOLE_DAY_TOOLS = ("days", "relate", "scan")   # the tools that read a period as whole days, up to yesterday
+RELOAD = "reload"   # the 🔄 under a chart with no periods to offer whose period runs to now: its call replayed as it is ("pd:reload")
 
 
 def keyboard(current: int | None = None) -> InlineKeyboardMarkup:
@@ -83,12 +85,41 @@ def own_period(drawn_by: dict, now: datetime, tz: tzinfo) -> str | None:
     return None
 
 
-def periods_keyboard(drawn_by: dict, current: str | None = None) -> InlineKeyboardMarkup | None:
-    """One button for each period the chart's drawn_by lists, labelled as the service labels it, the chart's own (`current`) shaded;
-    None when it lists none."""
+def _span(drawn_by: dict, now: datetime, tz: tzinfo):
+    """(start, end) of the chart's call's period as the service reads it now; None when it can't be read here."""
+    from .periods_text import read_period
+    args = drawn_by.get("arguments") or {}
+    period, start, end = args.get("period"), args.get("start"), args.get("end")
+    if not (period or start):
+        return None
+    try:
+        read = read_period(period or None, start, end, now=now, tz=tz, default=period or "today",
+                           whole_days=drawn_by.get("tool") in WHOLE_DAY_TOOLS, first_held=date(2000, 1, 1))   # (only the end matters)
+    except Exception:   # (PeriodError, or words only a tool with the file can read)
+        return None
+    return read.start, read.end
+
+
+def ends_now(drawn_by: dict | None, now: datetime, tz: tzinfo) -> bool:
+    """Whether the chart's period runs to the present, so drawing it again can show more: to now, or (a tool of whole days) through
+    yesterday, the last whole day. "Yesterday" on a chart of readings, or a range of past dates, doesn't."""
+    span = _span(drawn_by, now, tz) if drawn_by else None
+    if span is None:
+        return False
+    def aware(t: datetime) -> datetime:   # (naive: the station's clock)
+        return t if t.tzinfo else t.replace(tzinfo=tz)
+    end, now = aware(span[1]), aware(now).astimezone(aware(span[1]).tzinfo)
+    whole = drawn_by.get("tool") in WHOLE_DAY_TOOLS
+    return end >= (now.replace(hour=0, minute=0, second=0, microsecond=0) if whole else now - timedelta(minutes=1))
+
+
+def periods_keyboard(drawn_by: dict, current: str | None = None, now: datetime | None = None,
+                     tz: tzinfo | None = None) -> InlineKeyboardMarkup | None:
+    """One button for each period the chart's drawn_by lists, labelled as the service labels it, the chart's own (`current`) shaded.
+    When it lists none: a 🔄 that draws it again if its period runs to now (ends_now; `now` and `tz` given), else None."""
     listed = drawn_by.get("periods") or []
     if not listed:
-        return None
+        return InlineKeyboardMarkup([[button("🔄", f"{PREFIX}{RELOAD}")]]) if now and tz and ends_now(drawn_by, now, tz) else None
     return InlineKeyboardMarkup([[button(p["label"], f"{PREFIX}{p['period']}", KeyboardButtonStyle.PRIMARY if p["period"] == current else None)
                                   for p in listed]])
 

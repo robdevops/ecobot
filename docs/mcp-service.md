@@ -474,8 +474,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
    isn't read), laid out bot-side (`lib/gauge_sheet.py`); `Ecowitt.dashboard()` and `sheet()` are gone. It asks for its charts as
    drawn (request `_meta` `chart_points: "drawn"`), since a chart of each day's average over years has more points than 500.
    Period buttons replay the chart's `drawn_by` with a new `period` (the buttons, their keyboard and the picture cache stay in the
-   bot; the service knows nothing of buttons), one button per `drawn_by.periods` entry with the service's label, none when it lists
-   none; a replay the service refuses shows its refusal on the button, and one that fails after "Drawing ..." says so in the chat.
+   bot; the service knows nothing of buttons), one button per `drawn_by.periods` entry with the service's label; when it lists
+   none, a 🔄 that replays the call as it is if its period runs to now (through yesterday for a whole-day tool), else nothing; a replay the service refuses shows its refusal on the button, and one that fails after "Drawing ..." says so in the chat.
    What the bot draws ahead replays calls at background priority: the other periods after a chart is sent, the keyboard's charts
    every 5 minutes, recent alerts' charts. The picture cache and the pre-upload are keyed by the call, so two wordings or two chats
    share a picture. Deliberate changes: a count per month offers 3M, 1Y and All (never 1D), per year none; whole-day `1y` is the 365

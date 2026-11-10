@@ -88,8 +88,11 @@ class Summary:
         if period in self.refuse:
             return json.dumps({"error": f"Nothing is held for {period}."})
         chart = Chart("Temperature", "", [Panel("Temperature", "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])])
-        arguments = {**{k: v for k, v in args.items() if k not in ("start", "end")}, "period": period}
-        data = {**to_json(chart, TZ), "drawn_by": {"tool": "summary", "arguments": arguments, "periods": [dict(p) for p in OVER_TIME]}}
+        if args.get("start"):   # set times, as the real summary keeps them: no periods to offer
+            arguments, listed = dict(args), []
+        else:
+            arguments, listed = {**{k: v for k, v in args.items() if k not in ("start", "end")}, "period": period}, [dict(p) for p in OVER_TIME]
+        data = {**to_json(chart, TZ), "drawn_by": {"tool": "summary", "arguments": arguments, "periods": listed}}
         return json.dumps({"caption": "Fri 25 Sep – Thu 1 Oct 2026\nTemperature: low 1 °C · high 2 °C", "charts": [data]})
 
 
@@ -97,7 +100,8 @@ def make_bot(alert_state, monkeypatch):
     class Agent:
         async def run(self, *a, **k):
             raise AssertionError("no model for a plain chart")
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: data["drawn_by"]["arguments"]["period"].encode())
+    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: str(data["drawn_by"]["arguments"].get("period")
+                                                                                      or data["drawn_by"]["arguments"]["start"]).encode())
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     return Bot(NS(tz=TZ), Agent(), sources, alert_state, service=Service([Summary()]))
 
@@ -641,3 +645,45 @@ def test_a_chart_drawn_in_one_theme_is_not_sent_again_after_the_theme_changes(mo
     assert images.get("summary {}") and images.ready("summary {}")
     monkeypatch.setattr(charts, "MODE", "on")                                      # 8pm under DARKMODE=8pm-8am
     assert images.ready("summary {}") is None and images.get("summary {}") is None
+
+
+def test_a_chart_with_no_periods_to_offer_gets_a_reload_when_its_period_runs_to_now():
+    """A chart whose call lists no periods gets a 🔄 when its period runs to the present (to now; for a tool of whole days, through
+    yesterday), so it can be drawn again with what has come in since; one over a fixed past stretch gets nothing."""
+    reload = [[("🔄", "pd:reload")]]
+
+    def row(tool, **arguments):
+        markup = periods.periods_keyboard({"tool": tool, "arguments": arguments, "periods": []}, None, NOW, TZ)
+        return labels(markup) if markup else None
+    assert row("summary", readings=["outdoor.temperature"], start="2026-10-02 09:00") == reload            # since 9am: to now
+    assert row("summary", start="2026-10-01 09:00", end="2026-10-01 18:00") is None                        # a fixed stretch
+    assert row("summary", period="today") == reload and row("summary", period="yesterday") is None
+    assert row("days", group_by="year", period="on record") == reload                                      # through yesterday
+    assert row("days", group_by="year", period="2024-01-01 to 2025-12-31") is None
+    assert row("days", group_by="year", period="2025-01-01 to 2026-12-31") == reload                       # (cut to yesterday)
+    assert periods.periods_keyboard({"tool": "summary", "arguments": {"start": "2026-10-02 09:00"}, "periods": []}) is None   # no clock: none
+    listed = {"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]}
+    assert labels(periods.periods_keyboard(listed, "7d", NOW, TZ)) == [ROW]                                # periods listed: those
+
+
+async def test_pressing_reload_draws_the_same_call_again_in_place_with_the_reload_under_it(alert_state, monkeypatch):
+    bot, edits, sent = make_bot(alert_state, monkeypatch), [], []
+    msg = chat_message(sent, edits)
+    start = f"{datetime.now(TZ):%Y-%m-%d} 00:00"
+    drawn_by = {"tool": "summary", "arguments": {"readings": ["outdoor.temperature"], "start": start, "chart": True}, "periods": []}
+    bot.charted.remember(1, 50, {"drawn_by": drawn_by, "words": False})
+    key = periods.call_key("summary", drawn_by["arguments"])
+    bot.images.put(key, b"old picture", "Temperature", drawn_by=drawn_by)   # drawn a moment ago: a reload draws it afresh all the same
+    answers = []
+
+    async def answer(text=None, **k):
+        answers.append(text)
+    await bot.on_period_button(press(msg, "pd:reload", answer), CONTEXT)
+    assert calls(bot) == [drawn_by["arguments"]] and answers == ["Drawing again..."]
+    caption, markup = edits[0]
+    assert caption == "Temperature" and labels(markup) == [[("🔄", "pd:reload")]]
+    assert bot.charted.get(1, 50)["drawn_by"]["arguments"] == drawn_by["arguments"] and bot.images.held(key).png == start.encode()
+    listed = {"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]}
+    bot.charted.remember(1, 50, {"drawn_by": listed, "words": False})
+    await bot.on_period_button(press(msg, "pd:reload", answer), CONTEXT)          # a chart with periods has no 🔄
+    assert answers[-1] == "That chart is out of date, please ask again" and len(calls(bot)) == 1

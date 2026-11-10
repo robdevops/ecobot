@@ -988,20 +988,23 @@ class Bot:
         drawn_by, words = record["drawn_by"], bool(record.get("words"))
         period = periods.period_in(query.data)
         listed = {p["period"]: p["label"] for p in drawn_by.get("periods") or ()}
-        if period not in listed:
+        reload = period == periods.RELOAD and not listed   # the 🔄 under a chart with no periods that runs to now: drawn again as it is
+        if period not in listed and not reload:
             await answer_query(query, "That chart is out of date, please ask again")
             return
         now = now_local(self.cfg.tz)
-        if periods.own_period(drawn_by, now, self.cfg.tz) == period:   # the chart already shows this period
+        if not reload and periods.own_period(drawn_by, now, self.cfg.tz) == period:   # the chart already shows this period
             await answer_query(query)
             return
-        tool, args = drawn_by["tool"], periods.with_period(drawn_by, period)
+        tool = drawn_by["tool"]
+        args = dict(drawn_by["arguments"]) if reload else periods.with_period(drawn_by, period)
+        label = "again" if reload else listed[period]
         key = periods.call_key(tool, args)
-        log.debug("Period button %s: %s", listed[period], key, extra=QUOTES)
-        if (held := self.images.held(key)) is not None and held.drawn_by:   # drawn lately: nothing is asked again
-            await drawing(listed[period])
+        log.debug("Period button %s: %s", label, key, extra=QUOTES)
+        if not reload and (held := self.images.held(key)) is not None and held.drawn_by:   # drawn lately: nothing is asked again
+            await drawing(label)
             began = time.monotonic()
-            row = periods.periods_keyboard(held.drawn_by, period)
+            row = periods.periods_keyboard(held.drawn_by, period, now, self.cfg.tz)
             if await self._redraw(message, (held.caption or "") if words else "", held.photo, held.title, row,
                                   {"drawn_by": held.drawn_by, "words": words}, key, TelegramError, "drawing it again"):
                 self.preload_soon(bot, held.drawn_by)
@@ -1017,11 +1020,11 @@ class Bot:
             await toast_quietly(query, fit(str(out.get("error") or "No chart came of it for that period"), TOAST_LIMIT))
             return
         png, title, newest = await asyncio.to_thread(self._draw, charts[0])   # (drawn before the toast, so a failure can be toasted)
-        await drawing(listed[period])
+        await drawing(label)
         drawn = charts[0].get("drawn_by") or {"tool": tool, "arguments": args, "periods": drawn_by.get("periods")}
         text = out.get("caption") or out.get("answer") or ""
         self.images.put(key, png, title, text or None, newest=newest, drawn_by=drawn)
-        row = periods.periods_keyboard(drawn, period)
+        row = periods.periods_keyboard(drawn, period, now, self.cfg.tz)
         if not await self._redraw(message, text if words else "", png, title, row, {"drawn_by": drawn, "words": words}, key):
             sent = await deliver(message, text if words else "", [png], titles=[title], period_row=row)
             if sent.photo:
@@ -1541,7 +1544,7 @@ class Bot:
         single = len(photos) == 1 and not (read.dashboard or read.report)   # a single chart: its period buttons go under it
         drawn_by = answer.drawn_by[0] if single and answer.drawn_by else None
         if drawn_by:   # the periods its call lists, the chart's own shaded; none when it lists none
-            row = periods.periods_keyboard(drawn_by, periods.own_period(drawn_by, now, self.cfg.tz))
+            row = periods.periods_keyboard(drawn_by, periods.own_period(drawn_by, now, self.cfg.tz), now, self.cfg.tz)
             record = {"drawn_by": drawn_by, "words": bool(reply.strip())}
         else:   # a chart the service can't replay (the model's, through a call it has no equivalent of): its question asked again
             row = periods.keyboard(intent.period_days(text, now)) if single else None
