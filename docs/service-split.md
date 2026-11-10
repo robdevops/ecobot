@@ -167,7 +167,7 @@ argument. Over MCP each becomes an argument with a plain name, and the model set
 | `chart_field`, `chart_fields` (overrule the model) | `summary.chart_metrics`, `layout: "panels"` |
 | `readings` (which readings the words name) | `summary.metrics` |
 | `two_axes` | `layout: "two_axes"` |
-| `average_asked` (daily means on the chart; the model can't ask for that today) | `daily_means` |
+| `average_asked`, from the words "average", "avg", "mean": the chart drawn as daily means, the average-first hint and caption (the model's own `average` only adds averages to the figures; it can't ask for that chart today) | `daily_means` |
 | `per_day` | `every_day` |
 | `chart_asked` | `chart` |
 | `text`: rain by month, grouping (fill), holidays (overrule) | `rain_by`, `days.group_by`, `days.only` |
