@@ -67,7 +67,7 @@ live reading the poll keeps, and the station's group list (which the archive tri
 
 | Service (`ecobot_service.py`, host A, near Home Assistant) | Bot (`ecobot.py`, host B) |
 |---|---|
-| `lib/storage`, `lib/ecowitt` (less `dashboard.sheet`), `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/snapshots.py`, `lib/warm.py`'s `Warmer`, `lib/history.py`, `lib/compose.py`, `lib/daytable.py`, `lib/analysis`, `lib/lines.py`, `lib/panels.py`, `lib/rain.py`, `lib/sources.py` | `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`, `lib/arguments.py` (3.8), `lib/report.py`, `lib/report_menu.py`, `lib/templates.py`, `lib/buttons.py`, `lib/periods.py`, `lib/topicmemory.py`, `lib/entities.py`, `lib/admins.py`, `lib/charts.py`, `lib/draw.py`, `lib/gauges.py` with `sheet()`, `GAUGES` and `STATUS`, `lib/alerts`, `lib/irrigation` |
+| `lib/storage`, `lib/ecowitt` (less `dashboard.sheet`), `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/snapshots.py`, `lib/warm.py`'s `Warmer`, `lib/history.py`, `lib/compose.py`, `lib/daytable.py`, `lib/analysis`, `lib/lines.py`, `lib/panels.py`, `lib/rain.py`, `lib/sources.py` | `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`, `lib/report.py`, `lib/report_menu.py`, `lib/templates.py`, `lib/buttons.py`, `lib/periods.py`, `lib/topicmemory.py`, `lib/entities.py`, `lib/admins.py`, `lib/charts.py`, `lib/draw.py`, `lib/gauges.py` with `sheet()`, `GAUGES` and `STATUS`, `lib/alerts`, `lib/irrigation` |
 | builds chart data (`specs.Chart`) next to the reads that choose its resolution | draws it (Pillow, fonts, dark mode) |
 | `lib/mcp_server.py`: the tools and resources below | `lib/mcp_client.py`: the connection (3.7) |
 | `lib/config.py`'s service fields (3.9) | `lib/config.py`'s bot fields |
@@ -75,7 +75,7 @@ live reading the poll keeps, and the station's group list (which the archive tri
 **Shared** (`lib/common/`, imported by both, importing neither side): `specs.py` (with JSON in and out, 3.6), `series.py`, `timeutil.py`,
 `captions.py` (hint texts), `tools.py`'s `json_result`, `logs.py`, `netenv.py`, `warm.py`'s `every` and `safely`, and the pure helpers
 the bot uses today from data packages: the thresholds (`GUST_ALERT_KMH`, `UVI_ALERT`, `TEMP_CHANGE_C`), `glance` (`solar_band`),
-`unit_text`, `POINT_BUDGET`, the air metrics' labels and units, `grouping_in`, `HOLIDAY_WORDS`, the rain helpers (`wet_flags`,
+`unit_text`, `POINT_BUDGET`, the air metrics' labels and units, `grouping_in`, the rain helpers (`wet_flags`,
 `rain_amount`, `duration`), the forecast's `describe_day` and `day_label`, and the pollen `LEVELS` and `LEVEL_EMOJI`.
 
 One repository and one image, two commands. A test reads every module's imports and fails if a bot module reaches a service package or
@@ -103,9 +103,12 @@ Conventions for the tools:
 - **Results** are JSON: figures with their wording (`low_when`, ratings, emoji), notes to pass on (`note_*`, `missing`, `warning`), and
   `error` with how to correct the call. Every tool is read-only to the caller (`readOnlyHint`); those that fetch what the file lacks
   before answering say so (`openWorldHint`).
-- **Request `_meta`**, for applications, never offered to the model: `priority: "background"` (a chart drawn ahead: its fetches wait
-  their turn; today's `turn.ahead`) and `fetch: false` (answer from what is held, never wait on the network; today's `cached`).
-  Result `_meta.timing` carries the seconds spent (today's `turn.times["data"]`).
+- **Request `_meta`**, set by the application, never by the model: `ecobot/charts: true` (this client draws: send chart data, 3.6),
+  `priority: "background"` (a chart drawn ahead: its fetches wait their turn; today's `turn.ahead`) and `fetch: false` (answer from
+  what is held, never wait on the network; today's `cached`). **Result `_meta`**, for the application, which clients don't hand to the
+  model: `ecobot/charts` (the chart data) and `timing` (the seconds spent; today's `turn.times["data"]`).
+- **Arguments are the model's.** Every choice a tool makes is an argument the model sets (or a shortcut sets, 3.8); the bot forwards the
+  model's calls as they are. The tools read nothing else about the question.
 
 ### 3.3 Tools
 
@@ -137,7 +140,7 @@ Nine tools in place of twelve, one per kind of question, each over both sensors 
 **`summary`'s result** is one shape for both sensors:
 `{period, series: {"outdoor.temperature": {unit, low, low_time, low_when, low_date, [low_note], high…, [average], [daily|monthly]},
 "air.pm2_5": {unit, low…, high…, average, high_rating, average_rating, high_aqi_us, high_band}, "wind.wind_direction": {most_common,
-then, steadiness, [daily]}}, [rain_total_mm], [monthly_note], [notes: {sensor: {…}}], [charts], [missing], [warning]}`. The breakdown and
+then, steadiness, [daily]}}, [rain_total_mm], [monthly_note], [notes: {sensor: {…}}], [chart_hint], [missing], [warning]}`. The breakdown and
 `monthly_note` are the station's; ratings, AQI and the 400-day cap (30 days fetched inline) the air sensor's; `rain_total_mm` whenever
 `rainfall.rain` is summarised. `current`'s result is `{time, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C",
 [emoji]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`.
@@ -148,30 +151,36 @@ sensor's source; the result keeps both sensors' notes (`note_daily`, `exact_from
 `note_missing`). A condition mixing the two sensors leaves out the days whose station figures come from Ecowitt's daily records (10am
 to 10am, not the air sensor's midnight to midnight) and says how many.
 
-**Charts in a result:** `charts: [{uri, title}]` with one `chart_hint`, and a `resource_link` per chart (3.6). The bot draws them in
-order (up to three a question); a drawn-ahead or alert chart still expects exactly one.
+**Charts in a result** (3.6): for a client that asked for them, the chart data in the result's `_meta` (`ecobot/charts`, a list: a
+history can add a wind rose beside its chart) and one line for the model, `chart_hint`: that a chart goes with its reply, so the reply
+is its caption (today's `CHART_HINT`). The bot draws them in order (up to three a question); a drawn-ahead or alert chart still expects
+exactly one.
 
-**What each hidden `Turn` input becomes:**
+**What each hidden `Turn` input becomes.** Today the bot reads the question with regexes and the tools use that reading beside the
+model's arguments: some fill an argument the model left out, three overrule the model (the reading charted, the readings stacked, a
+holiday filter). Each was added for a mistake the production model made (the eval cases `humidity-chart`, `temperature-and-rain`,
+`days-over-limit-by-year`, `rain-by-month-two-years`), several of them because the choice was a hidden input or an easily missed
+argument. Over MCP each becomes an argument with a plain name, and the model sets it:
 
 | Today (`Turn`) | Over MCP |
 |---|---|
-| `chart_field`, `chart_fields` | `summary.chart_metrics`, `layout: "panels"` |
+| `chart_field`, `chart_fields` (overrule the model) | `summary.chart_metrics`, `layout: "panels"` |
 | `readings` (which readings the words name) | `summary.metrics` |
 | `two_axes` | `layout: "two_axes"` |
-| `average_asked` | `daily_means` (and `average`) |
+| `average_asked` (daily means on the chart; the model can't ask for that today) | `daily_means` |
 | `per_day` | `every_day` |
 | `chart_asked` | `chart` |
-| `text` (rain by month; `only` holidays; grouping) | `rain_by`; `days.only` and `days.group_by`, which the bot drops or fills from the words (3.8) |
-| `air_named` (the air reading charted when none is named) | `metrics`, filled by the bot from the conversation |
+| `text`: rain by month, grouping (fill), holidays (overrule) | `rain_by`, `days.group_by`, `days.only` |
+| `air_named` (the air reading charted when none is named) | `metrics` (the conversation is in the model's context) |
 | `ahead` | request `_meta.priority: "background"` |
-| `charts`, `times`, written | `charts` links in the result; result `_meta.timing` |
+| `charts`, `times`, written | result `_meta`: `ecobot/charts`, `timing` |
 | `forecast_shown`, written | `forecast`'s result has the days shown (`days: [{date, …}]`), which the bot records |
 | `air_extra_used`, written | known from the arguments (`air.air_temperature` among the metrics) |
 | `Tool.asked` | the service lists every metric; the bot leaves the air sensor's own temperature and humidity out unless the words name them (3.8) |
 | `CHART_SOURCE` | `source` on the chart tools, written into the chart; the service sets it on every call, so alert charts get theirs too |
 
-The bot keeps its own reading of the words on its `Turn` (`chart_field(s)`, `average_asked`) for its captions and for holding back the
-streamed draft under a chart; only the tools stop reading it.
+The bot's chart captions follow the arguments of the call that drew the chart (its `chart_metrics`, `daily_means`), so a caption
+always matches its chart; the streamed draft is held back once a result brings chart data.
 
 ### 3.4 Resources
 
@@ -188,7 +197,6 @@ client turns them back into `date`s (the day figures' keys, the forecast's and p
 | `ecobot://days/{sensor}{?start,end,fields}` | `sensor` is `weather` or `air`: day figures `{field: {date: value}}`; a bare read is the year so far | no | the gauges |
 | `ecobot://forecast` | the forecast days, raw, with `fetched_at` and `place` | each new forecast | the forecast alert, irrigation |
 | `ecobot://pollen` | grass and asthma levels with their days, `fetched_at`, `in_season` | each new page | the pollen alert |
-| `ecobot://chart/{id}` | a chart's data (3.6), kept 15 minutes | no | the bot, after a tool linked it |
 | `ecobot://health` | each loop's last success and failure, archive progress, the file's size | no | the bot's log at connect; troubleshooting |
 
 The bot always reads `rows` and `days` with an explicit `start` and `end`; subscriptions are on the bare URIs only.
@@ -221,9 +229,13 @@ as now, next to the reads that chose its resolution, its buckets and its rose. A
 `period` as two dates), so:
 - `specs.to_json(chart)` and `specs.from_json(data)`, with a `version`; `from_json` runs the same checks as building one. Tuples come back
   as lists, which the renderer already takes. Non-finite numbers are dropped when the spec is built.
-- The tool keeps each chart at `ecobot://chart/{id}` and links it (3.3): the model reads a title, not 100 KB of points. The bot reads
-  each link as the tool's result arrives (so the draft is held back under a chart, as now), rebuilds the spec and draws it. Another
-  client can plot the JSON as it likes.
+- The charts travel in the tool's own result, in its `_meta` (`ecobot/charts`), which MCP clients keep for the application and don't
+  hand to the model: one round trip, nothing stored on the service. The model gets only `chart_hint`, the line that tells it a chart
+  goes with its reply so the reply is the chart's caption: keep it short, don't describe the chart (today's `CHART_HINT`). Without that
+  line a model writes a long answer, or describes or apologises for a chart it doesn't know is there.
+- Charts are sent only to a client that asks (request `_meta` `ecobot/charts: true`, which the bot always sends). For any other client
+  the tool builds no chart and adds no `chart_hint`, so its model is never told of a chart that won't appear.
+- The bot rebuilds each spec as the result arrives (so the streamed draft is held back under a chart, as now) and draws it.
 - The rain caption reads the rebuilt chart's bars; `newest` (what the alerts' picture cache keys on) and `caption()` work on it unchanged.
 - A period button is a new `summary` call with new dates, as today; only pictures are cached (`periods.ImageCache`).
 
@@ -256,14 +268,14 @@ as now, next to the reads that chose its resolution, its buckets and its rose. A
 
 ### 3.8 The bot's side of a tool call
 
-The bot is the MCP client, so it shapes what it offers and what it forwards, in `lib/arguments.py`, with the tests of what each phrase
-does:
 - **What it offers:** the service's tool list, except the air sensor's own temperature and humidity left out of the metric lists unless
   the words name them (the list only changes with the words, so the prompt cache holds, as now); a new list when the service says so.
-- **What it forwards:** each call the model makes, with the corrections the tools make from `Turn` today: `chart: true` when the words
-  ask for a chart, `daily_means` when they ask for an average, `chart_metrics` from the readings they name, `days.only` dropped unless
-  they say holidays or weekends, `days.group_by` from "per month", `rain_by` from "by month", the air reading the conversation was about
-  when the model named none.
+  This narrows what the model can pick from; it never changes what the model picked.
+- **What it forwards:** each call the model makes, as it is. The corrections the tools make from the words today are not carried over:
+  with every choice an explicit argument, the model gets a fair chance to make it, and the regexes overruled it even when it was right,
+  misfired on wording nobody foresaw ("miles per hour"), and would leave other MCP clients with different answers from the same service.
+  The live evals decide (step 3): the cases each correction was added for are run against the nine tools, and a correction comes back
+  only for one that still fails, in the bot, filling an argument the model left out, never overruling one it set, each with its case.
 - **Shortcuts** build the tools' arguments directly (`intent.fast_call` and the rest), so a shortcut and the model ask the same way; the
   report sends `_meta.fetch: false` as `cached` does now.
 - **The early cue:** today the bot pokes the sources the words concern as soon as a question arrives, so they refresh while the model
@@ -289,20 +301,23 @@ their state; the charts' look; the shortcuts' choices; Telegram.
 Each step ships on its own, with the tests and evals green and the bot working the whole way. The tool list never offers old and new
 names together.
 
-1. **Explicit arguments, shared helpers.** The twelve tools take the `Turn`'s inputs as arguments, filled by `lib/arguments.py`; they
-   return their charts in the result instead of appending to `turn.charts`, and `weather_forecast` returns the days it shows. The pure
-   helpers the bot imports from data packages move to `lib/common` (3.1). Still one process; the evals check the new arguments.
+1. **Explicit arguments, shared helpers.** The twelve tools take the `Turn`'s inputs as arguments and read nothing else about the
+   question; they return their charts in the result instead of appending to `turn.charts`, and `weather_forecast` returns the days it
+   shows. So that this step changes no answer, today's corrections from the words move out of the tools into the bot, which applies them
+   to the model's calls on the way in, as before; step 3 removes them. The pure helpers the bot imports from data packages move to
+   `lib/common` (3.1). Still one process; the evals check the new arguments.
 2. **Chart JSON.** `specs.to_json` and `from_json`, and a round trip over every chart the samples and `scripts/dump_specs.py` draw: the
    rebuilt spec draws the same picture (the golden images).
 3. **The nine tools, in process.** The tools of 3.3 with their result shapes; the prompt, the shortcuts, `lib/report.py` (`report`,
-   `weather_now`, `lookup`, `chart_caption`), the alert charts and the evals move to them together; the twelve go. Shipped only when the
-   live evals (`--live`, all cases) do as well as before.
+   `weather_now`, `lookup`, `chart_caption`), the alert charts and the evals move to them together; the twelve go. The bot's corrections
+   from the words go too (3.8), and come back only for a case that then fails. Shipped only when the live evals (`--live`, all cases)
+   do as well as before.
 4. **The data interface, in process.** A `Data` protocol with the tools and resources of section 3, and an in-process implementation
    over today's sources. The bot's direct reads move to it: the gauges (`sheet()` moves to the bot), the alerts (resources, clocks and an
    in-process stand-in for the listen stream in place of `Warmer.after` and `on_live`), irrigation, the prompt's lines and `by_name`
    (from the station resource). Nothing in the bot holds a source object after this step.
 5. **The MCP server and client.** `lib/mcp_server.py` serves `Data` (the bus, the low-level server, the transport settings, the token
-   check); `lib/mcp_client.py` implements `Data` over MCP (the supervisor, date parsing, chart links). The evals read a checked-in tool
+   check); `lib/mcp_client.py` implements `Data` over MCP (the supervisor, date parsing, charts from the result's `_meta`). The evals read a checked-in tool
    list (`tests/evals/tools.json`), which a test keeps equal to the server's.
 6. **Two programs.** `ecobot_service.py` starts the sources, the loops and the server; `ecobot.py` connects to `MCP_URL`. The import
    boundary test, both ways. Config split. One compose file per host, TLS and tokens. Scripts go where they work: on the service's host
@@ -313,10 +328,10 @@ names together.
 ## 6. Testing
 
 - The suite splits along the boundary: the service's tests (storage, sources, tools, resources, the server) and the bot's (intent,
-  arguments, report, alerts, drawing, the client), the bot's running against a fake `Data`, or against the real server in memory over an
+  report, alerts, drawing, the client), the bot's running against a fake `Data`, or against the real server in memory over an
   archived file.
-- A wire test per tool and resource: the arguments it takes, the shape it returns (`test_contract`), dates that come back as `date`s, a
-  chart link that reads back as a spec.
+- A wire test per tool and resource: the arguments it takes, the shape it returns (`test_contract`), dates that come back as `date`s, chart
+  data in the result's `_meta` that reads back as a spec for a client that asks, and no chart and no `chart_hint` for one that doesn't.
 - A reconnect test against the real app under uvicorn on a localhost port the test stops and starts (not in memory: a connection can't
   fail there, and the in-memory HTTP transport buffers a listen stream): the listen is lost, the bot listens again and reads what it
   depends on; a question asked while the service is down is answered as unreachable, and the next one after it is back is answered; an
@@ -328,8 +343,9 @@ names together.
 
 - **Latency.** Each call is a network round trip: tens of milliseconds on a LAN, against a question budget of seconds. Charts drawn
   ahead are a few calls every 5 minutes. The early cue keeps the head start the poke gives today.
-- **The model and the new tools.** New names, arguments and shapes can change what the model picks: step 3 ships only on the live
-  evals, in one process, before any network is involved.
+- **The model and the new tools.** New names, arguments and shapes can change what the model picks, and without the corrections from
+  the words it must make every choice itself: step 3 ships only on the live evals, in one process, before any network is involved; a
+  correction that turns out to be needed comes back as a fill, never an override.
 - **A protocol still settling.** `subscriptions/listen` is the 2026-07-28 revision: the bot pins it, and both programs upgrade the SDK
   together.
 - **Two things to run.** More to deploy and watch; `ecobot://health` and the bot's "unreachable" answers make a failure visible.
