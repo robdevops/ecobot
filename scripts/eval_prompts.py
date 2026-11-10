@@ -14,8 +14,9 @@ copy of it, so no case's calls change another's answers), wrapped as the bot wra
 refusals and calls again until it replies (the turn ends on a complete result, as the bot's does; after 10 steps of calls the
 model is made to answer). A case is scored over the whole turn: an expected call passes if any call that was not refused makes it (a
 refused call later corrected passes), a forbidden tool fails in any round, refused or not, more than 8 calls fails ("ran away"), and
-so does an empty reply, the Agent's fallback reply (the model's last answer was empty) or a turn that ends on a refused call with
-none answered after it; each run's number of calls, refusals and the reply's first 200 characters are printed.
+so does an empty reply, the Agent's fallback reply (the model's last answer was empty) or a refused call that no call to the same
+tool answered in a later step corrects (one in the same step was made with it); each run's number of calls, refusals and the
+reply's first 200 characters are printed.
 
     python scripts/eval_prompts.py                       # the decisions made in code, and the service expectations
     python scripts/eval_prompts.py --live                # and the model, as the bot asks it

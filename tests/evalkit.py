@@ -205,11 +205,14 @@ MAX_CALLS = 8   # a bot-mode turn that makes more tool calls than this has run a
 @dataclass
 class LiveTurn:
     """One question asked as the bot asks it: every call of the turn in order (refused ones too), the reply, whether each call's result
-    was a refusal (an `error`; `refusals`, in the calls' order), and whether the bot answered it in code (its fixed calls, no model)."""
+    was a refusal (an `error`; `refusals`, in the calls' order), whether the bot answered it in code (its fixed calls, no model), and
+    the model's step each call was made in (`steps`, in the calls' order: the calls of one step are made together; without them, each
+    call is its own step)."""
     calls: list
     reply: str
     refusals: list = field(default_factory=list)
     in_code: bool = False
+    steps: list = field(default_factory=list)
 
     @property
     def refused(self) -> int:
@@ -219,6 +222,15 @@ class LiveTurn:
     def answered(self) -> list:
         """The calls that were not refused."""
         return [c for c, no in zip(self.calls, self.refusals + [False] * len(self.calls)) if not no]
+
+    def uncorrected(self) -> list:
+        """The refused calls no call to the same tool answered after: one answered in a later step corrects a refusal, one in the same
+        step doesn't (they were made together), nor does one to another tool."""
+        refusals = self.refusals + [False] * len(self.calls)
+        steps = self.steps + list(range(len(self.steps), len(self.calls)))
+        return [c for c, no, step in zip(self.calls, refusals, steps)
+                if no and not any(d[0] == c[0] and not no_d and later > step
+                                  for d, no_d, later in zip(self.calls, refusals, steps))]
 
     def line(self) -> str:
         """`3 calls, 1 refused: "the reply's first 200 characters"`."""
@@ -242,20 +254,21 @@ def refusal(text: str) -> bool:
     return isinstance(out, dict) and "error" in out
 
 
-def turn_calls(messages: list[dict]) -> list[tuple[str, dict, bool]]:
+def turn_calls(messages: list[dict]) -> list[tuple[str, dict, bool, int]]:
     """The tool calls of a turn's messages (as lib/llm.py's Agent leaves them: each assistant step's calls, then their results in
-    order), in the order made: (tool, arguments, whether its result was a refusal)."""
-    calls = []
+    order), in the order made: (tool, arguments, whether its result was a refusal, the step it was made in, from 0)."""
+    calls, step = [], -1
     for i, m in enumerate(messages):
         if m.get("role") != "assistant" or not m.get("tool_calls"):
             continue
+        step += 1
         for c, result in zip(m["tool_calls"], messages[i + 1:i + 1 + len(m["tool_calls"])]):
             try:
                 args = json.loads(c["function"]["arguments"] or "{}")
             except ValueError:
                 args = {}
             calls.append((c["function"]["name"], args if isinstance(args, dict) else {},
-                          result.get("role") == "tool" and refusal(str(result.get("content", "")))))
+                          result.get("role") == "tool" and refusal(str(result.get("content", ""))), step))
     return calls
 
 
@@ -277,7 +290,7 @@ async def run_live(case: Case, client, model: str, effort: str | None = None, se
     reply = await Agent(client, model, tools).run(messages, system, effort or r.effort, tool_choice="auto", turn=Turn(),
                                                   finish=lambda _, results: complete_reply(results))
     made = turn_calls(messages[asked:])
-    return LiveTurn([(n, a) for n, a, _ in made], reply, [no for *_, no in made])
+    return LiveTurn([(n, a) for n, a, *_ in made], reply, [no for _, _, no, _ in made], steps=[s for *_, s in made])
 
 
 # ---------- the service's ten tools, offered alone (docs/mcp-service.md 6, step 2; 7) ----------
@@ -578,7 +591,8 @@ def check_turn(turn: LiveTurn, expect: dict) -> list[str]:
     calls against shortcut_expectation. Else: the expected tools and arguments are met by any call that was not refused (a refused call
     later corrected passes; a refused one alone meets nothing), not_tools hold for every call, refused or not; and the turn fails if it
     made more than MAX_CALLS calls (it ran away), if its reply is empty or the Agent's fallback (lib/llm.py FALLBACK: the model's last
-    answer was empty), or if it ended on a refused call with no call answered after it."""
+    answer was empty), or if a refused call was left uncorrected (LiveTurn.uncorrected): no call to the same tool was answered in a
+    later step (one answered in the same step was made with it, and one to another tool answers something else, so neither corrects it)."""
     from lib.llm import FALLBACK
     fails = [f"ran away: {len(turn.calls)} calls (more than {MAX_CALLS})"] if len(turn.calls) > MAX_CALLS else []
     if turn.in_code:
@@ -589,8 +603,8 @@ def check_turn(turn: LiveTurn, expect: dict) -> list[str]:
         fails.append("the reply is empty")
     elif turn.reply.strip() == FALLBACK:
         fails.append("the reply is the Agent's fallback (the model's last answer was empty)")
-    if turn.refusals[-1:] == [True]:
-        fails.append(f"the turn ended on a refused call ({calls_text(turn.calls[-1:])}), none answered after it")
+    if left := turn.uncorrected():
+        fails.append(f"a refused call was not corrected ({calls_text(left)}): no call to the same tool answered in a later step")
     return fails
 
 
