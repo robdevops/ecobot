@@ -341,7 +341,7 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
     (photos_first: sent after the pictures, carrying the buttons: the report and its gauges). link = (label, url) adds a small italic link
     line at the end of the text. markup (the button keyboard) rides on the last text, or on the single photo when there is no text (a
     group of photos can't carry one). period_row (the period buttons) rides on a single photo instead, and then the keyboard waits.
-    bold_headings: the text is the report (or a pollen / forecast lookup), whose heading names are set in bold."""
+    bold_headings: the text is the report, whose heading names are set in bold."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
