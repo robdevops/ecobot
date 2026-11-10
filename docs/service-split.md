@@ -142,8 +142,8 @@ Nine tools in place of twelve, one per kind of question, each over both sensors 
 "air.pm2_5": {unit, low…, high…, average, high_rating, average_rating, high_aqi_us, high_band}, "wind.wind_direction": {most_common,
 then, steadiness, [daily]}}, [rain_total_mm], [monthly_note], [notes: {sensor: {…}}], [chart_hint], [missing], [warning]}`.
 The breakdown and `monthly_note` are the station's; ratings, AQI and the 400-day cap (30 days fetched inline) the air sensor's;
-`rain_total_mm` whenever `rainfall.rain` is summarised. `current`'s result is `{time, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C",
-[emoji]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`.
+`rain_total_mm` whenever `rainfall.rain` is summarised. `current`'s result is
+`{time, sensors: {"outdoor": {"temperature": {value, unit, text: "12.3 °C", [emoji]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`.
 
 **`days` over both sensors:** the fields shown and the default sort come from the sensor of the fields named (an air-only question
 shows and ranks by `pm2_5_max`); `days_checked` counts the days on which every sensor named has a day row; each listed day carries each
