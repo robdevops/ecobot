@@ -9,28 +9,19 @@ under it, so that check is of the arguments being taken (names, words, forms, st
 real date."""
 
 import asyncio
-import datetime as _dt
-import importlib
 import json
 import os
-import pkgutil
 import subprocess
 import sys
-import time as _time
-from datetime import datetime, time as dtime
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace as NS
-from unittest import mock
-from zoneinfo import ZoneInfo
 
 import pytest
 
-from lib.airgradient import AirGradient
-from lib.compose import Composer
-from lib.forecast import Forecast
 from lib.service.context import Context
-from tests import evalkit
-from tests.fakes import TZ, air_transport, archived_station, config
+from tests import evalkit, evalworld
+from tests.fakes import TZ
 
 CASES = evalkit.load_cases()
 EXPECT = evalkit.load_service_cases()
@@ -203,84 +194,21 @@ def test_each_description_is_short_and_each_schema_is_json_schema(name):
 # At the evals' NOW (Tue 29 Sep 2026 14:05, Melbourne), whatever the real date: the expectations are written for it ("this month" is
 # September to the 28th, "June to August 2026" is in the fake's history). Every datetime.now(), date.today() and time.time() in lib/
 # and tests/ reads it, and the fake station's archive is built under it (the idea of tests/test_service_switch.py's freeze, kept here).
-EVAL_NOW = evalkit.NOW.replace(tzinfo=ZoneInfo(evalkit.NOW_TZ)).timestamp()
-
-
-class _DatetimeType(type):
-    def __instancecheck__(cls, obj):
-        return isinstance(obj, _dt.datetime)
-
-    def __subclasscheck__(cls, sub):
-        return issubclass(sub, _dt.datetime)
-
-
-class _EvalDatetime(_dt.datetime, metaclass=_DatetimeType):
-    @classmethod
-    def now(cls, tz=None):
-        return _dt.datetime.fromtimestamp(EVAL_NOW, tz)
-
-    @classmethod
-    def today(cls):
-        return _dt.datetime.fromtimestamp(EVAL_NOW)
-
-
-class _DateType(type):
-    def __instancecheck__(cls, obj):
-        return isinstance(obj, _dt.date)
-
-    def __subclasscheck__(cls, sub):
-        return issubclass(sub, _dt.date)
-
-
-class _EvalDate(_dt.date, metaclass=_DateType):
-    @classmethod
-    def today(cls):
-        return _dt.datetime.fromtimestamp(EVAL_NOW).date()
+EVAL_NOW = evalworld.EVAL_NOW
 
 
 def at_eval_now(patch: pytest.MonkeyPatch):
-    """The clock fixed at EVAL_NOW in every module of lib/ and tests/ (and this one, whatever pytest names it): every module of lib/ is
-    imported first (whatever was imported before), then every name bound to datetime or date is the fixed one, and time.time() (and
-    the archive's epoch_now) returns EVAL_NOW."""
-    import lib
-    import tests.fakes, tests.test_pollen, tests.test_service_forecast  # noqa: F401
-    for info in pkgutil.walk_packages(lib.__path__, "lib."):
-        importlib.import_module(info.name)
-    patch.setattr(_time, "time", lambda: EVAL_NOW)
-    for name, module in list(sys.modules.items()):
-        if module is None or not (name in ("lib", __name__) or name.startswith(("lib.", "tests."))):
-            continue
-        for attr, value in list(vars(module).items()):
-            if value is _dt.datetime:
-                patch.setattr(module, attr, _EvalDatetime)
-            elif value is _dt.date:
-                patch.setattr(module, attr, _EvalDate)
-    patch.setattr(sys.modules["lib.ecowitt.archive"], "epoch_now", lambda: EVAL_NOW)
-
-
-async def _inline(func, /, *args, **kwargs):
-    return func(*args, **kwargs)
+    """evalworld.at_eval_now, this module included (whatever pytest names it)."""
+    evalworld.at_eval_now(patch, __name__)
 
 
 @pytest.fixture(scope="module")
 def eval_archive(tmp_path_factory):
     """The fake station's whole archive (its ecobot.sqlite) built at EVAL_NOW, once for the module."""
-    from lib.ecowitt import Archive, Ecowitt, api, archive
-    from tests.fakes import ecowitt_transport
-
-    async def build(path):
-        transport, _ = ecowitt_transport()
-        eco = Ecowitt(config(path), transport=transport)
-        await eco.start()
-        await Archive(eco).run_once()
-        await eco.close()
-        return config(path).storage_path
     path = tmp_path_factory.mktemp("eval-now")
     with pytest.MonkeyPatch.context() as patch:
         at_eval_now(patch)
-        with mock.patch.object(api, "MIN_GAP_SECONDS", 0), mock.patch.object(archive, "PACE_SECONDS", 0), \
-                mock.patch.object(asyncio, "to_thread", _inline):
-            return asyncio.run(build(path))
+        return asyncio.run(evalworld.build_archive(path))
 
 
 def calls_for(tool: str) -> list[tuple[str, dict]]:
@@ -288,22 +216,7 @@ def calls_for(tool: str) -> list[tuple[str, dict]]:
 
 
 async def real_context(tmp_path, archive) -> Context:
-    """The ten tools' sources, faked, at the clock as it is (at_eval_now): the archived station, an AirGradient on the same file, both
-    together, Open-Meteo, the pollen page in season; the context's own clock is EVAL_NOW."""
-    from tests.test_pollen import make as pollen_source
-    from tests.test_service_forecast import open_meteo
-    eco, _ = await archived_station(tmp_path, archive)
-    air = AirGradient(config(tmp_path), transport=air_transport(rows_per_day=24)[0], storage=eco.storage)
-    await air.start()
-    forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9, place="Melbourne"), None, open_meteo([]))
-    noon = datetime.combine(evalkit.NOW.date(), dtime(12, 0))
-    forecast.now = lambda: noon
-    pollen, _ = pollen_source(tmp_path)
-    ctx = await Context.open(eco=eco, air=air, composer=Composer(eco, air), forecast=forecast, pollen=pollen, clock=lambda: EVAL_NOW)
-    (summary,) = [t for t in evalkit.service_tools(ctx) if t.name == "summary"]
-    held = json.loads(await summary.call({"readings": ["air"], "period": "last 30 days", "chart": False}))   # (the air's month, held)
-    assert "error" not in held
-    return ctx
+    return await evalworld.real_context(tmp_path, archive)
 
 
 @pytest.mark.parametrize("tool", evalkit.service_tool_names())
@@ -323,9 +236,7 @@ async def test_every_expected_call_is_answered_not_refused(tool, tmp_path, eval_
                 refused[case_id] = (args, out["error"])
         assert refused == {}, json.dumps(refused, indent=1, ensure_ascii=False)
     finally:
-        await ctx.pollen.close()
-        await ctx.air.close()
-        await ctx.eco.close()
+        await evalworld.close(ctx)
 
 
 # ---------- the live run, with a scripted model ----------
@@ -480,3 +391,109 @@ def test_the_hottest_day_ranked_by_days_must_be_the_hottest():
     assert fails({"sort_by": "temp_max", "order": "asc"}) == ["order"]
     assert fails({"sort_by": "temp_max", "count_only": True}) == ["count_only"]
     assert fails({"stat": "avg", "of": "temp_avg"}) == ["stat"]
+
+
+# ---------- the bot's live run over the frozen world, with a scripted model ----------
+# `--live` answers the bot's model from the real ten tools (evalworld.world), so a turn can take more than one round: it is scored over
+# the whole turn. These run it with a model that reads what its calls gave, over the same world (the module's archive, at EVAL_NOW).
+class Reacting:
+    """An OpenAI-style client whose steps are scripted: each a text (the reply), a list of (tool, args), or a function of what the last
+    step's calls gave (each result as the model was sent it, parsed) that returns one. Past the script it says "Done."."""
+
+    def __init__(self, *steps):
+        self.steps, self.requests, self.seen = list(steps), [], []
+        self.chat = NS(completions=NS(create=self.create))
+
+    async def create(self, **kw):
+        self.requests.append(kw)
+        given = []
+        for m in reversed(kw["messages"]):
+            if m["role"] != "tool":
+                break
+            text = m["content"].split("\n", 1)[-1] if m["content"].startswith(evalkit.REPEATED) else m["content"]
+            given.insert(0, json.loads(text))
+        self.seen.append(given)
+        step = self.steps.pop(0) if self.steps else "Done."
+        step = step(given) if callable(step) else step
+        calls = None if isinstance(step, str) else [NS(id=f"c{i}", function=NS(name=n, arguments=json.dumps(a)))
+                                                    for i, (n, a) in enumerate(step)]
+        return NS(choices=[NS(message=NS(content=step if isinstance(step, str) else "", tool_calls=calls))], usage=None)
+
+
+@pytest.fixture
+async def eval_service(tmp_path, eval_archive, monkeypatch):
+    """The ten tools over the frozen world (what evalworld.world gives a run), on the module's archive."""
+    from lib.service import Service
+    at_eval_now(monkeypatch)
+    ctx = await real_context(tmp_path, eval_archive)
+    yield Service.of(ctx)
+    await evalworld.close(ctx)
+
+
+async def bot_run(case_id: str, model: Reacting, service) -> tuple[int, str]:
+    lines = []
+    failed = await evalkit.run_service([case(case_id)], EXPECT, model, "m", bot=True, service=service, out=lines.append)
+    return failed, "\n".join(lines)
+
+
+async def test_a_refused_call_then_a_corrected_one_passes_and_the_refusal_is_counted(eval_service):
+    model = Reacting([("summary", {"readings": ["flux capacitor"], "period": "3m", "average": True})],
+                     lambda given: [("summary", {"readings": ["temperature"], "period": "3m", "average": True})] if "error" in given[0]
+                     else "gave up",
+                     "Averaged 14.2 °C.")
+    failed, text = await bot_run("3m-average", model, eval_service)
+    assert failed == 0, text
+    assert "1/1  3m-average" in text and '2 calls, 1 refused: "Averaged 14.2 °C."' in text
+    assert "isn't a reading this service knows" in model.seen[1][0]["error"]   # (the real refusal, as the model was sent it)
+    assert model.requests[0]["messages"][0]["content"] == evalkit.bot_system(ctx=eval_service.ctx)
+
+
+async def test_a_second_call_made_on_a_note_passes(eval_service):
+    """rain-per-month: one figure for the year comes back with days' note_group_by; the model acts on it and asks again by month."""
+    asked = {"stat": "sum", "of": "rain", "period": "this year"}
+    model = Reacting([("days", asked)],
+                     lambda given: [("days", {**asked, "group_by": "month"})] if "note_group_by" in given[0] else "One figure.",
+                     lambda given: f"{len(given[0]['by_month'])} months.")
+    failed, text = await bot_run("rain-per-month", model, eval_service)
+    assert failed == 0, text
+    assert '2 calls, 0 refused: "9 months."' in text   # (January to September: the real days, by month)
+    without = Reacting([("days", asked)], lambda given: "One figure.")
+    failed, text = await bot_run("rain-per-month", without, eval_service)
+    assert failed == 1 and "group_by" in text and '1 call, 0 refused: "One figure."' in text
+
+
+async def test_a_forbidden_tool_in_a_later_round_fails(eval_service):
+    model = Reacting([("relate", {})], [("days", {"stat": "max", "of": "pressure_max", "group_by": "month"})], "Weak.")
+    failed, text = await bot_run("pressure-rain-correlation", model, eval_service)
+    assert failed == 1 and "0/1 FAIL  pressure-rain-correlation" in text and "should not have called days" in text
+    assert "2 calls, 0 refused" in text
+
+
+async def test_a_turn_of_more_than_eight_calls_has_run_away_and_fails(eval_service):
+    many = [[("days", {"stat": "sum", "of": "rain", "group_by": "month", "period": f"last {n} days"})] for n in range(40, 49)]
+    failed, text = await bot_run("rain-per-month", Reacting(*many, "Rain by month."), eval_service)
+    assert failed == 1 and "ran away: 9 calls (more than 8)" in text and "9 calls, 0 refused" in text
+    failed, text = await bot_run("rain-per-month", Reacting(*many[:8], "Rain by month."), eval_service)
+    assert "ran away" not in text and '8 calls, 0 refused: "Rain by month."' in text
+
+
+async def test_a_turn_is_capped_at_the_agents_steps():
+    """However long the model keeps calling, the turn takes at most lib/llm.py's MAX_STEPS (10) steps of calls, then it is made to
+    answer."""
+    from lib import llm
+    assert llm.MAX_STEPS == 10
+    model = Reacting(*[[("about", {})]] * 30)
+    turn = await evalkit.run_live(case("3m-average"), model, "m")
+    assert len(model.requests) == llm.MAX_STEPS + 1 and len(turn.calls) == llm.MAX_STEPS
+    assert model.requests[-1]["tool_choice"] == "none"
+
+
+async def test_the_world_is_built_at_the_frozen_clock_and_its_tools_give_real_results_then_the_clock_is_put_back():
+    import time
+    async with evalworld.world() as service:
+        assert time.time() == EVAL_NOW
+        out = json.loads(await service["days"].call({"stat": "sum", "of": "rain", "group_by": "month", "period": "this year"}))
+        assert "error" not in out and out["period"]["text"] == "this year: Thu 1 Jan – Mon 28 Sep 2026"
+        assert list(out["by_month"]) == [f"2026-{m:02d}" for m in range(1, 10)] and out["days_checked"]
+        assert [t.name for t in service] == evalkit.service_tool_names()
+    assert time.time() != EVAL_NOW

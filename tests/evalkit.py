@@ -7,8 +7,9 @@ tests/evals/service_cases.json holds, for the same case ids, what a model offere
 checked offline by tests/test_service_evals.py, and asked of a model by `python scripts/eval_prompts.py --live` three ways:
   - the bot's own request (`bot=True`, the default of --live): its system prompt (lib/prompt.py: the persona, the server's
     instructions, the date and time), the ten tools as the bot offers them, its reasoning effort from the words; a question the bot
-    answers in code is not asked of the model, its fixed calls are scored instead;
-  - `--service`: the ten tools alone with a neutral system line and the date (SERVICE_SYSTEM);
+    answers in code is not asked of the model, its fixed calls are scored instead. Each call is answered by the real tool over the
+    evals' frozen world (tests/evalworld.py), so the model takes as many rounds as it needs, and the whole turn is scored (run_service);
+  - `--service`: the ten tools alone with a neutral system line and the date (SERVICE_SYSTEM), every call answered CANNED (one round);
   - `--service --instructions`: that, with the server's instructions (lib/service/instructions.py) after the neutral line.
 """
 
@@ -187,24 +188,86 @@ def shortcut_expectation(expect: dict) -> dict:
     return {**expect, "args": args}
 
 
-def bot_system(now: datetime = NOW) -> str:
-    """The bot's system prompt at `now` (the station's local time): its persona, the server's instructions, the date and time."""
+def bot_system(now: datetime = NOW, ctx=None) -> str:
+    """The bot's system prompt at `now` (the station's local time): its persona, the server's instructions (over `ctx`, as the bot builds
+    them over its own; over eval_context() when none is given), the date and time."""
     from zoneinfo import ZoneInfo
-    return prompt.build(now.replace(tzinfo=ZoneInfo(NOW_TZ)), service_instructions())
+
+    from lib.service.instructions import instructions
+    told = instructions(ctx) if ctx is not None else service_instructions()
+    return prompt.build(now.replace(tzinfo=ZoneInfo(NOW_TZ)), told)
 
 
-async def run_live(case: Case, client, model: str, effort: str | None = None) -> tuple[list[tuple[str, dict]], str]:
+MAX_CALLS = 8   # a bot-mode turn that makes more tool calls than this has run away: it fails, whatever it called
+
+
+@dataclass
+class LiveTurn:
+    """One question asked as the bot asks it: every call of the turn in order (refused ones too), how many of their results were
+    refusals (an `error`), the reply, and whether the bot answered it in code (its fixed calls, no model)."""
+    calls: list
+    reply: str
+    refused: int = 0
+    in_code: bool = False
+
+    def line(self) -> str:
+        """`3 calls, 1 refused: "the reply's first 200 characters"`."""
+        return (f"{len(self.calls)} call{'s' * (len(self.calls) != 1)}, {self.refused} refused: "
+                f"{json.dumps(self.reply[:200], ensure_ascii=False)}")
+
+
+REPEATED = "[You already made this exact call"   # (lib/llm.py's answer to a repeat, the first result after it)
+
+
+def refusal(text: str) -> bool:
+    """Is this tool result, as the model was sent it, a refusal: an `error`, or the tool loop's own "Error..." (no such tool, arguments
+    that aren't JSON, the tool failed)?"""
+    body = text.split("\n", 1)[-1] if text.startswith(REPEATED) else text
+    if body.startswith("Error"):
+        return True
+    try:
+        out = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(out, dict) and "error" in out
+
+
+def turn_calls(messages: list[dict]) -> tuple[list[tuple[str, dict]], int]:
+    """The tool calls of a turn's messages (as lib/llm.py's Agent leaves them: each assistant step's calls, then their results in
+    order), in the order made, and how many of their results were refusals."""
+    calls, refused = [], 0
+    for i, m in enumerate(messages):
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        for c, result in zip(m["tool_calls"], messages[i + 1:i + 1 + len(m["tool_calls"])]):
+            try:
+                args = json.loads(c["function"]["arguments"] or "{}")
+            except ValueError:
+                args = {}
+            calls.append((c["function"]["name"], args if isinstance(args, dict) else {}))
+            refused += result.get("role") == "tool" and refusal(str(result.get("content", "")))
+    return calls, refused
+
+
+async def run_live(case: Case, client, model: str, effort: str | None = None, service=None) -> LiveTurn:
     """The bot's own request (docs/mcp-service.md 4): a question it answers in code gives its fixed calls (no model); any other is asked
     of the model with the bot's system prompt, the ten tools as it offers them, its reasoning effort from the words, tool_choice auto,
-    and the turn ended on a complete result as the bot ends it. Returns the calls made and the reply."""
+    and the turn ended on a complete result as the bot ends it. With `service` (evalworld.world: the ten tools over the frozen world)
+    each call is answered by the real tool, wrapped as the bot wraps it (lib/model_tools.py: the model is sent for_model of the
+    result), so the model calls again until it replies (at most lib/llm.py's MAX_STEPS steps, then it is made to answer); without, every
+    call is answered CANNED. Returns the whole turn."""
+    from lib import model_tools
     r = read(case)
     if (calls := shortcut_calls(r)) is not None:
-        return list(calls), "(answered in code)"
-    calls = []
+        return LiveTurn(list(calls), "(answered in code)", in_code=True)
     messages = [*case.history, {"role": "user", "content": content(case)}]
-    reply = await Agent(client, model, make_service_tools(calls)).run(messages, bot_system(), effort or r.effort, tool_choice="auto",
-                                                                      turn=Turn(), finish=lambda _, results: complete_reply(results))
-    return calls, reply
+    asked = len(messages)
+    tools = model_tools.tools(service) if service is not None else make_service_tools([])
+    system = bot_system(ctx=getattr(service, "ctx", None))
+    reply = await Agent(client, model, tools).run(messages, system, effort or r.effort, tool_choice="auto", turn=Turn(),
+                                                  finish=lambda _, results: complete_reply(results))
+    calls, refused = turn_calls(messages[asked:])
+    return LiveTurn(calls, reply, refused)
 
 
 # ---------- the service's ten tools, offered alone (docs/mcp-service.md 6, step 2; 7) ----------
@@ -501,29 +564,36 @@ def calls_text(calls: list[tuple[str, dict]]) -> str:
 
 
 async def run_service(cases: list[Case], expectations: dict[str, dict], client=None, model: str = "", *, repeat: int = 1,
-                      effort: str | None = None, instructions: str | None = None, bot: bool = False, out=print) -> int:
-    """The service's evals: each case's expectation checked (service_problems) and, with a client, the model asked `repeat` times with
-    the ten tools alone (and the server's `instructions`, when given) and its calls scored against it (check_calls), as `--live` scores
-    cases.json. Prints a line per case (`out`), with the calls of a run that fails; returns how many cases fail."""
+                      effort: str | None = None, instructions: str | None = None, bot: bool = False, service=None, out=print) -> int:
+    """The service's evals: each case's expectation checked (service_problems) and, with a client, the model asked `repeat` times and
+    its calls scored against it (check_calls). Without `bot`: the ten tools alone (and the server's `instructions`, when given), every
+    call answered CANNED, so its first round is what is scored (what the descriptions lead to). With `bot`: as the bot asks (run_live),
+    over `service` (evalworld.world) when given, and scored over the whole turn: an expected tool or arguments pass if any call of the
+    turn makes them (a refused call later corrected passes), not_tools hold for every call, and a turn of more than MAX_CALLS calls
+    fails (it ran away); each run's calls, refusals and the reply's start are printed under the case. Prints a line per case (`out`),
+    with the calls of a run that fails; returns how many cases fail."""
     failed = 0
     for case in cases:
         expect = expectations.get(case.id)
         problems = service_problems(expect)
-        line = "ok" if not problems else "FAIL"
+        line, runs = "ok" if not problems else "FAIL", []
         if client and not problems:
             passes = 0
             for _ in range(repeat):
                 if bot:
-                    calls, _reply = await run_live(case, client, model, effort)
-                    in_code = shortcut_calls(read(case)) is not None
+                    turn = await run_live(case, client, model, effort, service)
+                    calls, in_code = turn.calls, turn.in_code
+                    runs.append(turn.line())
                 else:
                     calls, _reply, in_code = *await run_live_service(case, client, model, effort, instructions), False
                 why = check_calls(calls, shortcut_expectation(expect) if in_code else expect)
+                if bot and len(calls) > MAX_CALLS:
+                    why.insert(0, f"ran away: {len(calls)} calls (more than {MAX_CALLS})")
                 passes += not why
                 problems += [*(f"  run: {w}" for w in why[:3]), f"  called: {calls_text(calls)}"] if why else []
             line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL") + (" code" if bot and in_code else "")
         out(f"{line:>10}  {case.id}  ({case.ask})")
-        for p in problems:
+        for p in [*runs, *problems]:
             out(f"            {p}")
         failed += bool(problems)
     what = "the bot's prompt and the ten tools" if bot else f"the service's ten tools alone{', with its instructions' if instructions else ''}"

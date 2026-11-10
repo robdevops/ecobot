@@ -531,7 +531,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
   ours), and again with the server's instructions, and checked for the tools and arguments it picks and, where it matters, the answer.
   They run against the production model and at least one other, so the interface isn't tuned to one model's habits. The cases carry
   over from `tests/evals/cases.json`, with their periods checked as the service reads them, and gain one for each periods form, each
-  routing rule (a record or a day, a chart or a figure per month), `outlook`, `about` and `chart_answers_it`.
+  routing rule (a record or a day, a chart or a figure per month), `outlook`, `about` and `chart_answers_it`. The tools-alone runs
+  answer every call "no data" and score the first round (what the descriptions lead to); the bot's run (`--live`) answers each call
+  from the real tools over a frozen world (the fake station's archive and the other sources' fakes at the cases' fixed time), so the
+  model sees real results, notes and refusals and is scored over its whole turn: any call may meet the expectation, none may be a
+  forbidden tool, and more than 8 calls fails.
 - **The contract:** a test per tool and resource for the arguments it takes and the shape it returns (`test_contract`); the periods
   table at its fixed times (step 1); charts against their schema; every chart's `drawn_by`, replayed, draws the same chart,
   and with only `period` changed to each of its `periods`, the same chart over that period, never an error; `day_look` against its rule.
