@@ -347,3 +347,13 @@ def test_it_is_offered_only_with_a_station_and_its_description_carries_the_rules
                  "wind picking up", "rain rate above 0 now", "forecast", "summary", "relate"):
         assert rule in DESCRIPTION, rule
     assert set(GROUPS) == {"outdoor", "pressure", "rainfall", "rainfall_piezo", "wind"}   # (the prefetch's groups)
+
+
+def test_the_last_hour_ends_at_the_newest_reading_so_stale_readings_still_count_their_rain():
+    """Read without fetching just after midnight, the newest readings can be over an hour old: their last hour's rain (and wind) is
+    counted from the newest reading, not from the clock, so the rain in them isn't dropped and the verdict doesn't flip to unlikely."""
+    stale = NOW_TS - 75 * 60   # the newest reading 75 minutes before the time asked
+    rows = station(daily=lambda i: 0.0 if i < STEPS - 6 else 0.4 * (i - STEPS + 6), rate=lambda i: 0.0, now_ts=stale)
+    out = read(rows, None, NOW_TS)
+    assert out["recent_rain"]["rained"] and out["recent_rain"]["last_hour_mm"] == 2.4 and out["verdict"] != "unlikely"
+    assert out["newest"] == stale

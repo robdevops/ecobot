@@ -33,7 +33,7 @@ _REAL = (_datetime, _date)   # the real classes, where freeze() can't rebind the
 
 
 # ---------- the clock, fixed ----------
-class _DatetimeType(type(_REAL[0])):   # (type, unless ECOBOT_CLOCK moved the clock: tests/sweepclock.py)
+class _DatetimeType(type(_REAL[0])):   # (type, unless ECOBOT_CLOCK moved the clock: tests/clocks.py)
     def __instancecheck__(cls, obj):
         return isinstance(obj, _REAL[0])
 

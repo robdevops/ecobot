@@ -76,8 +76,10 @@ def read(rows: Rows, now_reading: dict | None, now_ts: int, live_ts: int | None 
 
     pressure = _pressure(points("pressure.relative"))
     moisture = _moisture(*latest("outdoor.temperature", "outdoor.humidity", "outdoor.dew_point"))
-    rain = _recent_rain(rows, live, live_ts, gauge, now_ts)
-    wind = _wind(points("wind.wind_speed"), now_ts)
+    until = newest or now_ts   # "the last hour" ends at the newest reading held: stale readings (a read without fetching, just after
+    #                            midnight) still count their rain, and the result's as_of and warning say how old they are
+    rain = _recent_rain(rows, live, live_ts, gauge, until)
+    wind = _wind(points("wind.wind_speed"), until)
 
     falling = pressure is not None and pressure["tendency"] == "falling"
     score = 0 if not falling else 2 if -pressure["change_hpa"] > LIKELY_FALL_HPA else 1
