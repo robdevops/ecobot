@@ -287,6 +287,9 @@ class Config:
     mcp_tokens: tuple[tuple[str, str], ...] = _setting("MCP_TOKENS", (), _tokens)   # "name:token,...", one per client; none: no auth, loopback only
     mcp_bind: tuple[str, int] = _setting("MCP_BIND", ("127.0.0.1", 8765), _bind)    # host:port the service listens on
     mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
+    # The bot as the service's client (docs/mcp-service.md step 5): set, the bot runs no sources, syncers or alert rules of its own
+    weather_mcp_url: str = _setting("WEATHER_MCP_URL", "", _url)    # the service's MCP endpoint, e.g. http://127.0.0.1:8765/mcp; unset: the service runs inside the bot
+    weather_mcp_token: str = _setting("WEATHER_MCP_TOKEN", "")      # the bearer token the bot sends it (one of the service's MCP_TOKENS)
 
     @property
     def alert_state_path(self) -> Path:
@@ -359,7 +362,7 @@ class Config:
         for f in fields(cls):
             if bot and f.name in REQUIRED_BY_BOT:
                 _required(getattr(cfg, f.name), f.default, f.metadata["env"])
-        if not (cfg.ecowitt or cfg.airgradient):
+        if not (cfg.ecowitt or cfg.airgradient) and not (bot and cfg.weather_mcp_url):   # (a client of the service needs no source)
             raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or HOMEASSISTANT_URL + HOMEASSISTANT_TOKEN and/or AIRGRADIENT_API_TOKEN + "
                              "AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
         return cfg

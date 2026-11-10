@@ -44,9 +44,37 @@ def tool(service_tool) -> Tool:
     return Tool(service_tool.name, service_tool.description, service_tool.parameters, handle)
 
 
+class ServiceTools(Tools):
+    """The service's tools as the model is offered them, following the service's list: read again whenever it is another list (a remote
+    service's, read on each connection and when the service says its tools changed; none while it has not been reached)."""
+
+    def __init__(self, service):
+        self.service = service
+        self._seen: list[int] | None = None
+        self._by_name: dict[str, Tool] = {}
+        self._schemas: list[dict] = []
+
+    def _current(self):
+        listed = list(self.service)
+        if (seen := [id(t) for t in listed]) != self._seen:
+            wrapped = [tool(t) for t in listed]
+            self._by_name, self._schemas, self._seen = {t.name: t for t in wrapped}, [t.schema() for t in wrapped], seen
+
+    @property
+    def by_name(self) -> dict[str, Tool]:
+        self._current()
+        return self._by_name
+
+    @property
+    def schemas(self) -> list[dict]:
+        self._current()
+        return self._schemas
+
+
 def tools(service) -> Tools:
-    """The service's tools (a lib.service.Service, or any list of ServiceTools), in its order, as the model is offered them."""
-    return Tools([tool(t) for t in service])
+    """The service's tools (a lib.service.Service, a remote service's list (lib/weather.py), or any list of ServiceTools), in its order,
+    as the model is offered them."""
+    return ServiceTools(service)
 
 
-__all__ = ["BOT_CHART_NOTE", "for_model", "tool", "tools"]
+__all__ = ["BOT_CHART_NOTE", "ServiceTools", "for_model", "tool", "tools"]

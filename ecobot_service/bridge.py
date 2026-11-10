@@ -64,10 +64,11 @@ class Upstream:
     """The one client of the service, owned by one supervisor task (`run`): built, discovered and listening; dropped when it fails or
     its listen is lost or ends, and built again after a backoff. `target`: the service's URL, or (in tests) a Server in-process."""
 
-    def __init__(self, target, token: str | None = None, on_event=None, on_discover=None, on_listening=None):
+    def __init__(self, target, token: str | None = None, on_event=None, on_discover=None, on_listening=None, resources=None):
         """Callbacks: on_discover(DiscoverResult), each new connection's, before it is used; on_listening(), once its listen is
-        acknowledged (what was missed is read from here: an event from now on isn't); on_event(event), each listen event. Async."""
-        self.target, self.token = target, token
+        acknowledged (what was missed is read from here: an event from now on isn't); on_event(event), each listen event. Async.
+        resources: the URIs listened to, of those the service lists (None: every one)."""
+        self.target, self.token, self.resources = target, token, resources
         self.on_event, self.on_discover, self.on_listening = on_event, on_discover, on_listening
         self.client: Client | None = None
         self.connected = asyncio.Event()
@@ -97,6 +98,8 @@ class Upstream:
             except BaseException as e:   # (a transport failure ends the whole client, as an exception group too)
                 if isinstance(e, (KeyboardInterrupt, SystemExit)):
                     raise
+                if (me := asyncio.current_task()) is not None and me.cancelling():   # cancelled while connecting: the SDK may have
+                    raise asyncio.CancelledError() from e                           # wrapped it (an exception group): stop all the same
                 log.warning("Bridge: the service at %s isn't reachable (%s: %s); trying again", self.target, type(e).__name__, e)
             finally:
                 self.client = None
@@ -106,7 +109,7 @@ class Upstream:
 
     async def _listen(self, client: Client):
         """Listen to every resource the service lists and its lists' changes, passing each event on, until the stream ends."""
-        uris = [r.uri for r in (await client.list_resources()).resources]
+        uris = [r.uri for r in (await client.list_resources()).resources if self.resources is None or str(r.uri) in self.resources]
         async with client.listen(tools_list_changed=True, prompts_list_changed=True, resources_list_changed=True,
                                  resource_subscriptions=uris) as sub:
             if self.on_listening:

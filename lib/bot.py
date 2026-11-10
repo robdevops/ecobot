@@ -31,8 +31,6 @@ from . import gauges
 from .charts import render_data
 from .service import Service
 from .service.common import AS_DRAWN, BACKGROUND
-from .service.context import Context
-from .service.instructions import instructions
 from .specs import from_json
 from . import gauge_sheet
 from .tools import Turn
@@ -43,6 +41,7 @@ from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
 from .warm import Tasks   # (the service's too: ecobot_service)
+from .weather import UNREACHABLE, LocalWeather, ServiceUnreachable
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +73,7 @@ NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n
             "/particulates, /wind), \"weather now\" and a reading's chart over a period like \"rain chart 7d\" or \"humidity 30d\", "
             "as well as all the alerts.")
 OUT_OF_DATE = "That chart is out of date, please ask again"
+SERVICE_DOWN = "Sorry, I can't reach the weather service right now. Please try again in a minute."   # (WEATHER_MCP_URL: it is another program)
 
 
 @dataclass
@@ -392,13 +392,15 @@ class Bot:
                  service: Service | None = None, alert_log=None):
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
-        its own when none is given. service: the service's tools (lib/service), which the bot's own code paths call (its shortcuts,
-        report, gauges, alert charts and period buttons); built over `sources` when none is given. The model is offered the same tools
-        (agent.tools: lib/model_tools.py), with the server's instructions (instructions(service.ctx)) after the bot's persona. alert_log:
-        the service's alert log (lib/alert_log.py), whose events the 🔄 under an alert's chart finds its chart's drawn_by in."""
+        its own when none is given. service: the weather service as the bot reaches it (lib/weather.py: RemoteWeather over MCP, with
+        WEATHER_MCP_URL; `sources` is then empty), or the service's tools in this process (lib/service), which the bot's own code paths
+        call (its shortcuts, report, gauges, alert charts and period buttons), built over `sources` when none is given (LocalWeather).
+        The model is offered the same tools (agent.tools: lib/model_tools.py), with the server's instructions after the bot's persona.
+        alert_log: the service's alert log in this process (lib/alert_log.py), whose events the 🔄 under an alert's chart finds its
+        chart's drawn_by in."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
-        self.alert_log = alert_log
-        self._service = service
+        self.weather = service if getattr(service, "is_weather", False) else \
+            LocalWeather(sources, service, alert_log, tz=getattr(cfg, "tz", None))
         self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
@@ -417,12 +419,14 @@ class Bot:
 
     @property
     def service(self) -> Service:
-        """The service's tools over the bot's sources (built on first use when none was given)."""
-        if self._service is None:
-            get = self.by_name.get
-            self._service = Service.of(Context(eco=get("Ecowitt"), air=get("AirGradient"), forecast=get("Forecast"), pollen=get("Pollen"),
-                                               tz=getattr(self.cfg, "tz", None)))
-        return self._service
+        """The service's tools (lib/weather.py: in this process, built over the bot's sources on first use when none was given; or the
+        remote service's list)."""
+        return self.weather.service
+
+    @property
+    def names(self) -> set[str]:
+        """The sources the service has ("Ecowitt", "AirGradient", "Forecast", "Pollen")."""
+        return self.weather.names
 
     # ---------- the service's tools, as the bot calls them ----------
     async def _service_call(self, tool: str, args: dict, ahead: bool = False) -> dict:
@@ -435,23 +439,21 @@ class Bot:
         log.debug("Service call %s %s", tool, json.dumps(args, ensure_ascii=False), extra=QUOTES)
         try:
             out = json.loads(await found.call(args, meta))
+        except ServiceUnreachable as e:   # (a remote service while it is being reached again: said once the person asks, _answer)
+            (log.debug if ahead else log.warning)("Service tool %s: %s", tool, e)
+            return {"error": str(e)}
         except Exception as e:
             log.error("Service tool %s failed: %s: %s", tool, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return {"error": f"{type(e).__name__}: {e}"}
         return out if isinstance(out, dict) else {"error": "not an answer"}
 
     def _catalogue(self):
-        """The readings the service holds (the words of a shortcut are read against them): its Context's, else those of the sources the
-        bot has."""
-        ctx = getattr(self.service, "ctx", None)
-        if ctx is not None:
-            return ctx.readings()
-        from .service.names import Catalogue
-        return Catalogue.of(station="Ecowitt" in self.by_name, air="AirGradient" in self.by_name)
+        """The readings the service holds (the words of a shortcut are read against them)."""
+        return self.weather.catalogue()
 
     def _instructions(self) -> str:
-        """The server's instructions (lib/service/instructions.py) over the service's Context."""
-        return instructions(getattr(self.service, "ctx", None))
+        """The server's instructions (lib/service/instructions.py; from server/discover when the service is remote)."""
+        return self.weather.instructions()
 
     def _sentence_call(self, text: str, now: datetime) -> tuple[str, dict] | None:
         """The call a keyboard sentence ("Wind chart 1d") is: a named reading's chart and a period (intent.chart_call); None for any other."""
@@ -603,7 +605,7 @@ class Bot:
             self.state.mark_gone(change.chat.id, f"bot {status}")
 
     def _alert_kinds(self) -> list[str]:
-        return menu.available_kinds(self.by_name, bool(self.irrigation))
+        return menu.available_kinds(self.names, bool(self.irrigation))
 
     async def on_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/alerts: the alert settings, as buttons (🔔 Alerts and 🔊 Sound). /alerts on and /alerts off still subscribe or
@@ -627,7 +629,7 @@ class Bot:
     async def _help_and_alerts(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """What the bot can do, then the alert settings: the Help & Alerts button and /usage."""
         about = await self._service_call("about", {})
-        await update.effective_message.reply_text("\n".join(about.get("lines") or []) or templates.capabilities_text(self.by_name))
+        await update.effective_message.reply_text("\n".join(about.get("lines") or []) or templates.capabilities_text(self.names))
         await self.on_alerts(update, context)
 
     async def on_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -717,10 +719,10 @@ class Bot:
                     return int(parts[3])
         return None
 
-    def _alert_call(self, kind: str, event: int | None) -> tuple[str, dict] | None:
+    async def _alert_call(self, kind: str, event: int | None) -> tuple[str, dict] | None:
         """The call that draws an alert's chart again: its chart's drawn_by, from the alert log (`event`: its id); None without one (an
         alert sent before the log, or one dropped from it), when the type's own chart is drawn."""
-        found = self.alert_log.get(event) if event is not None and self.alert_log is not None else None
+        found = await self.weather.alert(event) if event is not None else None
         drawn_by = (found or {}).get("chart", {}).get("drawn_by") if found and found.get("kind") == kind else None
         return (drawn_by["tool"], drawn_by["arguments"]) if drawn_by else None
 
@@ -730,18 +732,19 @@ class Bot:
         drawn_by replayed, found in the alert log by its id `event`; the type's chart for an alert from before the log) and kept. The
         alert's text (what happened, as it was sent) and its buttons stay as they are."""
         message = query.message
-        source = self.by_name.get(menu.TYPES[kind][1]) if kind in menu.TYPES else None
-        if source is None or not self._redrawable(message, kind):   # an alert of a type, or from a source, the bot no longer has
+        there = kind in menu.TYPES and menu.TYPES[kind][1] in self.names
+        if not there or not self._redrawable(message, kind):   # an alert of a type, or from a source, the bot no longer has
             await answer_query(query, STALE_BUTTON)
             return
         photo, drawn = self.alert_charts.newer_than(kind, message), False
         if photo is None:
             try:
-                if call := self._alert_call(kind, event):
+                if call := await self._alert_call(kind, event):
                     made = await asyncio.wait_for(self._draw_call(*call, ahead=False), TURN_SECONDS)
                     picture = pictures.Picture(made[0], made[1], made[3], made[4]) if made else None
                 else:
-                    picture = await asyncio.wait_for(pictures.chart(source, pictures.CHARTS[kind], source.tz, self.service), TURN_SECONDS)
+                    picture = await asyncio.wait_for(pictures.chart(self.by_name.get(menu.TYPES[kind][1]), pictures.CHARTS[kind], self.cfg.tz,
+                                                                       self.service), TURN_SECONDS)
             except TimeoutError:
                 picture = None
             if picture is None:   # (pictures.chart has said why) the message stays as it was
@@ -893,8 +896,7 @@ class Bot:
     async def _redraw_dashboard(self, query):
         """A press on 🔄 under the dashboard: its gauges drawn again with the latest readings, and the time in its title, in the same
         message. When the station doesn't answer, the message stays as it was."""
-        eco = self.by_name.get("Ecowitt")
-        if eco is None or not getattr(getattr(query, "message", None), "photo", None):   # no station any more, or not the dashboard's picture
+        if "Ecowitt" not in self.names or not getattr(getattr(query, "message", None), "photo", None):   # no station any more, or not the dashboard's picture
             await answer_query(query, STALE_BUTTON)
             return
         try:
@@ -1147,7 +1149,7 @@ class Bot:
     async def _written_in_code(self, report: bool, ahead: bool = False) -> str:
         """The report, or "weather now", in the service's words: the readings now (current: each device's heading and lines), then the
         pollen's and the forecast's own text, the calls made together (intent.report_calls; "weather now": current {})."""
-        calls = intent.report_calls(self.by_name) if report else [intent.WEATHER_NOW_CALL]
+        calls = intent.report_calls(self.names) if report else [intent.WEATHER_NOW_CALL]
         results = await asyncio.gather(*(self._service_call(name, args, ahead=ahead) for name, args in calls))
         by_tool = {name: out for (name, _), out in zip(calls, results)}
         now = by_tool.get("current") or {"error": "none"}
@@ -1171,7 +1173,7 @@ class Bot:
     async def _status_gauges(self) -> bytes | None:
         """The report's picture: the weather station's temperature, humidity and rain gauges (gauge_sheet.STATUS), from the service's
         current with context. None without the station, or when they can't be drawn (the report then goes as text alone)."""
-        if "Ecowitt" not in self.by_name:
+        if "Ecowitt" not in self.names:
             return None
         try:
             sheet = await self._gauge_sheet(gauge_sheet.STATUS)
@@ -1342,10 +1344,10 @@ class Bot:
         typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
         await asyncio.sleep(0)
         now = now_local(self.cfg.tz)
-        read = intent.read(text, now, self.by_name, self.cfg.tz, self._catalogue())
+        read = intent.read(text, now, self.names, self.cfg.tz, self._catalogue())
         log.info("%s%s: %s", describe_source(update), f" (reasoning: {read.effort})" if read.effort != intent.EFFORT_DEFAULT else "",
                  text, extra=QUOTES)
-        for source in self.sources:  # fetch recent readings while the model thinks
+        for source in self.sources:  # fetch recent readings while the model thinks (in-process: a remote service keeps its own warm)
             if source.wants(text) and not read.chart:   # a chart made in code reads just what it needs, first in line
                 source.poke()
         if read.chart:
@@ -1389,6 +1391,9 @@ class Bot:
         key = periods.call_key(*read.chart) if read.chart else None   # the call the chart is (its cache key)
         if read.chart and (ready := self.images.ready(key)):   # drawn ahead, or for someone's same call
             answer = Answer(ready.caption, [ready.photo], [ready.title], silent=True, ready=ready, drawn_by=[ready.drawn_by], key=key)
+        elif not await self.weather.ready():   # a remote service that can't be reached (in-process: always there)
+            log.warning("%s: %s", chat_tag(msg.chat_id), UNREACHABLE)
+            answer = Answer(SERVICE_DOWN, ok=False)
         elif read.chart:   # drawn by the service; the chart goes out with just its title (the text is kept for the history)
             began = time.monotonic()
             made = await asyncio.wait_for(self._chart_in_code(read.chart), TURN_SECONDS)
@@ -1428,7 +1433,7 @@ class Bot:
                  time.monotonic() - started, len(used), len(photos), len(reply))
         catalogue = self._catalogue()
         used_air = answer.ok and any(r and reads_air(*r, catalogue) for r in turn.results)   # (an error reply gets no link)
-        air = self.by_name.get("AirGradient")
+        air_link = self.weather.air_link() if used_air else None
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         refresh = answer.ok and read.report and 0 < len(reply) <= TG_LIMIT and not markup   # the report, to be refreshed in place
         single = len(photos) == 1 and not (read.dashboard or read.report)   # a single chart: its period buttons go under it
@@ -1446,7 +1451,7 @@ class Bot:
             self.images.alias(kept, periods.call_key(drawn_by["tool"], periods.with_period(drawn_by, own)))
         try:
             began = time.monotonic()
-            sent = await deliver(msg, reply, photos, link=air.link if air and used_air else None,
+            sent = await deliver(msg, reply, photos, link=air_link,
                                  markup=markup or (report_menu.keyboard() if refresh else report_menu.dashboard_keyboard()
                                                    if answer.ok and read.dashboard and photos else None), titles=titles, period_row=row,
                                  bold_headings=answer.ok and read.report, photos_first=read.report)

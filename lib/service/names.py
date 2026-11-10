@@ -19,7 +19,7 @@ A name or word it can't read raises UnknownReading, a Refusal that lists the nam
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..history import AIR_SENSOR, RAIN, Metric, air_metrics, station_fields, station_metrics
 from ..series import AIR, AIR_EXTRA, INDOOR_READINGS, WEATHER
@@ -200,6 +200,15 @@ class Catalogue:
     async def open(cls, eco=None, air=None) -> "Catalogue":
         """The readings the file holds for these sources (Ecowitt, AirGradient; either may be None), as the readings tool reads them."""
         return cls.of(await station_fields(eco) if eco else None, station=eco is not None, air=air is not None)
+
+    @classmethod
+    def listed(cls, entries: Iterable[dict]) -> "Catalogue":
+        """The catalogue another process holds, from the readings it lists ({name, label, unit}, as ecobot://station's sensors give
+        them: a client's, docs/mcp-service.md step 5): each reading as this catalogue makes it, with the label and unit listed."""
+        wanted = {e["name"]: e for e in entries if isinstance(e, dict) and e.get("name")}
+        made = (_reading(m, set(wanted)) for m in [*station_metrics(None), *air_metrics(extra=True)])
+        return cls(replace(r, label=wanted[r.name].get("label") or r.label, unit=wanted[r.name].get("unit", r.unit))
+                   for r in made if r.name in wanted)
 
     @property
     def names(self) -> list[str]:

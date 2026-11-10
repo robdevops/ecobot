@@ -24,6 +24,7 @@ from ..logs import QUOTES
 from .menu import ALL, LABELS, alert_keyboard
 from .pictures import CHARTS, AlertCharts, Picture, picture_of
 from .store import load, write
+from ..weather import value
 
 log = logging.getLogger(__name__)
 
@@ -259,8 +260,20 @@ class AlertDelivery:
     nothing for as long), noticed by the log's identity kept with the id, or by the id being past the log's newest."""
 
     def __init__(self, log, notify: "Notifier", state: AlertState, tz):
+        """log: the alert log in this process (lib/alert_log.py), or the remote service's read over MCP (lib/weather.RemoteAlerts, whose
+        reads are coroutines: it is looked at when `run` starts)."""
         self.log, self.notify, self.state, self.tz = log, notify, state, tz
-        newest = self.log.last_id()
+        self.begun = False
+        if not getattr(log, "remote", False):
+            self._begin(self.log.last_id())
+
+    async def begin(self):
+        """Where delivery starts (the log looked at), if it hasn't yet."""
+        if not self.begun:
+            self._begin(await value(self.log.last_id()))
+
+    def _begin(self, newest: int):
+        self.begun = True
         if self.state.read is None:
             self._handled(newest)
         elif (self.state.read_log not in (None, self.log.identity)) or self.state.read > newest:
@@ -288,8 +301,9 @@ class AlertDelivery:
         """Forever: deliver what is new, then wait for more. A failure reading the log is logged and retried, never the end of alerts."""
         while True:
             try:
+                await self.begin()
                 await self.deliver_new()
-                await self.log.wait(self.last)
+                await value(self.log.wait(self.last))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -299,9 +313,9 @@ class AlertDelivery:
 
     async def deliver_new(self) -> int:
         """Send each unexpired event after the last handled, oldest first; returns how many were sent."""
-        newest = self.log.last_id()
+        newest = await value(self.log.last_id())
         sent = 0
-        for event in self.log.since(self.last):
+        for event in await value(self.log.since(self.last)):
             try:
                 await self.deliver(event)
                 sent += 1

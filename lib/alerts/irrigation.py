@@ -33,7 +33,9 @@ class IrrigationMonitor:
     KINDS = kinds_of("Irrigation")
 
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
-        """station: the Ecowitt source (its recent() gives the measured rain); forecast: the Forecast source. Either may be None."""
+        """station: the Ecowitt source (its recent() gives the measured rain), or, with the weather service remote, what asks it for the
+        measured rain (lib/weather.ServiceRain: rain_mm()); forecast: the Forecast source, or the forecast read from the service
+        (lib/weather.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be None."""
         self.device, self.state, self.notify, self.tz, self.hour = device, state, notify, tz, hour
         self.station, self.forecast = station, forecast
 
@@ -95,13 +97,22 @@ class IrrigationMonitor:
         """Why the irrigation should be delayed (what rained or will), or None. `now` is local."""
         if self.station is not None:
             try:
-                rows = await self.station.recent(MEASURED_HOURS)
-                fell = rain_amount(rows, rows[0][0], rows[-1][0]) if rows else None
+                if (asked := getattr(self.station, "rain_mm", None)) is not None:   # the weather service's summary of the rain
+                    fell = await asked(MEASURED_HOURS)
+                else:
+                    rows = await self.station.recent(MEASURED_HOURS)
+                    fell = rain_amount(rows, rows[0][0], rows[-1][0]) if rows else None
             except Exception as e:   # the forecast can still decide
                 log.warning("Irrigation: the measured rain is unavailable (%s: %s)", type(e).__name__, e)
                 fell = None
             if fell is not None and fell > MEASURED_MM:
                 return f"{fell:g} mm of rain in the last 24 hours"
+        if (refresh := getattr(self.forecast, "refresh", None)) is not None:   # the weather service's forecast, read again
+            try:
+                await refresh()
+            except Exception as e:
+                log.warning("Irrigation: the forecast couldn't be read (%s: %s); %s", type(e).__name__, e,
+                            "using the one last read" if self.forecast.days else "there is none to go on")
         if self.forecast is not None and self.forecast.days:
             if local_epoch(now, self.tz) - self.forecast.fetched_at > FORECAST_TRUSTED_SECONDS:
                 log.info("Irrigation: the forecast is from %s, over a day old: only the measured rain decides",

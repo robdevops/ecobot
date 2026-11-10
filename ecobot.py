@@ -3,12 +3,16 @@ answered by a model through OpenRouter, with proactive alerts. Settings come fro
 (see lib/config.py); run it under systemd with the unit's EnvironmentFile set.
 
 The service's half (the sources, the alert log, the tools, the alert rules, the keep-warm, the first fetch, the archive, the backfills and
-Home Assistant's imports) is ecobot_service/core.py, which the service (python -m ecobot_service) runs the same way: the bot runs it
-in-process, beside its own half (Telegram, the model, delivering the alerts, the irrigation controller, its charts drawn ahead).
+Home Assistant's imports) is ecobot_service/core.py, which the service (python -m ecobot_service) runs the same way. With WEATHER_MCP_URL
+unset the bot runs it in-process, beside its own half (Telegram, the model, delivering the alerts, the irrigation controller, its charts
+drawn ahead). With it set the bot is the service's client over MCP (lib/weather.RemoteWeather, docs/mcp-service.md 3.8 and step 5): it
+runs no sources, syncers or alert rules of its own; its tools, instructions, station and alerts come from the service. Either way the bot
+reaches the service through one interface (lib/weather.py).
 """
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import signal
 
@@ -36,6 +40,7 @@ from lib.pollen import Pollen   # noqa: F401
 from lib.service.alerts import AlertRules
 from lib import model_tools
 from lib.warm import every, safely
+from lib.weather import RemoteWeather, ServiceRain
 
 
 _format = LogFormat("%(levelname)s %(message)s", priority=on_journal())   # DEBUG and INFO to stdout, WARN and ERROR to stderr
@@ -44,19 +49,48 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")
 
+STARTUP_WAIT = 30.0   # seconds the bot waits for a remote service at start (its station names the time zone) before it carries on without
 
-def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, core: Core) -> tuple[list[str], AlertRules]:
-    """Hook up the service's alert rules over every source that started (core.start_alerts: they append to the alert log, which the
-    bot delivers from, AlertDelivery) and the irrigation controller's (sent by the bot itself until it is a server of its own). The
-    weather rules start in warm_up, once the station has been read. Returns the alert types now running, and the rules."""
-    running = core.start_alerts(moved_from=bot.state)   # (the first start moves the rules' state out of bot_state.json)
-    tasks.start(AlertDelivery(core.alert_log, notify, bot.state, cfg.tz).run())
+
+def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, core: Core | None,
+                 weather: RemoteWeather | None = None) -> tuple[list[str], AlertRules | None]:
+    """In-process (`core`): hook up the service's alert rules over every source that started (core.start_alerts: they append to the
+    alert log); the weather rules start in warm_up, once the station has been read. Remote (`weather`): the rules are the service's, and
+    its alert log is read over MCP. Either way the bot delivers from the log (AlertDelivery), and runs the irrigation controller's check
+    and watchdog (sent by the bot itself until it is a server of its own, step 5b; remote, its rain and forecast are asked of the
+    service). Returns the alert types now running here, and the rules (None when remote)."""
+    if core is not None:
+        running = core.start_alerts(moved_from=bot.state)   # (the first start moves the rules' state out of bot_state.json)
+        feed, station, forecast = core.alert_log, bot.by_name.get("Ecowitt"), bot.by_name.get("Forecast")
+    else:
+        running, feed, station, forecast = [], weather.alerts, ServiceRain(weather), weather.forecast
+    tasks.start(AlertDelivery(feed, notify, bot.state, cfg.tz).run())
     if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, bot.by_name.get("Ecowitt"),
-                                      bot.by_name.get("Forecast")).run())
+        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, station, forecast).run())
         tasks.start(every(VALVE_CHECK_SECONDS, bot.watchdog.check))
         running += IrrigationMonitor.KINDS
-    return running, core.rules
+    return running, core.rules if core is not None else None
+
+
+async def connect(cfg: Config, stack: contextlib.AsyncExitStack) -> tuple[RemoteWeather, Config]:
+    """The bot as the service's client (WEATHER_MCP_URL): the supervisor started (closed by `stack`), the first connection waited for up to
+    STARTUP_WAIT seconds; the settings in the station's time zone once it has been read (else TZ's, with a warning)."""
+    weather = RemoteWeather(cfg.weather_mcp_url, cfg.weather_mcp_token or None, cfg.tz)
+    supervisor = asyncio.create_task(weather.run())
+
+    async def stop():
+        supervisor.cancel()
+        await asyncio.gather(supervisor, return_exceptions=True)
+        await weather.close()
+    stack.push_async_callback(stop)
+    try:
+        await asyncio.wait_for(weather.listening.wait(), STARTUP_WAIT)
+    except TimeoutError:
+        log.warning("The weather service at %s isn't reachable yet: questions are told so until it is (the time zone is TZ's, %s)",
+                    cfg.weather_mcp_url, cfg.tz)
+    if weather.station_tz is not None and str(weather.station_tz) != str(cfg.tz):
+        cfg = dataclasses.replace(cfg, tz=weather.station_tz)
+    return weather, cfg
 
 
 async def warm_up(bot: Bot, core: Core, running: list[str], tasks: Tasks, tg_bot=None):
@@ -96,14 +130,19 @@ async def main():
                .connect_timeout(10).read_timeout(15).write_timeout(15)  # default 5s is tight
                .build())
         handshake = asyncio.create_task(app.initialize())   # Telegram is asked who the bot is while the sources start
+        weather = None   # (WEATHER_MCP_URL: the service, reached over MCP)
         try:
-            sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
+            if cfg.weather_mcp_url:   # a client of the service: no sources of its own
+                sources = []
+                weather, cfg = await connect(cfg, stack)
+            else:
+                sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
         except BaseException:
             handshake.cancel()
             raise
         for source in sources:
             stack.push_async_callback(safely, source.close)
-        if not sources:
+        if not sources and weather is None:
             handshake.cancel()
             raise SystemExit("No data source is working - nothing to talk about")
         charts.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
@@ -118,14 +157,15 @@ async def main():
                         "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
         tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
         # The service in-process (ecobot_service/core.py): the alert log the rules write and the bot delivers from, and the ten tools
-        # over the sources that started (lib/service): the model is offered them (lib/model_tools.py), and the bot's own code paths call
-        # them (its shortcuts, report, gauges, alert charts and period buttons)
-        core = await Core.open(cfg, sources, stack, tasks)
+        # over the sources that started (lib/service); or, remote, the same over MCP (lib/weather.py). The model is offered the tools
+        # (lib/model_tools.py), and the bot's own code paths call them (its shortcuts, report, gauges, alert charts and period buttons)
+        core = await Core.open(cfg, sources, stack, tasks) if weather is None else None
         irrigation = Tuya(cfg) if cfg.irrigation else None
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
-        bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(core.service)), sources, state, irrigation, tasks,
-                  service=core.service, alert_log=core.alert_log)
+        service = weather if weather is not None else core.service
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(service)), sources, state, irrigation, tasks,
+                  service=service, alert_log=core.alert_log if core else None)
 
         bot.register(app)
         stop = asyncio.Event()
@@ -148,12 +188,18 @@ async def main():
             stack.push_async_callback(source.warmer.stop)
 
         log.info("Telegram: @%s, Model: %s", app.bot.username, cfg.openrouter_model if client else "none")
-        core.log_startup()   # what each source is reading, in the order they are listed
+        if core is not None:
+            core.log_startup()   # what each source is reading, in the order they are listed
+        else:
+            log.info("Weather service: %s (%s)", cfg.weather_mcp_url, ", ".join(sorted(weather.names)) or "not reached yet")
         notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
         await bot.publish_commands(app.bot)   # the / menu
-        running, rules = start_alerts(cfg, bot, notify, tasks, core)
-        core.start_warmers()   # keeping warm: everything questions need, refreshed before they arrive
-        tasks.start(warm_up(bot, core, running, tasks, app.bot))
+        running, rules = start_alerts(cfg, bot, notify, tasks, core, weather)
+        if core is not None:
+            core.start_warmers()   # keeping warm: everything questions need, refreshed before they arrive
+            tasks.start(warm_up(bot, core, running, tasks, app.bot))
+        else:   # the service keeps itself warm: the bot only draws its keyboard's charts ahead (quietly nothing while it can't be reached)
+            tasks.start(every(AHEAD_SECONDS, lambda: bot.draw_buttons_ahead(app.bot)))
         await stop.wait()
 
 

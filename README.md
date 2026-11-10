@@ -201,6 +201,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
 | `AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
 | `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
+| `WEATHER_MCP_URL`, `WEATHER_MCP_TOKEN` | Optional. The bot as a client of the weather service running on its own (`python -m ecobot_service`, e.g. `http://127.0.0.1:8765/mcp`, and one of its `MCP_TOKENS`): the bot then fetches nothing and runs no alert rules itself, and needs none of the source settings above. Unset (the default), the bot runs everything itself, as before. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-the-services-client). |
 
 After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 

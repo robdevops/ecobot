@@ -578,8 +578,33 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `schemas/`; compose has `ecobot-service`, off unless its profile is asked for. Tests: `tests/test_mcp_server.py` (in memory) and
      `tests/test_mcp_listen.py` (uvicorn on a localhost port: the lost listen and the reading after the last id, auth, hosts, the bridge
      on stdio, the service started with the fakes and called through a proxy's Host name). Settings: `Config.from_env(bot=False)` needs
-     no Telegram token. Left: the bot as a client (the switch, the supervisor, `charts` from results, delivery from the listen), its
-     `warm_up` cut to its charts drawn ahead, the poke going, the irrigation server and the scripts as clients.
+     no Telegram token.
+   - **The bot as a client (done).** `WEATHER_MCP_URL` (and `WEATHER_MCP_TOKEN`) set: the bot starts no sources, syncers or alert rules
+     (`ecobot.connect`); unset: it runs the service in-process, unchanged. Both go through one interface, `lib/weather.py`
+     (`LocalWeather` over lib/service and the sources; `RemoteWeather` over MCP): the tools as `Service` lists them (each `call(args,
+     meta)` answering the tool's JSON), the sources there are (`names`), the catalogue, the instructions, the AirGradient link, the
+     alert feed and one alert by id, a resource, and whether it can be reached. `RemoteWeather` is 3.8's client: the bridge's `Upstream`
+     (pinned to 2026-07-28, `send_discover` and `adopt` for the instructions, one supervisor task that drops the client on a transport
+     error or a lost or ended listen and builds another after a backoff, the 45-second read timeout), listening to the station, the
+     alerts and the forecast; each connection reads the tool list and the station again (`ToolsListChanged` and the station's
+     `ResourceUpdated` too). The station gives the time zone, the sources (`names`: the alert menu, the report's calls, the gauges, Help
+     and `/usage`), the catalogue the shortcuts read their words against (`Catalogue.listed`) and the AirGradient dashboard. The model's
+     tools follow the service's list (`model_tools.ServiceTools`), charts stripped for the model as before; the shortcuts, report,
+     gauges, period buttons and 🔄 replays, charts drawn ahead and preloads call the same tools. Alert delivery
+     (`AlertDelivery`) reads `ecobot://alerts?since=<last id handled>`, woken by the listen's `ResourceUpdated` for `ecobot://alerts`
+     and by each new connection (nothing is replayed), resuming from the id kept in `bot_state.json` as before; the 🔄 under an alert
+     finds its event with the template (`since` the id before it, `expired=true`). A question's call waits up to 5 seconds while the
+     client is being built again, a background one not at all; a question while the service can't be reached is answered that it can't
+     (`bot.SERVICE_DOWN`), without the model. The bot's `warm_up` is its charts drawn ahead, every 5 minutes, quietly nothing while the
+     service is away; the poke of the sources is gone (there are none). Irrigation stays in the bot until 5b: its daily check reads the
+     measured rain from `summary {readings: ["rain"], period: "last 24 hours"}` (`ServiceRain`) and the forecast from `ecobot://forecast`
+     (`ServiceForecast`, read again at each check and on each `ResourceUpdated`; the one last read stands when the service can't be
+     reached). Tests: `tests/test_bot_remote.py` (the bot against the real server, in memory and under uvicorn: a question answered with
+     the remote tools and the instructions from discover, a chart from a remote result with its buttons, an alert through the listen, a
+     dropped connection rebuilt and the alerts after the last id read once, the service down, `ecobot.main()` as a client); the path
+     with the setting unset is the rest of the suite, unchanged.
+   - **Left: 5b**, the irrigation server in its own repository (3.9: its tools, the watchdog and the daily check, `irrigation://alerts`),
+     the bot connecting to both and `lib/irrigation` going from here; and `show_request` and `report_inputs` as MCP clients.
 6. **The bot retired** (section 4), its code and tests deleted; the repository is the service.
 
 ## 7. Testing

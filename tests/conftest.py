@@ -23,6 +23,17 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda item: (item.path.name not in HEAVY, HEAVY.index(item.path.name) if item.path.name in HEAVY else 0))
 
 
+@pytest.fixture(autouse=True)
+def the_log_levels_as_they_were():
+    """The programs' main() (ecobot.py, ecobot_service) set the "ecobot" and "lib" loggers' levels from LOG_LEVEL: put back after every
+    test, so a test that reads the debug lines doesn't depend on which ran before it on its worker."""
+    import logging
+    levels = {name: logging.getLogger(name).level for name in ("ecobot", "lib")}
+    yield
+    for name, level in levels.items():
+        logging.getLogger(name).setLevel(level)
+
+
 @pytest.fixture
 def alert_state(tmp_path):
     """The bot's chats and settings (an AlertState) in a file of the test's own: what a Bot is given, as in the running bot."""
