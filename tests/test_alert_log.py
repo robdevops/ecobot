@@ -275,6 +275,32 @@ async def test_the_delivery_runs_on_the_logs_notification(tmp_path):
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_a_log_that_cant_be_read_for_a_moment_is_tried_again_not_the_end_of_alerts(tmp_path):
+    """A locked file or a disk error reading the log is logged and retried: the delivery keeps running, and the alert written meanwhile
+    is sent once the log reads again (before, one error ended the task and every alert stopped until a restart)."""
+    import sqlite3
+    d, log, state, telegram = delivery(tmp_path, chats=(1,))
+    d.RETRY_SECONDS = 0.01
+    real, failures = log.since, [sqlite3.OperationalError("database is locked")]
+
+    def flaky(*a, **k):
+        if failures:
+            raise failures.pop()
+        return real(*a, **k)
+    log.since = flaky
+    log.append("uv", "UV 11", "t")
+    task = asyncio.create_task(d.run())
+    try:
+        for _ in range(200):
+            if telegram.sent:
+                break
+            await asyncio.sleep(0.01)
+        assert [text for _, text, _, _ in telegram.sent] == ["UV 11"] and not task.done()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 # ---------- the 🔄 under a delivered alert ----------
 class ChartQuery:
     def __init__(self, data, kind="gusts", event=None):

@@ -47,7 +47,7 @@ WITHOUT = {"Pollen": "pollen and thunderstorm asthma", "Forecast": "forecasts (o
 ALERT_WORDS = {"rain": "rain starting or stopping", "gusts": f"wind gusts over {GUST_ALERT_KMH} km/h",
                "uv": f"UV index of {UVI_ALERT} or more", "temps": "indoor/outdoor temperature crossing",
                "particulates": "air-quality mask alerts", "pollen_and_asthma": "pollen or thunderstorm asthma risk reaching High",
-               "forecast": f"a forecast it sent being revised (rain, or max temperature over {TEMP_CHANGE_C:g} degrees)"}
+               "forecast": f"today's or tomorrow's forecast changing (rain becoming likely or unlikely, or the high moving over {TEMP_CHANGE_C:g} degrees)"}
 # The alert kinds (lib/alerts/menu.py TYPES, copied, without the irrigation controller's: that is a server of its own): kind -> (its name,
 # the source that sends it)
 TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV", "Ecowitt"), "temps": ("temperature crossing", "Ecowitt"),

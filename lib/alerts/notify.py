@@ -282,11 +282,20 @@ class AlertDelivery:
         except Exception as e:   # (the next one saved covers it; at worst a restart sends it again)
             log.warning("Couldn't save the last alert delivered (%s: %s)", type(e).__name__, e)
 
+    RETRY_SECONDS = 30   # after the log can't be read (locked, a disk error): try again, rather than stop alerts until a restart
+
     async def run(self):
-        """Forever: deliver what is new, then wait for more."""
+        """Forever: deliver what is new, then wait for more. A failure reading the log is logged and retried, never the end of alerts."""
         while True:
-            await self.deliver_new()
-            await self.log.wait(self.last)
+            try:
+                await self.deliver_new()
+                await self.log.wait(self.last)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error("Alert delivery couldn't read the log (%s: %s); trying again in %ds", type(e).__name__, e, self.RETRY_SECONDS,
+                          exc_info=True)
+                await asyncio.sleep(self.RETRY_SECONDS)
 
     async def deliver_new(self) -> int:
         """Send each unexpired event after the last handled, oldest first; returns how many were sent."""
