@@ -530,11 +530,40 @@ async def test_a_turn_whose_reply_is_empty_or_the_fallback_or_that_ends_on_a_ref
     assert failed == 1 and "the reply is the Agent's fallback" in text and f'1 call, 0 refused: "{FALLBACK}"' in text
     bad = ("summary", {**asked[1], "bogus": 1})
     failed, text = await bot_run("3m-average", Reacting([asked], [bad], "Averaged 14.2 °C."), eval_world)
-    assert failed == 1 and "the turn ended on a refused call (summary" in text and '2 calls, 1 refused: "Averaged 14.2 °C."' in text
+    assert failed == 1 and "a refused call was not corrected (summary" in text and '2 calls, 1 refused: "Averaged 14.2 °C."' in text
     failed, text = await bot_run("3m-average", Reacting([bad], [asked], "Averaged 14.2 °C."), eval_world)
     assert failed == 0, text
     assert evalkit.check_turn(evalkit.LiveTurn([asked], " ", [False]), EXPECT["3m-average"]) == ["the reply is empty"]
     assert evalkit.check_turn(evalkit.LiveTurn([asked], "Averaged.", [False]), EXPECT["3m-average"]) == []
+
+
+# A refusal is corrected by a call to the same tool answered in a later step: not by one to another tool after it, and not by one made
+# in the same step (calls of one step are made together, so their order in it changes nothing).
+ASKED = ("summary", {"readings": ["temperature"], "period": "3m", "average": True})
+BAD = ("summary", {**ASKED[1], "bogus": 1})
+
+
+async def test_a_refused_call_followed_by_another_tools_answered_call_fails(eval_world):
+    failed, text = await bot_run("3m-average", Reacting([ASKED], [BAD], [("about", {})], "Averaged 14.2 °C."), eval_world)
+    assert failed == 1 and "a refused call was not corrected (summary" in text and "3 calls, 1 refused" in text
+
+
+async def test_a_refused_call_in_a_step_fails_whatever_the_order_of_the_steps_calls(eval_world):
+    for step in ([BAD, ("about", {})], [("about", {}), BAD], [BAD, ASKED]):
+        failed, text = await bot_run("3m-average", Reacting(step, "Averaged 14.2 °C."), eval_world)
+        assert failed == 1 and "a refused call was not corrected (summary" in text and "2 calls, 1 refused" in text, step
+
+
+async def test_a_refused_call_corrected_in_a_later_step_by_the_same_tool_passes(eval_world):
+    model = Reacting([ASKED], [BAD, ("about", {})], [("about", {}), ASKED], "Averaged 14.2 °C.")
+    turn = await evalkit.run_live(case("3m-average"), model, "m", service=None)
+    assert turn.steps == [0, 1, 1, 2, 2] and turn.uncorrected() == []
+    failed, text = await bot_run("3m-average", Reacting([ASKED], [BAD, ("about", {})], [("about", {}), ASKED], "Averaged 14.2 °C."),
+                                 eval_world)
+    assert failed == 0, text
+    assert '5 calls, 1 refused: "Averaged 14.2 °C."' in text
+    assert evalkit.LiveTurn([ASKED, BAD, ASKED], "Averaged.", [False, True, False], steps=[0, 1, 1]).uncorrected() == [BAD]
+    assert evalkit.LiveTurn([BAD, ASKED], "Averaged.", [True, False]).uncorrected() == []   # (no steps: each call is its own)
 
 
 async def test_the_tools_alone_answer_no_data_to_every_call_and_score_every_call_of_the_turn():

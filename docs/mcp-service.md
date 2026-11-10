@@ -536,7 +536,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
   each call from the real tools over a frozen world (the fake station's archive, copied fresh for each run of each case, and the other
   sources' fakes at the cases' fixed time), so the model sees real results, notes and refusals and is scored over its whole turn: any
   call that was not refused may meet the expectation, none may be a forbidden tool, and more than 8 calls, an empty or fallback reply,
-  or a turn ending on a refused call fails.
+  or a refused call that no call to the same tool answered in a later step corrects fails.
 - **The contract:** a test per tool and resource for the arguments it takes and the shape it returns (`test_contract`); the periods
   table at its fixed times (step 1); charts against their schema; every chart's `drawn_by`, replayed, draws the same chart,
   and with only `period` changed to each of its `periods`, the same chart over that period, never an error; `day_look` against its rule.
