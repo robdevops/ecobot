@@ -8,6 +8,7 @@ import pytest
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 
+from lib.service.summary import OVER_TIME
 from lib import periods, report_menu, templates
 from lib.admins import Admins
 from lib.alerts import menu
@@ -339,6 +340,12 @@ async def test_usage_is_the_help_and_alerts_button(tmp_path, kind):
 
 
 # ---------- every button comes in through one place ----------
+def period_keyboard(current=None):
+    """The period buttons under a chart of summary's (its drawn_by's periods), `current` shaded."""
+    from lib.service.summary import OVER_TIME
+    return periods.periods_keyboard({"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]}, current)
+
+
 def alert_keyboard(opened="alerts"):
     return menu.keyboard(set(), menu.available_kinds({"Ecowitt"}), opened, set())
 
@@ -346,7 +353,7 @@ def alert_keyboard(opened="alerts"):
 async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_let_through(tmp_path):
     bot, state, tg = make(tmp_path, irrigation=Remote())
     state.add_chat(ADMIN, "Rob")
-    cases = [("al:off:rain:alerts", alert_keyboard()), (f"{periods.PREFIX}7", periods.keyboard(1)),
+    cases = [("al:off:rain:alerts", alert_keyboard()), (f"{periods.PREFIX}7d", period_keyboard("1d")),
              ("ir:open:water", irrigation_menu.keyboard(True, True))]
     for data, markup in cases:
         press = Press(data, markup, user=STRANGER)
@@ -389,8 +396,8 @@ def every_keyboard(bot):
             for opened in (None, *irrigation_menu.SECTIONS, "bogus"):
                 for paused in (True, False):
                     yield irrigation_menu.keyboard(battery, pause, opened, paused)
-    for current in (None, *periods.PERIODS):
-        yield periods.keyboard(current)
+    for current in (None, *(p["period"] for p in OVER_TIME)):
+        yield period_keyboard(current)
     yield report_menu.keyboard()
     yield report_menu.dashboard_keyboard()
 
@@ -496,7 +503,7 @@ async def test_random_data_never_gets_past_the_entry_point(tmp_path):
     rng = random.Random(7)
     spy = Spy()
     bot, state, tg = make(tmp_path, irrigation=spy)
-    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), periods.keyboard(1), report_menu.keyboard()]
+    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), period_keyboard("1d"), report_menu.keyboard()]
     known = {b.callback_data for board_ in boards for row in board_.inline_keyboard for b in row}
     pieces = ["ir", "al", "pd", "on", "off", "water", "delay", "sw", "batt", "pause", "refresh", "open", "close", "all", "sub", "unsub",
               "rain", "uv", "24h", "cancel", "5", "30", "99999", "-1", "", " ", "\n", "é", "💧", "*", "%s", "{}", "\\", ";", "$(x)", "None"]

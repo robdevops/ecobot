@@ -45,4 +45,4 @@ async def test_the_benchmark_s_own_cache_is_as_old_as_asked_and_its_short_chart_
     short = rows["Temperature chart, 3 hours"]
     assert short[2] == 0
     assert rows["Temperature chart, 1D"][2] == 1                                                            # its newest hour is settling
-    assert "air_days: days PM2.5 over 25, 4 years" in rows
+    assert "days: days PM2.5 over 25, 4 years" in rows

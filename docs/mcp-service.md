@@ -490,7 +490,14 @@ Each step ships on its own, with the tests and evals green and the bot working t
    the air sensor's inline fetch; `tests/report_words.py` keeps the old report's words as the tests' reference, deleted with the bot.
 3. **The swap**, gated on the live evals (all cases, the production model and one other, with the tool list alone and with the
    instructions): the model gets the ten tools; the bot's prompt keeps only its persona; the twelve, the `Turn`'s inputs, the period
-   hints, the prefetch and the corrections from the words go.
+   hints, the prefetch and the corrections from the words go. The bot offers the ten as they are (`lib/model_tools.py`: each result
+   kept whole for drawing and its buttons, the model sent it with each chart as its title and period), with its persona, the server's
+   instructions and the time (`lib/prompt.py`); tool_choice is the model's own, the reasoning effort still comes from the words. Its
+   shortcuts (`lib/intent.py`) are fixed calls built directly: a named reading's chart and a period (summary with the person's words
+   for both, the keyboard's and the alerts' sentences among them), weather now, the report (current, pollen, the next 3 days'
+   forecast) and the gauges; everything else it answered in code goes to the model. The turn ends on a step whose every result is
+   complete. `lib/service/legacy.py` is gone; the `Turn` is only the engines' options, set by the service from its arguments. `--live`
+   asks the model as the bot does (its prompt, the ten tools; a question answered in code is scored by its fixed calls).
 4. **Alerts in the service.** The rules, their state and config move service-side and append events to the alert log, with `expires`,
    `link` and `chart` (with its `drawn_by`); the forecast alert gets its station-wide baseline. The bot delivers from the log.
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the

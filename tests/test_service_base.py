@@ -6,9 +6,7 @@ from datetime import date, datetime
 
 import pytest
 
-from lib import intent
 from lib.periods_text import PeriodError
-from lib.prompt import PROMPT
 from lib.service import common, daylook, names
 from lib.service.common import (CHART_NOTE, FRESH, Refusal, ServiceTool, answer, charts_field, period_properties, read_period, refuse,
                                 refuse_period, request_meta, with_charts)
@@ -59,7 +57,7 @@ async def test_a_service_tool_is_sent_its_arguments_and_the_requests_metadata_an
     tool = ServiceTool("probe", "A probe.", {"type": "object", "properties": {}}, handler, open_world=True)
     assert tool.annotations == {"readOnlyHint": True, "openWorldHint": True}
     tools = Tools([tool.tool()])
-    assert got(await tools.call("probe", '{"x": 1}', Turn(text="plot it", chart_asked=True, meta={"chart_points": 500}))) == {"ok": True}
+    assert got(await tools.call("probe", '{"x": 1}', Turn(chart_asked=True, meta={"chart_points": 500}))) == {"ok": True}
     assert seen[-1] == ({"x": 1}, {"chart_points": 500, "fetch": True, "priority": "normal"})   # the Turn's words never reach it
     await tools.call("probe", "{}", Turn(ahead=True))                       # a chart drawn ahead is a background request
     assert seen[-1][1]["priority"] == "background"
@@ -264,8 +262,6 @@ def test_all_is_every_station_reading_in_the_usual_chart_order_with_the_settings
     monkeypatch.setattr(names, "FEELS_LIKE_IN_ALL", True)
     monkeypatch.setattr(names, "VPD_IN_ALL", True)
     assert named("all") == [*usual[:8], "outdoor.feels_like", "outdoor.vpd", *usual[8:]]
-    assert intent.chart_fields("weather all week") == ["temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like",
-                                                       "vpd", "wind"]   # the bot's "weather all week" reads the same settings
     held = Catalogue.of({"outdoor": {"temperature": "℃"}, "indoor": {"temperature": "℃"}, "pressure": {"relative": "hPa"},
                          "wind": {"wind_speed": "km/h"}, "rainfall": {"daily": "mm"}, "rainfall_piezo": {"daily": "mm"},
                          "solar_and_uvi": {"uvi": ""}}, air=False)
@@ -379,8 +375,8 @@ def test_a_day_with_no_solar_radiation_has_no_cloud_step():
     assert day_look(today | {"temp_max": 36.0}, latitude=MELBOURNE, day=SUMMER, so_far=True)["word"] == "very hot"
 
 
-def test_a_days_look_uses_only_the_prompts_weather_emojis():
-    allowed = next(line for line in PROMPT.splitlines() if "Use only these" in line)
+def test_a_days_look_uses_only_the_weather_emojis_the_bot_always_used():
+    allowed = "☀️ 🌤️ ⛅ ☁️ 🌦️ 🌧️ ⛈️ 💨 🥵 🥶 🌫️"   # (the old prompt's list)
     assert all(emoji in allowed for emoji in LOOKS.values())
     assert daylook.FIGURES == ("rain", "wind_gust", "temp_max", "temp_min", "solar_avg")   # the days tool's names
 
@@ -396,3 +392,23 @@ def test_a_clear_sky_follows_the_season_and_the_latitude():
 def test_the_service_modules_say_what_they_offer():
     for module in (common, names, daylook):
         assert all(hasattr(module, name) for name in module.__all__), module.__name__
+
+
+def test_the_ten_are_built_in_order_each_where_its_source_is_and_found_by_name():
+    from lib.service.context import Context
+    from types import SimpleNamespace as NS
+    from lib.service import ORDER, Service, build
+    from tests.fakes import TZ
+    station = NS(name="Ecowitt", tz=TZ, storage=None, latitude=-37.8)
+    everything = build(Context(eco=station, air=NS(name="AirGradient", tz=TZ), forecast=NS(), pollen=NS(), tz=TZ))
+    assert [t.name for t in everything] == list(ORDER)
+    assert [t.name for t in build(Context(tz=TZ))] == ["summary", "readings", "relate", "scan", "about"]   # no source: what needs none
+    service = Service(everything)
+    assert service["summary"] is service.get("summary") and "days" in service and service.get("nothing") is None
+    assert [t.name for t in service] == list(ORDER) and service.held(["a"]) == ["a"]   # (no context: every name is held)
+
+
+def test_the_bot_asks_for_its_charts_as_drawn():
+    from lib.service.common import AS_DRAWN, MAX_CHART_POINTS, request_meta
+    assert request_meta({"chart_points": AS_DRAWN})["chart_points"] == AS_DRAWN
+    assert request_meta({"chart_points": 10_000})["chart_points"] == MAX_CHART_POINTS

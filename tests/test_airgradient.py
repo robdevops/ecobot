@@ -9,6 +9,7 @@ from lib.airgradient.metrics import METRICS
 from lib.timeutil import local_date
 from lib.tools import Turn
 from tests.fakes import TZ, air_transport, config
+from tests import old_tools
 
 
 async def make(tmp_path):
@@ -37,7 +38,7 @@ async def test_current_reading_with_ratings(tmp_path):
     async def no_previous(ts, count):
         return []        # the fake history's PM2.5 depends on the hour, so the previous reading would too
     air._previous_rows = no_previous
-    reading = json.loads(await air.handle({}))
+    reading = json.loads(await old_tools.air_quality(air, {}))
     assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == "moderate"
     assert set(reading) == {"sensor", "sensor_type", "time", *METRICS} and reading["pm2_5"]["rating"].endswith("poor")
     await air.close()
@@ -49,7 +50,7 @@ async def test_a_rating_is_the_level_the_last_two_readings_both_reached(tmp_path
         async def previous(ts, count, before=before):
             return [{"pm2_5": before}]
         air._previous_rows = previous
-        reading = json.loads(await air.handle({}))
+        reading = json.loads(await old_tools.air_quality(air, {}))
         assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == band
         assert ("rating_note" in reading["pm2_5"]) is noted
     await air.close()
@@ -59,7 +60,7 @@ async def test_history_summary_and_chart(tmp_path):
     air, _ = await make(tmp_path)
     day = datetime.now(TZ).date() - timedelta(days=2)
     turn = Turn()
-    out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59", "chart": True,
+    out = json.loads(await old_tools.air_quality(air, {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59", "chart": True,
                                        "metrics": ["pm2_5", "co2"]}, turn))
     assert out["pm2_5"]["high"] >= out["pm2_5"]["low"] and "high_aqi_us" in out["pm2_5"]
     (chart,) = turn.charts
@@ -72,7 +73,7 @@ async def test_a_chart_the_model_names_no_reading_for_is_of_the_one_the_person_a
     day = datetime.now(TZ).date() - timedelta(days=5)
     for named, title in (([], "PM2.5"), (["co2"], "CO₂")):   # "give me that timestamp", after "CO2 since Sunday": CO2, not PM2.5
         turn = Turn(air_named=named)
-        await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day + timedelta(days=3)} 23:59:59"}, turn)   # 3+ days: drawn anyway
+        await old_tools.air_quality(air, {"start_date": f"{day} 00:00:00", "end_date": f"{day + timedelta(days=3)} 23:59:59"}, turn)   # 3+ days: drawn anyway
         (chart,) = turn.charts
         assert chart.title == title
     await air.close()
@@ -83,7 +84,7 @@ async def test_finished_days_are_fetched_once(tmp_path):
     await air.warm(True)
     n = len(calls)
     day = datetime.now(TZ).date() - timedelta(days=3)
-    await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"})
+    await old_tools.air_quality(air, {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"})
     assert len(calls) == n  # already warmed
     await air.close()
 
@@ -97,7 +98,7 @@ async def test_warm_summary_and_wants(tmp_path):
 
 async def test_history_is_capped_at_14_days(tmp_path):
     air, _ = await make(tmp_path)
-    out = json.loads(await air.handle({"start_date": "2026-01-01 00:00:00", "chart": False, "end_date": "2026-03-01 00:00:00"}))
+    out = json.loads(await old_tools.air_quality(air, {"start_date": "2026-01-01 00:00:00", "chart": False, "end_date": "2026-03-01 00:00:00"}))
     assert "note_period" in out or out.get("error") is None
     await air.close()
 
@@ -112,12 +113,12 @@ async def test_finished_days_survive_a_restart_and_need_no_requests(tmp_path):
     air, calls = await make(tmp_path)
     day = datetime.now(TZ).date() - timedelta(days=3)
     args = {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
-    first = json.loads(await air.handle(args))
+    first = json.loads(await old_tools.air_quality(air, args))
     assert calls.count("past") == 1
     await air.close()
     dead = httpx.MockTransport(lambda r: httpx.Response(500))  # AirGradient is unreachable now
     again = AirGradient(config(tmp_path), transport=dead)
-    assert json.loads(await again.handle(args)) == first
+    assert json.loads(await old_tools.air_quality(again, args)) == first
     assert again.requests == 0
     await again.close()
 
@@ -132,7 +133,7 @@ async def test_backfill_walks_back_to_the_start_of_the_sensors_data(tmp_path):
     assert await air.backfill(pace=0, empty_stop=3) == (0, 0, total)  # nothing left to fetch
     assert len(calls) == n
     # and a long question is now answered entirely from the cache
-    out = json.loads(await air.handle({"start_date": (datetime.now(TZ) - timedelta(days=9)).strftime("%Y-%m-%d %H:%M:%S"),
+    out = json.loads(await old_tools.air_quality(air, {"start_date": (datetime.now(TZ) - timedelta(days=9)).strftime("%Y-%m-%d %H:%M:%S"),
                                        "end_date": (datetime.now(TZ) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")}))
     assert out["readings"] > 100 and len(calls) == n and "note_missing" not in out
     await air.close()
@@ -167,7 +168,7 @@ async def test_backfill_stops_after_repeated_failures(tmp_path):
 async def test_missing_days_are_fetched_inline_only_up_to_a_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(source, "MAX_INLINE_DAYS", 3)
     air, calls = await make(tmp_path)
-    out = json.loads(await air.handle({"start_date": (datetime.now(TZ) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S"),
+    out = json.loads(await old_tools.air_quality(air, {"start_date": (datetime.now(TZ) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S"),
                                        "end_date": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")}))
     assert calls.count("past") <= 3 and "note_missing" in out and out["readings"] > 0  # one window, plus today (and yesterday, in the small hours)
     await air.close()
@@ -222,7 +223,7 @@ async def test_requests_never_ask_for_more_than_ten_days(tmp_path):
     await air.backfill(pace=0, empty_stop=3)
     assert 2 <= calls.count("past") <= 10 and longest_request(transport) <= timedelta(days=10)
     day = datetime.now(TZ) - timedelta(days=200)
-    out = json.loads(await air.handle({"start_date": day.strftime("%Y-%m-%d %H:%M:%S"),
+    out = json.loads(await old_tools.air_quality(air, {"start_date": day.strftime("%Y-%m-%d %H:%M:%S"),
                                        "end_date": (day + timedelta(days=25)).strftime("%Y-%m-%d %H:%M:%S")}))
     assert "error" not in out and longest_request(transport) <= timedelta(days=10)  # 422s would have failed the answer
     await air.close()
@@ -234,7 +235,7 @@ async def test_no_data_available_is_an_empty_period_not_a_failure(tmp_path):
     fetched, failed, total = await air.backfill(pace=0, empty_stop=5, empty_before_data=5)
     assert failed == 0 and fetched >= 5 and total == 5
     day = datetime.now(TZ).date() - timedelta(days=3)
-    out = json.loads(await air.handle({"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}))
+    out = json.loads(await old_tools.air_quality(air, {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}))
     assert out["note"] == "No readings for this period." and "error" not in out
     await air.close()
 
@@ -244,10 +245,10 @@ async def test_answers_say_when_old_days_are_hourly_averages(tmp_path):
     air = AirGradient(config(tmp_path), transport=transport)
     now = datetime.now(TZ)
     fmt = "%Y-%m-%d %H:%M:%S"
-    out = json.loads(await air.handle({"start_date": (now - timedelta(days=9)).strftime(fmt),
+    out = json.loads(await old_tools.air_quality(air, {"start_date": (now - timedelta(days=9)).strftime(fmt),
                                        "end_date": (now - timedelta(days=1)).strftime(fmt)}))
     assert "hourly averages" in out["note_resolution"] and out["note_resolution"].startswith(("4 ", "5 ", "6 "))
-    recent = json.loads(await air.handle({"start_date": (now - timedelta(days=3)).strftime(fmt),
+    recent = json.loads(await old_tools.air_quality(air, {"start_date": (now - timedelta(days=3)).strftime(fmt),
                                           "end_date": (now - timedelta(days=1)).strftime(fmt)}))
     assert "note_resolution" not in recent
     await air.close()
@@ -294,7 +295,7 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_carry_a
 
     async def specs(days_back, metrics):
         turn = Turn()
-        await air.handle({"start_date": (now - timedelta(days=days_back)).strftime(fmt), "end_date": now.strftime(fmt),
+        await old_tools.air_quality(air, {"start_date": (now - timedelta(days=days_back)).strftime(fmt), "end_date": now.strftime(fmt),
                           "chart": True, "metrics": metrics}, turn)
         return turn.charts
     short = (await specs(3, ["pm2_5"]))[0].panels[0].lines[0]
@@ -317,7 +318,7 @@ async def test_air_charts_too_long_for_the_point_budget_are_bucketed_and_carry_a
 
 
 async def current_with(tmp_path, latest, earlier, gap=300):
-    """air.current() when the latest reading is `latest` and today's cache holds `earlier` (a list of values `gap` seconds apart,
+    """old_tools.air_current(air) when the latest reading is `latest` and today's cache holds `earlier` (a list of values `gap` seconds apart,
     oldest first, the last one `gap` seconds before the latest)."""
     from datetime import timezone
     from tests.fakes import air_row
@@ -333,7 +334,7 @@ async def current_with(tmp_path, latest, earlier, gap=300):
     async def day_rows(day, refresh=False):
         return cached
     air._current_row, air._day_rows = current_row, day_rows
-    out = await air.current()
+    out = await old_tools.air_current(air)
     await air.close()
     return out
 
@@ -410,21 +411,20 @@ async def test_every_air_day_row_is_what_the_glitch_rule_in_python_gives(tmp_pat
 
 
 async def test_air_days_counts_days_by_a_metric_and_draws_the_months_as_bars(tmp_path):
-    from lib.airgradient.days import air_days_tool
     from lib.tools import Turn
     from tests.fakes import TZ
     store, start = await _air_store(tmp_path)
     end = datetime.now(TZ).date() - timedelta(days=1)
     turn = Turn()
-    out = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end),
+    out = json.loads(await old_tools.air_days(store, TZ, dict(start_date=str(start), end_date=str(end),
                                                           where=[{"field": "pm2_5_max", "op": ">", "value": 25}], count_only=True, group_by="month"), turn))
     assert out["matching_days"] == 4 and out["days_checked"] == 40 and "days" not in out
     assert sum(out["by_month"].values()) == 4 and turn.charts[0].title == "Days with PM2.5 > 25 µg/m³"
-    mean = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), stat="avg", of="co2_avg", count_only=True)))
+    mean = json.loads(await old_tools.air_days(store, TZ, dict(start_date=str(start), end_date=str(end), stat="avg", of="co2_avg", count_only=True)))
     assert mean["stat"]["what"] == "Average CO₂" and 500 < mean["value"] < 600       # 420 + the mean of 0..287
-    worst = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), sort_by="pm2_5_max", limit=2)))
+    worst = json.loads(await old_tools.air_days(store, TZ, dict(start_date=str(start), end_date=str(end), sort_by="pm2_5_max", limit=2)))
     assert [r["pm2_5_max"] for r in worst["days"]] == [40.0, 40.0]
-    bad = json.loads(await air_days_tool(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
+    bad = json.loads(await old_tools.air_days(store, TZ, dict(start_date=str(start), end_date=str(end), where=[{"field": "uv_max", "op": ">", "value": 1}])))
     assert "unusable condition" in bad["error"]
     store.close()
 
@@ -494,7 +494,7 @@ async def test_the_latest_reading_comes_with_the_lowest_of_the_last_readings_for
     air, _ = await make(tmp_path)
     reading, at, sustained = await air.latest()
     assert set(sustained) >= {"pm2_5"} and sustained["pm2_5"] <= reading["pm2_5"]["value"] and at.tzinfo is not None
-    assert json.loads(await air.handle({}, None)) == json.loads(json.dumps(reading))      # the tool gives the reading alone
+    assert json.loads(await old_tools.air_quality(air, {}, None)) == json.loads(json.dumps(reading))      # the tool gives the reading alone
     await air.close()
 
 
@@ -504,7 +504,7 @@ async def test_the_reading_is_rated_alone_when_only_the_history_fails(tmp_path, 
     async def down(day, refresh=False):
         raise RuntimeError("AirGradient past failed: HTTP 500")
     air._day_rows = down
-    reading = json.loads(await air.handle({}))
+    reading = json.loads(await old_tools.air_quality(air, {}))
     assert reading["pm2_5"]["value"] == 12.0 and "rating_note" not in reading["pm2_5"] and "rating the latest alone" in caplog.text
     assert (await air.latest()).sustained["pm2_5"] == 12.0
     await air.close()
@@ -553,8 +553,8 @@ async def test_a_date_with_an_offset_is_read_and_a_bad_one_is_not_called_a_senso
     from datetime import timezone as tz_
     air, _ = await make(tmp_path)
     start = (datetime.now(TZ) - timedelta(days=2)).astimezone(tz_.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out = json.loads(await air.handle({"start_date": start}))
-    bad = json.loads(await air.handle({"start_date": "yesterday morning"}))
+    out = json.loads(await old_tools.air_quality(air, {"start_date": start}))
+    bad = json.loads(await old_tools.air_quality(air, {"start_date": "yesterday morning"}))
     await air.close()
     assert "error" not in out and out["readings"] > 0 and bad["error"].startswith("bad date")
 
@@ -573,14 +573,14 @@ async def test_the_sensors_own_temperature_and_humidity_are_kept_but_given_only_
     air, _ = await make(tmp_path)
     day = local_date(datetime.now(TZ).timestamp() - 86400, TZ)
     span = {"start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
-    assert "air_humidity" not in json.loads(await air.handle({})) and "air_humidity" not in json.loads(await air.handle(span))
-    now = json.loads(await air.handle({"metrics": ["air_humidity", "air_temperature"]}))
+    assert "air_humidity" not in json.loads(await old_tools.air_quality(air, {})) and "air_humidity" not in json.loads(await old_tools.air_quality(air, span))
+    now = json.loads(await old_tools.air_quality(air, {"metrics": ["air_humidity", "air_temperature"]}))
     assert now["air_humidity"]["unit"] == "%" and now["air_temperature"]["unit"] == "°C" and "rating" not in now["air_humidity"]
     assert "pm2_5" in now                                                              # the air itself is still there
-    out = json.loads(await air.handle({**span, "metrics": ["air_humidity"]}))
+    out = json.loads(await old_tools.air_quality(air, {**span, "metrics": ["air_humidity"]}))
     assert out["air_humidity"]["unit"] == "%" and {"low", "high", "average"} <= set(out["air_humidity"]) and "air_temperature" not in out
     turn = Turn()
-    out = json.loads(await air.handle({**span, "chart": True, "metrics": ["air_temperature", "air_humidity"]}, turn))
+    out = json.loads(await old_tools.air_quality(air, {**span, "chart": True, "metrics": ["air_temperature", "air_humidity"]}, turn))
     assert turn.charts[0].title == "AirGradient temperature and AirGradient humidity" and len(turn.charts[0].panels) == 2
     assert [p.unit for p in turn.charts[0].panels] == ["°C", "%"]
     await air.close()

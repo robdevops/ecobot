@@ -1,12 +1,15 @@
-"""Saved questions with the tool calls we expect, so every fix we make for a real report stays fixed.
+"""Saved questions with what should happen to them, so every fix we make for a real report stays fixed.
 
-tests/evals/cases.json holds the questions (real ones from the logs). Two kinds of check:
-  - decisions made in code (fast path, period hints, reasoning effort, which readings a chart combines): run by pytest;
-  - what the model does with them (which tool, which arguments): `python scripts/eval_prompts.py --live`, against the
-    real model with recording stand-in tools (nothing is fetched).
-tests/evals/service_cases.json holds, for the same case ids, what a model offered only the service's ten tools (lib/service) should
-call: checked offline by tests/test_service_evals.py, and asked of the model by `python scripts/eval_prompts.py --live --service`
-(with `--instructions`, the server's instructions, lib/service/instructions.py, after the neutral system line).
+tests/evals/cases.json holds the questions (real ones from the logs) and the decisions the bot still makes in code (docs/mcp-service.md 4):
+the reasoning effort from the words, and its few shortcuts (the report, the gauges, "weather now", a named reading's chart and a
+period, each a fixed call to a service tool). pytest checks them (`deterministic`).
+tests/evals/service_cases.json holds, for the same case ids, what a model offered the service's ten tools (lib/service) should call:
+checked offline by tests/test_service_evals.py, and asked of a model by `python scripts/eval_prompts.py --live` three ways:
+  - the bot's own request (`bot=True`, the default of --live): its system prompt (lib/prompt.py: the persona, the server's
+    instructions, the date and time), the ten tools as the bot offers them, its reasoning effort from the words; a question the bot
+    answers in code is not asked of the model, its fixed calls are scored instead;
+  - `--service`: the ten tools alone with a neutral system line and the date (SERVICE_SYSTEM);
+  - `--service --instructions`: that, with the server's instructions (lib/service/instructions.py) after the neutral line.
 """
 
 import json
@@ -15,15 +18,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from lib import compose, history, intent, prompt
-from lib.airgradient import days as air_days, source as air
-from lib.ecowitt import days, link, source as station
-from lib.forecast import source as forecast
-from lib.pollen import source as pollen
-from tests.fakes import EVERY_SOURCE
+from lib import intent, prompt
+from lib.bot import complete_reply
 from lib.llm import Agent
-from lib.specs import AIR_SOURCE, ECOWITT_SOURCE
-from lib.tools import Tool, Tools
+from lib.tools import Tool, Tools, Turn
+from tests.fakes import EVERY_SOURCE
 
 CASES = Path(__file__).resolve().parent / "evals" / "cases.json"
 NOW = datetime(2026, 9, 29, 14, 5)  # a Tuesday: dates in the cases are relative to this
@@ -65,35 +64,6 @@ class Case:
 
 def load_cases(path: Path = CASES) -> list[Case]:
     return [Case(**c) for c in json.loads(path.read_text())]
-
-
-def tool_names() -> list[str]:
-    return ["weather_now", "weather_history", "weather_days", "weather_link", "air_quality", "plot_chart", "air_link", "air_scan",
-            "pollen_asthma", "weather_forecast", "air_days", "readings"]
-
-
-def make_tools(calls: list) -> Tools:
-    """The real tool definitions with stand-in handlers that record the call."""
-    def recorder(name):
-        async def handler(args, turn=None):
-            calls.append((name, args))
-            return CANNED
-        return handler
-    defs = [("weather_now", station.REALTIME_DESCRIPTION, station.REALTIME_PARAMS),
-            ("weather_history", station.HISTORY_DESCRIPTION, station.HISTORY_PARAMS),
-            ("weather_days", days.DESCRIPTION, days.PARAMETERS),
-            ("weather_link", link.DESCRIPTION, link.PARAMETERS),
-            ("air_quality", air.DESCRIPTION, air.PARAMETERS),
-            ("plot_chart", compose.PLOT_DESCRIPTION, compose.PLOT_PARAMETERS),
-            ("air_link", compose.LINK_DESCRIPTION, compose.LINK_PARAMETERS),
-            ("air_scan", compose.SCAN_DESCRIPTION, compose.SCAN_PARAMETERS),
-            ("pollen_asthma", pollen.DESCRIPTION, pollen.PARAMETERS),
-            ("weather_forecast", forecast.DESCRIPTION, forecast.PARAMETERS),
-            ("air_days", air_days.DESCRIPTION, air_days.PARAMETERS),
-            ("readings", history.DESCRIPTION, history.PARAMETERS)]
-    sources = {name: ECOWITT_SOURCE for name in ("weather_history", "weather_days", "weather_link")} | \
-              {name: AIR_SOURCE for name in ("air_quality", "air_days")} | {name: "" for name in ("plot_chart", "air_link", "air_scan")}
-    return Tools([Tool(n, d, p, recorder(n), source=sources.get(n)) for n, d, p in defs])
 
 
 def content(case: Case) -> str:
@@ -159,54 +129,81 @@ def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
     return fails
 
 
+DECISIONS = {"effort", "report", "dashboard", "weather_now", "chart"}   # what cases.json's `expect` may say
+
+
+def read(case: Case):
+    """intent.read of the case's question, as the bot reads it at NOW with every source."""
+    from zoneinfo import ZoneInfo
+    from lib.service.names import CATALOGUE
+    tz = ZoneInfo(NOW_TZ)
+    return intent.read(case.ask, NOW.replace(tzinfo=tz), EVERY_SOURCE, tz, CATALOGUE)
+
+
 def deterministic(case: Case) -> list[str]:
-    """Failures of the decisions made in code (no model): reasoning effort, fast path, hints, chart choices."""
+    """Failures of the decisions made in code (no model): the reasoning effort, and which shortcut answers it, if any (`chart`: the
+    summary arguments of a named reading's chart and a period, or null: no chart shortcut)."""
     e, fails = case.expect, []
-    text = case.ask
-    r = intent.read(text, NOW, EVERY_SOURCE)
+    if extra := set(e) - DECISIONS:
+        fails.append(f"unknown keys {sorted(extra)}")
+    r = read(case)
     if "effort" in e and r.effort != e["effort"]:
         fails.append(f"effort {r.effort}, expected {e['effort']}")
-    if "fast" in e:
-        fast = r.fast
-        if e["fast"] is None:
-            if fast:
-                fails.append(f"took the fast path ({fast[0]}) but should go to the model")
-        elif not fast:
-            fails.append("did not take the fast path")
-        else:
-            if fast[0] != e["fast"].get("tool"):
-                fails.append(f"fast path tool {fast[0]}, expected {e['fast'].get('tool')}")
-            fails += [f"fast path {f}" for f in check_args(fast[1], e["fast"].get("args", {}))]
-    if "hints" in e:
-        hints = " | ".join(r.hints)
-        fails += [f"period hints lack {h!r} (got: {hints or 'none'})" for h in e["hints"] if h not in hints]
-    for key, got in (("chart_fields", r.chart_fields), ("two_axes", r.two_axes), ("air_extra", r.air_extra), ("chart_field", r.chart_field), ("report", r.report), ("dashboard", r.dashboard),
-                     ("about_the_bot", r.about_the_bot), ("needs_data", r.needs_data),
-                     ("weather_now", r.weather_now), ("rain_caption", r.rain_caption), ("chart_in_code", r.chart_in_code), ("lookup", r.lookup)):
-        if key in e and got != e[key]:
-            fails.append(f"{key} {got}, expected {e[key]}")
-    for name in e.get("tools", []) + e.get("any_tools", []) + e.get("not_tools", []) + ([e["first_tool"]] if "first_tool" in e else []):
-        if name not in tool_names():
-            fails.append(f"unknown tool {name!r} in the case")
+    for key in ("report", "dashboard", "weather_now"):
+        if key in e and getattr(r, key) != e[key]:
+            fails.append(f"{key} {getattr(r, key)}, expected {e[key]}")
+    if "chart" in e:
+        got = r.chart[1] if r.chart else None
+        if got != e["chart"]:
+            fails.append(f"chart shortcut {got}, expected {e['chart']}")
     return fails
 
 
+def shortcut_calls(r) -> list[tuple[str, dict]] | None:
+    """The service calls the bot makes itself for a question it answers in code (the report, the gauges, weather now, a chart), else
+    None: the model takes it."""
+    from lib import gauge_sheet
+    if r.report:
+        return intent.report_calls(EVERY_SOURCE)
+    if r.dashboard:
+        return [("current", gauge_sheet.call())]
+    if r.weather_now:
+        return [intent.WEATHER_NOW_CALL]
+    return [r.chart] if r.chart else None
+
+
+# Where the bot's own shortcuts differ from what a model is expected to call, on purpose (docs/mcp-service.md 4): the report's forecast
+# is the next 3 days, as it always was; a chart the bot draws itself sends its caption, so it needs no chart_answers_it
+SHORTCUT_LEAVES = {"forecast": ("period",), "summary": ("chart_answers_it",)}
+
+
+def shortcut_expectation(expect: dict) -> dict:
+    """The case's service expectation, as the bot's own shortcut calls are held to it (less SHORTCUT_LEAVES)."""
+    args = {}
+    for tool, want in expect.get("args", {}).items():
+        drop = SHORTCUT_LEAVES.get(tool, ())
+        args[tool] = [{k: v for k, v in w.items() if k not in drop} for w in want] if isinstance(want, list) else \
+            {k: v for k, v in want.items() if k not in drop}
+    return {**expect, "args": args}
+
+
+def bot_system(now: datetime = NOW) -> str:
+    """The bot's system prompt at `now` (the station's local time): its persona, the server's instructions, the date and time."""
+    from zoneinfo import ZoneInfo
+    return prompt.build(now.replace(tzinfo=ZoneInfo(NOW_TZ)), service_instructions())
+
+
 async def run_live(case: Case, client, model: str, effort: str | None = None) -> tuple[list[tuple[str, dict]], str]:
-    """Ask the real model; returns the tool calls it made and its final reply."""
-    calls: list[tuple[str, dict]] = []
-    text = case.ask
-    r = intent.read(text, NOW, EVERY_SOURCE)
-    system = prompt.build(NOW, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor",
-                                "Pollen": "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au)",
-                                "Forecast": "Weather forecast for the owner's location (Open-Meteo)"},
-                          r.hints, r.about_the_bot, r.rain_caption, intent.topics(content(case), [m["content"] for m in case.history if m["role"] == "user"][-2:]))
-    fast = r.fast
+    """The bot's own request (docs/mcp-service.md 4): a question it answers in code gives its fixed calls (no model); any other is asked
+    of the model with the bot's system prompt, the ten tools as it offers them, its reasoning effort from the words, tool_choice auto,
+    and the turn ended on a complete result as the bot ends it. Returns the calls made and the reply."""
+    r = read(case)
+    if (calls := shortcut_calls(r)) is not None:
+        return list(calls), "(answered in code)"
+    calls = []
     messages = [*case.history, {"role": "user", "content": content(case)}]
-    reply = await Agent(client, model, make_tools(calls)).run(
-        messages, system, effort or r.effort, first_call=[*([fast[:2], *r.more] if fast else []), *r.extra] or None,
-        tool_choice=r.tool_choice)
-    if fast or r.extra:
-        calls[0:0] = [*([(fast[0], fast[1]), *r.more] if fast else []), *r.extra]  # the bot ran them itself, before the model
+    reply = await Agent(client, model, make_service_tools(calls)).run(messages, bot_system(), effort or r.effort, tool_choice="auto",
+                                                                      turn=Turn(), finish=lambda _, results: complete_reply(results))
     return calls, reply
 
 
@@ -488,7 +485,7 @@ def calls_text(calls: list[tuple[str, dict]]) -> str:
 
 
 async def run_service(cases: list[Case], expectations: dict[str, dict], client=None, model: str = "", *, repeat: int = 1,
-                      effort: str | None = None, instructions: str | None = None, out=print) -> int:
+                      effort: str | None = None, instructions: str | None = None, bot: bool = False, out=print) -> int:
     """The service's evals: each case's expectation checked (service_problems) and, with a client, the model asked `repeat` times with
     the ten tools alone (and the server's `instructions`, when given) and its calls scored against it (check_calls), as `--live` scores
     cases.json. Prints a line per case (`out`), with the calls of a run that fails; returns how many cases fail."""
@@ -500,14 +497,21 @@ async def run_service(cases: list[Case], expectations: dict[str, dict], client=N
         if client and not problems:
             passes = 0
             for _ in range(repeat):
-                calls, _reply = await run_live_service(case, client, model, effort, instructions)
-                why = check_calls(calls, expect)
+                if bot:
+                    calls, _reply = await run_live(case, client, model, effort)
+                    in_code = shortcut_calls(read(case)) is not None
+                else:
+                    calls, _reply, in_code = *await run_live_service(case, client, model, effort, instructions), False
+                why = check_calls(calls, shortcut_expectation(expect) if in_code else expect)
                 passes += not why
                 problems += [*(f"  run: {w}" for w in why[:3]), f"  called: {calls_text(calls)}"] if why else []
-            line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL")
+            line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL") + (" code" if bot and in_code else "")
         out(f"{line:>10}  {case.id}  ({case.ask})")
         for p in problems:
             out(f"            {p}")
         failed += bool(problems)
-    out(f"\n{len(cases) - failed} of {len(cases)} cases pass (the service's ten tools alone{', with its instructions' if instructions else ''})")
+    what = "the bot's prompt and the ten tools" if bot else f"the service's ten tools alone{', with its instructions' if instructions else ''}"
+    if client:
+        out(f"\nmodel: {model}")
+    out(f"\n{len(cases) - failed} of {len(cases)} cases pass ({what})")
     return failed

@@ -580,7 +580,7 @@ class Summary:
         series_names = list(dict.fromkeys(_station_series(r) or r.column for r in every))
         turn = Turn(chart_asked=here, chart_field=named[0] if len(named) == 1 else None, chart_fields=named if len(named) > 1 else [],
                     two_axes=here and call.layout == "two_axes", average_asked=call.average, per_day=call.every_day,
-                    readings=series_names, text="", ahead=background)
+                    readings=series_names, ahead=background)
         start, end = self._span(call)
         args = {"start_date": start, "end_date": end, "average": call.average,
                 "include_derived": sorted({r.column for r in every if r.column in DERIVED})}

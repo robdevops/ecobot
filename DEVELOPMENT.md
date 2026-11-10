@@ -6,7 +6,7 @@ How to test the bot and what the GitHub checks do. (Running it is in `README.md`
 ```
 pip install -r requirements-dev.txt
 python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process
-python scripts/eval_prompts.py         # the saved questions: decisions made in code, no key needed
+python scripts/eval_prompts.py         # the saved questions: decisions made in code and the service expectations, no key needed
 ```
 The suite takes about 25 s on four cores. The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
 is built once an hour and shared by the workers and by later runs: it lives under pytest's own temp folder (`/tmp/pytest-of-<user>/ecobot-archive-*.sqlite`),
@@ -21,7 +21,7 @@ The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build t
 |---|---|---|
 | `test` | every push to `main` and every pull request | the exact versions in `requirements.txt`: pytest (chart pictures included) and the offline evals. The gate. |
 | `newest` | Sundays 21:17 UTC, or the Run workflow button | the tests with the newest Pillow. Advisory. |
-| `live-evals` | Sundays 21:17 UTC, or the Run workflow button | asks the real model the six questions in `tests/evals/weekly.txt` (`python scripts/eval_prompts.py --live`) and checks which tool it calls; a failure is asked once more before it is reported. Advisory. The button's "all cases" box asks all 87. Skipped until the secrets below exist. |
+| `live-evals` | Sundays 21:17 UTC, or the Run workflow button | asks the real model the six questions in `tests/evals/weekly.txt` as the bot asks it (`python scripts/eval_prompts.py --live`: its prompt and the service's ten tools) and checks which tool it calls against `tests/evals/service_cases.json`; a failure is asked once more before it is reported. Advisory. The button's "all cases" box asks all 94. Skipped until the secrets below exist. |
 | `image` | pushes that change `Dockerfile`, `.dockerignore` or `requirements.txt` (any branch), or the Run workflow button | builds the Docker image, checks the bot starts in it and names the commit, draws the sample charts in it (they must be in Inter and match `tests/charts`); the image's size goes in the run's summary. |
 
 Repository secrets (Settings, Secrets and variables, Actions, New repository secret):

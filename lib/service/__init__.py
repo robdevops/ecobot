@@ -5,10 +5,10 @@ what every one of them shares:
     answers: the period it read, the time of its figures, its charts, and its refusals;
   - names.py: the readings the service has, one name each (`outdoor.temperature`, `air.pm2_5`), and the words people use for them;
   - daylook.py: a day's look ("wet", 🌧️) from its figures;
-  - legacy.py: the bot's old tool calls read as the service's (its own code paths' only way in; deleted whole in step 3).
+  - instructions.py: the server's instructions, a short summary for a client to pass to its model.
 
 `build(ctx)` makes the ten, in 3.3's order, each module's `tools(ctx)` (a tool whose source isn't there is left out), and `Service`
-holds them by name. Nothing here is offered to a model yet (the bot's own code paths call them: step 2), and nothing here knows of
+holds them by name. The bot offers them to its model (lib/model_tools.py) and its own code paths call them; nothing here knows of
 Telegram, of the bot's buttons or of who draws a chart.
 """
 

@@ -4,11 +4,12 @@ from datetime import datetime, time, timedelta
 
 import pytest
 
-from lib import intent
 from lib.tools import Turn
 from lib.ecowitt import Ecowitt
 from lib.ecowitt import api as ecowitt_api
 from tests.fakes import MAC, FakeEcowitt, archived_station, config, ecowitt_transport
+from tests import old_tools
+from lib.service.names import in_all
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ async def station(tmp_path):
 async def test_finds_the_station(station):
     eco, _ = station
     assert eco.mac == MAC and eco.station_name == "Fairleigh" and eco.longitude == 145.0
-    assert "Fairleigh" in eco.describe() and "created" in eco.describe()
+    assert eco.created is not None
 
 
 async def test_a_station_that_gives_no_longitude_has_none_not_melbournes(tmp_path):
@@ -103,7 +104,7 @@ async def test_requests_use_metric_unit_ids(station):
 
 async def test_realtime_is_compact_and_local(station):
     eco, _ = station
-    out = json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
+    out = json.loads(await old_tools.weather_now(eco, {"groups": "outdoor"}))
     assert out["outdoor"]["temperature"] == "12.3 ℃" and out["time"]
 
 
@@ -111,7 +112,7 @@ async def test_history_gives_extremes_with_times_and_days(station):
     eco, fake = station
     today = datetime.now(eco.tz).date()
     start, end = today - timedelta(days=3), today - timedelta(days=1)
-    result = json.loads(await eco.tools[1].handler(
+    result = json.loads(await old_tools.weather_history(eco, 
         {"groups": "outdoor", "start_date": f"{start} 00:00:00", "end_date": f"{end} 23:59:59"}))
     s = result["series"]["outdoor.temperature"]
     assert set(s) >= {"low", "high", "low_when", "high_when", "low_date", "high_date", "daily"}
@@ -129,7 +130,7 @@ async def test_every_record_has_its_days_time_and_a_tie_goes_to_the_first_day(tm
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     start, end = today - timedelta(days=13), today - timedelta(days=2)
-    out = json.loads(await eco.tools[1].handler({"groups": "outdoor,indoor,pressure,wind,solar_and_uvi", "start_date": f"{start} 00:00:00",
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "outdoor,indoor,pressure,wind,solar_and_uvi", "start_date": f"{start} 00:00:00",
                                                  "end_date": f"{end} 23:59:59"}))
     records = [s for s in out["series"].values() if "low_when" in s]
     assert len(records) >= 6 and all(s[f"{w}_when"].startswith("at ") for s in records for w in ("low", "high"))
@@ -146,16 +147,16 @@ async def test_second_question_is_served_from_the_cache(station):
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=4)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
-    first = await eco.tools[1].handler(args)
+    first = await old_tools.weather_history(eco, args)
     fake.calls.clear()
-    assert await eco.tools[1].handler(args) == first
+    assert await old_tools.weather_history(eco, args) == first
     assert fake.calls == []
 
 
 async def test_long_range_uses_daily_data_and_monthly_figures(station):
     eco, fake = station
     today = datetime.now(eco.tz).date()
-    result = json.loads(await eco.tools[1].handler(
+    result = json.loads(await old_tools.weather_history(eco, 
         {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today} 00:00:00"}))
     s = result["series"]["outdoor.temperature"]
     assert "monthly" in s and "daily" not in s and result["monthly_note"]
@@ -175,8 +176,8 @@ async def test_derived_readings_hidden_unless_asked(tmp_path):
     eco.api.history = with_dew
     day = datetime.now(eco.tz).date() - timedelta(days=2)
     args = {"groups": "outdoor", "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}
-    assert "outdoor.dew_point" not in json.loads(await eco.tools[1].handler(args))["series"]
-    assert "outdoor.dew_point" in json.loads(await eco.tools[1].handler({**args, "include_derived": ["dew_point"]}))["series"]
+    assert "outdoor.dew_point" not in json.loads(await old_tools.weather_history(eco, args))["series"]
+    assert "outdoor.dew_point" in json.loads(await old_tools.weather_history(eco, {**args, "include_derived": ["dew_point"]}))["series"]
     await eco.close()
 
 
@@ -184,14 +185,14 @@ async def test_chart_request_adds_a_spec(station):
     eco, _ = station
     day = datetime.now(eco.tz).date() - timedelta(days=2)
     turn = Turn()
-    out = json.loads(await eco.tools[1].handler(
+    out = json.loads(await old_tools.weather_history(eco, 
         {"groups": "outdoor,indoor", "chart": True, "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, turn))
     assert "chart" in out and len(turn.charts[0].panels) == 1 and {s.label for s in turn.charts[0].panels[0].lines} == {"Outdoor", "Indoor"}
 
 
 async def test_bad_dates_are_reported(station):
     eco, _ = station
-    assert (await eco.tools[1].handler({"start_date": "nonsense", "end_date": "x"})).startswith("Error: bad date")
+    assert (await old_tools.weather_history(eco, {"start_date": "nonsense", "end_date": "x"})).startswith("Error: bad date")
 
 
 async def test_warm_then_question_needs_no_new_requests_for_the_tail(station):
@@ -243,11 +244,11 @@ async def test_a_questions_requests_go_before_the_background_ones_and_the_refres
     assert marked and not any(marked)
     marked.clear()
     today = eco.now().date()
-    await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=20)} 00:00:00",
+    await old_tools.weather_history(eco, {"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=20)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=10)} 23:59:59"}, Turn())
     assert marked and all(marked)   # the question's own, and its wind rose's
     marked.clear()
-    await eco.tools[1].handler({"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=40)} 00:00:00",
+    await old_tools.weather_history(eco, {"groups": "outdoor,wind", "start_date": f"{today - timedelta(days=40)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=30)} 23:59:59"}, Turn(ahead=True))
     assert marked and not any(marked)   # a chart drawn ahead: nobody is waiting for it
 
@@ -279,7 +280,7 @@ async def test_archive_caches_every_cycle_so_long_questions_need_no_requests_and
     fake.calls.clear()
     today = datetime.now(eco.tz).date()
     for days in (5, 12, 23):  # up to all of the fake station's 25 days
-        out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
+        out = await old_tools.weather_history(eco, {"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                           "end_date": f"{today - timedelta(days=2)} 23:59:59"})
         assert "Error" not in out[:20], out[:200]
     assert fake.calls == []  # nothing was fetched while answering
@@ -329,14 +330,14 @@ async def test_year_long_questions_get_dated_monthly_figures_once_the_history_is
     def monthly(out):
         return json.loads(out)["series"]["outdoor.temperature"]["monthly"]
 
-    before = monthly(await eco.tools[1].handler(args))          # nothing cached: daily figures, values only
+    before = monthly(await old_tools.weather_history(eco, args))          # nothing cached: daily figures, values only
     assert all("low_when" not in m for m in before.values())
     await eco.close()
 
     (tmp_path / "archived").mkdir()
     eco, fake = await archived_station(tmp_path / "archived", archived_cache)   # the whole history archived
     turn = Turn()
-    out = await eco.tools[1].handler({**args, "chart": True}, turn)
+    out = await old_tools.weather_history(eco, {**args, "chart": True}, turn)
     spec = turn.charts[0]
     after = monthly(out)
     assert len(after) >= 6 and all({"low_when", "low_date", "high_when", "high_date"} <= set(m) for m in after.values())
@@ -531,7 +532,7 @@ async def test_a_failed_history_request_tells_the_model_and_the_log_no_key(tmp_p
     eco = Ecowitt(config(tmp_path, ecowitt_api_key="SECRET-API", ecowitt_app_key="SECRET-APP"), transport=transport)
     await eco.start()
     day = datetime.now(eco.tz).date() - timedelta(days=3)
-    out = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, Turn())
+    out = await old_tools.weather_history(eco, {"groups": "outdoor", "start_date": f"{day} 00:00:00", "end_date": f"{day} 23:59:59"}, Turn())
     await eco.close()
     assert "HTTP 502" in out and "SECRET" not in out and "SECRET" not in caplog.text
 
@@ -619,7 +620,7 @@ def test_direction_summary_of_a_variable_wind_and_averaged_data():
 async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, archived_cache):
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
-    out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{today - timedelta(days=7)} 00:00:00",
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "wind", "start_date": f"{today - timedelta(days=7)} 00:00:00",
                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
     direction = out["series"]["wind.wind_direction"]
     assert direction["most_common"].startswith("N ") and "low" not in direction and "high" not in direction
@@ -627,7 +628,7 @@ async def test_history_reports_direction_by_compass_point_not_a_range(tmp_path, 
     assert 20 <= int(direction["calm"].split("%")[0]) <= 30                                # midnight to 6am had no wind: about a quarter
     assert len(direction["daily"]) == 6 and all(v.startswith("N ") for v in direction["daily"].values())
     assert "high" in out["series"]["wind.wind_gust"]                                       # speeds are unchanged
-    again = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "include_derived": [],   # a chart of direction alone
+    again = json.loads(await old_tools.weather_history(eco, {"groups": "wind", "chart": True, "include_derived": [],   # a chart of direction alone
                                                    "start_date": f"{today - timedelta(days=3)} 00:00:00",
                                                    "end_date": f"{today - timedelta(days=2)} 23:59:59"}, Turn()))
     assert "wind.wind_direction" in again["series"]
@@ -646,7 +647,7 @@ async def test_the_wind_rose_reads_its_5_minute_readings_in_runs_of_days_not_a_d
     monkeypatch.setattr(query.Fetcher, "sibling", recorded)
     today = eco.now().date()
     turn = Turn(chart_field="wind")
-    out = json.loads(await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind",
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "wind", "chart": True, "chart_field": "wind",
                                                  "start_date": f"{today - timedelta(days=30)} 00:00:00"}, turn))
     assert out["series"]["wind.wind_direction"] and turn.charts[0].compass
     assert len(made) == 1 and made[0].ranges <= 2           # the archived days and today in one read (two in the first hours of the local day, while yesterday's last readings are not yet settled), not one for each of 31 days
@@ -663,7 +664,7 @@ async def test_the_wind_chart_carries_the_compass_beside_the_speed_line(tmp_path
     args = {"groups": "wind", "chart": True, "start_date": f"{today - timedelta(days=6)} 00:00:00",
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
     turn = Turn()
-    out = json.loads(await eco.tools[1].handler(args, turn))
+    out = json.loads(await old_tools.weather_history(eco, args, turn))
     specs = turn.charts
     assert len(specs) == 1 and specs[0].compass and "compass" in out["chart"]     # one image: speed line and compass
     spec = specs[0]
@@ -695,7 +696,7 @@ async def test_a_chart_asked_for_in_the_persons_words_is_drawn_even_if_the_model
     long = {**short, "start_date": f"{today - timedelta(days=5)} 00:00:00"}   # four days: always a chart
     for args, asked, expected in ((short, False, 0), (short, True, 1), (long, False, 1)):     # one wind chart: line and compass
         turn = Turn(chart_asked=asked)
-        await eco.tools[1].handler(args, turn)
+        await old_tools.weather_history(eco, args, turn)
         assert len(turn.charts) == expected
     await eco.close()
 
@@ -709,7 +710,7 @@ async def test_the_chart_plots_the_field_the_question_is_about(tmp_path):
             "end_date": f"{today - timedelta(days=2)} 23:59:59"}
     async def chart_of(asked_field=None, **extra):
         turn = Turn(chart_field=asked_field)                                   # asked_field: from the person's words
-        await eco.tools[1].handler({**base, **extra}, turn)
+        await old_tools.weather_history(eco, {**base, **extra}, turn)
         return turn.charts[0]
     assert (await chart_of()).title == "Temperature"                       # the default
     assert (await chart_of(chart_field="wind_gust", groups="wind")).title == "Wind"
@@ -726,7 +727,7 @@ async def test_a_chart_is_bucketed_to_the_point_budget_and_every_period_carries_
 
     async def spec_for(days_back):
         turn = Turn()
-        await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+        await old_tools.weather_history(eco, {"groups": "outdoor", "chart": True,
                                     "start_date": f"{today - timedelta(days=days_back)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         return turn.charts[0]
@@ -749,7 +750,7 @@ async def test_a_multi_year_chart_uses_cached_30_minute_data_for_the_newest_year
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     turn = Turn()
-    await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+    await old_tools.weather_history(eco, {"groups": "outdoor", "chart": True,
                                 "start_date": f"{today - timedelta(days=540)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=1)} 00:00:00"}, turn)   # settled: no request in the small hours
     spec = turn.charts[0]
@@ -769,7 +770,7 @@ async def test_the_wind_chart_is_the_average_speed_shaded_up_to_the_gusts(tmp_pa
 
     async def wind_chart(days, **extra):
         turn = Turn()
-        await eco.tools[1].handler({"groups": "wind", "chart": True, "chart_field": "wind_gust",
+        await old_tools.weather_history(eco, {"groups": "wind", "chart": True, "chart_field": "wind_gust",
                                     "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59", **extra}, turn)
         return turn.charts[0]
@@ -806,7 +807,7 @@ async def test_a_5_minute_temperature_line_is_lightly_smoothed_and_its_records_s
 
     async def chart():
         turn = Turn()
-        out = json.loads(await eco.tools[1].handler(args, turn))
+        out = json.loads(await old_tools.weather_history(eco, args, turn))
         return out, turn.charts[0]
     out, smooth = await chart()
     monkeypatch.setattr(history, "SMOOTH_SERIES", set())
@@ -832,7 +833,7 @@ async def test_a_long_period_is_read_from_the_cache_at_30_minutes_when_it_is_hel
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 00:00:00"}
-    await eco.tools[1].handler(args)
+    await old_tools.weather_history(eco, args)
     assert set(seen) == {"30min"} and fake.calls == []            # held: no daily records, no requests
     await eco.close()
 
@@ -841,15 +842,15 @@ async def test_averages_come_with_the_answer(tmp_path, archived_cache):
     eco, _ = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     span = {"groups": "outdoor", "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=2)} 23:59:59"}
-    plain = json.loads(await eco.tools[1].handler(span))
+    plain = json.loads(await old_tools.weather_history(eco, span))
     assert "average" not in plain["series"]["outdoor.temperature"]         # highs and lows are the default
-    week = json.loads(await eco.tools[1].handler({**span, "average": True}))
+    week = json.loads(await old_tools.weather_history(eco, {**span, "average": True}))
     temp = week["series"]["outdoor.temperature"]
     days = list(temp["daily"].values())
     assert float(temp["average"]) == pytest.approx(sum(float(d["avg"]) for d in days) / len(days), abs=0.1)
     assert float(temp["low"]) <= float(temp["average"]) <= float(temp["high"])
     assert all(float(d["low"]) <= float(d["avg"]) <= float(d["high"]) and "_sum" not in d for d in days)
-    year = json.loads(await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00",
+    year = json.loads(await old_tools.weather_history(eco, {"groups": "outdoor", "start_date": f"{today - timedelta(days=200)} 00:00:00",
                                                   "end_date": f"{today - timedelta(days=2)} 23:59:59", "average": True}))
     months = year["series"]["outdoor.temperature"]["monthly"]
     assert all("avg" in m and "_sum" not in m for m in months.values()) and "average" in year["series"]["outdoor.temperature"]
@@ -865,7 +866,7 @@ async def test_an_average_question_gets_a_caption_that_leads_with_the_average_an
     hints = {}
     for asked in (False, True):
         turn = Turn(average_asked=asked)
-        out = json.loads(await eco.tools[1].handler(args, turn))
+        out = json.loads(await old_tools.weather_history(eco, args, turn))
         spec = turn.charts[0]
         hints[asked] = out["chart"]
         assert ("average" in out["series"]["outdoor.temperature"]) is asked      # highs and lows by default
@@ -882,7 +883,7 @@ async def test_asking_for_an_average_uses_daily_points_even_for_a_short_period(t
     subtitles = {}
     for asked in (False, True):
         turn = Turn(average_asked=asked)
-        await eco.tools[1].handler(args, turn)
+        await old_tools.weather_history(eco, args, turn)
         subtitles[asked] = turn.charts[0].subtitle
     assert "daily averages" not in subtitles[False] and "daily averages" in subtitles[True] and "range shaded" in subtitles[True]
     await eco.close()
@@ -898,7 +899,7 @@ async def test_resolution_follows_the_length_of_the_period(tmp_path):
         eco = Ecowitt(config(tmp_path / str(days)), transport=transport)
         await eco.start()
         today = datetime.now(eco.tz).date()
-        await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
+        await old_tools.weather_history(eco, {"groups": "outdoor", "start_date": f"{today - timedelta(days=days)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=2)} 23:59:59"})
         calls = [c for c in fake.calls if c.get("path") == "history"]
         seen[days] = {c["cycle_type"]: sum(1 for x in calls if x["cycle_type"] == c["cycle_type"]) for c in calls}
@@ -1006,16 +1007,16 @@ async def test_weather_link_reads_the_cache_only_and_charts_rain_under_the_readi
     eco, fake = await archived_station(tmp_path, archived_cache)
     today = datetime.now(eco.tz).date()
     turn = Turn()
-    out = json.loads(await eco.tools[3].handler({"start_date": f"{today - timedelta(days=20)}",
+    out = json.loads(await old_tools.weather_link(eco, {"start_date": f"{today - timedelta(days=20)}",
                                                  "end_date": f"{today - timedelta(days=2)}"}, turn))
     specs = turn.charts
     assert fake.calls == [] and out["resolution"].startswith("30-minute") and out["slots"] > 500
     assert set(out["by_change_before"]) == {"falling", "steady", "rising"} and "chart" in out
     assert len(specs) == 1 and specs[0].title == "Pressure, Rain" and specs[0].panels[0].bars.width == 6 * 3600
     assert render(specs[0], eco.tz)[:4] == b"\x89PNG"
-    assert "error" in json.loads(await eco.tools[3].handler({"driver": "nonsense"}))
+    assert "error" in json.loads(await old_tools.weather_link(eco, {"driver": "nonsense"}))
     wind = Turn()                                                 # shaded as plot_chart shades it: up to the gusts (48 km/h at most)
-    await eco.tools[3].handler({"driver": "wind", "start_date": f"{today - timedelta(days=20)}", "end_date": f"{today - timedelta(days=2)}"}, wind)
+    await old_tools.weather_link(eco, {"driver": "wind", "start_date": f"{today - timedelta(days=20)}", "end_date": f"{today - timedelta(days=2)}"}, wind)
     line = wind.charts[0].panels[0].lines[0]
     assert line.records["high"][1] == max(line.high) == 48.0
     await eco.close()
@@ -1125,7 +1126,7 @@ async def test_weather_link_says_which_series_is_missing(tmp_path, driver, serie
     eco = Ecowitt(config(tmp_path), transport=transport)          # nothing cached at all
     await eco.start()
     today = datetime.now(eco.tz).date()
-    out = json.loads(await eco.tools[3].handler({"start_date": str(today - timedelta(days=9)), "end_date": str(today - timedelta(days=2)),
+    out = json.loads(await old_tools.weather_link(eco, {"start_date": str(today - timedelta(days=9)), "end_date": str(today - timedelta(days=2)),
                                                  **({"driver": driver} if driver else {})}))
     assert f"{series} or rainfall (rainfall.daily)" in out["note"] and "chart" not in out
     assert f"falling = {falling} or more" in out["how_to_read"]                  # the change that counts, in the reading's unit
@@ -1141,7 +1142,7 @@ async def test_any_readings_can_be_plotted_together_one_panel_each(tmp_path, arc
 
     async def ask_chart(asked_stack=(), **extra):
         turn = Turn(chart_fields=list(asked_stack))                                  # asked_stack: from the person's words
-        out = json.loads(await eco.tools[1].handler({**args, **extra}, turn))
+        out = json.loads(await old_tools.weather_history(eco, {**args, **extra}, turn))
         return out, turn.charts
     out, specs = await ask_chart(chart_fields=["temperature", "rain"])              # the model's choice; rain's group is added for it
     assert len(specs) == 1 and specs[0].title == "Temperature, Rain" and [p.label for p in specs[0].panels] == ["Temperature"]
@@ -1186,7 +1187,7 @@ async def test_weather_now_carries_the_emoji_next_to_the_readings(tmp_path):
     transport, _ = ecowitt_transport()
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
-    out = json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
+    out = json.loads(await old_tools.weather_now(eco, {"groups": "outdoor"}))
     assert out["emoji"] == {"outdoor.temperature": "🧥"}                       # the fake station reports 12.3 degrees
     await eco.close()
 
@@ -1197,7 +1198,7 @@ async def test_rain_on_its_own_is_drawn_as_daily_columns_not_as_the_running_coun
     await eco.start()
     today = datetime.now(eco.tz).date()
     turn = Turn()
-    out = json.loads(await eco.tools[1].handler({"groups": "rainfall", "chart": True,
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "rainfall", "chart": True,
                                                  "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                                  "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn))
     (chart,) = turn.charts
@@ -1212,7 +1213,7 @@ async def test_a_dew_point_chart_plots_the_dew_point_and_never_quietly_a_tempera
     await eco.start()
     today = datetime.now(eco.tz).date()
     turn = Turn(chart_field="dew_point")
-    out = json.loads(await eco.tools[1].handler({"groups": "outdoor", "chart": True,
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "outdoor", "chart": True,
                                                  "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                                  "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn))
     assert turn.charts and turn.charts[0].title == "Dew point" and "outdoor.dew_point" in out["series"]
@@ -1224,21 +1225,13 @@ async def test_weather_all_week_is_a_stack_of_every_reading_the_station_has(tmp_
     eco = Ecowitt(config(tmp_path), transport=transport)
     await eco.start()
     today = datetime.now(eco.tz).date()
-    turn = Turn(chart_asked=True, chart_fields=intent.chart_fields("weather all week"))
-    await eco.tools[1].handler({"groups": "outdoor,indoor", "chart": True, "start_date": f"{today - timedelta(days=7)} 00:00:00",
+    turn = Turn(chart_asked=True, chart_fields=list(in_all()))
+    await old_tools.weather_history(eco, {"groups": "outdoor,indoor", "chart": True, "start_date": f"{today - timedelta(days=7)} 00:00:00",
                                 "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
     assert len(turn.charts) == 1                                       # one image: no separate wind chart with the compass
     chart = turn.charts[0]
     assert len(chart.panels) >= 3 and {"Temperature", "Dew point"} <= {p.label for p in chart.panels}
     await eco.close()
-
-
-def test_a_reading_named_as_a_group_becomes_its_group_and_an_unknown_name_is_dropped():
-    from lib.ecowitt.source import parse_groups
-    assert parse_groups("pressure,humidity") == ["pressure", "outdoor"]
-    assert parse_groups("rain, dew_point, wind, outdoor") == ["rainfall", "outdoor", "wind"]
-    assert parse_groups("outdoor.temperature,bogus") == ["outdoor"] and parse_groups("bogus") == ["outdoor", "indoor"]
-    assert parse_groups(["indoor", "rainfall_piezo"]) == ["indoor", "rainfall_piezo"]
 
 
 async def test_a_job_stops_asking_once_ecowitt_has_refused_twice(tmp_path):
@@ -1268,7 +1261,7 @@ async def test_each_weather_chart_carries_its_reading_so_it_is_drawn_in_that_rea
     today = datetime.now(eco.tz).date()
     for field, reading in (("wind_gust", "wind"), ("dew_point", "dew_point"), ("relative", "pressure")):
         turn = Turn(chart_field=field)
-        await eco.tools[1].handler({"groups": "outdoor,wind,pressure", "chart": True, "start_date": f"{today - timedelta(days=9)} 00:00:00",
+        await old_tools.weather_history(eco, {"groups": "outdoor,wind,pressure", "chart": True, "start_date": f"{today - timedelta(days=9)} 00:00:00",
                                     "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         panel = turn.charts[0].panels[0]
         assert panel.reading == reading and _colour(panel.lines[0], 0, panel.reading) == READING_COLOURS[reading]
@@ -1283,7 +1276,7 @@ async def test_a_chart_field_may_be_a_readings_name_or_its_field_however_it_is_w
     for said, title in (("pressure", "Pressure"), ("relative", "Pressure"), ("dew_point", "Dew point"), ("Dew Point", "Dew point"),
                         ("wind gust", "Wind")):
         turn = Turn()                                                           # the reading's group is added for it
-        await eco.tools[1].handler({"groups": "outdoor", "chart": True, "chart_field": said,
+        await old_tools.weather_history(eco, {"groups": "outdoor", "chart": True, "chart_field": said,
                                     "start_date": f"{today - timedelta(days=9)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}, turn)
         assert turn.charts and turn.charts[0].title == title, said
     await eco.close()
@@ -1379,18 +1372,18 @@ async def test_weather_now_is_served_from_the_minute_old_live_reading_and_asks_a
     eco, fake = station
     real_time = lambda: [c for c in fake.calls if c.get("path") == "real_time"]
     groups = "outdoor,indoor,pressure,wind,rainfall,solar_and_uvi"
-    out = json.loads(await eco.tools[0].handler({"groups": groups}))
+    out = json.loads(await old_tools.weather_now(eco, {"groups": groups}))
     assert len(real_time()) == 1                                   # nothing cached yet: a request of its own
     await eco.live_rain()                                          # the keep-warm's minute check takes every group
     assert real_time()[-1]["call_back"] == groups and len(real_time()) == 2
-    cached = json.loads(await eco.tools[0].handler({"groups": groups}))
+    cached = json.loads(await old_tools.weather_now(eco, {"groups": groups}))
     assert len(real_time()) == 2 and cached["outdoor"] == out["outdoor"]                # no request: the report is instant
-    json.loads(await eco.tools[0].handler({"groups": "outdoor"}))
+    json.loads(await old_tools.weather_now(eco, {"groups": "outdoor"}))
     assert len(real_time()) == 2                                   # a subset of those groups too
-    json.loads(await eco.tools[0].handler({"groups": "rainfall_piezo"}))
+    json.loads(await old_tools.weather_now(eco, {"groups": "rainfall_piezo"}))
     assert len(real_time()) == 3                                   # a group it doesn't hold: asks
     eco._live = (time.time() - 100, eco._live[1])                  # older than 90 s: asks
-    json.loads(await eco.tools[0].handler({"groups": groups}))
+    json.loads(await old_tools.weather_now(eco, {"groups": groups}))
     assert len(real_time()) == 4
 
 
@@ -1398,8 +1391,8 @@ async def test_a_two_week_result_keeps_only_the_days_of_the_records_unless_every
     eco, _ = station
     today = datetime.now(eco.tz).date()
     args = {"groups": "outdoor", "start_date": f"{today - timedelta(days=13)} 00:00:00", "end_date": f"{today - timedelta(days=1)} 23:59:59"}
-    short = json.loads(await eco.tools[1].handler(args, Turn()))["series"]["outdoor.temperature"]
-    full = json.loads(await eco.tools[1].handler(args, Turn(per_day=True)))["series"]["outdoor.temperature"]
+    short = json.loads(await old_tools.weather_history(eco, args, Turn()))["series"]["outdoor.temperature"]
+    full = json.loads(await old_tools.weather_history(eco, args, Turn(per_day=True)))["series"]["outdoor.temperature"]
     assert len(full["daily"]) == 13 and 1 <= len(short["daily"]) <= 2
     assert short["high"] == full["high"] and set(short["daily"]) <= set(full["daily"])
 
@@ -1437,9 +1430,6 @@ async def test_rain_older_than_the_30_minute_readings_is_drawn_from_the_daily_re
     held = storage.read_now(history_on, f.mac, ["rainfall"], [], f.epoch(q.start), f.epoch(q.end), False, [], True)
     daily = q._rain_bars(held)
     assert q.rain_from_daily and len(daily.x) >= 59 and round(sum(daily.y), 1) == 120.0 and daily.per == "day"
-    q.turn = Turn(text="rain by month for 2 months")
-    monthly = q._rain_bars(held)
-    assert monthly.per == "month" and monthly.values and round(sum(monthly.y), 1) == 120.0 and len(monthly.x) in (2, 3)
     storage.close()
 
 
@@ -1456,7 +1446,7 @@ async def test_an_empty_history_answer_is_explained_in_the_log_and_the_start_say
     with caplog.at_level(logging.INFO):
         await eco.start()
         today = datetime.now(eco.tz).date()
-        reply = await eco.tools[1].handler({"groups": "outdoor", "start_date": f"{today - timedelta(days=1)} 00:00:00",
+        reply = await old_tools.weather_history(eco, {"groups": "outdoor", "start_date": f"{today - timedelta(days=1)} 00:00:00",
                                             "end_date": f"{today} 23:59:59"})
     assert reply.startswith("Error: no history data returned")
     text = caplog.text
@@ -1474,21 +1464,22 @@ def test_the_live_summary_gives_rain_first_then_a_few_readings_and_skips_what_is
 
 
 async def test_a_single_reading_chart_is_labelled_with_the_reading_not_its_group(tmp_path, archived_cache):
-    from lib import intent
     from lib.timeutil import now_local
     from tests.fakes import archived_station
     eco, _ = await archived_station(tmp_path, archived_cache)
 
-    async def lines(text):
-        read = intent.read(text, now_local(eco.tz))
-        turn = Turn(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, text=text)
-        await eco.tools[1].handler(read.fast[1], turn)
+    async def lines(groups, field):
+        now = now_local(eco.tz)
+        turn = Turn(chart_asked=True, chart_field=field)
+        await old_tools.weather_history(eco, {"groups": groups, "chart": True, "chart_field": field,
+                                              "start_date": f"{now - timedelta(hours=24):%Y-%m-%d %H:%M:%S}",
+                                              "end_date": f"{now:%Y-%m-%d %H:%M:%S}"}, turn)
         (panel,) = turn.charts[0].panels
         return [line.label for line in panel.lines]
-    assert await lines("UV chart 1d") == ["UV index"]                  # not "Solar and uvi"
-    assert await lines("Solar radiation chart 1d") == ["Solar radiation"]
-    assert sorted(await lines("Temperature chart 1d")) == ["Indoor", "Outdoor"]    # these two tell the lines apart, so they keep their names
-    assert await lines("Wind chart 1d") == ["Wind"]
+    assert await lines("solar_and_uvi", "uv") == ["UV index"]                  # not "Solar and uvi"
+    assert await lines("solar_and_uvi", "solar") == ["Solar radiation"]
+    assert sorted(await lines("outdoor,indoor", "temperature")) == ["Indoor", "Outdoor"]    # these two tell the lines apart, so they keep their names
+    assert await lines("wind", "wind") == ["Wind"]
     await eco.close()
 
 
@@ -1531,7 +1522,7 @@ async def test_wind_direction_over_a_past_week_keeps_its_last_day(tmp_path, arch
     eco = Ecowitt(cfg, transport=httpx.MockTransport(Retaining()))
     await eco.start()
     last = datetime.now(eco.tz).date() - timedelta(days=200)
-    out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{last - timedelta(days=6)} 00:00:00",
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "wind", "start_date": f"{last - timedelta(days=6)} 00:00:00",
                                                  "end_date": f"{last} 23:59:59"}))
     await eco.close()
     assert len(out["series"]["wind.wind_direction"]["daily"]) == 7
@@ -1548,7 +1539,7 @@ async def test_the_wind_rose_s_failed_requests_are_reported_with_the_rest(tmp_pa
         self.wind = SimpleNamespace(errors=["5min 16 Oct 2026 - 16 Oct 2026: HTTP 502"], seconds=0.0)
     monkeypatch.setattr(query.HistoryQuery, "_summarise_direction", with_a_failure)
     today = datetime.now(eco.tz).date()
-    out = json.loads(await eco.tools[1].handler({"groups": "wind", "start_date": f"{today - timedelta(days=3)} 00:00:00",
+    out = json.loads(await old_tools.weather_history(eco, {"groups": "wind", "start_date": f"{today - timedelta(days=3)} 00:00:00",
                                                  "end_date": f"{today - timedelta(days=2)} 23:59:59"}))
     await eco.close()
     assert "HTTP 502" in " ".join(out.get("missing", [])) and "warning" in out

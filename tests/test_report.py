@@ -32,73 +32,7 @@ def _turn(**kw):
     return NS(charts=[Chart("Rain", "", [Panel("Rain", "mm", bars=bars)])], chart_fields=[], chart_field=None, average_asked=False, **kw)
 
 
-def test_a_weather_chart_caption_gives_the_period_then_low_and_high_per_series():
-    from zoneinfo import ZoneInfo
-    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {
-        "outdoor.temperature": {"unit": "℃", "low": "8.1", "low_when": "at 5:30am", "low_date": "Wed 30 Sep 2026",
-                                "high": "24.3", "high_when": "around 3pm", "high_date": "Sat 3 Oct 2026"},
-        "indoor.temperature": {"unit": "℃", "low": "18.0", "low_when": "at 6am", "low_date": "Wed 30 Sep 2026",
-                               "high": "22.5", "high_when": "at 4pm", "high_date": "Sat 3 Oct 2026"}}})
-    caption = report.chart_caption("weather_history", {}, result, _turn(), ZoneInfo("Australia/Melbourne"))
-    assert caption.splitlines() == ["Tue 29 Sep – Tue 06 Oct 2026",
-                                    "Temperature (outdoor): low 8.1 °C, Wed 30 Sep at 5:30am · high 24.3 °C, Sat 3 Oct around 3pm",
-                                    "Temperature (indoor): low 18.0 °C, Wed 30 Sep at 6am · high 22.5 °C, Sat 3 Oct at 4pm"]
-
-
-def test_an_average_chart_caption_leads_with_the_average():
-    from zoneinfo import ZoneInfo
-    turn = _turn()
-    turn.average_asked = True
-    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {
-        "outdoor.temperature": {"unit": "℃", "low": "8.1", "high": "24.3", "average": "15.2"}}})
-    assert report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC")).splitlines()[1] == \
-        "Temperature: average 15.2 °C (low 8.1, high 24.3)"
-
-
-def test_a_rain_chart_caption_is_the_least_and_most_rain():
-    from zoneinfo import ZoneInfo
-    turn = _turn()
-    turn.chart_fields = ["rain"]
-    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "series": {"rainfall.daily": {"unit": "mm", "low": "0", "high": "7.2"}}})
-    lines = report.chart_caption("weather_history", {}, result, turn, ZoneInfo("UTC")).splitlines()
-    assert lines[1].startswith("☔ Rain per day: least 0 mm (") and "most 7.2 mm (" in lines[1] and "8.6 mm in all" in lines[1]
-    assert len(lines) == 2
-
-
-def test_an_air_chart_caption_gives_each_metrics_peak_rating_and_average():
-    from zoneinfo import ZoneInfo
-    result = json.dumps({"period": "Tue 29 Sep 2026 - Tue 06 Oct 2026", "pm2_5": {
-        "unit": "µg/m³", "high": 34.2, "high_time": "Wed 30 Sep 2026 3:00pm", "high_rating": "🟠 Poor", "average": 8.1},
-        "pm10": {"unit": "µg/m³", "high": 50, "high_time": "x", "average": 9}})
-    caption = report.chart_caption("air_quality", {"metrics": ["pm2_5"]}, result, _turn(), ZoneInfo("UTC"))
-    assert caption.splitlines()[1] == "• PM2.5: peak 34.2 µg/m³ (Wed 30 Sep 3:00pm) · 🟠 Poor · average 8.1"
-    assert len(caption.splitlines()) == 2
-
-
-def test_no_caption_when_the_tool_failed_or_drew_nothing():
-    from zoneinfo import ZoneInfo
-    from types import SimpleNamespace as NS
-    assert report.chart_caption("weather_history", {}, json.dumps({"error": "x"}), _turn(), ZoneInfo("UTC")) is None
-    assert report.chart_caption("weather_history", {}, json.dumps({"series": {}}), NS(charts=[]), ZoneInfo("UTC")) is None
-
-
 # ---------- a days lookup (the model's day tools' charts that answer the question) ----------
-def test_a_days_count_lookup_gives_the_count_the_condition_and_the_period():
-    result = json.dumps({"period": "Wed 5 Oct 2022 - Sat 3 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"})
-    assert report.lookup("days", result, [], [], TODAY) == "137 of 1,454 days with UV index ≥ 10 (Wed 5 Oct 2022 – Sat 3 Oct 2026)."
-    averaged = json.dumps({"period": "a - b", "days_checked": 10, "matching_days": 2, "note_averaged": "x"})
-    assert "may fall slightly short" in report.lookup("days", averaged, [], [], TODAY)
-    assert report.lookup("days", json.dumps({"error": "bad"}), [], [], TODAY) is None
-
-
-def test_a_figure_per_period_lookup_gives_the_figure_over_the_whole_period():
-    result = json.dumps({"period": "Fri 4 Oct 2024 - Sat 3 Oct 2026", "days_checked": 731, "matching_days": 731,
-                         "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 1234.5, "by_month": {"2024-10": 0.0}})
-    assert report.lookup("days", result, [], [], TODAY) == "Total rain: 1234.5 mm over 731 days (Fri 4 Oct 2024 – Sat 3 Oct 2026)."
-    hot = json.dumps({"period": "a 2025 - b 2026", "days_checked": 3, "matching_days": 3, "stat": {"what": "Highest temperature", "of": "temp_max", "unit": "℃"}, "value": 41.2})
-    assert report.lookup("days", hot, [], [], TODAY).startswith("Highest temperature: 41.2 °C over 3 days")
-
-
 def test_when_gives_the_form_the_tools_use_in_their_time_field():
     from datetime import datetime
     from lib.timeutil import when

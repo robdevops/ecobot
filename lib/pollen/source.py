@@ -15,8 +15,7 @@ from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
 from ..sources import Source
-from ..timeutil import day_text, local_date, when
-from ..tools import Tool, Turn, json_result
+from ..timeutil import day_text, local_date
 from ..warm import Warmer, in_sync_hours
 from .parse import DISTRICTS, LEVEL_EMOJI, parse_melbourne_pollen
 
@@ -27,11 +26,6 @@ HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot; a few requests a day
 POLLEN_REFRESH_SECONDS = 30 * 60
 SEASON_MONTHS = (10, 11, 12)   # grass pollen and the thunderstorm asthma forecast run October to December: nothing else is fetched, shown or alerted
 OFF_SEASON = "Pollen and thunderstorm asthma forecasts only run from October to December."
-
-DESCRIPTION = ("Melbourne's grass pollen level today and the thunderstorm asthma risk (Low, Moderate, High or Extreme), from "
-               "melbournepollen.com.au. Use it for pollen, hay fever and thunderstorm asthma questions. Takes no arguments. "
-               "The result's \"lines\" are ready-made, emoji included: copy them as they are.")
-PARAMETERS = {"type": "object", "properties": {}}
 
 
 def _district(name: str) -> str:
@@ -56,7 +50,6 @@ class Pollen(Source):
         self.store = Snapshots(cfg.storage_path)
         self._load()
         self.warmer = Warmer(self.warm, POLLEN_REFRESH_SECONDS)
-        self.tools = [Tool("pollen_asthma", DESCRIPTION, PARAMETERS, self.handle)]
 
     async def start(self):
         if not self.in_season():
@@ -67,9 +60,6 @@ class Pollen(Source):
             self.summary = f"Melbourne Pollen: {'/'.join(l.split(' forecast')[0] for l in self.lines()) or 'no levels on the page'} ({self.warmer.interval:g}s)"
         except Exception as e:  # the site may just be briefly unreachable
             log.warning("Pollen not readable yet: %s", e)
-
-    def describe(self) -> str:
-        return "Melbourne pollen forecast and thunderstorm asthma risk (melbournepollen.com.au) (people say \"pollen\" or \"hay fever\")"
 
     def wants(self, text: str) -> bool:
         """Only pollen questions start a refresh; the report always uses what is cached."""
@@ -146,25 +136,3 @@ class Pollen(Source):
         if a := cur["asthma"]:
             out.append(f"Thunderstorm asthma forecast: {a['emoji']} {a['level']}")
         return out
-
-    async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        if not self.in_season():
-            return json_result({"error": OFF_SEASON})
-        if self.page is None and not args.get("cached"):   # the report ("cached") never fetches
-            try:
-                await self.warm(True)
-            except Exception as e:
-                log.warning("Pollen not readable: %s", e)
-        lines = self.lines()
-        if not lines:
-            return json_result({"error": "No pollen levels are available right now."})
-        cur = self.current()
-        out = {"lines": lines, "place": self.place, "source": "melbournepollen.com.au (grass pollen from pollen-trap data; asthma risk from the "
-                                         "Victorian Department of Health and BOM, 1 Oct - 31 Dec)"}
-        if cur["fetched_at"]:
-            out["time"] = when(int(cur["fetched_at"]), self.tz)   # when the page was last fetched
-        if cur["asthma"] and cur["asthma"]["updated"]:
-            out["asthma_updated"] = cur["asthma"]["updated"]
-        if not cur["asthma"]:   # in season the page always has one: it may have changed
-            out["asthma_note"] = "The page had no thunderstorm asthma level for this district when it was last read."
-        return json_result(out)

@@ -11,7 +11,7 @@ import pytest
 from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient import AirGradient
 from lib.ecowitt.days import day_values_on
-from lib.intent import NOW_GROUPS
+from tests.old_tools import NOW_GROUPS
 from lib.service import current as cur
 from lib.service.common import FRESH
 from lib.service.context import Context
@@ -19,6 +19,7 @@ from lib.service.current import CurrentTool, heading
 from lib.service.names import AIR_DEVICE, STATION, Catalogue
 from lib.timeutil import clock_text, to_local
 from tests.fakes import TZ, air_transport, archived_station, config
+from tests import old_tools
 
 WHEN = re.compile(r"^(at|around) \d{1,2}(:\d\d)?[ap]m$|^sometime between ")
 
@@ -189,7 +190,7 @@ async def test_the_lines_are_the_reports_and_weather_nows_words(tmp_path, archiv
     tool, _, air = await world(tmp_path, archived_cache, live(time.time(), **changes))
     got = await call(tool)
     eco, today = tool.ctx.eco, tool.ctx.now().date()
-    weather_now, air_quality = await eco._realtime({"groups": NOW_GROUPS}), await air.handle({})   # today's tools, on the same readings
+    weather_now, air_quality = await old_tools.weather_now(eco, {"groups": NOW_GROUPS}), await old_tools.air_quality(air, {})   # today's tools, on the same readings
     written = "\n\n".join(f"{got['headings'][d]}\n" + "\n".join(got["lines"][d]) for d in (STATION, AIR_DEVICE))
     assert written == report.report({"weather_now": weather_now, "air_quality": air_quality}, today)
     assert "\n".join(got["lines"][STATION]) == report.weather_now(weather_now)
@@ -216,11 +217,11 @@ LOOKUPS = [(["temperature"], ["outdoor", "indoor"], ["temperature"]),           
 async def test_named_readings_are_worded_as_the_bots_plain_lookups(tmp_path, archived_cache, changes):
     tool, _, air = await world(tmp_path, archived_cache, live(time.time(), **changes))
     eco, today = tool.ctx.eco, tool.ctx.now().date()
-    weather_now = await eco._realtime({"groups": NOW_GROUPS})
+    weather_now = await old_tools.weather_now(eco, {"groups": NOW_GROUPS})
     for names, sides, asked in LOOKUPS:
         got = await call(tool, readings=asked)
         assert "\n".join(got["lines"][STATION]) == report.lookup("reading", weather_now, names, sides, today), asked
-    air_quality = await air.handle({})
+    air_quality = await old_tools.air_quality(air, {})
     for names, asked in ((["pm10"], ["pm10"]), (["co2", "pm2_5"], ["co2", "pm2.5"]), ([], ["air"]), ([], ["airgradient"])):
         got = await call(tool, readings=asked)
         assert "\n".join(got["lines"][AIR_DEVICE]) == report.lookup("air", air_quality, names, [], today), asked
@@ -377,7 +378,7 @@ async def test_a_device_that_doesnt_answer_is_said_so_and_the_other_still_answer
     assert got["lines"][STATION] == ["• not available right now"] and got["headings"][STATION] == "Weather station"
     assert list(got["sensors"]) == ["air"] and got["as_of"]
     written = "\n\n".join(f"{got['headings'][d]}\n" + "\n".join(got["lines"][d]) for d in (STATION, AIR_DEVICE))
-    assert written == report.report({"weather_now": "Error calling tool: busy", "air_quality": await air.handle({})},
+    assert written == report.report({"weather_now": "Error calling tool: busy", "air_quality": await old_tools.air_quality(air, {})},
                                     tool.ctx.now().date())                                 # the report's words for it
 
     async def down(extras=()):

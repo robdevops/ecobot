@@ -569,12 +569,12 @@ def test_every_alert_chart_has_the_key_of_the_call_its_typed_request_is_read_as(
     from lib.alerts.pictures import CHARTS
     from lib.periods import call_key
     charts, images = alert_charts([0.0])
-    day = {"period": "last 24 hours", "chart": True}
+    day = {"period": "1d", "chart": True}
     assert {kind: charts.call(kind) for kind in CHARTS} == {
-        "gusts": ("summary", {"readings": ["wind.wind_speed", "wind.wind_direction"], **day}),   # "Wind chart 1d", the Wind button's
-        "uv": ("summary", {"readings": ["solar_and_uvi.uvi"], **day}),
-        "temps": ("summary", {"readings": ["outdoor.temperature", "indoor.temperature"], **day}),
-        "particulates": ("summary", {"readings": ["air.pm2_5", "air.pm10", "air.pm1"], **day})}
+        "gusts": ("summary", {"readings": ["wind"], **day}),   # "Wind chart 1d", the Wind button's
+        "uv": ("summary", {"readings": ["uv"], **day}),
+        "temps": ("summary", {"readings": ["temperature"], **day}),
+        "particulates": ("summary", {"readings": ["pm2.5", "pm10", "pm1"], **day})}
     assert charts.key("gusts") == call_key(*charts.call("gusts"))
     assert charts.key("rain") is None                                                     # an alert without a chart
 

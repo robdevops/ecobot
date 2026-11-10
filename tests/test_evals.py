@@ -28,18 +28,32 @@ def test_every_kind_of_question_metric_and_chart_has_a_saved_case():
 
 
 def test_the_call_checker_reports_what_is_wrong():
-    expect = {"tools": ["weather_days"], "first_tool": "weather_days",
-              "args": {"weather_days": {"start_date": "2026-09-05", "where": {"absent": True}, "sort_by": {"any_of": ["temp_max"]}}}}
-    good = [("weather_days", {"start_date": "2026-09-05", "sort_by": "temp_max"})]
+    expect = {"tools": ["days"], "first_tool": "days",
+              "args": {"days": {"period": "this month", "where": {"absent": True}, "sort_by": {"any_of": ["temp_max"]}}}}
+    good = [("days", {"period": "this month", "sort_by": "temp_max"})]
     assert evalkit.check_calls(good, expect) == []
-    bad = [("weather_history", {}), ("weather_days", {"start_date": "2026-09-01", "where": [{"field": "rain"}], "sort_by": "rain"})]
+    bad = [("summary", {}), ("days", {"period": "last month", "where": [{"field": "rain"}], "sort_by": "rain"})]
     fails = " | ".join(evalkit.check_calls(bad, expect))
-    assert "first tool" in fails and "start_date" in fails and "where" in fails and "sort_by" in fails
-    assert evalkit.check_calls([], {"tools": ["weather_link"]}) == ["did not call weather_link (called: nothing)"]
-    assert evalkit.check_calls([("weather_now", {})], {"not_tools": ["weather_now"]}) == ["should not have called weather_now"]
+    assert "first tool" in fails and "period" in fails and "where" in fails and "sort_by" in fails
+    assert evalkit.check_calls([], {"tools": ["relate"]}) == ["did not call relate (called: nothing)"]
+    assert evalkit.check_calls([("current", {})], {"not_tools": ["current"]}) == ["should not have called current"]
     assert evalkit.check_args({"g": ["a", "b"]}, {"g": {"has": ["a"]}}) == [] and evalkit.check_args({"g": "x"}, {"g": {"regex": "^y"}})
 
 
-def test_the_real_tool_definitions_are_what_the_live_run_offers():
-    tools = evalkit.make_tools([])
-    assert set(tools.by_name) == set(evalkit.tool_names())
+async def test_the_bots_live_run_is_its_own_request_and_its_shortcuts_ask_no_model():
+    """--live asks the model as the bot does (its prompt: the persona, the server's instructions, the time; the ten tools; its effort);
+    a question it answers in code gives its fixed calls, and the model isn't asked."""
+    from tests.test_agent import FakeLLM
+    from tests.test_service_evals import case
+    client = FakeLLM([[("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})], "Done."])
+    calls, reply = await evalkit.run_live(case("3m-average"), client, "m")
+    assert calls == [("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})] and reply == "Done."
+    first = client.requests[0]
+    assert first["messages"][0] == {"role": "system", "content": evalkit.bot_system()}
+    assert first["messages"][0]["content"].startswith("You are a friendly weather bot on Telegram") and first["tool_choice"] == "auto"
+    assert [t["function"]["name"] for t in first["tools"]] == evalkit.service_tool_names()
+    assert first["extra_body"]["reasoning"]["effort"] == evalkit.read(case("3m-average")).effort
+    assert await evalkit.run_live(case("report"), None, "m") == (
+        [("current", {}), ("pollen", {}), ("forecast", {"period": "next 3 days"})], "(answered in code)")
+    calls, _ = await evalkit.run_live(case("button-rain-chart"), None, "m")
+    assert calls == [("summary", {"readings": ["rain"], "period": "7d", "chart": True})]

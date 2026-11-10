@@ -11,6 +11,7 @@ from lib.service.context import Context
 from lib.service.pollen import DESCRIPTION, PARAMETERS, tools
 from tests.fakes import TZ
 from tests.test_pollen import SEASON_DAY, make, page
+from tests import old_tools
 
 
 def got(text: str) -> dict:
@@ -33,7 +34,7 @@ async def test_the_lines_are_pollen_asthmas_and_each_level_has_its_emoji_and_day
     assert pollen_tool.name == "pollen" and pollen_tool.annotations == {"readOnlyHint": True, "openWorldHint": True}
     out = got(await pollen_tool.call({}))
     assert len(calls) == 1   # nothing held: fetched, as pollen_asthma does
-    old = got(await pollen.handle({}))
+    old = got(await old_tools.pollen(pollen, {}))
     assert out["lines"] == old["lines"] == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🟠 Moderate"]
     assert out["grass"] == {"level": "High", "emoji": "🔴", "day": "2026-11-10", "day_text": "Tue 10 Nov 2026"}
     assert out["asthma"] == {"level": "Moderate", "emoji": "🟠", "updated": "1 Oct 2026 4:00pm"}
@@ -48,7 +49,7 @@ async def test_the_lines_are_pollen_asthmas_and_each_level_has_its_emoji_and_day
 async def test_its_text_is_the_bots_pollen_section_word_for_word(tmp_path):
     pollen, _ = make(tmp_path, lambda: page(grass="Low", asthma="Low"))
     out = got(await tool(context(pollen)).call({}))
-    old = await pollen.handle({"cached": True})
+    old = await old_tools.pollen(pollen, {"cached": True})
     assert out["text"] == report.lookup("pollen", old, [], [], SEASON_DAY) == report.report({"pollen_asthma": old}, SEASON_DAY)
     assert out["text"].endswith("\n• Grass pollen forecast: 🟢 Low\n• Thunderstorm asthma forecast: 🟢 Low")
     later = SEASON_DAY + timedelta(days=1)
@@ -59,7 +60,7 @@ async def test_its_text_is_the_bots_pollen_section_word_for_word(tmp_path):
 async def test_a_forecast_for_another_day_says_its_day_and_a_missing_asthma_level_is_said_so(tmp_path):
     pollen, _ = make(tmp_path, lambda: page(grass="Moderate", day=SEASON_DAY + timedelta(days=1), season=False))
     out = got(await tool(context(pollen)).call({}))
-    old = got(await pollen.handle({}))
+    old = got(await old_tools.pollen(pollen, {}))
     assert out["lines"] == old["lines"] == ["Grass pollen forecast: 🟠 Moderate (forecast for Wed 11 Nov)"]
     assert out["grass"]["day"] == "2026-11-11" and out["asthma"] is None and out["asthma_note"] == old["asthma_note"]
     await pollen.close()
@@ -68,7 +69,7 @@ async def test_a_forecast_for_another_day_says_its_day_and_a_missing_asthma_leve
 async def test_with_fetch_false_it_answers_from_what_is_held_and_fetches_nothing(tmp_path):
     pollen, calls = make(tmp_path)
     out = got(await tool(context(pollen)).call({}, {"fetch": False}))
-    assert out == {"error": "No pollen levels are available right now."} == got(await pollen.handle({"cached": True})) and calls == []
+    assert out == {"error": "No pollen levels are available right now."} == got(await old_tools.pollen(pollen, {"cached": True})) and calls == []
     await pollen.warm(True)
     calls.clear()
     held = got(await tool(context(pollen)).call({}, {"fetch": False}))
@@ -80,7 +81,7 @@ async def test_out_of_season_it_gives_pollen_asthmas_answer_and_fetches_nothing(
     pollen, calls = make(tmp_path)
     pollen.now = lambda: datetime(2026, 1, 15, 12, 0)
     out = await tool(context(pollen, date(2026, 1, 15))).call({})
-    assert out == await pollen.handle({}) and got(out) == {"error": OFF_SEASON} and calls == []
+    assert out == await old_tools.pollen(pollen, {}) and got(out) == {"error": OFF_SEASON} and calls == []
     await pollen.close()
 
 

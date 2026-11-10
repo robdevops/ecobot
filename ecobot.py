@@ -42,10 +42,9 @@ from lib.service import about as service_about
 from lib.service import names as service_names
 from lib.service.context import Context
 from lib.compose import Composer
-from lib.history import History
 from lib.sources import Source
 from lib.storage import Storage
-from lib.tools import Tools
+from lib import model_tools
 from lib.warm import every, safely
 
 
@@ -254,8 +253,6 @@ async def main():
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
         charts.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
         composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
-        history = await History.open(eco, air) if eco or air else None   # the readings tool: values at an interval, from the file
-        tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []) + (history.tools if history else []))
         client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
         if client:
             stack.push_async_callback(safely, client.close)
@@ -269,12 +266,12 @@ async def main():
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
         tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
-        # The service's ten tools over the sources that started (lib/service): the bot's own code paths call them (its shortcuts, lookups,
-        # report, alert charts and period buttons); the model is still offered the old tools above, until step 3
+        # The service's ten tools over the sources that started (lib/service): the model is offered them (lib/model_tools.py), and the
+        # bot's own code paths call them (its shortcuts, report, gauges, alert charts and period buttons)
         service = Service.of(await Context.open(eco=eco, air=air, composer=composer, forecast=by_name.get("Forecast"),
                                                 pollen=by_name.get("Pollen"), tz=cfg.tz))
         log.info("Service tools: %s", ", ".join(t.name for t in service))
-        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation, tasks, service=service)
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(service)), sources, state, irrigation, tasks, service=service)
 
         bot.register(app)
         stop = asyncio.Event()

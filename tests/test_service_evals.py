@@ -154,9 +154,6 @@ def test_the_tool_list_is_the_ten_service_tools_with_their_own_descriptions_and_
     assert [t.name for t in built] == evalkit.service_tool_names()
     offered = evalkit.make_service_tools([])
     assert set(offered.by_name) == set(evalkit.service_tool_names())
-    # (the two lists are never offered together; the one name they share is the service's own `readings`, not the bot's)
-    assert set(offered.by_name) & set(evalkit.tool_names()) == {"readings"}
-    assert offered.by_name["readings"].parameters != evalkit.make_tools([]).by_name["readings"].parameters
     for tool, schema in zip(built, offered.schemas):
         assert schema == {"type": "function", "function": {"name": tool.name, "description": tool.description,
                                                           "parameters": tool.parameters}}

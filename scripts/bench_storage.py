@@ -19,7 +19,6 @@ import statistics
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,7 +27,6 @@ import httpx
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 
 from lib.config import Config, data_dir, local_tz  # noqa: E402
-from lib.tools import Turn  # noqa: E402
 
 FILES = ("ecobot.sqlite",)
 
@@ -112,8 +110,19 @@ def stations(storage) -> list[tuple[str, int, int]]:
     return storage.read_now(count)
 
 
-def period(days: float, now: datetime) -> dict:
-    return {"start_date": f"{now - timedelta(days=days):%Y-%m-%d %H:%M:%S}", "end_date": f"{now:%Y-%m-%d %H:%M:%S}"}
+def service(**sources):
+    """The service's tools over these sources (lib/service), as the bot and the model call them."""
+    from lib.service import Service
+    from lib.service.context import Context
+    return Service.of(Context(**sources, tz=next(iter(sources.values())).tz))
+
+
+def asking(tools, name: str, args: dict):
+    """A request: the service's `name` called with `args`, as the bot asks for its charts (as drawn)."""
+    return lambda: tools[name].call(args, {"chart_points": "drawn"})
+
+
+FOUR_YEARS = "last 4 years"
 
 
 async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
@@ -132,20 +141,16 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
         eco.has_minutes = any(n for _, _, n in held)   # Home Assistant's minutes, which the bot draws a chart of a few hours from
         print(f"Ecowitt {eco.mac}: {held[0][1] if held else 0:,} rows of readings, {held[0][2] if held else 0:,} minutes, {Archive(eco).held()} "
               f"(opened in {opened:.1f} s)")
-        now = eco.now()
-        history, days, link = eco.tools[1].handler, eco.tools[2].handler, eco.tools[3].handler
-        chart = lambda field, d, groups="outdoor": lambda: history({"groups": groups, "chart": True, "chart_field": field, **period(d, now)}, Turn())
-        work = [(f"Temperature chart, {label}", chart("temperature", d))
-                for label, d in (("3 hours", 0.125), ("1D", 1), ("7D", 7), ("1M", 30), ("3M", 90), ("1Y", 365))]
-        work += [("Rain chart, 3M", chart("rain", 90, "rainfall")),
-                 ("History of outdoor and indoor, 7 days, no chart", lambda: history({"groups": "outdoor,indoor", **period(7, now)}, Turn())),
-                 ("weather_days: days over 30°C, 4 years", lambda: days({"condition": "temp_max > 30", "count_only": True,
-                                                                         "start_date": f"{now - timedelta(days=1460):%Y-%m-%d}",
-                                                                         "end_date": f"{now:%Y-%m-%d}"}, Turn())),
-                 ("weather_days: rain per month, a year", lambda: days({"stat": "sum", "of": "rain", "group_by": "month",
-                                                                       "start_date": f"{now - timedelta(days=365):%Y-%m-%d}",
-                                                                       "end_date": f"{now:%Y-%m-%d}"}, Turn())),
-                 ("weather_link: pressure and rain, 90 days, chart", lambda: link({"driver": "pressure", "chart": True}, Turn())),
+        tools = service(eco=eco)
+        chart = lambda reading, period: asking(tools, "summary", {"readings": [reading], "period": period, "chart": True})
+        work = [(f"Temperature chart, {label}", chart("outdoor.temperature", period))
+                for label, period in (("3 hours", "last 3 hours"), ("1D", "1d"), ("7D", "7d"), ("1M", "1m"), ("3M", "3m"), ("1Y", "1y"))]
+        work += [("Rain chart, 3M", chart("rain", "3m")),
+                 ("Summary of outdoor and indoor, 7 days, no chart", asking(tools, "summary", {"period": "7d", "chart": False})),
+                 ("days: days over 30°C, 4 years", asking(tools, "days", {"where": [{"field": "temp_max", "op": ">", "value": 30}],
+                                                                           "count_only": True, "period": FOUR_YEARS})),
+                 ("days: rain per month, a year", asking(tools, "days", {"stat": "sum", "of": "rain", "group_by": "month", "period": "1y"})),
+                 ("relate: pressure and rain, 90 days, chart", asking(tools, "relate", {"reading": "pressure", "chart": True})),
                  ("The alerts' last 3 hours", lambda: eco.recent(3))]
         for label, run in work:
             rows.append((label, *await measured(run, repeat, lambda: eco.api.asked)))
@@ -168,12 +173,11 @@ async def bench(folder: Path, repeat: int, tz) -> list[tuple[str, float, int]]:
         air.tz = tz
         n = (await air.store.lacking())["all"]
         print(f"AirGradient {air.loc}: {n:,} readings")
-        now = datetime.now(tz).replace(tzinfo=None)
-        work = [(f"Air chart (PM2.5), {label}", lambda d=d: air.handle({"chart": True, "metrics": ["pm2_5"], **period(d, now)}, Turn()))
-                for label, d in (("1D", 1), ("7D", 7), ("1M", 30))]
-        work.append(("air_days: days PM2.5 over 25, 4 years", lambda: air.tools[1].handler(
-            {"condition": "pm2_5_max > 25", "count_only": True, "start_date": f"{now - timedelta(days=1460):%Y-%m-%d}",
-             "end_date": f"{now:%Y-%m-%d}"}, Turn())))
+        tools = service(air=air)
+        work = [(f"Air chart (PM2.5), {label}", asking(tools, "summary", {"readings": ["pm2.5"], "period": period, "chart": True}))
+                for label, period in (("1D", "1d"), ("7D", "7d"), ("1M", "1m"))]
+        work.append(("days: days PM2.5 over 25, 4 years", asking(tools, "days", {"where": [{"field": "pm2_5_max", "op": ">", "value": 25}],
+                                                                                 "count_only": True, "period": FOUR_YEARS})))
         for label, run in work:
             rows.append((label, *await measured(run, repeat, lambda: asked[0])))
         await air.close()

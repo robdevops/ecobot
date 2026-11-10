@@ -7,6 +7,7 @@ from lib.forecast import Forecast
 from lib.tools import Turn
 from tests.fakes import TZ, config
 from tests.test_forecast import make
+from tests import old_tools
 
 TODAY = date(2026, 10, 3)
 
@@ -127,18 +128,24 @@ async def test_what_was_sent_survives_a_restart_and_is_not_repeated(tmp_path):
     assert len(bot.sent) == 1                                        # the new baseline was saved too
 
 
-async def test_the_forecast_tool_notes_the_days_it_gave_for_the_chat_and_a_failure_notes_none(tmp_path):
+async def forecast_result(forecast, period="next 2 days") -> dict:
+    """What the service's forecast answers the model."""
+    from lib.service import Service
+    from lib.service.context import Context
+    return json.loads(await Service.of(Context(forecast=forecast, tz=TZ))["forecast"].call({"period": period}))
+
+
+async def test_the_forecast_days_a_result_shows_are_noted_for_the_chat_and_a_failure_notes_none(tmp_path):
+    from types import SimpleNamespace as NS
+    from lib.bot import Bot
     forecast, _ = make(tmp_path)
     await forecast.start()
-    turn = Turn()
-    await forecast.handle({"days": 2}, turn)
-    assert [d["date"] for d in turn.forecast_shown] == [forecast.now().date(), forecast.now().date() + timedelta(days=1)]
-    assert turn.forecast_shown[0]["max_c"] == 16 and turn.forecast_shown[0]["rain_chance_pct"] == 40
-    empty = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, None)
-    empty.days, turn = [], Turn()
-    assert "error" in json.loads(await empty.handle({"cached": True}, turn)) and turn.forecast_shown == []
+    bot = Bot(NS(tz=TZ), None, [forecast], AlertState(tmp_path / "s.json"))
+    shown = bot._shown_forecast(await forecast_result(forecast))
+    assert [d["date"] for d in shown] == [forecast.now().date(), forecast.now().date() + timedelta(days=1)]
+    assert shown[0]["max_c"] == 16 and shown[0]["rain_chance_pct"] == 40
+    assert bot._shown_forecast({"error": "No forecast is available right now."}) == [] and bot._shown_forecast(None) == []
     await forecast.close()
-    await empty.close()
 
 
 async def test_a_delivered_answer_records_the_forecast_for_its_chat_and_an_undelivered_one_does_not(tmp_path):
@@ -153,10 +160,10 @@ async def test_a_delivered_answer_records_the_forecast_for_its_chat_and_an_undel
     class Agent:
         tools = None
 
-        async def run(self, messages, system, effort, first_call=None, turn=None, **k):
-            await forecast.handle({"days": 2}, turn)
+        async def run(self, messages, system, effort, turn=None, **k):
+            turn.results.append(("forecast", {"period": "next 2 days"}, await forecast_result(forecast)))   # (as lib/model_tools.py keeps it)
             return "Today: showers"
-    bot = Bot(NS(tz=TZ), Agent(), [], state)
+    bot = Bot(NS(tz=TZ), Agent(), [forecast], state)
 
     def update(fail):
         async def reply_text(body, **kw):

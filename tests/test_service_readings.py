@@ -7,12 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from lib.history import INTERVALS, MAX_ROWS, History
+from lib.history import INTERVALS, MAX_ROWS
 from lib.service import readings
 from lib.service.common import FRESH
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.storage import Storage
+from tests.old_tools import History
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import local_epoch
 from lib.tools import Tools, Turn
@@ -210,6 +211,6 @@ async def test_only_the_arguments_reach_it_and_its_metadata_changes_nothing(stor
     put(storage, "outdoor", "5min", [{"ts": at(9, 1, 5 * i), "humidity": 80 + i} for i in range(9)])
     args = {"reading": "outdoor.humidity", "period": "last hour", "interval": "5min"}
     direct = await tool(storage).call(args)
-    via_bot = await Tools([tool(storage).tool()]).call("readings", json.dumps(args), Turn(text="humidity every 30 minutes", per_day=True))
+    via_bot = await Tools([tool(storage).tool()]).call("readings", json.dumps(args), Turn(per_day=True))
     assert via_bot == direct and json.loads(direct)["interval"] == "5min"
     assert await tool(storage).call(args, {"fetch": False, "priority": "background"}) == direct   # nothing is fetched here anyway

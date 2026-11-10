@@ -218,7 +218,7 @@ async def test_a_chart_is_sent_in_the_points_the_request_asks_for_and_only_when_
     lines = [s for p in small["charts"][0]["panels"] for s in p["series"] if s["kind"] in ("line", "band")]
     assert lines and all(len(s["points"]) <= 20 for s in lines)
     (made,) = relate.tools(ctx)
-    asked = json.loads(await Tools([made.tool()]).call("relate", "{}", Turn(text="plot pressure against rain", chart_asked=True)))
+    asked = json.loads(await Tools([made.tool()]).call("relate", "{}", Turn(chart_asked=True)))
     assert "charts" not in asked                                     # the words of the question never reach it: only `chart` draws
     await eco.close()
 

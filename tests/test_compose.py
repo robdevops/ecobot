@@ -37,14 +37,6 @@ async def plot(comp, **args):
     return out, turn.charts
 
 
-async def test_the_composer_offers_the_chart_tool_and_the_two_air_tools(tmp_path, archived_cache):
-    comp, eco = await composer(tmp_path, archived_cache)
-    assert [t.name for t in comp.tools] == ["plot_chart", "air_link", "air_scan"]
-    schema = comp.tools[0].parameters["properties"]["panels"]
-    assert schema["maxItems"] == MAX_PANELS and schema["items"]["properties"]["series"]["enum"] == SERIES
-    await eco.close()
-
-
 async def test_a_reading_with_its_zones_over_rain_is_one_stacked_chart(tmp_path, archived_cache):
     comp, eco = await composer(tmp_path, archived_cache)
     out, specs = await plot(comp, panels=[{"series": "pm2_5"}, {"series": "rain"}])
@@ -207,19 +199,6 @@ async def test_the_air_sensors_own_temperature_goes_over_the_stations_on_one_axi
     assert "can't both be set" in out["error"]
     out, specs = await plot(comp, panels=[{"series": "air_humidity", "style": "rating"}])
     assert "error" in out and specs == []                                                 # no traffic light for a humidity
-    await eco.close()
-
-
-async def test_the_tools_offer_the_air_sensors_own_temperature_and_humidity_only_to_a_question_that_asks(tmp_path, archived_cache):
-    from lib.tools import Tools
-    comp, eco = await composer(tmp_path, archived_cache)
-    tools = Tools(comp.tools)
-    plain = tools.schemas_for(Turn())
-    assert plain is tools.schemas and "air_humidity" not in json.dumps(plain) and "same_axis" not in json.dumps(plain)
-    asked = {s["function"]["name"]: s["function"] for s in tools.schemas_for(Turn(air_extra=True))}
-    series = asked["plot_chart"]["parameters"]["properties"]["panels"]["items"]["properties"]["series"]["enum"]
-    assert series == [*SERIES, "air_temperature", "air_humidity"] and "same_axis" in asked["plot_chart"]["parameters"]["properties"]
-    assert [s["function"]["name"] for s in tools.schemas_for(Turn(air_extra=True))] == [s["function"]["name"] for s in plain]   # the same tools, in order
     await eco.close()
 
 

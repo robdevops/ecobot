@@ -11,16 +11,14 @@ The exact range grows by itself as the archive keeps more sub-daily data.
 
 import logging
 import operator
-import re
 from datetime import date, datetime, tzinfo
 
-from ..daytable import analyse, grouped_as_asked, lists_days, parameters, prepare
+from ..daytable import analyse, lists_days, prepare
 from ..series import WEATHER
 from ..storage import Storage
 from ..storage.catalogue import column_of
 from ..storage.read import Reader
-from ..timeutil import day_text, now_local
-from ..tools import json_result
+from ..timeutil import day_text
 from .api import daily_run
 from .calendar import PublicHolidays
 
@@ -49,23 +47,6 @@ FIELDS["temp_avg"] = ("outdoor", "temperature", "mean", "°C")
 AVERAGED = {n for n in FIELDS if n.endswith(("_max", "_min")) and n not in ("temp_max", "temp_min")}   # no range of their own at 30 minutes or daily
 FIELD_UNITS = {n: f[3] for n, f in FIELDS.items()}
 ALWAYS_SHOWN = ("temp_max", "temp_min", "rain")   # every listed day shows them; days rank by the first when nothing else is named
-
-PARAMETERS = parameters(list(FIELDS), "rain >= 1 and temp_max > 30", {
-    "only": {"type": "string", "enum": ["public_holiday", "weekend"],
-             "description": "ONLY when the person's words say holidays or weekends: look just at public holidays in the owner's local area "
-                            "(the bot knows them: never pick holiday dates yourself) or just Saturdays and Sundays. Days are then counted "
-                            "from those only, so never set it otherwise."}})
-DESCRIPTION = ("Find, rank or count DAYS by the station's readings, checking every day in the period: for questions that "
-               "compare readings on the same day or count days (\"the hottest day it also rained\", \"how many days over "
-               "35°C\", \"how many days was UV 9 or more\", \"the wettest day\", \"the windiest cold day\"). Fields: temp_max / temp_min (outdoor °C), "
-               "rain (mm total for the day; a rainy day is 1 mm or more, above 0 is only a trace), wind_gust (km/h, highest), and a day's "
-               "highest (_max) or lowest (_min) of every other reading: humidity, pressure, dew_point, feels_like, vpd, "
-               "indoor_temp, indoor_humidity (_max and _min); wind_speed, solar, uv, rain_rate (_max only), e.g. uv_max >= 9; and _avg, a day's mean (temp_avg, "
-               "humidity_avg, pressure_avg ...). For \"how many\" use count_only; group_by month or year breaks it down and draws a bar chart. "
-               "For a total, average, highest or lowest per month or year use stat and of (\"rain per month\": stat sum, of rain; \"hottest day each "
-               "year\": stat max, of temp_max; \"average humidity per month\": stat avg, of humidity_avg). Returns the total of matching "
-               "days and the top ones. For a record's value and the time it happened (hottest, coldest, fastest gust), use weather_history instead. For ONE known day, give start_date = end_date = that day and no conditions: it returns that day's figures. Can be limited to local public holidays or weekends (only). Works from cached history, so any period up to the whole record is fast.")
-
 
 PARTS = {"high": "hi", "low": "lo", "mean": "mean"}   # a figure's kind -> where a day row (storage.read.Days) keeps it
 COARSER = {"5min": 0, "30min": 1, "1day": 2}
@@ -160,18 +141,3 @@ async def find_days(storage: Storage, mac: str, tz: tzinfo, args: dict, now: dat
         out["note"] = "No cached readings for this period yet (the bot may still be downloading history)."
     log.info("Days %s to %s: %d checked, %d match, %d exact", first, last, len(checked), len(matches), len(exact_days))
     return out
-
-
-HOLIDAY_WORDS = re.compile(r"\b(holidays?|weekends?|saturdays?|sundays?)\b", re.I)
-
-
-async def days_tool(storage: Storage, mac: str, tz: tzinfo, args: dict, turn=None) -> str:
-    if args.get("only") and turn is not None and turn.text and not HOLIDAY_WORDS.search(turn.text):
-        # the model added a holiday or weekend filter nobody asked for: it would count only those days (and, with holidays,
-        # only the years the calendar knows), so it is dropped
-        log.warning("Ignored only=%s: the question doesn't mention holidays or weekends (%s)", args["only"], turn.text[:60])
-        args = {k: v for k, v in args.items() if k != "only"}
-    args = grouped_as_asked(args, turn)
-    now = now_local(tz)
-    result = await find_days(storage, mac, tz, args, now, turn)   # (one read of the day rows; the rest is quick enough to stay here)
-    return json_result(result)
