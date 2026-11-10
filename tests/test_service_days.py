@@ -126,6 +126,10 @@ async def test_the_tool_offers_the_fields_of_the_sensors_there_are_and_says_what
     assert "Whole days only" in props["period"]["description"] and "night (22:00-06:00" in props["hours"]["description"]
     d = t.description
     assert len(d) < 1500 and all(word in d for word in ("summary", "readings", "relate", "day_look", "hours", "only", "count_only"))
+    # the live evals: "days with most rain" sent no sort_by (ranked by temp_max), "average temperature per year" no group_by
+    assert 'sort_by is the field the days are ranked by: the wettest days, most rain {sort_by: "rain"}' in d
+    assert '"per year", "each year", "by month"), group_by' in d and '{stat: "avg", of: "temp_avg", group_by: "year"}' in d
+    assert '"most rain"' in props["sort_by"]["description"] and '"each year"' in props["group_by"]["description"]
     station_only = days_tool.tools(Context(eco=world.eco))[0].parameters["properties"]
     assert "pm2_5_max" not in station_only["where"]["items"]["properties"]["field"]["enum"]
     assert "Air sensor" not in station_only["where"]["description"]
@@ -381,6 +385,14 @@ async def test_a_chart_drawn_with_dates_names_them_as_its_period_and_per_year_it
     for end in ({}, {"end": str(ago(-3))}):   # a start with no end, or an end today or later: "to now", so a replay moves on with the clock
         drawn = chart_of(await ask(world, start=str(ago(200)), where=[{"field": "rain", "op": ">=", "value": 1}], group_by="year", **end))["drawn_by"]
         assert drawn["arguments"]["period"] == f"{ago(200).isoformat()} to now"
+
+
+async def test_a_period_sent_with_start_and_end_beside_it_wins_and_its_chart_is_drawn_by_the_words(world):
+    # the live evals: period with start 'count_only', end 'cancel' (a model filling in every argument)
+    out = await ask(world, period="last 30 days", start="count_only", end="cancel", where=[{"field": "rain", "op": ">=", "value": 1}],
+                    group_by="month")
+    assert "error" not in out and out["period"]["asked"] == "last 30 days" and "were ignored" in out["period"]["note"]
+    assert chart_of(out)["drawn_by"]["arguments"]["period"] == "last 30 days"
 
 
 async def test_a_chart_is_not_the_whole_answer_when_a_note_needs_the_models_words(world):

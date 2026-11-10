@@ -110,12 +110,14 @@ FORMS = (   # (form, example, timed)
 @dataclass(frozen=True)
 class Period:
     """A period as read: the words asked (or "start/end"), its start and end on the station's clock (the end not included), how it
-    was read, ready to pass on, and, when a whole-day tool cut it to yesterday, a note saying so."""
+    was read, ready to pass on, and, when a whole-day tool cut it to yesterday, a note saying so. `note`: anything else the reader of the
+    result should know about how the call's period was taken (lib/service/common.read_period: `start` and `end` ignored beside `period`)."""
     asked: str
     start: datetime
     end: datetime
     text: str
     cut: str | None = None
+    note: str | None = None
 
     @property
     def first_day(self) -> date:

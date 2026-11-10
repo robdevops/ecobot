@@ -5,7 +5,8 @@ tests/evals/cases.json holds the questions (real ones from the logs). Two kinds 
   - what the model does with them (which tool, which arguments): `python scripts/eval_prompts.py --live`, against the
     real model with recording stand-in tools (nothing is fetched).
 tests/evals/service_cases.json holds, for the same case ids, what a model offered only the service's ten tools (lib/service) should
-call: checked offline by tests/test_service_evals.py, and asked of the model by `python scripts/eval_prompts.py --live --service`.
+call: checked offline by tests/test_service_evals.py, and asked of the model by `python scripts/eval_prompts.py --live --service`
+(with `--instructions`, the server's instructions, lib/service/instructions.py, after the neutral system line).
 """
 
 import json
@@ -229,17 +230,27 @@ def service_tool_names() -> list[str]:
     return ["current", "summary", "readings", "days", "relate", "scan", "outlook", "forecast", "pollen", "about"]
 
 
-def service_tools(ctx=None) -> list:
-    """The ten ServiceTools, each module's tools(ctx). With no ctx: over stand-ins for every source (nothing behind them: the tools are
-    built, never run), the catalogue of every reading the service knows, the station's zone and NOW."""
-    if ctx is None:
-        from zoneinfo import ZoneInfo
+def eval_context():
+    """The Context the service's evals build the tools over: stand-ins for every source (nothing behind them: the tools are built, never
+    run), the catalogue of every reading the service knows, the station's zone and NOW."""
+    from zoneinfo import ZoneInfo
 
-        from lib.service.context import Context
-        tz = ZoneInfo(NOW_TZ)
-        ctx = Context(eco=object(), air=object(), composer=object(), forecast=object(), pollen=object(), tz=tz,
-                      clock=lambda: NOW.replace(tzinfo=tz).timestamp())
+    from lib.service.context import Context
+    tz = ZoneInfo(NOW_TZ)
+    return Context(eco=object(), air=object(), composer=object(), forecast=object(), pollen=object(), tz=tz,
+                   clock=lambda: NOW.replace(tzinfo=tz).timestamp())
+
+
+def service_tools(ctx=None) -> list:
+    """The ten ServiceTools, each module's tools(ctx), over eval_context() when no ctx is given."""
+    ctx = ctx if ctx is not None else eval_context()
     return [t for module in service_modules() for t in module.tools(ctx)]
+
+
+def service_instructions() -> str:
+    """The server's instructions (lib/service/instructions.py) over eval_context(), as a `--instructions` run adds them."""
+    from lib.service.instructions import instructions
+    return instructions(eval_context())
 
 
 def make_service_tools(calls: list) -> Tools:
@@ -252,9 +263,11 @@ def make_service_tools(calls: list) -> Tools:
     return Tools([Tool(t.name, t.description, t.parameters, recorder(t.name)) for t in service_tools()])
 
 
-def service_system(now: datetime = NOW) -> str:
-    """The whole system prompt of a service run: the neutral line, and the date, time and zone now."""
-    return f"{SERVICE_SYSTEM}\nNow: {now:%A} {now.day} {now:%B %Y}, {now:%H:%M} ({NOW_TZ} time)."
+def service_system(now: datetime = NOW, instructions: str | None = None) -> str:
+    """The whole system prompt of a service run: the neutral line, and the date, time and zone now; with `instructions` (the server's,
+    service_instructions()), those after it, as a client that passes them on to its model would (docs/mcp-service.md 3.2, 7)."""
+    system = f"{SERVICE_SYSTEM}\nNow: {now:%A} {now.day} {now:%B %Y}, {now:%H:%M} ({NOW_TZ} time)."
+    return f"{system}\n\n{instructions}" if instructions else system
 
 
 def load_service_cases(path: Path = SERVICE_CASES) -> dict[str, dict]:
@@ -324,6 +337,8 @@ def _means(sent, refs, tool: str | None = None) -> str | None:
     sent = sent if isinstance(sent, dict) else {"period": sent}
     if sent.get("period") is not None and str(sent["period"]).strip() == "":
         sent = {**sent, "period": None}
+    if sent.get("period") is not None:   # the period wins over start and end sent beside it, as the tools read it (common.read_period)
+        sent = {"period": sent["period"]}
     # words are compared as words (whole days would make "last 28 days" September on the 29th); dates as the tool reads them
     whole = tool in WHOLE_DAY_TOOLS and sent.get("period") is None
     got = _period_span(sent.get("period"), sent.get("start"), sent.get("end"), whole)
@@ -456,21 +471,27 @@ def service_problems(expect: dict | None) -> list[str]:
     return fails
 
 
-async def run_live_service(case: Case, client, model: str, effort: str | None = None) -> tuple[list[tuple[str, dict]], str]:
-    """Ask the model with the ten tools alone and the neutral system line; returns the tool calls it made and its final reply. It may
-    answer with no tool at all (tool_choice auto): a plain client forces nothing."""
+async def run_live_service(case: Case, client, model: str, effort: str | None = None,
+                           instructions: str | None = None) -> tuple[list[tuple[str, dict]], str]:
+    """Ask the model with the ten tools alone and the neutral system line (with `instructions` after it, when given); returns the tool
+    calls it made and its final reply. It may answer with no tool at all (tool_choice auto): a plain client forces nothing."""
     calls: list[tuple[str, dict]] = []
     messages = [*case.history, {"role": "user", "content": content(case)}]
-    reply = await Agent(client, model, make_service_tools(calls)).run(messages, service_system(), effort or SERVICE_EFFORT,
-                                                                      tool_choice="auto")
+    reply = await Agent(client, model, make_service_tools(calls)).run(messages, service_system(instructions=instructions),
+                                                                      effort or SERVICE_EFFORT, tool_choice="auto")
     return calls, reply
 
 
+def calls_text(calls: list[tuple[str, dict]]) -> str:
+    """The calls a model made, one line: `days {"sort_by": "rain"}; pollen {}`."""
+    return "; ".join(f"{n} {json.dumps(a, ensure_ascii=False)}" for n, a in calls) or "nothing"
+
+
 async def run_service(cases: list[Case], expectations: dict[str, dict], client=None, model: str = "", *, repeat: int = 1,
-                      effort: str | None = None, out=print) -> int:
+                      effort: str | None = None, instructions: str | None = None, out=print) -> int:
     """The service's evals: each case's expectation checked (service_problems) and, with a client, the model asked `repeat` times with
-    the ten tools alone and its calls scored against it (check_calls), as `--live` scores cases.json. Prints a line per case (`out`);
-    returns how many cases fail."""
+    the ten tools alone (and the server's `instructions`, when given) and its calls scored against it (check_calls), as `--live` scores
+    cases.json. Prints a line per case (`out`), with the calls of a run that fails; returns how many cases fail."""
     failed = 0
     for case in cases:
         expect = expectations.get(case.id)
@@ -479,14 +500,14 @@ async def run_service(cases: list[Case], expectations: dict[str, dict], client=N
         if client and not problems:
             passes = 0
             for _ in range(repeat):
-                calls, _reply = await run_live_service(case, client, model, effort)
+                calls, _reply = await run_live_service(case, client, model, effort, instructions)
                 why = check_calls(calls, expect)
                 passes += not why
-                problems += [f"  run: {w}" for w in why[:3]] if why else []
+                problems += [*(f"  run: {w}" for w in why[:3]), f"  called: {calls_text(calls)}"] if why else []
             line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL")
         out(f"{line:>10}  {case.id}  ({case.ask})")
         for p in problems:
             out(f"            {p}")
         failed += bool(problems)
-    out(f"\n{len(cases) - failed} of {len(cases)} cases pass (the service's ten tools alone)")
+    out(f"\n{len(cases) - failed} of {len(cases)} cases pass (the service's ten tools alone{', with its instructions' if instructions else ''})")
     return failed

@@ -15,6 +15,8 @@ date, time and zone, and none of the bot's prompt, hints or fast path. Without -
 
     python scripts/eval_prompts.py --service             # every case has a service expectation, each one the tools take
     python scripts/eval_prompts.py --live --service      # and the model, with the ten tools alone
+    python scripts/eval_prompts.py --live --service --instructions   # ... and the server's instructions (lib/service/instructions.py)
+                                                                     # after the neutral line, as a client that passes them on would
 """
 
 import asyncio
@@ -33,7 +35,10 @@ async def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="ask the model this many times per case")
     ap.add_argument("--effort", choices=["none", "low", "medium"], help="force this reasoning effort for every case")
     ap.add_argument("--service", action="store_true", help="the service's ten tools alone, scored against tests/evals/service_cases.json")
+    ap.add_argument("--instructions", action="store_true", help="with --service: add the server's instructions to the system line")
     args = ap.parse_args()
+    if args.instructions and not args.service:
+        sys.exit("--instructions goes with --service")
     cases = evalkit.load_cases()
     if args.ids:
         wanted = set(args.ids.split(","))
@@ -46,7 +51,8 @@ async def main() -> int:
         client = AsyncOpenAI(api_key=os.environ["OPENROUTER_API_KEY"], base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
         model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
     if args.service:
-        failed = await evalkit.run_service(cases, evalkit.load_service_cases(), client, model, repeat=args.repeat, effort=args.effort)
+        failed = await evalkit.run_service(cases, evalkit.load_service_cases(), client, model, repeat=args.repeat, effort=args.effort,
+                                           instructions=evalkit.service_instructions() if args.instructions else None)
         return 1 if failed else 0
     failed = 0
     for case in cases:

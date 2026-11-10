@@ -206,6 +206,8 @@ async def test_whole_days_sent_as_dates_are_drawn_by_as_words_and_a_time_lists_n
     assert [p["period"] for p in words["periods"]] == ["1d", "7d", "1m", "3m", "1y"]
     again = await ask(tool, **words["arguments"])
     assert without_drawn_by(again["charts"][0]) == without_drawn_by(dated["charts"][0]) and again["period"]["text"] == dated["period"]["text"]
+    beside = await ask(tool, readings=["pressure"], period="this week", start=days_ago(9), end=days_ago(5), chart=True)   # period wins
+    assert "were ignored" in beside["period"]["note"] and beside["charts"][0]["drawn_by"]["arguments"]["period"] == "this week"
     since = await ask(tool, readings=["pressure"], start=days_ago(4))
     assert since["charts"][0]["drawn_by"]["arguments"]["period"] == f"{days_ago(4)} to now"
     timed = await ask(tool, readings=["pressure"], start=f"{days_ago(4)} 06:00", chart=True)

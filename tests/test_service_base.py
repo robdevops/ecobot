@@ -136,9 +136,19 @@ def test_words_that_are_no_form_are_refused_with_every_form_and_what_it_means_no
     with pytest.raises(Refusal) as e:
         read_period({"period": "next week"}, tz=TZ, now=NOW, default="today")
     assert "use forecast" in e.value.message and "forms" not in got(e.value.text)
-    with pytest.raises(Refusal) as e:
-        read_period({"period": "this week", "start": "2026-11-01"}, tz=TZ, now=NOW, default="today")
-    assert "not both" in e.value.message
+
+
+def test_a_period_sent_beside_start_and_end_wins_and_the_result_says_they_were_ignored():
+    # a model may fill in every argument it sees: the live evals sent period with start 'count_only', end 'cancel'
+    for dates in ({"start": "2026-11-01"}, {"end": "2026-11-03"}, {"start": "count_only", "end": "cancel"}):
+        read = read_period({"period": "this week", **dates}, tz=TZ, now=NOW, default="today")
+        assert read.text == "the last 7 days: Wed 4 – Tue 10 Nov 2026" and read.note == common.IGNORED_DATES, dates
+        assert common.period_field(read)["note"] == common.IGNORED_DATES
+    alone = read_period({"period": "this week", "start": "", "end": None}, tz=TZ, now=NOW, default="today")
+    assert alone.note is None and "note" not in common.period_field(alone)
+    with pytest.raises(Refusal) as e:   # the period itself can't be read: still refused, as words
+        read_period({"period": "the other week", "start": "2026-11-01"}, tz=TZ, now=NOW, default="today")
+    assert "'the other week' isn't a period" in e.value.message
 
 
 def test_a_whole_day_tool_refuses_what_leaves_no_whole_day_and_points_elsewhere():
@@ -162,7 +172,7 @@ def test_the_period_properties_tell_a_model_the_forms_the_dates_and_the_default(
                  "yesterday afternoon", "last night", "since 6am", "Christmas Day", "on record", "A to B"):
         assert form in words, form
     assert "own words" in words and "unchanged" in words and words.endswith("Default: last 24 hours.")
-    assert "'YYYY-MM-DD HH:MM'" in props["start"]["description"] and "never with it" in props["start"]["description"]
+    assert "'YYYY-MM-DD HH:MM'" in props["start"]["description"] and "ignored when `period` is sent" in props["start"]["description"]
     assert "Default: now." in props["end"]["description"]
     whole = period_properties("on record", whole_days=True)
     assert "yesterday" in whole["period"]["description"] and whole["period"]["description"].endswith("Default: on record.")

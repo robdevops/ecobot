@@ -172,7 +172,8 @@ async def test_a_period_it_cant_read_says_what_it_can(storage):
     assert "isn't a period" in out["error"] and any(form.startswith("last N hours") for form in out["forms"])
     assert "It is now Mon 9 Nov 2026 1:47am." in out["error"]
     assert "use forecast" in (await ask(storage, reading="humidity", period="tomorrow", interval="1hour"))["error"]
-    assert "not both" in (await ask(storage, reading="humidity", period="today", start="2026-11-08", interval="1hour"))["error"]
+    both = await ask(storage, reading="humidity", period="today", start="2026-11-08", interval="1hour")   # period wins, said so
+    assert "error" not in both and both["period"]["asked"] == "today" and "were ignored" in both["period"]["note"]
     out = await ask(storage, reading="humidity", period="on record", interval="1day")
     assert "Nothing is held yet" in out["error"]
 

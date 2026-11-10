@@ -156,7 +156,7 @@ def _period_words(args: dict) -> dict:
     to 2026-11-05", "2026-11-01 to now"), so another period can be swapped in; a start or end with a time as it came."""
     period, start, end = (str(args[k]).strip() if args.get(k) is not None and str(args[k]).strip() else None
                           for k in ("period", "start", "end"))
-    if start is None:
+    if start is None or period:   # (`period` wins over start and end sent beside it: common.read_period)
         return {"period": period}
     if DATE.fullmatch(start) and (end is None or DATE.fullmatch(end)):
         return {"period": f"{start} to {end or 'now'}"}

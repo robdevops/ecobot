@@ -221,3 +221,11 @@ async def test_a_chart_is_sent_in_the_points_the_request_asks_for_and_only_when_
     asked = json.loads(await Tools([made.tool()]).call("relate", "{}", Turn(text="plot pressure against rain", chart_asked=True)))
     assert "charts" not in asked                                     # the words of the question never reach it: only `chart` draws
     await eco.close()
+
+
+def test_a_period_sent_beside_start_and_end_is_the_words_a_replay_is_drawn_by():
+    from datetime import datetime
+    from lib.periods_text import Period
+    period = Period("this week", datetime(2026, 11, 3), datetime(2026, 11, 10), "the last 7 days")
+    assert relate.whole_day_words({"period": "this week", "start": "2026-11-01", "end": "2026-11-02"}, period) == "this week"
+    assert relate.whole_day_words({"start": "2026-11-03"}, period) == "2026-11-03 to 2026-11-09"

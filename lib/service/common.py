@@ -15,8 +15,8 @@ Every answer is compact JSON (`answer`), and starts the same way:
      "chart_note": CHART_NOTE, "charts": [...]}
 
   - `period`: how the words were read (lib/periods_text.Period): `asked` the words (or "start/end"), `text` how they were read, ready
-    to pass on, `start` and `end` ISO local times with their offset (the end not included), and `cut` only when a whole-day tool cut
-    today off. Left out by a tool that takes no period.
+    to pass on, `start` and `end` ISO local times with their offset (the end not included), `cut` only when a whole-day tool cut
+    today off, and `note` only when `start` and `end` were sent beside `period` and ignored (read_period). Left out by a tool that takes no period.
   - `as_of`: the time of the figures, `text` written as the tools write a time (timeutil.when), `time` ISO.
   - `fresh`: one fixed line for the model: the figures are as of `as_of`, and a follow-up or a challenge needs the tool called again.
   - `chart_note` and `charts` (`with_charts`): the charts as data (specs.to_json, bucketed to the request's `chart_points`), and the
@@ -29,7 +29,7 @@ answers with its JSON. A period that isn't one of the forms is refused with each
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, tzinfo
 
 from .. import specs
@@ -162,11 +162,11 @@ def period_properties(default: str, whole_days: bool = False) -> dict:
     if whole_days:
         forms, days = WHOLE_DAY_FORMS, (" Whole days only, up to yesterday, as today isn't over: a rolling period is that many whole days "
                                         "to yesterday (\"last 7 days\" is the 7 days before today).")
-        start = "Instead of `period`, never with it: the first day, 'YYYY-MM-DD'."
+        start = "Instead of `period` (ignored when `period` is sent): the first day, 'YYYY-MM-DD'."
         end = "With `start`: the last day, 'YYYY-MM-DD', up to yesterday. Default: yesterday."
     else:
         forms, days = PERIOD_FORMS, ""
-        start = ("Instead of `period`, never with it: when it starts, the station's local time, 'YYYY-MM-DD' (from midnight) or "
+        start = ("Instead of `period` (ignored when `period` is sent): when it starts, the station's local time, 'YYYY-MM-DD' (from midnight) or "
                  "'YYYY-MM-DD HH:MM'.")
         end = "With `start`: when it ends, local time, 'YYYY-MM-DD' (to the end of that day) or 'YYYY-MM-DD HH:MM'. Default: now."
     return {
@@ -178,16 +178,30 @@ def period_properties(default: str, whole_days: bool = False) -> dict:
     }
 
 
+IGNORED_DATES = "`start` and `end` were ignored: `period` was sent too, and the period is read from it."
+
+
+def sends_period(args: dict) -> bool:
+    """Whether the call sends `period` (words, not empty): it then wins over any `start` and `end` sent beside it (read_period)."""
+    return args.get("period") is not None and str(args["period"]).strip() != ""
+
+
 def read_period(args: dict, *, tz: tzinfo, now: datetime, default: str, whole_days: bool = False,
                 first_held: date | datetime | None = None) -> Period:
     """The period a call asks for, from its `period`, or `start` and `end`, else `default` (words), read by lib/periods_text.py at `now`
     (aware, or naive on the station's clock) in the station's zone. `first_held`: the first reading held for the readings asked about
-    ("on record"). Raises Refusal (refuse_period) when it can't be read."""
+    ("on record"). When `period` is sent, it wins: any `start` and `end` beside it are ignored (a model may fill in every argument it
+    sees), and the Period's `note` says so (IGNORED_DATES; the result's `period.note`). Raises Refusal (refuse_period) when the period
+    can't be read."""
+    period, start, end = args.get("period"), args.get("start"), args.get("end")
+    ignored = sends_period(args) and any(x is not None and str(x).strip() for x in (start, end))
+    if ignored:
+        start = end = None
     try:
-        return read_words(args.get("period"), args.get("start"), args.get("end"), now=now, tz=tz, default=default, whole_days=whole_days,
-                          first_held=first_held)
+        read = read_words(period, start, end, now=now, tz=tz, default=default, whole_days=whole_days, first_held=first_held)
     except PeriodError as e:
         raise Refusal.of_period(e) from None
+    return replace(read, note=IGNORED_DATES) if ignored else read
 
 
 # ---------- an answer ----------
@@ -209,10 +223,12 @@ def iso(t: datetime | int | float, tz: tzinfo | None = None) -> str:
 
 
 def period_field(period: Period) -> dict:
-    """{"asked", "text", "start", "end", ["cut"]}: how the period was read."""
+    """{"asked", "text", "start", "end", ["cut"], ["note"]}: how the period was read."""
     out = {"asked": period.asked, "text": period.text, "start": iso(period.start), "end": iso(period.end)}
     if period.cut:
         out["cut"] = period.cut
+    if period.note:
+        out["note"] = period.note
     return out
 
 
@@ -258,6 +274,6 @@ def complete(reply: str) -> dict:
     return {"reply": reply, "complete": True}
 
 
-__all__ = ["AS_DRAWN", "BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
+__all__ = ["AS_DRAWN", "BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "IGNORED_DATES", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
            "ServiceTool", "WHOLE_DAY_FORMS", "answer", "as_of_field", "charts_field", "complete", "iso", "period_field", "period_properties",
-           "read_period", "refuse", "refuse_period", "request_meta", "turn_meta", "with_charts"]
+           "read_period", "refuse", "sends_period", "refuse_period", "request_meta", "turn_meta", "with_charts"]

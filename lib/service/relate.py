@@ -23,7 +23,7 @@ from ..periods_text import Period
 from ..specs import ECOWITT_SOURCE, Chart
 from ..timeutil import local_date, local_epoch
 from ..tools import Turn
-from .common import Refusal, ServiceTool, answer, period_properties, read_period, with_charts
+from .common import Refusal, ServiceTool, answer, period_properties, read_period, sends_period, with_charts
 from .context import Context
 from .names import Catalogue, Reading
 from .readings import first_day
@@ -78,7 +78,7 @@ def drawn_charts(charts: list[Chart], ctx: Context, meta: dict, tool: str, argum
 def whole_day_words(args: dict, period: Period) -> str:
     """The period of a whole-day call as words a replay reads the same: the words asked (or the default), or, for one made with
     `start` and `end`, "<first day> to <last day>"."""
-    if str(args.get("start") or "").strip():
+    if str(args.get("start") or "").strip() and not sends_period(args):   # (`period` wins: common.read_period)
         return f"{period.first_day.isoformat()} to {period.last_day.isoformat()}"
     return period.asked
 
