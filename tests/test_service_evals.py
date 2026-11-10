@@ -3,17 +3,25 @@ every case in cases.json, checked without a model. Every case has an expectation
 describes, made concrete, is one the real tool answers rather than refuses; the tool list itself is one any model can read. (What a
 real model does with the ten is `scripts/eval_prompts.py --live --service`; its plumbing is tested here with a scripted model.)
 
-The expectations are written for evalkit.NOW (Tue 29 Sep 2026 14:05), and a period is matched by what it means then ({"means"}). The
-real tools are called on the real clock over the fake station (its history runs to now), so that check is of the arguments being taken
-(names, words, forms, start and end), not of the figures."""
+The expectations are written for evalkit.NOW (Tue 29 Sep 2026 14:05), and a period is matched by what it means then ({"means"}), sent
+in words or as start and end. The real tools are called with the clock fixed at that time (at_eval_now) over the fake station built
+under it, so that check is of the arguments being taken (names, words, forms, start and end), not of the figures, and holds on any
+real date."""
 
+import asyncio
+import datetime as _dt
+import importlib
 import json
 import os
+import pkgutil
 import subprocess
 import sys
+import time as _time
 from datetime import datetime, time as dtime
 from pathlib import Path
 from types import SimpleNamespace as NS
+from unittest import mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -66,6 +74,70 @@ def test_the_checker_reads_names_words_and_periods_as_the_service_does():
     assert check({"period": "Tuesday"}, {"period": {"means": ["Tuesday", "today"]}}) == []
     assert "can't be read" in check({"period": "sometime"}, {"period": {"means": "today"}})[0]
     assert check({"x": 1}, {"x": {"one_of": [1, 2]}}) == [] and check({"x": 3}, {"x": {"one_of": [1, 2]}})
+
+
+def test_a_condition_list_is_matched_by_its_keys_and_numbers_not_its_spelling():
+    check = evalkit.check_args
+    want = {"where": {"conditions": [{"field": "uv_max", "op": [">=", ">"], "value": 9}]}}
+    for same in ([{"field": "uv_max", "op": ">=", "value": 9}], [{"value": 9, "op": ">=", "field": "uv_max"}],
+                 [{"field": "uv_max", "op": ">=", "value": 9.0}], [{"field": "uv_max", "op": "≥", "value": "9"}],
+                 [{"field": " uv_max", "op": "=>", "value": 9, "note": "after value"}], {"field": "uv_max", "op": ">", "value": 9}):
+        assert check({"where": same}, want) == [], same
+    for wrong in ([{"field": "uv_avg", "op": ">=", "value": 9}], [{"field": "uv_max", "op": "<", "value": 9}],
+                  [{"field": "uv_max", "op": ">=", "value": 10}], [{"field": "uv_max", "op": ">=", "value": "nine"}],
+                  [{"field": "uv_max", "op": ">=", "value": True}], [{"field": "uv_max", "op": ">="}], [], None, "uv_max >= 9",
+                  [{"field": "uv_max", "op": ">=", "value": 9}, {"field": "rain", "op": ">=", "value": 1}]):
+        assert check({"where": wrong}, want), wrong
+    two = {"where": {"conditions": [{"field": "temp_max", "op": [">", ">="], "value": 35}, {"field": "rain", "op": [">", ">="]}]}}
+    assert check({"where": [{"op": ">", "value": 0.2, "field": "rain"}, {"field": "temp_max", "value": 35.0, "op": "≥"}]}, two) == []
+    assert check({"where": [{"field": "temp_max", "op": ">", "value": 35}]}, two)          # (the rain condition missing)
+    either = {"where": {"conditions": [{"field": ["pm2_5_max", "pm2_5_avg"], "op": [">"], "value": 25}]}}
+    assert check({"where": [{"field": "pm2_5_avg", "op": ">", "value": 25}]}, either) == []
+    assert evalkit.example_value(two["where"]) == [{"field": "temp_max", "op": ">", "value": 35}, {"field": "rain", "op": ">", "value": 1}]
+
+
+def test_every_where_is_matched_as_conditions_so_a_correct_call_in_any_key_order_passes():
+    wheres = {cid: w for cid, expect in EXPECT.items() for alternatives in expect.get("args", {}).values()
+              for alt in (alternatives if isinstance(alternatives, list) else [alternatives]) if (w := alt.get("where"))}
+    assert wheres and all(set(w) <= {"conditions", "e.g."} and "conditions" in w for w in wheres.values()), wheres
+    for cid in ("uv-days-two-years", "uv-days-per-year", "days-over-limit-by-year", "air-days-per-year", "count-pm25-days-per-year",
+                "days-two-readings-go-to-the-model", "hottest-day-that-rained", "rainy-days-in-september"):
+        (name, args), *_ = evalkit.example_calls(EXPECT[cid])
+        backwards = {**args, "where": [{"note": "x", **dict(reversed(list(c.items())))} for c in args["where"]]}
+        assert evalkit.check_calls([(name, backwards)], EXPECT[cid]) == [], cid
+
+
+def test_a_period_sent_as_start_and_end_is_matched_by_what_it_means_as_the_tool_reads_it():
+    check = evalkit.check_calls
+    # days reads whole days to yesterday: September from its first day is the month to the 28th, as "September" is
+    assert check([("days", {"start": "2026-09-01"})], {"args": {"days": {"period": {"means": "September"}}}}) == []
+    assert check([("days", {"start": "2026-09-01", "end": "2026-09-28"})], {"args": {"days": {"period": {"means": "this month"}}}}) == []
+    assert check([("days", {"start": "2026-08-01"})], {"args": {"days": {"period": {"means": "September"}}}})
+    # summary reads to the minute: one day is that day's start and end; a start alone runs to now
+    assert check([("summary", {"start": "2026-06-11", "end": "2026-06-11"})], {"args": {"summary": {"period": {"means": "11 June"}}}}) == []
+    assert check([("summary", {"start": "2026-06-11"})], {"args": {"summary": {"period": {"means": "11 June"}}}})
+    assert check([("readings", {"start": "2026-09-29"})], {"args": {"readings": {"period": {"means": "today"}}}}) == []
+    assert "no period sent" in check([("days", {})], {"args": {"days": {"period": {"means": "September"}}}})[0]
+    assert check([("days", {})], {"args": {"days": {"period": {"means": "on record", "optional": True}}}}) == []
+    for cid, call in (("most-rain-days-jja", ("days", {"sort_by": "rain", "start": "2026-06-01", "end": "2026-08-31"})),
+                      ("rainy-days-in-september", ("days", {"where": [{"field": "rain", "op": ">=", "value": 1}], "start": "2026-09-01"})),
+                      ("rain-on-a-named-day", ("days", {"start": "2026-09-05", "end": "2026-09-05"})),
+                      ("weather-on-june-11", ("summary", {"start": "2026-06-11", "end": "2026-06-11"})),
+                      ("temperature-every-30-minutes",
+                       ("readings", {"reading": "temperature", "interval": "30min", "start": "2026-09-29"}))):
+        assert check([call], EXPECT[cid]) == [], cid
+
+
+def test_the_whole_day_tools_are_those_whose_period_is_described_as_whole_days():
+    tools = {t.name: t for t in evalkit.service_tools()}
+    assert evalkit.WHOLE_DAY_TOOLS == {n for n, t in tools.items() if "Whole days only" in t.parameters.get("properties", {})
+                                       .get("period", {}).get("description", "")}
+
+
+def test_a_hottest_day_of_a_period_may_be_found_by_days_as_well():
+    for cid, period in (("think-hottest-week", "this week"), ("hottest-coldest-this-month", "this month")):
+        assert evalkit.check_calls([("days", {"sort_by": "temp_max", "period": period})], EXPECT[cid]) == [], cid
+        assert evalkit.check_calls([("days", {"period": period})], EXPECT[cid]) == [], cid
 
 
 def test_alternatives_pass_when_any_one_does():
@@ -131,23 +203,106 @@ def test_each_description_is_short_and_each_schema_is_json_schema(name):
 
 
 # ---------- every expected call is one the real tool answers ----------
+# At the evals' NOW (Tue 29 Sep 2026 14:05, Melbourne), whatever the real date: the expectations are written for it ("this month" is
+# September to the 28th, "June to August 2026" is in the fake's history). Every datetime.now(), date.today() and time.time() in lib/
+# and tests/ reads it, and the fake station's archive is built under it (the idea of tests/test_service_switch.py's freeze, kept here).
+EVAL_NOW = evalkit.NOW.replace(tzinfo=ZoneInfo(evalkit.NOW_TZ)).timestamp()
+
+
+class _DatetimeType(type):
+    def __instancecheck__(cls, obj):
+        return isinstance(obj, _dt.datetime)
+
+    def __subclasscheck__(cls, sub):
+        return issubclass(sub, _dt.datetime)
+
+
+class _EvalDatetime(_dt.datetime, metaclass=_DatetimeType):
+    @classmethod
+    def now(cls, tz=None):
+        return _dt.datetime.fromtimestamp(EVAL_NOW, tz)
+
+    @classmethod
+    def today(cls):
+        return _dt.datetime.fromtimestamp(EVAL_NOW)
+
+
+class _DateType(type):
+    def __instancecheck__(cls, obj):
+        return isinstance(obj, _dt.date)
+
+    def __subclasscheck__(cls, sub):
+        return issubclass(sub, _dt.date)
+
+
+class _EvalDate(_dt.date, metaclass=_DateType):
+    @classmethod
+    def today(cls):
+        return _dt.datetime.fromtimestamp(EVAL_NOW).date()
+
+
+def at_eval_now(patch: pytest.MonkeyPatch):
+    """The clock fixed at EVAL_NOW in every module of lib/ and tests/ (and this one, whatever pytest names it): every module of lib/ is
+    imported first (whatever was imported before), then every name bound to datetime or date is the fixed one, and time.time() (and
+    the archive's epoch_now) returns EVAL_NOW."""
+    import lib
+    import tests.fakes, tests.test_pollen, tests.test_service_forecast  # noqa: F401
+    for info in pkgutil.walk_packages(lib.__path__, "lib."):
+        importlib.import_module(info.name)
+    patch.setattr(_time, "time", lambda: EVAL_NOW)
+    for name, module in list(sys.modules.items()):
+        if module is None or not (name in ("lib", __name__) or name.startswith(("lib.", "tests."))):
+            continue
+        for attr, value in list(vars(module).items()):
+            if value is _dt.datetime:
+                patch.setattr(module, attr, _EvalDatetime)
+            elif value is _dt.date:
+                patch.setattr(module, attr, _EvalDate)
+    patch.setattr(sys.modules["lib.ecowitt.archive"], "epoch_now", lambda: EVAL_NOW)
+
+
+async def _inline(func, /, *args, **kwargs):
+    return func(*args, **kwargs)
+
+
+@pytest.fixture(scope="module")
+def eval_archive(tmp_path_factory):
+    """The fake station's whole archive (its ecobot.sqlite) built at EVAL_NOW, once for the module."""
+    from lib.ecowitt import Archive, Ecowitt, api, archive
+    from tests.fakes import ecowitt_transport
+
+    async def build(path):
+        transport, _ = ecowitt_transport()
+        eco = Ecowitt(config(path), transport=transport)
+        await eco.start()
+        await Archive(eco).run_once()
+        await eco.close()
+        return config(path).storage_path
+    path = tmp_path_factory.mktemp("eval-now")
+    with pytest.MonkeyPatch.context() as patch:
+        at_eval_now(patch)
+        with mock.patch.object(api, "MIN_GAP_SECONDS", 0), mock.patch.object(archive, "PACE_SECONDS", 0), \
+                mock.patch.object(asyncio, "to_thread", _inline):
+            return asyncio.run(build(path))
+
+
 def calls_for(tool: str) -> list[tuple[str, dict]]:
     return [(cid, args) for cid, expect in EXPECT.items() for name, args in evalkit.example_calls(expect) if name == tool]
 
 
-async def real_context(tmp_path, archived_cache) -> Context:
-    """The ten tools' sources, faked: the archived station, an AirGradient on the same file, both together, Open-Meteo, the pollen page
-    in season."""
+async def real_context(tmp_path, archive) -> Context:
+    """The ten tools' sources, faked, at the clock as it is (at_eval_now): the archived station, an AirGradient on the same file, both
+    together, Open-Meteo, the pollen page in season; the context's own clock is EVAL_NOW."""
     from tests.test_pollen import make as pollen_source
     from tests.test_service_forecast import open_meteo
-    eco, _ = await archived_station(tmp_path, archived_cache)
+    eco, _ = await archived_station(tmp_path, archive)
     air = AirGradient(config(tmp_path), transport=air_transport(rows_per_day=24)[0], storage=eco.storage)
     await air.start()
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9, place="Melbourne"), None, open_meteo([]))
-    noon = datetime.combine(datetime.now(TZ).date(), dtime(12, 0))
+    noon = datetime.combine(evalkit.NOW.date(), dtime(12, 0))
     forecast.now = lambda: noon
     pollen, _ = pollen_source(tmp_path)
-    ctx = await Context.open(eco=eco, air=air, composer=Composer(eco, air), forecast=forecast, pollen=pollen)
+    ctx = await Context.open(eco=eco, air=air, composer=Composer(eco, air), forecast=forecast, pollen=pollen, clock=lambda: EVAL_NOW)
     (summary,) = [t for t in evalkit.service_tools(ctx) if t.name == "summary"]
     held = json.loads(await summary.call({"readings": ["air"], "period": "last 30 days", "chart": False}))   # (the air's month, held)
     assert "error" not in held
@@ -155,11 +310,13 @@ async def real_context(tmp_path, archived_cache) -> Context:
 
 
 @pytest.mark.parametrize("tool", evalkit.service_tool_names())
-async def test_every_expected_call_is_answered_not_refused(tool, tmp_path, archived_cache):
+async def test_every_expected_call_is_answered_not_refused(tool, tmp_path, eval_archive, monkeypatch):
     calls = calls_for(tool)
     if not calls:
         pytest.skip(f"no case expects {tool}")
-    ctx = await real_context(tmp_path, archived_cache)
+    at_eval_now(monkeypatch)
+    assert datetime.now(TZ).strftime("%a %d %b %Y %H:%M") == "Tue 29 Sep 2026 14:05"
+    ctx = await real_context(tmp_path, eval_archive)
     try:
         (service_tool,) = [t for t in evalkit.service_tools(ctx) if t.name == tool]
         refused = {}
