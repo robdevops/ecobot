@@ -20,6 +20,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
     - [Docker logging](#docker-logging)
     - [Docker networking](#docker-networking)
 - [Upgrading](#upgrading)
+  - [Renamed settings](#renamed-settings)
   - [systemd](#systemd-1)
   - [Docker](#docker-1)
 - [Configuration](#configuration)
@@ -49,22 +50,25 @@ sudoedit /etc/ecobot.env
 
 ```
 # Telegram bot token from @BotFather
-TELEGRAM_BOT_TOKEN=
+BOT_TELEGRAM_TOKEN=
 
 # Your Telegram user id (ask @userinfobot), so the bot answers you
-ADMIN_CHAT_IDS=
+BOT_ADMIN_CHAT_IDS=
 
 # AI model (optional)
-OPENROUTER_API_KEY=
+BOT_OPENROUTER_API_KEY=
 
 # Weather station (optional)
-ECOWITT_API_KEY=
-ECOWITT_APP_KEY=
+MCP_ECOWITT_API_KEY=
+MCP_ECOWITT_APP_KEY=
 
 # AirGradient sensor (optional)
-AIRGRADIENT_API_TOKEN=
-AIRGRADIENT_LOCATION_ID=
+MCP_AIRGRADIENT_API_TOKEN=
+MCP_AIRGRADIENT_LOCATION_ID=
 ```
+
+Settings that start with `MCP_` are read by ecobot-mcp (the part that fetches the readings and runs the alert rules), the ones that
+start with `BOT_` by the Telegram bot; the few without either, such as `TZ`, by both.
 
 ### systemd
 
@@ -98,40 +102,36 @@ journalctl -fu ecobot
 
 Warnings and errors alone: `journalctl -p warning -u ecobot`.
 
-#### The weather service on its own (optional)
+#### ecobot-mcp on its own (optional)
 
-Not needed: without it the bot runs everything itself, as before. `ecobot-mcp.service` runs the weather service as its own program
-(`python -m ecobot_service`, an MCP server at `http://127.0.0.1:8765/mcp`) for other MCP clients, with the bot as one of them. It uses the
+Not needed: without it the bot runs everything itself, as before. `ecobot-mcp.service` runs ecobot-mcp as its own program
+(`python -m ecobot_mcp`, an MCP server at `http://127.0.0.1:8765/mcp`) for other MCP clients, with the bot as one of them. It uses the
 bot's data folder, so back that up first: `sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then:
 
-1. Add to `/etc/ecobot.env` (one token, made with `openssl rand -hex 16`):
+1. Add to `/etc/ecobot.env`:
    ```
-   MCP_SERVICE_TOKENS=<token>
-   WEATHER_MCP_URL=http://127.0.0.1:8765/mcp
-   WEATHER_MCP_TOKEN=<token>
+   BOT_MCP_URL=http://127.0.0.1:8765/mcp
    ```
-2. Restart the bot, now the service's client (it waits for the service): `sudo systemctl restart ecobot`
-3. Start the service: `sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ecobot-mcp`
+   No token is needed: at its first start ecobot-mcp makes one and keeps it in the data folder (`/var/lib/private/ecobot/auth_token`),
+   where the bot reads it. To choose your own instead, set `AUTH_TOKENS=<token>` (both read it; the bot sends the first).
+2. Restart the bot, now ecobot-mcp's client (it waits for it): `sudo systemctl restart ecobot`
+3. Start ecobot-mcp: `sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ecobot-mcp`
 4. Check that both run as the same user and the folder's owner is unchanged (the three numbers match):
    `systemctl show -p UID --value ecobot ecobot-mcp; stat -c %u /var/lib/private/ecobot`
 
-Logs: `journalctl -fu ecobot-mcp`. To go back: `sudo systemctl disable --now ecobot-mcp`, remove the three lines, `sudo systemctl restart ecobot`.
-Only one process runs the service on the data folder: started beside a bot without `WEATHER_MCP_URL`, it stops, saying so in its log.
+Logs: `journalctl -fu ecobot-mcp`. To go back: `sudo systemctl disable --now ecobot-mcp`, remove the `BOT_MCP_URL` line, `sudo systemctl restart ecobot`.
+Only one process runs ecobot-mcp's part on the data folder: started beside a bot without `BOT_MCP_URL`, it stops, saying so in its log.
+The token for [other MCP clients](#other-mcp-clients): `sudo cat /var/lib/private/ecobot/auth_token`.
 
 Then message `/report` to your Telegram bot.
 
-The service runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
+The bot runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
 
 ### Docker
 
-Docker runs two containers from one image: `ecobot-service`, the weather service (the readings, the alerts, and an MCP server that the
-bot and other AI clients use), and `ecobot`, the Telegram bot, which is optional. Add to `/etc/ecobot.env` one token for the bot to
-reach the service (make it with `openssl rand -hex 16`), the same value twice:
-
-```
-MCP_SERVICE_TOKENS=<token>
-WEATHER_MCP_TOKEN=<token>
-```
+Docker runs two containers, each from its own image built from this repository: `ecobot-mcp` (the readings, the alerts, and an MCP
+server that the bot and other AI clients use) and `ecobot`, the Telegram bot, which is optional. No token is needed between them: at
+its first start ecobot-mcp makes one and keeps it in the data folder, where the bot reads it.
 
 ```
 sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
@@ -145,7 +145,7 @@ sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
 cd /opt/ecobot
 ```
 
-To run the Telegram bot too (leave this out for the service alone):
+To run the Telegram bot too (leave this out for ecobot-mcp alone):
 
 ```
 echo "COMPOSE_PROFILES=bot" | sudo tee -a /opt/ecobot/.env
@@ -155,25 +155,27 @@ echo "COMPOSE_PROFILES=bot" | sudo tee -a /opt/ecobot/.env
 sudo docker compose up -d --build
 ```
 
-Watch the logs: `sudo docker logs -tf ecobot-service` shows `MCP: http://...:8765/mcp`, and `sudo docker logs -tf ecobot` shows
-`Weather service: connected`. Then message `/report` to your Telegram bot.
+Watch the logs: `sudo docker logs -tf ecobot-mcp` shows `MCP: http://...:8765/mcp`, and `sudo docker logs -tf ecobot` shows
+`ecobot-mcp: connected`. Then message `/report` to your Telegram bot.
 
-Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd:
-`sudo docker compose --profile bot down && sudo systemctl start ecobot`. Only one process runs the service on the data folder: started
-beside a bot that runs it itself, it stops, saying so in its log.
+Docker uses the same data folder as the systemd units, so you can switch between them, one at a time. To go back to systemd:
+`sudo docker compose --profile bot down && sudo systemctl start ecobot`. Only one process runs ecobot-mcp's part on the data folder:
+started beside a bot that runs it itself, it stops, saying so in its log.
 
 #### Other MCP clients
 
-The service is published on port 8765 of every address your machine has, so other devices on your network (Claude Code on a laptop,
-say) can use it: give each its own token, added to `MCP_SERVICE_TOKENS` with a comma, and add your machine's IP address or name, as they
-write it in the URL, to `MCP_SERVICE_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. For Claude Code:
+ecobot-mcp is published on port 8765 of every address your machine has, so other devices on your network (Claude Code on a laptop,
+say) can use it with a token: the one it generated (`sudo cat /var/lib/private/ecobot/auth_token`), or, better, one each: set
+`AUTH_TOKENS=<bot's token>,<laptop's token>` in `/etc/ecobot.env` (made with `openssl rand -hex 16`; the bot sends the first, and a
+token taken out is refused from the next start). Add your machine's IP address or name, as they write it in the URL, to
+`MCP_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. For Claude Code:
 `claude mcp add --transport http ecobot http://192.168.1.5:8765/mcp --header "Authorization: Bearer <token>"`. It is plain HTTP: keep it
 on your own network. Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in
 `compose.yaml` to `127.0.0.1:8765:8765`. A client that shows pictures can have the charts as images: add `?charts=png` to its URL.
 
 #### Docker logging
 
-Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot-service` or `CONTAINER_NAME=ecobot`):
+Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot-mcp` or `CONTAINER_NAME=ecobot`):
 
 ```
 echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee -a /opt/ecobot/.env
@@ -185,7 +187,7 @@ To use both this and [Docker host network](#docker-networking), set `COMPOSE_FIL
 
 #### Docker networking
 
-`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or put both containers on the host's network (then run the `docker compose` command again; the bot then reaches the service at 127.0.0.1):
+`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or put both containers on the host's network (then run the `docker compose` command again; the bot then reaches ecobot-mcp at 127.0.0.1):
 
 ```
 echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ecobot/.env
@@ -195,7 +197,37 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ec
 
 ## Upgrading
 
-Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept. The log's first line, `Starting ecobot <commit>`, says which version is running.
+Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept; settings with an old name still work
+([Renamed settings](#renamed-settings)). The log's first line, `Starting ecobot <commit>`, says which version is running.
+
+### Renamed settings
+
+In November 2026 every setting got the name of the program that reads it: `MCP_` for ecobot-mcp's, `BOT_` for the bot's, and none
+for the few both read. The old names still work: when a new name is unset and its old one is set, the old one is used, and the log says
+once at start which to rename (never their values). Rename them in `/etc/ecobot.env` when convenient:
+
+| Old name | New name |
+|---|---|
+| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY`, `ECOWITT_SOURCE` | `MCP_ECOWITT_API_KEY`, `MCP_ECOWITT_APP_KEY`, `MCP_ECOWITT_SOURCE` |
+| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID`, `AIRGRADIENT_DASHBOARD_URL`, `AIRGRADIENT_LOCAL_URL`, `AIRGRADIENT_SOURCE` | the same with `MCP_` in front |
+| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | `MCP_HOMEASSISTANT_URL`, `MCP_HOMEASSISTANT_TOKEN` |
+| `PLACE`, `POLLEN`, `POLLEN_DISTRICT`, `FORECAST`, `FORECAST_LAT`, `FORECAST_LON` | the same with `MCP_` in front |
+| `RAIN_QUIET_HOURS`, `ALERT_COOLDOWN_MINUTES`, `ANTISPIKE_REQUIRE_CONSECUTIVE` | the same with `MCP_` in front |
+| `CHART_ALL_FEELS_LIKE`, `CHART_ALL_VPD` | `MCP_CHART_ALL_FEELS_LIKE`, `MCP_CHART_ALL_VPD` |
+| `MCP_SERVICE_BIND`, `MCP_SERVICE_ALLOWED_HOSTS` | `MCP_BIND`, `MCP_ALLOWED_HOSTS` |
+| `MCP_SERVICE_TOKENS` | `AUTH_TOKENS` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_PRELOAD_CHAT` | `BOT_TELEGRAM_TOKEN`, `BOT_TELEGRAM_PRELOAD_CHAT` |
+| `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL` | `BOT_OPENROUTER_API_KEY`, `BOT_OPENROUTER_BASE_URL`, `BOT_OPENROUTER_MODEL` |
+| `ADMIN_ONLY`, `ADMIN_CHAT_IDS`, `LOG_WIDTH` | `BOT_ADMIN_ONLY`, `BOT_ADMIN_CHAT_IDS`, `BOT_LOG_WIDTH` |
+| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET`, `TUYA_BASE_URL` | the same with `BOT_` in front |
+| `IRRIGATION_CHECK_HOUR` | `BOT_IRRIGATION_CHECK_HOUR` |
+| `WEATHER_MCP_URL` | `BOT_MCP_URL` |
+| `WEATHER_MCP_TOKEN` | retired: the bot sends the first of `AUTH_TOKENS`. Still sent, with a warning, while `AUTH_TOKENS` is unset |
+
+`TZ`, `DATA_DIR`, `LOG_LEVEL` and `DARKMODE` keep their names. In Docker, `docker/bot.env` sets `BOT_MCP_URL`, so an old
+`WEATHER_MCP_URL` in `/etc/ecobot.env` no longer overrides it: rename it if you set one.
+
+### Your data
 
 The weather station's and the air sensor's history lives in one file, `ecobot.sqlite`. A version from before 29 October 2026 kept it in `ecowitt_cache.sqlite`, the two files beside it, `airgradient_cache.sqlite` and `conditions_cache.sqlite`; the releases of that week moved them into the one file at start, so upgrade through one of those (commit 56a998c or earlier that week) if you still have the old files, then delete them.
 
@@ -229,10 +261,25 @@ Compose replaces a container only if its image or settings changed. To remove th
 sudo docker image prune -f && sudo docker builder prune -f
 ```
 
-**From a version before the service ran on its own (November 2026):** the bot ran everything itself; now `ecobot-service` does, and the
-bot is its client, under the `bot` profile. Back up first (`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`), add the
-two token lines from [Docker](#docker) to `/etc/ecobot.env` (remove any `WEATHER_MCP_URL` line: Docker sets it), replace any
-`COMPOSE_PROFILES=service` in `/opt/ecobot/.env` with `COMPOSE_PROFILES=bot` (or add it), then:
+**From the layout with a container named `ecobot-service` (November 2026):** that container is now `ecobot-mcp`, from an image of
+its own (`ecobot-mcp`; the bot's is still `ecobot`). Remove the old container first, or it keeps port 8765:
+
+```
+sudo docker rm -f ecobot-service
+```
+
+```
+sudo docker compose up -d --build
+```
+
+Your token lines still work (`MCP_SERVICE_TOKENS` is read as `AUTH_TOKENS`, and `WEATHER_MCP_TOKEN` is ignored once that is set, with
+a warning): rename `MCP_SERVICE_TOKENS` to `AUTH_TOKENS` and delete `WEATHER_MCP_TOKEN`, or delete both to use the token ecobot-mcp
+generates. See [Renamed settings](#renamed-settings).
+
+**From a version before ecobot-mcp ran on its own (November 2026):** the bot ran everything itself; now `ecobot-mcp` does, and the
+bot is its client, under the `bot` profile. Back up first (`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`), remove
+any `BOT_MCP_URL` (or `WEATHER_MCP_URL`) line from `/etc/ecobot.env` (Docker sets it), replace any `COMPOSE_PROFILES=service` in
+`/opt/ecobot/.env` with `COMPOSE_PROFILES=bot` (or add it), then:
 
 ```
 sudo docker compose --profile bot down && sudo docker compose up -d --build
@@ -244,16 +291,17 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 
 | Variable | What it does |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Required. |
-| `ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
-| `OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
-| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
-| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
-| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
-| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
-| `AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
-| `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
-| `WEATHER_MCP_URL`, `WEATHER_MCP_TOKEN` | Optional. The bot as a client of the weather service running on its own (`python -m ecobot_service`, e.g. `http://127.0.0.1:8765/mcp`, and one of its `MCP_SERVICE_TOKENS`): the bot then fetches nothing and runs no alert rules itself, and needs none of the source settings above. Unset (the default), the bot runs everything itself, as before. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-the-services-client). |
+| `BOT_TELEGRAM_TOKEN` | Required. |
+| `BOT_ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
+| `BOT_OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
+| `MCP_ECOWITT_API_KEY`, `MCP_ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
+| `MCP_HOMEASSISTANT_URL`, `MCP_HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `MCP_ECOWITT_SOURCE`). |
+| `MCP_AIRGRADIENT_API_TOKEN`, `MCP_AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
+| `MCP_AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
+| `MCP_AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
+| `MCP_POLLEN`, `MCP_FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
+| `BOT_MCP_URL` | Optional. The bot as a client of ecobot-mcp running on its own (`python -m ecobot_mcp`, e.g. `http://127.0.0.1:8765/mcp`): the bot then fetches nothing and runs no alert rules itself, and needs none of the `MCP_` settings above. Unset (the default), the bot runs everything itself, as before. Docker sets it. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-ecobot-mcps-client). |
+| `AUTH_TOKENS` | Optional. The tokens ecobot-mcp accepts (`token,token,...`, one per client); the bot sends the first. Unset, ecobot-mcp generates one at its first start and keeps it in the data folder (`auth_token`), where the bot reads it. |
 
 After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 

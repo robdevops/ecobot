@@ -70,7 +70,7 @@ class Forecast(Source):
         self.tz, self.place = cfg.tz, cfg.place
         configured = (cfg.forecast_lat, cfg.forecast_lon)
         if configured != (None, None) and None in configured:
-            log.warning("FORECAST_LAT and FORECAST_LON go together: with only one set, the weather station's location is used")
+            log.warning("MCP_FORECAST_LAT and MCP_FORECAST_LON go together: with only one set, the weather station's location is used")
         self.location = configured if None not in configured else location if location and None not in location else None
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
@@ -82,7 +82,7 @@ class Forecast(Source):
 
     async def start(self):
         if not self.location:
-            raise RuntimeError("no location: set FORECAST_LAT and FORECAST_LON (or the weather station supplies one)")
+            raise RuntimeError("no location: set MCP_FORECAST_LAT and MCP_FORECAST_LON (or the weather station supplies one)")
         try:
             await self.warm(True)
             self.summary = f"{SOURCE}: {len(self.days or [])} days (every {self.warmer.interval:g}s)"

@@ -1,4 +1,4 @@
-"""The service's ten tools (lib/service) as the bot offers them to its model (docs/mcp-service.md 4): each by its own name, description
+"""The service's ten tools (lib/service) as the bot offers them to its model (docs/ecobot-mcp.md 4): each by its own name, description
 and parameters, as they are. The bot draws the charts itself, so it asks for them as drawn (request `_meta` `chart_points: "drawn"`)
 and keeps each whole result on the question's Turn (`Turn.results`: for drawing, the period buttons, the complete result that ends the
 turn; a call that gave no JSON object leaves None); the model is sent the result less the charts' data (`for_model`): each chart as its title and period,

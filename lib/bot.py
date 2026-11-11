@@ -40,7 +40,7 @@ from .sources import Source
 from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
-from .warm import Tasks   # (the service's too: ecobot_service)
+from .warm import Tasks   # (the service's too: ecobot_mcp)
 from .weather import UNREACHABLE, ChartImage, ChartNotDrawn, LocalWeather, ServiceUnreachable
 
 log = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n
             "/particulates, /wind), \"weather now\" and a reading's chart over a period like \"rain chart 7d\" or \"humidity 30d\", "
             "as well as all the alerts.")
 OUT_OF_DATE = "That chart is out of date, please ask again"
-SERVICE_DOWN = "Sorry, I can't reach the weather service right now. Please try again in a minute."   # (WEATHER_MCP_URL: it is another program)
+SERVICE_DOWN = "Sorry, I can't reach the weather service right now. Please try again in a minute."   # (BOT_MCP_URL: it is another program)
 
 
 @dataclass
@@ -188,7 +188,7 @@ def strip_chart_talk(text: str) -> str:
 
 
 def complete_reply(results: list[str]) -> str | None:
-    """The reply of a step whose every result is complete (docs/mcp-service.md 3.7: `complete: true`, a chart made and its `reply`
+    """The reply of a step whose every result is complete (docs/ecobot-mcp.md 3.7: `complete: true`, a chart made and its `reply`
     ready): the replies in order; None when any isn't."""
     replies = []
     for result in results:
@@ -404,7 +404,7 @@ class Bot:
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
         its own when none is given. service: the weather service as the bot reaches it (lib/weather.py: RemoteWeather over MCP, with
-        WEATHER_MCP_URL; `sources` is then empty), or the service's tools in this process (lib/service), which the bot's own code paths
+        BOT_MCP_URL; `sources` is then empty), or the service's tools in this process (lib/service), which the bot's own code paths
         call (its shortcuts, report, gauges, alert charts and period buttons), built over `sources` when none is given (LocalWeather).
         The model is offered the same tools (agent.tools: lib/model_tools.py), with the server's instructions after the bot's persona.
         alert_log: the service's alert log in this process (lib/alert_log.py), whose events the 🔄 under an alert's chart finds its
@@ -415,15 +415,15 @@ class Bot:
         self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
-        self.admin_only = bool(getattr(cfg, "admin_only", False))   # ADMIN_ONLY: only the admins of the groups the bot is in may use it
+        self.admin_only = bool(getattr(cfg, "admin_only", False))   # BOT_ADMIN_ONLY: only the admins of the groups the bot is in may use it
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
-        self._refused: set[int] = set()   # the senders ADMIN_ONLY has turned away, each logged once with its id (for ADMIN_CHAT_IDS)
+        self._refused: set[int] = set()   # the senders BOT_ADMIN_ONLY has turned away, each logged once with its id (for BOT_ADMIN_CHAT_IDS)
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.alert_charts = pictures.AlertCharts(self.images, lambda: now_local(self.cfg.tz),
                                                  tz=getattr(cfg, "tz", None))   # the alerts' charts, kept with them
-        self.preloading: set[str] = set()        # the calls whose other periods are being uploaded (TELEGRAM_PRELOAD_CHAT)
+        self.preloading: set[str] = set()        # the calls whose other periods are being uploaded (BOT_TELEGRAM_PRELOAD_CHAT)
         self.last_used = 0.0                     # when a message or a press last came in (monotonic; 0: never)
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
         self.charted = periods.Charted(state.charts, state.save)   # the call behind each chart sent (kept across restarts)
@@ -544,7 +544,7 @@ class Bot:
         return ("user", update.effective_user.id, update.effective_user.full_name) if update.effective_user else None
 
     async def _allowed(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """With ADMIN_ONLY on, only known group admins (and ADMIN_CHAT_IDS) get through; anyone else is told so, once, and False is
+        """With BOT_ADMIN_ONLY on, only known group admins (and BOT_ADMIN_CHAT_IDS) get through; anyone else is told so, once, and False is
         returned. A group the bot hears from is remembered first: it has to be known for its admins to count."""
         chat = update.effective_chat
         if chat is not None and chat.type != ChatType.PRIVATE:
@@ -553,7 +553,7 @@ class Bot:
             return True
         if (who := self._sender(update)) and who[1] not in self._refused:   # once per sender in this run: the id is for the owner to list
             self._refused.add(who[1])
-            log.info("%s: refused: %s %d (%s) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in", describe_source(update), *who)
+            log.info("%s: refused: %s %d (%s) is not a known group admin; add the id to BOT_ADMIN_CHAT_IDS to let them in", describe_source(update), *who)
         if update.callback_query is not None:
             await toast_quietly(update.callback_query, NOT_ADMIN_TOAST)
         elif update.effective_message is not None:
@@ -600,7 +600,7 @@ class Bot:
 
     async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """The one place every button press comes in: believed (_press), a known family (a prefix nobody handles is refused, so a
-        new kind of button is dead until it is added to buttons()), allowed (ADMIN_ONLY), then handled."""
+        new kind of button is dead until it is added to buttons()), allowed (BOT_ADMIN_ONLY), then handled."""
         query = update.callback_query
         if query is None or not await self._press(query):
             return
@@ -1246,7 +1246,7 @@ class Bot:
 
     @staticmethod
     def _complete(calls: list[dict], results: list[str]) -> str | None:
-        """The model loop's finish: when every call of a step gave a complete result (docs/mcp-service.md 3.7: its chart and its ready
+        """The model loop's finish: when every call of a step gave a complete result (docs/ecobot-mcp.md 3.7: its chart and its ready
         reply), their replies in order are the answer and the model is asked nothing more; else None, and the model answers as usual."""
         return complete_reply(results)
 
@@ -1273,7 +1273,7 @@ class Bot:
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
     def preload_soon(self, bot, drawn_by: dict | None):
-        """With TELEGRAM_PRELOAD_CHAT set, upload the chart of each other period its drawn_by lists, in the background."""
+        """With BOT_TELEGRAM_PRELOAD_CHAT set, upload the chart of each other period its drawn_by lists, in the background."""
         chat = getattr(self.cfg, "telegram_preload_chat", None)
         key = periods.drawn_key(drawn_by)
         if chat is None or self.preload_off or not drawn_by or not drawn_by.get("periods") or key in self.preloading:
@@ -1312,7 +1312,7 @@ class Bot:
 
             await asyncio.gather(*(upload(period, args) for period, args in asked.items()))
             if skipped:
-                log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take %d of the charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
+                log.warning("BOT_TELEGRAM_PRELOAD_CHAT %s didn't take %d of the charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
             if done:
                 log.info("[Telegram] Preloaded %s %s to %s in %.1fs", tool, json.dumps(periods.with_period(drawn_by, "…"), ensure_ascii=False),
                          chat, time.monotonic() - started, extra=QUOTES)
@@ -1330,14 +1330,14 @@ class Bot:
         except TelegramError as e:
             if not self.preload_off:
                 self.preload_off = True
-                log.warning("Couldn't upload to TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
+                log.warning("Couldn't upload to BOT_TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
         return None
 
     async def draw_buttons_ahead(self, bot):
         """The chart of each keyboard button (each a fixed service call: the call its sentence is read as), and of each alert type sent in
         the last hours (alert_charts.warm, by their calls), drawn afresh (every AHEAD_SECONDS, from ecobot.warm_up), so a press, or the
         Refresh under the alert, is answered with a chart already drawn (images.ready, AlertCharts.newer_than) instead of drawing one
-        then; with TELEGRAM_PRELOAD_CHAT set and the bot used in the last 15 minutes, uploaded too, so the press sends Telegram's copy and
+        then; with BOT_TELEGRAM_PRELOAD_CHAT set and the bot used in the last 15 minutes, uploaded too, so the press sends Telegram's copy and
         uploads nothing. A chart drawn for a question in the last minute is left. Nobody is waiting: the requests are background ones,
         and the logs are quiet."""
         started, now = time.monotonic(), now_local(self.cfg.tz)
@@ -1366,7 +1366,7 @@ class Bot:
         if drawn:
             log.debug("Drew %d button charts ahead%s in %.1fs", drawn, f", uploaded {uploaded} to {chat}" if uploaded else "", time.monotonic() - started)
         if skipped:
-            log.warning("TELEGRAM_PRELOAD_CHAT %s didn't take %d of the button charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
+            log.warning("BOT_TELEGRAM_PRELOAD_CHAT %s didn't take %d of the button charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
 
     async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
         """Answer `text`."""
@@ -1442,7 +1442,7 @@ class Bot:
         if answer.reply is not None:
             working.append({"role": "assistant", "content": answer.reply})
             return answer
-        if not getattr(self.agent, "ready", True):   # no OPENROUTER_API_KEY: what is left is for the model
+        if not getattr(self.agent, "ready", True):   # no BOT_OPENROUTER_API_KEY: what is left is for the model
             answer.reply = NO_MODEL
             working.append({"role": "assistant", "content": answer.reply})
             return answer

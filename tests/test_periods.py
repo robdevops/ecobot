@@ -320,7 +320,7 @@ async def test_a_chart_is_drawn_again_once_it_is_stale_and_never_answers_another
 
 
 def preloading_bot(alert_state, monkeypatch, refuse=None, clock=None):
-    """A bot with TELEGRAM_PRELOAD_CHAT set, and the (chat, photo, silent) of every upload to it. The periods are uploaded side by side,
+    """A bot with BOT_TELEGRAM_PRELOAD_CHAT set, and the (chat, photo, silent) of every upload to it. The periods are uploaded side by side,
     in no fixed order, so each period's picture is its period's words and its file id "file " and those words; context.refused.error
     is what the uploads raise (none: they go through)."""
     bot, uploads, refused = make_bot(alert_state, monkeypatch), [], NS(error=refuse)
@@ -382,7 +382,7 @@ async def test_nothing_is_uploaded_ahead_without_the_setting_and_a_refused_uploa
         await settle(bot)
         await bot.respond(pressed(bot, []), context, "Temperature chart 30d")
         await settle(bot)
-    assert [r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()].__len__() == 1 and uploads == [] and bot.preload_off
+    assert [r for r in caplog.records if "BOT_TELEGRAM_PRELOAD_CHAT" in r.getMessage()].__len__() == 1 and uploads == [] and bot.preload_off
 
 
 async def test_a_flood_limit_or_a_timeout_skips_those_uploads_and_the_next_chart_uploads_again(alert_state, monkeypatch, caplog):
@@ -398,7 +398,7 @@ async def test_a_flood_limit_or_a_timeout_skips_those_uploads_and_the_next_chart
             await bot.respond(pressed(bot, []), context, asked)
             await settle(bot)
         assert uploads == [] and not bot.preload_off
-    assert len([r for r in caplog.records if "TELEGRAM_PRELOAD_CHAT" in r.getMessage()]) == 2        # one a chart, though several uploads were skipped
+    assert len([r for r in caplog.records if "BOT_TELEGRAM_PRELOAD_CHAT" in r.getMessage()]) == 2        # one a chart, though several uploads were skipped
     context.refused.error = None
     await bot.respond(pressed(bot, []), context, "Temperature chart 90d")
     await settle(bot)

@@ -1,5 +1,5 @@
 """Periods in words: the person's own words for a stretch of time ("this week", "3m", "yesterday afternoon"), read by one table in
-the station's time zone, so a model never works out a date (docs/mcp-service.md 3.2). Every tool that takes a period reads it here,
+the station's time zone, so a model never works out a date (docs/ecobot-mcp.md 3.2). Every tool that takes a period reads it here,
 and its result begins with how it was read.
 
   - `period` must be one of the table's forms as a whole phrase, case aside; N is a number in digits or a word up to twelve. There is

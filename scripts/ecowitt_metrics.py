@@ -14,12 +14,11 @@ sensor, and "invalid" when Ecowitt does not accept the name.
 """
 
 import asyncio
-import os
 from datetime import datetime, timedelta
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 
-from lib.config import local_tz  # noqa: E402
+from lib.config import env, local_tz  # noqa: E402
 from lib.ecowitt.api import GROUPS, EcowittAPI, EcowittError  # noqa: E402
 
 # Data groups the API's documentation (real_time and history "call_back") lists. Channels are numbered.
@@ -65,9 +64,9 @@ async def main():
     ap.add_argument("--groups", help="comma-separated groups to ask about, instead of the documented list")
     ap.add_argument("--history", action="store_true", help="also ask for the last 6 hours at 30 minutes, to list the history fields")
     args = ap.parse_args()
-    key, app = os.getenv("ECOWITT_API_KEY", "").strip(), os.getenv("ECOWITT_APP_KEY", "").strip()
+    key, app = env("MCP_ECOWITT_API_KEY"), env("MCP_ECOWITT_APP_KEY")   # (or their old names)
     if not (key and app):
-        raise SystemExit("Set ECOWITT_API_KEY and ECOWITT_APP_KEY in the environment first (see the top of this file).")
+        raise SystemExit("Set MCP_ECOWITT_API_KEY and MCP_ECOWITT_APP_KEY in the environment first (see the top of this file).")
     if args.groups:
         names = [g.strip() for g in args.groups.split(",") if g.strip()]
     else:

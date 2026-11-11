@@ -4,7 +4,8 @@ Without --live: no key needed. The decisions the bot still makes in code (the re
 report, the gauges, "weather now", a named reading's chart and a period) are checked over cases.json, and every service expectation
 is checked against the tools it names (each one they take).
 
-With --live: also asks the real model (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL in the environment) and checks
+With --live: also asks the real model (OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL in the environment: this script's own
+names, as CI's secrets are called, not the bot's BOT_OPENROUTER_* settings) and checks
 which tools it called and with what. Nothing is fetched. The bot's own request is the default: its system prompt (the persona, the
 server's instructions, the date and time; lib/prompt.py), the ten tools as it offers them, its reasoning effort from the words, and a
 question it answers in code scored by its fixed calls without asking the model. Each call is answered by the real tool over the
@@ -23,7 +24,7 @@ reply's first 200 characters are printed.
     python scripts/eval_prompts.py --live --effort low   # force a reasoning level to see what it fixes
     python scripts/eval_prompts.py --live --repeat 5 --ids 3m-average,public-holidays   # how reliable is one case?
 
-With --service: the ten tools alone (docs/mcp-service.md 7): the model is offered only their names, descriptions and parameters, with a
+With --service: the ten tools alone (docs/ecobot-mcp.md 7): the model is offered only their names, descriptions and parameters, with a
 neutral system line and the date, time and zone, and none of the bot's prompt or shortcuts; every call is answered "no data" (the
 model may call again or reply, up to the Agent's 10 steps), and every call of the turn is scored (what the descriptions lead a model
 to, with nothing real to react to). --instructions adds the server's instructions

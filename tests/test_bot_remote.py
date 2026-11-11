@@ -1,8 +1,8 @@
-"""The bot as the service's client over MCP (WEATHER_MCP_URL: lib/weather.RemoteWeather, docs/mcp-service.md 3.8 and step 5), against the
+"""The bot as the service's client over MCP (BOT_MCP_URL: lib/weather.RemoteWeather, docs/ecobot-mcp.md 3.8 and step 5), against the
 real server (lib/mcp_server.EcobotServer): over the SDK's in-memory transport for a question answered with the remote tools, a chart drawn
 from a remote result with its buttons, an alert delivered through the listen and the irrigation check's inputs; under uvicorn on a localhost
 port (a connection can fail there) for a dropped connection rebuilt with the alerts after the last id read once, the service down (the bot
-says so), and ecobot.main() as a client. The path with WEATHER_MCP_URL unset is the rest of the suite's."""
+says so), and ecobot.main() as a client. The path with BOT_MCP_URL unset is the rest of the suite's."""
 
 import asyncio
 import json
@@ -355,7 +355,7 @@ async def test_with_the_service_down_the_bot_says_so_and_carries_on(alert_state,
 
 
 async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bare, tmp_path, monkeypatch, caplog):
-    """ecobot.main() with WEATHER_MCP_URL: no source is started (no keys are set), the service's station names the time zone, the
+    """ecobot.main() with BOT_MCP_URL: no source is started (no keys are set), the service's station names the time zone, the
     bot draws its keyboard's charts ahead, and an alert the service logs reaches a chat."""
     import os
     import signal
@@ -364,12 +364,12 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
     from tests.test_startup import FakeApp, FakeBuilder
     caplog.set_level("INFO")
     port = free_port()
-    cfg = config(tmp_path, weather_mcp_url=f"http://127.0.0.1:{port}/mcp", weather_mcp_token=TOKEN, ecowitt_api_key="",
+    cfg = config(tmp_path, mcp_url=f"http://127.0.0.1:{port}/mcp", auth_tokens=(TOKEN,), ecowitt_api_key="",
                  ecowitt_app_key="", airgradient_token="", airgradient_location="", state_path=tmp_path / "bot" / "bot_state.json")
     (tmp_path / "bot").mkdir()
     AlertState(cfg.state_path).add_chat(5, "private")
     app = FakeApp()
-    monkeypatch.setattr(ecobot._format, "width", ecobot._format.width)   # (main sets LOG_WIDTH's: put back after; the levels: conftest)
+    monkeypatch.setattr(ecobot._format, "width", ecobot._format.width)   # (main sets BOT_LOG_WIDTH's: put back after; the levels: conftest)
     drawn = []
 
     async def note(self, tg_bot):
@@ -401,13 +401,13 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
         publishing.cancel()
         await asyncio.gather(publishing, return_exceptions=True)
     assert started == [] and "Ecowitt: " not in caplog.text and "Telegram: @testbot" in caplog.text
-    assert f"Weather service: {cfg.weather_mcp_url}" in caplog.text
+    assert f"ecobot-mcp: {cfg.mcp_url}" in caplog.text
     assert [(chat, text) for chat, text, _ in app.sent] == [(5, "🌧️ Raining")]
     assert drawn == [app.bot]
 
 
 async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_zone_once_read_and_keeps_it(tmp_path, monkeypatch, caplog):
-    """ecobot.main() with WEATHER_MCP_URL and the service not up within STARTUP_WAIT starts in TZ's zone (UTC here, as a container's); once
+    """ecobot.main() with BOT_MCP_URL and the service not up within STARTUP_WAIT starts in TZ's zone (UTC here, as a container's); once
     the service is reached, its station's zone (Melbourne) is the bot's, the charts', the alert delivery's and the irrigation check's,
     and it is kept in bot_state.json: the next start with the service down runs in it, not in UTC."""
     import os
@@ -420,7 +420,7 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
     caplog.set_level("INFO")
     utc = ZoneInfo("Etc/UTC")
     port = free_port()
-    cfg = config(tmp_path, tz=utc, weather_mcp_url=f"http://127.0.0.1:{port}/mcp", weather_mcp_token=TOKEN, ecowitt_api_key="",
+    cfg = config(tmp_path, tz=utc, mcp_url=f"http://127.0.0.1:{port}/mcp", auth_tokens=(TOKEN,), ecowitt_api_key="",
                  ecowitt_app_key="", airgradient_token="", airgradient_location="", state_path=tmp_path / "bot" / "bot_state.json")
     (tmp_path / "bot").mkdir()
     monkeypatch.setattr(ecobot, "STARTUP_WAIT", 0.3)
@@ -508,13 +508,13 @@ async def test_the_irrigation_check_is_timed_again_in_a_zone_read_later(tmp_path
 def test_a_client_of_the_service_needs_no_source_settings(monkeypatch, tmp_path):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1:x")
-    for name in ("ECOWITT_API_KEY", "ECOWITT_APP_KEY", "HOMEASSISTANT_URL", "HOMEASSISTANT_TOKEN", "AIRGRADIENT_API_TOKEN",
-                 "AIRGRADIENT_LOCATION_ID", "AIRGRADIENT_LOCAL_URL", "WEATHER_MCP_URL"):
+    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "1:x")
+    for name in ("MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY", "MCP_HOMEASSISTANT_URL", "MCP_HOMEASSISTANT_TOKEN", "MCP_AIRGRADIENT_API_TOKEN",
+                 "MCP_AIRGRADIENT_LOCATION_ID", "MCP_AIRGRADIENT_LOCAL_URL", "BOT_MCP_URL"):
         monkeypatch.delenv(name, raising=False)
-    with pytest.raises(SystemExit, match="ECOWITT_API_KEY"):
+    with pytest.raises(SystemExit, match="MCP_ECOWITT_API_KEY"):
         Config.from_env()
-    monkeypatch.setenv("WEATHER_MCP_URL", "http://127.0.0.1:8765/mcp/")
-    monkeypatch.setenv("WEATHER_MCP_TOKEN", "t0ken")
+    monkeypatch.setenv("BOT_MCP_URL", "http://127.0.0.1:8765/mcp/")
+    monkeypatch.setenv("AUTH_TOKENS", "t0ken, other")
     cfg = Config.from_env()
-    assert (cfg.weather_mcp_url, cfg.weather_mcp_token) == ("http://127.0.0.1:8765/mcp", "t0ken") and not cfg.ecowitt
+    assert (cfg.mcp_url, cfg.auth_tokens) == ("http://127.0.0.1:8765/mcp", ("t0ken", "other")) and not cfg.ecowitt

@@ -1,5 +1,5 @@
 """Chart images: a chart's JSON (schemas/chart.json) drawn as a PNG by the bot's renderer (lib/charts.render_data, Pillow), for the
-service's tools when a client asks for images (docs/mcp-service.md 3.7) and for the bot's interface to the service (lib/weather.py).
+service's tools when a client asks for images (docs/ecobot-mcp.md 3.7) and for the bot's interface to the service (lib/weather.py).
 
 Pillow is optional on the service (requirements-charts.txt): nothing here imports it, nor lib.charts or lib.draw, until the first image
 is asked for (`renderer`). Without it `renderer()` is None, said once as a warning, and the service answers with the charts' JSON as if

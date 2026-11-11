@@ -1,3 +1,3 @@
-# The chart pictures (lib/charts.py, lib/draw.py, the gauges): the bot needs them; the service (python -m ecobot_service) only to send
-# its charts as images (docs/mcp-service.md 3.7). Pinned: the reference images in tests/charts are drawn with this version.
+# The chart pictures (lib/charts.py, lib/draw.py, the gauges): the bot needs them; ecobot-mcp (python -m ecobot_mcp) only to send
+# its charts as images (docs/ecobot-mcp.md 3.7). Both Docker images have it. Pinned: the reference images in tests/charts are drawn with this version.
 pillow==13.0.0

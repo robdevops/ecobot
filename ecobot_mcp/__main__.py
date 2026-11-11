@@ -1,47 +1,38 @@
-"""python -m ecobot_service: the weather and air service on its own (docs/mcp-service.md 3.8). It runs the sources and their syncers
-(ecobot_service/core.py: the keep-warm, the first fetch, the archive, the backfills, Home Assistant's imports), the alert rules writing
-the alert log, and the MCP server (lib/mcp_server.py) at http://MCP_SERVICE_BIND/mcp, Streamable HTTP under uvicorn: put it behind TLS (a
+"""python -m ecobot_mcp: ecobot-mcp, the MCP server on its own (docs/ecobot-mcp.md 3.8). It runs the sources and their syncers
+(ecobot_mcp/core.py: the keep-warm, the first fetch, the archive, the backfills, Home Assistant's imports), the alert rules writing
+the alert log, and the MCP server (lib/mcp_server.py) at http://MCP_BIND/mcp, Streamable HTTP under uvicorn: put it behind TLS (a
 reverse proxy such as Caddy) to reach it from elsewhere.
 
-Settings come from the environment, as the bot reads them (lib/config.py, docs/configuration.md), less the bot's own (no Telegram token
-is needed), with MCP_SERVICE_TOKENS (token,token,..., one per client), MCP_SERVICE_BIND (host:port, default 127.0.0.1:8765) and MCP_SERVICE_ALLOWED_HOSTS (the
-Host names it answers, default 127.0.0.1 and localhost). Without MCP_SERVICE_TOKENS it serves without auth, and then only on a loopback address."""
+Settings come from the environment (lib/config.py, docs/configuration.md): the MCP_ ones and the shared ones; the bot's (BOT_) are not
+needed. Among them MCP_BIND (host:port, default 127.0.0.1:8765), MCP_ALLOWED_HOSTS (the Host names it answers, default 127.0.0.1 and
+localhost) and AUTH_TOKENS (token,token,..., one per client). Every request needs one of the tokens: with AUTH_TOKENS unset, the one
+it generates at its first start and keeps in the data folder (lib/auth_token.py)."""
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
 import signal
 import socket
 
 import uvicorn
 
-from lib import chart_images
+from lib import auth_token, chart_images
 from lib.config import Config
 from lib.logs import LogFormat, on_journal, stream_handlers
 
 from .core import Core, configure, start_sources, version
 
-log = logging.getLogger("ecobot.service")
-SHUTDOWN_SECONDS = 3   # how long uvicorn waits for open connections (a listen stream) to end when the service stops
+log = logging.getLogger("ecobot.mcp")
+SHUTDOWN_SECONDS = 3   # how long uvicorn waits for open connections (a listen stream) to end when ecobot-mcp stops
 
 
 class Uvicorn(uvicorn.Server):
-    """uvicorn's server, leaving SIGINT and SIGTERM to the service (which closes everything in order: uvicorn's own handling raises the
+    """uvicorn's server, leaving SIGINT and SIGTERM to ecobot-mcp (which closes everything in order: uvicorn's own handling raises the
     signal again once it has stopped, ending the process before the sources are closed)."""
 
     @contextlib.contextmanager
     def capture_signals(self):
         yield
-
-
-def loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def server_config(app, host: str, port: int) -> uvicorn.Config:
@@ -51,16 +42,27 @@ def server_config(app, host: str, port: int) -> uvicorn.Config:
                           timeout_graceful_shutdown=SHUTDOWN_SECONDS)
 
 
+def generated_token(cfg: Config) -> str:
+    """AUTH_TOKENS unset: the token kept in the data folder, made at the first start (its place is logged, never its value)."""
+    folder = cfg.state_path.parent
+    try:
+        token = auth_token.ensure(folder)
+    except OSError as e:
+        raise SystemExit(f"AUTH_TOKENS is not set and a token couldn't be kept in {auth_token.path(folder)} ({type(e).__name__}: {e}): "
+                         "set AUTH_TOKENS (token,token,...), or make the data folder writable") from None
+    log.info("AUTH_TOKENS is not set: accepting the token kept in %s (the bot reads it from there; give it to any other client)",
+             auth_token.path(folder))
+    return token
+
+
 async def main():
     from lib.mcp_server import EcobotServer, http_app
-    log.info("Starting the ecobot service %s", version())
+    log.info("Starting ecobot-mcp %s", version())
     cfg = Config.from_env(bot=False)
     for name in ("ecobot", "lib"):
         logging.getLogger(name).setLevel(cfg.log_level)
-    host, port = cfg.mcp_service_bind
-    if not cfg.mcp_service_tokens and not loopback(host):
-        raise SystemExit(f"MCP_SERVICE_BIND is {host}:{port}, which other machines can reach, and MCP_SERVICE_TOKENS is empty: set MCP_SERVICE_TOKENS "
-                         "(token,token,...) or bind to 127.0.0.1")
+    host, port = cfg.mcp_bind
+    tokens = cfg.auth_tokens or (generated_token(cfg),)
     configure(cfg)
     async with contextlib.AsyncExitStack() as stack:
         sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
@@ -76,8 +78,8 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
         server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version())
-        hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_service_allowed_hosts)))   # (its own name too: a container's hostname)
-        app = http_app(server, tokens=cfg.mcp_service_tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
+        hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_allowed_hosts)))   # (its own name too: a container's hostname)
+        app = http_app(server, tokens=tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()
@@ -95,7 +97,7 @@ async def main():
         web = Uvicorn(server_config(app, host, port))
         serving = asyncio.create_task(web.serve())
         log.info("MCP: http://%s:%d/mcp, %s; answering Host %s", host if ":" not in host else f"[{host}]", port,
-                 f"{len(cfg.mcp_service_tokens)} token(s)" if cfg.mcp_service_tokens else "no auth (loopback only)",
+                 f"{len(tokens)} token(s) from AUTH_TOKENS" if cfg.auth_tokens else f"the token in {auth_token.path(cfg.state_path.parent)}",
                  ", ".join(hosts))
         waiting = asyncio.create_task(stop.wait())
         await asyncio.wait({serving, waiting}, return_when=asyncio.FIRST_COMPLETED)

@@ -1,4 +1,4 @@
-"""The `relate` tool (docs/mcp-service.md 3.3): rain against one reading, the two read together at 30-minute resolution over whole days
+"""The `relate` tool (docs/ecobot-mcp.md 3.3): rain against one reading, the two read together at 30-minute resolution over whole days
 to yesterday. For pressure, humidity or wind: does rain follow a change in it (lib/ecowitt/link.py, today's weather_link); for PM2.5 or
 PM10: is the air cleaner after rain (lib/compose.py Composer.air_link, today's air_link). Their findings come back as they are, in the
 service's shape; a chart, when asked, is the reading with rain as bars behind it, carrying the call that drew it (drawn_by, 3.7).

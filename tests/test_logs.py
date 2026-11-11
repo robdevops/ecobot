@@ -77,5 +77,5 @@ async def test_an_airgradient_that_does_not_answer_says_so_and_in_dockers_networ
         text = caplog.text
         assert ("AirGradient: (airgradient_d83bda1c1e08.local) did not answer (OSError: airgradient_d83bda1c1e08.local was not found on "
                 "the network); " + ("using the cloud, " if cloud else "") + "trying again in 5 min") in text
-        assert ("put the IP address in AIRGRADIENT_LOCAL_URL, or put the container on the host network" in text) == private
+        assert ("put the IP address in MCP_AIRGRADIENT_LOCAL_URL, or put the container on the host network" in text) == private
         await sensor.close()

@@ -1,4 +1,4 @@
-"""What the bot decides about a message with patterns rather than the model (docs/mcp-service.md 4):
+"""What the bot decides about a message with patterns rather than the model (docs/ecobot-mcp.md 4):
 
   - how much the model should think (only predictions, analysis and "describe it" questions get reasoning);
   - the few shortcuts the bot answers in code, each a fixed call to a service tool: the report, the gauges, "weather now", and a

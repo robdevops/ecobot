@@ -575,5 +575,5 @@ async def test_the_tools_alone_answer_no_data_to_every_call_and_score_every_call
     assert await evalkit.run_service([case("will-it-rain")], EXPECT, model, "m", out=lines.append) == 0, lines
     assert len(model.requests) == 3
     script_doc = ast.get_docstring(ast.parse((ROOT / "scripts" / "eval_prompts.py").read_text()))
-    for text in (script_doc, evalkit.run_service.__doc__, evalkit.__doc__, (ROOT / "docs" / "mcp-service.md").read_text()):
+    for text in (script_doc, evalkit.run_service.__doc__, evalkit.__doc__, (ROOT / "docs" / "ecobot-mcp.md").read_text()):
         assert "first round" not in text and "(one round)" not in text

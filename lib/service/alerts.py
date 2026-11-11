@@ -1,4 +1,4 @@
-"""The service's alert rules (docs/mcp-service.md 3.6), each on the trigger it has: the weather alerts after every refresh of the station
+"""The service's alert rules (docs/ecobot-mcp.md 3.6), each on the trigger it has: the weather alerts after every refresh of the station
 (and the rain on each live reading), particulates every CHECK_SECONDS, pollen and the forecast after each refresh of their pages. Their
 settings (quiet hours, cooldown) are the service's config, their state its own store (lib/alerts/store.py, alert_state.json), and what
 they decide goes to the alert log (lib/alert_log.py), which clients read: they know nothing of chats or Telegram.

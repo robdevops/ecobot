@@ -1,4 +1,4 @@
-"""The server's instructions (lib/service/instructions.py; docs/mcp-service.md 3.2): the devices and their nicknames, Indoor and Outdoor,
+"""The server's instructions (lib/service/instructions.py; docs/ecobot-mcp.md 3.2): the devices and their nicknames, Indoor and Outdoor,
 the units, built from the Context's sources and the catalogue."""
 
 from zoneinfo import ZoneInfo

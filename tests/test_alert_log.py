@@ -1,5 +1,5 @@
 """The alert log (lib/alert_log.py), the rules' own store (lib/alerts/store.py) and the bot's delivery from the log
-(lib/alerts/notify.AlertDelivery): docs/mcp-service.md 3.6 and section 4."""
+(lib/alerts/notify.AlertDelivery): docs/ecobot-mcp.md 3.6 and section 4."""
 
 import asyncio
 from types import SimpleNamespace as NS

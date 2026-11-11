@@ -1,4 +1,4 @@
-"""A day's look: one word and an emoji for that day's outdoor weather, worked out from its figures (docs/mcp-service.md 3.2, "Answers
+"""A day's look: one word and an emoji for that day's outdoor weather, worked out from its figures (docs/ecobot-mcp.md 3.2, "Answers
 ready to pass on"), so a model quotes `day_look: {word: "wet", emoji: "🌧️"}` beside a day and never guesses it.
 
 The rule takes the first that holds:

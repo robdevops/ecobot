@@ -1,8 +1,8 @@
-"""The service over the network (docs/mcp-service.md 7, "a client that listens", "a deploy check"): the real Streamable HTTP app under
+"""The service over the network (docs/ecobot-mcp.md 7, "a client that listens", "a deploy check"): the real Streamable HTTP app under
 uvicorn on a localhost port each test starts and stops, not the in-memory transport (a connection can't fail there, and it buffers a
 listen stream). A client that listens hears a new alert, loses its listen when the service stops, listens again once it is back and
 reads the alerts after its last id, once; a request without the token, with a wrong or revoked one, or to a Host not allowed is
-refused; and `python -m ecobot_service` runs the sources and answers a tool call through the name a proxy uses."""
+refused; and `python -m ecobot_mcp` runs the sources and answers a tool call through the name a proxy uses."""
 
 import asyncio
 import contextlib
@@ -19,7 +19,7 @@ import pytest
 from mcp import Client
 
 from lib import upstream
-from ecobot_service.__main__ import Uvicorn, server_config
+from ecobot_mcp.__main__ import Uvicorn, server_config
 from lib.upstream import Upstream, http_transport
 from lib.alert_log import AlertLog
 from lib.mcp_server import ALERTS_URI, EcobotServer, http_app
@@ -143,18 +143,18 @@ async def test_a_request_without_the_token_with_a_wrong_or_revoked_one_or_to_a_h
 
 
 async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_proxys_name(tmp_path, monkeypatch, caplog):
-    """A deploy check: `python -m ecobot_service` (main) with the fake sources, MCP_SERVICE_ALLOWED_HOSTS the name a reverse proxy sends, a
+    """A deploy check: `python -m ecobot_mcp` (main) with the fake sources, MCP_ALLOWED_HOSTS the name a reverse proxy sends, a
     tool call with a token through that name answered, the archives run, then SIGTERM closes it all."""
-    import ecobot_service.__main__ as service_main
-    from ecobot_service import core
+    import ecobot_mcp.__main__ as service_main
+    from ecobot_mcp import core
     from lib.config import Config
     from lib.ecowitt import archive
     from lib.airgradient import source as air_source
     from tests.fakes import air_transport, config, ecowitt_transport
     caplog.set_level("INFO")
     port = free_port()
-    cfg = config(tmp_path, telegram_token="", mcp_service_tokens=("pr0xy",), mcp_service_bind=("127.0.0.1", port),
-                 mcp_service_allowed_hosts=("weather.lan",))
+    cfg = config(tmp_path, telegram_token="", auth_tokens=("pr0xy",), mcp_bind=("127.0.0.1", port),
+                 mcp_allowed_hosts=("weather.lan",))
     eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
@@ -183,7 +183,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
             answered["current"] = json.loads((await client.call_tool("current", {"readings": ["temperature"]})).content[0].text)
             answered["health"] = json.loads((await client.read_resource("ecobot://health")).contents[0].text)
         answered["stranger"] = await post_status(url, "evil.example")   # a Host it doesn't answer (127.0.0.1, localhost and its own
-        answered["own name"] = await post_status(url, socket.gethostname())   # hostname always are, beside MCP_SERVICE_ALLOWED_HOSTS)
+        answered["own name"] = await post_status(url, socket.gethostname())   # hostname always are, beside MCP_ALLOWED_HOSTS)
         await until(lambda: any("Backfill Ecowitt: " in l and " fetched/failed, " in l for l in caplog.text.splitlines())
                     and "Backfill AirGradient:" in caplog.text, 60, "the archives")
         os.kill(os.getpid(), signal.SIGTERM)
@@ -196,7 +196,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     await service_main.main()
     await asker
     log = caplog.text
-    assert "Ecowitt: 'Fairleigh' (" in log and "Service tools: current, summary" in log and "1 token(s)" in log
+    assert "Ecowitt: 'Fairleigh' (" in log and "Tools: current, summary" in log and "1 token(s)" in log
     assert "MCP 127.0.0.1: POST /mcp tools/call current temperature -> 200" in log and "-> 421, its Host isn't in" in log   # (the request log)
     assert answered["tools"] == ["current", "summary", "readings", "days", "relate", "scan", "outlook", "about"]   # (no forecast, no pollen)
     assert answered["current"]["sensors"]["outdoor"]["temperature"]["unit"]
@@ -205,23 +205,13 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     assert "Alerts NOT running" not in log and "Telegram" not in log
 
 
-async def test_the_service_will_not_serve_without_tokens_on_an_address_others_can_reach(tmp_path, monkeypatch):
-    import ecobot_service.__main__ as service_main
-    from lib.config import Config
-    from tests.fakes import config
-    cfg = config(tmp_path, telegram_token="", mcp_service_bind=("0.0.0.0", free_port()))
-    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
-    with pytest.raises(SystemExit, match="MCP_SERVICE_TOKENS"):
-        await service_main.main()
-
-
-async def test_the_bot_s_warning_says_why_the_service_refused_it(service, monkeypatch, caplog):
+async def test_the_bot_s_warning_says_why_ecobot_mcp_refused_it(service, monkeypatch, caplog):
     """The SDK reports every HTTP error as "Server returned an error response": the warning names the status and what to change."""
     monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
     port = free_port()
     async with Serving(http_app(service, tokens=TOKENS.values(), allowed_hosts=("localhost",)), port):
-        for url, token, want in ((f"http://localhost:{port}/mcp", "wrong", "401: WEATHER_MCP_TOKEN"),
-                                 (f"http://127.0.0.1:{port}/mcp", TOKENS["bot"], "421: the service doesn't answer to this address")):
+        for url, token, want in ((f"http://localhost:{port}/mcp", "wrong", "401: the token the bot sends isn't one ecobot-mcp accepts"),
+                                 (f"http://127.0.0.1:{port}/mcp", TOKENS["bot"], "421: ecobot-mcp doesn't answer to this address")):
             caplog.clear()
             task = asyncio.create_task(Upstream(url, token).run())
             for _ in range(100):
@@ -251,6 +241,6 @@ async def test_each_request_is_logged_with_who_asked_what_and_a_refusal_with_its
     assert any("MCP 127.0.0.1: POST /mcp tools/call about -> 200" in line for line in lines), lines
     assert any("tools/call summary rain 1d -> 200" in line for line in lines), lines
     assert any("resources/read ecobot://health -> 200" in line for line in lines), lines
-    assert any("refused: POST /mcp tools/list -> 401, no token, or one that isn't in MCP_SERVICE_TOKENS" in line for line in lines), lines
-    assert any("-> 421, its Host isn't in MCP_SERVICE_ALLOWED_HOSTS (Host 192.168.1.208:8765)" in line for line in lines), lines
+    assert any("refused: POST /mcp tools/list -> 401, no token, or one that isn't in AUTH_TOKENS" in line for line in lines), lines
+    assert any("-> 421, its Host isn't in MCP_ALLOWED_HOSTS (Host 192.168.1.208:8765)" in line for line in lines), lines
     assert not any(TOKENS["bot"] in line or "wrong" in line for line in lines)

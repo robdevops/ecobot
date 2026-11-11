@@ -341,7 +341,7 @@ async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes
     storage.close()
 
 
-# ---------- the gauges from the service's current, with context (docs/mcp-service.md 3.1, 6 step 2) ----------
+# ---------- the gauges from the service's current, with context (docs/ecobot-mcp.md 3.1, 6 step 2) ----------
 STATUS_TITLES = ("Temperature", "Humidity", "Rain")
 GAUGE_RESULT = {
     "sensors": {

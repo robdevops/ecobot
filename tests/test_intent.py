@@ -1,4 +1,4 @@
-"""intent: the reasoning effort from the words, and the few shortcuts the bot answers in code (docs/mcp-service.md 4): the report,
+"""intent: the reasoning effort from the words, and the few shortcuts the bot answers in code (docs/ecobot-mcp.md 4): the report,
 the gauges, "weather now" and a named reading's chart and a period, each a fixed call to a service tool. Everything else is the
 model's."""
 

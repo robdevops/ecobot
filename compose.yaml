@@ -1,29 +1,32 @@
-# ecobot in Docker (README). `sudo docker compose up -d --build` builds the image and starts the weather service; the Telegram bot is
+# ecobot in Docker (README). `sudo docker compose up -d --build` builds the images and starts ecobot-mcp; the Telegram bot is
 # optional, under the `bot` profile: `sudo docker compose --profile bot up -d --build`, or COMPOSE_PROFILES=bot in /opt/ecobot/.env.
+# Two images from the one Dockerfile: ecobot-mcp (its target ecobot-mcp: no Telegram, no model client) and ecobot (the bot, everything).
 # Compose replaces a running container only when its image or settings changed. The commit the log's first line names is read from
 # the clone's .git (see the Dockerfile). Logs: Docker's `local` driver (README: "Docker logging", compose.journald.yaml for the
-# journal), which compresses and rotates its files (5 of 10 MB here); read them with `docker logs -tf ecobot-service` (or `ecobot`).
+# journal), which compresses and rotates its files (5 of 10 MB here); read them with `docker logs -tf ecobot-mcp` (or `ecobot`).
+# Settings (/etc/ecobot.env, docs/configuration.md): MCP_ ones are ecobot-mcp's, BOT_ ones the bot's, the rest both read.
 services:
-  # The weather service (docs/mcp-service.md 3.8, DEVELOPMENT.md "The MCP service"): the sources and their syncers, the alert rules
+  # ecobot-mcp, the MCP server (docs/ecobot-mcp.md 3.8, DEVELOPMENT.md "ecobot-mcp"): the sources and their syncers, the alert rules
   # and the MCP server, on port 8765 of every address the host has, so other machines on the network can reach it too (plain HTTP,
   # with a token; put TLS in front of it, e.g. Caddy, to reach it over the internet; for this host only, publish 127.0.0.1:8765:8765).
-  # It needs MCP_SERVICE_TOKENS (token,token,..., in /etc/ecobot.env): it listens on all of the container's addresses, which it refuses
-  # to do without tokens. It answers its own name (hostname, below), 127.0.0.1 and localhost; MCP_SERVICE_ALLOWED_HOSTS adds more: the
-  # host's IP address or name, as LAN clients write it in their URL, and a proxy's name.
-  ecobot-service:
-    image: ecobot
-    container_name: ecobot-service
-    hostname: ecobot-service
+  # Every request needs a token: one of AUTH_TOKENS (token,token,..., in /etc/ecobot.env), or, with that unset, the one it generates
+  # at its first start in the data folder (/var/lib/private/ecobot/auth_token on the host), which the bot reads from there. It answers
+  # its own name (hostname, below), 127.0.0.1 and localhost; MCP_ALLOWED_HOSTS adds more: the host's IP address or name, as LAN
+  # clients write it in their URL, and a proxy's name.
+  ecobot-mcp:
+    image: ecobot-mcp
+    container_name: ecobot-mcp
+    hostname: ecobot-mcp
     build:
       context: .
+      target: ecobot-mcp
       args:
         COMMIT: ${COMMIT:-}
-    command: ["python", "-m", "ecobot_service"]
     restart: unless-stopped
     # Docker's default network is private, where .local names (mDNS) can't be found (README: "Docker networking", compose.host-network.yaml)
     env_file: /etc/ecobot.env
     environment:
-      MCP_SERVICE_BIND: 0.0.0.0:8765
+      MCP_BIND: 0.0.0.0:8765
     ports:
       - 8765:8765
     volumes:
@@ -34,14 +37,19 @@ services:
         max-size: 10m
         max-file: "5"
 
-  # The Telegram bot, a client of the service (WEATHER_MCP_URL, docker/bot.env; WEATHER_MCP_TOKEN, one of MCP_SERVICE_TOKENS, in
-  # /etc/ecobot.env). It keeps its own state (chats, alert settings) in the same data folder.
+  # The Telegram bot, a client of ecobot-mcp (BOT_MCP_URL, docker/bot.env), sending the first of AUTH_TOKENS, or, with that unset, the
+  # token ecobot-mcp generated in the data folder they share. It keeps its own state (chats, alert settings) in the same folder.
   ecobot:
     image: ecobot
     container_name: ecobot
+    build:
+      context: .
+      target: ecobot
+      args:
+        COMMIT: ${COMMIT:-}
     profiles: [bot]
     restart: unless-stopped
-    depends_on: [ecobot-service]
+    depends_on: [ecobot-mcp]
     env_file: [docker/bot.env, /etc/ecobot.env]
     volumes:
       - /var/lib/private/ecobot:/data

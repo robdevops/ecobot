@@ -62,11 +62,11 @@ def _required(value: str, default: str, name: str) -> str:
     raise SystemExit(f"{name} is not set: the bot can't start without it (see docs/configuration.md)")
 
 
-REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: the service (python -m ecobot_service) runs without them
+REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: ecobot-mcp (python -m ecobot_mcp) runs without them
 
 
 def _tokens(value: str, default: tuple, name: str) -> tuple[str, ...]:
-    """"s3cret, t0ken" -> ("s3cret", "t0ken"): the bearer tokens the service accepts, one per client, so one can be revoked alone (take
+    """"s3cret, t0ken" -> ("s3cret", "t0ken"): the bearer tokens ecobot-mcp accepts, one per client, so one can be revoked alone (take
     it out and restart). Blank entries are skipped; a token given twice counts once."""
     return tuple(dict.fromkeys(filter(None, (p.strip() for p in value.split(","))))) or default
 
@@ -223,64 +223,101 @@ def _level(value: str, default: str, name: str) -> str:
     return default
 
 
-def _setting(name: str, default=None, read=None):
-    """A Config field read from the environment variable `name` by `read` (a reader above; none: the text, blank being the default)."""
-    return field(default=default, metadata={"env": name, "read": read})
+def _setting(name: str, default=None, read=None, old: str | None = None):
+    """A Config field read from the environment variable `name` by `read` (a reader above; none: the text, blank being the default).
+    old: the name it had before (docs/configuration.md, "Renamed settings"), still read when `name` is unset, with a warning."""
+    return field(default=default, metadata={"env": name, "read": read, "old": old})
 
 
-def _from_env(f) -> object:
-    text = os.getenv(f.metadata["env"], "").strip()
-    return f.metadata["read"](text, f.default, f.metadata["env"]) if f.metadata["read"] else text or f.default
+def _text(f, renamed: list | None = None) -> tuple[str, str]:
+    """The setting's text (stripped) and the variable it was read from: its own name, else its old one (noted in `renamed`)."""
+    name, old = f.metadata["env"], f.metadata.get("old")
+    text = os.getenv(name, "").strip()
+    if not text and old and (text := os.getenv(old, "").strip()):
+        if renamed is not None:
+            renamed.append((old, name))
+        return text, old
+    if text and old and os.getenv(old, "").strip() and renamed is not None:
+        renamed.append((old, None))   # both set: the old one is ignored
+    return text, name
+
+
+def _from_env(f, renamed: list | None = None) -> object:
+    text, name = _text(f, renamed)
+    return f.metadata["read"](text, f.default, name) if f.metadata["read"] else text or f.default
+
+
+def warn_renamed(renamed: list[tuple[str, str | None]]):
+    """One warning naming the old variables found and their new names (never their values)."""
+    used = [f"{old} -> {new}" for old, new in renamed if new]
+    ignored = [old for old, new in renamed if not new]
+    if used:
+        log.warning("Old setting names, still read for now: rename %s (docs/configuration.md, \"Renamed settings\")", ", ".join(used))
+    if ignored:
+        log.warning("Ignoring %s: the new name%s set", ", ".join(ignored), " is" if len(ignored) == 1 else "s are")
+
+
+def env(name: str) -> str:
+    """A setting's text by its name, or by its old one when that is all that is set (for the scripts, which read a few directly)."""
+    for f in fields(Config):
+        if f.metadata.get("env") == name:
+            return _text(f)[0]
+    return os.getenv(name, "").strip()
+
+
+RETIRED_TOKEN = "WEATHER_MCP_TOKEN"   # the bot's token before AUTH_TOKENS: still sent when AUTH_TOKENS is unset, with a warning
 
 
 @dataclass(frozen=True)
 class Config:
     tz: tzinfo
     state_path: Path
-    storage_path: Path                                             # the bot's one file of readings, the pollen page and the forecast (lib/storage)
-    telegram_token: str = _setting("TELEGRAM_BOT_TOKEN", "")                       # the bot's (REQUIRED_BY_BOT: it stops without it)
-    openrouter_api_key: str = _setting("OPENROUTER_API_KEY", "")                   # unset: the bot runs without the model, answering only what it works out in code
-    openrouter_base_url: str = _setting("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    openrouter_model: str = _setting("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")
-    ecowitt_api_key: str = _setting("ECOWITT_API_KEY", "")
-    ecowitt_app_key: str = _setting("ECOWITT_APP_KEY", "")
-    airgradient_token: str = _setting("AIRGRADIENT_API_TOKEN", "")
-    airgradient_location: str = _setting("AIRGRADIENT_LOCATION_ID", "")
-    airgradient_dashboard: str = _setting("AIRGRADIENT_DASHBOARD_URL", "")
-    airgradient_local_url: str = _setting("AIRGRADIENT_LOCAL_URL", "")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
-    airgradient_source: str = _setting("AIRGRADIENT_SOURCE", "auto", _air_source)   # auto: the monitor itself, then Home Assistant, then the cloud, each that is set; or one alone
-    homeassistant_url: str = _setting("HOMEASSISTANT_URL", "", _url)       # Home Assistant, where the station's readings are read from (its Ecowitt integration), e.g. http://192.168.1.219:8123
-    homeassistant_token: str = _setting("HOMEASSISTANT_TOKEN", "")         # a long-lived access token (your profile page in Home Assistant)
-    ecowitt_source: str = _setting("ECOWITT_SOURCE", "auto", _source)      # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
-    place: str = _setting("PLACE", "Melbourne")                     # named after the Pollen & asthma and Forecast headings in the report
-    pollen: bool = _setting("POLLEN", False, _flag)                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
-    pollen_district: str = _setting("POLLEN_DISTRICT", "Central")   # the Victorian forecast district whose thunderstorm asthma risk is used
-    forecast: bool = _setting("FORECAST", False, _flag)             # the daily forecast from Open-Meteo
-    forecast_lat: float | None = _setting("FORECAST_LAT", None, _number)   # the weather station's own location when unset
-    forecast_lon: float | None = _setting("FORECAST_LON", None, _number)
-    rain_quiet_hours: tuple[int, int] | None = _setting("RAIN_QUIET_HOURS", (0, 6), _hours)   # "0-6", local hours ("off" for none): no rain alerts, a summary after
-    chart_all_feels_like: bool = _setting("CHART_ALL_FEELS_LIKE", False, _flag)   # "weather all week" also draws the feels-like panel (off: it nearly repeats temperature)
-    chart_all_vpd: bool = _setting("CHART_ALL_VPD", False, _flag)   # "weather all week" also draws the vapour pressure deficit panel (off: it is temperature and humidity combined)
-    tuya_device_id: str = _setting("TUYA_DEVICE_ID", "")            # all three switch the irrigation controller on
-    tuya_client_id: str = _setting("TUYA_CLIENT_ID", "")
-    tuya_client_secret: str = _setting("TUYA_CLIENT_SECRET", "")
-    tuya_base_url: str = _setting("TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url)   # the data centre's address (EU by default)
-    irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour)   # the local hour of the daily check (0 to 23)
-    dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the bot's time zone
-    admin_only: bool = _setting("ADMIN_ONLY", False, _flag)         # on: the bot answers nobody but the admins of the groups it is in (and ADMIN_CHAT_IDS)
-    admin_chat_ids: frozenset[int] = _setting("ADMIN_CHAT_IDS", frozenset(), _ids)   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
-    alert_cooldown_minutes: int = _setting("ALERT_COOLDOWN_MINUTES", 60, _between(5, 150))   # dry this long before "the rain has stopped"; and the temperature-crossing alert's minimum gap
-    telegram_preload_chat: int | None = _setting("TELEGRAM_PRELOAD_CHAT", None, _chat_id)   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
-    antispike_require_consecutive: int = _setting("ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row)   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
-    log_width: int = _setting("LOG_WIDTH", 24, _whole)             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
-    log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
-    # The MCP service (python -m ecobot_service: docs/mcp-service.md 3.8)
-    mcp_service_tokens: tuple[str, ...] = _setting("MCP_SERVICE_TOKENS", (), _tokens)   # "token,token,...", one per client; none: no auth, loopback only
-    mcp_service_bind: tuple[str, int] = _setting("MCP_SERVICE_BIND", ("127.0.0.1", 8765), _bind)    # host:port the service listens on
-    mcp_service_allowed_hosts: tuple[str, ...] = _setting("MCP_SERVICE_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
-    # The bot as the service's client (docs/mcp-service.md step 5): set, the bot runs no sources, syncers or alert rules of its own
-    weather_mcp_url: str = _setting("WEATHER_MCP_URL", "", _url)    # the service's MCP endpoint, e.g. http://127.0.0.1:8765/mcp; unset: the service runs inside the bot
-    weather_mcp_token: str = _setting("WEATHER_MCP_TOKEN", "")      # the bearer token the bot sends it (one of the service's MCP_SERVICE_TOKENS)
+    storage_path: Path                                             # the one file of readings, the pollen page and the forecast (lib/storage)
+    # ecobot-mcp's (python -m ecobot_mcp): the sources, the alert rules and the MCP server. The bot reads them too when it runs all of
+    # that in-process (BOT_MCP_URL unset)
+    ecowitt_api_key: str = _setting("MCP_ECOWITT_API_KEY", "", old="ECOWITT_API_KEY")
+    ecowitt_app_key: str = _setting("MCP_ECOWITT_APP_KEY", "", old="ECOWITT_APP_KEY")
+    ecowitt_source: str = _setting("MCP_ECOWITT_SOURCE", "auto", _source, old="ECOWITT_SOURCE")   # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
+    airgradient_token: str = _setting("MCP_AIRGRADIENT_API_TOKEN", "", old="AIRGRADIENT_API_TOKEN")
+    airgradient_location: str = _setting("MCP_AIRGRADIENT_LOCATION_ID", "", old="AIRGRADIENT_LOCATION_ID")
+    airgradient_dashboard: str = _setting("MCP_AIRGRADIENT_DASHBOARD_URL", "", old="AIRGRADIENT_DASHBOARD_URL")
+    airgradient_local_url: str = _setting("MCP_AIRGRADIENT_LOCAL_URL", "", old="AIRGRADIENT_LOCAL_URL")   # the sensor's own server for the live reading, e.g. http://airgradient_<serial>.local
+    airgradient_source: str = _setting("MCP_AIRGRADIENT_SOURCE", "auto", _air_source, old="AIRGRADIENT_SOURCE")   # auto: the monitor itself, then Home Assistant, then the cloud, each that is set; or one alone
+    homeassistant_url: str = _setting("MCP_HOMEASSISTANT_URL", "", _url, old="HOMEASSISTANT_URL")       # Home Assistant, where the station's readings are read from (its Ecowitt integration), e.g. http://192.168.1.219:8123
+    homeassistant_token: str = _setting("MCP_HOMEASSISTANT_TOKEN", "", old="HOMEASSISTANT_TOKEN")         # a long-lived access token (your profile page in Home Assistant)
+    place: str = _setting("MCP_PLACE", "Melbourne", old="PLACE")                     # named after the Pollen & asthma and Forecast headings in the report
+    pollen: bool = _setting("MCP_POLLEN", False, _flag, old="POLLEN")                 # Melbourne grass pollen and thunderstorm asthma risk (a scraped website)
+    pollen_district: str = _setting("MCP_POLLEN_DISTRICT", "Central", old="POLLEN_DISTRICT")   # the Victorian forecast district whose thunderstorm asthma risk is used
+    forecast: bool = _setting("MCP_FORECAST", False, _flag, old="FORECAST")             # the daily forecast from Open-Meteo
+    forecast_lat: float | None = _setting("MCP_FORECAST_LAT", None, _number, old="FORECAST_LAT")   # the weather station's own location when unset
+    forecast_lon: float | None = _setting("MCP_FORECAST_LON", None, _number, old="FORECAST_LON")
+    rain_quiet_hours: tuple[int, int] | None = _setting("MCP_RAIN_QUIET_HOURS", (0, 6), _hours, old="RAIN_QUIET_HOURS")   # "0-6", local hours ("off" for none): no rain alerts, a summary after
+    alert_cooldown_minutes: int = _setting("MCP_ALERT_COOLDOWN_MINUTES", 60, _between(5, 150), old="ALERT_COOLDOWN_MINUTES")   # dry this long before "the rain has stopped"; and the temperature-crossing alert's minimum gap
+    antispike_require_consecutive: int = _setting("MCP_ANTISPIKE_REQUIRE_CONSECUTIVE", 2, _readings_in_a_row, old="ANTISPIKE_REQUIRE_CONSECUTIVE")   # readings in a row a rise of the particles needs to be the air, not a glitch of the sensor (1: off)
+    chart_all_feels_like: bool = _setting("MCP_CHART_ALL_FEELS_LIKE", False, _flag, old="CHART_ALL_FEELS_LIKE")   # "weather all week" also draws the feels-like panel (off: it nearly repeats temperature)
+    chart_all_vpd: bool = _setting("MCP_CHART_ALL_VPD", False, _flag, old="CHART_ALL_VPD")   # "weather all week" also draws the vapour pressure deficit panel (off: it is temperature and humidity combined)
+    mcp_bind: tuple[str, int] = _setting("MCP_BIND", ("127.0.0.1", 8765), _bind, old="MCP_SERVICE_BIND")    # host:port ecobot-mcp listens on
+    mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names, old="MCP_SERVICE_ALLOWED_HOSTS")   # the Host names it answers (any port, unless one is given)
+    # The bot's (ecobot.py)
+    telegram_token: str = _setting("BOT_TELEGRAM_TOKEN", "", old="TELEGRAM_BOT_TOKEN")                       # (REQUIRED_BY_BOT: it stops without it)
+    telegram_preload_chat: int | None = _setting("BOT_TELEGRAM_PRELOAD_CHAT", None, _chat_id, old="TELEGRAM_PRELOAD_CHAT")   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)
+    openrouter_api_key: str = _setting("BOT_OPENROUTER_API_KEY", "", old="OPENROUTER_API_KEY")                   # unset: the bot runs without the model, answering only what it works out in code
+    openrouter_base_url: str = _setting("BOT_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", old="OPENROUTER_BASE_URL")
+    openrouter_model: str = _setting("BOT_OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017", old="OPENROUTER_MODEL")
+    admin_only: bool = _setting("BOT_ADMIN_ONLY", False, _flag, old="ADMIN_ONLY")         # on: the bot answers nobody but the admins of the groups it is in (and BOT_ADMIN_CHAT_IDS)
+    admin_chat_ids: frozenset[int] = _setting("BOT_ADMIN_CHAT_IDS", frozenset(), _ids, old="ADMIN_CHAT_IDS")   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
+    log_width: int = _setting("BOT_LOG_WIDTH", 24, _whole, old="LOG_WIDTH")             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
+    tuya_device_id: str = _setting("BOT_TUYA_DEVICE_ID", "", old="TUYA_DEVICE_ID")            # all three switch the irrigation controller on
+    tuya_client_id: str = _setting("BOT_TUYA_CLIENT_ID", "", old="TUYA_CLIENT_ID")
+    tuya_client_secret: str = _setting("BOT_TUYA_CLIENT_SECRET", "", old="TUYA_CLIENT_SECRET")
+    tuya_base_url: str = _setting("BOT_TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url, old="TUYA_BASE_URL")   # the data centre's address (EU by default)
+    irrigation_check_hour: int = _setting("BOT_IRRIGATION_CHECK_HOUR", 18, _hour, old="IRRIGATION_CHECK_HOUR")   # the local hour of the daily check (0 to 23)
+    mcp_url: str = _setting("BOT_MCP_URL", "", _url, old="WEATHER_MCP_URL")    # ecobot-mcp's endpoint, e.g. http://127.0.0.1:8765/mcp: set, the bot is its client and runs no sources, syncers or alert rules of its own; unset: all of that runs inside the bot
+    retired_mcp_token: str = _setting(RETIRED_TOKEN, "")            # retired: sent only when AUTH_TOKENS is unset (ecobot.mcp_token)
+    # Both read them
+    dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the station's time zone
+    log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the program's own debug lines; the libraries keep theirs
+    auth_tokens: tuple[str, ...] = _setting("AUTH_TOKENS", (), _tokens, old="MCP_SERVICE_TOKENS")   # "token,token,...": ecobot-mcp accepts each, the bot sends the first; unset: the one ecobot-mcp generates in the data folder (lib/auth_token.py)
 
     @property
     def alert_state_path(self) -> Path:
@@ -298,12 +335,12 @@ class Config:
 
     @property
     def ecowitt_cloud(self) -> bool:
-        """The station's readings are asked of Ecowitt's cloud (its keys are set, and ECOWITT_SOURCE does not say Home Assistant only)."""
+        """The station's readings are asked of Ecowitt's cloud (its keys are set, and MCP_ECOWITT_SOURCE does not say Home Assistant only)."""
         return bool(self.ecowitt_api_key and self.ecowitt_app_key) and self.ecowitt_source != "homeassistant"
 
     @property
     def ecowitt_home_assistant(self) -> bool:
-        """... of Home Assistant (it is set, and ECOWITT_SOURCE does not say the cloud only)."""
+        """... of Home Assistant (it is set, and MCP_ECOWITT_SOURCE does not say the cloud only)."""
         return self.homeassistant and self.ecowitt_source != "cloud"
 
     @property
@@ -317,17 +354,17 @@ class Config:
 
     @property
     def airgradient_cloud(self) -> bool:
-        """The air monitor's readings are asked of AirGradient's cloud (its token and location are set, and AIRGRADIENT_SOURCE allows)."""
+        """The air monitor's readings are asked of AirGradient's cloud (its token and location are set, and MCP_AIRGRADIENT_SOURCE allows)."""
         return bool(self.airgradient_token and self.airgradient_location) and self.airgradient_source in ("auto", "cloud")
 
     @property
     def airgradient_local(self) -> bool:
-        """... of the monitor itself (its address is set, and AIRGRADIENT_SOURCE allows)."""
+        """... of the monitor itself (its address is set, and MCP_AIRGRADIENT_SOURCE allows)."""
         return bool(self.airgradient_local_url) and self.airgradient_source in ("auto", "local")
 
     @property
     def airgradient_homeassistant(self) -> bool:
-        """... of Home Assistant (it is set, and AIRGRADIENT_SOURCE allows; whether it has the monitor is found at start)."""
+        """... of Home Assistant (it is set, and MCP_AIRGRADIENT_SOURCE allows; whether it has the monitor is found at start)."""
         return self.homeassistant and self.airgradient_source in ("auto", "homeassistant")
 
     @property
@@ -338,7 +375,8 @@ class Config:
     @classmethod
     def from_env(cls, bot: bool = True) -> "Config":
         """Every setting from its variable, the files in the data folder. Stops, saying why, when one the bot can't run without is
-        missing or the folder can't be written. bot: False for the service (python -m ecobot_service), which has no Telegram token."""
+        missing or the folder can't be written. bot: False for ecobot-mcp (python -m ecobot_mcp), which has no Telegram token. Old
+        names still read are named in one warning (never their values)."""
         data = data_dir()
         try:
             data.mkdir(parents=True, exist_ok=True)
@@ -348,12 +386,15 @@ class Config:
         if not writable:
             raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
+        renamed: list = []
         cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", storage_path=data / "ecobot.sqlite",
-                  **{f.name: _from_env(f) for f in fields(cls) if "env" in f.metadata})
+                  **{f.name: _from_env(f, renamed) for f in fields(cls) if "env" in f.metadata})
+        warn_renamed(renamed)
         for f in fields(cls):
             if bot and f.name in REQUIRED_BY_BOT:
                 _required(getattr(cfg, f.name), f.default, f.metadata["env"])
-        if not (cfg.ecowitt or cfg.airgradient) and not (bot and cfg.weather_mcp_url):   # (a client of the service needs no source)
-            raise SystemExit("Set ECOWITT_API_KEY + ECOWITT_APP_KEY and/or HOMEASSISTANT_URL + HOMEASSISTANT_TOKEN and/or AIRGRADIENT_API_TOKEN + "
-                             "AIRGRADIENT_LOCATION_ID and/or AIRGRADIENT_LOCAL_URL")
+        if not (cfg.ecowitt or cfg.airgradient) and not (bot and cfg.mcp_url):   # (a client of ecobot-mcp needs no source)
+            raise SystemExit("Set MCP_ECOWITT_API_KEY + MCP_ECOWITT_APP_KEY and/or MCP_HOMEASSISTANT_URL + MCP_HOMEASSISTANT_TOKEN and/or "
+                             "MCP_AIRGRADIENT_API_TOKEN + MCP_AIRGRADIENT_LOCATION_ID and/or MCP_AIRGRADIENT_LOCAL_URL"
+                             + ("" if not bot else ", or BOT_MCP_URL to use ecobot-mcp"))
         return cfg

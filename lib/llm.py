@@ -29,7 +29,7 @@ LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data alr
 
 class Agent:
     def __init__(self, client: "AsyncOpenAI | None", model: str, tools: Tools):
-        self.client, self.model, self.tools = client, model, tools   # no client (no OPENROUTER_API_KEY): the tools are still called, the model never is
+        self.client, self.model, self.tools = client, model, tools   # no client (no BOT_OPENROUTER_API_KEY): the tools are still called, the model never is
 
     @property
     def ready(self) -> bool:
@@ -91,7 +91,7 @@ class Agent:
         data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
         first. The work carries on; nothing waits for a reply.
         finish(calls, results) is asked after each step of the model's tool calls: text from it is the reply, and the turn ends there
-        with no further model call (a complete result, docs/mcp-service.md 3.7)."""
+        with no further model call (a complete result, docs/ecobot-mcp.md 3.7)."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:

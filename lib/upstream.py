@@ -1,4 +1,4 @@
-"""The bot's one connection to the weather service (WEATHER_MCP_URL, docs/mcp-service.md 3.8), kept by one supervisor task (Upstream):
+"""The bot's one connection to ecobot-mcp (BOT_MCP_URL, docs/ecobot-mcp.md 3.8), kept by one supervisor task (Upstream):
 the protocol revision is pinned (2026-07-28, so a proxy's 502 during a restart can't land it on the older revision, which can't listen)
 and discovered by hand for the instructions; when the connection fails or the listen is lost, the client is dropped and a new one built
 after a backoff, which listens again (there is no replay: the caller reads what it missed). A request while it is down is refused with
@@ -16,18 +16,19 @@ log = logging.getLogger("lib.upstream")
 
 VERSION = "2026-07-28"          # the protocol revision pinned: the one that can listen
 READ_SECONDS = 45.0             # the HTTP read timeout: three of the server's 15-second pings, so a silently dead link is noticed
-CONNECT_WAIT = 10.0             # how long a request waits for the service to be reached before it is refused
+CONNECT_WAIT = 10.0             # how long a request waits for ecobot-mcp to be reached before it is refused
 BACKOFF = (1, 2, 5, 10, 30)     # seconds between attempts to reach it again, the last repeated
 
 
-REFUSED = {401: "401: WEATHER_MCP_TOKEN isn't one of the service's MCP_SERVICE_TOKENS",
+REFUSED = {401: "401: the token the bot sends isn't one ecobot-mcp accepts: give both the same AUTH_TOKENS, or leave it unset in both "
+                "on one data folder (the generated token)",
            403: "403: the token was refused",
-           421: "421: the service doesn't answer to this address: add its host part to the service's MCP_SERVICE_ALLOWED_HOSTS",
+           421: "421: ecobot-mcp doesn't answer to this address: add its host part to ecobot-mcp's MCP_ALLOWED_HOSTS",
            404: "404: nothing at this path: the URL ends in /mcp"}
 
 
 def http_transport(url: str, token: str | None = None, refused: dict | None = None):
-    """The Streamable HTTP transport to the service, its bearer token sent with every request, its read timeout READ_SECONDS.
+    """The Streamable HTTP transport to ecobot-mcp, its bearer token sent with every request, its read timeout READ_SECONDS.
     refused: given, its "status" is set to an HTTP error the service answered with (the SDK reports any of them as one message)."""
     import httpx2
     from mcp.client.streamable_http import streamable_http_client
@@ -55,10 +56,11 @@ def _leaf(e: BaseException) -> BaseException:
 
 
 class Upstream:
-    """The one client of the service, owned by one supervisor task (`run`): built, discovered and listening; dropped when it fails or
-    its listen is lost or ends, and built again after a backoff. `target`: the service's URL, or (in tests) a Server in-process."""
+    """The one client of ecobot-mcp, owned by one supervisor task (`run`): built, discovered and listening; dropped when it fails or
+    its listen is lost or ends, and built again after a backoff. `target`: ecobot-mcp's URL, or (in tests) a Server in-process. `token`: the
+    bearer token, or a function giving it (called for each connection), or None."""
 
-    def __init__(self, target, token: str | None = None, on_event=None, on_discover=None, on_listening=None, resources=None):
+    def __init__(self, target, token=None, on_event=None, on_discover=None, on_listening=None, resources=None):
         """Callbacks: on_discover(DiscoverResult), each new connection's, before it is used; on_listening(), once its listen is
         acknowledged (what was missed is read from here: an event from now on isn't); on_event(event), each listen event. Async.
         resources: the URIs listened to, of those the service lists (None: every one)."""
@@ -70,7 +72,8 @@ class Upstream:
         self.refused: dict = {}   # the HTTP error the service last answered with
 
     def _client(self) -> Client:
-        server = http_transport(self.target, self.token, self.refused) if isinstance(self.target, str) else self.target
+        token = self.token() if callable(self.token) else self.token   # (a function: read again for each connection)
+        server = http_transport(self.target, token, self.refused) if isinstance(self.target, str) else self.target
         return Client(server, mode=VERSION, cache=None)
 
     async def run(self):
@@ -86,9 +89,9 @@ class Upstream:
                         await self.on_discover(discovered)
                     self.client, self.attempts = client, 0
                     self.connected.set()
-                    log.info("Weather service: connected to %s", self.target if isinstance(self.target, str) else "the service")
+                    log.info("ecobot-mcp: connected to %s", self.target if isinstance(self.target, str) else "the service")
                     await self._listen(client)
-                    log.warning("Weather service: the service ended the listen; connecting again")
+                    log.warning("ecobot-mcp ended the listen; connecting again")
             except asyncio.CancelledError:
                 raise
             except BaseException as e:   # (a transport failure ends the whole client, as an exception group too)
@@ -98,7 +101,7 @@ class Upstream:
                     raise asyncio.CancelledError() from e                           # wrapped it (an exception group): stop all the same
                 cause, status = _leaf(e), self.refused.get("status")
                 why = (REFUSED.get(status, f"HTTP {status}") if status else f"{type(cause).__name__}: {cause}")
-                log.warning("Weather service: the service at %s isn't reachable (%s); trying again", self.target, why)
+                log.warning("ecobot-mcp at %s isn't reachable (%s); trying again", self.target, why)
             finally:
                 self.client = None
                 self.connected.clear()
@@ -124,5 +127,5 @@ class Upstream:
             except TimeoutError:
                 pass
         if self.client is None:
-            raise MCPError(types.INTERNAL_ERROR, f"The weather service isn't reachable ({self.target}): try again shortly.")
+            raise MCPError(types.INTERNAL_ERROR, f"ecobot-mcp isn't reachable ({self.target}): try again shortly.")
         return self.client

@@ -32,7 +32,7 @@ def _district(name: str) -> str:
     """The site's name for this district, whatever its case. One the site doesn't have is warned about: no level can be found for it."""
     known = {d.lower(): d for d in DISTRICTS}
     if name.lower() not in known:
-        log.warning("POLLEN_DISTRICT %r is not one of the site's districts (%s): no district level will be found", name,
+        log.warning("MCP_POLLEN_DISTRICT %r is not one of the site's districts (%s): no district level will be found", name,
                     ", ".join(sorted(DISTRICTS)))
     return known.get(name.lower(), name)
 

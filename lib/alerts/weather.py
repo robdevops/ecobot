@@ -2,7 +2,7 @@
 5-minute readings; the rain check also reads the gauge's live value, one small request).
 
   - Rain: "started" (one tip of the gauge is enough, told at once, however lately it stopped) and "stopped" (dry for
-    ALERT_COOLDOWN_MINUTES, so patchy showers are one spell), with how much fell over the whole spell. Not during quiet hours (RAIN_QUIET_HOURS, default midnight to 6am, and they may run across midnight):
+    MCP_ALERT_COOLDOWN_MINUTES, so patchy showers are one spell), with how much fell over the whole spell. Not during quiet hours (MCP_RAIN_QUIET_HOURS, default midnight to 6am, and they may run across midnight):
     those are kept quiet and one summary of the rain that fell in them is sent after they end.
   - Strong gusts: one alert when a gust goes over 40 km/h, and no more until the gusts have stayed at or under
     it for an hour, so a blustery afternoon is one message, not twenty.
@@ -10,7 +10,7 @@
     below 10 for an hour.
   - Temperatures crossing: outdoor becomes warmer than indoor (or cooler); it has to differ by more than 1 degree, which stops
     sensor noise flip-flopping.
-  The crossing has a back-off rule (rules.py): after an alert, a change is held for ALERT_COOLDOWN_MINUTES and then
+  The crossing has a back-off rule (rules.py): after an alert, a change is held for MCP_ALERT_COOLDOWN_MINUTES and then
   announced if the state still differs from the one last alerted; if it is back where it was, nothing is sent.
 Each alert is an event appended to the alert log (lib/alert_log.py), news for a while (rain RAIN_EXPIRES_SECONDS, gusts and UV their
 rearm time, the crossing its cooldown); gusts, UV and the crossing carry their chart as data, with the call that draws it again.
@@ -29,7 +29,7 @@ from ..timeutil import at_hour, clock_text, to_local
 
 log = logging.getLogger(__name__)
 
-ALERT_COOLDOWN_SECONDS = 60 * 60   # the default; ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
+ALERT_COOLDOWN_SECONDS = 60 * 60   # the default; MCP_ALERT_COOLDOWN_MINUTES sets it (the readings looked at go back 3 hours, so 150 minutes is the most)
 CROSS_MARGIN = 1.0
 GUST_ALERT_KMH = 40
 GUST_REARM_SECONDS = 3600

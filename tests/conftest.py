@@ -24,8 +24,22 @@ def pytest_collection_modifyitems(items):
 
 
 @pytest.fixture(autouse=True)
+def no_settings_from_outside(monkeypatch):
+    """Every setting's variable, by its name and its old one, unset for each test (a test sets what it reads): one set where the suite
+    runs (a CI secret named like an old setting, an env file loaded in the shell) changes nothing."""
+    from dataclasses import fields
+
+    from lib.config import RETIRED_TOKEN, Config
+    for f in fields(Config):
+        for name in (f.metadata.get("env"), f.metadata.get("old")):
+            if name:
+                monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(RETIRED_TOKEN, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def the_log_levels_as_they_were():
-    """The programs' main() (ecobot.py, ecobot_service) set the "ecobot" and "lib" loggers' levels from LOG_LEVEL: put back after every
+    """The programs' main() (ecobot.py, ecobot_mcp) set the "ecobot" and "lib" loggers' levels from LOG_LEVEL: put back after every
     test, so a test that reads the debug lines doesn't depend on which ran before it on its worker."""
     import logging
     levels = {name: logging.getLogger(name).level for name in ("ecobot", "lib")}

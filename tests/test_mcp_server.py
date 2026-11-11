@@ -1,4 +1,4 @@
-"""The service over MCP (lib/mcp_server.py, docs/mcp-service.md 3.4-3.8): the ten tools listed and called over the SDK's in-memory
+"""The service over MCP (lib/mcp_server.py, docs/ecobot-mcp.md 3.4-3.8): the ten tools listed and called over the SDK's in-memory
 transport with the same answers as the ServiceTools themselves, the resources and the alerts' template, the prompts, the publishing of
 changes, the auth and the allowed hosts. The listen over the network is tests/test_mcp_listen.py's (under uvicorn,
 as docs 7 asks)."""
@@ -266,7 +266,7 @@ async def test_the_prompts_are_questions_in_words_with_their_period_an_argument(
 
 
 # ---------- auth and hosts ----------
-async def test_a_token_is_one_of_mcp_service_tokens_and_one_can_be_revoked_alone():
+async def test_a_token_is_one_of_auth_tokens_and_one_can_be_revoked_alone():
     check = TokenCheck(("s3cret-bot", "s3cret-phone"))
     assert await check.verify_token("s3cret-bot") and await check.verify_token("s3cret-phone")
     for wrong in ("", "s3cret", "s3cret-bot ", "S3CRET-BOT"):
@@ -285,36 +285,36 @@ def test_the_allowed_hosts_take_any_port_unless_one_is_named():
 def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch, tmp_path, caplog):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    for key, value in {"ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", "TELEGRAM_BOT_TOKEN": ""}.items():
+    for key, value in {"MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b", "BOT_TELEGRAM_TOKEN": ""}.items():
         monkeypatch.setenv(key, value)
-    for key in ("MCP_SERVICE_TOKENS", "MCP_SERVICE_BIND", "MCP_SERVICE_ALLOWED_HOSTS"):
+    for key in ("AUTH_TOKENS", "MCP_BIND", "MCP_ALLOWED_HOSTS"):
         monkeypatch.delenv(key, raising=False)
-    with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
+    with pytest.raises(SystemExit, match="BOT_TELEGRAM_TOKEN is not set"):
         Config.from_env()                                                   # the bot can't start without it ...
     cfg = Config.from_env(bot=False)                                        # ... the service can
-    assert cfg.mcp_service_tokens == () and cfg.mcp_service_bind == ("127.0.0.1", 8765) and cfg.mcp_service_allowed_hosts == ("127.0.0.1", "localhost")
-    monkeypatch.setenv("MCP_SERVICE_TOKENS", " s3cret , t0k:en,, s3cret")
-    monkeypatch.setenv("MCP_SERVICE_BIND", "0.0.0.0:9000")
-    monkeypatch.setenv("MCP_SERVICE_ALLOWED_HOSTS", "weather.lan, 192.168.1.5:9000")
+    assert cfg.auth_tokens == () and cfg.mcp_bind == ("127.0.0.1", 8765) and cfg.mcp_allowed_hosts == ("127.0.0.1", "localhost")
+    monkeypatch.setenv("AUTH_TOKENS", " s3cret , t0k:en,, s3cret")
+    monkeypatch.setenv("MCP_BIND", "0.0.0.0:9000")
+    monkeypatch.setenv("MCP_ALLOWED_HOSTS", "weather.lan, 192.168.1.5:9000")
     cfg = Config.from_env(bot=False)
-    assert cfg.mcp_service_tokens == ("s3cret", "t0k:en") and "s3cret" not in caplog.text
-    assert cfg.mcp_service_bind == ("0.0.0.0", 9000) and cfg.mcp_service_allowed_hosts == ("weather.lan", "192.168.1.5:9000")
+    assert cfg.auth_tokens == ("s3cret", "t0k:en") and "s3cret" not in caplog.text
+    assert cfg.mcp_bind == ("0.0.0.0", 9000) and cfg.mcp_allowed_hosts == ("weather.lan", "192.168.1.5:9000")
     for value, want in (("[::1]:8800", ("::1", 8800)), ("9001", ("127.0.0.1", 9001)), ("host:port", ("127.0.0.1", 8765)),
                         ("h:70000", ("127.0.0.1", 8765))):
-        monkeypatch.setenv("MCP_SERVICE_BIND", value)
-        assert Config.from_env(bot=False).mcp_service_bind == want, value
+        monkeypatch.setenv("MCP_BIND", value)
+        assert Config.from_env(bot=False).mcp_bind == want, value
 
 
 def test_one_service_per_data_folder(tmp_path):
-    """The bot running the service in-process and python -m ecobot_service on one folder would both fetch and both write each alert."""
+    """The bot running the service in-process and python -m ecobot_mcp on one folder would both fetch and both write each alert."""
     import contextlib
     from types import SimpleNamespace
 
-    from ecobot_service.core import hold_data_folder
+    from ecobot_mcp.core import hold_data_folder
     cfg = SimpleNamespace(state_path=tmp_path / "bot_state.json")
     with contextlib.ExitStack() as first:
         hold_data_folder(cfg, first)
-        with contextlib.ExitStack() as second, pytest.raises(SystemExit, match="already runs the weather service"):
+        with contextlib.ExitStack() as second, pytest.raises(SystemExit, match="already runs ecobot-mcp.s work"):
             hold_data_folder(cfg, second)
     with contextlib.ExitStack() as again:   # free once the first has closed
         hold_data_folder(cfg, again)
@@ -400,9 +400,9 @@ def test_images_are_wanted_per_call_else_per_connection():
 
 
 def test_the_service_imports_no_pillow_until_an_image_is_asked_for_and_no_telegram_ever(tmp_path):
-    """Importing the server and building its app (as python -m ecobot_service does) imports neither Pillow nor the renderer, nor the
+    """Importing the server and building its app (as python -m ecobot_mcp does) imports neither Pillow nor the renderer, nor the
     Telegram library: the service knows nothing of Telegram."""
-    code = ("import sys, ecobot_service.__main__; from zoneinfo import ZoneInfo; from lib.mcp_server import EcobotServer, http_app; "
+    code = ("import sys, ecobot_mcp.__main__; from zoneinfo import ZoneInfo; from lib.mcp_server import EcobotServer, http_app; "
             "from lib.service.context import Context; http_app(EcobotServer(Context(tz=ZoneInfo('UTC'))), tokens=('t',)); "
             "print(sorted(m for m in sys.modules if m.split('.')[0] in ('PIL', 'telegram') or m in ('lib.charts', 'lib.draw', 'lib.gauges')))")
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120,

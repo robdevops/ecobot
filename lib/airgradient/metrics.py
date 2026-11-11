@@ -38,7 +38,7 @@ PARTICLES = AIR_PANELS[0]
 SPIKE_RATIO = 2.5    # a particle reading that is this many times the readings either side of it ...
 SPIKE_RISE = 5.0     # ... and this far (µg/m³) above both, with nothing like it next to it, is a glitch of the sensor, not the air
 SPIKE_NEIGHBOUR = 900   # the readings either side must be within this many seconds
-REQUIRE_CONSECUTIVE = 2   # ANTISPIKE_REQUIRE_CONSECUTIVE: readings in a row a rise needs to be the air (set at startup); 1 turns the rule off
+REQUIRE_CONSECUTIVE = 2   # MCP_ANTISPIKE_REQUIRE_CONSECUTIVE: readings in a row a rise needs to be the air (set at startup); 1 turns the rule off
 
 
 def without_spikes(rows: list[dict], require: int | None = None) -> list[dict]:

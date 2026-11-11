@@ -1,7 +1,7 @@
-"""The weather service as the bot reaches it (docs/mcp-service.md section 4 and step 5): one interface, whether the service runs in this
-process (LocalWeather: lib/service's tools over the bot's own sources, the alert log in this process; WEATHER_MCP_URL unset, as before)
-or is another program reached over MCP (RemoteWeather: WEATHER_MCP_URL, a client pinned to protocol 2026-07-28 that one supervisor
-task keeps connected). Everything the bot asks of the service goes through it, so the bot doesn't branch on where the service runs:
+"""ecobot-mcp's tools as the bot reaches them (docs/ecobot-mcp.md section 4 and step 5): one interface, whether they run in this
+process (LocalWeather: lib/service's tools over the bot's own sources, the alert log in this process; BOT_MCP_URL unset, as before)
+or in ecobot-mcp, another program reached over MCP (RemoteWeather: BOT_MCP_URL, a client pinned to protocol 2026-07-28 that one supervisor
+task keeps connected). Everything the bot asks of them goes through it, so the bot doesn't branch on where they run:
 
   - `service`: the tools, as lib.service.Service gives them: iterated in order, `get(name)` or `service[name]`, each with its name,
     description, parameters and `call(args, meta)`, which returns the tool's JSON text (lib/model_tools.py offers them to the model; the
@@ -273,7 +273,7 @@ class RemoteWeather:
     then refused with ServiceUnreachable."""
     is_weather, remote = True, True
 
-    def __init__(self, target, token: str | None = None, tz=None):
+    def __init__(self, target, token=None, tz=None):
         from lib.upstream import Upstream
         self.target, self.fallback_tz, self.station_tz = target, tz, None
         self.upstream = Upstream(target, token, on_event=self._event, on_discover=self._discovered, on_listening=self._listening,
@@ -309,7 +309,7 @@ class RemoteWeather:
             try:
                 await refresh()
             except Exception as e:   # (the connection is still good: the listen's events refresh them later)
-                log.warning("Weather service: couldn't read %s (%s: %s)", refresh.__name__.removeprefix("_read_"), type(e).__name__, e)
+                log.warning("ecobot-mcp: couldn't read %s (%s: %s)", refresh.__name__.removeprefix("_read_"), type(e).__name__, e)
         self.alerts.changed()
         self._soon(self.forecast.refresh)
         self.listening.set()
@@ -333,7 +333,7 @@ class RemoteWeather:
             try:
                 await fn()
             except Exception as e:
-                log.debug("Weather service: %s failed (%s: %s)", getattr(fn, "__name__", fn), type(e).__name__, e)
+                log.debug("ecobot-mcp: %s failed (%s: %s)", getattr(fn, "__name__", fn), type(e).__name__, e)
         task = asyncio.create_task(run())
         self._background.add(task)
         task.add_done_callback(self._background.discard)
@@ -387,7 +387,7 @@ class RemoteWeather:
         """A tool's answer as its JSON text (the first text block: the tool's JSON, a refusal's too). A background request (nobody
         waiting) doesn't wait for the service."""
         meta = dict(meta or {})
-        meta.setdefault("chart_image", chart_images.NO_IMAGE)   # (the JSON, even if WEATHER_MCP_URL asks for images: the bot draws these)
+        meta.setdefault("chart_image", chart_images.NO_IMAGE)   # (the JSON, even if BOT_MCP_URL asks for images: the bot draws these)
         client = await self._client(0 if meta.get("priority") == BACKGROUND else CALL_WAIT)
         result = await client.call_tool(name, args or {}, meta=meta)
         for block in result.content:
@@ -419,7 +419,7 @@ class RemoteWeather:
         if pngs:
             dark = extra.get(chart_images.DARK_META)
             return out, ChartImage(pngs[0], charts[0], dark if isinstance(dark, bool) else meta["chart_dark"])
-        log.debug("Weather service: %s sent no chart image (%s); drawn here", name, out.get("chart_image_note"))
+        log.debug("ecobot-mcp: %s sent no chart image (%s); drawn here", name, out.get("chart_image_note"))
         return out, await draw_here(chart_images.render, charts[0], self.tz, meta["chart_dark"])
 
     async def picture(self, chart: dict, dark: bool | None = None) -> ChartImage:
@@ -437,7 +437,7 @@ class RemoteWeather:
                 out, image = {"error": f"{type(e).__name__}: {e}"}, None
             if image is not None:
                 return image
-            log.debug("Weather service: %s drew no chart again (%s); drawn here", by["tool"], out.get("error"))
+            log.debug("ecobot-mcp: %s drew no chart again (%s); drawn here", by["tool"], out.get("error"))
         return await draw_here(chart_images.render, chart, self.tz, dark)
 
     async def resource(self, uri: str, wait=AS_A_CALL) -> dict:
@@ -468,7 +468,7 @@ class RemoteWeather:
         try:
             return await asyncio.wait_for(self.alerts.get(event_id), CALL_WAIT)
         except Exception as e:   # (not reached in time, or refused: the alert's type's own chart is drawn instead)
-            log.debug("Weather service: alert %s couldn't be read (%s: %s)", event_id, type(e).__name__, e)
+            log.debug("ecobot-mcp: alert %s couldn't be read (%s: %s)", event_id, type(e).__name__, e)
             return None
 
     async def close(self):

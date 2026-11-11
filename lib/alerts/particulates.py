@@ -2,7 +2,7 @@
 
 "Wear a mask outside" when PM2.5 or PM10 reaches US AQI 151+ ("unhealthy", the official level
 at which masks are advised for everyone) in two readings in a row, each check counting only when the sensor's last
-ANTISPIKE_REQUIRE_CONSECUTIVE (2) readings are all that high (a spike never does); "back to safe" when both are at
+MCP_ANTISPIKE_REQUIRE_CONSECUTIVE (2) readings are all that high (a spike never does); "back to safe" when both are at
 AQI 100 or below in two readings in a row (rules.py: a check that brings no new reading counts for nothing). Every episode gets the pair. Particles only: masks
 filter particles, not gases like CO2/VOC/NOx.
 Each is an event in the alert log (lib/alert_log.py) with the sensor's dashboard as its link and the 1-day particulates chart as data;
@@ -45,7 +45,7 @@ class ParticulatesMonitor:
             return
         if when is not None and not rules.new_reading(m, when.timestamp()):   # the sensor has said nothing new since the last check
             return
-        # held: the lowest of the last readings (ANTISPIKE_REQUIRE_CONSECUTIVE), so a spike alone can't make the air unhealthy
+        # held: the lowest of the last readings (MCP_ANTISPIKE_REQUIRE_CONSECUTIVE), so a spike alone can't make the air unhealthy
         high25, high10 = held.get("pm2_5", pm25), held.get("pm10", pm10)
         bad = (high25 is not None and high25 >= MASK_PM25) or (high10 is not None and high10 >= MASK_PM10)
         good = (pm25 is None or pm25 <= SAFE_PM25) and (pm10 is None or pm10 <= SAFE_PM10)

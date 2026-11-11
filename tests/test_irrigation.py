@@ -150,14 +150,14 @@ async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
 
 def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely(monkeypatch, tmp_path):
     assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
-    env = {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}
+    env = {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b"}
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     for value, hour in (("", 18), ("6", 6), ("0", 0), ("23", 23), ("24", 18), ("noon", 18), ("-1", 18)):
-        monkeypatch.setenv("IRRIGATION_CHECK_HOUR", value)
+        monkeypatch.setenv("BOT_IRRIGATION_CHECK_HOUR", value)
         assert Config.from_env().irrigation_check_hour == hour, value
-    monkeypatch.setenv("TUYA_BASE_URL", "https://openapi.tuyaus.com/")
-    monkeypatch.setenv("TUYA_DEVICE_ID", " dev ")
+    monkeypatch.setenv("BOT_TUYA_BASE_URL", "https://openapi.tuyaus.com/")
+    monkeypatch.setenv("BOT_TUYA_DEVICE_ID", " dev ")
     assert Config.from_env().tuya_base_url == "https://openapi.tuyaus.com" and Config.from_env().tuya_device_id == "dev"
 
 

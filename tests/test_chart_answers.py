@@ -1,5 +1,5 @@
 """A question that is only a chart: the model sets chart_answers_it, the service's result comes complete (its chart and its `reply`),
-and the turn ends with that reply: the model is asked nothing more (docs/mcp-service.md 3.7). A real Agent over a scripted model and
+and the turn ends with that reply: the model is asked nothing more (docs/ecobot-mcp.md 3.7). A real Agent over a scripted model and
 stand-in service tools (offered as the bot offers them, lib/model_tools.py), through the bot's own model call."""
 
 import json

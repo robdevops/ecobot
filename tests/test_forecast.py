@@ -118,9 +118,9 @@ async def test_the_station_location_is_used_when_none_is_configured_and_without_
     cfg = config(tmp_path, forecast=True)
     assert Forecast(cfg, (-37.8, 144.9)).location == (-37.8, 144.9)
     half = config(tmp_path, forecast=True, forecast_lat=-33.9)                       # one half alone is not a place: not paired with the station's
-    assert Forecast(half, (-37.8, 144.9)).location == (-37.8, 144.9) and "FORECAST_LAT and FORECAST_LON go together" in caplog.text
+    assert Forecast(half, (-37.8, 144.9)).location == (-37.8, 144.9) and "MCP_FORECAST_LAT and MCP_FORECAST_LON go together" in caplog.text
     assert Forecast(config(tmp_path, forecast=True, forecast_lat=-33.9, forecast_lon=151.2), (-37.8, 144.9)).location == (-33.9, 151.2)
-    with pytest.raises(RuntimeError, match="FORECAST_LAT"):
+    with pytest.raises(RuntimeError, match="MCP_FORECAST_LAT"):
         await Forecast(cfg).start()
 
 

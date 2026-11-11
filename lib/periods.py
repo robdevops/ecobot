@@ -1,6 +1,6 @@
 """The period buttons under a chart, and the charts drawn lately.
 
-A chart the service drew carries `drawn_by` (docs/mcp-service.md 3.7): the call that drew it and the periods it is worth drawing over,
+A chart the service drew carries `drawn_by` (docs/ecobot-mcp.md 3.7): the call that drew it and the periods it is worth drawing over,
 each with its label ("7d", "7D"). Its buttons are those periods, the chart's own shaded (the blue of an alert toggle that is on), and
 none when it lists none (but a 🔄, "pd:reload", that draws it again when its period runs to now); a button's data is the period
 ("pd:7d"), never the call, which Telegram's 64 bytes couldn't hold. Pressing one replays the call with that period
@@ -170,7 +170,7 @@ class ImageCache:
 
     CHART_TTL = 10 * 60
     CHART_IMAGES = 60
-    PRELOAD_TTL = 30 * 60   # a chart uploaded ahead (TELEGRAM_PRELOAD_CHAT) is used for this long, then drawn afresh
+    PRELOAD_TTL = 30 * 60   # a chart uploaded ahead (BOT_TELEGRAM_PRELOAD_CHAT) is used for this long, then drawn afresh
     FRESH = 330   # a chart made in code this lately answers the same call again as it is (the readings move slowly)
 
     def __init__(self, clock=None):
@@ -207,7 +207,7 @@ class ImageCache:
 
     def ready(self, key: str | None) -> Drawn | None:
         """The chart made in code for this call in the last FRESH seconds (for someone's question, or uploaded ahead to
-        TELEGRAM_PRELOAD_CHAT), with the text that went with it; None if there is none."""
+        BOT_TELEGRAM_PRELOAD_CHAT), with the text that went with it; None if there is none."""
         entry = self.items.get(key) if key else None
         if entry is None or entry.caption is None or self.age(entry) > self.FRESH or entry.dark != dark_now():
             return None

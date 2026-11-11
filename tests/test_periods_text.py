@@ -1,4 +1,4 @@
-"""Periods in words (lib/periods_text.py): the table of docs/mcp-service.md 3.2 read at fixed times, every answer worked out by hand.
+"""Periods in words (lib/periods_text.py): the table of docs/ecobot-mcp.md 3.2 read at fixed times, every answer worked out by hand.
 Melbourne's clocks go back an hour at 3am on 5 Apr 2026 (2am to 3am happens twice) and forward at 2am on 4 Oct 2026 (2am to 3am
 never happens)."""
 

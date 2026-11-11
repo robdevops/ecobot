@@ -1,4 +1,4 @@
-"""What every service tool shares (docs/mcp-service.md 3.2, 3.7): how a tool is made and what it is sent, how it reads a period, and
+"""What every service tool shares (docs/ecobot-mcp.md 3.2, 3.7): how a tool is made and what it is sent, how it reads a period, and
 the shape of what it answers.
 
 A tool is a ServiceTool: its handler is `handler(args, meta)`, the arguments as sent and the request's metadata (`request_meta`), and

@@ -34,10 +34,10 @@ Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off i
 
 ## Who can use it
 
-By default the bot answers everyone who messages it. `ADMIN_ONLY=on` answers only the admins of the groups it is in, plus any ids in `ADMIN_CHAT_IDS`; everyone else is told it is for group admins. A refused sender is logged once, with their id, so the owner can add them to `ADMIN_CHAT_IDS`. See [configuration.md](configuration.md).
+By default the bot answers everyone who messages it. `BOT_ADMIN_ONLY=on` answers only the admins of the groups it is in, plus any ids in `BOT_ADMIN_CHAT_IDS`; everyone else is told it is for group admins. A refused sender is logged once, with their id, so the owner can add them to `BOT_ADMIN_CHAT_IDS`. See [configuration.md](configuration.md).
 
 ## Optional extras
 
-- **Pollen and thunderstorm asthma** for Melbourne (October to December), from melbournepollen.com.au: `POLLEN=on`.
-- **Daily forecast** from Open-Meteo, with the chance of at least 1 mm of rain: `FORECAST=on`.
-- **Irrigation controller** (a Tuya smart timer): an Irrigation button with its status and buttons to water for 5 to 30 minutes, switch off, pause for 24 to 72 hours, and its own alert toggles. A daily check at 18:00 delays watering 24 hours when rain fell or is likely. Set the `TUYA_*` variables.
+- **Pollen and thunderstorm asthma** for Melbourne (October to December), from melbournepollen.com.au: `MCP_POLLEN=on`.
+- **Daily forecast** from Open-Meteo, with the chance of at least 1 mm of rain: `MCP_FORECAST=on`.
+- **Irrigation controller** (a Tuya smart timer): an Irrigation button with its status and buttons to water for 5 to 30 minutes, switch off, pause for 24 to 72 hours, and its own alert toggles. A daily check at 18:00 delays watering 24 hours when rain fell or is likely. Set the `BOT_TUYA_*` variables.

@@ -228,7 +228,7 @@ async def test_a_tool_that_fails_answers_the_model_with_the_error_and_only_a_bug
 
 
 def test_the_prompt_is_the_persona_then_the_servers_instructions_then_the_time():
-    """docs/mcp-service.md 4: the bot adds only its persona (a friendly Telegram bot, plain text, bullets, the caption a photo allows)
+    """docs/ecobot-mcp.md 4: the bot adds only its persona (a friendly Telegram bot, plain text, bullets, the caption a photo allows)
     to the server's instructions; nothing about the tools, the periods or the data."""
     from datetime import datetime
     from zoneinfo import ZoneInfo

@@ -1,4 +1,4 @@
-"""The `scan` tool (docs/mcp-service.md 3.3): each air reading against every weather reading, read together at 30-minute resolution
+"""The `scan` tool (docs/ecobot-mcp.md 3.3): each air reading against every weather reading, read together at 30-minute resolution
 over whole days to yesterday, for the relationships that stand out (lib/compose.py Composer.air_scan, today's air_scan, over
 lib/analysis/scan.py). Its verdict and findings come back as they are, in the service's shape; a chart, when asked, is the strongest pair
 over time, carrying the call that drew it (drawn_by, 3.7).

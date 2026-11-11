@@ -2,7 +2,7 @@
 start() checks the monitor, tools are what the model can call, warm()/poke() keep recent
 readings ready, backfill() caches the monitor's whole history, current() feeds the alert monitor.
 
-Its readings come from each of its sources that is set (AIRGRADIENT_SOURCE; docs/storage-plan.md 3.12), each filling only what the ones
+Its readings come from each of its sources that is set (MCP_AIRGRADIENT_SOURCE; docs/storage-plan.md 3.12), each filling only what the ones
 before it lack: the monitor's own server (local.py: read every minute, each 5 minutes' readings averaged into a row with their lowest and
 highest as its band, and each reading kept as a minute), Home Assistant (homeassistant.py: its states of the monitor sampled the same way
 while the monitor does not answer the bot, and its history read back for the times the bot did not read it at all), and AirGradient's
@@ -97,7 +97,7 @@ class AirGradient(Source):
         owned: the file is this source's to close (so when it opened it, or no station has it)."""
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
-        self.cloud = cfg.airgradient_cloud    # without an account (or with AIRGRADIENT_SOURCE saying not) the cloud is never asked
+        self.cloud = cfg.airgradient_cloud    # without an account (or with MCP_AIRGRADIENT_SOURCE saying not) the cloud is never asked
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
         self.local = LocalSensor(cfg.airgradient_local_url, cloud=self.cloud) if cfg.airgradient_local else None   # the monitor's own server
@@ -307,7 +307,7 @@ class AirGradient(Source):
             return self._current[0]
 
     async def _fetch_current(self) -> dict:
-        """The live reading: from the monitor's own server when AIRGRADIENT_LOCAL_URL answers, else Home Assistant's states of it (each
+        """The live reading: from the monitor's own server when MCP_AIRGRADIENT_LOCAL_URL answers, else Home Assistant's states of it (each
         with the cloud's name for the sensor, last heard), else the cloud."""
         row, _ = await self._sample()
         if row is not None:

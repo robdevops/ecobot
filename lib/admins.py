@@ -1,8 +1,8 @@
-"""Who may talk to the bot when ADMIN_ONLY is on: the admins of the groups it is in, and the ids listed in ADMIN_CHAT_IDS.
+"""Who may talk to the bot when BOT_ADMIN_ONLY is on: the admins of the groups it is in, and the ids listed in BOT_ADMIN_CHAT_IDS.
 
 A "known admin" is anyone Telegram lists as an administrator or creator of a group the bot knows (a group becomes known when the bot is
-added to it or someone speaks in it) or of a group named by a negative id in ADMIN_CHAT_IDS. The lists are asked for once and kept for
-ten minutes. ADMIN_CHAT_IDS is added to that, never instead of it: a positive id is a user (it bootstraps a bot that is in no group yet),
+added to it or someone speaks in it) or of a group named by a negative id in BOT_ADMIN_CHAT_IDS. The lists are asked for once and kept for
+ten minutes. BOT_ADMIN_CHAT_IDS is added to that, never instead of it: a positive id is a user (it bootstraps a bot that is in no group yet),
 a negative id is a group, whose own admins are then looked up and whose anonymous admins are let in: a message an admin sends "as the
 group" carries the group as its `sender_chat` and no real user, so it is allowed only when that group's id is listed. The groups'
 lists are asked for together, and messages that arrive together while a list is being fetched wait for that one lookup.
@@ -26,7 +26,7 @@ class Admins:
         self._looking: dict[int, asyncio.Lock] = {}   # group -> held while its list is fetched
 
     def groups(self) -> list[int]:
-        """The groups whose admins count: the ones the bot is in (not one that removed it), and the ones ADMIN_CHAT_IDS names."""
+        """The groups whose admins count: the ones the bot is in (not one that removed it), and the ones BOT_ADMIN_CHAT_IDS names."""
         known = {c for c in self.state.present() if c < 0}
         return sorted(known | {i for i in self.extra if i < 0})
 

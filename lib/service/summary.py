@@ -1,4 +1,4 @@
-"""The `summary` tool (docs/mcp-service.md 3.3): a period's figures from the weather station and the air sensor, each reading's lowest
+"""The `summary` tool (docs/ecobot-mcp.md 3.3): a period's figures from the weather station and the air sensor, each reading's lowest
 and highest with when and that day's look, averages, a breakdown by day or by month, wind direction, the rain that fell, the air's
 ratings and AQI, and a chart of any readings from either sensor or both. It replaces weather_history, air_quality with dates and
 plot_chart, and wraps their engines, each given only what this tool's arguments say (a Turn built from them, never from words):

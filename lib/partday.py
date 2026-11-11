@@ -1,4 +1,4 @@
-"""Part of each day (docs/mcp-service.md 3.3): a sensor's figures over one stretch of local time on each day of a period, worked out as a
+"""Part of each day (docs/ecobot-mcp.md 3.3): a sensor's figures over one stretch of local time on each day of a period, worked out as a
 day row is from a whole day's readings (lib/storage/days.py), so the overnight low, the nights below 5°C or the 3pm temperature can be
 found, ranked and counted as days are.
 

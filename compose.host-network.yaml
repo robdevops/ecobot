@@ -2,11 +2,11 @@ services:
   # On the host's network (its sources may be .local names), on port 8765 of every address the host has, as compose.yaml publishes
   # it: the bot reaches it at http://127.0.0.1:8765/mcp, and other machines at the host's address. (No hostname of its own here: the
   # host's name is its name, and it answers that.)
-  ecobot-service:
+  ecobot-mcp:
     network_mode: host
     hostname: !reset null
     ports: !reset []
   ecobot:
     network_mode: host
     environment:
-      WEATHER_MCP_URL: http://127.0.0.1:8765/mcp
+      BOT_MCP_URL: http://127.0.0.1:8765/mcp

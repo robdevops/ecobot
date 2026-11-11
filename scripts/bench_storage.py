@@ -67,7 +67,7 @@ def copy(source: Path, target: Path):
 def settings(folder: Path) -> Config:
     """The bot's settings with its files in `folder`, and nothing that would reach the network (Home Assistant, the sensor itself)."""
     os.environ["DATA_DIR"] = str(folder)
-    for name in ("TELEGRAM_BOT_TOKEN", "ECOWITT_API_KEY", "ECOWITT_APP_KEY"):   # (never used: nothing is asked of them)
+    for name in ("BOT_TELEGRAM_TOKEN", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):   # (never used: nothing is asked of them)
         os.environ.setdefault(name, "bench")
     cfg = Config.from_env()
     location = None

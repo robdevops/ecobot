@@ -85,7 +85,7 @@ async def test_the_district_is_the_sites_whatever_its_case_and_one_it_lacks_is_w
     await pollen.close()
     with caplog.at_level("WARNING"):
         pollen, _ = make(tmp_path, pollen_district="Centrl")
-    assert pollen.district == "Centrl" and "POLLEN_DISTRICT 'Centrl' is not one of the site's districts" in caplog.text
+    assert pollen.district == "Centrl" and "MCP_POLLEN_DISTRICT 'Centrl' is not one of the site's districts" in caplog.text
     await pollen.close()
 
 

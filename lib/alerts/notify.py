@@ -262,7 +262,7 @@ class Notifier:
 
 
 class AlertDelivery:
-    """The bot's side of the alert log (lib/alert_log.py, docs/mcp-service.md section 4): it reads each new event and sends it, as the
+    """The bot's side of the alert log (lib/alert_log.py, docs/ecobot-mcp.md section 4): it reads each new event and sends it, as the
     Notifier does, to the chats subscribed to its kind, with its link, its chart drawn from the event's chart data (and the 🔄 that
     replays the chart's drawn_by) or the text alone. The id of the last event handled is kept in bot_state.json (AlertState.read), so a
     restart resumes after it; the events that expired meanwhile are skipped (the morning's rain is not news by the afternoon). With no id

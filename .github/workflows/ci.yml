@@ -21,8 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}   # optional: set both secrets to get failures as a Telegram message
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  NOTIFY_TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}   # optional: set both secrets to get failures as a Telegram message (not the bot's
+  NOTIFY_TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}      # BOT_TELEGRAM_TOKEN setting: CI's own names)
 
 jobs:
   test:
@@ -50,10 +50,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       - name: Tell me on Telegram (main only)
-        if: failure() && github.ref == 'refs/heads/main' && env.TELEGRAM_BOT_TOKEN != ''
+        if: failure() && github.ref == 'refs/heads/main' && env.NOTIFY_TELEGRAM_TOKEN != ''
         run: |
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+          curl -fsS "https://api.telegram.org/bot${NOTIFY_TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${NOTIFY_TELEGRAM_CHAT}" \
             --data-urlencode "text=CI failed on main: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
 
   newest:
@@ -84,15 +84,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Tell me on Telegram
-        if: (failure() || steps.pictures.outcome == 'failure') && env.TELEGRAM_BOT_TOKEN != ''
+        if: (failure() || steps.pictures.outcome == 'failure') && env.NOTIFY_TELEGRAM_TOKEN != ''
         run: |
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+          curl -fsS "https://api.telegram.org/bot${NOTIFY_TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${NOTIFY_TELEGRAM_CHAT}" \
             --data-urlencode "text=The newest Pillow changes something: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true
 
   live-evals:
     # Advisory, never blocks: asks the real model the few questions in tests/evals/weekly.txt and checks which tool it calls. Needs the
-    # repository secret OPENROUTER_API_KEY (skipped without it); OPENROUTER_MODEL is optional, for when production runs another model than deepseek/deepseek-v4.1-flash-1017. A failure is run once more before it is reported.
+    # repository secret OPENROUTER_API_KEY (skipped without it; the eval script's own names, not the bot's BOT_OPENROUTER_*); OPENROUTER_MODEL is optional, for when production runs another model than deepseek/deepseek-v4.1-flash-1017. A failure is run once more before it is reported.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -115,8 +115,8 @@ jobs:
           if [ "$ALL_CASES" != "true" ]; then ids=(--ids "$(paste -sd, tests/evals/weekly.txt)"); fi
           python scripts/eval_prompts.py --live "${ids[@]}" || { echo "Failed: asking once more"; python scripts/eval_prompts.py --live "${ids[@]}"; }
       - name: Tell me on Telegram
-        if: failure() && env.TELEGRAM_BOT_TOKEN != ''
+        if: failure() && env.NOTIFY_TELEGRAM_TOKEN != ''
         run: |
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+          curl -fsS "https://api.telegram.org/bot${NOTIFY_TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${NOTIFY_TELEGRAM_CHAT}" \
             --data-urlencode "text=The model answers differently to the saved questions: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || true

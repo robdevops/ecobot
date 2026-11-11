@@ -1,14 +1,17 @@
-# The weather service on its own (python -m ecobot_service, docs/mcp-service.md step 5): the sources and their syncers, the alert rules
-# and the MCP server at http://127.0.0.1:8765/mcp. Install it beside ecobot.service, from the same checkout and venv (see that file):
+# ecobot-mcp, the MCP server on its own (python -m ecobot_mcp, docs/ecobot-mcp.md step 5): the sources and their syncers, the alert
+# rules and the MCP server at http://127.0.0.1:8765/mcp. Install it beside ecobot.service, from the same checkout and venv (see that file):
 #   sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
-# Only one process runs the service on a data folder (service.lock): before enabling this, make the bot its client (WEATHER_MCP_URL
-# and WEATHER_MCP_TOKEN in /etc/ecobot.env, with the token in MCP_SERVICE_TOKENS) and restart it; otherwise this one stops at start, saying so.
+# Only one process runs ecobot-mcp's part on a data folder (mcp.lock): before enabling this, make the bot its client (BOT_MCP_URL in
+# /etc/ecobot.env) and restart it; otherwise this one stops at start, saying so.
 # The data folder is the bot's own, /var/lib/private/ecobot (StateDirectory=ecobot): User=ecobot gives this unit the same dynamic user
-# as ecobot.service, so the two share the folder's owner and neither takes it from the other when it starts.
-# It reads /etc/ecobot.env as the bot does, less the bot's own secrets (UnsetEnvironment=). MCP_SERVICE_BIND defaults to 127.0.0.1:8765; to
-# reach it from other machines set MCP_SERVICE_BIND=0.0.0.0:8765 (refused without MCP_SERVICE_TOKENS) and put TLS in front of it.
+# as ecobot.service, so the two share the folder's owner and neither takes it from the other when it starts. The token: the first of
+# AUTH_TOKENS, which the bot sends and this accepts; with AUTH_TOKENS unset, the one this generates at its first start in the data
+# folder (/var/lib/private/ecobot/auth_token, readable by that user only), which the bot reads from there.
+# It reads /etc/ecobot.env as the bot does, less the bot's own secrets, by their names and their old ones (UnsetEnvironment=): its
+# settings are the MCP_ ones and the shared ones (docs/configuration.md). MCP_BIND defaults to 127.0.0.1:8765; to reach it from other
+# machines set MCP_BIND=0.0.0.0:8765 and put TLS in front of it.
 [Unit]
-Description=ecobot weather service (MCP)
+Description=ecobot-mcp (the ecobot MCP server: sources, alert rules)
 After=network-online.target
 Wants=network-online.target
 Before=ecobot.service
@@ -19,12 +22,12 @@ User=ecobot
 Group=ecobot
 WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
-UnsetEnvironment=TELEGRAM_BOT_TOKEN OPENROUTER_API_KEY WEATHER_MCP_TOKEN TUYA_CLIENT_ID TUYA_CLIENT_SECRET
+UnsetEnvironment=BOT_TELEGRAM_TOKEN TELEGRAM_BOT_TOKEN BOT_OPENROUTER_API_KEY OPENROUTER_API_KEY BOT_TUYA_CLIENT_ID TUYA_CLIENT_ID BOT_TUYA_CLIENT_SECRET TUYA_CLIENT_SECRET WEATHER_MCP_TOKEN
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
 StateDirectory=ecobot
 CacheDirectory=ecobot
-ExecStart=/opt/ecobot/.venv/bin/python -m ecobot_service
+ExecStart=/opt/ecobot/.venv/bin/python -m ecobot_mcp
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30

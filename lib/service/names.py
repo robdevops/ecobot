@@ -1,4 +1,4 @@
-"""The readings the service has, one name each, and the words people use for them (docs/mcp-service.md 3.2, "One naming scheme").
+"""The readings the service has, one name each, and the words people use for them (docs/ecobot-mcp.md 3.2, "One naming scheme").
 
 A reading's name is `sensor.reading`: the weather station's Ecowitt group and the reading's column (`outdoor.temperature`,
 `indoor.humidity`, `pressure.relative`, `wind.wind_gust`), with rain as `rainfall.rain`, the mm that fell (the file keeps the running
@@ -30,7 +30,7 @@ STATION, AIR_DEVICE = "station", "air"   # the two devices: the Ecowitt weather 
 
 # ---------- "all" ----------
 # The settings "all" follows: the panels of "weather all week", top to bottom, as lib/series.py names the readings. intent.chart_fields
-# reads them here too. ecobot.py sets the two flags from the config (CHART_ALL_FEELS_LIKE, CHART_ALL_VPD) at startup.
+# reads them here too. ecobot.py sets the two flags from the config (MCP_CHART_ALL_FEELS_LIKE, MCP_CHART_ALL_VPD) at startup.
 ALL_ORDER = ("temperature", "humidity", "solar", "pressure", "rain", "dew_point", "feels_like", "vpd", "uv", "wind")
 LEFT_OUT_OF_ALL = ("uv",)   # the UV index has the same shape as solar radiation
 FEELS_LIKE_IN_ALL = False   # the feels-like panel: off, as it nearly repeats temperature
@@ -204,7 +204,7 @@ class Catalogue:
     @classmethod
     def listed(cls, entries: Iterable[dict]) -> "Catalogue":
         """The catalogue another process holds, from the readings it lists ({name, label, unit}, as ecobot://station's sensors give
-        them: a client's, docs/mcp-service.md step 5): each reading as this catalogue makes it, with the label and unit listed."""
+        them: a client's, docs/ecobot-mcp.md step 5): each reading as this catalogue makes it, with the label and unit listed."""
         wanted = {e["name"]: e for e in entries if isinstance(e, dict) and e.get("name")}
         made = (_reading(m, set(wanted)) for m in [*station_metrics(None), *air_metrics(extra=True)])
         return cls(replace(r, label=wanted[r.name].get("label") or r.label, unit=wanted[r.name].get("unit", r.unit))

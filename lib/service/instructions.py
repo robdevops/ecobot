@@ -1,4 +1,4 @@
-"""The server's instructions (docs/mcp-service.md 3.2): a short summary of what the tools read, for a client that passes it to its model
+"""The server's instructions (docs/ecobot-mcp.md 3.2): a short summary of what the tools read, for a client that passes it to its model
 (over MCP a client gets it by asking: `server/discover`). Nothing depends on it: every rule a choice of tool or the reading of a result
 depends on is in the tool's description or in the result, and the evals are run with and without it (`--live --service
 --instructions`, docs 7).

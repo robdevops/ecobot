@@ -2,11 +2,12 @@
 # in the container: docker compose exec ecobot python scripts/...)
 *
 !ecobot.py
-!ecobot_service/
+!ecobot_mcp/
 !lib/
 !schemas/
 !scripts/
 !requirements.txt
+!requirements-mcp.txt
 !requirements-charts.txt
 # the commit the log says it is running is read from these (a clone; the files are a few hundred bytes)
 !.git/HEAD

@@ -1,4 +1,4 @@
-"""The `forecast` tool (docs/mcp-service.md 3.3): today and the days ahead, from the forecast source (lib/forecast, Open-Meteo), for a
+"""The `forecast` tool (docs/ecobot-mcp.md 3.3): today and the days ahead, from the forecast source (lib/forecast, Open-Meteo), for a
 period in words that look ahead ("tomorrow", "next 3 days", "this weekend"), read here: lib/periods_text.py reads only what has been
 measured, and refuses the future by pointing to this tool.
 

@@ -1,4 +1,4 @@
-"""The bot's words before step 2 (docs/mcp-service.md 6): lib/report.py as it was, the report, "weather now" and the plain lookups
+"""The bot's words before step 2 (docs/ecobot-mcp.md 6): lib/report.py as it was, the report, "weather now" and the plain lookups
 written in code from the old tools' results. The bot now quotes the service's words instead; these stay as the oracle the service's
 words are checked against (tests/test_service_current.py, _forecast, _pollen, _summary), word for word."""
 

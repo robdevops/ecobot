@@ -1,4 +1,4 @@
-"""The forecast alert, station-wide (docs/mcp-service.md 3.6): today's and tomorrow's forecast against the day's baseline (the first one
+"""The forecast alert, station-wide (docs/ecobot-mcp.md 3.6): today's and tomorrow's forecast against the day's baseline (the first one
 fetched from 6 am), an alert when the high moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or
 less), the alerted forecast the new baseline."""
 

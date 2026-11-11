@@ -99,7 +99,7 @@ async def test_main_starts_warms_and_shuts_down_cleanly(tmp_path, monkeypatch, c
     assert "/0 fetched/failed, " in final and "d held (5m/30m/4h/1d)" in final
     assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
     assert "Alerts NOT running" not in log
-    assert ecobot._format.width == 120                   # LOG_WIDTH reaches the bot's own log lines
+    assert ecobot._format.width == 120                   # BOT_LOG_WIDTH reaches the bot's own log lines
     assert buttons_not_drawn_ahead == [app.bot]          # the keyboard's charts are drawn ahead once the sources are warm
 
 
@@ -277,20 +277,20 @@ def test_the_time_zone_without_a_station_is_tz_else_the_one_etc_localtime_links_
 
 def test_the_alert_cooldown_is_configurable_with_a_default_and_limits(monkeypatch):
     from lib.config import Config
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("ECOWITT_API_KEY", "a")
-    monkeypatch.setenv("ECOWITT_APP_KEY", "b")
-    monkeypatch.delenv("ALERT_COOLDOWN_MINUTES", raising=False)
+    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "t")
+    monkeypatch.setenv("BOT_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("MCP_ALERT_COOLDOWN_MINUTES", raising=False)
     assert Config.from_env().alert_cooldown_minutes == 60
     for value, want in (("45", 45), ("1", 5), ("0", 5), ("-3", 5), ("999", 150), ("junk", 60)):   # 0 is under 5 like 1 is
-        monkeypatch.setenv("ALERT_COOLDOWN_MINUTES", value)
+        monkeypatch.setenv("MCP_ALERT_COOLDOWN_MINUTES", value)
         assert Config.from_env().alert_cooldown_minutes == want, value
 
 
 def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     assert Config.from_env().log_level == "INFO"
@@ -303,48 +303,48 @@ def test_the_log_level_is_a_setting_and_a_typo_keeps_info_with_a_warning(monkeyp
 
 def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypatch, caplog):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", " t "), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("BOT_TELEGRAM_TOKEN", " t "), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    for k in ("OPENROUTER_MODEL", "OPENROUTER_BASE_URL", "PLACE", "POLLEN_DISTRICT", "TUYA_BASE_URL"):
+    for k in ("BOT_OPENROUTER_MODEL", "BOT_OPENROUTER_BASE_URL", "PLACE", "MCP_POLLEN_DISTRICT", "BOT_TUYA_BASE_URL"):
         monkeypatch.setenv(k, "  ")
     monkeypatch.setenv("POLLEN", "enabled")
     cfg = Config.from_env()
     assert (cfg.telegram_token, cfg.openrouter_model, cfg.openrouter_base_url, cfg.place, cfg.pollen_district, cfg.tuya_base_url) == (
         "t", "deepseek/deepseek-v4.1-flash-1017", "https://openrouter.ai/api/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert cfg.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
-    monkeypatch.setenv("OPENROUTER_API_KEY", " ")
+    monkeypatch.setenv("BOT_OPENROUTER_API_KEY", " ")
     assert Config.from_env().openrouter_api_key == ""            # no model is allowed: the bot then answers only what it works out itself
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", " ")
-    with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
+    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", " ")
+    with pytest.raises(SystemExit, match="BOT_TELEGRAM_TOKEN is not set"):
         Config.from_env()
 
 
 def test_the_rain_quiet_hours_are_configurable():
     from lib.config import _hours
-    hours = lambda text: _hours(text, (0, 6), "RAIN_QUIET_HOURS")
+    hours = lambda text: _hours(text, (0, 6), "MCP_RAIN_QUIET_HOURS")
     assert hours("") == (0, 6) and hours("22-6") == (22, 6) and hours("off") is None
     assert hours("junk") == (0, 6) and hours("6-6") == (0, 6) and hours("0-25") == (0, 6)
 
 
 def test_feels_like_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("ECOWITT_API_KEY", "a")
-    monkeypatch.setenv("ECOWITT_APP_KEY", "b")
-    monkeypatch.delenv("CHART_ALL_FEELS_LIKE", raising=False)
+    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "t")
+    monkeypatch.setenv("BOT_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("MCP_CHART_ALL_FEELS_LIKE", raising=False)
     assert Config.from_env().chart_all_feels_like is False
-    monkeypatch.setenv("CHART_ALL_FEELS_LIKE", "on")
+    monkeypatch.setenv("MCP_CHART_ALL_FEELS_LIKE", "on")
     assert Config.from_env().chart_all_feels_like is True
 
 
 def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    monkeypatch.delenv("CHART_ALL_VPD", raising=False)
+    monkeypatch.delenv("MCP_CHART_ALL_VPD", raising=False)
     assert Config.from_env().chart_all_vpd is False
-    monkeypatch.setenv("CHART_ALL_VPD", "on")
+    monkeypatch.setenv("MCP_CHART_ALL_VPD", "on")
     assert Config.from_env().chart_all_vpd is True
 
 
@@ -437,23 +437,23 @@ def test_a_traceback_is_logged_whole_after_its_message():
 
 def test_the_log_width_is_24_unless_set_and_0_keeps_whole_messages(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    monkeypatch.delenv("LOG_WIDTH", raising=False)
+    monkeypatch.delenv("BOT_LOG_WIDTH", raising=False)
     assert Config.from_env().log_width == 24
     for value, want in (("120", 120), ("0", 0), ("junk", 24), ("-5", 24), ("7.5", 24), ("²", 24)):
-        monkeypatch.setenv("LOG_WIDTH", value)
+        monkeypatch.setenv("BOT_LOG_WIDTH", value)
         assert Config.from_env().log_width == want, value
 
 
 def test_the_preload_chat_is_a_chat_id_or_off(monkeypatch):
     from lib.config import Config
-    for k, v in (("TELEGRAM_BOT_TOKEN", "t"), ("OPENROUTER_API_KEY", "k"), ("ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b")):
+    for k, v in (("BOT_TELEGRAM_TOKEN", "t"), ("BOT_OPENROUTER_API_KEY", "k"), ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    monkeypatch.delenv("TELEGRAM_PRELOAD_CHAT", raising=False)
+    monkeypatch.delenv("BOT_TELEGRAM_PRELOAD_CHAT", raising=False)
     assert Config.from_env().telegram_preload_chat is None
     for value, want in (("-1001234567890", -1001234567890), ("42", 42), ("", None), ("junk", None)):
-        monkeypatch.setenv("TELEGRAM_PRELOAD_CHAT", value)
+        monkeypatch.setenv("BOT_TELEGRAM_PRELOAD_CHAT", value)
         assert Config.from_env().telegram_preload_chat == want, value
 
 
@@ -481,5 +481,5 @@ async def test_a_token_telegram_rejects_stops_the_bot_with_a_plain_message_that_
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(Rejecting())))
     with pytest.raises(SystemExit) as stopped:
         await ecobot.main()
-    assert "TELEGRAM_BOT_TOKEN was rejected by Telegram" in str(stopped.value) and "SECRET" not in str(stopped.value)
+    assert "BOT_TELEGRAM_TOKEN was rejected by Telegram" in str(stopped.value) and "SECRET" not in str(stopped.value)
     assert stopped.value.__cause__ is None and stopped.value.__suppress_context__

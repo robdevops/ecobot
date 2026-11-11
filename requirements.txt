@@ -1,7 +1,5 @@
-holidays
-httpx
-mcp==2.3.0
+# Everything: the bot (ecobot.py), which can also run ecobot-mcp's part in-process, and ecobot-mcp itself; the systemd install and
+# the Docker image ecobot. With requirements-charts.txt (Pillow).
+-r requirements-mcp.txt
 openai
 python-telegram-bot>=22.8
-uvicorn==0.54.0
-zeroconf

@@ -1,4 +1,4 @@
-"""The `current` tool (docs/mcp-service.md 3.3): how it is now, from the weather station and the air sensor, every reading or the ones
+"""The `current` tool (docs/ecobot-mcp.md 3.3): how it is now, from the weather station and the air sensor, every reading or the ones
 named, and with `context` today's, this month's and this year's highs and lows beside each reading, as the gauges show them. It replaces
 weather_now and air_quality without dates (and the gauges' figures), on their engines:
 

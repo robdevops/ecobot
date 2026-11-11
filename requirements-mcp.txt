@@ -1,0 +1,8 @@
+# ecobot-mcp's packages (python -m ecobot_mcp: the sources, the alert rules, the MCP server), and the Docker image ecobot-mcp's. The
+# bot needs these too (requirements.txt) and Pillow for its charts (requirements-charts.txt, which ecobot-mcp uses only to send charts
+# as images when a client asks).
+holidays
+httpx
+mcp==2.3.0
+uvicorn==0.54.0
+zeroconf

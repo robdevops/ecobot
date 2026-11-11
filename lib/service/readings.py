@@ -1,4 +1,4 @@
-"""The `readings` tool (docs/mcp-service.md 3.3): one reading's values at an interval, a row per interval with its time, over a period in
+"""The `readings` tool (docs/ecobot-mcp.md 3.3): one reading's values at an interval, a row per interval with its time, over a period in
 the person's words. It replaces the bot's `readings` tool, and wraps its engine (lib/history.py): the same rows read the same way
 (read_intervals, read_days: an interval's average with its lowest and highest, rain as the mm that fell, gusts as the highest, wind
 direction as the reading at the interval's end, days from the day rows), the same cap of MAX_ROWS rows with the interval that fits when

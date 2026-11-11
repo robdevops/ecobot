@@ -87,7 +87,7 @@ async def test_a_name_that_cannot_be_found_is_said_once_for_every_place_that_ask
     await asyncio.sleep(0.2)
     task.cancel()
     assert caplog.text.count("Home Assistant: the ") == 1                                  # ranges, minutes and live reading: one line
-    assert "can't find .local names: put the IP address in HOMEASSISTANT_URL" in caplog.text and "host network" in caplog.text
+    assert "can't find .local names: put the IP address in MCP_HOMEASSISTANT_URL" in caplog.text and "host network" in caplog.text
     await eco.close()
 
 
@@ -97,5 +97,5 @@ def test_outside_docker_a_name_that_cannot_be_found_is_to_be_checked_or_given_as
     monkeypatch.setattr(netenv, "docker_private_network", lambda: False)
     caplog.set_level(logging.INFO)
     Trouble("http://homeassistant.local:8123").failed("live reading", "[Errno -2] Name or service not known")
-    assert "The name in HOMEASSISTANT_URL (http://homeassistant.local:8123) can't be found from here: check it, or use the address" in caplog.text
+    assert "The name in MCP_HOMEASSISTANT_URL (http://homeassistant.local:8123) can't be found from here: check it, or use the address" in caplog.text
     assert "Docker" not in caplog.text

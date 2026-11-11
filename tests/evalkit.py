@@ -1,6 +1,6 @@
 """Saved questions with what should happen to them, so every fix we make for a real report stays fixed.
 
-tests/evals/cases.json holds the questions (real ones from the logs) and the decisions the bot still makes in code (docs/mcp-service.md 4):
+tests/evals/cases.json holds the questions (real ones from the logs) and the decisions the bot still makes in code (docs/ecobot-mcp.md 4):
 the reasoning effort from the words, and its few shortcuts (the report, the gauges, "weather now", a named reading's chart and a
 period, each a fixed call to a service tool). pytest checks them (`deterministic`).
 tests/evals/service_cases.json holds, for the same case ids, what a model offered the service's ten tools (lib/service) should call:
@@ -174,7 +174,7 @@ def shortcut_calls(r) -> list[tuple[str, dict]] | None:
     return [r.chart] if r.chart else None
 
 
-# Where the bot's own shortcuts differ from what a model is expected to call, on purpose (docs/mcp-service.md 4): the report's forecast
+# Where the bot's own shortcuts differ from what a model is expected to call, on purpose (docs/ecobot-mcp.md 4): the report's forecast
 # is the next 3 days, as it always was; a chart the bot draws itself sends its caption, so it needs no chart_answers_it
 SHORTCUT_LEAVES = {"forecast": ("period",), "summary": ("chart_answers_it",)}
 
@@ -273,7 +273,7 @@ def turn_calls(messages: list[dict]) -> list[tuple[str, dict, bool, int]]:
 
 
 async def run_live(case: Case, client, model: str, effort: str | None = None, service=None) -> LiveTurn:
-    """The bot's own request (docs/mcp-service.md 4): a question it answers in code gives its fixed calls (no model); any other is asked
+    """The bot's own request (docs/ecobot-mcp.md 4): a question it answers in code gives its fixed calls (no model); any other is asked
     of the model with the bot's system prompt, the ten tools as it offers them, its reasoning effort from the words, tool_choice auto,
     and the turn ended on a complete result as the bot ends it. With `service` (evalworld.World.fresh: the ten tools over the frozen world)
     each call is answered by the real tool, wrapped as the bot wraps it (lib/model_tools.py: the model is sent for_model of the
@@ -293,7 +293,7 @@ async def run_live(case: Case, client, model: str, effort: str | None = None, se
     return LiveTurn([(n, a) for n, a, *_ in made], reply, [no for _, _, no, _ in made], steps=[s for *_, s in made])
 
 
-# ---------- the service's ten tools, offered alone (docs/mcp-service.md 6, step 2; 7) ----------
+# ---------- the service's ten tools, offered alone (docs/ecobot-mcp.md 6, step 2; 7) ----------
 # The same questions asked of a model given only the service's tool list: no prompt of ours (a neutral line, the date, time and zone),
 # no hints, no fast path, nothing filled in from the words. tests/evals/service_cases.json says, for every case id in cases.json, which
 # of the ten tools answers it and with which arguments, as a client that has never seen this repository would call them.
@@ -348,7 +348,7 @@ def make_service_tools(calls: list) -> Tools:
 
 def service_system(now: datetime = NOW, instructions: str | None = None) -> str:
     """The whole system prompt of a service run: the neutral line, and the date, time and zone now; with `instructions` (the server's,
-    service_instructions()), those after it, as a client that passes them on to its model would (docs/mcp-service.md 3.2, 7)."""
+    service_instructions()), those after it, as a client that passes them on to its model would (docs/ecobot-mcp.md 3.2, 7)."""
     system = f"{SERVICE_SYSTEM}\nNow: {now:%A} {now.day} {now:%B %Y}, {now:%H:%M} ({NOW_TZ} time)."
     return f"{system}\n\n{instructions}" if instructions else system
 

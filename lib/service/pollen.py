@@ -1,4 +1,4 @@
-"""The `pollen` tool (docs/mcp-service.md 3.3): Melbourne's grass pollen and the thunderstorm asthma risk, from the pollen source
+"""The `pollen` tool (docs/ecobot-mcp.md 3.3): Melbourne's grass pollen and the thunderstorm asthma risk, from the pollen source
 (lib/pollen, melbournepollen.com.au). No arguments.
 
 The answer is today's pollen_asthma's, in the service's shape: the same `lines` (Pollen.lines), each level with its emoji and its

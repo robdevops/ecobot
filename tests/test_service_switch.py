@@ -1,5 +1,5 @@
 """The bot's own answers (everything it answers without the model) pinned word for word, chart for chart, on the archived fake station
-at a fixed time (Tue 10 Nov 2026 2:05pm, Melbourne), so moving them onto the service's tools (docs/mcp-service.md 6, step 2) changes
+at a fixed time (Tue 10 Nov 2026 2:05pm, Melbourne), so moving them onto the service's tools (docs/ecobot-mcp.md 6, step 2) changes
 nothing the person sees but what is meant to change.
 
 What is pinned, for each question the bot answers in code (its keyboard's charts, the shortcuts and plain lookups intent.read answers,

@@ -1,5 +1,5 @@
-"""The service's startup (docs/mcp-service.md step 5: "ecobot.py's warm_up() is split"), shared by the service (python -m
-ecobot_service) and the bot (ecobot.py), which runs it in-process until it is a client of the service:
+"""ecobot-mcp's startup (docs/ecobot-mcp.md step 5: "ecobot.py's warm_up() is split"), shared by ecobot-mcp (python -m ecobot_mcp)
+and the bot (ecobot.py), which runs it in-process unless it is ecobot-mcp's client (BOT_MCP_URL):
 
   1. `configure(cfg)`: the settings the engines read as module values (the anti-spike rule, what "all" draws, what `about` says);
   2. `start_sources(cfg)`: every configured source that starts, the weather station first (its time zone wins);
@@ -42,7 +42,7 @@ from lib.sources import Source
 from lib.storage import Storage
 from lib.warm import Tasks, every, safely
 
-log = logging.getLogger("ecobot.service")   # (under the bot's own logger: LOG_LEVEL reaches it)
+log = logging.getLogger("ecobot.mcp")   # (under the bot's own logger: LOG_LEVEL reaches it)
 
 
 def configure(cfg: Config):
@@ -147,27 +147,27 @@ class Health:
         return {"loops": loops, **({"archive": archive} if archive else {})}
 
 
-# ---------- the service ----------
+# ---------- ecobot-mcp ----------
 def hold_data_folder(cfg: Config, stack):
-    """One service per data folder: the bot running it in-process and `python -m ecobot_service` on the same folder would both fetch
+    """One ecobot-mcp per data folder: the bot running it in-process and `python -m ecobot_mcp` on the same folder would both fetch
     and both write each alert (sent twice). The lock is the kernel's, so it goes with the process, however that ends."""
     import fcntl
-    path = cfg.state_path.parent / "service.lock"
+    path = cfg.state_path.parent / "mcp.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     held = open(path, "w")
     try:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         held.close()
-        raise SystemExit(f"Another process already runs the weather service on {path.parent} (the bot without WEATHER_MCP_URL, or "
-                         f"python -m ecobot_service). Stop it first, or set WEATHER_MCP_URL to use it.")
+        raise SystemExit(f"Another process already runs ecobot-mcp's work (the sources and the alert rules) on {path.parent} (the bot without BOT_MCP_URL, or "
+                         f"python -m ecobot_mcp). Stop it first, or set BOT_MCP_URL to use it.")
     stack.callback(held.close)
 
 
 
 @dataclass
 class Core:
-    """The service as it runs: its settings, sources, alert log, tools and their Context, the alert rules once started."""
+    """ecobot-mcp as it runs (in its own process or the bot's): its settings, sources, alert log, tools and their Context, the alert rules once started."""
     cfg: Config
     sources: list[Source]
     alert_log: AlertLog
@@ -194,7 +194,7 @@ class Core:
         ctx = await Context.open(eco=eco, air=air, composer=composer, forecast=by_name.get("Forecast"), pollen=by_name.get("Pollen"),
                                  tz=cfg.tz)
         service = Service.of(ctx)
-        log.info("Service tools: %s", ", ".join(t.name for t in service))
+        log.info("Tools: %s", ", ".join(t.name for t in service))
         health = Health(cfg.tz)
         for source in sources:   # (the keep-warm's refreshes, recorded)
             source.warmer.refresh = health.track(f"{source.name} refresh", source.warmer.refresh)
@@ -298,7 +298,7 @@ def version() -> str:
 
 def commit_in(git_dir) -> str:
     """The short hash HEAD points at, read from the repository's files rather than by running git (which refuses a folder owned by
-    another user, as when the service runs as its own user). "unknown" when it cannot be read."""
+    another user, as when the program runs as its own user). "unknown" when it cannot be read."""
     try:
         head = (git_dir / "HEAD").read_text().strip()
         if head.startswith("ref:"):

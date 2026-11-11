@@ -2,6 +2,6 @@ services:
   ecobot:
     logging: !override
       driver: journald
-  ecobot-service:
+  ecobot-mcp:
     logging: !override
       driver: journald

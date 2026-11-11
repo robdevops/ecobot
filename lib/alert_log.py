@@ -1,4 +1,4 @@
-"""The alert log (docs/mcp-service.md 3.6): every alert the service's rules decide, as an event a client reads and delivers.
+"""The alert log (docs/ecobot-mcp.md 3.6): every alert the service's rules decide, as an event a client reads and delivers.
 
 An event is {id, kind, time, expires, title, text, data, [link: {label, url}], [chart]}:
   - id: monotonic (1, 2, ...), never reused, so a client resumes from the last one it handled;

@@ -1,4 +1,4 @@
-"""ADMIN_ONLY (who may use the bot), /alerts in groups, /usage, and the checks every button press goes through."""
+"""BOT_ADMIN_ONLY (who may use the bot), /alerts in groups, /usage, and the checks every button press goes through."""
 
 import asyncio
 import random
@@ -106,19 +106,19 @@ def board(*data):
 
 # ---------- the settings ----------
 def test_admin_only_is_off_unless_switched_on_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
-    for k, v in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
+    for k, v in {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.delenv("ADMIN_ONLY", raising=False)
+    monkeypatch.delenv("BOT_ADMIN_ONLY", raising=False)
     assert Config.from_env().admin_only is False and Config.from_env().admin_chat_ids == frozenset()
     for value, on in (("", False), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
                       ("no", False), ("false", False), ("ture", False), ("of", False)):   # a typo keeps the default
-        monkeypatch.setenv("ADMIN_ONLY", value)
+        monkeypatch.setenv("BOT_ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
-    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (off)" in caplog.text
-    ids = lambda text: _ids(text, frozenset(), "ADMIN_CHAT_IDS")
+    assert "BOT_ADMIN_ONLY: 'ture' is not on or off; keeping the default (off)" in caplog.text
+    ids = lambda text: _ids(text, frozenset(), "BOT_ADMIN_CHAT_IDS")
     assert ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and ids("") == frozenset()
-    assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
-    monkeypatch.setenv("ADMIN_CHAT_IDS", "5 -9")
+    assert "BOT_ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
+    monkeypatch.setenv("BOT_ADMIN_CHAT_IDS", "5 -9")
     assert Config.from_env().admin_chat_ids == frozenset({5, -9})
 
 
@@ -247,13 +247,13 @@ async def test_a_refused_sender_is_logged_once_with_the_id_to_list(tmp_path, cap
             update, sent = message("how warm is it", user=STRANGER)
             await bot.on_message(update, ctx(tg))
             assert [b for b, _ in sent] == [NOT_ADMIN]                                     # told every time
-        assert refused() == [f"[Telegram {STRANGER}]: @u: refused: user {STRANGER} (U) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"]
+        assert refused() == [f"[Telegram {STRANGER}]: @u: refused: user {STRANGER} (U) is not a known group admin; add the id to BOT_ADMIN_CHAT_IDS to let them in"]
         update, sent = message("hello", user=8)                                                 # another stranger: its own line
         await bot.on_message(update, ctx(tg))
         assert len(refused()) == 2 and refused()[1].startswith("[Telegram 8]: @u: refused: user 8 (U) is not")
         update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))   # as the group: the chat
         await bot.on_message(update, ctx(tg))
-        assert refused()[2] == f"[Telegram {GROUP}]: @u, group 'Home': refused: chat {GROUP} (Home) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"
+        assert refused()[2] == f"[Telegram {GROUP}]: @u, group 'Home': refused: chat {GROUP} (Home) is not a known group admin; add the id to BOT_ADMIN_CHAT_IDS to let them in"
 
 
 async def test_a_listed_user_can_use_the_bot_before_it_is_in_any_group(tmp_path):
@@ -366,7 +366,7 @@ async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_
     press = Press("ir:open:water", irrigation_menu.keyboard(True, True), user=STRANGER)
     off = make(tmp_path, admin_only=False, irrigation=Remote())[0]
     await off.on_button(press.update(), ctx(tg))
-    assert press.edits                                                                          # ADMIN_ONLY=off: as before
+    assert press.edits                                                                          # BOT_ADMIN_ONLY=off: as before
 
 
 async def test_alert_buttons_in_a_group_stay_admin_only_even_when_admin_only_is_off(tmp_path):

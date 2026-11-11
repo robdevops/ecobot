@@ -1,4 +1,4 @@
-"""The bot's twelve old tools' handlers, as they answered before the model got the service's tools (docs/mcp-service.md 6, step 3), kept
+"""The bot's twelve old tools' handlers, as they answered before the model got the service's tools (docs/ecobot-mcp.md 6, step 3), kept
 for the tests only: they drive the engines the service wraps the way the old tools did (HistoryQuery, AirGradient.history, the day
 rows, link, the readings), and they are the oracle the service's words were ported against (with tests/report_words.py). The corrections
 from the person's words are gone with step 3. Deleted with the bot (step 6)."""

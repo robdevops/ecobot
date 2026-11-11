@@ -1,4 +1,4 @@
-"""Averages weighted by time (docs/mcp-service.md 3.3): weather_history's and air_quality's average of a period count each day for the time of
+"""Averages weighted by time (docs/ecobot-mcp.md 3.3): weather_history's and air_quality's average of a period count each day for the time of
 it the period holds (lines.time_mean), so the part of a day at either end counts for its hours, not as a whole day, and an air day held only
 as hourly averages counts for its 24 hours, not for its 24 readings against a 5-minute day's 288. Rain rate has an average; the rain
 counters, which are totals, have none."""

@@ -1,4 +1,4 @@
-"""The forecast revised: station-wide, for today and tomorrow (docs/mcp-service.md 3.6).
+"""The forecast revised: station-wide, for today and tomorrow (docs/ecobot-mcp.md 3.6).
 
 Each day, the first forecast fetched after 6 am is the baseline for today and tomorrow. Every later fetch is compared with it, day by
 day, and a day that changed substantially is an alert, saying what changed:

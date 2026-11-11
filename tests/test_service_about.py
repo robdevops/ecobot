@@ -111,7 +111,7 @@ def test_each_alert_has_its_rule_and_the_thresholds_the_rules_use(monkeypatch):
     assert rules["rain"]["thresholds"] == {"dry_minutes": 60, "quiet_hours": "00:00-06:00"}
     assert rules["rain"]["rule"].endswith("None from 12am to 6am: one summary of the rain in those hours after them.")
     assert all(a["what"] == ab.ALERT_WORDS[a["kind"]] and a["name"] == menu.LABELS[a["kind"]] for a in rules.values())
-    monkeypatch.setattr(ab, "RAIN_QUIET_HOURS", None)            # the service's settings, as the config sets them
+    monkeypatch.setattr(ab, "RAIN_QUIET_HOURS", None)            # ecobot-mcp's settings, as the config sets them
     monkeypatch.setattr(ab, "ALERT_COOLDOWN_MINUTES", 90)
     rules = {a["kind"]: a for a in ab.alerts(EVERY)}
     assert rules["rain"]["thresholds"] == {"dry_minutes": 90, "quiet_hours": None} and "None from" not in rules["rain"]["rule"]

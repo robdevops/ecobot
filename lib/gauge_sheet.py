@@ -1,4 +1,4 @@
-"""The gauges' sheet (specs.Dashboard, what lib/gauges.py draws), laid out by the bot as a client of the service (docs/mcp-service.md
+"""The gauges' sheet (specs.Dashboard, what lib/gauges.py draws), laid out by the bot as a client of the service (docs/ecobot-mcp.md
 3.1, 4): each gauge's scale and colours (lib/ecowitt/dashboard.py GAUGES) filled from the service's `current` with `context`, its reading
 now and the highs and lows of today, the month and the year beside it (rain: its totals and wettest day; wind: its highest gust).
 

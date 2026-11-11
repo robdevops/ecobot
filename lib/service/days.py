@@ -1,4 +1,4 @@
-"""The `days` tool (docs/mcp-service.md 3.3): days found, ranked, counted or totalled by their figures, over the weather station's and
+"""The `days` tool (docs/ecobot-mcp.md 3.3): days found, ranked, counted or totalled by their figures, over the weather station's and
 the air sensor's day figures, or over part of each day (`hours`). It replaces weather_days and air_days, on their engines:
 
   - the fields are theirs: the station's (lib/ecowitt/days.py FIELDS: temp_max, rain, humidity_avg, indoor_temp_min ...) and the air

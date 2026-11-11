@@ -1,4 +1,4 @@
-"""The `about` tool (docs/mcp-service.md 3.3): what the service measures and what it doesn't, how far back each kind of history goes,
+"""The `about` tool (docs/ecobot-mcp.md 3.3): what the service measures and what it doesn't, how far back each kind of history goes,
 the alerts there are with their thresholds, and that alerts can't be added or changed by asking. It replaces what the bot's prompt told
 its model outside the tools (lib/prompt.py: NEVER_AVAILABLE, the capabilities, ALERT_WORDS), whose lists are copied here (the prompt
 goes with the bot), and the bot's Help list (lib/templates.py MEASURES: `lines`, the same words).
@@ -8,7 +8,7 @@ goes with the bot), and the bot's Help list (lib/templates.py MEASURES: `lines`,
   - history: for each sensor, from when to when each resolution is held, and on how many days, from the coverage of the file (the
     minutes, which have none, from the readings themselves): what "on record" reaches, and how fine a record is in each stretch of it;
   - alerts: each kind there is for the sources there are (lib/alerts/menu.py TYPES, copied), with what it is, its rule in words and its
-    thresholds as figures, from the alert rules' own constants and the settings (RAIN_QUIET_HOURS, ALERT_COOLDOWN_MINUTES).
+    thresholds as figures, from the alert rules' own constants and the settings (MCP_RAIN_QUIET_HOURS, MCP_ALERT_COOLDOWN_MINUTES).
 
 It takes no arguments and reads only what is held, so `fetch` and `priority` change nothing.
 """
@@ -36,7 +36,7 @@ from .names import AIR_DEVICE, STATION
 NAME = "about"
 
 # ---------- the settings the alerts follow ----------
-# The rain alert's quiet hours and the alerts' cooldown are the service's config (RAIN_QUIET_HOURS, ALERT_COOLDOWN_MINUTES): set from it at
+# The rain alert's quiet hours and the alerts' cooldown are the service's config (MCP_RAIN_QUIET_HOURS, MCP_ALERT_COOLDOWN_MINUTES): set from it at
 # startup, as names.FEELS_LIKE_IN_ALL is. These are the config's defaults.
 RAIN_QUIET_HOURS: tuple[int, int] | None = (0, 6)   # local hours with no rain alerts, a summary after; None: none
 ALERT_COOLDOWN_MINUTES = 60                         # dry this long before "the rain has stopped"; the temperature crossing's least gap

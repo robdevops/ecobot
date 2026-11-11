@@ -310,8 +310,8 @@ async def test_airgradient_source_picks_the_monitors_sources_and_a_typo_keeps_au
             assert (air.local is not None, air.ha is not None, air.cloud) == (monitor, home, cloud), kwargs
             await air.close()
     from lib.config import _air_source
-    assert _air_source("Cloud", "auto", "AIRGRADIENT_SOURCE") == "cloud"
-    assert _air_source("sensor", "auto", "AIRGRADIENT_SOURCE") == "auto" and "AIRGRADIENT_SOURCE: 'sensor' is not" in caplog.text
+    assert _air_source("Cloud", "auto", "MCP_AIRGRADIENT_SOURCE") == "cloud"
+    assert _air_source("sensor", "auto", "MCP_AIRGRADIENT_SOURCE") == "auto" and "MCP_AIRGRADIENT_SOURCE: 'sensor' is not" in caplog.text
 
 
 async def test_each_reading_of_the_monitor_is_kept_as_a_minute_and_a_short_chart_is_drawn_from_them(tmp_path, monkeypatch):

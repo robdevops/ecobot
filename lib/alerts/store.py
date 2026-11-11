@@ -1,7 +1,7 @@
 """The alert rules' own state (alert_state.json in DATA_DIR): what each rule last alerted and the runs it is counting, so a restart neither
 forgets nor repeats. The service's, apart from the bot's chats and settings (bot_state.json), which the rules know nothing of.
 
-Before step 4 of docs/mcp-service.md the rules kept it in bot_state.json's "monitor": the first start with no alert_state.json moves it
+Before step 4 of docs/ecobot-mcp.md the rules kept it in bot_state.json's "monitor": the first start with no alert_state.json moves it
 here (MOVED), so nothing alerted before the upgrade alerts again. The irrigation controller's (irrigation_monitor, irrigation_watchdog)
 stay with the bot until it moves to its own server; the forecast each chat was sent (forecast_sent) goes: the forecast alert is
 station-wide now."""

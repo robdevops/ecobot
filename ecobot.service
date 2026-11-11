@@ -1,14 +1,15 @@
 # Install as /etc/systemd/system/ecobot.service, with the code outside every home directory:
 #   sudo git clone <repo> /opt/ecobot && cd /opt/ecobot
 #   sudo python3.13 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt -r requirements-charts.txt     # Python 3.13.5 (.python-version)
-# The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them,
+# The files stay owned by root and readable by all: the bot runs as a throw-away user (DynamicUser=) that cannot write to them,
 # so its bytecode goes to /var/cache/ecobot (CacheDirectory=, PYTHONPYCACHEPREFIX=) and is rebuilt on its own after an update.
 # Any other place needs only the WorkingDirectory and ExecStart lines changed.
-# The bot never opens the environment file itself: systemd loads it (TZ, OPENROUTER_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
-# TELEGRAM_BOT_TOKEN, ...).
+# The bot never opens the environment file itself: systemd loads it (docs/configuration.md: its BOT_ settings, the shared ones such as
+# TZ and AUTH_TOKENS, and, while it runs ecobot-mcp's part in-process, BOT_MCP_URL unset, the MCP_ ones too). With ecobot-mcp.service
+# installed, set BOT_MCP_URL=http://127.0.0.1:8765/mcp: the bot is then its client.
 # StateDirectory= gives the bot /var/lib/ecobot (the state file and the SQLite caches): the bot finds it through
 # STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older install kept in
-# the checkout (bot_state.json, *_cache.sqlite) are not read from there: with the service stopped, copy them into /var/lib/ecobot once;
+# the checkout (bot_state.json, *_cache.sqlite) are not read from there: with the bot stopped, copy them into /var/lib/ecobot once;
 # systemd hands the folder to the dynamic user when it starts.
 [Unit]
 Description=ecobot (Telegram weather and air-quality bot)

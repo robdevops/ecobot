@@ -1,4 +1,4 @@
-"""The bot's system prompt (docs/mcp-service.md 4): its persona, a friendly Telegram bot, then the server's instructions
+"""The bot's system prompt (docs/ecobot-mcp.md 4): its persona, a friendly Telegram bot, then the server's instructions
 (lib/service/instructions.py) and the date and time now. Everything about the tools and the data is in their descriptions and results
 (3.2): nothing here is about which tool to call or how to read what comes back."""
 
