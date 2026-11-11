@@ -46,11 +46,12 @@
   const MIN_TILE = 180;                // the narrowest tile (CSS px) worth fitting on one screen: narrower, the page scrolls
   const MIN_SCROLL_TILE = 150;         // ... and then the narrowest a column may be (two on a 320-375 px phone, not one huge one)
   const MOVE_MS = 900;                 // how long a gauge takes to move to a new reading
+  const RISE_MS = 1000;                // ... and, when the page opens, to rise from 0 to its reading
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const PAD = 8, STATUS = 18;
   const NS = "http://www.w3.org/2000/svg";
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
-  let L = null, tiles = [], asOf = null, lost = false, drawn = [];   // drawn: each tile on the page, to be moved in place
+  let L = null, tiles = [], asOf = null, lost = false, drawn = [], opening = true;   // drawn: each tile on the page, to be moved in place
 
   // ---------- colours ----------
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -211,24 +212,29 @@
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
     const fill = table(box, tile, ink);
-    if (tile.value !== null) at(tile.value);
     const drawnTile = {box, shape: shape(tile), value: tile.value, frame: 0};
     drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change
       box.setAttribute("aria-label", label(t));
       fill(t);
-      const from = drawnTile.value, to = t.value;
+      move(drawnTile.value, t.value, MOVE_MS);
+    };
+    const move = (from, to, ms) => {
       drawnTile.value = to;
       cancelAnimationFrame(drawnTile.frame);
-      if (to === null || from === to) return;
-      if (STILL || from === null || document.hidden) return at(to);
+      if (to === null) return;
+      if (from === to || STILL || from === null || document.hidden) return at(to);
       const start = performance.now();
       const step = (now) => {
-        const p = Math.min((now - start) / MOVE_MS, 1), eased = 1 - (1 - p) ** 3;
+        const p = Math.min((now - start) / ms, 1), eased = 1 - (1 - p) ** 3;
         at(p < 1 ? from + (to - from) * eased : to);
         if (p < 1) drawnTile.frame = requestAnimationFrame(step);
       };
       drawnTile.frame = requestAnimationFrame(step);
     };
+    if (tile.value !== null) {
+      if (opening) move(0, tile.value, RISE_MS);   // the page just opened: every gauge rises from 0 to its reading
+      else at(tile.value);
+    }
     return drawnTile;
   }
 
@@ -277,6 +283,7 @@
     }
     drawn = tiles.map(drawTile);
     grid.replaceChildren(...drawn.map((d) => d.box));
+    if (drawn.length) opening = false;   // (only the first drawing rises from 0; a tile drawn again later starts at its reading)
     layout();
   }
 
