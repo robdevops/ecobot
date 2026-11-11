@@ -172,7 +172,9 @@ def period_properties(default: str, whole_days: bool = False) -> dict:
         end = "With `start`: when it ends, local time, 'YYYY-MM-DD' (to the end of that day) or 'YYYY-MM-DD HH:MM'. Default: now."
     return {
         "period": {"type": "string", "description": "The period in the person's own words, passed on unchanged (\"this week\", \"in the "
-                                                    "last year\", \"past two years\"): the service reads them, and the result says how. \"past week\" (the "
+                                                    "last year\", \"past two years\"): the service reads them, and the result says how. Any number "
+                                                    "works (\"31d\", \"45 days\", \"18 months\", \"last 90 minutes\"): never refuse or round a "
+                                                    "period without calling; if the service can't read one, its answer says so. \"past week\" (the "
                                                     "last 7 days) is never sent as \"last week\" (the previous Monday to Sunday). "
                                                     f"Forms: {forms}.{days} Default: {default}."},
         "start": {"type": "string", "description": start},
