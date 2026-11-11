@@ -7,6 +7,7 @@ an error that says so."""
 import asyncio
 import contextlib
 import logging
+import time
 
 import mcp_types as types
 from mcp import Client
@@ -18,6 +19,8 @@ VERSION = "2026-07-28"          # the protocol revision pinned: the one that can
 READ_SECONDS = 45.0             # the HTTP read timeout: three of the server's 15-second pings, so a silently dead link is noticed
 CONNECT_WAIT = 10.0             # how long a request waits for ecobot-mcp to be reached before it is refused
 BACKOFF = (1, 2, 5, 10, 30)     # seconds between attempts to reach it again, the last repeated
+QUIET_SECONDS = 30.0            # how long it may be unreachable before that is a warning (a start or restart of either takes a few
+                                # seconds); a refusal (a wrong token, Host or path) is one at once: it won't go away by itself
 
 
 REFUSED = {401: "401: the token the bot sends isn't one ecobot-mcp accepts: give both the same AUTH_TOKENS, or leave it unset in both "
@@ -70,6 +73,8 @@ class Upstream:
         self.connected = asyncio.Event()
         self.attempts = 0
         self.refused: dict = {}   # the HTTP error ecobot-mcp last answered with
+        self.down_since: float | None = None   # (monotonic) when it was last found unreachable, while it still is
+        self.warned = False                    # whether this time down has been warned about
 
     def _client(self) -> Client:
         token = self.token() if callable(self.token) else self.token   # (a function: read again for each connection)
@@ -89,9 +94,14 @@ class Upstream:
                         await self.on_discover(discovered)
                     self.client, self.attempts = client, 0
                     self.connected.set()
-                    log.info("ecobot-mcp: connected to %s", self.target if isinstance(self.target, str) else "in-process")
+                    target = self.target if isinstance(self.target, str) else "in-process"
+                    if self.warned:
+                        log.info("ecobot-mcp: connected to %s again, after %.0fs", target, time.monotonic() - self.down_since)
+                    else:
+                        log.info("ecobot-mcp: connected to %s", target)
+                    self.down_since, self.warned = None, False
                     await self._listen(client)
-                    log.warning("ecobot-mcp ended the listen; connecting again")
+                    log.info("ecobot-mcp ended the listen (a restart?); connecting again")
             except asyncio.CancelledError:
                 raise
             except BaseException as e:   # (a transport failure ends the whole client, as an exception group too)
@@ -101,7 +111,14 @@ class Upstream:
                     raise asyncio.CancelledError() from e                           # wrapped it (an exception group): stop all the same
                 cause, status = _leaf(e), self.refused.get("status")
                 why = (REFUSED.get(status, f"HTTP {status}") if status else f"{type(cause).__name__}: {cause}")
-                log.warning("ecobot-mcp at %s isn't reachable (%s); trying again", self.target, why)
+                now = time.monotonic()
+                self.down_since = self.down_since or now
+                if status or now - self.down_since >= QUIET_SECONDS:
+                    log.warning("ecobot-mcp at %s isn't reachable (%s)%s; trying again", self.target, why,
+                                f" for {now - self.down_since:.0f}s" if now - self.down_since >= 1 else "")
+                    self.warned = True
+                else:
+                    log.debug("ecobot-mcp at %s isn't reachable yet (%s); trying again", self.target, why)
             finally:
                 self.client = None
                 self.connected.clear()

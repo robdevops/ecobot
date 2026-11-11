@@ -244,3 +244,27 @@ async def test_each_request_is_logged_with_who_asked_what_and_a_refusal_with_its
     assert any("refused: POST /mcp tools/list -> 401, no token, or one that isn't in AUTH_TOKENS" in line for line in lines), lines
     assert any("-> 421, its Host isn't in MCP_ALLOWED_HOSTS (Host 192.168.1.208:8765)" in line for line in lines), lines
     assert not any(TOKENS["bot"] in line or "wrong" in line for line in lines)
+
+
+async def test_ecobot_mcp_down_for_a_moment_isnt_a_warning_but_down_for_longer_or_refusing_is(service, monkeypatch, caplog):
+    """A start or restart of either takes a few seconds: only QUIET_SECONDS of not reaching it is warned about, and the connection after
+    says how long it was down. A refusal (here the token) is warned about at once: it won't go away by itself."""
+    caplog.set_level("DEBUG", logger="lib.upstream")
+    monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
+    monkeypatch.setattr(upstream, "QUIET_SECONDS", 0.6)
+    port = free_port()
+    task = asyncio.create_task(Upstream(f"http://127.0.0.1:{port}/mcp", TOKENS["bot"]).run())   # (nothing listens there yet)
+    await asyncio.sleep(0.3)
+    warned = lambda: [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and r.name == "lib.upstream"]
+    assert not warned() and "isn't reachable yet" in caplog.text
+    await asyncio.sleep(0.6)
+    assert warned() and "for 0s" not in warned()[0]
+    async with Serving(http_app(service, tokens=TOKENS.values()), port):
+        for _ in range(100):
+            if "again, after" in caplog.text:
+                break
+            await asyncio.sleep(0.05)
+        assert f"connected to http://127.0.0.1:{port}/mcp again, after" in caplog.text
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
