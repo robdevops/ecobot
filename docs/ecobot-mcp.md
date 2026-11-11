@@ -645,9 +645,14 @@ Each step ships on its own, with the tests and evals green and the bot working t
 
    - **6a. Every picture from ecobot-mcp.** The charts in the model's answers and in the keyboard's answers come from ecobot-mcp as
      images (request `_meta` `chart_image: "png"`): the bot keeps the image blocks and `ecobot/charts` (for the period buttons) and
-     gives the model only the text (`for_model`, as today). The dashboard's gauges move to ecobot-mcp the same way: a tool or resource
-     that returns the gauge sheet as a PNG, its figures as text. The bot then imports neither Pillow nor `lib/charts.py`,
+     gives the model only the text (`for_model`, as today). The bot then imports neither Pillow nor `lib/charts.py`,
      `lib/draw.py` or `lib/gauges.py`.
+   - **The gauges.** The Telegram dashboard goes: the Dashboard button, `/dashboard`, the whole gauge sheet as a picture and its
+     tables. The dashboard is the web page now (below). Kept: the Status picture's three gauges (Temperature, Humidity, Rain),
+     without the Daily/Monthly/Yearly Max/Min tables under them. ecobot-mcp draws it (a `status` picture: a tool or resource that
+     returns the PNG, its readings as text), and the bot sends it with Status (`/status`, `/report`), followed by the `report`
+     prompt's answer (6c). The PNG drawing (`lib/gauges.py`) then lives only in ecobot-mcp and draws only those
+     three; `lib/gauge_sheet.py`'s tiles still feed the web page, which keeps every gauge and its tables.
      The gauges' live page is already ecobot-mcp's: `/dashboard` beside `/mcp` (`lib/web_dashboard.py`, `MCP_DASHBOARD`, on by
      default) is a self-contained HTML5 page drawing the same tiles in the browser (inline SVG, `lib/gauge_look.py`'s colours and
      sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`
@@ -683,8 +688,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
      Telegram formatting, group-chat names, the chart caption rule).
    - **Alerts:** listening to `ecobot://alerts`, sending each to the chats subscribed to its kind with its picture, the alert menus
      (on/off and sound per kind), 🔄 under an alert's chart.
-   - **Charts:** the keyboard's chart buttons (each a fixed call), the period buttons and 🔄 (replaying `drawn_by`), and Help from
-     `about`.
+   - **Charts:** the keyboard's chart buttons (each a fixed call), the period buttons and 🔄 (replaying `drawn_by`), Status's picture
+     of three gauges (from ecobot-mcp), and Help from `about`.
 
    **What it leaves:** about a fifth of today's bot code: `lib/bot.py` (much smaller), `lib/weather.py` (the remote half),
    `lib/upstream.py`, `lib/model_tools.py`, `lib/llm.py`, `lib/prompt.py`, `lib/alerts/notify.py` and `menu.py`, `lib/periods.py`
