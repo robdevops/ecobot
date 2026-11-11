@@ -618,7 +618,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
      (`station_zone`), and a start while the service can't be reached runs in the zone last read, `TZ` only before any. A question's call waits up to 5 seconds while the
      client is being built again, a background one not at all; a question while the service can't be reached is answered that it can't
      (`bot.SERVICE_DOWN`), without the model. The bot's `warm_up` is its charts drawn ahead, every 5 minutes, quietly nothing while the
-     service is away; the poke of the sources is gone (there are none). Irrigation stays in the bot until 5b: its daily check reads the
+     service is away; the poke of the sources is gone (there are none). Irrigation stays in the bot until step 7: its daily check reads the
      measured rain from `summary {readings: ["rain"], period: "last 24 hours"}` (`ServiceRain`) and the forecast from `ecobot://forecast`
      (`ServiceForecast`, read again at each check and on each `ResourceUpdated`; the one last read stands when the service can't be
      reached). Tests: `tests/test_bot_remote.py` (the bot against the real server, in memory and under uvicorn: a question answered with
@@ -637,8 +637,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
      drawn by the bot. Tests: `tests/test_mcp_server.py` (in memory and under uvicorn: off unchanged, the URL's `?charts=png`, the
      per-call override both ways, without Pillow, no Pillow imported by the server), `tests/test_bot_remote.py` (the service's PNG
      byte for byte the bot's own, for a call and an alert's chart).
-   - **Left: 5b**, the irrigation server in its own repository (3.9: its tools, the watchdog and the daily check, `irrigation://alerts`),
-     the bot connecting to both and `lib/irrigation` going from here; and `show_request` and `report_inputs` as MCP clients.
+   - **Left:** the irrigation server, now step 7; and `show_request` and `report_inputs` as MCP clients.
 6. **The slim bot** (decided November 2026, in place of retiring it: section 4 describes the bot as it was). The Telegram bot is kept, but only as a thin client of ecobot-mcp: it does what only a Telegram bot can do
    (chats, buttons, pushing alerts), and everything about the weather, the air, the alerts' rules and the pictures comes from
    ecobot-mcp over MCP. It never opens the readings file and draws nothing. Sub-steps, each its own change with the checks green:
@@ -662,8 +661,6 @@ Each step ships on its own, with the tests and evals green and the bot working t
      - Without `BOT_OPENROUTER_API_KEY` the bot answers the buttons and sends alerts; a typed question gets one line saying the
        model isn't set up (the no-model fallbacks go).
      - The test-only oracles from step 3 (`tests/old_tools.py`, `tests/report_words.py`) are deleted.
-   - **6d. Irrigation** is step 5b's: its own repository and MCP server, which the bot connects to as a second server
-     (`BOT_IRRIGATION_MCP_URL`), listening for its alerts the same way.
 
    **What the bot keeps:**
    - **Telegram:** who may use it (`BOT_ADMIN_ONLY`, `BOT_ADMIN_CHAT_IDS`, group admins), private and group chats, the keyboard, the
@@ -685,6 +682,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
 
    **Risks:** a typed chart request ("rain chart 7d") now costs a model call and a second or two, where it was instant; a keyboard
    button's first press waits for ecobot-mcp; the bot does nothing without ecobot-mcp (it says so, as today).
+7. **Irrigation on its own** (was 5b): the irrigation server in its own repository and MCP server (3.9: its tools, the watchdog and the
+   daily check, `irrigation://alerts`). The bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`) and listens for its alerts
+   the same way; `lib/irrigation` and the bot's `BOT_TUYA_*` and `BOT_IRRIGATION_CHECK_HOUR` go from here.
 
 ## 7. Testing
 

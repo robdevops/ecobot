@@ -21,7 +21,7 @@ task keeps connected). Everything the bot asks of them goes through it, so the b
     (`chart_dark`: its DARKMODE, so its image cache's theme holds). A service that sends no image (no Pillow there) has its chart drawn
     here.
 
-For the irrigation check while it is still the bot's (step 5b moves it to its own server): `ServiceRain` (the measured rain, from
+For the irrigation check while it is still the bot's (step 7 moves it to its own server): `ServiceRain` (the measured rain, from
 `summary {readings: ["rain"], period: "last 24 hours"}`) and `ServiceForecast` (ecobot://forecast, the last read kept when the service
 can't be reached), docs 3.9."""
 

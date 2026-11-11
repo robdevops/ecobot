@@ -60,7 +60,7 @@ def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, core: Co
     """In-process (`core`): hook up ecobot-mcp's alert rules over every source that started (core.start_alerts: they append to the
     alert log); the weather rules start in warm_up, once the station has been read. Remote (`weather`): the rules are ecobot-mcp's, and
     its alert log is read over MCP. Either way the bot delivers from the log (AlertDelivery), and runs the irrigation controller's check
-    and watchdog (sent by the bot itself until it is a server of its own, step 5b; remote, its rain and forecast are asked of
+    and watchdog (sent by the bot itself until it is a server of its own, step 7; remote, its rain and forecast are asked of
     ecobot-mcp). Returns the alert types now running here, the rules (None when remote), and what keeps the time zone (the delivery, the
     irrigation check: follow_zone)."""
     if core is not None:
