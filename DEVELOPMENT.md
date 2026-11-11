@@ -6,7 +6,7 @@ How to test the bot and what the GitHub checks do. (Running it is in `README.md`
 ```
 pip install -r requirements-dev.txt     # requirements.txt (requirements-mcp.txt and requirements-bot.txt), requirements-charts.txt (Pillow) and pytest
 python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process
-python scripts/eval_prompts.py         # the saved questions: decisions made in code and the tools' expectations, no key needed
+python scripts/eval_prompts.py         # the saved questions: the reasoning effort (made in code) and the tools' expectations, no key needed
 ```
 The suite takes about 25 s on four cores. The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
 is built once an hour and shared by the workers and by later runs: it lives under pytest's own temp folder (`/tmp/pytest-of-<user>/ecobot-archive-*.sqlite`),
@@ -23,6 +23,11 @@ ECOBOT_CLOCK="2026-11-11 00:05" python -m pytest -q    # also 23:55 or 23:59, an
 A test whose answer depends on the time of day or the date pins its own clock instead: `daytime_archive` (2:05pm on Tue 10 Nov 2026) or
 `pinned_archive(when)` with `clocks.pin(monkeypatch, when)`, the fake station's archive as it was then, built once for the code that shapes
 it and kept (`ecobot-archive-pinned-*.sqlite`); a tool's answer to words alone can take `Context(clock=...)` (`clocks.yesterday_at`).
+
+The engines the service's tools wrap are tested directly where that is simpler: `tests/engines.py` drives the station's
+`HistoryQuery`, `link()` and the air sensor's history and reading now. The old tools' handlers and the bot's old words, the oracle the
+service was ported against, are gone (step 6c): `tests/test_history.py` and `tests/test_days.py` hold the service's `readings` and `days`
+tools to the stored rows and the fake station's own figures, and current's words are pinned in `tests/current_words.json`.
 
 The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build the same Python into `.venv` with uv (`.claude/hooks/session-start.sh`).
 
@@ -64,9 +69,11 @@ the token ecobot-mcp generated in the data folder they share (read again for eac
 `ecobot.mcp_token`): one client pinned to protocol 2026-07-28, kept by one supervisor task (`lib/upstream.Upstream`), which discovers by
 hand for the instructions and listens to `ecobot://alerts`, `ecobot://station` and `ecobot://forecast`; when the connection fails or the
 listen is lost it builds a new client after a backoff, listens again and reads the alerts after the last id it handled. Everything the
-bot asks for goes through `lib/weather.py`: the model's tools and instructions, its shortcuts, report, Status picture, charts drawn
-ahead and period buttons, Help and `/usage`, the alerts (lib/alerts/notify.AlertDelivery) and the irrigation check's rain and forecast
-(`ServiceRain`, `ServiceForecast`).
+bot asks for goes through `lib/weather.py`: the model's tools and instructions, the prompts it offers as commands, the keyboard's
+charts (each a fixed call, `lib/templates.py` `CALLS`), the Status picture, the period buttons and the charts' other periods fetched in
+the background, Help and `/usage`, the alerts (lib/alerts/notify.AlertDelivery) and the irrigation check's rain and forecast
+(`ServiceRain`, `ServiceForecast`). The bot answers no typed question in code (step 6c): everything typed goes to the model, and only
+its reasoning effort is read from the words (`lib/intent.py`).
 The bot draws nothing ([docs/ecobot-mcp.md](docs/ecobot-mcp.md) step 6a): every chart it sends comes drawn by ecobot-mcp
 (`call_images`, `chart_image`: the remote one sends its PNGs, `chart_image: "png"` in the request's `_meta`, in the bot's own theme,
 `chart_dark` from `DARKMODE`, `lib/theme.py`), the model's answers' charts too (the model is sent the text alone), and the Status
@@ -89,8 +96,10 @@ Its tests run the bot against ecobot-mcp in memory: the `serve` fixture (`tests/
 (`lib/mcp_server.EcobotServer`) over a test's Context (the fake sources, or none) or a test's stand-in tools (`tests.fakes.StandInService`,
 with `sources=` naming the sources ecobot://station lists), and connects the bot's own client (`RemoteWeather`) to it through the SDK's
 in-memory transport: `bot = Bot(cfg, agent, state, service=await serve(...))`. A test of the Telegram side alone, which asks ecobot-mcp
-nothing, builds the bot over `tests.served.unreached()`. `tests/test_bot_remote.py` is the bot against the real server (in memory: a
-question answered with the remote tools and the instructions from discover, a chart from a remote result with its buttons, ecobot-mcp's
+nothing, builds the bot over `tests.served.unreached()`. A keyboard button is `bot.press(update, context, sentence)`; a chart over
+any period as a button answers it, `bot.respond(update, context, text, call=(tool, args))`. `tests/test_bot_remote.py` is the bot
+against the real server (in memory: a question answered with the remote tools and the instructions from discover, ecobot-mcp's prompts
+as Telegram commands, Status's gauges and the report prompt, a chart from a remote result with its buttons, ecobot-mcp's
 PNG of a chart byte for byte as its renderer draws it, an alert through the listen, the irrigation check's inputs; under uvicorn: a
 dropped connection rebuilt and the alerts after the last id read once, ecobot-mcp down, `ecobot.main()`); `tests/test_startup.py` runs
 both programs' main(): ecobot-mcp's over the fake sources, the bot's against ecobot-mcp under uvicorn.

@@ -599,7 +599,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
    when a question arrives goes: the service's keep-warm and the tools' own fetches cover it. Then the irrigation server is built in its own
    repository against it, the bot connects to both, and `lib/irrigation` goes from here. The service's scripts (`edit_readings`,
    `cache_status`, `refill_airgradient`, `check_rain`, `bench_storage`, `conditions`, `ecowitt_metrics`, `dump_specs`) stay;
-   `show_request` and `report_inputs` become MCP clients.
+   `show_request` becomes an MCP client (`report_inputs`, what the report written in code was made from, went with it in step 6c).
    - **The service side (done).** `lib/mcp_server.py` (`EcobotServer`): the SDK's low-level `Server` with the ten tools (their
      hand-written schemas, `readOnlyHint` and `openWorldHint` from each ServiceTool, the list built from the current catalogue; a call
      runs the ServiceTool with the request's `_meta` and answers its JSON unchanged as one text block, `isError` for a refusal, a
@@ -664,8 +664,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `markdown`, a `ResourceLink` per chart. Tests: `tests/test_mcp_server.py` (in memory and under uvicorn: the link served byte for
      byte as png mode's image, without a token or an allowed Host, `/mcp` still needing both; the override both ways; 404 for an
      unknown or expired id; the base URL from the setting and the proxy's headers; the store's bounds; the bot unaffected).
-   - **Left:** the irrigation server, now step 8; and `show_request` and `report_inputs` as MCP clients.
-6. **The slim bot** (decided November 2026, in place of retiring it: section 4 describes the bot as it was). The Telegram bot is kept, but only as a thin client of ecobot-mcp: it does what only a Telegram bot can do
+   - **Left:** the irrigation server, now step 8; and `show_request` as an MCP client.
+6. **The slim bot** (done; decided November 2026, in place of retiring it: section 4 describes the bot as it was). The Telegram bot is kept, but only as a thin client of ecobot-mcp: it does what only a Telegram bot can do
    (chats, buttons, pushing alerts), and everything about the weather, the air, the alerts' rules and the pictures comes from
    ecobot-mcp over MCP. It never opens the readings file and draws nothing. Sub-steps, each its own change with the checks green:
 
@@ -743,6 +743,29 @@ Each step ships on its own, with the tests and evals green and the bot working t
      - Without `BOT_OPENROUTER_API_KEY` the bot answers the buttons and sends alerts; a typed question gets one line saying the
        model isn't set up (the no-model fallbacks go).
      - The test-only oracles from step 3 (`tests/old_tools.py`, `tests/report_words.py`) are deleted.
+     *Done:* `lib/intent.py` keeps only the reasoning effort (`intent.effort`): its patterns for the report, "weather now", the
+     dashboard and a named reading's chart (`chart_call`) are gone, and anything typed goes to the model. The keyboard's chart buttons
+     are fixed calls (`lib/templates.py` `CALLS`, the calls they were read as before), answered by `Bot.press` with no model (a chart the
+     service can't draw says why); the alerts' charts are the same calls (`lib/alerts/pictures.py` `CHARTS`), so neither the bot nor
+     ecobot-mcp's rules read words. `RemoteWeather` reads ecobot-mcp's prompts on each connection and on `PromptsListChanged`
+     (`prompts`, `on_prompts`, `prompt(name, arguments)`); `Bot.publish_commands` sets Telegram's menu to the bot's own commands
+     (`templates.MENU`: `/status`, the charts, `/alerts`, `/usage`, `/keyboard`, `/reset`) with one per prompt after the charts', and
+     again when it changes (a prompt whose name Telegram won't take, or that is one of the bot's own, left out with a warning);
+     `Bot.on_command` answers `/<prompt> <words>` (`prompt_arguments`: in order, the last taking the rest; a refusal such as `/chart`
+     with no reading is said in the chat; another bot's command is left alone). `/report` is the `report` prompt; Status is
+     `ecobot://status`'s picture at once, then the report prompt's answer (`Bot.status`). `lib/report.py`, `lib/report_menu.py` and
+     `scripts/report_inputs.py` are deleted (an old report's 🔄 is out of date). `draw_buttons_ahead`, its loop and the alert charts kept
+     warm are gone; after any chart is sent its other periods are fetched in the background, with or without
+     `BOT_TELEGRAM_PRELOAD_CHAT` (`Bot.preload_soon`). Without the model a typed question gets `NO_MODEL`, one line. The evals' cases
+     keep only the effort (now pinned for every case); the cases answered in code before (the report, "sitrep", "weather now" and 13
+     named charts: 3m-wind-chart, weather-week, weather-4-months, pressure-week, wind-3m, ecowitt-week, ag-week, button-rain-chart,
+     button-humidity-chart, chart-pressure-30d, chart-weather-90d, chart-all-90d, chart-only-answers-itself) go to the model in bot
+     mode, their expected calls unchanged (`tests/evalkit.py` lost `SHORTCUT_LEAVES` and `in_code`). The oracles' tests now run
+     against the service's tools or lib's engines (`tests/engines.py`), and current's words are pinned (`tests/current_words.json`).
+     Tests: `tests/test_bot_remote.py` (prompts as commands over MCP, their arguments and refusals, the menu set again on
+     `PromptsListChanged`, Status's gauges and the report prompt), `tests/test_dashboard.py` (Status with and without its gauges or
+     the model), `tests/test_bot.py`, `tests/test_templates.py`, `tests/test_periods.py` (the other periods fetched without the preload
+     chat), `tests/test_startup.py` (the menu at start), `tests/test_admin_only.py` (a stranger refused a prompt command).
 
    **What the bot keeps:**
    - **Telegram:** who may use it (`BOT_ADMIN_ONLY`, `BOT_ADMIN_CHAT_IDS`, group admins), private and group chats, the keyboard, the

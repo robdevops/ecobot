@@ -28,19 +28,20 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 
 ## Features
 
-- **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
+- **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?" Anything you type is answered by the AI model with ecobot-mcp's tools.
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
-- **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message, under gauges of the temperature, humidity and rain.
-- **Web dashboard:** the same gauges as a live page in any browser on your network, laid out to fill a phone, a tablet or a screen.
+- **Buttons for the usual:** in a private chat a keyboard of instant charts (Rain, Weather, Temperature, Humidity, Air Quality, Particulates, Wind), and Status: a picture of the temperature, humidity and rain gauges, then a report of the weather, air quality, pollen and forecast. Each is a command too (`/rain`, `/status` ...).
+- **Commands from ecobot-mcp:** its prompts appear in Telegram's `/` menu: `/report`, `/now`, `/will_it_rain`, `/chart rain 7d`, `/rainfall last week` ... The words after the command fill the prompt in, and a prompt added to ecobot-mcp appears with no change to the bot.
+- **Web dashboard:** the gauges as a live page in any browser on your network, laid out to fill a phone, a tablet or a screen.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.
 - **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast.
-- **Cheap to run:** most answers are worked out by the bot itself, and the AI model is only called when it's needed.
+- **A thin client:** the bot only talks to Telegram and the model; ecobot-mcp reads the sources, runs the alert rules and draws every picture. The buttons and alerts work without the model.
 
 ## Install
 
 Already installed? See [Upgrading](#upgrading).
 
-You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [OpenRouter API key](https://openrouter.ai/keys) for questions that need the AI model. Either way, start by putting your keys in one private file:
+You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [OpenRouter API key](https://openrouter.ai/keys) for typed questions and the `/report`-style commands (without one, the buttons and the alerts still work). Either way, start by putting your keys in one private file:
 
 ```
 sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
@@ -122,7 +123,7 @@ Both run sandboxed as one user of their own, and keep their data in `/var/lib/pr
 and the folder's owner is unchanged (the three numbers match): `systemctl show -p UID --value ecobot-mcp ecobot; stat -c %u /var/lib/private/ecobot`.
 The token for [other MCP clients](#other-mcp-clients): `sudo cat /var/lib/private/ecobot/auth_token`.
 
-Then message `/report` to your Telegram bot.
+Then message `/status` to your Telegram bot.
 
 ### Docker
 
@@ -153,7 +154,7 @@ sudo docker compose up -d --build
 ```
 
 Watch the logs: `sudo docker logs -tf ecobot-mcp` shows `MCP: http://...:8765/mcp`, and `sudo docker logs -tf ecobot` shows
-`ecobot-mcp: connected`. Then message `/report` to your Telegram bot.
+`ecobot-mcp: connected`. Then message `/status` to your Telegram bot.
 
 Docker uses the same data folder as the systemd units, so you can switch between them, one at a time. To go back to systemd:
 `sudo docker compose --profile bot down && sudo systemctl start ecobot-mcp ecobot` (with `BOT_MCP_URL=http://127.0.0.1:8765/mcp` in
@@ -216,7 +217,8 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ec
 ecobot-mcp also serves the station's and the air sensor's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
 (your machine's name or IP address). It shows every gauge with the day's, month's and year's highs and lows, drawn by the browser (plain HTML5, nothing fetched from
 the internet), and fits every tile on the screen in portrait or landscape where they stay readable (on a phone it scrolls). It
-updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away.
+updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away. This page is the dashboard: the
+Telegram bot has none of its own (its Status button sends a picture of the temperature, humidity and rain gauges alone).
 
 After the weather station's gauges come the air sensor's, when there is one, with their bands on US standards:
 
@@ -379,7 +381,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 |---|---|
 | `BOT_TELEGRAM_TOKEN` | Required. |
 | `BOT_ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
-| `BOT_OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
+| `BOT_OPENROUTER_API_KEY` | Enables the AI model, which answers everything typed (and the prompt commands such as `/report`). Without it the buttons (their charts and the Status gauges) and the alerts still work, and a typed question is told the model isn't set up. |
 | `MCP_ECOWITT_API_KEY`, `MCP_ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
 | `MCP_HOMEASSISTANT_URL`, `MCP_HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `MCP_ECOWITT_SOURCE`). |
 | `MCP_AIRGRADIENT_API_TOKEN`, `MCP_AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |

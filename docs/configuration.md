@@ -80,10 +80,10 @@ Every request to `/mcp` needs a token (`AUTH_TOKENS`, below). Chart images are n
 | Variable | Default | Description |
 |---|---|---|
 | `BOT_TELEGRAM_TOKEN` | – | Required by the bot (not by ecobot-mcp). Bot token (@BotFather) |
-| `BOT_OPENROUTER_API_KEY` | – | [OpenRouter](https://openrouter.ai/keys) API key. Unset → no model: `/report`, chart commands, plain lookups ("how hot is it?", "rain chart 7d", "forecast") and all alerts work; anything needing the model gets a "no model" reply |
+| `BOT_OPENROUTER_API_KEY` | – | [OpenRouter](https://openrouter.ai/keys) API key. Everything typed, and ecobot-mcp's prompts as commands (`/report`, `/chart` ...), go to the model. Unset → no model: the buttons and their commands (the charts, Status's gauges) and all alerts work; a typed question gets one line saying the model isn't set up |
 | `BOT_OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash-1017` | Model, by its OpenRouter name |
 | `BOT_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | API endpoint |
-| `BOT_TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload charts to: the other periods of each chart asked for, and, while the bot has been used in the last 15 minutes, the keyboard's charts every 5 minutes. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
+| `BOT_TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload charts to. After a chart is sent, its other periods are always fetched from ecobot-mcp in the background; with this set they are uploaded here too, so a period button sends Telegram's copy. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
 | `BOT_LOG_WIDTH` | `24` | Characters of a chat message kept in the log, then `…`; `0` keeps all. No other line is cut |
 
 ### Access

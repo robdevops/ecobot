@@ -59,7 +59,8 @@ TOAST_LIMIT = 200             # ... and on the text a button's answer shows
 
 HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
-        "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
+        "In a private chat the buttons under the message box ask common questions; /keyboard off hides them. "
+        "The / menu lists the rest, /report and /chart among them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
 NO_MODEL = "Sorry, this bot has no AI model set up, so it can't answer typed questions; the buttons and the alerts still work."
 COMMAND_NAME = re.compile(r"[a-z0-9_]{1,32}")   # what Telegram takes as a command's name
@@ -675,7 +676,8 @@ class Bot:
         msg = update.effective_message
         if not msg or not msg.text:
             return
-        head, _, words = msg.text.strip().partition(" ")
+        head, *rest = msg.text.strip().split(maxsplit=1)
+        words = rest[0] if rest else ""
         name, _, to = head.lstrip("/").partition("@")
         if to and to.lower() != (getattr(context.bot, "username", "") or "").lower():
             return
