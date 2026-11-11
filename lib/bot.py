@@ -21,7 +21,7 @@ from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, ChatMigrated, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import intent, periods, prompt, report, report_menu, templates
+from . import intent, periods, prompt, templates
 from .admins import Admins
 from .alerts import menu, pictures
 from .alerts.notify import AlertState
@@ -48,14 +48,12 @@ PENDING_MAX_SECONDS = 10 * 60   # a message that waited longer (the bot was down
 TURN_SECONDS = 90            # a question that takes longer is given up on, so the ones queued behind it in the chat are not stuck
 DRAFT_REFRESH_SECONDS = 20   # Telegram drops a draft 30 s after its last update, so it is re-sent before that
 DRAFT_MIN_GAP = 1.0          # at most one draft update a second while the answer streams in
-AHEAD_SECONDS = 300          # the keyboard's charts are drawn ahead this often (draw_buttons_ahead), so a press sends one already drawn
-AHEAD_KEEP_SECONDS = 60      # ... unless the chart was drawn for a question this lately
-USED_SECONDS = 900           # the bot counts as in use this long after a message or a press: the charts drawn ahead are then uploaded ahead too
 IRRIGATION_SETTLE_SECONDS = 3   # after any irrigation action, the controller is given this long to report its new state before it is read and the message redrawn
 NOT_ADMIN = "Sorry, only group admins can use this bot."
 NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
 CHART_FAILED = "Sorry, I couldn't draw that chart, please ask again"   # a period button's chart that couldn't be drawn or sent
+NOT_DRAWN = "Sorry, I couldn't draw that chart. Please try again in a moment."   # a button's chart that couldn't be drawn
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
 TOAST_LIMIT = 200             # ... and on the text a button's answer shows
 
@@ -63,10 +61,9 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "/reset clears this chat's memory, /alerts opens the alert settings (buttons to subscribe or unsubscribe), /usage shows what I can do.\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
-NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n"
-            "Without it I can still do: /report, the chart commands (/rain, /weather, /temperature, /humidity, /air_quality, "
-            "/particulates, /wind), \"weather now\" and a reading's chart over a period like \"rain chart 7d\" or \"humidity 30d\", "
-            "as well as all the alerts.")
+NO_MODEL = "Sorry, this bot has no AI model set up, so it can't answer typed questions; the buttons and the alerts still work."
+COMMAND_NAME = re.compile(r"[a-z0-9_]{1,32}")   # what Telegram takes as a command's name
+MAX_COMMANDS = 100                             # ... and how many it takes in the menu
 OUT_OF_DATE = "That chart is out of date, please ask again"
 SERVICE_DOWN = "Sorry, I can't reach the weather service right now. Please try again in a minute."   # (BOT_MCP_URL: it is another program)
 
@@ -83,20 +80,19 @@ class Answer:
     reply: str | None = None                 # its text; None until something gives one
     photos: list = field(default_factory=list)
     titles: list[str] = field(default_factory=list)
-    silent: bool = False                     # a chart made in code: it goes with just its title, its text kept for the history
+    silent: bool = False                     # a button's chart: it goes with just its title, its text kept for the history
     ready: periods.Drawn | None = None       # a chart drawn moments ago, sent as it is
-    made: float | None = None                # seconds the tool took to make the chart in code, for the timing line
+    made: float | None = None                # seconds the tool took to make a button's chart, for the timing line
     ok: bool = True                          # False: the reply says something went wrong
     pictures: list = field(default_factory=list)       # the charts as the service drew them (lib/weather.ChartImage: each PNG with its
                                                        # chart's JSON and drawn_by), still to send
     drawn_by: list = field(default_factory=list)       # each photo's drawn_by (the call that draws it again), None for one with none
-    key: str | None = None                   # the call a chart made in code was read as (periods.call_key): the picture cache's key
+    key: str | None = None                   # a button's call (periods.call_key): the picture cache's key
 
 
 @dataclass
 class Made:
-    """What a service tool gave for a question answered in code: its words (a caption, an answer, lines) and its charts as the service
-    drew them."""
+    """What a button's service call gave: its words (the chart's caption) and its charts as the service drew them."""
     text: str | None
     pictures: list = field(default_factory=list)
 
@@ -138,7 +134,7 @@ def _short(text: str, limit: int) -> str:
 
 def chart_times(times: dict, made: float | None, pngs: list, sending: float) -> str:
     """A reply's chart timings for the log: "data 12, calc 3, 23 KB, send 812" (ms). times is the question's Turn.times; made is how
-    long the call took when the chart was made in code (its drawing by the service included: the calculation is that less its data),
+    long the call took for a button's chart (its drawing by the service included: the calculation is that less its data),
     else None. A step that wasn't timed is left out; the size is the pictures' (none for Telegram's copy)."""
     ms = lambda seconds: f"{seconds * 1000:.0f}"
     parts = [f"data {ms(times['data'])}"] if "data" in times else []
@@ -305,29 +301,24 @@ class Delivered(NamedTuple):
     photo: Message | None = None  # the single chart, as sent
 
 
-def caption_of(text: str, title: str = "", link: tuple[str, str] | None = None, bold_headings: bool = False):
-    """(caption, entities) for a photo: its title and the text, the link under them as a footer, the report's heading names bold; None
-    when that is longer than a caption may be (CAPTION_LIMIT, counted as Telegram counts it)."""
+def caption_of(text: str, title: str = "", link: tuple[str, str] | None = None):
+    """(caption, entities) for a photo: its title and the text, the link under them as a footer; None when that is longer than a caption
+    may be (CAPTION_LIMIT, counted as Telegram counts it)."""
     body, ents = with_link(f"{title}\n\n{text}" if title else text, link)
     if utf16_len(body) > CAPTION_LIMIT:
         return None
-    return body, [*(report.heading_entities(body) if bold_headings else []), *ents]
+    return body, ents
 
 
-def _first_fitting(pieces: list[str], glue: str):
-    """(caption, entities) of as many of the first `pieces` (joined by `glue`) as fit a caption; None when even the first doesn't."""
-    for n in range(len(pieces), 0, -1):
-        if fitted := caption_of(glue.join(pieces[:n]), bold_headings=True):
-            return fitted
-    return None
-
-
-def report_caption(text: str):
-    """(caption, entities) for the report under its gauges: the whole report, else as many of its first sections as fit a caption, else as
-    many of its first section's lines (only a report longer than any yet, refreshed in its photo, needs cutting: a new one that long goes
-    apart from its picture)."""
-    sections = text.split("\n\n")
-    return _first_fitting(sections, "\n\n") or _first_fitting(sections[0].splitlines(), "\n") or (text.splitlines()[0][:CAPTION_LIMIT // 2], [])
+def prompt_arguments(names: tuple[str, ...], words: str) -> dict[str, str]:
+    """A prompt command's words as its arguments, in order, the last taking the rest ("/chart rain 7d": reading "rain", period "7d";
+    "/rainfall last week": period "last week"); none given: none (the prompt's defaults)."""
+    said, arguments = words.split(), {}
+    for i, name in enumerate(names):
+        if i >= len(said):
+            break
+        arguments[name] = " ".join(said[i:]) if i == len(names) - 1 else said[i]
+    return arguments
 
 
 async def _photos(msg: Message, photos: list[bytes], titles: list[str], buttons, alone: bool) -> tuple[bool, Message | None]:
@@ -346,18 +337,17 @@ async def _photos(msg: Message, photos: list[bytes], titles: list[str], buttons,
 
 
 async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str, str] | None = None, markup=None,
-                  titles: list[str] | None = None, period_row=None, bold_headings: bool = False, photos_first: bool = False) -> Delivered:
+                  titles: list[str] | None = None, period_row=None) -> Delivered:
     """Send the answer with any charts. One chart and an answer that fits a caption (CAPTION_LIMIT) go as one message, the picture with its
-    title and the answer; otherwise a chart carries only its title as its caption and any answer text is its own message, sent first
-    (photos_first: sent after the pictures, carrying the buttons: the report and its gauges). link = (label, url) adds a small italic link
-    line at the end of the text. markup (the button keyboard) rides on the last text, or on the single photo when there is no text (a
-    group of photos can't carry one). period_row (the period buttons) rides on a single photo instead, and then the keyboard waits.
-    bold_headings: the text is the report, whose heading names are set in bold."""
+    title and the answer; otherwise a chart carries only its title as its caption and any answer text is its own message, sent first.
+    link = (label, url) adds a small italic link line at the end of the text. markup (the button keyboard) rides on the last text, or on the
+    single photo when there is no text (a group of photos can't carry one). period_row (the period buttons) rides on a single photo
+    instead, and then the keyboard waits."""
     text = text.strip()
     if photos:
         text = strip_chart_talk(text)
     titles = titles or []
-    if text and len(photos) == 1 and (fitted := caption_of(text, titles[0] if titles else "", link, bold_headings)):
+    if text and len(photos) == 1 and (fitted := caption_of(text, titles[0] if titles else "", link)):
         body, ents = fitted   # one chart and an answer that fits its caption: one message, the picture with its title and the answer
         buttons = period_row or markup
         try:
@@ -366,22 +356,18 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
             return Delivered(bool(markup) and not period_row, sent)
         except TelegramError as e:
             log.error("Couldn't send the chart with its answer (%s: %s); sending them apart", type(e).__name__, e)
-    sent = None
-    if photos and photos_first:
-        _, sent = await _photos(msg, photos, titles, None, not text)
-    on_text = bool(markup) and (not photos or photos_first)   # the keyboard rides on the text
+    on_text = bool(markup) and not photos   # the keyboard rides on the text
     if text:
         chunks = split_message(text)
         for i, chunk in enumerate(chunks):
             last = i == len(chunks) - 1
             body, ents = with_link(chunk, link) if last else (chunk, [])
-            ents = [*(report.heading_entities(chunk) if bold_headings else []), *ents]
             await msg.reply_text(body, entities=ents or None, disable_web_page_preview=True,
                                  **({"reply_markup": markup} if on_text and last else {}))
-    if photos and not photos_first:
+    if photos:
         went, sent = await _photos(msg, photos, titles, period_row or markup, not text)
         return Delivered(bool(markup) and not period_row and went, sent)
-    return Delivered(on_text and bool(text), sent)
+    return Delivered(on_text and bool(text), None)
 
 
 class CallChart(NamedTuple):
@@ -401,10 +387,10 @@ class Bot:
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
         its own when none is given. service: ecobot-mcp as the bot reaches it (lib/weather.RemoteWeather, over MCP at BOT_MCP_URL),
-        whose tools the bot's own code paths call (its shortcuts, report, Status picture, alert charts and period buttons), whose alert
-        log the 🔄 under an alert's chart finds its chart's drawn_by in, and which draws every picture the bot sends: the bot runs no
-        sources and draws nothing. The model is offered the same tools (agent.tools: lib/model_tools.py), with the server's
-        instructions after the bot's persona."""
+        whose tools the bot's own code paths call (the keyboard's charts, the Status picture, the alert charts and the period buttons),
+        whose prompts are the bot's commands too (/report, /chart ...: asked of the model), whose alert log the 🔄 under an alert's chart
+        finds its chart's drawn_by in, and which draws every picture the bot sends: the bot runs no sources and draws nothing. The model
+        is offered the same tools (agent.tools: lib/model_tools.py), with the server's instructions after the bot's persona."""
         self.cfg, self.agent, self.state, self.irrigation = cfg, agent, state, irrigation
         self.weather = service
         self.tasks = tasks or Tasks()
@@ -415,10 +401,10 @@ class Bot:
         self._refused: set[int] = set()   # the senders BOT_ADMIN_ONLY has turned away, each logged once with its id (for BOT_ADMIN_CHAT_IDS)
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
-        self.alert_charts = pictures.AlertCharts(self.images, lambda: now_local(self.cfg.tz),
-                                                 tz=getattr(cfg, "tz", None))   # the alerts' charts, kept with them
+        self.alert_charts = pictures.AlertCharts(self.images, tz=getattr(cfg, "tz", None))   # the alerts' charts, kept with them
         self.preloading: set[str] = set()        # the calls whose other periods are being uploaded (BOT_TELEGRAM_PRELOAD_CHAT)
-        self.last_used = 0.0                     # when a message or a press last came in (monotonic; 0: never)
+        self.prompt_commands: dict = {}          # ecobot-mcp's prompts offered as commands: name -> lib/weather.Prompt (publish_commands)
+        self._published: list | None = None      # the command menu last given to Telegram
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
         self.charted = periods.Charted(state.charts, state.save)   # the call behind each chart sent (kept across restarts)
 
@@ -465,16 +451,12 @@ class Bot:
         return (out, image) if isinstance(out, dict) else ({"error": "not an answer"}, None)
 
     def _catalogue(self):
-        """The readings the service holds (the words of a shortcut are read against them)."""
+        """The readings the service holds (an answer's calls are read against them: reads_air)."""
         return self.weather.catalogue()
 
     def _instructions(self) -> str:
         """The server's instructions (from server/discover)."""
         return self.weather.instructions()
-
-    def _sentence_call(self, text: str, now: datetime) -> tuple[str, dict] | None:
-        """The call a keyboard sentence ("Wind chart 1d") is: a named reading's chart and a period (intent.chart_call); None for any other."""
-        return intent.chart_call(text, now, self.cfg.tz, self._catalogue())
 
     def _titled(self, chart: dict) -> tuple[str, int | None]:
         """(title, the time of its newest reading) of a chart given as data."""
@@ -498,6 +480,7 @@ class Bot:
         app.add_handler(CommandHandler("alerts", self.on_alerts))
         app.add_handler(CommandHandler("usage", self.on_usage))
         app.add_handler(CommandHandler(list(templates.COMMANDS), self.on_ask))
+        app.add_handler(MessageHandler(filters.COMMAND, self.on_command))   # any other command: ecobot-mcp's prompts (on_command)
         app.add_handler(CallbackQueryHandler(self.on_button))   # every button press, whatever its data: see on_button
         app.add_handler(MessageHandler(filters.ALL & ~filters.TEXT & ~filters.COMMAND, self.on_other), group=1)
         app.add_handler(ChatMemberHandler(self.on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -566,18 +549,11 @@ class Bot:
             await toast_quietly(query, STALE_BUTTON)
         return believed
 
-    def noticed(self):
-        """A message or a press came in: the bot is in use (used_lately)."""
-        self.last_used = time.monotonic()
-
-    @property
-    def used_lately(self) -> bool:
-        return bool(self.last_used) and time.monotonic() - self.last_used <= USED_SECONDS
-
     def buttons(self) -> dict:
-        """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button."""
+        """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button.
+        (The 🔄 under the report written in code, rp:, and under the Telegram dashboard are no more: their presses are out of date.)"""
         return {"al:": self.on_alert_button, **({"ir:": self.on_irrigation_button} if self.irrigation else {}),
-                periods.PREFIX: self.on_period_button, report_menu.PREFIX: self.on_report_button}
+                periods.PREFIX: self.on_period_button}
 
     async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """The one place every button press comes in: believed (_press), a known family (a prefix nobody handles is refused, so a
@@ -585,7 +561,6 @@ class Bot:
         query = update.callback_query
         if query is None or not await self._press(query):
             return
-        self.noticed()
         handler = next((h for prefix, h in self.buttons().items() if query.data.startswith(prefix)), None)
         if handler is None:
             await toast_quietly(query, STALE_BUTTON)
@@ -656,13 +631,73 @@ class Bot:
         await self._help_and_alerts(update, context)
 
     async def on_ask(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/report, /status, /rain, /weather, /temperature, /humidity, /air_quality, /particulates, /wind: the same as the button of that name,
-        in a private chat or a group."""
+        """/status, /rain, /weather, /temperature, /humidity, /air_quality, /particulates, /wind: the same as the button of that name, in a
+        private chat or a group."""
         if not await self._allowed(update, context):
             return
         self.remember_chat(update)
         command = update.effective_message.text.split()[0].lstrip("/").split("@")[0].lower()
-        await self.respond(update, context, templates.COMMANDS[command])
+        await self.press(update, context, templates.COMMANDS[command])
+
+    async def press(self, update: Update, context: ContextTypes.DEFAULT_TYPE, sentence: str):
+        """A keyboard button (or its command), answered at once without the model: Status is the gauges and the report prompt's answer
+        (status), a chart button its fixed call (templates.CALLS), drawn by ecobot-mcp."""
+        if sentence == templates.STATUS:
+            await self.status(update, context)
+        else:
+            await self.respond(update, context, sentence, call=templates.call(sentence))
+
+    async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Status (the button, /status): the Status picture (the station's three gauges, ecobot://status) at once, then the answer to
+        ecobot-mcp's `report` prompt, asked of the model as a typed question (without the model: the one line saying so)."""
+        msg = update.effective_message
+        gauges = asyncio.create_task(self._status_gauges())
+        try:
+            question = await self.weather.prompt("report")
+        except Exception as e:   # (ecobot-mcp away, or it has no report prompt): respond says what it can
+            log.warning("%s: the report prompt couldn't be read (%s: %s)", chat_tag(msg.chat_id), type(e).__name__, e)
+            question = None
+        if photo := await gauges:
+            try:
+                await msg.reply_photo(photo)
+            except TelegramError as e:
+                log.error("Couldn't send the Status picture: %s: %s", type(e).__name__, e)
+        if question:
+            await self.respond(update, context, question)
+        elif not photo:
+            with contextlib.suppress(TelegramError):
+                await msg.reply_text(SERVICE_DOWN if not await self.weather.ready(0) else "Sorry, I couldn't get the report. Please try again in a moment.")
+
+    async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Any command the bot has no handler of its own for: one of ecobot-mcp's prompts (prompt_commands), whose words after the command
+        fill its arguments (prompt_arguments): the prompt's question is asked of the model as a typed question. Any other command, or one
+        addressed to another bot ("/chart@otherbot"), is left alone."""
+        msg = update.effective_message
+        if not msg or not msg.text:
+            return
+        head, _, words = msg.text.strip().partition(" ")
+        name, _, to = head.lstrip("/").partition("@")
+        if to and to.lower() != (getattr(context.bot, "username", "") or "").lower():
+            return
+        found = self.prompt_commands.get(name.lower())
+        if found is None:
+            return
+        if not await self._allowed(update, context):
+            return
+        self.remember_chat(update)
+        arguments = prompt_arguments(found.arguments, words)
+        try:
+            question = await self.weather.prompt(found.name, arguments)
+        except ServiceUnreachable:
+            log.warning("%s: %s", chat_tag(msg.chat_id), UNREACHABLE)
+            await msg.reply_text(SERVICE_DOWN)
+            return
+        except Exception as e:   # (refused: a required argument missing, a prompt gone since the menu was set)
+            why = getattr(e, "message", None) or str(e)
+            log.info("%s: /%s %s refused: %s", describe_source(update), found.name, words, why, extra=QUOTES)
+            await msg.reply_text(f"Sorry, /{found.name} didn't work: {why}")
+            return
+        await self.respond(update, context, question)
 
     @staticmethod
     def _alerts_named(kind: str) -> str:
@@ -771,7 +806,7 @@ class Bot:
         edited = await _edit_quietly(query.edit_message_media(InputMediaPhoto(photo, caption=message.caption, caption_entities=message.caption_entities or None),
                                                               reply_markup=message.reply_markup))
         if drawn:
-            self.alert_charts.sent(kind, edited, alerted=False)
+            self.alert_charts.sent(kind, edited)
         log.debug("%s: the %s alert's chart %s", chat_tag(message.chat.id), kind, "drawn again" if drawn else "sent from the one drawn ahead")
 
     # ---------- irrigation ----------
@@ -887,37 +922,6 @@ class Bot:
             await _edit_quietly(query.edit_message_reply_markup(reply_markup=markup))
         else:
             await _edit_quietly(query.edit_message_text(text, reply_markup=markup, **({"entities": entities} if entities else {})))
-
-    async def on_report_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """A press on 🔄 under the report: read everything again and redraw the report in the same message (its Status picture too).
-        The chat's conversation is not touched (this is not a new question). Any other button of the family (the 🔄 under a Telegram
-        dashboard, which is no more) is out of date."""
-        query = update.callback_query
-        if query.data != report_menu.REFRESH:
-            await answer_query(query, STALE_BUTTON)
-            return
-        pictured = bool(getattr(getattr(query, "message", None), "photo", None))   # the report is the caption of its gauges: they are drawn again too
-        try:
-            text, gauge = await self._report(True, pictured)
-        except Exception as e:   # the message stays as it was
-            log.warning("Report refresh failed: %s", e)
-            await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
-            return
-        await answer_query(query)   # no toast: the times in the headings show what changed
-        if pictured:
-            await self._recaption(query, text, gauge)
-        else:
-            await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
-
-    @staticmethod
-    async def _recaption(query, text: str, photo: bytes | None):
-        """Put the report's new text, and its gauges drawn again, into the photo message its Refresh was pressed under (no new picture:
-        the caption alone)."""
-        body, ents = report_caption(text)
-        if photo:
-            await _edit_quietly(query.edit_message_media(InputMediaPhoto(photo, caption=body, caption_entities=ents or None), reply_markup=report_menu.keyboard()))
-        else:
-            await _edit_quietly(query.edit_message_caption(caption=body, caption_entities=ents or None, reply_markup=report_menu.keyboard()))
 
     async def on_period_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """A press on a period button under a chart: the chart's call (its drawn_by) replayed with that period, by the service, and the
@@ -1053,11 +1057,34 @@ class Bot:
         if private:
             self.state.set_keyboard(update.effective_chat.id, self.keyboard_version)
 
-    @staticmethod
-    async def publish_commands(tg_bot) -> None:
-        """At startup: give Telegram the command menu (templates.MENU). A refusal is logged and the bot carries on."""
+    def commands(self) -> list[tuple[str, str]]:
+        """The command menu: the bot's own (templates.MENU), with one command per ecobot-mcp prompt (its description) after the charts'.
+        A prompt whose name isn't a command Telegram takes (COMMAND_NAME), or is one of the bot's own, is left out with a warning; the
+        prompts kept are prompt_commands, what on_command answers."""
+        kept: dict = {}
+        for found in getattr(self.weather, "prompts", None) or ():
+            if not COMMAND_NAME.fullmatch(found.name):
+                log.warning("ecobot-mcp's prompt %r isn't a name Telegram takes as a command (lowercase letters, digits and _, at most 32): "
+                            "it is left out of the bot's commands", found.name)
+            elif found.name in templates.OWN_COMMANDS:
+                log.warning("ecobot-mcp's prompt %r has the name of one of the bot's own commands: it is left out of them", found.name)
+            else:
+                kept.setdefault(found.name, found)
+        self.prompt_commands = kept
+        own = list(templates.MENU)
+        at = next((i for i, (name, _) in enumerate(own) if name == "alerts"), len(own))   # (the settings last)
+        offered = [(name, fit(" ".join((p.description or name).split()), 256).ljust(3, ".")) for name, p in kept.items()]
+        return [*own[:at], *offered, *own[at:]][:MAX_COMMANDS]
+
+    async def publish_commands(self, tg_bot) -> None:
+        """Give Telegram the command menu (commands): at start, and again whenever ecobot-mcp's prompts are read (each connection, and
+        when it says they changed), when the menu changed. A refusal is logged and the bot carries on."""
+        menu = self.commands()
+        if menu == self._published:
+            return
         try:
-            await tg_bot.set_my_commands([BotCommand(name, description) for name, description in templates.MENU])
+            await tg_bot.set_my_commands([BotCommand(name, description) for name, description in menu])
+            self._published = menu
         except Exception as e:
             log.warning("Couldn't set the command menu: %s: %s", type(e).__name__, e)
 
@@ -1108,15 +1135,16 @@ class Bot:
         private = msg.chat.type == ChatType.PRIVATE
         if private and not await self._allowed(update, context):   # before remember_chat: a stranger never becomes an alert chat
             return
-        self.noticed()
         self.remember_chat(update)
         if private:
             if self.irrigation and (msg.text.strip() == templates.IRRIGATION or irrigation_menu.asked(msg.text)):   # the controller's status and buttons (no model needed)
                 await self.send_irrigation(msg)
             elif msg.text.strip() == templates.CAPABILITIES:  # what it measures, then the alert settings (no model needed)
                 await self._help_and_alerts(update, context)
-            else:
-                await self.respond(update, context, templates.sentence(msg.text) or msg.text)
+            elif sentence := templates.sentence(msg.text):   # a keyboard button: answered at once, without the model
+                await self.press(update, context, sentence)
+            else:                                           # anything typed: the model's
+                await self.respond(update, context, msg.text)
             return
         # Group / supergroup: only respond when addressed
         mention = re.compile(rf"@{re.escape(context.bot.username)}\b", re.IGNORECASE)
@@ -1144,30 +1172,6 @@ class Bot:
         sender = msg.from_user.full_name if msg.from_user else "Someone"
         return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
 
-    async def _written_in_code(self, report: bool, ahead: bool = False) -> str:
-        """The report, or "weather now", in the service's words: the readings now (current: each device's heading and lines), then the
-        pollen's and the forecast's own text, the calls made together (intent.report_calls; "weather now": current {})."""
-        calls = intent.report_calls(self.names) if report else [intent.WEATHER_NOW_CALL]
-        results = await asyncio.gather(*(self._service_call(name, args, ahead=ahead) for name, args in calls))
-        by_tool = {name: out for (name, _), out in zip(calls, results)}
-        now = by_tool.get("current") or {"error": "none"}
-        if not report:
-            if "error" in now or "station" in (now.get("unavailable") or {}) or not (now.get("lines") or {}).get("station"):
-                return "The weather station isn't answering right now."
-            return "\n".join(now["lines"]["station"])
-        sections = [] if "error" in now else [
-            "\n".join([now["headings"][device], *now["lines"][device]]) for device in ("station", "air") if device in now.get("lines", {})]
-        sections += [out["text"] for name in ("pollen", "forecast") if (out := by_tool.get(name)) and out.get("text")]
-        return "\n\n".join(sections) or "No readings are available right now."
-
-    async def _report(self, report: bool, gauges: bool) -> tuple[str, bytes | None]:
-        """The report (or "weather now") written in code and, with `gauges`, its picture drawn alongside (None without one), in
-        TURN_SECONDS."""
-        written = self._written_in_code(report)
-        if gauges:
-            return tuple(await asyncio.wait_for(asyncio.gather(written, self._status_gauges()), TURN_SECONDS))
-        return await asyncio.wait_for(written, TURN_SECONDS), None
-
     async def _status_gauges(self) -> bytes | None:
         """The report's picture: the weather station's temperature, humidity and rain gauges, the Status picture the service draws
         (ecobot://status, lib/status.py). None without the station, or when it sends none (the report then goes as text alone)."""
@@ -1186,22 +1190,24 @@ class Bot:
         with contextlib.suppress(TelegramError):
             await msg.reply_text(text)
 
-    async def _chart_in_code(self, call: tuple[str, dict]) -> Made | None:
-        """A named reading's chart and a period (intent.chart_call): the service draws it and its caption goes with it. None (the model
-        then takes the question) when it drew nothing or has nothing to say."""
+    async def _chart_in_code(self, call: tuple[str, dict]) -> Made | str:
+        """A keyboard button's chart (its fixed call): the service draws it and its caption goes with it. When it gives neither, what to
+        say instead: the service's refusal, or NOT_DRAWN."""
         tool, args = call
         try:
             out, pictures = await self.weather.call_images(tool, args, {"chart_points": AS_DRAWN})
         except ServiceUnreachable as e:
             log.warning("Service tool %s: %s", tool, e)
-            return None
+            return SERVICE_DOWN
         except Exception as e:
             log.error("Service tool %s failed: %s: %s", tool, type(e).__name__, e, exc_info=isinstance(e, BUGS))
-            return None
-        if not isinstance(out, dict) or "error" in out:
-            return None
+            return NOT_DRAWN
+        if not isinstance(out, dict):
+            return NOT_DRAWN
+        if "error" in out:
+            return str(out["error"])
         text = out.get("caption") or out.get("answer")
-        return Made(text, pictures) if pictures and text else None
+        return Made(text, pictures) if pictures or text else NOT_DRAWN
 
     @staticmethod
     def _complete(calls: list[dict], results: list[str]) -> str | None:
@@ -1209,11 +1215,11 @@ class Bot:
         reply), their replies in order are the answer and the model is asked nothing more; else None, and the model answers as usual."""
         return complete_reply(results)
 
-    async def _ask_model(self, working: list[dict], system: str, read, turn: Turn, draft, on_heavy=None) -> str:
+    async def _ask_model(self, working: list[dict], system: str, effort: str, turn: Turn, draft, on_heavy=None) -> str:
         """The model's answer, with the service's tools. If it has not answered in TURN_SECONDS, ask again once with one reasoning step
         less (medium > low > none), for RETRY_SECONDS; a question already at no reasoning just times out. A step whose results are all
         complete ends the turn with their replies (_complete). No draft streams once a result has a chart: the reply is its caption."""
-        before, effort, budget, retried = list(working), read.effort, TURN_SECONDS, False
+        before, budget, retried = list(working), TURN_SECONDS, False
         charted = lambda: any(r and r[2].get("charts") for r in turn.results)
         while True:
             try:
@@ -1233,24 +1239,27 @@ class Bot:
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
     def preload_soon(self, bot, drawn_by: dict | None):
-        """With BOT_TELEGRAM_PRELOAD_CHAT set, upload the chart of each other period its drawn_by lists, in the background."""
+        """After a chart is sent: the chart of each other period its drawn_by lists fetched from ecobot-mcp in the background (and, with
+        BOT_TELEGRAM_PRELOAD_CHAT set, uploaded there), so its period buttons answer at once."""
         chat = getattr(self.cfg, "telegram_preload_chat", None)
         key = periods.drawn_key(drawn_by)
-        if chat is None or self.preload_off or not drawn_by or not drawn_by.get("periods") or key in self.preloading:
+        if not drawn_by or not drawn_by.get("periods") or key in self.preloading:
             return
         self.preloading.add(key)
-        self.tasks.start(self.preload(bot, chat, drawn_by))
+        self.tasks.start(self.preload(bot, None if self.preload_off else chat, drawn_by))
 
-    async def preload(self, bot, chat: int, drawn_by: dict):
-        """Upload (silently, to `chat`) the chart for each other period of a chart's drawn_by, each its call replayed with that period
-        (in the background: nobody is waiting), so a press of a period button edits the message by Telegram's copy and uploads nothing.
-        Nothing holds it back: each period is drawn and uploaded on its own, the moment it can be, whatever else is being answered."""
+    async def preload(self, bot, chat: int | None, drawn_by: dict):
+        """The chart for each other period of a chart's drawn_by, each its call replayed with that period, fetched and kept (in the
+        background: nobody is waiting) and, with a `chat` (BOT_TELEGRAM_PRELOAD_CHAT), uploaded to it silently, so a press of a period
+        button edits the message with the chart held (by Telegram's copy, when uploaded) and asks ecobot-mcp nothing. Nothing holds it
+        back: each period is fetched and uploaded on its own, the moment it can be, whatever else is being answered."""
         started, done, skipped = time.monotonic(), set(), []
         tool = drawn_by["tool"]
         try:
             own = periods.own_period(drawn_by, now_local(self.cfg.tz), self.cfg.tz)
             asked = {p["period"]: periods.with_period(drawn_by, p["period"]) for p in drawn_by.get("periods") or () if p["period"] != own}
-            asked = {p: args for p, args in asked.items() if not self.images.has_copy(periods.call_key(tool, args))}
+            held = self.images.has_copy if chat is not None else (lambda key: self.images.held(key) is not None)
+            asked = {p: args for p, args in asked.items() if not held(periods.call_key(tool, args))}
 
             async def upload(period, args):
                 key = periods.call_key(tool, args)
@@ -1263,7 +1272,7 @@ class Bot:
                     return
                 png, title, caption, newest, by = drawn[:5]
                 self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL, newest=newest, drawn_by=by, dark=drawn.dark)
-                if self.preload_off:   # an upload was refused meanwhile
+                if chat is None or self.preload_off:   # (fetched only; or an upload was refused meanwhile)
                     return
                 if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
                     skipped.append(why)
@@ -1293,43 +1302,9 @@ class Bot:
                 log.warning("Couldn't upload to BOT_TELEGRAM_PRELOAD_CHAT %s (%s: %s); not preloading charts", chat, type(e).__name__, e)
         return None
 
-    async def draw_buttons_ahead(self, bot):
-        """The chart of each keyboard button (each a fixed service call: the call its sentence is read as), and of each alert type sent in
-        the last hours (alert_charts.warm, by their calls), drawn afresh (every AHEAD_SECONDS, from ecobot.warm_up), so a press, or the
-        Refresh under the alert, is answered with a chart already drawn (images.ready, AlertCharts.newer_than) instead of drawing one
-        then; with BOT_TELEGRAM_PRELOAD_CHAT set and the bot used in the last 15 minutes, uploaded too, so the press sends Telegram's copy and
-        uploads nothing. A chart drawn for a question in the last minute is left. Nobody is waiting: the requests are background ones,
-        and the logs are quiet."""
-        started, now = time.monotonic(), now_local(self.cfg.tz)
-        chat = getattr(self.cfg, "telegram_preload_chat", None) if self.used_lately else None
-        drawn, uploaded, skipped = 0, 0, []
-        calls = [call for text in templates.chart_sentences(self.irrigation is not None) if (call := self._sentence_call(text, now))]
-        calls = list({periods.call_key(*call): call for call in [*calls, *self.alert_charts.warm()]}.items())
-        for key, (tool, args) in calls:
-            if (age := self.images.age_of(key)) is not None and age < AHEAD_KEEP_SECONDS:
-                continue
-            try:
-                made = await asyncio.wait_for(self._draw_call(tool, args), TURN_SECONDS)
-            except Exception as e:
-                log.debug("Couldn't draw %s ahead: %s: %s", key, type(e).__name__, e)
-                continue
-            if made is None:   # it drew no chart (its source is not there)
-                continue
-            png, title, caption, newest, drawn_by = made[:5]
-            self.images.put(key, png, title, caption, newest=newest, drawn_by=drawn_by, dark=made.dark)
-            drawn += 1
-            if chat is not None and not self.preload_off:
-                if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
-                    skipped.append(why)
-                elif not self.preload_off:
-                    uploaded += 1
-        if drawn:
-            log.debug("Drew %d button charts ahead%s in %.1fs", drawn, f", uploaded {uploaded} to {chat}" if uploaded else "", time.monotonic() - started)
-        if skipped:
-            log.warning("BOT_TELEGRAM_PRELOAD_CHAT %s didn't take %d of the button charts just now (%s: %s)", chat, len(skipped), type(skipped[0]).__name__, skipped[0])
-
-    async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-        """Answer `text`."""
+    async def respond(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, call: tuple[str, dict] | None = None):
+        """Answer `text`: a typed question (or a prompt's), asked of the model; with `call`, a keyboard button's chart (its fixed call),
+        drawn by ecobot-mcp without the model, `text` its sentence (what the history and the log keep)."""
         msg = update.effective_message
         text = text.strip()
         if not text:
@@ -1338,22 +1313,22 @@ class Bot:
         typing = asyncio.create_task(keep_typing(context.bot, msg.chat_id, self._thread(msg), stop_typing))
         await asyncio.sleep(0)
         now = now_local(self.cfg.tz)
-        read = intent.read(text, now, self.names, self.cfg.tz, self._catalogue())
-        log.info("%s%s: %s", describe_source(update), f" (reasoning: {read.effort})" if read.effort != intent.EFFORT_DEFAULT else "",
+        effort = intent.EFFORT_DEFAULT if call else intent.effort(text)
+        log.info("%s%s: %s", describe_source(update), f" (reasoning: {effort})" if effort != intent.EFFORT_DEFAULT else "",
                  text, extra=QUOTES)
-        if read.chart:
-            log.debug("Shortcut: %s %s", read.chart[0], json.dumps(read.chart[1], ensure_ascii=False), extra=QUOTES)
+        if call:
+            log.debug("Button: %s %s", call[0], json.dumps(call[1], ensure_ascii=False), extra=QUOTES)
 
         chat = self.chats[self._key(msg)]
         started = time.monotonic()
         turn = Turn()
         async with chat.lock:
-            draft = Draft(context.bot, msg.chat_id, self._thread(msg)) if msg.chat.type == ChatType.PRIVATE else None
+            draft = Draft(context.bot, msg.chat_id, self._thread(msg)) if msg.chat.type == ChatType.PRIVATE and not call else None
             drafting = asyncio.create_task(draft.run(stop_typing)) if draft else None   # a private chat also gets the "Thinking..." draft
             working = [*chat.history, {"role": "user", "content": self._content(msg, text, context.bot.id)}]
             new_from = len(working)
             try:
-                answer = await self._answer(msg, read, turn, working, draft)
+                answer = await self._answer(msg, call, effort, turn, working, draft)
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
                 for picture in answer.pictures[:MAX_CHARTS]:   # the charts as the service drew them, each titled from its JSON
                     try:
@@ -1374,49 +1349,43 @@ class Bot:
             finally:
                 stop_typing.set()
                 await asyncio.gather(*[t for t in (typing, drafting) if t])  # wait for any in-flight "typing" or draft so none is sent after the reply
-        await self._send(msg, context.bot, read, turn, answer, working[new_from:], now, started)
+        await self._send(msg, context.bot, turn, answer, working[new_from:], now, started)
 
-    async def _answer(self, msg: Message, read, turn: Turn, working: list[dict], draft) -> Answer:
-        """The answer, from the first way that gives one: a chart drawn moments ago, a named reading's chart drawn by the service, the
-        report or "weather now" written in code, else the model with the service's tools (its charts as the service drew them).
-        `working` is the conversation, the question last; the answer joins it."""
-        key = periods.call_key(*read.chart) if read.chart else None   # the call the chart is (its cache key)
-        if read.chart and (ready := self.images.ready(key)):   # drawn ahead, or for someone's same call
+    async def _answer(self, msg: Message, call: tuple[str, dict] | None, effort: str, turn: Turn, working: list[dict], draft) -> Answer:
+        """The answer. A button's chart (`call`): the one drawn moments ago for the same call, else drawn by the service now, its text
+        kept for the history. A typed question: the model with the service's tools (its charts as the service drew them); without the
+        model (no BOT_OPENROUTER_API_KEY), one line saying so. `working` is the conversation, the question last; the answer joins it."""
+        key = periods.call_key(*call) if call else None   # the call the chart is (its cache key)
+        if call and (ready := self.images.ready(key)):   # drawn for someone's same call moments ago
             answer = Answer(ready.caption, [ready.photo], [ready.title], silent=True, ready=ready, drawn_by=[ready.drawn_by], key=key)
+        elif not call and not getattr(self.agent, "ready", True):   # no BOT_OPENROUTER_API_KEY: typed questions are the model's
+            answer = Answer(NO_MODEL)
         elif not await self.weather.ready():   # ecobot-mcp can't be reached
             log.warning("%s: %s", chat_tag(msg.chat_id), UNREACHABLE)
             answer = Answer(SERVICE_DOWN, ok=False)
-        elif read.chart:   # drawn by the service; the chart goes out with just its title (the text is kept for the history)
+        elif call:   # drawn by the service; the chart goes out with just its title (the text is kept for the history)
             began = time.monotonic()
-            made = await asyncio.wait_for(self._chart_in_code(read.chart), TURN_SECONDS)
-            answer = Answer(made.text, silent=True, made=time.monotonic() - began, pictures=made.pictures, key=key) if made else Answer()
-        elif read.report or read.weather_now:   # written in code from the service's results, no model (the report: with its gauges)
-            text, gauge = await self._report(read.report, read.report)
-            answer = Answer(text, [gauge] if gauge else [], [""] if gauge else [])
+            made = await asyncio.wait_for(self._chart_in_code(call), TURN_SECONDS)
+            answer = (Answer(made.text or "", silent=True, made=time.monotonic() - began, pictures=made.pictures, key=key)
+                      if isinstance(made, Made) else Answer(made, ok=False))
         else:
-            answer = Answer()
-        if answer.reply is not None:
-            working.append({"role": "assistant", "content": answer.reply})
+            system = prompt.build(datetime.now(self.cfg.tz), self._instructions())
+            answer = Answer(await self._ask_model(working, system, effort, turn, draft, lambda tokens: self._warn(msg, tokens)))
+            answer.pictures = [picture for slot, result in enumerate(turn.results) if result for picture in turn.pictures.get(slot, ())]
             return answer
-        if not getattr(self.agent, "ready", True):   # no BOT_OPENROUTER_API_KEY: what is left is for the model
-            answer.reply = NO_MODEL
-            working.append({"role": "assistant", "content": answer.reply})
-            return answer
-        system = prompt.build(datetime.now(self.cfg.tz), self._instructions())
-        answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens))
-        answer.pictures = [picture for slot, result in enumerate(turn.results) if result for picture in turn.pictures.get(slot, ())]
+        working.append({"role": "assistant", "content": answer.reply})
         return answer
 
-    async def _send(self, msg: Message, bot, read, turn: Turn, answer: Answer, added: list[dict], now: datetime, started: float):
+    async def _send(self, msg: Message, bot, turn: Turn, answer: Answer, added: list[dict], now: datetime, started: float):
         """Send the answer, a single chart with the period buttons under it, the keyboard if the chat's is out of date; then keep what
-        follows from it: the chart for its period buttons and the next to ask, its other periods drawn ahead. `added`: the messages the
-        answer added to the conversation."""
+        follows from it: the chart for its period buttons and the next to ask, its other periods fetched in the background. `added`: the
+        messages the answer added to the conversation."""
         reply, photos, titles = answer.reply, answer.photos, answer.titles
-        caption = reply if answer.silent else None   # a chart made in code: its text, kept with the chart for the next to ask the same
+        caption = reply if answer.silent else None   # a button's chart: its text, kept with the chart for the next to press the same
         if answer.silent and photos:
             reply = ""
         if answer.ok and not reply.strip() and not photos:   # a chart with no text that could not be drawn
-            reply = "Sorry, I couldn't draw that chart. Please try again in a moment."
+            reply = NOT_DRAWN
         used = [m for m in added if m["role"] == "tool"]
         log.info("%s: %s in %.1fs, tools %d, charts %d, %d chars", chat_tag(msg.chat_id), "Replied" if answer.ok else "Error reply",
                  time.monotonic() - started, len(used), len(photos), len(reply))
@@ -1424,8 +1393,7 @@ class Bot:
         used_air = answer.ok and any(r and reads_air(*r, catalogue) for r in turn.results)   # (an error reply gets no link)
         air_link = self.weather.air_link() if used_air else None
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
-        refresh = answer.ok and read.report and 0 < len(reply) <= TG_LIMIT and not markup   # the report, to be refreshed in place
-        single = len(photos) == 1 and not read.report   # a single chart: its period buttons go under it
+        single = len(photos) == 1   # a single chart: its period buttons go under it
         drawn_by = answer.drawn_by[0] if single and answer.drawn_by else None
         if drawn_by:   # the periods its call lists, the chart's own shaded; none when it lists none
             row = periods.periods_keyboard(drawn_by, periods.own_period(drawn_by, now, self.cfg.tz), now, self.cfg.tz)
@@ -1434,16 +1402,14 @@ class Bot:
             row = record = None
         drawn = list(photos)
         kept = (answer.key or periods.drawn_key(drawn_by)) if single and answer.ok and (drawn_by or not reply.strip()) else None
-        if kept and not answer.ready:   # kept for the period buttons, and (made in code) for the next to ask for the same call
+        if kept and not answer.ready:   # kept for the period buttons, and (a button's) for the next to press the same
             self.images.put(kept, photos[0], titles[0], (caption or reply or None) if answer.key else None, drawn_by=drawn_by)
         if kept and drawn_by and (own := periods.own_period(drawn_by, now, self.cfg.tz)):   # ... and as its own button replays it
             self.images.alias(kept, periods.call_key(drawn_by["tool"], periods.with_period(drawn_by, own)))
         try:
             began = time.monotonic()
-            sent = await deliver(msg, reply, photos, link=air_link,
-                                 markup=markup or (report_menu.keyboard() if refresh else None), titles=titles, period_row=row,
-                                 bold_headings=answer.ok and read.report, photos_first=read.report)
-            carried_keyboard = sent.carried and bool(markup)   # the refresh button is not the chat's keyboard
+            sent = await deliver(msg, reply, photos, link=air_link, markup=markup, titles=titles, period_row=row)
+            carried_keyboard = sent.carried and bool(markup)
             if answer.ready:
                 log.debug("Chart ms: drawn %.0fs ago, send %.0f%s", self.images.age(answer.ready), (time.monotonic() - began) * 1000,
                           " (Telegram's copy)" if isinstance(drawn[0], str) else "")

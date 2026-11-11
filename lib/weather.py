@@ -20,7 +20,10 @@ sources of its own and never opens the readings file (step 6b). Everything the b
     and theme from its `_meta`), in the bot's own theme (`chart_dark`: its DARKMODE, lib/theme.py, so its image cache's theme holds). The
     bot draws nothing: a service that sends no image (no Pillow there) gives the answer without its pictures;
   - `status_picture()`: the Status picture (ecobot://status: the station's temperature, humidity and rain gauges), as ecobot-mcp draws
-    it; None without one.
+    it; None without one;
+  - `prompts`: ecobot-mcp's prompts (name, description, argument names: `Prompt`), read on each connection and again when it says they
+    changed (PromptsListChanged; `on_prompts()` is called after each read), and `prompt(name, arguments)` one's question in words (the
+    bot offers each as a Telegram command, step 6c).
 
 For the irrigation check while it is still the bot's (step 8 moves it to its own server): `ServiceRain` (the measured rain, from
 `summary {readings: ["rain"], period: "last 24 hours"}`) and `ServiceForecast` (ecobot://forecast, the last read kept when the service
@@ -59,6 +62,13 @@ class ServiceUnreachable(RuntimeError):
 
 class ChartNotDrawn(RuntimeError):
     """A chart came but couldn't be drawn (its JSON isn't a chart, or the renderer failed): not the service's refusal."""
+
+
+class Prompt(NamedTuple):
+    """One of ecobot-mcp's prompts, as prompts/list gives it."""
+    name: str
+    description: str
+    arguments: tuple[str, ...]   # its arguments' names, in order
 
 
 class ChartImage(NamedTuple):
@@ -219,6 +229,8 @@ class RemoteWeather:
         self.forecast = ServiceForecast(self)
         self.listening = asyncio.Event()   # the first connection's listen is up, its tools and station read
         self.on_zone = None   # on_zone(zone): the station's time zone, called when it is first read and when it changes (ecobot.py)
+        self.prompts: list[Prompt] = []
+        self.on_prompts = None   # on_prompts(): called after the prompts are read (ecobot.py: the bot's command menu set again)
         self._background: set[asyncio.Task] = set()
 
     def __iter__(self):   # (the tools, as the service lists them now: lib/model_tools.py follows the list)
@@ -236,9 +248,9 @@ class RemoteWeather:
         self._instructions = discovered.instructions or ""
 
     async def _listening(self):
-        """A new connection listens: the tools and the station read again, the alerts looked at (what came while it was down is not
-        replayed), the forecast read again."""
-        for refresh in (self._read_tools, self._read_station):
+        """A new connection listens: the tools, the station and the prompts read again, the alerts looked at (what came while it was
+        down is not replayed), the forecast read again."""
+        for refresh in (self._read_tools, self._read_station, self._read_prompts):
             try:
                 await refresh()
             except Exception as e:   # (the connection is still good: the listen's events refresh them later)
@@ -248,9 +260,11 @@ class RemoteWeather:
         self.listening.set()
 
     async def _event(self, event):
-        from mcp.shared.subscriptions import ResourceUpdated, ToolsListChanged
+        from mcp.shared.subscriptions import PromptsListChanged, ResourceUpdated, ToolsListChanged
         if isinstance(event, ToolsListChanged):
             self._soon(self._read_tools)
+        elif isinstance(event, PromptsListChanged):
+            self._soon(self._read_prompts)
         elif isinstance(event, ResourceUpdated):
             uri = str(event.uri)
             if uri == ALERTS_URI:
@@ -274,6 +288,13 @@ class RemoteWeather:
     async def _read_tools(self):
         client = await self._client(0)
         self.service = RemoteTools(RemoteTool(self, t) for t in (await client.list_tools()).tools)
+
+    async def _read_prompts(self):
+        client = await self._client(0)
+        listed = (await client.list_prompts()).prompts
+        self.prompts = [Prompt(p.name, p.description or "", tuple(a.name for a in p.arguments or ())) for p in listed]
+        if self.on_prompts:
+            self.on_prompts()
 
     async def _read_station(self):
         station = await self.resource(STATION_URI, wait=0)
@@ -403,6 +424,13 @@ class RemoteWeather:
                 return base64.b64decode(content.blob)
         return None
 
+    async def prompt(self, name: str, arguments: dict[str, str] | None = None) -> str:
+        """A prompt's question in words: the text of its messages, its `arguments` filled in (the prompt's defaults for those not given). A
+        refusal (MCPError: no such prompt, a required argument missing) is raised."""
+        client = await self._client(CALL_WAIT)
+        got = await client.get_prompt(name, arguments or None)
+        return "\n\n".join(m.content.text for m in got.messages if getattr(m.content, "type", None) == "text").strip()
+
     async def resource(self, uri: str, wait=AS_A_CALL) -> dict:
         """A resource's content; `wait`: how long to wait for the service (CALL_WAIT; None as long as it takes)."""
         client = await self._client(CALL_WAIT if wait is AS_A_CALL else wait)
@@ -485,4 +513,4 @@ class ServiceForecast:
         return [d for d in (self.days or []) if d["date"] >= today][:count]
 
 
-__all__ = ["ChartImage", "ChartNotDrawn", "RemoteWeather", "ServiceForecast", "ServiceRain", "ServiceUnreachable", "UNREACHABLE", "value"]
+__all__ = ["ChartImage", "ChartNotDrawn", "Prompt", "RemoteWeather", "ServiceForecast", "ServiceRain", "ServiceUnreachable", "UNREACHABLE", "value"]

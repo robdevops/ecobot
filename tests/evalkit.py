@@ -1,14 +1,13 @@
 """Saved questions with what should happen to them, so every fix we make for a real report stays fixed.
 
-tests/evals/cases.json holds the questions (real ones from the logs) and the decisions the bot still makes in code (docs/ecobot-mcp.md 4):
-the reasoning effort from the words, and its few shortcuts (the report, "weather now", a named reading's chart and a
-period, each a fixed call to a service tool). pytest checks them (`deterministic`).
+tests/evals/cases.json holds the questions (real ones from the logs) and the one decision the bot still makes in code (docs/ecobot-mcp.md
+4): the reasoning effort from the words. Every typed question goes to the model (step 6c: the shortcuts the bot once answered in code,
+the report, "weather now" and a named reading's chart and a period, are the model's too). pytest checks it (`deterministic`).
 tests/evals/service_cases.json holds, for the same case ids, what a model offered the service's ten tools (lib/service) should call:
 checked offline by tests/test_service_evals.py, and asked of a model by `python scripts/eval_prompts.py --live` three ways:
   - the bot's own request (`bot=True`, the default of --live): its system prompt (lib/prompt.py: the persona, the server's
-    instructions, the date and time), the ten tools as the bot offers them, its reasoning effort from the words; a question the bot
-    answers in code is not asked of the model, its fixed calls are scored instead. Each call is answered by the real tool over the
-    evals' frozen world (tests/evalworld.py), so the model takes as many rounds as it needs, and the whole turn is scored (run_service);
+    instructions, the date and time), the ten tools as the bot offers them, its reasoning effort from the words. Each call is answered
+    by the real tool over the evals' frozen world (tests/evalworld.py), so the model takes as many rounds as it needs, and the whole turn is scored (run_service);
   - `--service`: the ten tools alone with a neutral system line and the date (SERVICE_SYSTEM), every call answered CANNED ("no data":
     the model may call again or reply, and every call of the turn is scored);
   - `--service --instructions`: that, with the server's instructions (lib/service/instructions.py) after the neutral line.
@@ -24,7 +23,6 @@ from lib import intent, prompt
 from lib.bot import complete_reply
 from lib.llm import Agent
 from lib.tools import Tool, Tools, Turn
-from tests.fakes import EVERY_SOURCE
 
 CASES = Path(__file__).resolve().parent / "evals" / "cases.json"
 NOW = datetime(2026, 9, 29, 14, 5)  # a Tuesday: dates in the cases are relative to this
@@ -131,59 +129,22 @@ def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
     return fails
 
 
-DECISIONS = {"effort", "report", "weather_now", "chart"}   # what cases.json's `expect` may say
+DECISIONS = {"effort"}   # what cases.json's `expect` may say
 
 
-def read(case: Case):
-    """intent.read of the case's question, as the bot reads it at NOW with every source."""
-    from zoneinfo import ZoneInfo
-    from lib.service.names import CATALOGUE
-    tz = ZoneInfo(NOW_TZ)
-    return intent.read(case.ask, NOW.replace(tzinfo=tz), EVERY_SOURCE, tz, CATALOGUE)
+def effort(case: Case) -> str:
+    """The reasoning effort the bot gives the case's question (intent.effort, from its words)."""
+    return intent.effort(case.ask)
 
 
 def deterministic(case: Case) -> list[str]:
-    """Failures of the decisions made in code (no model): the reasoning effort, and which shortcut answers it, if any (`chart`: the
-    summary arguments of a named reading's chart and a period, or null: no chart shortcut)."""
+    """Failures of the decision made in code (no model): the reasoning effort."""
     e, fails = case.expect, []
     if extra := set(e) - DECISIONS:
         fails.append(f"unknown keys {sorted(extra)}")
-    r = read(case)
-    if "effort" in e and r.effort != e["effort"]:
-        fails.append(f"effort {r.effort}, expected {e['effort']}")
-    for key in ("report", "weather_now"):
-        if key in e and getattr(r, key) != e[key]:
-            fails.append(f"{key} {getattr(r, key)}, expected {e[key]}")
-    if "chart" in e:
-        got = r.chart[1] if r.chart else None
-        if got != e["chart"]:
-            fails.append(f"chart shortcut {got}, expected {e['chart']}")
+    if "effort" in e and (got := effort(case)) != e["effort"]:
+        fails.append(f"effort {got}, expected {e['effort']}")
     return fails
-
-
-def shortcut_calls(r) -> list[tuple[str, dict]] | None:
-    """The service calls the bot makes itself for a question it answers in code (the report, weather now, a chart), else None: the
-    model takes it."""
-    if r.report:
-        return intent.report_calls(EVERY_SOURCE)
-    if r.weather_now:
-        return [intent.WEATHER_NOW_CALL]
-    return [r.chart] if r.chart else None
-
-
-# Where the bot's own shortcuts differ from what a model is expected to call, on purpose (docs/ecobot-mcp.md 4): the report's forecast
-# is the next 3 days, as it always was; a chart the bot draws itself sends its caption, so it needs no chart_answers_it
-SHORTCUT_LEAVES = {"forecast": ("period",), "summary": ("chart_answers_it",)}
-
-
-def shortcut_expectation(expect: dict) -> dict:
-    """The case's service expectation, as the bot's own shortcut calls are held to it (less SHORTCUT_LEAVES)."""
-    args = {}
-    for tool, want in expect.get("args", {}).items():
-        drop = SHORTCUT_LEAVES.get(tool, ())
-        args[tool] = [{k: v for k, v in w.items() if k not in drop} for w in want] if isinstance(want, list) else \
-            {k: v for k, v in want.items() if k not in drop}
-    return {**expect, "args": args}
 
 
 def bot_system(now: datetime = NOW, ctx=None) -> str:
@@ -202,13 +163,11 @@ MAX_CALLS = 8   # a bot-mode turn that makes more tool calls than this has run a
 @dataclass
 class LiveTurn:
     """One question asked as the bot asks it: every call of the turn in order (refused ones too), the reply, whether each call's result
-    was a refusal (an `error`; `refusals`, in the calls' order), whether the bot answered it in code (its fixed calls, no model), and
-    the model's step each call was made in (`steps`, in the calls' order: the calls of one step are made together; without them, each
-    call is its own step)."""
+    was a refusal (an `error`; `refusals`, in the calls' order), and the model's step each call was made in (`steps`, in the calls' order:
+    the calls of one step are made together; without them, each call is its own step)."""
     calls: list
     reply: str
     refusals: list = field(default_factory=list)
-    in_code: bool = False
     steps: list = field(default_factory=list)
 
     @property
@@ -270,21 +229,18 @@ def turn_calls(messages: list[dict]) -> list[tuple[str, dict, bool, int]]:
 
 
 async def run_live(case: Case, client, model: str, effort: str | None = None, service=None) -> LiveTurn:
-    """The bot's own request (docs/ecobot-mcp.md 4): a question it answers in code gives its fixed calls (no model); any other is asked
-    of the model with the bot's system prompt, the ten tools as it offers them, its reasoning effort from the words, tool_choice auto,
-    and the turn ended on a complete result as the bot ends it. With `service` (evalworld.World.fresh: the ten tools over the frozen world)
+    """The bot's own request (docs/ecobot-mcp.md 4): every question is asked of the model (step 6c: the bot answers no typed question
+    in code) with the bot's system prompt, the ten tools as it offers them, its reasoning effort from the words, tool_choice auto, and
+    the turn ended on a complete result as the bot ends it. With `service` (evalworld.World.fresh: the ten tools over the frozen world)
     each call is answered by the real tool, wrapped as the bot wraps it (lib/model_tools.py: the model is sent for_model of the
     result), so the model calls again until it replies (at most lib/llm.py's MAX_STEPS steps, then it is made to answer); without, every
     call is answered CANNED. Returns the whole turn."""
     from lib import model_tools
-    r = read(case)
-    if (calls := shortcut_calls(r)) is not None:
-        return LiveTurn(list(calls), "(answered in code)", in_code=True)
     messages = [*case.history, {"role": "user", "content": content(case)}]
     asked = len(messages)
     tools = model_tools.tools(service) if service is not None else make_service_tools([])
     system = bot_system(ctx=getattr(service, "ctx", None))
-    reply = await Agent(client, model, tools).run(messages, system, effort or r.effort, tool_choice="auto", turn=Turn(),
+    reply = await Agent(client, model, tools).run(messages, system, effort or intent.effort(case.ask), tool_choice="auto", turn=Turn(),
                                                   finish=lambda _, results: complete_reply(results))
     made = turn_calls(messages[asked:])
     return LiveTurn([(n, a) for n, a, *_ in made], reply, [no for _, _, no, _ in made], steps=[s for *_, s in made])
@@ -296,7 +252,7 @@ async def run_live(case: Case, client, model: str, effort: str | None = None, se
 # of the ten tools answers it and with which arguments, as a client that has never seen this repository would call them.
 SERVICE_CASES = CASES.parent / "service_cases.json"
 SERVICE_SYSTEM = "You answer questions about a home weather station and air sensor using the tools."
-SERVICE_EFFORT = "low"   # one reasoning level for every case: there is no intent.read to choose one
+SERVICE_EFFORT = "low"   # one reasoning level for every case: there is no intent.effort to choose one
 NOW_TZ = "Australia/Melbourne"
 EXPECT_KEYS = {"tools", "any_tools", "not_tools", "first_tool", "args", "note"}
 
@@ -584,16 +540,13 @@ def calls_text(calls: list[tuple[str, dict]]) -> str:
 
 
 def check_turn(turn: LiveTurn, expect: dict) -> list[str]:
-    """Failures of a bot-mode turn (run_live) against the case's expectation, over the whole turn. A turn answered in code: its fixed
-    calls against shortcut_expectation. Else: the expected tools and arguments are met by any call that was not refused (a refused call
-    later corrected passes; a refused one alone meets nothing), not_tools hold for every call, refused or not; and the turn fails if it
+    """Failures of a bot-mode turn (run_live) against the case's expectation, over the whole turn: the expected tools and arguments are
+    met by any call that was not refused (a refused call later corrected passes; a refused one alone meets nothing), not_tools hold for every call, refused or not; and the turn fails if it
     made more than MAX_CALLS calls (it ran away), if its reply is empty or the Agent's fallback (lib/llm.py FALLBACK: the model's last
     answer was empty), or if a refused call was left uncorrected (LiveTurn.uncorrected): no call to the same tool was answered in a
     later step (one answered in the same step was made with it, and one to another tool answers something else, so neither corrects it)."""
     from lib.llm import FALLBACK
     fails = [f"ran away: {len(turn.calls)} calls (more than {MAX_CALLS})"] if len(turn.calls) > MAX_CALLS else []
-    if turn.in_code:
-        return fails + check_calls(turn.calls, shortcut_expectation(expect))
     fails += check_calls(turn.answered(), {k: v for k, v in expect.items() if k != "not_tools"})
     fails += check_calls(turn.calls, {"not_tools": expect.get("not_tools", [])})
     if not turn.reply.strip():
@@ -622,14 +575,13 @@ async def run_service(cases: list[Case], expectations: dict[str, dict], client=N
         if client and not problems:
             passes = 0
             for _ in range(repeat):
-                in_code = False
                 if bot:
                     if world is not None:
                         async with world.fresh() as service:
                             turn = await run_live(case, client, model, effort, service)
                     else:
                         turn = await run_live(case, client, model, effort)
-                    calls, in_code = turn.calls, turn.in_code
+                    calls = turn.calls
                     runs.append(turn.line())
                     why = check_turn(turn, expect)
                 else:
@@ -637,7 +589,7 @@ async def run_service(cases: list[Case], expectations: dict[str, dict], client=N
                     why = check_calls(calls, expect)
                 passes += not why
                 problems += [*(f"  run: {w}" for w in why[:3]), f"  called: {calls_text(calls)}"] if why else []
-            line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL") + (" code" if bot and in_code else "")
+            line = f"{passes}/{repeat}" + ("" if passes == repeat else " FAIL")
         out(f"{line:>10}  {case.id}  ({case.ask})")
         for p in [*runs, *problems]:
             out(f"            {p}")

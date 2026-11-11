@@ -155,7 +155,7 @@ async def test_a_charts_picture_comes_from_the_service_with_its_period_buttons(c
         photos.append(photo)
         return await reply_photo(photo, **kw)
     update.effective_message.reply_photo = kept
-    await bot.respond(update, context, "Humidity chart 7d")     # (a shortcut: a fixed summary call, no model)
+    await bot.respond(update, context, "Humidity chart 7d", call=("summary", {"readings": ["humidity"], "period": "7d", "chart": True}))   # (as a button: its call, no model)
     (caption, markup), = replies
     ((image,),) = got
     chart = image.chart
@@ -201,11 +201,14 @@ async def test_the_models_charts_come_from_the_service_as_pictures_and_the_model
     assert bot.charted.get(1, 9)["drawn_by"] == out["charts"][0]["drawn_by"]
 
 
-async def test_status_sends_the_services_picture_of_three_gauges_with_the_report(connected, world, alert_state, monkeypatch):
-    """/status and /report: the Status picture is ecobot://status's PNG, byte for byte, the report its caption."""
+async def test_status_sends_the_services_picture_of_three_gauges_then_the_report_prompts_answer(connected, world, alert_state, monkeypatch):
+    """Status (/status): the Status picture is ecobot://status's PNG, byte for byte, then the model's answer to ecobot-mcp's `report`
+    prompt (got over MCP), asked as a typed question (step 6c: the report written in code, its caption and 🔄 are gone)."""
     import base64
+    from lib.mcp_server import prompt
     photos = []
-    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
+    model = Model([], "Weather station: 14.2 °C.")
+    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), alert_state, service=connected)
     update, context, replies = a_chat("group")
     reply_photo = update.effective_message.reply_photo
 
@@ -213,12 +216,74 @@ async def test_status_sends_the_services_picture_of_three_gauges_with_the_report
         photos.append(photo)
         return await reply_photo(photo, **kw)
     update.effective_message.reply_photo = kept
-    await bot.respond(update, context, "status")
-    (caption, markup), = replies
+    await bot.status(update, context)
     contents = (await connected.upstream.client.read_resource("ecobot://status")).contents
     (png,) = [base64.b64decode(c.blob) for c in contents if getattr(c, "blob", None)]
-    assert photos == [png] and png.startswith(b"\x89PNG") and caption.startswith("Weather station")
-    assert [b.callback_data for b in markup.inline_keyboard[0]] == ["rp:refresh"]
+    assert photos == [png] and png.startswith(b"\x89PNG") and replies == [(None, None), "Weather station: 14.2 °C."]
+    assert model.seen[0]["messages"][-1]["content"] == f"Rob: {prompt('report').messages[0].content.text}"   # (a group: its sender named)
+
+
+async def test_ecobot_mcps_prompts_are_telegram_commands_whose_words_fill_their_arguments(connected, world, alert_state, caplog):
+    """Step 6c: each of ecobot-mcp's prompts is a command in the menu (after the charts', before the settings), with its description;
+    "/<prompt> <words>" fills its arguments in order, the last taking the rest, and the prompt's question is asked of the model as a typed
+    question; none: the prompt's defaults. A prompt the service refuses is said in the chat; another bot's command is left alone."""
+    from lib import templates
+    from lib.mcp_server import PROMPTS, prompt
+    model = Model([], "Done.")
+    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), alert_state, service=connected)
+    menus = []
+
+    class Telegram:
+        async def set_my_commands(self, commands):
+            menus.append([(c.command, c.description) for c in commands])
+    await bot.publish_commands(Telegram())
+    own = list(templates.MENU)
+    at = [name for name, _ in own].index("alerts")
+    assert menus == [[*own[:at], *((name, what) for name, (what, _, _) in PROMPTS.items()), *own[at:]]]
+    asked = lambda: model.seen[-1]["messages"][-1]["content"]
+    question = lambda name, **args: prompt(name, args).messages[0].content.text
+    for typed, want in (("/chart rain 7d", question("chart", reading="rain", period="7d")),
+                        ("/chart pm2.5 last two weeks", question("chart", reading="pm2.5", period="last two weeks")),
+                        ("/rainfall last week", question("rainfall", period="last week")),
+                        ("/rainfall", question("rainfall")), ("/now", question("now")), ("/report@ecobot", question("report")),
+                        ("/air", "How is the air quality now?")):
+        update, context, replies = a_chat("group")
+        update.effective_message.text, update.effective_message.chat.id, context.bot.username = typed, 1, "ecobot"
+        await bot.on_command(update, context)
+        assert asked() == f"Rob: {want}" and replies == ["Done."], typed      # (a group: its sender named)
+    seen = len(model.seen)
+    for typed in ("/chart", "/report@otherbot", "/nosuch rain"):
+        update, context, replies = a_chat()
+        update.effective_message.text, update.effective_message.chat.id, context.bot.username = typed, 1, "ecobot"
+        await bot.on_command(update, context)
+        assert replies == (["Sorry, /chart didn't work: The prompt 'chart' needs reading."] if typed == "/chart" else []), typed
+    assert len(model.seen) == seen                                                        # none of these asked the model
+
+
+async def test_a_prompt_that_is_no_command_name_or_is_one_of_the_bots_is_left_out_with_a_warning(connected, alert_state, caplog):
+    from lib import templates
+    from lib.weather import Prompt
+    bot = Bot(NS(tz=TZ), Agent(None, "m", []), alert_state, service=connected)
+    connected.prompts = [Prompt("Weather Now", "Bad name", ()), Prompt("rain", "Takes the Rain button's", ()),
+                         Prompt("x" * 33, "Too long", ()), Prompt("frost", "Frost tonight?", ("place",))]
+    menu = bot.commands()
+    assert [name for name, _ in menu] == [*[n for n, _ in templates.MENU][:8], "frost", *[n for n, _ in templates.MENU][8:]]
+    assert list(bot.prompt_commands) == ["frost"]
+    assert "'Weather Now' isn't a name Telegram takes" in caplog.text and "'rain' has the name of one of the bot's own commands" in caplog.text
+    assert f"'{'x' * 33}' isn't a name" in caplog.text
+
+
+async def test_the_menu_is_set_again_when_ecobot_mcp_says_its_prompts_changed(connected, world, alert_state, monkeypatch):
+    """PromptsListChanged: the prompts are read again and on_prompts called (ecobot.py sets the command menu again with them)."""
+    from mcp.server.subscriptions import PromptsListChanged
+    from lib import mcp_server
+    called = []
+    connected.on_prompts = lambda: called.append([p.name for p in connected.prompts])
+    assert "frost" not in [p.name for p in connected.prompts]
+    monkeypatch.setitem(mcp_server.PROMPTS, "frost", ("Frost tonight?", [], "Will there be frost tonight?"))
+    await world.bus.publish(PromptsListChanged())
+    await until(lambda: called, what="the prompts read again")
+    assert called[-1][-1] == "frost"
 
 
 async def drawn_by_the_service(world, call) -> tuple[dict, bytes]:
@@ -245,7 +310,7 @@ async def test_the_bot_sends_the_services_picture_of_a_chart_byte_for_byte_as_it
     call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
     out, png = await drawn_by_the_service(world, call)
     chart = out["charts"][0]
-    event_chart = await pictures.chart_data(None, "Wind chart 1d", TZ, world.service)   # (an alert's chart, as its event carries it)
+    event_chart = await pictures.chart_data(None, pictures.CHARTS["gusts"], TZ, world.service)   # (an alert's chart, as its event carries it)
     event_png = (await asyncio.to_thread(chart_images.render, event_chart, TZ, False))[0]
     bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
     made = await bot._draw_call(*call)
@@ -257,7 +322,7 @@ async def test_the_bot_sends_the_services_picture_of_a_chart_byte_for_byte_as_it
     alert = await pictures.picture_of(event_chart, TZ, connected)                            # an alert's chart: its drawn_by replayed
     assert (alert.png, alert.drawn_by, alert.dark) == (event_png, event_chart["drawn_by"], False)
     assert alert.title == from_json(event_chart).caption(now_local(TZ).date())
-    typed = await pictures.chart("Wind chart 1d", TZ, connected)                             # the 🔄 under an alert from before the log
+    typed = await pictures.chart(pictures.CHARTS["gusts"], TZ, connected)                    # the 🔄 under an alert from before the log
     assert typed.png == event_png
 
 
@@ -269,7 +334,7 @@ async def test_a_service_without_pillow_sends_the_charts_json_and_the_bot_sends_
     from lib.alerts import pictures
     call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
     here = json.loads(await world.service["summary"].call(call[1], {"chart_points": "drawn"}))["charts"][0]
-    event_chart = await pictures.chart_data(None, "Wind chart 1d", TZ, world.service)
+    event_chart = await pictures.chart_data(None, pictures.CHARTS["gusts"], TZ, world.service)
     monkeypatch.setattr(mcp_server, "chart_images", SimpleNamespace(**{**vars(chart_images), "renderer": lambda: None}))   # (no Pillow there)
     bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
     assert await bot._draw_call(*call) is None
@@ -428,9 +493,9 @@ async def test_with_the_service_down_the_bot_says_so_and_carries_on(alert_state,
     try:
         model = Model([("current", {})])
         bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(remote)), alert_state, service=remote)
-        for text in ("how warm is it?", "weather now", "Humidity chart 7d"):
+        for text in ("how warm is it?", "weather now", "Humidity chart 7d", "Humidity chart 1d"):
             update, context, replies = a_chat()
-            await bot.respond(update, context, text)
+            await (bot.press if text == "Humidity chart 1d" else bot.respond)(update, context, text)   # (the last: the Humidity button)
             assert replies == [SERVICE_DOWN], text
         assert model.seen == []                                            # (no model call for an answer it couldn't get)
         assert model_tools.tools(remote).schemas == []                     # (no tools listed while it has not been reached)
@@ -444,7 +509,7 @@ async def test_with_the_service_down_the_bot_says_so_and_carries_on(alert_state,
 
 async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bare, tmp_path, monkeypatch, caplog):
     """ecobot.main(), ecobot-mcp's client at BOT_MCP_URL: no source is started (the bot has none: no keys are set), the service's
-    station names the time zone, the bot draws its keyboard's charts ahead, and an alert the service logs reaches a chat."""
+    station names the time zone, the command menu is set (with ecobot-mcp's prompts), and an alert the service logs reaches a chat."""
     import os
     import signal
     import ecobot
@@ -458,11 +523,6 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
     AlertState(cfg.state_path).add_chat(5, "private")
     app = FakeApp()
     monkeypatch.setattr(ecobot._format, "width", ecobot._format.width)   # (main sets BOT_LOG_WIDTH's: put back after; the levels: conftest)
-    drawn = []
-
-    async def note(self, tg_bot):
-        drawn.append(tg_bot)
-    monkeypatch.setattr(ecobot.Bot, "draw_buttons_ahead", note)
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
     publishing = asyncio.create_task(bare.watch_alerts())
@@ -489,7 +549,7 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
     assert "Ecowitt: " not in caplog.text and "Telegram: @testbot" in caplog.text
     assert f"ecobot-mcp: {cfg.mcp_url}" in caplog.text
     assert [(chat, text) for chat, text, _ in app.sent] == [(5, "🌧️ Raining")]
-    assert drawn == [app.bot]
+    assert app.menus and "chart" in app.menus[-1] and "report" in app.menus[-1]
 
 
 async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_zone_once_read_and_keeps_it(tmp_path, monkeypatch, caplog):

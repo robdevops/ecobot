@@ -1,9 +1,10 @@
 """The bot's own answers (everything it answers without the model) pinned word for word, chart for chart, on the archived fake station
 at a fixed time (Tue 10 Nov 2026 2:05pm, Melbourne), so moving them onto the service's tools (docs/ecobot-mcp.md 6, step 2) changes
-nothing the person sees but what is meant to change.
+nothing the person sees but what is meant to change. Since step 6c the bot answers no typed question in code: what it once did (the
+report, "weather now", a named reading's chart and a period) goes to the model, and only the keyboard's charts, an alert's chart and a
+period button's redraw are its own.
 
-What is pinned, for each question the bot answers in code (its keyboard's charts, the shortcuts and plain lookups intent.read answers,
-the report with its Status picture, an alert's chart, a period button's redraw): every message sent (its text or caption, and its buttons), the
+What is pinned, for each of those (the keyboard's charts, an alert's chart, a period button's redraw): every message sent (its text or caption, and its buttons), the
 text the answer leaves in the chat's history, and each chart as JSON (specs.to_json, less `drawn_by`, which only the service's charts
 carry) and the gauges' sheet. They are recorded in tests/service_switch.json: `ECOBOT_RECORD_SWITCH=1 pytest tests/test_service_switch.py`
 writes it afresh (only ever on purpose).
@@ -201,7 +202,9 @@ class World:
         from lib.llm import Agent
         weather = await self.ecobot_mcp(monkeypatch, serve)
         self.tools = model_tools.tools(weather)
-        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), alert_state, service=weather)
+        bot = botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), alert_state, service=weather)
+        bot.preload_soon = lambda *a: None   # (a chart's other periods not fetched in the background: what is drawn is what is asked)
+        return bot
 
     def message(self, message_id=50):
         world = self
@@ -290,31 +293,27 @@ def period_buttons_are_drawn_bys(world, got: dict):
 
 
 async def asked(serve, world, alert_state, monkeypatch, text) -> dict:
-    """Ask the bot `text`, as a group's message to it, and return what it did."""
+    """Ask the bot `text`, as a group's message to it (a keyboard button's sentence: pressed, Bot.press), and return what it did."""
     bot = await world.bot(alert_state, monkeypatch, serve)
     msg = world.message()
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
-    await bot.respond(update, CONTEXT, text)
+    await (bot.press if text in templates.CALLS else bot.respond)(update, CONTEXT, text)
     history = bot.chats[(msg.chat_id, None)].history
     said = history[-1]["content"] if history and history[-1]["role"] == "assistant" else None
     return {"sent": world.sent, "charts": world.charts, "gauges": world.sheets, "history": said}
 
 
-# Every question the bot answers in code: the keyboard's charts (templates.chart_sentences, the same with irrigation: only Wind goes),
-# then each of intent's shortcuts (bot._answer: a named reading's chart and a period, the report and "weather now")
+# Every question the bot answers in code: the keyboard's charts (templates.CALLS, each a fixed call; with irrigation only Wind goes)
 from lib import templates  # noqa: E402
 
-KEYBOARD = templates.chart_sentences(False)
-SHORTCUTS = [
-    # the report and "weather now" (written in code from current, pollen and forecast)
-    "Report", "weather now", "status",
-    # a named reading's chart and a period (summary with the words as they are; the caption goes with it)
-    "temperature chart 7d", "humidity 7d", "rain chart 7d", "pressure chart this month", "temperature and rain chart 7d",
-    "weather 30d", "indoor temperature chart 7d", "wind direction plot 3m", "temperature chart last month", "air quality chart 7d",
-    "pm2.5 chart 3d",
-]
-# What the bot answered in code until step 3 (the dashboard until step 6) and the model answers now (with no model: NO_MODEL)
+KEYBOARD = list(templates.CALLS)
+# What the bot answered in code until step 3 (the dashboard until step 6, the report, "weather now" and a named reading's chart and a
+# period until step 6c) and the model answers now (with no model: NO_MODEL)
 TO_THE_MODEL = [
+    "Report", "weather now", "status",                                                     # the report and "weather now", until 6c
+    "temperature chart 7d", "humidity 7d", "rain chart 7d", "pressure chart this month", "temperature and rain chart 7d",   # a chart and
+    "weather 30d", "indoor temperature chart 7d", "wind direction plot 3m", "temperature chart last month",               # a period, typed,
+    "air quality chart 7d", "pm2.5 chart 3d", "temperature 1d", "co2 1d", "pm2.5 1d", "rain chart 1d",                    # until 6c
     "how hot is it", "is it raining", "humidity", "wind", "indoor temperature", "uv", "pressure",          # a reading now
     "air quality now", "co2", "how's the air",                                                             # the air now
     "pollen", "forecast", "what can you do",
@@ -327,7 +326,6 @@ TO_THE_MODEL = [
     "highest humidity this week", "temps this week", "chart weather",                                                   # a question
     "dashboard",                                       # the Telegram dashboard, until step 6 (its live page is ecobot-mcp's /dashboard)
 ]
-CHANGED = {"air quality chart 7d"}   # a shortcut whose words the service reads as every air reading now (until step 3: PM2.5 alone)
 
 
 @pytest.mark.parametrize("text", TO_THE_MODEL)
@@ -337,7 +335,7 @@ async def test_what_was_answered_in_code_goes_to_the_model(serve, world, alert_s
     assert got["history"] == NO_MODEL and got["charts"] == [] and got["gauges"] == []
 
 
-@pytest.mark.parametrize("text", KEYBOARD + SHORTCUTS)
+@pytest.mark.parametrize("text", KEYBOARD)
 async def test_the_bots_own_answers_are_unchanged(serve, world, alert_state, monkeypatch, text):
     got = await asked(serve, world, alert_state, monkeypatch, text)
     pinned(text, got)
@@ -345,13 +343,15 @@ async def test_the_bots_own_answers_are_unchanged(serve, world, alert_state, mon
         period_buttons_are_drawn_bys(world, got)
 
 
-@pytest.mark.parametrize("question, press", [("Temperature chart 1d", "7D"), ("Rain chart 1d", "1M"), ("humidity 7d", "1Y")])
-async def test_a_period_button_redraws_the_same_chart_as_before(serve, world, alert_state, monkeypatch, question, press):
-    """A press on a period button under a chart: the chart over that period, put into the same message."""
-    bot = await world.bot(alert_state, monkeypatch, serve)
+@pytest.mark.parametrize("question, press, recorded", [("Temperature chart 1d", "7D", "Temperature chart 1d"), ("Rain chart 1d", "1M", "Rain chart 1d"),
+                                                       ("Humidity chart 1d", "1Y", "humidity 7d")])
+async def test_a_period_button_redraws_the_same_chart_as_before(serve, world, alert_state, monkeypatch, question, press, recorded):
+    """A press on a period button under a chart: the chart over that period, put into the same message. (1Y was recorded under the typed
+    "humidity 7d", drawn in code until step 6c: under the Humidity button its press is the same call, and the same chart.)"""
+    bot = await world.bot(alert_state, monkeypatch, serve)   # (its chart's other periods not fetched ahead: the press draws its chart)
     msg = world.message()
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
-    await bot.respond(update, CONTEXT, question)
+    await bot.press(update, CONTEXT, question)
     sent_id = 100 + len(world.sent)
     row = next((s[2] for s in world.sent if s[0] == "photo" and s[2]), None)
     assert row, "a single chart with its period buttons"
@@ -366,7 +366,7 @@ async def test_a_period_button_redraws_the_same_chart_as_before(serve, world, al
     await bot.on_period_button(NS(callback_query=query, effective_message=under, effective_chat=under.chat,
                                   effective_user=NS(username="rob", full_name="Rob", id=7)), CONTEXT)
     got = {"charts": world.charts, "edits": [e[:2] for e in world.edits]}
-    pinned(f"press {press} under {question}", got)
+    pinned(f"press {press} under {recorded}", got)
 
 
 @pytest.mark.parametrize("kind", ["gusts", "uv", "temps", "particulates"])
@@ -386,7 +386,9 @@ async def test_an_alerts_chart_is_the_same_as_before(serve, world, monkeypatch, 
     assert old["source"] == "" and chart["source"] == ("AirGradient sensor" if kind == "particulates" else "Ecowitt weather station")
     assert {k: v for k, v in chart.items() if k not in ("source", "sha")} == {k: v for k, v in old.items() if k not in ("source", "sha")}
     assert {k: v for k, v in got.items() if k != "charts"} == {k: v for k, v in want.items() if k != "charts"}
-    keyboard = golden().get(pictures.CHARTS[kind])
+    sentence = next((said for said, call in templates.CALLS.items() if call == pictures.CHARTS[kind]), None)
+    keyboard = golden().get(sentence) if sentence else None
+    assert (keyboard is None) is (kind == "uv")
     if keyboard:   # (the UV chart is no button)
         assert chart == keyboard["charts"][0]
 
@@ -447,11 +449,3 @@ async def test_an_error_reply_gets_no_air_link(serve, world, alert_state, monkey
     """The air was read, then the model timed out: the apology goes alone."""
     said = await asked_the_model(serve, world, alert_state, monkeypatch, "how's the air", [[("current", {"readings": ["air"]})]], TimeoutError())
     assert said == ["Sorry, that took too long. Please try again in a moment."]
-
-
-@pytest.mark.parametrize("text", ["temperature 1d", "co2 1d", "pm2.5 1d"])
-async def test_a_bare_reading_and_1d_is_still_its_chart_without_the_model(serve, world, alert_state, monkeypatch, text):
-    """As before the swap: "temperature 1d" is the chart of the last day, drawn in code (no model needed)."""
-    from lib.bot import NO_MODEL
-    got = await asked(serve, world, alert_state, monkeypatch, text)
-    assert got["history"] != NO_MODEL and len(got["charts"]) == 1

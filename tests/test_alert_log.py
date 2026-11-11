@@ -9,7 +9,7 @@ import pytest
 from lib.alert_log import KEEP_SECONDS, AlertLog
 from lib.alerts.menu import alert_keyboard
 from lib.alerts.notify import AlertDelivery, AlertState, Notifier
-from lib.alerts.pictures import Picture
+from lib.alerts.pictures import CHARTS, Picture
 from lib.alerts.store import AlertStore
 from tests.fakes import TZ
 
@@ -175,7 +175,7 @@ async def test_a_real_chart_in_an_event_is_drawn_as_a_picture(serve, tmp_path, a
     from lib.service.context import Context
     from tests.fakes import archived_station
     eco, _ = await archived_station(tmp_path, archived_cache)
-    data = await pictures.chart_data(eco, "Wind chart 1d", TZ)
+    data = await pictures.chart_data(eco, CHARTS["gusts"], TZ)
     assert data["drawn_by"]["tool"] == "summary" and data["drawn_by"]["arguments"]["period"]
     (tmp_path / "d").mkdir()
     weather = await serve(Context(eco=eco, tz=TZ))
@@ -362,7 +362,7 @@ async def test_refresh_of_an_alert_not_in_the_log_draws_its_types_chart(serve, t
     bot, calls = await a_bot(serve, tmp_path, new_log(tmp_path), monkeypatch)
     q = ChartQuery("al:refresh:gusts:99", event=99)                     # (dropped from the log)
     await bot.on_alert_button(NS(callback_query=q), NS())
-    assert calls == [] and asked == ["Wind chart 1d"] and q.media[0][0].media.input_file_content == b"type png"
+    assert calls == [] and asked == [CHARTS["gusts"]] and q.media[0][0].media.input_file_content == b"type png"
 
 
 async def test_the_bell_under_a_delivered_alert_keeps_the_event_in_its_refresh(serve, tmp_path, monkeypatch):

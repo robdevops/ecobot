@@ -14,15 +14,9 @@
   {
     "id": "3m-wind-chart",
     "ask": "wind direction plot 3m",
-    "note": "fast path: a plain wind chart request with a short-form period",
+    "note": "a plain wind chart request with a short-form period (drawn in code with no model until step 6c: the model answers it now)",
     "expect": {
-      "chart": {
-        "readings": [
-          "wind direction"
-        ],
-        "period": "3m",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "m:wind-direction",
@@ -34,7 +28,7 @@
     "ask": "plot temperature and rain",
     "note": "only temperature was charted",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:stack",
@@ -47,7 +41,7 @@
     "ask": "lowest and highest humidity",
     "note": "plotted temperature on a humidity question",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "m:humidity",
@@ -71,7 +65,7 @@
     "id": "pressure-vs-rain-graph",
     "ask": "plot a graph of pressure against rainfall",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:link",
@@ -83,7 +77,7 @@
     "id": "public-holidays",
     "ask": "hottest public holidays",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:rank-days",
@@ -106,7 +100,7 @@
     "id": "wind-direction-week",
     "ask": "most common wind direction this week",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "m:wind-direction"
@@ -127,7 +121,7 @@
     "id": "air-now",
     "ask": "how's the air?",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:current",
@@ -138,13 +132,7 @@
     "id": "weather-week",
     "ask": "weather week",
     "expect": {
-      "chart": {
-        "readings": [
-          "weather"
-        ],
-        "period": "week",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "q:summary",
@@ -155,7 +143,7 @@
     "id": "hello",
     "ask": "thanks, that's great",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:chat"
@@ -165,7 +153,7 @@
     "id": "chart-pm10-week",
     "ask": "chart PM10 from the past week",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:air-single",
@@ -177,13 +165,7 @@
     "ask": "weather 4 months",
     "note": "4 months was read as the last 7 days",
     "expect": {
-      "chart": {
-        "readings": [
-          "weather"
-        ],
-        "period": "4 months",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "q:summary",
@@ -195,7 +177,7 @@
     "id": "chart-indoors",
     "ask": "chart the past week indoors",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:line",
@@ -205,15 +187,9 @@
   {
     "id": "pressure-week",
     "ask": "pressure week",
-    "note": "a bare 'pressure week' is a chart of the pressure group, sent with no model call",
+    "note": "a bare 'pressure week' is a chart of the pressure group (sent with no model call until step 6c: the model answers it now)",
     "expect": {
-      "chart": {
-        "readings": [
-          "pressure"
-        ],
-        "period": "week",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "m:pressure",
@@ -225,13 +201,7 @@
     "ask": "wind 3m",
     "note": "wind 3m was read as 3 days; a bare reading and period is a chart",
     "expect": {
-      "chart": {
-        "readings": [
-          "wind"
-        ],
-        "period": "3m",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "m:wind-speed",
@@ -242,7 +212,7 @@
     "id": "hottest-weekends",
     "ask": "hottest weekends",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:rank-days"
@@ -252,7 +222,7 @@
     "id": "windiest-day-on-record",
     "ask": "Windiest day on record",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:rank-days",
@@ -264,7 +234,7 @@
     "id": "rainy-days-in-september",
     "ask": "list rainy days in september",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:rank-days",
@@ -276,7 +246,7 @@
     "ask": "give me the outdoor high between 11am Fri 10 Nov 2023 and 11am Sat 11 Nov 2023",
     "note": "a particular window, not a whole period",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:known-day",
@@ -287,7 +257,7 @@
     "id": "weather-on-june-11",
     "ask": "what kind of weather was June 11",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:describe-day"
@@ -308,7 +278,7 @@
     "ask": "add an alert for if winds reach 100 km hour",
     "note": "a request to change the bot, not for readings: it was forced to fetch the weather",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:command"
@@ -318,7 +288,7 @@
     "id": "metrics-bare",
     "ask": "metrics",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:about-the-bot"
@@ -328,7 +298,7 @@
     "id": "most-rain-days-jja",
     "ask": "Days with most rain in June, July, August 2026",
     "expect": {
-      "chart": null
+      "effort": "low"
     },
     "covers": [
       "q:rank-days",
@@ -339,7 +309,7 @@
     "id": "fastest-gust",
     "ask": "fastest gust recorded",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:record",
@@ -350,7 +320,7 @@
     "id": "chart-all-airgradient-week",
     "ask": "chart all airgradient past week",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:air-panels",
@@ -362,7 +332,7 @@
     "ask": "did it rain on Sat 5 Sep",
     "note": "one known day: its figures, not a search of the month",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:known-day",
@@ -384,7 +354,7 @@
     ],
     "note": "a pushback: fetch again, don't defend or agree from memory",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:correction"
@@ -404,7 +374,7 @@
       }
     ],
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:follow-up"
@@ -415,7 +385,7 @@
     "ask": "win direction 3 months",
     "note": "a typo: the model path handles it",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "m:wind-direction"
@@ -425,7 +395,7 @@
     "id": "hottest-coldest-this-month",
     "ask": "hottest/coldest day this month",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:summary",
@@ -436,7 +406,7 @@
     "id": "high-low-all-time",
     "ask": "high and low all time",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:record",
@@ -458,7 +428,7 @@
     ],
     "note": "the resolution is chosen automatically and extremes are refined to 5-minute windows: fetch again and say so",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:detail-level",
@@ -471,8 +441,7 @@
     "ask": "report",
     "note": "only the weather station was fetched; the older answer listed everything from both devices",
     "expect": {
-      "report": true,
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:report"
@@ -483,8 +452,7 @@
     "ask": "dashboard",
     "note": "the station's gauges were drawn in code with no model until the Telegram dashboard went (step 6): the model answers it now; it used to mean the report",
     "expect": {
-      "report": false,
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:dashboard"
@@ -494,7 +462,7 @@
     "id": "weather-report-for-a-day",
     "ask": "weather report for Tuesday",
     "expect": {
-      "report": false
+      "effort": "none"
     },
     "covers": [
       "q:summary"
@@ -505,8 +473,7 @@
     "ask": "Is there a correlation between air quality and precipitation",
     "note": "AirGradient and Ecowitt are separate tools: needs the cross-source link",
     "expect": {
-      "effort": "medium",
-      "chart": null
+      "effort": "medium"
     },
     "covers": [
       "q:cross-source",
@@ -519,7 +486,7 @@
     "ask": "plot the traffic light rating of air quality against rainfall for the last 30 days",
     "note": "a new kind of chart: the rating over rain",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:rating-strip",
@@ -531,8 +498,7 @@
     "ask": "Is there a correlation between air quality and other metrics",
     "note": "needs a scan of every pair, not one lookup",
     "expect": {
-      "effort": "medium",
-      "chart": null
+      "effort": "medium"
     },
     "covers": [
       "q:scan",
@@ -544,13 +510,7 @@
     "ask": "ecowitt week",
     "note": "ecowitt is a synonym of weather",
     "expect": {
-      "chart": {
-        "readings": [
-          "ecowitt"
-        ],
-        "period": "week",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "q:summary",
@@ -562,13 +522,7 @@
     "ask": "ag 7d",
     "note": "ag is a synonym of air quality",
     "expect": {
-      "chart": {
-        "readings": [
-          "ag"
-        ],
-        "period": "7d",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "q:summary",
@@ -580,7 +534,7 @@
     "ask": "air gradient",
     "note": "air gradient is a synonym of air quality",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:current",
@@ -592,7 +546,7 @@
     "ask": "ecowitt all week",
     "note": "every reading stacked (solar third, wind last), except UV, feels like and VPD (unless configured)",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:summary",
@@ -604,7 +558,7 @@
     "ask": "sitrep",
     "note": "sitrep is a synonym of status: the full current report",
     "expect": {
-      "report": true
+      "effort": "none"
     },
     "covers": [
       "q:report"
@@ -627,13 +581,7 @@
     "ask": "Rain chart 7d",
     "note": "the Rain chart button",
     "expect": {
-      "chart": {
-        "readings": [
-          "rain"
-        ],
-        "period": "7d",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "m:rain",
@@ -645,13 +593,7 @@
     "ask": "Humidity chart 7d",
     "note": "the Humidity chart button",
     "expect": {
-      "chart": {
-        "readings": [
-          "humidity"
-        ],
-        "period": "7d",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "m:humidity",
@@ -663,7 +605,7 @@
     "ask": "AQ all week",
     "note": "the AQ all week button",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:air-panels",
@@ -675,8 +617,7 @@
     "ask": "weather now",
     "note": "every reading the station has, in the report's layout",
     "expect": {
-      "weather_now": true,
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:report",
@@ -688,7 +629,7 @@
     "ask": "pollen",
     "note": "pollen and thunderstorm asthma are fetched without the model",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:pollen"
@@ -699,7 +640,7 @@
     "ask": "is the pollen bad today?",
     "note": "a plain pollen question is answered in code",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:pollen"
@@ -710,7 +651,7 @@
     "ask": "what's the forecast for tomorrow?",
     "note": "the forecast tool, not the station's own pressure trend",
     "expect": {
-      "chart": null
+      "effort": "low"
     },
     "covers": [
       "q:forecast"
@@ -732,7 +673,7 @@
     "ask": "only that it's cold",
     "note": "a chat reply, not a request: it replaced the bot's answer with the temperatures",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:chat"
@@ -743,7 +684,7 @@
     "ask": "how cold is it",
     "note": "a plain current-temperature question",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:current",
@@ -755,7 +696,7 @@
     "ask": "ok now what?",
     "note": "'now' alone is not a weather question",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:chat"
@@ -766,7 +707,7 @@
     "ask": "plot rain this week and will it rain tomorrow",
     "note": "a forecast question goes to the model",
     "expect": {
-      "chart": null
+      "effort": "low"
     }
   },
   {
@@ -774,7 +715,7 @@
     "ask": "graph humidity and say if it relates to rain",
     "note": "correlation goes to the model",
     "expect": {
-      "chart": null
+      "effort": "medium"
     }
   },
   {
@@ -782,13 +723,7 @@
     "ask": "pressure graph 30d",
     "note": "a plain chart of a named reading",
     "expect": {
-      "chart": {
-        "readings": [
-          "pressure"
-        ],
-        "period": "30d",
-        "chart": true
-      }
+      "effort": "none"
     }
   },
   {
@@ -796,35 +731,35 @@
     "ask": "how hot is it",
     "note": "a plain reading question",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "lookup-raining",
     "ask": "is it raining",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "lookup-air",
     "ask": "how's the air",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "lookup-forecast",
     "ask": "forecast",
     "expect": {
-      "chart": null
+      "effort": "low"
     }
   },
   {
     "id": "lookup-about",
     "ask": "what can you do",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -832,7 +767,7 @@
     "ask": "is it too cold to run",
     "note": "judgement stays with the model",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -840,14 +775,14 @@
     "ask": "hottest today",
     "note": "highs and lows of a short period",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "lookup-hottest-vs",
     "ask": "is today hotter than yesterday",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -855,14 +790,14 @@
     "ask": "average temp yesterday",
     "note": "a plain average is answered in code",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "highest-humidity-yesterday",
     "ask": "highest humidity yesterday",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -870,7 +805,7 @@
     "ask": "will the pollen be bad tomorrow",
     "note": "looking ahead stays with the model",
     "expect": {
-      "chart": null
+      "effort": "low"
     }
   },
   {
@@ -878,7 +813,7 @@
     "ask": "average rain last week",
     "note": "a rain total has no average: the model explains",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -886,7 +821,7 @@
     "ask": "how many times was UV 9 or more in the past two years?",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -894,7 +829,7 @@
     "ask": "days over UVI 10 per year",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -902,7 +837,7 @@
     "ask": "rain total per month this year",
     "note": "a total per month is counted in code and drawn as bars",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -910,7 +845,7 @@
     "ask": "hottest day each year",
     "note": "the highest daily maximum per year is counted in code and drawn as bars",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -918,7 +853,7 @@
     "ask": "days PM2.5 over 25 per year",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -926,7 +861,7 @@
     "ask": "count days over PM2.5 of 90 per year",
     "note": "counted in code: one reading against one limit",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -934,14 +869,14 @@
     "ask": "days over UVI 10 by year",
     "note": "the model once answered with one overall count and no chart; now counted in code, per year, whole record",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "days-two-readings-go-to-the-model",
     "ask": "days over 35 and also rained",
     "expect": {
-      "chart": null
+      "effort": "low"
     }
   },
   {
@@ -949,28 +884,28 @@
     "ask": "rain by month for 2 years",
     "note": "the model answered with monthly text under a chart of daily bars: now monthly bars, one per line",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "avg-temp-per-year",
     "ask": "average temperature per year",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "highest-pm25-by-month",
     "ask": "highest PM2.5 by month",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
     "id": "two-readings-by-month-go-to-the-model",
     "ask": "pm2.5 and co2 by month",
     "expect": {
-      "chart": null
+      "effort": "none"
     }
   },
   {
@@ -978,13 +913,7 @@
     "ask": "weather chart 90d",
     "note": "a chart naming no reading is every reading, a panel each",
     "expect": {
-      "chart": {
-        "readings": [
-          "weather"
-        ],
-        "period": "90d",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "c:line",
@@ -996,13 +925,7 @@
     "ask": "chart all 90d",
     "note": "a chart naming no reading is every reading, a panel each",
     "expect": {
-      "chart": {
-        "readings": [
-          "all"
-        ],
-        "period": "90d",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "c:line",
@@ -1014,7 +937,7 @@
     "ask": "graph combine uvi and solar radiation on two axis",
     "note": "two readings with different scales on one panel: fast path, drawn in code with the second on a right-hand axis",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "c:two-axes"
@@ -1025,7 +948,7 @@
     "ask": "plot airgradient humidity over ecowitt outdoor humidity",
     "note": "the air sensor's own humidity is offered to the model only when the AirGradient is named with it; the chart is the model's (plot_chart)",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": []
   },
@@ -1034,7 +957,7 @@
     "ask": "What was the humidity each hour for the last 5 hours",
     "note": "the bot said its tool only gave extremes: the readings tool gives a value per hour",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:interval",
@@ -1046,7 +969,7 @@
     "ask": "temperature every 30 minutes today",
     "note": "took the fast path to a highs-and-lows summary of today",
     "expect": {
-      "chart": null
+      "effort": "none"
     },
     "covers": [
       "q:interval",
@@ -1056,15 +979,9 @@
   {
     "id": "chart-only-answers-itself",
     "ask": "plot pressure since Sunday",
-    "note": "only the chart is asked for: the model says so (chart_answers_it) and the bot sends the chart with its caption written in code, with no second model call. A weekday keeps it off the fast path, so the model decides",
+    "note": "only the chart is asked for: the model says so (chart_answers_it) and the bot sends the chart with its caption written in code, with no second model call (every typed request goes to the model since step 6c)",
     "expect": {
-      "chart": {
-        "readings": [
-          "pressure"
-        ],
-        "period": "since Sunday",
-        "chart": true
-      }
+      "effort": "none"
     },
     "covers": [
       "q:chart-only",
@@ -1076,7 +993,7 @@
     "ask": "plot pressure since Sunday, is a storm coming?",
     "note": "the chart and something else to answer: the model writes the reply, so chart_answers_it stays unset",
     "expect": {
-      "chart": null
+      "effort": "low"
     },
     "covers": [
       "q:chart-only",

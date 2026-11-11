@@ -40,17 +40,6 @@ def the_log_as_it_was():
 
 
 @pytest.fixture(autouse=True)
-def buttons_not_drawn_ahead(monkeypatch):
-    """The keyboard's charts are not drawn ahead here (seven charts a start; test_periods.py tests the drawing): only noted."""
-    drawn = []
-
-    async def note(self, tg_bot):
-        drawn.append(tg_bot)
-    monkeypatch.setattr(ecobot.Bot, "draw_buttons_ahead", note)
-    return drawn
-
-
-@pytest.fixture(autouse=True)
 def quick_shutdown(monkeypatch):
     """A listen stream still open when ecobot-mcp stops is ended after a quarter of a second, not SHUTDOWN_SECONDS (3)."""
     monkeypatch.setattr(service_main, "SHUTDOWN_SECONDS", 0.25)
@@ -58,15 +47,18 @@ def quick_shutdown(monkeypatch):
 
 class FakeApp:
     def __init__(self):
-        self.sent, self.handlers = [], []
+        self.sent, self.handlers, self.menus = [], [], []
         self.updater = NS(start_polling=self._noop, stop=self._noop)
-        self.bot = NS(username="testbot", send_message=self.send_message)
+        self.bot = NS(username="testbot", send_message=self.send_message, set_my_commands=self.set_my_commands)
 
     async def _noop(self, *a, **k):
         pass
 
     async def send_message(self, chat_id, text, **kw):
         self.sent.append((chat_id, text, kw))
+
+    async def set_my_commands(self, commands):
+        self.menus.append([c.command for c in commands])
 
     initialize = shutdown = start = stop = _noop
 
@@ -248,18 +240,22 @@ async def run_bot_until(check, what: str):
     await stopper
 
 
-async def test_main_starts_as_ecobot_mcps_client_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog, buttons_not_drawn_ahead):
+async def test_main_starts_as_ecobot_mcps_client_and_shuts_down_cleanly(tmp_path, monkeypatch, caplog):
+    """The command menu is the bot's own commands and one per ecobot-mcp prompt (step 6c); no chart is drawn ahead."""
+    from lib import templates
+    from lib.mcp_server import PROMPTS
     caplog.set_level("INFO")
     monkeypatch.setattr(ecobot._format, "width", 0)   # put back after the test
     app = FakeApp()
     async with ecobot_mcp_up(tmp_path) as url:
         bot_settings(tmp_path, monkeypatch, url, app, log_width=120)
-        await run_bot_until(lambda: buttons_not_drawn_ahead, "the keyboard's charts drawn ahead")
+        await run_bot_until(lambda: app.menus, "the command menu set")
     log = caplog.text
     assert "Telegram: @testbot, Model: " in log and f"ecobot-mcp: {url}" in log and "Ecowitt: " not in log
-    assert len(app.handlers) == 11  # start+help, reset, keyboard, alerts, usage, report, the one button handler, other updates, membership, messages, errors
+    assert len(app.handlers) == 12  # start+help, reset, keyboard, alerts, usage, the buttons' commands, the prompts' commands, the one button handler, other updates, membership, messages, errors
     assert ecobot._format.width == 120                   # BOT_LOG_WIDTH reaches the bot's own log lines
-    assert buttons_not_drawn_ahead == [app.bot]          # the keyboard's charts are drawn ahead once started
+    own = [name for name, _ in templates.MENU]
+    assert app.menus == [[*own[:own.index("alerts")], *PROMPTS, *own[own.index("alerts"):]]]   # once: the prompts read before it was set
 
 
 async def test_a_failure_part_way_through_starting_closes_everything_already_open(tmp_path, monkeypatch, caplog):
@@ -405,7 +401,7 @@ async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog
     async with ecobot_mcp_up(tmp_path) as url:
         bot_settings(tmp_path, monkeypatch, url, app, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret="s")
         await run_bot_until(lambda: {"check", "watchdog"} <= set(started), "the irrigation check and its watchdog")
-    assert len(app.handlers) == 11 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
+    assert len(app.handlers) == 12 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
 
 
 def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():

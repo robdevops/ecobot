@@ -4,12 +4,12 @@ from types import SimpleNamespace as NS
 
 import pytest
 from PIL import Image
-from telegram import InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import json
 import time
 
-from lib import gauge_sheet, gauges, intent
+from lib import gauge_sheet, gauges
 from lib.bot import Bot
 from lib.ecowitt import dashboard as dash
 from lib.service import current as cur
@@ -80,24 +80,32 @@ async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(
     await eco.close()
 
 
-async def test_the_old_dashboards_refresh_is_out_of_date_and_changes_nothing(serve, alert_state):
-    """The Telegram dashboard is no more (the gauges' live page is ecobot-mcp's /dashboard): the 🔄 under one sent before is out of
-    date, and its message stays as it was."""
+async def test_the_old_dashboards_and_reports_refresh_are_out_of_date_and_change_nothing(serve, alert_state):
+    """The Telegram dashboard is no more (the gauges' live page is ecobot-mcp's /dashboard), nor the report written in code (step 6c):
+    the 🔄 under one sent before is out of date, and its message stays as it was."""
     from lib.bot import STALE_BUTTON
     bot, _ = await report_bot(serve, alert_state, three_gauges)
     edits = []
 
     class Query:
-        data, message, toast = "rp:dashboard", NS(photo=[NS(file_id="x")]), "unset"
+        def __init__(self, data):
+            self.data, self.toast, self.from_user = data, "unset", NS(id=7)
+            self.message = NS(photo=[NS(file_id="x")], reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄", callback_data=data)]]),
+                              chat=NS(id=1, type="private"), chat_id=1)
 
         async def answer(self, text=None, **k):
             self.toast = text
 
         async def edit_message_media(self, *a, **k):
             edits.append(a)
-    query = Query()
-    await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    assert query.toast == STALE_BUTTON and edits == []
+
+        async def edit_message_caption(self, *a, **k):
+            edits.append(a)
+    for data in ("rp:dashboard", "rp:refresh"):
+        query = Query(data)
+        await bot.on_button(NS(callback_query=query, effective_chat=query.message.chat, effective_user=query.from_user,
+                               effective_message=query.message), CONTEXT)
+        assert query.toast == STALE_BUTTON and edits == [], data
 
 
 def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
@@ -127,9 +135,21 @@ async def test_the_reports_gauges_read_the_years_day_rows_in_one_go_and_only_wha
     await eco.close()
 
 
+class ReportAgent:
+    """The model, answering every question with the report it is asked for (Status: the `report` prompt's question)."""
+
+    def __init__(self):
+        self.asked = []
+
+    async def run(self, messages, system, effort, **k):
+        self.asked.append(messages[-1]["content"])
+        messages.append({"role": "assistant", "content": "Weather station\n• Outdoor: 12.3 °C"})   # (as lib/llm.py's Agent does)
+        return messages[-1]["content"]
+
+
 async def report_bot(serve, alert_state, gauges_now):
     """A bot whose service gives the report's readings now (its `reading`, the outdoor temperature, which a test may change) and, with
-    context, its gauges (`gauges`: current's result with context, or raises; gauges_now to begin with)."""
+    context, its gauges (`gauges`: current's result with context, or raises; gauges_now to begin with); its model a ReportAgent."""
     now = NS(reading="12.3 °C", gauges=gauges_now)
 
     def current(args, meta):
@@ -139,11 +159,7 @@ async def report_bot(serve, alert_state, gauges_now):
         return {"lines": {"station": [f"• Outdoor: {now.reading}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
                 "headings": {"station": "Weather station", "air": "Air quality"}}
     service = StandInService(current=current)
-
-    class Agent:
-        pass
-
-    bot = Bot(NS(tz=TZ), Agent(), alert_state, service=await serve(tools=service, sources=["Ecowitt", "AirGradient"]))
+    bot = Bot(NS(tz=TZ), ReportAgent(), alert_state, service=await serve(tools=service, sources=["Ecowitt", "AirGradient"]))
     alert_state.add_chat(1, "Rob")
     alert_state.set_keyboard(1, bot.keyboard_version)
     return bot, now
@@ -174,82 +190,42 @@ async def no_action(*a, **k):
 CONTEXT = NS(bot=NS(send_chat_action=no_action, send_message_draft=no_action, id=99))   # a Telegram bot that shows "typing..." and takes drafts
 
 
-async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_refresh_redraws_both(serve, alert_state, monkeypatch):
-    from lib import report_menu
+async def test_status_is_its_gauges_then_the_report_prompts_answer_from_the_model(serve, alert_state):
+    """Status (the button, /status): the three gauges' picture at once, then ecobot-mcp's `report` prompt asked of the model as a typed
+    question, its answer a message of its own (step 6c: the report written in code, its caption and its 🔄 are gone)."""
+    from lib.mcp_server import prompt
     bot, tools = await report_bot(serve, alert_state, three_gauges)
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "report")
-    assert len(sent) == 1
-    kind, photo, caption, kw = sent[0]
-    assert kind == "photo" and photo == b"\x89PNG" and caption.startswith("Weather station\n• Outdoor: 12.3 °C")
-    assert [e.type for e in kw["caption_entities"]] == ["bold", "bold"]                                        # the headings, as in the text report
-    assert [b.callback_data for b in kw["reply_markup"].inline_keyboard[0]] == [report_menu.REFRESH]         # Refresh, no period buttons
-    assert bot.charted.get(1, 7) is None
-
-    edits = []
-
-    class Query:
-        data, message = report_menu.REFRESH, NS(photo=[NS(file_id="x")])
-
-        async def answer(self, *a, **k):
-            pass
-
-        async def edit_message_media(self, media, reply_markup=None):
-            edits.append(("media", media.caption, media.caption_entities, reply_markup))
-
-        async def edit_message_caption(self, caption=None, caption_entities=None, reply_markup=None):
-            edits.append(("caption", caption, caption_entities, reply_markup))
-    tools.reading = "13.0 °C"
-    await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
-    what, caption, entities, markup = edits[-1]
-    assert what == "media" and "13.0 °C" in caption and [e.type for e in entities] == ["bold", "bold"]
-    assert markup.inline_keyboard[0][0].callback_data == report_menu.REFRESH
-
-    def failing():
-        raise RuntimeError("cache gone")
-    tools.gauges = failing
-    tools.reading = "14.0 °C"
-    await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
-    assert edits[-1][0] == "caption" and "14.0 °C" in edits[-1][1]                                             # no new picture: the caption alone
+    await bot.status(update, CONTEXT)
+    question = prompt("report").messages[0].content.text
+    assert bot.agent.asked == [question]
+    assert [(k, photo, text) for k, photo, text, _ in sent] == [("photo", b"\x89PNG", None), ("text", None, "Weather station\n• Outdoor: 12.3 °C")]
+    assert "reply_markup" not in sent[0][3] and sent[1][3].get("reply_markup") is None                       # no 🔄, no period buttons
+    history = bot.chats[(1, None)].history
+    assert history[-2] == {"role": "user", "content": question} and history[-1]["content"] == "Weather station\n• Outdoor: 12.3 °C"
 
 
-async def test_a_report_without_its_gauges_is_the_text_report_as_before(serve, alert_state, caplog):
-    from lib import report_menu
+async def test_status_without_the_model_sends_its_gauges_and_the_line_saying_so(serve, alert_state):
+    from lib.bot import NO_MODEL
+    bot, _ = await report_bot(serve, alert_state, three_gauges)
+    bot.agent = NS(ready=False)
+    sent = []
+    msg, update = chat(sent)
+    await bot.status(update, CONTEXT)
+    assert [(k, photo, text) for k, photo, text, _ in sent] == [("photo", b"\x89PNG", None), ("text", None, NO_MODEL)]
 
+
+async def test_status_without_its_gauges_is_the_report_alone(serve, alert_state, caplog):
     def broken():
         raise RuntimeError("no cache")
     bot, _ = await report_bot(serve, alert_state, broken)
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "report")
-    assert [k for k, *_ in sent] == ["text"] and sent[0][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
+    await bot.status(update, CONTEXT)
+    assert [(k, text) for k, _, text, _ in sent] == [("text", "Weather station\n• Outdoor: 12.3 °C")]
     assert "The report's gauges failed (MCPError: Internal server error)" in caplog.text   # (refused by ecobot-mcp, which logs why:)
     assert "RuntimeError: no cache" in caplog.text
-
-
-async def test_a_report_too_long_for_a_caption_goes_after_its_gauges_with_the_refresh_button_on_the_text():
-    from lib.bot import deliver
-    from lib import report_menu
-    sent = []
-    msg, _ = chat(sent)
-    text = "Weather station\n" + "\n".join(f"• line {i} " + "x" * 40 for i in range(30))
-    await deliver(msg, text, [b"\x89PNG"], markup=report_menu.keyboard(), titles=[""], bold_headings=True, photos_first=True)
-    assert [k for k, *_ in sent] == ["photo", "text"]
-    assert "reply_markup" not in sent[0][3] and sent[1][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
-
-
-def test_a_refreshed_report_too_long_for_its_caption_keeps_its_first_sections():
-    from lib.bot import CAPTION_LIMIT, report_caption
-    from lib.entities import utf16_len
-    first = "Weather station (2:21am)\n• Outdoor: 12.3 °C"
-    long = first + "\n\nAir quality\n" + "\n".join(f"• line {i} 🟢" + "x" * 30 for i in range(40))
-    body, entities = report_caption(long)
-    assert body == first and [e.type for e in entities] == ["bold"]
-    body, _ = report_caption(first + "\n\nForecast\n• Today: fine")
-    assert body.endswith("• Today: fine")                                                                  # it fits: all of it
-    body, _ = report_caption("Weather station\n" + "\n".join(f"• {i} " + "y" * 60 for i in range(40)))
-    assert utf16_len(body) <= CAPTION_LIMIT and body.startswith("Weather station\n• 0 ")                    # one long section: its first lines
 
 
 async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes_in_the_month(tmp_path):
@@ -315,7 +291,7 @@ def test_the_gauges_sheet_is_drawn_from_currents_readings_and_their_context():
 
 
 async def test_the_reports_gauges_are_the_services_current_with_context(serve, alert_state, monkeypatch):
-    """The report's gauges are drawn from current {context: true} (the station's own dashboard() is not asked), its three readings
+    """Status's gauges are drawn from current {context: true} (the station's own dashboard() is not asked), its three readings
     named, by the service (lib/status.py)."""
     from tests.fakes import StandInService
     drawn = []
@@ -326,11 +302,11 @@ async def test_the_reports_gauges_are_the_services_current_with_context(serve, a
             return GAUGE_RESULT
         return {"lines": {"station": ["• Outdoor: 12.3 °C"]}, "headings": {"station": "Weather station"}}
     service = StandInService(current=current)
-    bot = Bot(NS(tz=TZ), NS(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
+    bot = Bot(NS(tz=TZ), ReportAgent(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "report")
-    assert sent[-1][0] == "photo" and [t.title for t in drawn[-1].tiles] == list(STATUS_TITLES)
+    await bot.status(update, CONTEXT)
+    assert sent[0][0] == "photo" and [t.title for t in drawn[-1].tiles] == list(STATUS_TITLES)
     assert ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True}) in service.calls
 
 
@@ -339,11 +315,11 @@ async def test_a_station_that_gives_nothing_sends_its_report_without_gauges(serv
     down = {"sensors": {}, "lines": {"station": ["• not available right now"]}, "headings": {"station": "Weather station"},
             "unavailable": {"station": "The weather station isn't answering right now."}}
     service = StandInService(current=down)
-    bot = Bot(NS(tz=TZ), NS(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
+    bot = Bot(NS(tz=TZ), ReportAgent(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "report")
-    assert sent[-1][0] == "text"                                                                 # the report as text alone
+    await bot.status(update, CONTEXT)
+    assert [k for k, *_ in sent] == ["text"]                                                     # the report as text alone
 
 
 # ---------- the air sensor's gauges, on US standards ----------

@@ -9,7 +9,7 @@ from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 
 from lib.service.summary import OVER_TIME
-from lib import periods, report_menu, templates
+from lib import periods, templates
 from lib.admins import Admins
 from lib.alerts import menu
 from lib.alerts.notify import AlertState
@@ -47,7 +47,7 @@ class Asked(Bot):
     """A Bot that records the questions it is asked instead of asking a model."""
     asked: list
 
-    async def respond(self, update, context, text, redraw=None):
+    async def respond(self, update, context, text, call=None):
         self.asked.append(text.strip())
 
 
@@ -222,16 +222,21 @@ async def test_listed_ids_are_added_to_the_known_admins_never_replacing_them(tmp
 
 
 # ---------- the gate: private chats ----------
-@pytest.mark.parametrize("command, args", [("on_start", []), ("on_reset", []), ("on_keyboard", []), ("on_usage", []), ("on_ask", []), ("on_alerts", [])])
+@pytest.mark.parametrize("command, args", [("on_start", []), ("on_reset", []), ("on_keyboard", []), ("on_usage", []), ("on_ask", []), ("on_alerts", []),
+                                           ("on_command", [])])
 async def test_a_stranger_is_refused_every_command_in_a_private_chat_and_is_not_remembered(tmp_path, command, args):
+    from lib.mcp_server import prompt
     bot, state, tg = make(tmp_path)
-    update, sent = message("/weather" if command == "on_ask" else "/x", user=STRANGER)
+    bot.commands()   # (ecobot-mcp's prompts as commands: /now is one)
+    typed = {"on_ask": "/weather", "on_command": "/now"}.get(command, "/x")
+    update, sent = message(typed, user=STRANGER)
     await getattr(bot, command)(update, ctx(tg, *args))
     assert [body for body, _ in sent] == [NOT_ADMIN] and STRANGER not in state.chats
-    update, sent = message("/weather" if command == "on_ask" else "/x", user=ADMIN)           # an admin of a known group is let in
+    update, sent = message(typed, user=ADMIN)           # an admin of a known group is let in
     await getattr(bot, command)(update, ctx(tg, *args))
-    assert (bot.asked == ["Weather chart 1d"] if command == "on_ask" else sent) and NOT_ADMIN not in [body for body, _ in sent]   # /weather asks for its chart
-    if command in ("on_start", "on_usage", "on_ask", "on_alerts"):
+    asked = {"on_ask": ["Weather chart 1d"], "on_command": [prompt("now").messages[0].content.text]}   # /weather asks for its chart, /now its prompt
+    assert (bot.asked == asked[command] if command in asked else sent) and NOT_ADMIN not in [body for body, _ in sent]
+    if command in ("on_start", "on_usage", "on_ask", "on_alerts", "on_command"):
         assert ADMIN in state.chats
 
 
@@ -411,7 +416,6 @@ def every_keyboard(bot):
                     yield irrigation_menu.keyboard(battery, pause, opened, paused)
     for current in (None, *(p["period"] for p in OVER_TIME)):
         yield period_keyboard(current)
-    yield report_menu.keyboard()
 
 
 def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(tmp_path):
@@ -425,7 +429,7 @@ def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(t
                 assert 0 < len(data.encode()) <= MAX_CALLBACK_BYTES and data.isprintable(), data
                 assert sum(data.startswith(prefix) for prefix in table) == 1, data
                 assert bot._on_keyboard(NS(reply_markup=markup), data)
-    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX, report_menu.PREFIX}
+    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX}   # (rp:, the report's 🔄, gone with step 6c)
     assert "ir:" not in make(tmp_path, irrigation=None)[0].buttons()
 
 
@@ -515,7 +519,7 @@ async def test_random_data_never_gets_past_the_entry_point(tmp_path):
     rng = random.Random(7)
     spy = Spy()
     bot, state, tg = make(tmp_path, irrigation=spy)
-    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), period_keyboard("1d"), report_menu.keyboard()]
+    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), period_keyboard("1d")]
     known = {b.callback_data for board_ in boards for row in board_.inline_keyboard for b in row}
     pieces = ["ir", "al", "pd", "on", "off", "water", "delay", "sw", "batt", "pause", "refresh", "open", "close", "all", "sub", "unsub",
               "rain", "uv", "24h", "cancel", "5", "30", "99999", "-1", "", " ", "\n", "é", "💧", "*", "%s", "{}", "\\", ";", "$(x)", "None"]

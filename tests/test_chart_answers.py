@@ -40,16 +40,14 @@ async def ask(serve, alert_state, script, tools, text=ONLY_A_CHART):
     client = FakeLLM(script)
     weather = await serve(tools=tools)
     bot = Bot(NS(tz=TZ), llm.Agent(client, "m", model_tools.tools(weather)), alert_state, service=weather)
-    read = intent.read(text, NOW)
     turn = Turn()
     working = [{"role": "user", "content": text}]
-    reply = await bot._ask_model(working, "sys", read, turn, None)
+    reply = await bot._ask_model(working, "sys", intent.effort(text), turn, None)
     return reply, client.requests, turn, working
 
 
 async def test_a_complete_result_is_the_reply_and_the_model_is_asked_once(serve, alert_state, caplog):
     tool = StandIn()
-    assert intent.read(ONLY_A_CHART, NOW).chart is None                       # the model takes it, not a shortcut
     with caplog.at_level(logging.INFO, logger="lib.llm"):
         reply, requests, turn, working = await ask(serve, alert_state, [[("summary", ASKED)], "the model's own caption"], [tool])
     assert reply == REPLY and len(requests) == 1 and len(tool.seen) == 1

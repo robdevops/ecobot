@@ -1,4 +1,4 @@
-"""The saved questions: the decisions made in code must hold for every case, and the checker itself must work.
+"""The saved questions: the decision made in code (the reasoning effort) must hold for every case, and the checker itself must work.
 (What the real model does with them is scripts/eval_prompts.py --live.)"""
 
 import pytest
@@ -40,21 +40,23 @@ def test_the_call_checker_reports_what_is_wrong():
     assert evalkit.check_args({"g": ["a", "b"]}, {"g": {"has": ["a"]}}) == [] and evalkit.check_args({"g": "x"}, {"g": {"regex": "^y"}})
 
 
-async def test_the_bots_live_run_is_its_own_request_and_its_shortcuts_ask_no_model():
+async def test_the_bots_live_run_is_its_own_request_and_every_question_goes_to_the_model():
     """--live asks the model as the bot does (its prompt: the persona, the server's instructions, the time; the ten tools; its effort);
-    a question it answers in code gives its fixed calls, and the model isn't asked."""
+    the questions it once answered in code (the report, a named reading's chart) are asked of the model too (step 6c)."""
     from tests.test_agent import FakeLLM
     from tests.test_service_evals import case
     client = FakeLLM([[("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})], "Done."])
     turn = await evalkit.run_live(case("3m-average"), client, "m")
     assert turn.calls == [("summary", {"readings": ["temperature"], "period": "last 3 months", "average": True})]
-    assert turn.reply == "Done." and turn.refused == 0 and not turn.in_code
+    assert turn.reply == "Done." and turn.refused == 0
     first = client.requests[0]
     assert first["messages"][0] == {"role": "system", "content": evalkit.bot_system()}
     assert first["messages"][0]["content"].startswith("You are a friendly weather bot on Telegram") and first["tool_choice"] == "auto"
     assert [t["function"]["name"] for t in first["tools"]] == evalkit.service_tool_names()
-    assert first["extra_body"]["reasoning"]["effort"] == evalkit.read(case("3m-average")).effort
-    assert await evalkit.run_live(case("report"), None, "m") == evalkit.LiveTurn(
-        [("current", {}), ("pollen", {}), ("forecast", {"period": "next 3 days"})], "(answered in code)", in_code=True)
-    turn = await evalkit.run_live(case("button-rain-chart"), None, "m")
-    assert turn.calls == [("summary", {"readings": ["rain"], "period": "7d", "chart": True})] and turn.in_code
+    assert first["extra_body"]["reasoning"]["effort"] == evalkit.effort(case("3m-average"))
+    for case_id, calls in (("report", [("current", {}), ("pollen", {}), ("forecast", {"period": "today"})]),
+                           ("button-rain-chart", [("summary", {"readings": ["rain"], "period": "7d", "chart": True})])):
+        client = FakeLLM([calls, "Done."])
+        turn = await evalkit.run_live(case(case_id), client, "m")
+        assert turn.calls == calls and turn.reply == "Done." and len(client.requests) == 2, case_id
+        assert client.requests[0]["messages"][-1] == {"role": "user", "content": case(case_id).ask}

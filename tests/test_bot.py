@@ -1,11 +1,10 @@
 """Bot.respond: what the person is sent when things go wrong."""
 
 import asyncio
-from datetime import datetime
 from types import SimpleNamespace as NS
 
 from lib import intent
-from lib.bot import Bot
+from lib.bot import NO_MODEL, Bot
 from lib.tools import Turn
 from tests.fakes import draws, TZ
 from tests.served import unreached
@@ -59,17 +58,16 @@ class NoModel:
         raise AssertionError("there is no model to ask")
 
 
-async def test_without_a_model_a_question_for_it_is_told_so_and_what_works_still_answers(serve, alert_state):
-    replies = await ask(serve, alert_state, NoModel(), "will it rain tomorrow, do you think?")
-    assert len(replies) == 1 and "needs the AI model" in replies[0] and "/report" in replies[0] and "/air_quality" in replies[0]
-    replies = await ask(serve, alert_state, NoModel(), "what can you do")
-    assert len(replies) == 1 and "needs the AI model" in replies[0]                   # the model's: it calls `about`
+async def test_without_a_model_a_typed_question_gets_one_line_saying_so(serve, alert_state):
+    """Every typed question is the model's (step 6c): without one, a typed chart request or "report" is told so too."""
+    for text in ("will it rain tomorrow, do you think?", "what can you do", "rain chart 7d", "report"):
+        replies = await ask(serve, alert_state, NoModel(), text)
+        assert replies == [NO_MODEL], text
+    assert "\n" not in NO_MODEL and "no AI model" in NO_MODEL and "buttons and the alerts still work" in NO_MODEL
 
 
-async def test_a_failing_shortcut_falls_back_to_the_model(serve, alert_state, monkeypatch):
-    def boom(*a, **k):
-        raise OverflowError("date value out of range")
-    monkeypatch.setattr(intent, "chart_call", boom)
+async def test_a_typed_chart_request_goes_to_the_model(serve, alert_state):
+    """"humidity 7d" was drawn in code until step 6c: anything typed is the model's now."""
     agent = AnsweringAgent()
     replies = []
 
@@ -241,35 +239,6 @@ async def test_one_chart_and_a_short_answer_are_one_message_otherwise_the_answer
     assert sent == [("text", "Both are up."), ("group", 2)]
 
 
-async def test_a_report_is_written_in_code_from_the_fast_path_calls_and_the_model_is_not_asked(serve, alert_state):
-    from tests.fakes import StandInService
-
-    class Agent:
-        async def run(self, *a, **k):
-            raise AssertionError("the model must not be asked for a report")
-    service = StandInService(current={"lines": {"station": ["• Outdoor: 12.3 °C, 💦 94 %"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},   # (no gauges: as text)
-                                      "headings": {"station": "Weather station", "air": "Air quality"}})
-    agent, replies = Agent(), []
-
-    async def reply_text(body, **kw):
-        replies.append(body)
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-
-    async def send_chat_action(*a, **k):
-        pass
-    bot = Bot(NS(tz=TZ), agent, alert_state, service=await serve(tools=service, sources=["Ecowitt", "AirGradient"]))
-    await bot.respond(update, NS(bot=telegram(send_chat_action)), "report")
-    await bot.respond(update, NS(bot=telegram(send_chat_action)), "weather now")
-    gauges = ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True})   # the report's
-    assert [c for c in service.calls if c != gauges] == [("current", {}), ("current", {})] and service.calls.count(gauges) == 1
-    assert replies[0] == "Weather station\n• Outdoor: 12.3 °C, 💦 94 %\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"
-    assert replies[1] == "• Outdoor: 12.3 °C, 💦 94 %"
-    history = bot.chats[(1, None)].history
-    assert history[-1] == {"role": "assistant", "content": replies[1]} and history[-4]["content"] == "report"
-
-
 async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower(alert_state, monkeypatch):
     from lib import bot as botmod
     monkeypatch.setattr(botmod, "TURN_SECONDS", 0.05)
@@ -285,9 +254,9 @@ async def test_a_question_that_times_out_is_asked_again_one_reasoning_step_lower
             return f"answered at {effort}"
     bot = Bot(NS(tz=TZ), SlowThenQuick(), alert_state, service=unreached())
     working = [{"role": "user", "content": "q"}]
-    read = intent.read("what do you think about the weather today?", datetime(2026, 10, 2, 12, 0))
-    assert read.effort == "medium"
-    assert await bot._ask_model(working, "sys", read, Turn(), None) == "answered at low"
+    effort = intent.effort("what do you think about the weather today?")
+    assert effort == "medium"
+    assert await bot._ask_model(working, "sys", effort, Turn(), None) == "answered at low"
     assert efforts == ["medium", "low"] and working == [{"role": "user", "content": "q"}, {"role": "assistant", "content": "(unfinished)"}]
 
 
@@ -306,16 +275,14 @@ async def test_a_question_with_no_lower_step_or_a_second_timeout_gives_up(alert_
     for text, expected in (("hello there", ["none"]), ("what do you think about the weather today?", ["medium", "low"])):
         efforts.clear()
         with pytest.raises(TimeoutError):
-            await bot._ask_model([], "sys", intent.read(text, datetime(2026, 10, 2, 12, 0)), Turn(), None)
+            await bot._ask_model([], "sys", intent.effort(text), Turn(), None)
         assert efforts == expected
 
 
-async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_model_is_not_asked(serve, alert_state, monkeypatch):
-    from lib import bot as botmod
-
+async def test_a_chart_button_is_its_fixed_call_drawn_by_the_service_and_the_model_is_not_asked(serve, alert_state, monkeypatch):
     class Agent:
         async def run(self, *a, **k):
-            raise AssertionError("the model must not be asked for a plain chart")
+            raise AssertionError("the model must not be asked for a button's chart")
     sent = []
 
     async def reply_photo(photo, caption=None, **kw):
@@ -329,8 +296,8 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
         pass
     service = chart_service()
     weather = await serve(tools=service, sources=["Ecowitt"])
-    await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).respond(update, NS(bot=telegram(send_chat_action)), "Humidity chart 7d")
-    assert service.calls == [("summary", {"readings": ["humidity"], "period": "7d", "chart": True})]   # the words, as they are
+    await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).press(update, NS(bot=telegram(send_chat_action)), "Humidity chart 1d")
+    assert service.calls == [("summary", {"readings": ["humidity"], "period": "1d", "chart": True})]   # the button's fixed call
     assert sent == ["Humidity"]    # the chart's title is its whole caption
 
 
@@ -347,7 +314,7 @@ async def test_a_chart_reply_logs_how_long_each_step_took(serve, alert_state, tm
 
     class Agent:
         async def run(self, *a, **k):
-            raise AssertionError("no model for a plain chart")
+            raise AssertionError("no model for a button's chart")
     sent = []
 
     async def reply_photo(photo, caption=None, **kw):
@@ -361,7 +328,7 @@ async def test_a_chart_reply_logs_how_long_each_step_took(serve, alert_state, tm
         pass
     weather = await serve(Context(eco=eco, tz=TZ))   # (ecobot-mcp over the fake station)
     with caplog.at_level("DEBUG"):
-        await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).respond(update, NS(bot=telegram(send_chat_action)), "Temperature chart 1d")
+        await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).press(update, NS(bot=telegram(send_chat_action)), "Temperature chart 1d")
     await eco.close()
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
     assert len(sent) == 1 and len(lines) == 1, lines
@@ -370,7 +337,8 @@ async def test_a_chart_reply_logs_how_long_each_step_took(serve, alert_state, tm
 
 
 async def _ask_with(serve, alert_state, answer, text, monkeypatch=None):
-    """Ask `text` of a bot whose service tools all give `answer`; returns (replies, whether the model was asked)."""
+    """Press the button whose sentence is `text` on a bot whose service tools all give `answer`; returns (replies, whether the model was
+    asked)."""
     from tests.fakes import StandInService
     asked = []
 
@@ -390,15 +358,16 @@ async def _ask_with(serve, alert_state, answer, text, monkeypatch=None):
         pass
     service = StandInService(**{name: answer for name in ("current", "summary", "days", "about", "pollen", "forecast")})
     weather = await serve(tools=service, sources=["Ecowitt", "AirGradient"])
-    await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).respond(update, NS(bot=telegram(send_chat_action)), text)
+    await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).press(update, NS(bot=telegram(send_chat_action)), text)
     return replies, bool(asked)
 
 
-async def test_a_chart_shortcut_the_service_cant_draw_falls_back_to_the_model(serve, alert_state):
-    replies, asked = await _ask_with(serve, alert_state, {"error": "station not answering"}, "humidity 7d")
-    assert asked and replies == ["from the model"]
-    replies, asked = await _ask_with(serve, alert_state, {"text": "no chart"}, "humidity chart 7d")
-    assert asked and replies == ["from the model"]
+async def test_a_button_chart_the_service_cant_draw_says_why_and_the_model_is_not_asked(serve, alert_state):
+    """(Until step 6c a chart shortcut the service couldn't draw went to the model: a button has no model to fall back on.)"""
+    replies, asked = await _ask_with(serve, alert_state, {"error": "station not answering"}, "Humidity chart 1d")
+    assert not asked and replies == ["station not answering"]
+    replies, asked = await _ask_with(serve, alert_state, {"text": "no chart"}, "Humidity chart 1d")
+    assert not asked and replies == ["Sorry, I couldn't draw that chart. Please try again in a moment."]
 
 
 async def test_typing_starts_before_the_model_is_asked_and_runs_alongside_the_draft(serve, alert_state):
@@ -499,9 +468,7 @@ async def test_the_model_chooses_its_own_tools_whatever_the_message(serve, alert
     assert seen == ["auto", "auto"]
 
 
-async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title(serve, alert_state, monkeypatch):
-    from lib import bot as botmod
-
+async def test_the_weather_and_temperature_buttons_charts_are_sent_with_just_their_title(serve, alert_state, monkeypatch):
     class Agent:
         async def run(self, *a, **k):
             raise AssertionError("no model for a chart")
@@ -511,7 +478,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
         sent.append(caption)
     draws(monkeypatch, lambda data, tz, times=None: b"png")
     weather = await serve(tools=chart_service(title="t"), sources=["Ecowitt"])
-    for text in ("weather 30d", "temperature chart 7d"):
+    for text in ("Weather chart 1d", "Temperature chart 1d"):
         sent.clear()
         msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
                  chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -519,53 +486,8 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
 
         async def send_chat_action(*a, **k):
             pass
-        await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).respond(update, NS(bot=telegram(send_chat_action)), text)
+        await Bot(NS(tz=TZ), Agent(), alert_state, service=weather).press(update, NS(bot=telegram(send_chat_action)), text)
         assert sent == ["t"], text
-
-
-async def test_the_report_carries_a_refresh_button_that_redraws_it_in_place(serve, alert_state):
-    from lib import report_menu
-    from tests.fakes import StandInService
-    reading = ["12.3 °C"]
-    service = StandInService(current=lambda args, meta: {
-        "lines": {"station": [f"• Outdoor: {reading[0]}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
-        "headings": {"station": "Weather station", "air": "Air quality"}})
-
-    class Agent:
-        pass
-
-    class Query:
-        data, edits, toast = report_menu.REFRESH, [], None
-
-        async def answer(self, text=None, **kw):
-            self.toast = text
-
-        async def edit_message_text(self, text, reply_markup=None, **kw):
-            self.edits.append((text, reply_markup))
-            self.entities = kw.get("entities")
-    sent = []
-
-    async def reply_text(body, **kw):
-        sent.append((body, kw.get("reply_markup"), kw.get("entities")))
-    msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_text=reply_text,
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-
-    async def send_chat_action(*a, **k):
-        pass
-    context = NS(bot=telegram(send_chat_action))
-    bot = Bot(NS(tz=TZ), Agent(), alert_state, service=await serve(tools=service, sources=["Ecowitt", "AirGradient"]))
-    alert_state.add_chat(1, "Rob")
-    alert_state.set_keyboard(1, bot.keyboard_version)   # its buttons are current, so a reply carries only its own
-    await bot.respond(update, context, "report")
-    await bot.respond(update, context, "weather now")
-    assert [b.callback_data for b in sent[0][1].inline_keyboard[0]] == [report_menu.REFRESH] and sent[1][1] is None
-    assert [e.type for e in sent[0][2]] == ["bold", "bold"] and sent[1][2] is None            # the report's headings are bold; "weather now" has none
-    reading[0] = "13.0 °C"
-    query = Query()
-    await bot.on_report_button(NS(callback_query=query), context)
-    assert query.toast is None and "13.0 °C" in query.edits[0][0] and query.edits[0][1].inline_keyboard[0][0].callback_data == report_menu.REFRESH
-    assert [e.type for e in query.entities] == ["bold", "bold"]
 
 
 async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_still_raise(caplog):
@@ -696,7 +618,7 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
 
 BOT_MODULES = ["ecobot", "lib.bot", "lib.weather", "lib.upstream", "lib.model_tools", "lib.llm", "lib.prompt", "lib.alerts.notify",
                "lib.alerts.menu", "lib.alerts.irrigation", "lib.irrigation", "lib.irrigation.menu", "lib.periods", "lib.templates",
-               "lib.admins", "lib.buttons", "lib.config", "lib.intent", "lib.report", "lib.report_menu", "lib.version", "lib.theme"]
+               "lib.admins", "lib.buttons", "lib.config", "lib.intent", "lib.version", "lib.theme"]
 NOT_THE_BOTS = ("PIL", "lib.charts", "lib.draw", "lib.gauges",                                       # drawing (step 6a)
                 "lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage")     # the sources and their file (6b)
 

@@ -7,7 +7,7 @@ import pytest
 from lib.airgradient import Latest
 from lib.alert_log import AlertLog
 from lib.alerts.notify import AlertState, Notifier
-from lib.alerts.pictures import Picture
+from lib.alerts.pictures import CHARTS, Picture
 from lib.alerts.particulates import ParticulatesMonitor
 from lib.alerts.store import AlertStore
 from lib.alerts.weather import WeatherMonitor
@@ -750,7 +750,7 @@ async def test_the_crossing_alert_carries_the_temperature_chart_when_there_is_on
     await m.check()                                    # learns: outdoor cooler
     m.station.data = temps(25, 20, T0 + 3 * 3600)
     await m.check()
-    assert len(sent) == 1 and sent.events[0]["chart"] == CHART and asked == ["Temperature chart 1d"]
+    assert len(sent) == 1 and sent.events[0]["chart"] == CHART and asked == [CHARTS["temps"]]
     assert sent.events[0]["title"] == "Warmer outside than inside" and sent.events[0]["data"]["outdoor_c"] == 25
     m.station.data = temps(10, 20, T0 + 6 * 3600)      # and back, with no chart this time: the alert still goes out, as text
     asking(m, photo=None)
@@ -766,7 +766,7 @@ async def test_the_gusts_alert_carries_the_wind_chart(tmp_path):
     m.station.data = [(T0 + i * 300, {"wind.wind_gust": v}) for i, v in enumerate([10, 12, 55])]
     await m.check()
     (event,) = sent.events
-    assert "Strong gusts" in event["text"] and event["chart"]["drawn_by"] == CHART["drawn_by"] and asked == ["Wind chart 1d"]
+    assert "Strong gusts" in event["text"] and event["chart"]["drawn_by"] == CHART["drawn_by"] and asked == [CHARTS["gusts"]]
     assert event["kind"] == "gusts" and event["data"]["gust_kmh"] == 55 and "link" not in event
     (tmp_path / "b").mkdir()
     m2, _, plain = monitor(tmp_path / "b", [(T0, {"wind.wind_gust": 10}), (T0 + 300, {"wind.wind_gust": 12})])
@@ -803,25 +803,26 @@ async def test_other_alerts_send_no_picture(tmp_path):
     assert sent.events and all("chart" not in e for e in sent.events) and asked == []
 
 
-async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sources_history(serve, tmp_path, archived_cache):
-    """The chart under an alert (and its 🔄) is the typed one-day chart, drawn by ecobot-mcp over each source's history."""
+async def test_the_alert_charts_are_the_buttons_one_day_charts_drawn_from_each_sources_history(serve, tmp_path, archived_cache):
+    """The chart under an alert (and its 🔄) is the one-day chart of its fixed call (the Wind, Temperature and Particulates buttons'),
+    drawn by ecobot-mcp over each source's history."""
     from lib.airgradient import AirGradient
     from lib.alerts import pictures
     from lib.service.context import Context
     from tests.fakes import air_transport, archived_station, config
     eco, _ = await archived_station(tmp_path, archived_cache)
     station = await serve(Context(eco=eco, tz=TZ))
-    for text in ("Temperature chart 1d", "Wind chart 1d", "UV chart 1d"):
-        picture = await pictures.chart(text, TZ, station)
+    for kind, text in (("temps", "Temperature"), ("gusts", "Wind"), ("uv", "UV")):
+        picture = await pictures.chart(pictures.CHARTS[kind], TZ, station)
         assert picture and picture.png[:4] == b"\x89PNG", text
-        assert picture.title.startswith(text.split()[0]) and picture.newest and abs(picture.newest - eco.now().timestamp()) < 3600, text
+        assert picture.title.startswith(text) and picture.newest and abs(picture.newest - eco.now().timestamp()) < 3600, text
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     (tmp_path / "air").mkdir()
     air = AirGradient(config(tmp_path / "air"), transport=transport)
     await air.start()
-    picture = await pictures.chart("Particulates chart 1d", TZ, await serve(Context(air=air, tz=TZ)))
+    picture = await pictures.chart(pictures.CHARTS["particulates"], TZ, await serve(Context(air=air, tz=TZ)))
     assert picture and picture.png[:4] == b"\x89PNG" and picture.title.startswith("Air quality") and picture.newest
-    assert await pictures.chart("Wind chart 1d", TZ, await serve(tools=[])) is None        # a service without the tool: no chart, no error
+    assert await pictures.chart(pictures.CHARTS["gusts"], TZ, await serve(tools=[])) is None        # a service without the tool: no chart, no error
     await eco.close()
     await air.close()
 
@@ -847,10 +848,10 @@ async def test_the_uv_alert_carries_the_uv_chart_once_per_spell(tmp_path):
     await m.check()                                    # the first look sets the mark
     m.station.data = uv(3, 5, 11, 12)
     await m.check()
-    assert len(seen) == 1 and "UV index 12" in seen[0] and seen.events[0]["chart"] == CHART and asked == ["UV chart 1d"]
+    assert len(seen) == 1 and "UV index 12" in seen[0] and seen.events[0]["chart"] == CHART and asked == [CHARTS["uv"]]
     m.station.data = uv(3, 5, 11, 12, 12)              # the same spell: nothing more, and no second chart is made
     await m.check()
-    assert len(seen) == 1 and asked == ["UV chart 1d"]
+    assert len(seen) == 1 and asked == [CHARTS["uv"]]
     (tmp_path / "b").mkdir()
     plain, _, got = monitor(tmp_path / "b", uv(3, 5))
     asking(plain, photo=None)

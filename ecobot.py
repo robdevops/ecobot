@@ -26,7 +26,7 @@ from telegram.ext import Application, Defaults
 from lib import theme   # (DARKMODE: the bot asks ecobot-mcp for charts in its own theme)
 from lib.alerts.irrigation import IrrigationMonitor
 from lib.alerts.notify import AlertDelivery, AlertState, Notifier
-from lib.bot import AHEAD_SECONDS, TURN_SECONDS, Bot, Tasks, polling_error
+from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
 from lib.irrigation import Tuya
 from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
 from lib.llm import Agent
@@ -183,11 +183,12 @@ async def main():
             handshake.cancel()
             raise
         theme.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
-        client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
+        client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers its buttons and sends alerts, no more
         if client:
             stack.push_async_callback(safely, client.close)
         else:
-            log.warning("BOT_OPENROUTER_API_KEY is not set: running without the model, so answers are limited")
+            log.warning("BOT_OPENROUTER_API_KEY is not set: running without the model, so the bot answers its buttons and sends alerts, "
+                        "and a typed question is told the model isn't set up")
         if cfg.admin_only and not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
             log.warning("Admin only is on but no group is known yet and BOT_ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                         "add it to a group, list your user id in BOT_ADMIN_CHAT_IDS, or set BOT_ADMIN_ONLY=off")
@@ -196,7 +197,7 @@ async def main():
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
         # ecobot-mcp's tools over MCP (lib/weather.py): the model is offered them (lib/model_tools.py), and the bot's own code paths
-        # call them (its shortcuts, report, gauges, alert charts and period buttons)
+        # call them (the keyboard's charts, the Status picture, the alert charts and the period buttons)
         bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(weather)), state, irrigation, tasks, service=weather)
 
         bot.register(app)
@@ -220,11 +221,12 @@ async def main():
         log.info("Telegram: @%s, Model: %s", app.bot.username, cfg.openrouter_model if client else "none")
         log.info("ecobot-mcp: %s (%s)", cfg.mcp_url, ", ".join(sorted(weather.names)) or "not reached yet")
         notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
-        await bot.publish_commands(app.bot)   # the / menu
+        # the / menu: the bot's own commands and ecobot-mcp's prompts, set again whenever the prompts are read (each connection, and
+        # when ecobot-mcp says they changed)
+        weather.on_prompts = lambda: tasks.start(bot.publish_commands(app.bot))
+        await bot.publish_commands(app.bot)
         _, zoned = start_alerts(cfg, bot, notify, tasks, weather)
         follow_zone(weather, bot, state, zoned)
-        # ecobot-mcp keeps itself warm: the bot only draws its keyboard's charts ahead (quietly nothing while it can't be reached)
-        tasks.start(every(AHEAD_SECONDS, lambda: bot.draw_buttons_ahead(app.bot)))
         await stop.wait()
 
 

@@ -78,9 +78,8 @@ async def main():
     ctx = await Context.open(eco=station, tz=tz)
     tools = model_tools.tools(Service.of(ctx))
     text = args.question
-    r = intent.read(text, now, {"Ecowitt"}, tz, ctx.readings())
     system = prompt.build(now, instructions(ctx))
-    effort = r.effort
+    effort = intent.effort(text)
     call = json.loads(args.call) if args.call else default_call()
 
     client = Recorder([call, "(the model's answer goes here)"])
@@ -88,8 +87,7 @@ async def main():
     await Agent(client, "deepseek/deepseek-v4.1-flash-1017", tools).run(messages, system, effort, turn=Turn())
 
     banner("DECISIONS MADE IN CODE")
-    print(f"reasoning effort: {effort}   answered in code (no model): "
-          f"{'the report' if r.report else 'weather now' if r.weather_now else r.chart or 'no'}")
+    print(f"reasoning effort: {effort}   (every typed question goes to the model)")
     first = client.requests[0]
     banner("REQUEST 1: settings")
     print(json.dumps({k: v for k, v in first.items() if k not in ("messages", "tools")}, indent=2))

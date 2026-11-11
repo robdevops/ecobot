@@ -258,6 +258,7 @@ class WeatherMonitor:
     def _iso(self, ts: int | None) -> str | None:
         return None if ts is None else to_local(ts, self.tz).isoformat(timespec="seconds")
 
-    async def _chart(self, text: str) -> dict | None:
-        """The chart a typed `text` ("Wind chart 1d") would give, as data with its drawn_by, for an alert; None when it cannot be made."""
-        return await pictures.chart_data(self.station, text, self.tz, self.service)
+    async def _chart(self, call: tuple[str, dict]) -> dict | None:
+        """The chart of the service `call` (pictures.CHARTS: the Wind button's for gusts), as data with its drawn_by, for an alert; None
+        when it cannot be made."""
+        return await pictures.chart_data(self.station, call, self.tz, self.service)
