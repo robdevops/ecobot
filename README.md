@@ -219,7 +219,10 @@ After the weather station's gauges come the air sensor's, when there is one, wit
 
 On the air dials every category gets an equal share of the dial (as AirNow's AQI dial draws them), so "good" and "moderate" aren't
 squeezed into a sliver of a scale that runs to 500; the numbers round the dial are the breakpoints. PM1 has no US standard and the
-monitor's own temperature and humidity repeat the station's outdoor ones, so they have no gauge.
+monitor's own temperature and humidity repeat the station's outdoor ones, so they have no gauge. The US AQI and each category's name
+are of the reading now, so they always agree with the needle and with the PM2.5 dial beside it (the alerts and the bot's words rate
+PM2.5 on the last two readings, so a passing spike isn't called poor). The page's data never asks the air sensor: with its reading
+stale it shows the one it holds.
 
 A tile whose reading is missing just now (the station or the air sensor not sending it) is dimmed, its gauge at its floor (0, or the
 scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes

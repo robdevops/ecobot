@@ -472,11 +472,22 @@ def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_
     assert [t.title for t in gauge_sheet.sheet(air_result(None)).tiles] == ["Temperature"]   # no air sensor: no air gauges
 
 
-def test_the_aqi_and_pm25_tiles_name_the_band_the_service_rated():
-    """The service rates PM2.5 (and its AQI) on the last two readings: the band beside the AQI is that one, not the latest's alone."""
-    latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³", "aqi_us": 80, "band": "moderate"}}
+def test_the_aqi_and_pm25_tiles_name_the_band_their_needle_is_in_on_a_rise():
+    """The service rates PM2.5 (its aqi_us and band) on the lower of the last two readings; the dials show the reading now, so their
+    numbers and names are of the reading now: a rise from 8 to 40 µg/m³ is Unhealthy for Sensitive Groups on both, not Good."""
+    from lib.airgradient.dashboard import EPA_NAMES
+    from lib.airgradient.metrics import pm25_aqi
+    from lib.gauge_look import share
+    latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³", "aqi_us": pm25_aqi(8.0)[0], "band": "good"}}   # (as latest() gives it after 8.0)
     tiles = {t.title: t for t in gauge_sheet.sheet(air_result(latest)).tiles}
-    assert (tiles["US AQI"].value, tiles["US AQI"].band, tiles["PM2.5"].band) == (80.0, "Moderate", "Moderate")
+    aqi, pm = tiles["US AQI"], tiles["PM2.5"]
+    assert (aqi.value, aqi.band, pm.value, pm.band) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", 40.0,
+                                                        "Unhealthy for Sensitive Groups")
+    assert 2 / 6 <= share(pm, pm.value) < 3 / 6 and 2 / 6 <= share(aqi, aqi.value) < 3 / 6   # both needles in the orange band
+    for value in (4.0, 9.1, 20.0, 35.5, 45.0, 55.5, 90.0, 125.5, 175.0, 225.5, 300.0):   # each band, and just over each edge
+        tiles = {t.title: t for t in gauge_sheet.sheet(air_result({"pm2_5": {"value": value, "unit": "µg/m³"}})).tiles}
+        pm, aqi = tiles["PM2.5"], tiles["US AQI"]
+        assert pm.band == aqi.band == EPA_NAMES[min(int(share(pm, value) * 6), 5)] == EPA_NAMES[min(int(share(aqi, aqi.value) * 6), 5)]
 
 
 def test_a_tile_with_no_reading_is_dimmed_at_its_floor_in_its_json():

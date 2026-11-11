@@ -577,10 +577,13 @@ class CurrentTool:
         return await eco._live_data(groups, urgent=meta["priority"] != BACKGROUND)
 
     async def _latest(self, extras: list[str], meta: dict):
-        """The air sensor's latest reading (AirGradient.latest), with its own temperature and humidity when named; with `fetch` off, only
-        when it holds one (NothingHeld otherwise)."""
-        if not meta["fetch"] and getattr(self.ctx.air, "_current", None) is None:
-            raise NothingHeld()
+        """The air sensor's latest reading (AirGradient.latest), with its own temperature and humidity when named; with `fetch` off, the
+        reading it keeps, whatever its age, rated on the readings before it it already has: nothing fetched (NothingHeld when it keeps
+        none), as the station's (_live)."""
+        if not meta["fetch"]:
+            if getattr(self.ctx.air, "_current", None) is None:
+                raise NothingHeld()
+            return await self.ctx.air.latest(extras, held=True)
         return await self.ctx.air.latest(extras)
 
     async def _context(self, station: list[Reading]) -> tuple[dict, dict]:

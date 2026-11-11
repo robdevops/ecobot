@@ -1,7 +1,9 @@
 """The gauges' sheet (specs.Dashboard, what lib/gauges.py draws), laid out by the bot as a client of the service (docs/ecobot-mcp.md
 3.1, 4): each gauge's scale and colours (the weather station's, lib/ecowitt/dashboard.py GAUGES, then the air sensor's,
 lib/airgradient/dashboard.py AIR_GAUGES) filled from the service's `current` with `context`, its reading now and the highs and lows of
-today, the month and the year beside it (rain: its totals and wettest day; wind: its highest gust; the US AQI: PM2.5's, as AQI).
+today, the month and the year beside it (rain: its totals and wettest day; wind: its highest gust; the US AQI: PM2.5's, as AQI). An air
+gauge's band is named from its own reading now, and the US AQI is worked out from PM2.5 now: both dials agree with their needles (the
+service's `aqi_us` and `band` are of the lower of the last two readings, for its ratings).
 
 A tile is left out when current has neither a reading nor a figure for it (no indoor sensor, no air sensor, a reading the air sensor
 never sent), and drawn dimmed at its floor when it has figures but no reading now. The whole dashboard is every gauge's; the report's
@@ -10,7 +12,7 @@ picture its three (STATUS).
 
 import math
 
-from .airgradient.dashboard import AIR_GAUGES, NAME_OF_BAND, AirGauge, air_gauges_of
+from .airgradient.dashboard import AIR_GAUGES, AirGauge, air_gauges_of
 from .airgradient.metrics import pm25_aqi
 from .ecowitt.dashboard import GAUGES, PERIODS, STATUS, Gauge, gauges_of, scale
 from .gauge_look import CELL_H, CELL_W
@@ -53,14 +55,14 @@ def _value(entry: dict, key: str = "value") -> float | None:
 
 def _tile(gauge: Gauge | AirGauge, entry: dict) -> Tile | None:
     """A gauge's tile from its reading's entry in current's result; None when it has neither a reading nor a figure."""
-    now = _value(entry, "aqi_us" if isinstance(gauge, AirGauge) and gauge.aqi else "value")
+    now = _value(entry)
+    if isinstance(gauge, AirGauge) and gauge.aqi and now is not None:
+        now = pm25_aqi(now)[0]   # (the AQI of PM2.5 now, as the PM2.5 dial beside it shows it: not the service's, of the lower of two)
     rows = {row: _row(gauge, entry.get(key) or {}) for row, key in ROWS.items()}
     if now is None and all(f is None for figures in rows.values() for f in figures):
         return None
     if isinstance(gauge, AirGauge):
-        band = gauge.band(now)
-        if gauge.column == "pm2_5" and now is not None and entry.get("band") in NAME_OF_BAND:
-            band = NAME_OF_BAND[entry["band"]]   # (PM2.5 and its AQI: the service's band, the level the last two readings reached)
+        band = gauge.band(now)   # (its own reading's: the name always where the needle is)
         ticks = gauge.bounds
         return Tile(gauge.title, gauge.unit, now, "dial", gauge.low, gauge.high, gauge.colours, ("Max", "Min"), rows, ticks,
                     gauge.decimals, gauge.bounds, band)

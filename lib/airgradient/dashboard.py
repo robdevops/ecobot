@@ -5,8 +5,8 @@ Every air gauge is a dial whose coloured bands are its categories, each band an 
 them), the needle placed in proportion within its band: so the bands that matter are as easy to read as the rest, and a scale that runs
 to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The numbers round the dial are the categories' breakpoints.
 
-  - US AQI (from PM2.5, as the service works it out: lib/airgradient/metrics.py pm25_aqi, the AirGradient's `aqi_us`): 0-500, the EPA's
-    six categories and colours;
+  - US AQI (from PM2.5 now, by the service's own lib/airgradient/metrics.py pm25_aqi: the AirGradient's `aqi_us` is of the lower of the
+    last two readings, so a dial of it could disagree with the PM2.5 dial beside it): 0-500, the EPA's six categories and colours;
   - PM2.5 (µg/m³): the EPA's 2024 breakpoints, 0-9.0, 9.1-35.4, 35.5-55.4, 55.5-125.4, 125.5-225.4, 225.5+ (to 325.4, AQI 500);
   - PM10 (µg/m³): the EPA's breakpoints, 0-54, 55-154, 155-254, 255-354, 355-424, 425+ (to 604, AQI 500);
   - CO2 (ppm): there is no EPA standard for it; the bands are the usual US indoor guidance, from ASHRAE's (ventilation keeps a room
@@ -30,7 +30,6 @@ from .metrics import PM25_AQI
 EPA = ("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023")
 EPA_NAMES = ("Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous")
 VOC_COLOURS = ("#00E400", "#9BE564", "#FFFF00", "#FF7E00", "#FF0000")   # (its average, 100-150, a paler green: the usual air)
-NAME_OF_BAND = {band: name for (*_, band), name in zip(PM25_AQI, EPA_NAMES)}   # the service's band ("unhealthy") -> the EPA's name
 
 
 @dataclass(frozen=True)
@@ -43,7 +42,7 @@ class AirGauge:
     names: tuple[str, ...]            # each band's name, shown under the reading
     step: float                       # the breakpoints' resolution: a reading below an edge + step is still in the band below
     decimals: int = 0
-    aqi: bool = False                 # shows PM2.5's US AQI (the reading's aqi_us), not the reading itself
+    aqi: bool = False                 # shows PM2.5's US AQI (pm25_aqi of the reading now), not the reading itself
 
     @property
     def reading(self) -> str:
@@ -80,4 +79,4 @@ def air_gauges_of(titles=None) -> list[AirGauge]:
     return [g for g in AIR_GAUGES if titles is None or g.title in titles]
 
 
-__all__ = ["AIR_GAUGES", "AirGauge", "EPA", "EPA_NAMES", "NAME_OF_BAND", "air_gauges_of"]
+__all__ = ["AIR_GAUGES", "AirGauge", "EPA", "EPA_NAMES", "air_gauges_of"]

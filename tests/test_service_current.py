@@ -429,6 +429,36 @@ async def test_without_fetching_it_answers_from_the_reading_held(tmp_path, archi
     await close(tool)
 
 
+async def test_without_fetching_the_air_sensor_answers_from_its_held_reading_whatever_its_age_and_asks_it_nothing(
+        tmp_path, archived_cache, monkeypatch):
+    """The dashboard's data (every gauge, with context, fetch off): with the air sensor's held reading stale (it isn't answering), it is
+    still the answer, rated on the readings it already has; neither the reading nor today's history is fetched again."""
+    import sys
+    calls, made = [], air_transport
+
+    def counted(*a, **k):
+        transport, seen = made(*a, **k)
+        calls.append(seen)
+        return transport, seen
+    monkeypatch.setattr(sys.modules[__name__], "air_transport", counted)
+    tool, _, sensor = await world(tmp_path, archived_cache)
+    asked = calls[0]                                                                            # (start() read it once)
+    fetched = await call(tool, context=True)
+    assert "past" in asked                                                                      # today's history, for the rating
+    pm = fetched["sensors"]["air"]["pm2_5"]["value"]
+    stale = time.time() - 3600                                                                  # an hour old: past FRESH_SECONDS
+    sensor._current = (sensor._current[0], stale)
+    sensor._recent = {day: (rows, stale) for day, (rows, _) in sensor._recent.items()}
+    asked.clear()
+    held = [await call(tool, {"fetch": False}, context=True) for _ in range(3)]
+    assert asked == []
+    assert all(h["sensors"]["air"]["pm2_5"]["value"] == pm and AIR_DEVICE not in (h.get("unavailable") or {}) for h in held)
+    assert held[0]["sensors"]["air"]["pm2_5"]["band"] == fetched["sensors"]["air"]["pm2_5"]["band"]   # rated as when fetched
+    await call(tool, context=True)
+    assert "current" in asked                                                                   # (a question still asks it again)
+    await close(tool)
+
+
 async def test_the_kept_reading_answers_while_fresh_and_a_group_it_lacks_is_asked_for_when_named(tmp_path, archived_cache):
     tool, station, _ = await world(tmp_path, archived_cache, air=False, catalogue="file")
     assert "rainfall_piezo.rain" in tool.ctx.readings()         # (a group that never sent anything is offered whole)

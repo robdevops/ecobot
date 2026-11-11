@@ -453,6 +453,20 @@ class AirGradient(Source):
         others = await self.store.load(lo, hi, srcs=(BOT, HOME_ASSISTANT))
         await self.store.merge(self._judge(CLOUD, got, others), self._final(day))
 
+    async def _held_day_rows(self, day: date) -> list[dict]:
+        """A day's readings as far as they are kept, whatever their age, nothing fetched: the stored ones (with the bucket being
+        averaged) when the bot keeps the readings itself or the day is finished, else the cloud's last fetch of it ([] when none)."""
+        if self._final(day) or self._sampled or (not self.cloud and (self.local or self._ha_ids)):
+            return self._with_bucket(day, await self.store.load_day(day))
+        cached = self._recent.get(day)
+        return cached[0] if cached else []
+
+    def _with_bucket(self, day: date, rows: list[dict]) -> list[dict]:
+        """A day's stored readings with the bucket being averaged as the last one, when it is that day's and not stored yet."""
+        if self._bucket and self._bucket[1] and local_date(self._bucket[0], self.tz) == day and self._bucket[0] not in {r["ts"] for r in rows}:
+            rows = [*rows, self._average(*self._bucket)]
+        return rows
+
     async def _recorded_day_rows(self, day: date) -> list[dict]:
         """An unfinished day (today, or one that has just ended) while the monitor or Home Assistant answers: the stored readings, the
         bucket being averaged as the last one, and the cloud asked, at most every GAP_RETRY_SECONDS, for the span of the buckets that are
@@ -465,9 +479,7 @@ class AirGradient(Source):
                 rows = await self.store.load_day(day)
             except Exception as e:   # the stored readings still stand
                 log.warning("AirGradient: couldn't fill the gaps of %s from the cloud: %s", day, e)
-        if self._bucket and self._bucket[1] and local_date(self._bucket[0], self.tz) == day and self._bucket[0] not in {r["ts"] for r in rows}:
-            rows = [*rows, self._average(*self._bucket)]
-        return rows
+        return self._with_bucket(day, rows)
 
     async def _complete_day(self, day: date) -> Held:
         """A finished day the bot holds readings of from the monitor or Home Assistant: the cloud is asked for the whole day once (one
@@ -541,10 +553,12 @@ class AirGradient(Source):
                     return fetched, failed, total
         return fetched, failed, total
 
-    async def _previous_rows(self, ts: int, count: int) -> list[dict]:
-        """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first."""
+    async def _previous_rows(self, ts: int, count: int, held: bool = False) -> list[dict]:
+        """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first (held:
+        only those already kept, nothing fetched)."""
         today = to_local(ts, self.tz).date()
-        earlier, got, after = [r for r in await self._day_rows(today) if r["ts"] < ts], [], ts
+        rows = await (self._held_day_rows(today) if held else self._day_rows(today))
+        earlier, got, after = [r for r in rows if r["ts"] < ts], [], ts
         for r in reversed(earlier):
             if len(got) >= count or after - r["ts"] > MAX_GAP_SECONDS:
                 break
@@ -552,15 +566,21 @@ class AirGradient(Source):
             after = r["ts"]
         return got
 
-    async def latest(self, extras: list[str] = ()) -> Latest:
+    async def latest(self, extras: list[str] = (), held: bool = False) -> Latest:
         """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
         spike is not called poor until the next reading agrees; the value shown is always the latest one. The readings before it
-        come from today's history: when that can't be read, the latest is rated alone."""
-        row = await self._current_row()
+        come from today's history: when that can't be read, the latest is rated alone. held: nothing fetched, the reading it keeps
+        whatever its age and the readings before it it already has (LookupError when it keeps none)."""
+        if held:
+            if not self._current:
+                raise LookupError("no reading held")
+            row = self._current[0]
+        else:
+            row = await self._current_row()
         at = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")) if row.get("timestamp") else None
         need = metrics.REQUIRE_CONSECUTIVE - 1   # the readings before the latest that `sustained` takes in
         try:
-            earlier = await self._previous_rows(int(at.timestamp()), max(need, 1)) if at else []
+            earlier = await self._previous_rows(int(at.timestamp()), max(need, 1), held) if at else []
         except Exception as e:   # only the history failing: the latest reading still stands
             log.warning("AirGradient: today's readings unavailable (%s); rating the latest alone", e)
             earlier = []
