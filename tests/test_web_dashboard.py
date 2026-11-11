@@ -211,8 +211,9 @@ def browser_there() -> bool:
     return subprocess.run(["node", "-e", "require('playwright')"], capture_output=True, timeout=60).returncode == 0
 
 
-@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
 async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overflow_and_no_console_error(server, station, tmp_path):
+    if not browser_there():   # (asked here, by the one worker that runs it, not by every worker as it collects the tests)
+        pytest.skip("needs node with Playwright's Chromium")
     shots = Path(os.getenv("ECOBOT_SCREENSHOTS") or tmp_path)
     shots.mkdir(parents=True, exist_ok=True)
     port = free_port()

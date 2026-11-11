@@ -11,7 +11,6 @@ writes it afresh (only ever on purpose).
 The clock: every `datetime.now()`, `date.today()` and `time.time()` in lib/ and tests/ reads the fixed time, and the station's archive is
 built under it (once per module), so every figure, time and point is the same on every run."""
 
-import asyncio
 import hashlib
 import json
 import os
@@ -21,7 +20,6 @@ import time as _time
 from datetime import date as _date, datetime as _datetime
 from pathlib import Path
 from types import SimpleNamespace as NS
-from unittest import mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -103,29 +101,11 @@ def test_the_clock_is_fixed_in_every_module_whatever_order_they_were_loaded_in(m
     assert issubclass(real.datetime, FrozenDatetime) and not isinstance(now.date(), FrozenDatetime)
 
 
-async def _inline(func, /, *args, **kwargs):
-    return func(*args, **kwargs)
-
-
 @pytest.fixture(scope="module")
-def frozen_archive(tmp_path_factory):
-    """The fake station's whole archive, built at the fixed time (about 8 s, once for the module)."""
-    from lib.ecowitt import Archive, Ecowitt, api, archive
-    from tests.fakes import config, ecowitt_transport
-
-    async def build(path):
-        transport, _ = ecowitt_transport()
-        eco = Ecowitt(config(path), transport=transport)
-        await eco.start()
-        await Archive(eco).run_once()
-        await eco.close()
-        return config(path).storage_path
-    path = tmp_path_factory.mktemp("frozen")
-    with pytest.MonkeyPatch.context() as patch:
-        freeze(patch)
-        with mock.patch.object(api, "MIN_GAP_SECONDS", 0), mock.patch.object(archive, "PACE_SECONDS", 0), \
-                mock.patch.object(asyncio, "to_thread", _inline):
-            return asyncio.run(build(path))
+def frozen_archive(pinned_archive):
+    """The fake station's whole archive, built at the fixed time: conftest's pinned_archive (built once for every worker and run, with
+    tests/clocks.pin, which fixes the clock as freeze() does: the same file)."""
+    return pinned_archive(_datetime.fromtimestamp(FROZEN, ZoneInfo("Australia/Melbourne")))
 
 
 # ---------- the bot over every source ----------

@@ -38,12 +38,10 @@ def at_eval_now(patch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(scope="module")
-def eval_archive(tmp_path_factory):
-    """The fake station's whole archive built at the evals' NOW, once for the module (as tests/test_service_evals.py's)."""
-    path = tmp_path_factory.mktemp("mcp-eval-now")
-    with pytest.MonkeyPatch.context() as patch:
-        at_eval_now(patch)
-        return asyncio.run(evalworld.build_archive(path))
+def eval_archive(shared_archive):
+    """The fake station's whole archive (its ecobot.sqlite) built at EVAL_NOW, the air's month held in it too (real_context), once for every
+    worker and run (tests/evalworld.py's)."""
+    return evalworld.shared_eval_archive(shared_archive)
 
 
 @pytest.fixture

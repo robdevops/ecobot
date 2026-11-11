@@ -11,6 +11,7 @@ real date."""
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -203,12 +204,10 @@ def at_eval_now(patch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(scope="module")
-def eval_archive(tmp_path_factory):
-    """The fake station's whole archive (its ecobot.sqlite) built at EVAL_NOW, once for the module."""
-    path = tmp_path_factory.mktemp("eval-now")
-    with pytest.MonkeyPatch.context() as patch:
-        at_eval_now(patch)
-        return asyncio.run(evalworld.build_archive(path))
+def eval_archive(shared_archive):
+    """The fake station's whole archive (its ecobot.sqlite) built at EVAL_NOW, the air's month held in it too (real_context), once for every
+    worker and run (tests/evalworld.py's)."""
+    return evalworld.shared_eval_archive(shared_archive)
 
 
 def calls_for(tool: str) -> list[tuple[str, dict]]:
@@ -488,8 +487,15 @@ async def test_a_turn_is_capped_at_the_agents_steps():
     assert model.requests[-1]["tool_choice"] == "none"
 
 
-async def test_the_world_is_built_at_the_frozen_clock_and_its_tools_give_real_results_then_the_clock_is_put_back():
+async def test_the_world_is_built_at_the_frozen_clock_and_its_tools_give_real_results_then_the_clock_is_put_back(eval_archive, monkeypatch):
+    """(world() builds its archive with build_archive, under the frozen clock: here it is given a copy of the one build_archive made under
+    it for the module, eval_archive, rather than build the same again.)"""
     import time
+
+    async def built(folder):
+        assert time.time() == EVAL_NOW
+        return Path(shutil.copy(eval_archive, folder / "ecobot.sqlite"))
+    monkeypatch.setattr(evalworld, "build_archive", built)
     async with evalworld.world() as world, world.fresh() as service:
         assert time.time() == EVAL_NOW
         out = json.loads(await service["days"].call({"stat": "sum", "of": "rain", "group_by": "month", "period": "this year"}))

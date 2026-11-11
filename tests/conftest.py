@@ -72,6 +72,13 @@ def pinned_archive(tmp_path_factory):
     return lambda when: _shared_archive(tmp_path_factory, f"pinned-{when.timestamp():.0f}", when)
 
 
+@pytest.fixture(scope="session")
+def shared_archive(tmp_path_factory):
+    """shared_archive(name, make, shaped_by) -> the file make(folder, patch) builds, built once for every worker and run (shared_file):
+    a module's own archive (at its own fixed clock), which its tests copy."""
+    return lambda name, make, shaped_by=(): shared_file(tmp_path_factory, name, make, shaped_by)
+
+
 @pytest.fixture
 def daytime_archive(pinned_archive, monkeypatch):
     """The fake station's archive at a fixed time, 2:05pm on Tue 10 Nov 2026 (clocks.DAYTIME), the clock pinned there for the test: for
@@ -84,12 +91,7 @@ def daytime_archive(pinned_archive, monkeypatch):
 def _shared_archive(tmp_path_factory, name: str, pinned) -> Path:
     """The fake station's whole archive in a file under pytest's own temp folder, named for `name` and the code that shapes it: built by
     the first worker that asks (the others wait and find it), at the clock as it is, or pinned at `pinned`."""
-    import concurrent.futures
-    import fcntl
-    import hashlib
-    from unittest import mock
-
-    from lib.ecowitt import Archive, Ecowitt, api, archive
+    from lib.ecowitt import Archive, Ecowitt
     from tests.fakes import config, ecowitt_transport
 
     async def build(path):
@@ -99,9 +101,27 @@ def _shared_archive(tmp_path_factory, name: str, pinned) -> Path:
         await Archive(eco).run_once()
         await eco.close()
         return config(path).storage_path
+
+    def make(folder, patch):
+        if pinned is not None:
+            clocks.pin(patch, pinned)
+        return _run(build(folder))
+    return shared_file(tmp_path_factory, name, make)
+
+
+def shared_file(tmp_path_factory, name: str, make, shaped_by=()) -> Path:
+    """A file built once by make(folder, patch) -> its path (in that empty folder, with a MonkeyPatch undone after it, the archive's
+    pacing off), kept under pytest's own temp folder named for `name` and the code that shapes it (lib/storage, lib/ecowitt,
+    tests/fakes.py and `shaped_by`, the files of the test that builds it): built by the first worker that asks, the others wait and find
+    it, and later runs too. A test copies it, so none sees another's writes."""
+    import fcntl
+    import hashlib
+
+    from lib.ecowitt import api, archive
     root = Path(__file__).resolve().parent.parent
-    shaped_by = sorted([*root.glob("lib/storage/*.py"), *root.glob("lib/ecowitt/*.py"), root / "tests" / "fakes.py"])
-    digest = hashlib.sha1(b"".join(f.read_bytes() for f in shaped_by)).hexdigest()[:12]
+    files = sorted({*root.glob("lib/storage/*.py"), *root.glob("lib/ecowitt/*.py"), root / "tests" / "fakes.py",
+                    root / "tests" / "clocks.py", *map(Path, shaped_by)})
+    digest = hashlib.sha1(b"".join(f.read_bytes() for f in files)).hexdigest()[:12]
     base = tmp_path_factory.getbasetemp()   # this run's folder under pytest-of-<user> (a worker's is a folder under that)
     while not base.parent.name.startswith("pytest-of-"):
         base = base.parent
@@ -109,16 +129,21 @@ def _shared_archive(tmp_path_factory, name: str, pinned) -> Path:
     with open(shared.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)   # the first worker builds it; the others wait and find it
         if not shared.exists():
-            path = tmp_path_factory.mktemp("archive")
+            folder = tmp_path_factory.mktemp("archive")
             with pytest.MonkeyPatch.context() as patch:
-                if pinned is not None:
-                    clocks.pin(patch, pinned)
-                with mock.patch.object(api, "MIN_GAP_SECONDS", 0), mock.patch.object(archive, "PACE_SECONDS", 0), \
-                        mock.patch.object(asyncio, "to_thread", _inline):
-                    with concurrent.futures.ThreadPoolExecutor(1) as pool:   # (on a thread: an async test may be asking)
-                        built = pool.submit(asyncio.run, build(path)).result()
+                patch.setattr(api, "MIN_GAP_SECONDS", 0)
+                patch.setattr(archive, "PACE_SECONDS", 0)
+                patch.setattr(asyncio, "to_thread", _inline)
+                built = make(folder, patch)
             os.replace(built, shared)
         return shared
+
+
+def _run(coro):
+    """asyncio.run on a thread of its own (an async test may be asking, its loop running on this one)."""
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 async def _inline(func, /, *args, **kwargs):

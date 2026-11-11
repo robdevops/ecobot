@@ -65,6 +65,15 @@ class Serving:
             await self.stop()
 
 
+@pytest.fixture(autouse=True)
+def quick_shutdown(monkeypatch):
+    """A listen stream still open when a test's server stops is ended after a quarter of a second, not ecobot-mcp's SHUTDOWN_SECONDS (3):
+    the client loses its listen either way, and no test here is about how long that takes (tests/test_web_dashboard.py's stream, which
+    must not hold the shutdown up, keeps the 3 s)."""
+    import ecobot_mcp.__main__ as service_main
+    monkeypatch.setattr(service_main, "SHUTDOWN_SECONDS", 0.25)
+
+
 @pytest.fixture
 def service(tmp_path):
     alerts = AlertLog(tmp_path / "alerts.sqlite", TZ)
@@ -257,8 +266,8 @@ async def test_ecobot_mcp_down_for_a_moment_isnt_a_warning_but_down_for_longer_o
     await asyncio.sleep(0.3)
     warned = lambda: [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and r.name == "lib.upstream"]
     assert not warned() and "isn't reachable yet" in caplog.text
-    await asyncio.sleep(0.6)
-    assert warned() and "for 0s" not in warned()[0]
+    await until(warned, what="the warning, once it has been QUIET_SECONDS")   # (0.6 s on: polled, so a slow machine can't miss it)
+    assert "for 0s" not in warned()[0]
     async with Serving(http_app(service, tokens=TOKENS.values()), port):
         for _ in range(100):
             if "again, after" in caplog.text:

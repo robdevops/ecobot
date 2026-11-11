@@ -136,11 +136,17 @@ WHOLE = ("humidity", "wind_direction")   # what the station writes as whole numb
 
 def written(name: str, value: float) -> str:
     """A reading as the station writes it: one decimal, but none for the WHOLE readings, nor for a UV index that is whole."""
+    return writer(name)(value)
+
+
+def writer(name: str):
+    """written(name, ...) as a function of the value alone (the fake history writes a field's every value with it)."""
     base = name.removesuffix("_low").removesuffix("_high")
     if base in WHOLE:
-        return f"{value:.0f}"
-    out = f"{value:.1f}"
-    return out[:-2] if base == "uvi" and out.endswith(".0") else out
+        return "{:.0f}".format
+    if base == "uvi":
+        return lambda value: out[:-2] if (out := f"{value:.1f}").endswith(".0") else out
+    return "{:.1f}".format
 
 
 class FakeEcowitt:
@@ -179,17 +185,27 @@ class FakeEcowitt:
         parse = lambda s: int(datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ).timestamp())
         start, end = parse(p["start_date"]), parse(p["end_date"])
         first = start - start % step if p["cycle_type"] == "1day" else start + -start % step  # on the clock; 1day buckets are UTC days
+        times = range(first, end + 1, step)
+        keys = [str(ts) for ts in times]
+        every = 300 if step <= 1800 else 3600   # each bucket's samples: its first, and its lowest and highest (but for 5 minutes)
+        n = step // every
         out: dict = {}
         for group in p["call_back"].split(","):
             named = {"outdoor": [("temperature", temp), ("humidity", humidity), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)] if group == "indoor" else []):   # (no piezo gauge)
-                for ts in range(first, end + 1, step):
-                    samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                    fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, samples[0])
-                    if p["cycle_type"] != "5min":
-                        for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
-                            fields.setdefault(name + suffix, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, val)
+                if not keys:
+                    continue
+                unit, write = "%" if name == "humidity" else "℃", writer(name)
+                samples = [fn(t) for t in range(first, times[-1] + step, every)]
+                if n == 1:
+                    fields[name] = {"unit": unit, "list": dict(zip(keys, map(write, samples)))}
+                    continue
+                buckets = [samples[i:i + n] for i in range(0, len(samples), n)]
+                fields[name] = {"unit": unit, "list": {k: write(b[0]) for k, b in zip(keys, buckets)}}
+                if p["cycle_type"] != "5min":
+                    fields[name + "_low"] = {"unit": unit, "list": {k: write(min(b)) for k, b in zip(keys, buckets)}}
+                    fields[name + "_high"] = {"unit": unit, "list": {k: write(max(b)) for k, b in zip(keys, buckets)}}
             out[group] = fields
         return out
 

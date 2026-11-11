@@ -224,14 +224,21 @@ class RemoteAlerts:
 
     async def read(self, since: int = 0, expired: bool = False) -> dict:
         """ecobot://alerts?since=… as {alerts, last_id, identity}, waiting for the service as long as it takes; a refusal (MCPError) is
-        raised."""
+        raised. The connection closing under the read (MCPError too, CONNECTION_CLOSED: the service stopping) is no refusal: the read
+        waits for the next connection, as for any other lost one (raised, AlertDelivery would wait its RETRY_SECONDS, 30, before reading
+        again, holding up the alerts of a service that is back in a moment)."""
         from mcp.shared.exceptions import MCPError
+        from mcp_types import CONNECTION_CLOSED
         uri = f"{ALERTS_URI}?since={int(since)}" + ("&expired=true" if expired else "")
         while True:
             try:
                 data = await self.weather.resource(uri, wait=None)
-            except MCPError:
-                raise
+            except MCPError as e:
+                if e.code != CONNECTION_CLOSED:
+                    raise
+                log.debug("The connection closed while the alerts were read; reading them again on the next")
+                await asyncio.sleep(1)
+                continue
             except asyncio.CancelledError:
                 raise
             except Exception as e:   # (the connection lost mid-read: the supervisor builds another)

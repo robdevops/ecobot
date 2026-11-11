@@ -100,6 +100,28 @@ async def build_archive(folder: Path) -> Path:
     return config(folder).storage_path
 
 
+def shared_eval_archive(shared_archive) -> Path:
+    """The archive build_archive makes at EVAL_NOW (at_eval_now first), as real_context leaves it (the air sensor's month held in it
+    too), once for every worker and run: conftest's shared_archive fixture, which the tests that need it pass. real_context over a
+    copy of it finds the air's month held, as it would after reading it into a copy of the bare archive."""
+    here = Path(__file__).resolve().parent
+
+    def make(folder, patch):
+        at_eval_now(patch)
+        return asyncio.run(build_archive(folder))
+    bare = shared_archive(f"eval-{EVAL_NOW:.0f}", make, [__file__, Path(evalkit.__file__)])
+
+    def fill(folder, patch):
+        at_eval_now(patch)
+
+        async def held():
+            await close(await real_context(folder, bare))
+        asyncio.run(held())
+        return folder / "ecobot.sqlite"
+    return shared_archive(f"eval-world-{EVAL_NOW:.0f}", fill, [__file__, Path(evalkit.__file__), here / "test_pollen.py",
+                                                              here / "test_service_forecast.py", *here.parent.glob("lib/**/*.py")])
+
+
 async def real_context(folder: Path, archive: Path):
     """The ten tools' sources, faked, at the clock as it is (at_eval_now), their files in `folder` (not the archive's): the archived
     station, an AirGradient on the same file, both together, Open-Meteo, the pollen page in season; the context's own clock is EVAL_NOW."""

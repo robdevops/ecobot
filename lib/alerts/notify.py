@@ -310,7 +310,8 @@ class AlertDelivery:
         first pass), after its newest, as at a start."""
         start = newest
         if self.seen_at is not None:
-            fresh = [e for e in await value(self.log.since(0)) if _epoch(e.get("time")) >= self.seen_at]
+            since = int(self.seen_at)   # (an event's time is in whole seconds: one logged later in the same second is news too)
+            fresh = [e for e in await value(self.log.since(0)) if _epoch(e.get("time")) >= since]
             start = fresh[0]["id"] - 1 if fresh else newest
         log.warning("Alerts: the service's alert log is another than the one the last alert delivered (%s) is from; "
                     "going on in it after %s", self.state.read, start)

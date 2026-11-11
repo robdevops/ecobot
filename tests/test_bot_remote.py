@@ -11,6 +11,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+import ecobot_mcp.__main__ as service_main
 from lib import upstream
 from lib import model_tools, weather as weather_module
 from lib.alert_log import AlertLog
@@ -32,11 +33,10 @@ def at_eval_now(patch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(scope="module")
-def eval_archive(tmp_path_factory):
-    path = tmp_path_factory.mktemp("remote-eval-now")
-    with pytest.MonkeyPatch.context() as patch:
-        at_eval_now(patch)
-        return asyncio.run(evalworld.build_archive(path))
+def eval_archive(shared_archive):
+    """The fake station's whole archive (its ecobot.sqlite) built at EVAL_NOW, the air's month held in it too (real_context), once for every
+    worker and run (tests/evalworld.py's)."""
+    return evalworld.shared_eval_archive(shared_archive)
 
 
 @pytest.fixture
@@ -56,6 +56,7 @@ def quick(monkeypatch):
     """Reconnections and waits in tenths of a second, not seconds."""
     monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
     monkeypatch.setattr(weather_module, "CALL_WAIT", 0.3)
+    monkeypatch.setattr(service_main, "SHUTDOWN_SECONDS", 0.25)   # (a listen still open when a server stops: tests/test_mcp_listen.py)
 
 
 @pytest.fixture

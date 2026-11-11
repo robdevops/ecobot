@@ -82,26 +82,13 @@ class Upstream:
         return Client(server, mode=VERSION, cache=None)
 
     async def run(self):
-        """Keep a connection, until cancelled."""
+        """Keep a connection, until cancelled. Each connection runs in a task of its own (_connection): the SDK's task groups (anyio) can
+        take a cancellation of the task they run in for their own and end with the transport's error instead, the cancellation gone
+        (uncancelled); this task's stays counted (cancelling()), so the supervisor stops all the same rather than connect again forever."""
         while True:
             self.refused.clear()
             try:
-                async with self._client() as client:
-                    raw = await client.session.send_discover(VERSION)
-                    discovered = types.DiscoverResult.model_validate(raw)
-                    client.session.adopt(discovered)
-                    if self.on_discover:
-                        await self.on_discover(discovered)
-                    self.client, self.attempts = client, 0
-                    self.connected.set()
-                    target = self.target if isinstance(self.target, str) else "in-process"
-                    if self.warned:
-                        log.info("ecobot-mcp: connected to %s again, after %.0fs", target, time.monotonic() - self.down_since)
-                    else:
-                        log.info("ecobot-mcp: connected to %s", target)
-                    self.down_since, self.warned = None, False
-                    await self._listen(client)
-                    log.info("ecobot-mcp ended the listen (a restart?); connecting again")
+                await asyncio.create_task(self._connection())
             except asyncio.CancelledError:
                 raise
             except BaseException as e:   # (a transport failure ends the whole client, as an exception group too)
@@ -119,11 +106,31 @@ class Upstream:
                     self.warned = True
                 else:
                     log.debug("ecobot-mcp at %s isn't reachable yet (%s); trying again", self.target, why)
-            finally:
-                self.client = None
-                self.connected.clear()
             await asyncio.sleep(BACKOFF[min(self.attempts, len(BACKOFF) - 1)])
             self.attempts += 1
+
+    async def _connection(self):
+        """One connection: built, discovered and listening, until its listen ends (returns) or it fails (raises)."""
+        try:
+            async with self._client() as client:
+                raw = await client.session.send_discover(VERSION)
+                discovered = types.DiscoverResult.model_validate(raw)
+                client.session.adopt(discovered)
+                if self.on_discover:
+                    await self.on_discover(discovered)
+                self.client, self.attempts = client, 0
+                self.connected.set()
+                target = self.target if isinstance(self.target, str) else "in-process"
+                if self.warned:
+                    log.info("ecobot-mcp: connected to %s again, after %.0fs", target, time.monotonic() - self.down_since)
+                else:
+                    log.info("ecobot-mcp: connected to %s", target)
+                self.down_since, self.warned = None, False
+                await self._listen(client)
+                log.info("ecobot-mcp ended the listen (a restart?); connecting again")
+        finally:
+            self.client = None
+            self.connected.clear()
 
     async def _listen(self, client: Client):
         """Listen to every resource ecobot-mcp lists and its lists' changes, passing each event on, until the stream ends."""
