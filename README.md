@@ -98,6 +98,26 @@ journalctl -fu ecobot
 
 Warnings and errors alone: `journalctl -p warning -u ecobot`.
 
+#### The weather service on its own (optional)
+
+Not needed: without it the bot runs everything itself, as before. `ecobot-mcp.service` runs the weather service as its own program
+(`python -m ecobot_service`, an MCP server at `http://127.0.0.1:8765/mcp`) for other MCP clients, with the bot as one of them. It uses the
+bot's data folder, so back that up first: `sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then:
+
+1. Add to `/etc/ecobot.env` (one token, made with `openssl rand -hex 16`):
+   ```
+   MCP_TOKENS=bot:<token>
+   WEATHER_MCP_URL=http://127.0.0.1:8765/mcp
+   WEATHER_MCP_TOKEN=<token>
+   ```
+2. Restart the bot, now the service's client (it waits for the service): `sudo systemctl restart ecobot`
+3. Start the service: `sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ecobot-mcp`
+4. Check that both run as the same user and the folder's owner is unchanged (the three numbers match):
+   `systemctl show -p UID --value ecobot ecobot-mcp; stat -c %u /var/lib/private/ecobot`
+
+Logs: `journalctl -fu ecobot-mcp`. To go back: `sudo systemctl disable --now ecobot-mcp`, remove the three lines, `sudo systemctl restart ecobot`.
+Only one process runs the service on the data folder: started beside a bot without `WEATHER_MCP_URL`, it stops, saying so in its log.
+
 Then message `/report` to your Telegram bot.
 
 The service runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
