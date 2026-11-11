@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14191D">
+<meta name="color-scheme" content="dark">
+<title>Weather station</title>
+<!-- The gauges, live (lib/web_dashboard.py): drawn here from /dashboard/data as the PNG (lib/gauges.py) draws them, in the same
+     colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless. -->
+<style>
+  :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "DejaVu Sans", Arial, sans-serif;
+    -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { overflow-x: hidden; overflow-y: auto; }
+  #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px); min-height: calc(100% - var(--status, 18px)); }
+  .tile { position: relative; container-type: inline-size; overflow: hidden; }
+  .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .tile svg text { font-family: inherit; }
+  .at { position: absolute; display: flex; align-items: center; justify-content: center; white-space: nowrap; line-height: 1; }
+  .title { left: 0; right: 0; }
+  .chip { border-radius: 1.875cqw; }
+  #status { height: var(--status, 18px); padding: 0 10px; font-size: 12px; line-height: var(--status, 18px); text-align: right;
+    color: var(--soft); overflow: hidden; }
+  #status.lost { color: #F4A93B; }
+  #message { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
+    font-size: 20px; color: var(--soft); }
+  body.unavailable #message { display: flex; }
+</style>
+</head>
+<body>
+<main id="grid" aria-live="polite"></main>
+<div id="message"></div>
+<div id="status">loading…</div>
+<script>
+"use strict";
+(() => {
+  const BASE = location.pathname.replace(/\/+$/, "");
+  const DATA = BASE + "/data", EVENTS = BASE + "/events";
+  const REFETCH_MS = 60000;            // the fallback: the data fetched again every minute, events or not
+  const MIN_TILE = 180;                // the narrowest tile (CSS px) worth fitting on one screen: narrower, the page scrolls
+  const PAD = 8, STATUS = 18;
+  const NS = "http://www.w3.org/2000/svg";
+  const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
+  let L = null, tiles = [], asOf = null, lost = false;
+
+  // ---------- colours ----------
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const hex = (c) => "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+  const blend = (colour, share, toward) => {   // `share` of the way from colour to `toward` (lib/charts _blend)
+    const a = rgb(colour), b = rgb(toward);
+    return hex(a.map((v, i) => v + (b[i] - v) * share));
+  };
+
+  // ---------- geometry (lib/gauges.py) ----------
+  const rad = (d) => d * Math.PI / 180;
+  const polar = (cx, cy, r, deg) => [cx + r * Math.cos(rad(deg)), cy - r * Math.sin(rad(deg))];
+  const clamp01 = (v) => Math.min(Math.max(v, 0), 1);
+  const figure = (v, decimals) => Number(v).toFixed(decimals);
+  const tickText = (t) => String(Number(t));
+  const lw = (points) => points * 100 / 72;   // a line width in points at the PNG's 100 DPI, in pixels
+
+  function el(name, attrs, parent) {
+    const e = document.createElementNS(NS, name);
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function text(svg, x, y, words, size, colour, anchor = "middle", weight = "normal") {
+    const t = el("text", {x: x.toFixed(1), y: y.toFixed(1), "font-size": size, fill: colour, "text-anchor": anchor,
+                          "dominant-baseline": "central", "font-weight": weight}, svg);
+    t.textContent = words;
+    return t;
+  }
+
+  function scaleBar(svg, x, y0, y1, tile, ink) {
+    const n = tile.colours.length, step = (y1 - y0) / n;
+    [...tile.colours].reverse().forEach((colour, i) =>
+      el("rect", {x, y: y0 + i * step + 1, width: L.bar_width, height: Math.max(step - 2, 0), fill: ink(colour)}, svg));
+    for (const tick of tile.ticks) {
+      const y = y0 + (tile.high - tick) / (tile.high - tile.low) * (y1 - y0);
+      text(svg, x - 6, y, tickText(tick), 17, ink(L.soft), "end");
+    }
+  }
+
+  function thermometerPath(cx, top, half, bulbY, radius) {
+    const join = bulbY - Math.sqrt(radius ** 2 - half ** 2), capY = top + half;
+    return `M${cx - half},${join} L${cx - half},${capY} A${half},${half} 0 0 1 ${cx + half},${capY} ` +
+           `L${cx + half},${join} A${radius},${radius} 0 1 1 ${cx - half},${join} Z`;
+  }
+
+  function thermometer(svg, tile, ink, id) {
+    const top = 95, bottom = 238, cx = 285, bulb = 280, half = L.tube_half, radius = L.bulb_radius, gap = L.mercury_gap;
+    scaleBar(svg, cx - half - L.bar_gap - L.bar_width, top, bottom, tile, ink);
+    let level = bulb - Math.sqrt((radius - gap) ** 2 - (half - gap) ** 2);   // no reading: just the bulb
+    if (tile.value !== null) level = top + (1 - clamp01((tile.value - tile.low) / (tile.high - tile.low))) * (bottom - top);
+    const clip = el("clipPath", {id}, el("defs", {}, svg));
+    el("rect", {x: 0, y: level, width: L.cell[0], height: L.cell[1]}, clip);
+    el("path", {d: thermometerPath(cx, top - 10 + gap, half - gap, bulb, radius - gap), fill: ink(L.fill), "clip-path": `url(#${id})`}, svg);
+    el("path", {d: thermometerPath(cx, top - 10, half, bulb, radius), fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5),
+                "stroke-linejoin": "round"}, svg);
+    if (tile.value !== null) text(svg, cx - 50, bulb, `${figure(tile.value, tile.decimals)} ${tile.unit}`, 40, ink(L.soft), "end");
+  }
+
+  function beaker(svg, tile, ink, id) {
+    const top = 90, bottom = 300, left = 235, right = 345, r = 34;
+    scaleBar(svg, left - L.bar_gap - L.bar_width, top, bottom - 10, tile, ink);
+    const jar = `M${left},${top} L${left},${bottom - r} A${r},${r} 0 0 0 ${left + r},${bottom} L${right - r},${bottom} ` +
+                `A${r},${r} 0 0 0 ${right},${bottom - r} L${right},${top}`;
+    if (tile.value !== null && tile.value > 0) {
+      const level = bottom - Math.max((tile.value - tile.low) / (tile.high - tile.low), 0.02) * (bottom - 10 - top);
+      const clip = el("clipPath", {id}, el("defs", {}, svg));
+      el("rect", {x: 0, y: level, width: L.cell[0], height: L.cell[1]}, clip);
+      el("path", {d: jar + " Z", fill: ink(L.water), "clip-path": `url(#${id})`}, svg);
+    }
+    el("path", {d: jar, fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5), "stroke-linejoin": "round"}, svg);
+    if (tile.value !== null) text(svg, 290, 345, `${figure(tile.value, tile.decimals)} ${tile.unit}`, 46, ink(L.soft));
+  }
+
+  function dial(svg, tile, ink) {
+    const cx = 240, cy = 203, angle = (v) => L.start - L.sweep * clamp01((v - tile.low) / (tile.high - tile.low));
+    el("circle", {cx, cy, r: 138, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
+    const n = tile.colours.length, step = L.sweep / n, outer = L.ring_outer, inner = L.ring_outer - L.band_width;
+    tile.colours.forEach((colour, i) => {
+      const a0 = L.start - i * step - 0.8, a1 = a0 - step + 1.6;
+      const [x0, y0] = polar(cx, cy, outer, a0), [x1, y1] = polar(cx, cy, outer, a1);
+      const [x2, y2] = polar(cx, cy, inner, a1), [x3, y3] = polar(cx, cy, inner, a0);
+      const big = a0 - a1 > 180 ? 1 : 0;
+      el("path", {d: `M${x0},${y0} A${outer},${outer} 0 ${big} 1 ${x1},${y1} L${x2},${y2} A${inner},${inner} 0 ${big} 0 ${x3},${y3} Z`,
+                  fill: ink(colour)}, svg);
+    });
+    for (const tick of tile.ticks) {
+      const [x, y] = polar(cx, cy, L.label_radius, angle(tick));
+      text(svg, x, y, tickText(tick), 17, ink(L.soft));
+    }
+    text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
+    if (tile.value !== null) {
+      const a = angle(tile.value);
+      const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -24, a), polar(cx, cy, 10, a - 90)];
+      el("polygon", {points: pts.map((p) => p.map((v) => v.toFixed(2)).join(",")).join(" "), fill: ink(L.needle)}, svg);
+      text(svg, cx, cy + 102, figure(tile.value, tile.decimals), 50, ink(L.ink));
+    }
+    el("circle", {cx, cy, r: 25, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
+  }
+
+  const DRAW = {thermometer, dial, beaker};
+
+  // ---------- HTML: the title and the table, placed in the tile's own pixels (480 x 575), sized with it ----------
+  function place(parent, x, y, w, h, size, words, cls, style) {
+    const [W, H] = L.cell;
+    const d = document.createElement("div");
+    d.className = "at " + (cls || "");
+    Object.assign(d.style, {left: `${x / W * 100}%`, top: `${y / H * 100}%`, width: `${w / W * 100}%`, height: `${h / H * 100}%`,
+                            fontSize: `${size / W * 100}cqw`}, style || {});
+    d.textContent = words;
+    parent.appendChild(d);
+    return d;
+  }
+
+  function table(box, tile, ink) {
+    const left = 60, top = 378, w = 128, h = 38, gap = 4;
+    const xs = tile.columns.map((_, i) => left + (w + gap) * (i + 1));
+    place(box, left, top, w, h, 17, tile.unit, "unit", {color: ink(L.ink), fontWeight: 700});
+    tile.columns.forEach((name, i) =>
+      place(box, xs[i], top, w, h, 19, `${L.marks[name]} ${name}`, "chip head", {background: ink(L.chips[name]), color: ink("#FFFFFF"), fontWeight: 700}));
+    L.rows.forEach((name, r) => {
+      const y = top + (r + 1) * (h + 10);
+      place(box, left, y, w, h, 19, name, "chip row", {background: ink(L.chip), color: ink(L.soft)});
+      (tile.rows[name] || []).forEach((v, i) => {
+        if (i < xs.length) place(box, xs[i], y, w, h, 21, v === null ? "-" : figure(v, tile.decimals), "figure", {color: ink(L.ink), fontWeight: 700});
+      });
+    });
+  }
+
+  function drawTile(tile, i) {
+    const ink = tile.faded ? (c) => blend(c, 1 - L.fade, L.bg) : (c) => c;
+    const box = document.createElement("section");
+    box.className = "tile" + (tile.faded ? " faded" : "");
+    box.dataset.kind = tile.kind;
+    box.setAttribute("aria-label", tile.value === null ? tile.title : `${tile.title} ${figure(tile.value, tile.decimals)} ${tile.unit}`);
+    const svg = el("svg", {viewBox: `0 0 ${L.cell[0]} ${L.cell[1]}`, preserveAspectRatio: "xMidYMid meet", "aria-hidden": "true"});
+    box.appendChild(svg);
+    DRAW[tile.kind](svg, tile, ink, `clip${i}`);
+    place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
+    table(box, tile, ink);
+    return box;
+  }
+
+  // ---------- the layout: the columns that make the tiles largest with all of them on the screen ----------
+  function layout() {
+    const n = grid.children.length;
+    if (!n || !L) return;
+    const aspect = L.cell[0] / L.cell[1];
+    const W = window.innerWidth - 2 * PAD, H = window.innerHeight - 2 * PAD - STATUS;
+    let best = {w: 0, cols: 1};
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols), w = Math.min(W / cols, H / rows * aspect);
+      if (w > best.w) best = {w, cols};
+    }
+    let {w, cols} = best, scroll = false;
+    if (w < MIN_TILE) {   // too small to read on one screen: as many columns as fit at a readable size, and the page scrolls
+      cols = Math.max(1, Math.min(n, Math.floor(W / MIN_TILE)));
+      w = W / cols;
+      scroll = true;
+    }
+    w = Math.max(Math.floor(w), 1);
+    document.documentElement.style.setProperty("--pad", PAD + "px");
+    document.documentElement.style.setProperty("--status", STATUS + "px");
+    grid.style.gridTemplateColumns = `repeat(${cols}, ${w}px)`;
+    grid.style.gridAutoRows = `${Math.floor(w / aspect)}px`;
+    document.body.dataset.columns = cols;
+    document.body.dataset.scroll = scroll ? "yes" : "no";
+  }
+
+  // ---------- the data ----------
+  function showStatus() {
+    statusLine.classList.toggle("lost", lost);
+    statusLine.textContent = lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : "";
+  }
+
+  function render(data) {
+    L = data.look;
+    tiles = data.tiles || [];
+    asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
+    document.body.classList.toggle("unavailable", !tiles.length);
+    message.textContent = data.unavailable || "";
+    grid.replaceChildren(...tiles.map(drawTile));
+    layout();
+  }
+
+  let fetching = null;
+  async function refresh() {
+    if (fetching) return fetching;
+    fetching = (async () => {
+      try {
+        const response = await fetch(DATA, {cache: "no-store"});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+        lost = false;
+      } catch (e) {
+        lost = true;
+      } finally {
+        showStatus();
+        fetching = null;
+      }
+    })();
+    return fetching;
+  }
+
+  // ---------- the events: a new reading, fetched and drawn in place ----------
+  let source = null;
+  function listen() {
+    if (!window.EventSource) return;
+    source = new EventSource(EVENTS);
+    source.addEventListener("readings", refresh);
+    source.onopen = () => { if (lost) refresh(); };
+    source.onerror = () => {
+      lost = true;
+      showStatus();
+      if (source.readyState === EventSource.CLOSED) {   // (refused outright: the browser won't retry by itself)
+        source.close();
+        setTimeout(listen, 10000);
+      }
+    };
+  }
+
+  let resizing = 0;
+  const relayout = () => { cancelAnimationFrame(resizing); resizing = requestAnimationFrame(layout); };
+  window.addEventListener("resize", relayout);
+  window.addEventListener("orientationchange", relayout);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  setInterval(refresh, REFETCH_MS);
+  refresh();
+  listen();
+})();
+</script>
+</body>
+</html>

@@ -67,8 +67,9 @@ At least one of Ecowitt (cloud or Home Assistant) or AirGradient (cloud, local o
 |---|---|---|
 | `MCP_BIND` | `127.0.0.1:8765` | `host:port` it listens on (`[::1]:8765` for IPv6; Docker sets `0.0.0.0:8765`). Serve it to other machines through TLS (a reverse proxy such as Caddy) |
 | `MCP_ALLOWED_HOSTS` | none | More `Host` names it answers, besides `127.0.0.1`, `localhost` and its own hostname (in Docker, `ecobot-mcp`), any port unless one is given (`weather.lan`, `192.168.1.5:8765`); any other is refused (421), against DNS rebinding. Add the name or IP address a proxy or a LAN client uses |
+| `MCP_DASHBOARD` | `on` | The gauges' live web page at `/dashboard` beside `/mcp` (`http://deb1:8765/dashboard`): read-only, so it needs no token and answers any `Host` (open it by the machine's name or address from the LAN); `/mcp` keeps both checks. `off`: `/dashboard`, `/dashboard/data` and `/dashboard/events` answer 404 |
 
-Every request needs a token (`AUTH_TOKENS`, below). Chart images are not a setting of ecobot-mcp but of each client: a client whose MCP URL ends `?charts=png` (`http://127.0.0.1:8765/mcp?charts=png`) gets each chart as a PNG beside the figures, drawn in `DARKMODE`'s theme; a call's request `_meta` `chart_image` (`"png"` or `"none"`) overrides its connection's ([ecobot-mcp.md](ecobot-mcp.md) 3.7). They need Pillow (`requirements-charts.txt`, in both Docker images): installed from `requirements-mcp.txt` alone ecobot-mcp answers with the charts' JSON and a note, and warns once.
+Every request to `/mcp` needs a token (`AUTH_TOKENS`, below). Chart images are not a setting of ecobot-mcp but of each client: a client whose MCP URL ends `?charts=png` (`http://127.0.0.1:8765/mcp?charts=png`) gets each chart as a PNG beside the figures, drawn in `DARKMODE`'s theme; a call's request `_meta` `chart_image` (`"png"` or `"none"`) overrides its connection's ([ecobot-mcp.md](ecobot-mcp.md) 3.7). They need Pillow (`requirements-charts.txt`, in both Docker images): installed from `requirements-mcp.txt` alone ecobot-mcp answers with the charts' JSON and a note, and warns once.
 
 ## The bot's settings (`BOT_`)
 

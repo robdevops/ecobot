@@ -19,6 +19,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
   - [Docker](#docker)
     - [Docker logging](#docker-logging)
     - [Docker networking](#docker-networking)
+- [Web dashboard](#web-dashboard)
 - [Upgrading](#upgrading)
   - [Renamed settings](#renamed-settings)
   - [systemd](#systemd-1)
@@ -30,6 +31,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
 - **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message, under gauges of the temperature, humidity and rain. `/dashboard` draws the station's gauges with the day's, month's and year's highs and lows.
+- **Web dashboard:** the same gauges as a live page in any browser on your network, laid out to fill a phone, a tablet or a screen.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.
 - **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast.
 - **Cheap to run:** most answers are worked out by the bot itself, and the AI model is only called when it's needed.
@@ -194,6 +196,18 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ec
 ```
 
 `/opt/ecobot/.env` holds one `COMPOSE_FILE=` line: to use more than one of these files, list them all in it, separated by `:`.
+
+## Web dashboard
+
+ecobot-mcp also serves the station's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
+(your machine's name or IP address). It looks like `/dashboard` in the chat, drawn by the browser (plain HTML5, nothing fetched from
+the internet), and fits every tile on the screen in portrait or landscape where they stay readable (on a phone it scrolls). It
+updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away.
+
+It is read-only (the weather readings, nothing else), so it is open to anyone on your network: no token, and any name or address
+in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
+Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
+turn it off, set `MCP_DASHBOARD=off`.
 
 ## Upgrading
 

@@ -648,6 +648,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
      gives the model only the text (`for_model`, as today). The dashboard's gauges move to ecobot-mcp the same way: a tool or resource
      that returns the gauge sheet as a PNG, its figures as text. The bot then imports neither Pillow nor `lib/charts.py`,
      `lib/draw.py` or `lib/gauges.py`.
+     The gauges' live page is already ecobot-mcp's: `/dashboard` beside `/mcp` (`lib/web_dashboard.py`, `MCP_DASHBOARD`, on by
+     default) is a self-contained HTML5 page drawing the same tiles in the browser (inline SVG, `lib/gauge_look.py`'s colours and
+     sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`
+     event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's change detection). Read-only, so no token
+     and no Host check; `/mcp` keeps both.
    - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,
      the alert rules and the alert log itself) is deleted. Under systemd, `ecobot.service` wants and starts after `ecobot-mcp.service`;
      in Docker this is already the layout. The bot's image installs only its own packages (python-telegram-bot, openai, mcp, httpx).

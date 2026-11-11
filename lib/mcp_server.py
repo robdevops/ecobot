@@ -21,7 +21,8 @@ token check.
   - **Prompts** (3.5): PROMPTS, each a question in words with its period an argument; no logic.
   - **HTTP** (`http_app`): `streamable_http_app` at /mcp, its Host header checked against the allowed hosts
     (TransportSecuritySettings: 127.0.0.1 and localhost unless MCP_ALLOWED_HOSTS says), each request's bearer token against
-    AUTH_TOKENS (TokenCheck: a constant-time compare, one token per client, so one can be revoked alone).
+    AUTH_TOKENS (TokenCheck: a constant-time compare, one token per client, so one can be revoked alone). Beside it, unless MCP_DASHBOARD
+    is off, the gauges' live page at /dashboard (lib/web_dashboard.py): read-only, so neither the token nor the Host is asked.
 
 `EcobotServer(ctx, alert_log)` builds it over the service's Context; `run()` is its publishing, for as long as it runs. Nothing here
 fetches, alerts or writes: ecobot_mcp runs the sources and the rules."""
@@ -55,6 +56,7 @@ from .service.current import CurrentTool
 from .service.instructions import instructions
 from .service.names import AIR_DEVICE, STATION, Catalogue
 from .tools import json_result
+from .web_dashboard import WebDashboard
 
 log = logging.getLogger(__name__)
 requests_log = logging.getLogger(__name__ + ".requests")   # one line per HTTP request (RequestLog)
@@ -546,14 +548,19 @@ class RequestLog:
 
 
 def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "localhost"), issuer_url: str = "http://127.0.0.1:8765",
-             path: str = "/mcp"):
-    """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS), every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth
-    metadata is published (resource_server_url=None)."""
+             path: str = "/mcp", dashboard: bool = True):
+    """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS),
+    every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth metadata is published
+    (resource_server_url=None). With `dashboard` (MCP_DASHBOARD), the gauges' live page beside it at /dashboard (lib/web_dashboard.py):
+    read-only, no token, any Host; `app.state.closing` ends its event streams at shutdown."""
     check = TokenCheck(tokens) if tokens else None
+    web = WebDashboard(server, WEATHER_URI) if dashboard else None
     app = server.server.streamable_http_app(
         streamable_http_path=path, transport_security=host_settings(allowed_hosts),
-        auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check)
+        auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check,
+        custom_starlette_routes=web.routes() if web else None)
     app.state.tokens = check
+    app.state.closing = web.close if web else None
     app.add_middleware(RequestLog)   # (added last: outermost, so it sees the token's and the Host's refusals too)
     return app
 

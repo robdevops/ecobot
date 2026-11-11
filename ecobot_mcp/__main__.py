@@ -28,11 +28,22 @@ SHUTDOWN_SECONDS = 3   # how long uvicorn waits for open connections (a listen s
 
 class Uvicorn(uvicorn.Server):
     """uvicorn's server, leaving SIGINT and SIGTERM to ecobot-mcp (which closes everything in order: uvicorn's own handling raises the
-    signal again once it has stopped, ending the process before the sources are closed)."""
+    signal again once it has stopped, ending the process before the sources are closed), and ending the dashboard's event streams as it
+    stops."""
 
     @contextlib.contextmanager
     def capture_signals(self):
         yield
+
+    async def shutdown(self, sockets=None):
+        """uvicorn's graceful shutdown, the app's endless streams (the dashboard's events: `app.state.closing`) ended first, once no new
+        connection is accepted, so it doesn't wait on them."""
+        for server in self.servers:
+            server.close()
+        closing = getattr(getattr(self.config.app, "state", None), "closing", None)
+        if closing is not None:
+            closing()
+        await super().shutdown(sockets)
 
 
 def server_config(app, host: str, port: int) -> uvicorn.Config:
@@ -79,7 +90,8 @@ async def main():
             stack.push_async_callback(source.warmer.stop)
         server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version())
         hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_allowed_hosts)))   # (its own name too: a container's hostname)
-        app = http_app(server, tokens=tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
+        app = http_app(server, tokens=tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}",
+                       dashboard=cfg.mcp_dashboard)
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()
@@ -96,9 +108,12 @@ async def main():
             asyncio.get_running_loop().add_signal_handler(sig, stop.set)
         web = Uvicorn(server_config(app, host, port))
         serving = asyncio.create_task(web.serve())
-        log.info("MCP: http://%s:%d/mcp, %s; answering Host %s", host if ":" not in host else f"[{host}]", port,
+        shown = host if ":" not in host else f"[{host}]"
+        log.info("MCP: http://%s:%d/mcp, %s; answering Host %s", shown, port,
                  f"{len(tokens)} token(s) from AUTH_TOKENS" if cfg.auth_tokens else f"the token in {auth_token.path(cfg.state_path.parent)}",
                  ", ".join(hosts))
+        if cfg.mcp_dashboard:
+            log.info("Dashboard: http://%s:%d/dashboard (read-only, no token, any Host; MCP_DASHBOARD=off turns it off)", shown, port)
         waiting = asyncio.create_task(stop.wait())
         await asyncio.wait({serving, waiting}, return_when=asyncio.FIRST_COMPLETED)
         server.listen.close()   # (the listen streams end gracefully: their clients know to listen again)

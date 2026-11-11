@@ -1,35 +1,19 @@
 """The dashboard: the station's readings as gauges on a dark card, each with its highest and lowest of the day, month and year.
 
 A thermometer, a dial or a rain beaker per tile (specs.Tile), three tiles to a row, drawn on one canvas laid out in pixels (the top left
-is 0, 0). A tile with no reading is dimmed. Safe to call from several threads, as charts.render is (they share its drawing lock).
+is 0, 0), in lib/gauge_look.py's colours and sizes (the live web page, lib/web_dashboard.py, draws with them too). A tile with no reading
+is dimmed. Safe to call from several threads, as charts.render is (they share its drawing lock).
 """
 
 import math
 
 from .charts import _DRAWING, _blend
 from .draw import PT, Canvas, arc, clip_below, rounded_rect
+from .gauge_look import (BAND_WIDTH, BAR_GAP, BAR_WIDTH, BG, BULB_RADIUS, CELL_H, CELL_W, CHIP, CHIPS, FADE, FILL, INK, LABEL_RADIUS,
+                         MARGIN, MARKS, MERCURY_GAP, NEEDLE, RING_OUTER, ROWS, SOFT, START, SWEEP, TUBE_HALF, WATER, faded)
 from .specs import Dashboard, Tile
 
-BG = "#14191D"
-INK = "#E8EAED"             # the titles, the figures
-SOFT = "#B8BDC2"            # scale numbers, outlines
-CHIP = "#3A4046"            # the row names' backing
-MAX_CHIP, MIN_CHIP, TOTAL_CHIP = "#C62828", "#4FB3F6", "#5BC8F0"
-CHIPS = {"Max": MAX_CHIP, "Min": MIN_CHIP, "Total": TOTAL_CHIP}
-MARKS = {"Max": "▲", "Min": "▼", "Total": "+"}   # in front of a column's name
-FILL = "#D32F27"            # the thermometer's mercury
-TUBE_HALF, BULB_RADIUS = 28, 38   # the thermometer: half the tube's width, the bulb's radius (pixels, to the outline)
-MERCURY_GAP = 7             # the gap between the outline and the red, the same round the bulb as up the tube
-BAR_WIDTH, BAR_GAP = 13, 12   # the scale's coloured blocks beside a thermometer or beaker: how wide, and how far from its outline
-RING_OUTER, BAND_WIDTH = 130, 22   # a dial's coloured scale: its outer radius and how wide it is (the outline is at 138)
-LABEL_RADIUS = 84           # where a dial's numbers sit, just inside its scale
-WATER = "#4FB3F6"           # the rain beaker's water
-NEEDLE = "#3E86C0"
-CELL_W, CELL_H, MARGIN = 480, 575, 20
 DPI = 100
-FADE = 0.4                  # how much of its colour a tile with no reading keeps
-SWEEP, START = 250.0, 215.0   # the dial runs clockwise from START degrees (0 = right, 90 = up) through SWEEP degrees
-ROWS = ("Daily", "Monthly", "Yearly")
 
 
 def _lw(width: float) -> float:
@@ -154,7 +138,7 @@ DRAW = {"thermometer": _thermometer, "dial": _dial, "beaker": _beaker}
 
 
 def _tile(c: Canvas, tile: Tile, ox: float, oy: float):
-    keep = 1.0 if tile.value is not None or any(any(f is not None for f in figures) for figures in tile.rows.values()) else FADE
+    keep = FADE if faded(tile) else 1.0
     ink = (lambda colour: _blend(colour, 1 - keep, BG)) if keep < 1 else (lambda colour: colour)   # dimmed towards the card
     _text(c, ox + CELL_W / 2, oy + 38, tile.title, 38, ink(INK))
     DRAW[tile.kind](c, tile, ox, oy, ink)
