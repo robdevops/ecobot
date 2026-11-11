@@ -205,7 +205,7 @@ class RemoteAlerts:
 
 class RemoteWeather:
     """The service at `target` (its MCP URL; in tests, a Server in-process), as the bot's interface. `run()` is the supervisor (the
-    bridge's Upstream: one client, discovered by hand for the instructions, listening; on a transport error or a lost or ended listen it
+    lib/upstream.py's Upstream: one client, discovered by hand for the instructions, listening; on a transport error or a lost or ended listen it
     is dropped and built again after a backoff, which discovers and listens again). Each new connection reads the tool list and the
     station; the listen's events keep them current (ToolsListChanged, the station's and the forecast's ResourceUpdated) and wake the
     alert delivery (the alerts'). A call while it is being reached waits up to CALL_WAIT seconds (a background one not at all) and is
@@ -213,7 +213,7 @@ class RemoteWeather:
     is_weather, remote = True, True
 
     def __init__(self, target, token: str | None = None, tz=None):
-        from ecobot_service.bridge import Upstream
+        from lib.upstream import Upstream
         self.target, self.fallback_tz, self.station_tz = target, tz, None
         self.upstream = Upstream(target, token, on_event=self._event, on_discover=self._discovered, on_listening=self._listening,
                                  resources=LISTENED)

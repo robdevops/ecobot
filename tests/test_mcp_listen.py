@@ -17,9 +17,9 @@ import httpx
 import pytest
 from mcp import Client
 
-from ecobot_service import bridge
+from lib import upstream
 from ecobot_service.__main__ import Uvicorn, server_config
-from ecobot_service.bridge import Upstream, http_transport
+from lib.upstream import Upstream, http_transport
 from lib.alert_log import AlertLog
 from lib.mcp_server import ALERTS_URI, EcobotServer, http_app
 from lib.service.context import Context
@@ -73,7 +73,7 @@ def service(tmp_path):
 
 
 async def test_a_client_that_listens_hears_an_alert_and_after_a_lost_listen_listens_again_and_reads_what_it_missed(service, monkeypatch):
-    monkeypatch.setattr(bridge, "BACKOFF", (0.1,))
+    monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
     alerts, port = service.alert_log, free_port()
     url = f"http://127.0.0.1:{port}/mcp"
     publishing = asyncio.create_task(service.watch_alerts())
@@ -139,22 +139,6 @@ async def test_a_request_without_the_token_with_a_wrong_or_revoked_one_or_to_a_h
                 await client.call_tool("about", {})
         async with Client(http_transport(url, TOKENS["bot"]), mode="2026-07-28") as client:
             assert not (await client.call_tool("about", {})).is_error
-
-
-async def test_the_stdio_bridge_as_a_desktop_client_starts_it_forwards_a_tool_call_to_the_running_service(service):
-    import sys
-    from mcp import StdioServerParameters
-    from lib.config import ROOT
-    port = free_port()
-    async with Serving(http_app(service, tokens=TOKENS), port):
-        params = StdioServerParameters(command=sys.executable, args=["-m", "ecobot_service.bridge"], cwd=str(ROOT),
-                                       env={**os.environ, "WEATHER_MCP_URL": f"http://127.0.0.1:{port}/mcp",
-                                            "WEATHER_MCP_TOKEN": TOKENS["bot"]})
-        async with Client(params) as client:
-            assert client.instructions == service.server.instructions
-            got = await client.call_tool("about", {})
-            assert not got.is_error and got.content[0].text == await service.service["about"].call({})
-            assert [r.uri for r in (await client.list_resources()).resources][0] == "ecobot://station"
 
 
 async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_proxys_name(tmp_path, monkeypatch, caplog):

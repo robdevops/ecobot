@@ -1,6 +1,6 @@
 """The service over MCP (lib/mcp_server.py, docs/mcp-service.md 3.4-3.8): the ten tools listed and called over the SDK's in-memory
 transport with the same answers as the ServiceTools themselves, the resources and the alerts' template, the prompts, the publishing of
-changes, the auth and the allowed hosts, and the stdio bridge. The listen over the network is tests/test_mcp_listen.py's (under uvicorn,
+changes, the auth and the allowed hosts. The listen over the network is tests/test_mcp_listen.py's (under uvicorn,
 as docs 7 asks)."""
 
 import asyncio
@@ -278,27 +278,6 @@ def test_the_allowed_hosts_take_any_port_unless_one_is_named():
     assert "https://weather.lan:443" in settings.allowed_origins and "http://127.0.0.1:*" in settings.allowed_origins
 
 
-# ---------- the bridge ----------
-async def test_the_bridge_forwards_a_tool_call_its_meta_and_its_complete_mark_and_the_instructions(world):
-    from ecobot_service.bridge import Bridge
-    bridge = Bridge(world.server)   # (the service in-process, as the bridge's upstream)
-    async with bridge.running(5):
-        assert bridge.upstream.client is not None
-        async with Client(bridge.server) as client:
-            assert client.instructions == world.server.instructions
-            assert [t.name for t in (await client.list_tools()).tools] == [t.name for t in world.service]
-            args = {"readings": ["pressure"], "period": "this week", "chart_answers_it": True}
-            got = await client.call_tool("summary", args, meta={"chart_points": 30})
-            direct = await world.service["summary"].call(args, {"chart_points": 30})
-            assert got.content[0].text == direct and got.meta[COMPLETE] is True and got.content[1].annotations.audience == ["user"]
-            refused = await client.call_tool("summary", {"period": "whenever"})
-            assert refused.is_error
-            assert json.loads((await client.read_resource("ecobot://health")).contents[0].text)["alert_log"] == {"last_id": 0}
-            assert (await client.get_prompt("now")).messages[0].content.text == "How is it outside now?"
-            with pytest.raises(MCPError, match="No resource"):
-                await client.read_resource("ecobot://nowhere")
-
-
 def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch, tmp_path, caplog):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -321,17 +300,6 @@ def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch,
                         ("h:70000", ("127.0.0.1", 8765))):
         monkeypatch.setenv("MCP_BIND", value)
         assert Config.from_env(bot=False).mcp_bind == want, value
-
-
-async def test_the_bridge_refuses_a_request_while_the_service_cant_be_reached(monkeypatch):
-    from ecobot_service import bridge as bridge_module
-    monkeypatch.setattr(bridge_module, "CONNECT_WAIT", 0.2)
-    monkeypatch.setattr(bridge_module, "BACKOFF", (0.1,))
-    bridge = bridge_module.Bridge("http://127.0.0.1:9/mcp")   # (nothing listens there)
-    async with bridge.running(0.2):
-        async with Client(bridge.server) as client:
-            with pytest.raises(MCPError, match="isn't reachable"):
-                await client.call_tool("current", {})
 
 
 def test_one_service_per_data_folder(tmp_path):

@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from ecobot_service import bridge
+from lib import upstream
 from lib import model_tools, weather as weather_module
 from lib.alert_log import AlertLog
 from lib.alerts.notify import AlertDelivery, AlertState, Notifier
@@ -54,7 +54,7 @@ async def world(tmp_path, eval_archive, monkeypatch):
 @pytest.fixture(autouse=True)
 def quick(monkeypatch):
     """Reconnections and waits in tenths of a second, not seconds."""
-    monkeypatch.setattr(bridge, "BACKOFF", (0.1,))
+    monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
     monkeypatch.setattr(weather_module, "CALL_WAIT", 0.3)
 
 

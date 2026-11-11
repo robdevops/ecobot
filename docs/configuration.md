@@ -90,7 +90,6 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | `MCP_BIND` | `127.0.0.1:8765` | `host:port` it listens on (`[::1]:8765` for IPv6). Serve it to other machines through TLS (a reverse proxy such as Caddy) |
 | `MCP_ALLOWED_HOSTS` | `127.0.0.1,localhost` | The `Host` names it answers, any port unless one is given (`weather.lan`, `192.168.1.5:8765`); any other is refused (421), against DNS rebinding. Add the name a proxy or a LAN client uses |
 
-The stdio bridge (`python -m ecobot_service.bridge`, for a desktop client) reads `WEATHER_MCP_URL` (default `http://127.0.0.1:8765/mcp`) and `WEATHER_MCP_TOKEN` (one of `MCP_TOKENS`' tokens).
 
 ### The bot as the service's client
 

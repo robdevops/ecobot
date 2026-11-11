@@ -385,9 +385,8 @@ Charts are data: the client draws them, or its model does from the numbers.
   server is the SDK's low-level `Server`, so each tool's input schema is hand-written JSON with its description; the list is built when
   asked, so it follows the file's metrics. The app is built with `TransportSecuritySettings(allowed_hosts=MCP_ALLOWED_HOSTS)`: by
   default it answers only `Host: 127.0.0.1` or `localhost`, and refuses the name a proxy or a LAN client uses.
-- **Stdio, for a desktop client:** `python -m ecobot_service.bridge` is a thin bridge, an SDK client to the running service re-exposed
-  on stdio (tools, resources, prompts and the listen stream forwarded), with no syncers, no rules and no file of its own. A second
-  process on the readings file would duplicate the fetching and the alerts, and its in-memory bus would hear nothing.
+- **No stdio:** clients connect over HTTP (Claude Code: `claude mcp add --transport http ...` with the bearer header). A stdio bridge
+  for clients that can only start a local command was built in step 5 and removed: nothing here needs it.
 - **Auth:** the service's own `TokenVerifier` (the SDK has only the protocol): a constant-time compare against `MCP_TOKENS`
   (`name:token,…`, one per client, so one can be revoked alone), passed with `auth=AuthSettings(issuer_url="https://<service>",
   resource_server_url=None)` (`issuer_url` is required but unused without an OAuth provider; no OAuth metadata is published). Bind to
@@ -551,8 +550,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
    - Tests: the rules' tests assert events appended (`tests/test_alerts.py`), the log and the delivery (`tests/test_alert_log.py`), the
      forecast baseline (`tests/test_forecast_alert.py`).
 5. **MCP, and the service on its own.** `lib/mcp_server.py` serves the tools, resources and prompts (the bus and listen handler, the
-   transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file) with the
-   stdio bridge; the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the
+   transport settings, the token check); the service starts as its own program (`python -m ecobot_service`, its compose file); the bot becomes a client over the network (the supervisor, discover for the instructions, `charts` from results, the
    alert log; `schemas/` goes into the image, which `.dockerignore` keeps out today). `ecobot.py`'s `warm_up()` is split: the first
    fetch, the archive, the backfill, the Home Assistant imports and the startup line go to the service; the bot keeps only its charts
    drawn ahead, as `summary` calls at background priority, failing quietly until the service has warmed. The bot's poke of the sources
@@ -573,17 +571,16 @@ Each step ships on its own, with the tests and evals green and the bot working t
      (`start_sources`, `Core`: the alert log, the tools, the alert rules, the keep-warm, and `warm_up`, the first fetch, the weather
      rules, the live poll, the archive, the backfill and Home Assistant's imports, each loop's last success and failure kept for
      `ecobot://health`), which `ecobot.py` now calls in-process, its behaviour unchanged; `__main__.py` runs it with the server under
-     uvicorn (`MCP_BIND`, refusing a non-loopback address without `MCP_TOKENS`); `bridge.py` is the stdio bridge, one supervised upstream
-     client pinned to 2026-07-28 that discovers by hand, listens and re-listens after a backoff. The image ships `ecobot_service/` and
+     uvicorn (`MCP_BIND`, refusing a non-loopback address without `MCP_TOKENS`); `lib/upstream.py` is the bot's one supervised
+     client, pinned to 2026-07-28, that discovers by hand, listens and re-listens after a backoff (a stdio bridge was built on it and later removed). The image ships `ecobot_service/` and
      `schemas/`; compose has `ecobot-service`, off unless its profile is asked for. Tests: `tests/test_mcp_server.py` (in memory) and
-     `tests/test_mcp_listen.py` (uvicorn on a localhost port: the lost listen and the reading after the last id, auth, hosts, the bridge
-     on stdio, the service started with the fakes and called through a proxy's Host name). Settings: `Config.from_env(bot=False)` needs
+     `tests/test_mcp_listen.py` (uvicorn on a localhost port: the lost listen and the reading after the last id, auth, hosts, the service started with the fakes and called through a proxy's Host name). Settings: `Config.from_env(bot=False)` needs
      no Telegram token.
    - **The bot as a client (done).** `WEATHER_MCP_URL` (and `WEATHER_MCP_TOKEN`) set: the bot starts no sources, syncers or alert rules
      (`ecobot.connect`); unset: it runs the service in-process, unchanged. Both go through one interface, `lib/weather.py`
      (`LocalWeather` over lib/service and the sources; `RemoteWeather` over MCP): the tools as `Service` lists them (each `call(args,
      meta)` answering the tool's JSON), the sources there are (`names`), the catalogue, the instructions, the AirGradient link, the
-     alert feed and one alert by id, a resource, and whether it can be reached. `RemoteWeather` is 3.8's client: the bridge's `Upstream`
+     alert feed and one alert by id, a resource, and whether it can be reached. `RemoteWeather` is 3.8's client: `lib/upstream.Upstream`
      (pinned to 2026-07-28, `send_discover` and `adopt` for the instructions, one supervisor task that drops the client on a transport
      error or a lost or ended listen and builds another after a backoff, the 45-second read timeout), listening to the station, the
      alerts and the forecast; each connection reads the tool list and the station again (`ToolsListChanged` and the station's

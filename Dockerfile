@@ -36,7 +36,7 @@ ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
 COPY .git* .git/
 ARG COMMIT=
 RUN if [ -n "$COMMIT" ]; then echo "$COMMIT" > .git/HEAD; fi \
- && DATA_DIR=/tmp/build python -c "import lib.bot, ecobot, ecobot_service.__main__, ecobot_service.bridge, lib.mcp_server" \
+ && DATA_DIR=/tmp/build python -c "import lib.bot, ecobot, ecobot_service.__main__, lib.upstream, lib.mcp_server" \
  && rm -rf /tmp/build
 ENV DATA_DIR=/data
 USER 10001:10001

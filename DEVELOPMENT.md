@@ -33,25 +33,24 @@ It reads the bot's settings ([docs/configuration.md](docs/configuration.md)) les
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a          # the settings, as the bot reads them
 MCP_TOKENS=me:$(openssl rand -hex 16) python -m ecobot_service      # http://127.0.0.1:8765/mcp
-python -m ecobot_service.bridge                        # the same on stdio (WEATHER_MCP_URL, WEATHER_MCP_TOKEN), for a desktop client
 sudo docker compose --profile service up -d ecobot-service           # in Docker (compose.yaml), on 127.0.0.1:8765
 ```
 Only one process runs the service on a data folder: it holds `service.lock` there, so `python -m ecobot_service` refuses to start beside
 a bot that runs the service itself (`WEATHER_MCP_URL` unset), and the other way round. Make the bot its client first (below): set
-`WEATHER_MCP_URL` and restart the bot, then start the service; the bot waits for it and connects when it is up. A desktop client (Claude Desktop, Claude Code) starts the bridge as its command, with
-`WEATHER_MCP_TOKEN` in its environment, e.g. `claude mcp add ecobot -e WEATHER_MCP_TOKEN=... -- python -m ecobot_service.bridge` from the clone.
+`WEATHER_MCP_URL` and restart the bot, then start the service; the bot waits for it and connects when it is up.
+Claude Code connects over HTTP: `claude mcp add --transport http ecobot http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"`.
 To look at it by hand: `npx @modelcontextprotocol/inspector` against the URL with the header `Authorization: Bearer <token>`.
 
 Its tests: `tests/test_mcp_server.py` (the SDK's in-memory transport: every tool listed and answering as the ServiceTool does, each resource,
-the alerts' template, the prompts, the publishing, the tokens, the bridge in-process) and `tests/test_mcp_listen.py` (the real app under uvicorn
+the alerts' template, the prompts, the publishing, the tokens) and `tests/test_mcp_listen.py` (the real app under uvicorn
 on a free localhost port: a client that listens loses its listen when the service stops and reads what it missed when it is back; the
-token and Host checks over HTTP; the bridge as a subprocess on stdio; `python -m ecobot_service` with the fake sources, a tool call through
+token and Host checks over HTTP; `python -m ecobot_service` with the fake sources, a tool call through
 a proxy's Host name).
 
 ### The bot as the service's client
 With `WEATHER_MCP_URL` (and `WEATHER_MCP_TOKEN`, one of the service's `MCP_TOKENS`) set, the bot runs no sources, syncers or alert rules of
 its own and reaches the service over MCP (`lib/weather.RemoteWeather`, [docs/mcp-service.md](docs/mcp-service.md) 3.8): one client pinned
-to protocol 2026-07-28, kept by one supervisor task (the bridge's `Upstream`), which discovers by hand for the instructions and listens to
+to protocol 2026-07-28, kept by one supervisor task (`lib/upstream.Upstream`), which discovers by hand for the instructions and listens to
 `ecobot://alerts`, `ecobot://station` and `ecobot://forecast`; when the connection fails or the listen is lost it builds a new client after
 a backoff, listens again and reads the alerts after the last id it handled. Unset, the bot runs the service in-process as before
 (`lib/weather.LocalWeather`). Both are one interface, `lib/weather.py`, which everything the bot asks of the service goes through:
