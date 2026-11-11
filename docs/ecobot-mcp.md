@@ -8,16 +8,16 @@
 
 The plan for turning this repository into a weather and air-quality service that any MCP client can use: the readings file, the
 syncers that fill it, and an MCP server over them. Claude Desktop, Claude Code, ChatGPT, Open WebUI or anyone's bot asks it questions
-and gets answers it can pass on. Today's Telegram bot becomes the service's first client while the tools move over, and is retired
-once another client does its job. Irrigation becomes a second MCP server in its own repository. This is a design and a sequence of
+and gets answers it can pass on. Today's Telegram bot becomes ecobot-mcp's first client while the tools move over, and stays as a
+slim client (step 6): Telegram's chats, buttons and alerts, with everything else from ecobot-mcp. Irrigation becomes a second MCP server in its own repository. This is a design and a sequence of
 steps, each shipped on its own, in the manner of [storage-plan.md](storage-plan.md).
 
 Decided:
 - **The end state is the service alone.** No bot of ours; nothing in the interface may assume one.
 - **Charts are data.** Tools return a chart's data; the client draws it (or its model does).
 - **Alerts are decided by the service and published over MCP only**, as a log clients listen to.
-- **This repository becomes the service**, keeping its history; the bot keeps working as a client until it is retired, then its code
-  goes. Irrigation moves to its own repository and server.
+- **This repository becomes ecobot-mcp**, keeping its history; the bot stays as a slim client of it (step 6), its in-process code
+  gone. Irrigation moves to its own repository and server.
 - **Separate hosts** are possible: the service runs near Home Assistant and the sensors; clients connect over the network.
 
 ## 1. Why
@@ -339,14 +339,14 @@ every 60 seconds, particulates every 30 minutes and only then, since its two-rea
   pollen the end of its day, a forecast the day it is about), and `ecobot://alerts?since=` returns only unexpired alerts unless asked.
   A client back after a gap sends what is still true, never the morning's rain as news.
 - **Delivery is the client's.** A client listens, reads `ecobot://alerts?since=<last id it handled>`, and sends each alert to whoever
-  it serves. Our bot does this for its subscribed chats until it is retired.
+  it serves. Our bot does this for its subscribed chats.
 - **The forecast alert is station-wide:** for today and tomorrow, it compares each new forecast with the first one fetched after 6am
   that day (its baseline), alerts when the maximum moves by more than 2°C or the chance of rain rises past 50% (or falls from there to 30% or less: the band
   keeps a chance hovering around 50% from alerting each way on every refresh), and makes the forecast it
   alerted on the new baseline. Its text says what changed ("The forecast for tomorrow has changed: was 24°C and dry, now 19°C with
   rain likely"), not "since I sent it", which only the bot could say.
-- **Only listening clients get alerts.** Most chat clients don't keep an MCP listen stream open; once the bot is retired, alerts reach
-  no one unless a client that listens is running (a short script with the SDK, or Home Assistant). Section 8.
+- **Only listening clients get alerts.** Most chat clients don't keep an MCP listen stream open: the bot is the client that listens
+  and delivers them (a short script with the SDK, or Home Assistant, could too). Section 8.
 
 ### 3.7 Charts
 
@@ -441,7 +441,7 @@ station names one), `DATA_DIR`, the alert settings (cooldowns, quiet hours, thre
 `AUTH_TOKENS`, `MCP_BIND`, `MCP_ALLOWED_HOSTS`. The irrigation server: `IRRIGATION_*` (Tuya), `BOT_MCP_URL`, a token,
 its own `AUTH_TOKENS`.
 
-## 4. The bot until it is retired
+## 4. The bot (as it was before step 6)
 
 The bot is the service's first client, and the measure of each step: it keeps answering in Telegram while its insides move to the
 service. Beyond what the steps need, it gets no new features. While it lives it:
@@ -457,9 +457,8 @@ service. Beyond what the steps need, it gets no new features. While it lives it:
 - keeps per-chat state: subscriptions, admins, and each chart's `drawn_by` behind its period buttons (a press replays it with a new
   `period`).
 
-It is retired when a replacement does what you use it for: another client for questions (any MCP-capable assistant), and, for alerts,
-a client that listens. Its code is then deleted from this repository: `lib/bot.py`, `lib/llm.py`, `lib/prompt.py`, `lib/intent.py`,
-`lib/report.py`, the menus, the renderer and its tests and golden images.
+The plan was to retire it once another client did its job; in November 2026 it was decided to keep it, slimmed down to a client of
+ecobot-mcp alone: step 6 says what it keeps and what goes.
 
 ## 5. What does not change
 
@@ -717,8 +716,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
 
 ## 8. Risks
 
-- **Alerts reach only listening clients.** With alerts over MCP only (3.6), once the bot is retired nobody gets them unless a client
-  that listens is running. Plan that client before step 6, or accept no alerts.
+- **Alerts reach only listening clients.** With alerts over MCP only (3.6), nobody gets them unless a client that listens is running:
+  the bot, which stays (step 6), or another.
 - **Charts only where a client can draw.** A client that neither draws the chart data nor lets its model draw gets the figures without
   a picture.
 - **Models other than ours.** A client's model may be weaker, or tuned differently, than the one the evals were built on; some clients
