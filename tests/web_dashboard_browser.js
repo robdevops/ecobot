@@ -42,7 +42,7 @@ async function sizes(browser, url, shots, wanted) {
 async function live(browser, url) {
   const { page, errors } = await open(browser, url, 800, 600);
   const label = () => page.evaluate(() => document.querySelector(".tile").getAttribute("aria-label"));
-  await page.evaluate(() => { window.__mark = 1; });
+  await page.evaluate(() => { window.__mark = 1; document.querySelector(".tile").__mark = 1; });
   const before = await label();
   process.stdout.write(JSON.stringify({ label: before }) + "\n");
   await new Promise((resolve) => readline.createInterface({ input: process.stdin }).once("line", resolve));
@@ -50,7 +50,10 @@ async function live(browser, url) {
     await page.waitForFunction((was) => document.querySelector(".tile").getAttribute("aria-label") !== was, before, { timeout: 15000 });
   } catch (e) { /* reported as the label unchanged */ }
   const same = await page.evaluate(() => window.__mark === 1);
-  process.stdout.write(JSON.stringify({ label: await label(), same_page: same, errors }) + "\n");
+  const sameTile = await page.evaluate(() => document.querySelector(".tile").__mark === 1);   // moved in place, not drawn again
+  await page.waitForTimeout(1200);   // (the gauge's move to the new reading, MOVE_MS)
+  const shown = await page.evaluate(() => [...document.querySelectorAll(".tile")[0].querySelectorAll("svg text")].map((t) => t.textContent).join("|"));
+  process.stdout.write(JSON.stringify({ label: await label(), same_page: same, same_tile: sameTile, shown, errors }) + "\n");
 }
 
 (async () => {

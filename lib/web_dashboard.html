@@ -15,15 +15,18 @@
     font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "DejaVu Sans", Arial, sans-serif;
     -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body { overflow-x: hidden; overflow-y: auto; }
-  #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px); min-height: calc(100% - var(--status, 18px)); }
+  #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px);
+    padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
   .tile { position: relative; container-type: inline-size; overflow: hidden; }
   .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .tile svg text { font-family: inherit; }
   .at { position: absolute; display: flex; align-items: center; justify-content: center; white-space: nowrap; line-height: 1; }
   .title { left: 0; right: 0; }
   .chip { border-radius: 1.875cqw; }
-  #status { height: var(--status, 18px); padding: 0 10px; font-size: 12px; line-height: var(--status, 18px); text-align: right;
-    color: var(--soft); overflow: hidden; }
+  #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
+    line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
+  html.scroll { scroll-snap-type: y proximity; scroll-padding-top: var(--pad, 8px); }
+  .tile { scroll-snap-align: start; }
   #status.lost { color: #F4A93B; }
   #message { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center;
     font-size: 20px; color: var(--soft); }
@@ -41,10 +44,13 @@
   const DATA = BASE + "/data", EVENTS = BASE + "/events";
   const REFETCH_MS = 60000;            // the fallback: the data fetched again every minute, events or not
   const MIN_TILE = 180;                // the narrowest tile (CSS px) worth fitting on one screen: narrower, the page scrolls
+  const MIN_SCROLL_TILE = 150;         // ... and then the narrowest a column may be (two on a 320-375 px phone, not one huge one)
+  const MOVE_MS = 900;                 // how long a gauge takes to move to a new reading
+  const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const PAD = 8, STATUS = 18;
   const NS = "http://www.w3.org/2000/svg";
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
-  let L = null, tiles = [], asOf = null, lost = false;
+  let L = null, tiles = [], asOf = null, lost = false, drawn = [];   // drawn: each tile on the page, to be moved in place
 
   // ---------- colours ----------
   const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -94,14 +100,18 @@
   function thermometer(svg, tile, ink, id) {
     const top = 95, bottom = 238, cx = 285, bulb = 280, half = L.tube_half, radius = L.bulb_radius, gap = L.mercury_gap;
     scaleBar(svg, cx - half - L.bar_gap - L.bar_width, top, bottom, tile, ink);
-    let level = bulb - Math.sqrt((radius - gap) ** 2 - (half - gap) ** 2);   // no reading: just the bulb
-    if (tile.value !== null) level = top + (1 - clamp01((tile.value - tile.low) / (tile.high - tile.low))) * (bottom - top);
+    const empty = bulb - Math.sqrt((radius - gap) ** 2 - (half - gap) ** 2);   // no reading: just the bulb
+    const level = (v) => v === null ? empty : top + (1 - clamp01((v - tile.low) / (tile.high - tile.low))) * (bottom - top);
     const clip = el("clipPath", {id}, el("defs", {}, svg));
-    el("rect", {x: 0, y: level, width: L.cell[0], height: L.cell[1]}, clip);
+    const mercury = el("rect", {x: 0, y: level(tile.value), width: L.cell[0], height: L.cell[1]}, clip);
     el("path", {d: thermometerPath(cx, top - 10 + gap, half - gap, bulb, radius - gap), fill: ink(L.fill), "clip-path": `url(#${id})`}, svg);
     el("path", {d: thermometerPath(cx, top - 10, half, bulb, radius), fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5),
                 "stroke-linejoin": "round"}, svg);
-    if (tile.value !== null) text(svg, cx - 50, bulb, `${figure(tile.value, tile.decimals)} ${tile.unit}`, 40, ink(L.soft), "end");
+    const label = tile.value !== null ? text(svg, cx - 50, bulb, "", 40, ink(L.soft), "end") : null;
+    return (v) => {   // the gauge at reading v (moved in place, frame by frame)
+      mercury.setAttribute("y", level(v).toFixed(2));
+      if (label) label.textContent = `${figure(v, tile.decimals)} ${tile.unit}`;
+    };
   }
 
   function beaker(svg, tile, ink, id) {
@@ -109,14 +119,16 @@
     scaleBar(svg, left - L.bar_gap - L.bar_width, top, bottom - 10, tile, ink);
     const jar = `M${left},${top} L${left},${bottom - r} A${r},${r} 0 0 0 ${left + r},${bottom} L${right - r},${bottom} ` +
                 `A${r},${r} 0 0 0 ${right},${bottom - r} L${right},${top}`;
-    if (tile.value !== null && tile.value > 0) {
-      const level = bottom - Math.max((tile.value - tile.low) / (tile.high - tile.low), 0.02) * (bottom - 10 - top);
-      const clip = el("clipPath", {id}, el("defs", {}, svg));
-      el("rect", {x: 0, y: level, width: L.cell[0], height: L.cell[1]}, clip);
-      el("path", {d: jar + " Z", fill: ink(L.water), "clip-path": `url(#${id})`}, svg);
-    }
+    const level = (v) => v === null || v <= 0 ? bottom + 1 : bottom - Math.max((v - tile.low) / (tile.high - tile.low), 0.02) * (bottom - 10 - top);
+    const clip = el("clipPath", {id}, el("defs", {}, svg));
+    const water = el("rect", {x: 0, y: level(tile.value), width: L.cell[0], height: L.cell[1]}, clip);   // (none at 0 mm)
+    el("path", {d: jar + " Z", fill: ink(L.water), "clip-path": `url(#${id})`}, svg);
     el("path", {d: jar, fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5), "stroke-linejoin": "round"}, svg);
-    if (tile.value !== null) text(svg, 290, 345, `${figure(tile.value, tile.decimals)} ${tile.unit}`, 46, ink(L.soft));
+    const label = tile.value !== null ? text(svg, 290, 345, "", 46, ink(L.soft)) : null;
+    return (v) => {
+      water.setAttribute("y", level(v).toFixed(2));
+      if (label) label.textContent = `${figure(v, tile.decimals)} ${tile.unit}`;
+    };
   }
 
   function dial(svg, tile, ink) {
@@ -136,13 +148,16 @@
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
-    if (tile.value !== null) {
-      const a = angle(tile.value);
-      const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -24, a), polar(cx, cy, 10, a - 90)];
-      el("polygon", {points: pts.map((p) => p.map((v) => v.toFixed(2)).join(",")).join(" "), fill: ink(L.needle)}, svg);
-      text(svg, cx, cy + 102, figure(tile.value, tile.decimals), 50, ink(L.ink));
-    }
+    const needle = tile.value !== null ? el("polygon", {fill: ink(L.needle)}, svg) : null;
+    const label = tile.value !== null ? text(svg, cx, cy + 102, "", 50, ink(L.ink)) : null;
     el("circle", {cx, cy, r: 25, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
+    return (v) => {
+      if (!needle) return;
+      const a = angle(v);
+      const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -24, a), polar(cx, cy, 10, a - 90)];
+      needle.setAttribute("points", pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" "));
+      label.textContent = figure(v, tile.decimals);
+    };
   }
 
   const DRAW = {thermometer, dial, beaker};
@@ -160,6 +175,7 @@
   }
 
   function table(box, tile, ink) {
+    const figures = {};
     const left = 60, top = 378, w = 128, h = 38, gap = 4;
     const xs = tile.columns.map((_, i) => left + (w + gap) * (i + 1));
     place(box, left, top, w, h, 17, tile.unit, "unit", {color: ink(L.ink), fontWeight: 700});
@@ -168,24 +184,52 @@
     L.rows.forEach((name, r) => {
       const y = top + (r + 1) * (h + 10);
       place(box, left, y, w, h, 19, name, "chip row", {background: ink(L.chip), color: ink(L.soft)});
-      (tile.rows[name] || []).forEach((v, i) => {
-        if (i < xs.length) place(box, xs[i], y, w, h, 21, v === null ? "-" : figure(v, tile.decimals), "figure", {color: ink(L.ink), fontWeight: 700});
-      });
+      xs.forEach((x, i) => { figures[`${name}/${i}`] = place(box, x, y, w, h, 21, "", "figure", {color: ink(L.ink), fontWeight: 700}); });
     });
+    const fill = (t) => L.rows.forEach((name) => xs.forEach((_, i) => {
+      const v = (t.rows[name] || [])[i];
+      figures[`${name}/${i}`].textContent = v === null || v === undefined ? (i < (t.rows[name] || []).length ? "-" : "") : figure(v, t.decimals);
+    }));
+    fill(tile);
+    return fill;
   }
 
-  function drawTile(tile, i) {
+  // What can't change in place (a tile so different is drawn again): its kind and scale, its look, whether it has a reading at all.
+  const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.columns, t.decimals, !!t.faded,
+                                       t.value === null]);
+  const label = (t) => t.value === null ? t.title : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`;
+  let clips = 0;
+
+  function drawTile(tile) {
     const ink = tile.faded ? (c) => blend(c, 1 - L.fade, L.bg) : (c) => c;
     const box = document.createElement("section");
     box.className = "tile" + (tile.faded ? " faded" : "");
     box.dataset.kind = tile.kind;
-    box.setAttribute("aria-label", tile.value === null ? tile.title : `${tile.title} ${figure(tile.value, tile.decimals)} ${tile.unit}`);
+    box.setAttribute("aria-label", label(tile));
     const svg = el("svg", {viewBox: `0 0 ${L.cell[0]} ${L.cell[1]}`, preserveAspectRatio: "xMidYMid meet", "aria-hidden": "true"});
     box.appendChild(svg);
-    DRAW[tile.kind](svg, tile, ink, `clip${i}`);
+    const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
-    table(box, tile, ink);
-    return box;
+    const fill = table(box, tile, ink);
+    if (tile.value !== null) at(tile.value);
+    const drawnTile = {box, shape: shape(tile), value: tile.value, frame: 0};
+    drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change
+      box.setAttribute("aria-label", label(t));
+      fill(t);
+      const from = drawnTile.value, to = t.value;
+      drawnTile.value = to;
+      cancelAnimationFrame(drawnTile.frame);
+      if (to === null || from === to) return;
+      if (STILL || from === null || document.hidden) return at(to);
+      const start = performance.now();
+      const step = (now) => {
+        const p = Math.min((now - start) / MOVE_MS, 1), eased = 1 - (1 - p) ** 3;
+        at(p < 1 ? from + (to - from) * eased : to);
+        if (p < 1) drawnTile.frame = requestAnimationFrame(step);
+      };
+      drawnTile.frame = requestAnimationFrame(step);
+    };
+    return drawnTile;
   }
 
   // ---------- the layout: the columns that make the tiles largest with all of them on the screen ----------
@@ -201,7 +245,7 @@
     }
     let {w, cols} = best, scroll = false;
     if (w < MIN_TILE) {   // too small to read on one screen: as many columns as fit at a readable size, and the page scrolls
-      cols = Math.max(1, Math.min(n, Math.floor(W / MIN_TILE)));
+      cols = Math.max(1, Math.min(n, Math.floor(W / MIN_SCROLL_TILE)));
       w = W / cols;
       scroll = true;
     }
@@ -212,6 +256,7 @@
     grid.style.gridAutoRows = `${Math.floor(w / aspect)}px`;
     document.body.dataset.columns = cols;
     document.body.dataset.scroll = scroll ? "yes" : "no";
+    document.documentElement.classList.toggle("scroll", scroll);   // (a scrolled page stops with a row at the top)
   }
 
   // ---------- the data ----------
@@ -226,7 +271,12 @@
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
     document.body.classList.toggle("unavailable", !tiles.length);
     message.textContent = data.unavailable || "";
-    grid.replaceChildren(...tiles.map(drawTile));
+    if (drawn.length === tiles.length && tiles.every((t, i) => drawn[i].shape === shape(t))) {
+      tiles.forEach((t, i) => drawn[i].update(t));   // the usual case: every gauge moved where it is, nothing redrawn
+      return;
+    }
+    drawn = tiles.map(drawTile);
+    grid.replaceChildren(...drawn.map((d) => d.box));
     layout();
   }
 

@@ -223,7 +223,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         out, err = await asyncio.wait_for(sizes.communicate(), 180)
         assert sizes.returncode == 0, err.decode()
         report = json.loads(out)
-        # a new reading: the open page fetches it and redraws in place, without a reload
+        # a new reading: the open page fetches it and moves its gauges in place, without a reload or redrawing the tiles
         live = await asyncio.create_subprocess_exec("node", str(BROWSER), url, "--live", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                                     stderr=subprocess.PIPE)
         before = json.loads(await asyncio.wait_for(live.stdout.readline(), 60))
@@ -251,3 +251,4 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
     assert report["phone-portrait"]["columns"] == "2"                         # too small for all at once: two to a row, scrolling
     assert before["label"] == "Temperature 12.9 °C" and after["label"] == "Temperature 21.5 °C", (before, after)
     assert after["same_page"] and after["errors"] == [], after
+    assert after["same_tile"] and "21.5 °C" in after["shown"], after                 # the gauge moved in place to the new reading
