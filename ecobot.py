@@ -115,7 +115,7 @@ def follow_zone(weather: RemoteWeather, bot: Bot, state: AlertState, zoned: list
 def mcp_token(cfg: Config):
     """The token the bot sends ecobot-mcp: the first of AUTH_TOKENS; else the retired WEATHER_MCP_TOKEN, with a warning; else the one
     ecobot-mcp generated in the data folder they share, read again for each connection (a function: ecobot-mcp may write it after the
-    bot starts), with a warning when it isn't there yet. Never logged: only where it is."""
+    bot starts: at a start of both, the bot may look before ecobot-mcp has written it). Never logged: only where it is."""
     if cfg.auth_tokens:
         if cfg.retired_mcp_token:
             log.warning("%s is retired and ignored: the bot sends the first of AUTH_TOKENS", RETIRED_TOKEN)
@@ -125,11 +125,18 @@ def mcp_token(cfg: Config):
                     "if it isn't there already)", RETIRED_TOKEN)
         return cfg.retired_mcp_token
     folder = cfg.state_path.parent
-    if auth_token.read(folder) is None:
-        log.warning("AUTH_TOKENS is not set and there is no token at %s (yet): ecobot-mcp writes it there at its first start, on the same "
-                    "data folder. Until it can be read the bot sends none and is refused; set AUTH_TOKENS (the same in both) if ecobot-mcp "
-                    "keeps another folder", auth_token.path(folder))
     return lambda: auth_token.read(folder)
+
+
+def no_token_yet(cfg: Config, token) -> bool:
+    """Said (a warning) when ecobot-mcp couldn't be reached in time and the bot has no token to send it: the generated one isn't in the
+    data folder. Only then: at a start of both, the file can appear a moment after the bot first looks."""
+    if not callable(token) or token() is not None:
+        return False
+    log.warning("AUTH_TOKENS is not set and there is no token at %s: ecobot-mcp writes it there at its first start, on the same data "
+                "folder. Until it can be read the bot sends none and is refused; set AUTH_TOKENS (the same in both) if ecobot-mcp keeps "
+                "another folder", auth_token.path(cfg.state_path.parent))
+    return True
 
 
 async def connect(cfg: Config, stack: contextlib.AsyncExitStack, state: AlertState) -> tuple[RemoteWeather, Config]:
@@ -137,7 +144,8 @@ async def connect(cfg: Config, stack: contextlib.AsyncExitStack, state: AlertSta
     STARTUP_WAIT seconds; the settings in the station's time zone once it has been read, else in the one last read (kept in
     bot_state.json), else in TZ's, with a warning. Read later, it is followed then (follow_zone)."""
     kept = _zone(state.zone)
-    weather = RemoteWeather(cfg.mcp_url, mcp_token(cfg), kept or cfg.tz)
+    token = mcp_token(cfg)
+    weather = RemoteWeather(cfg.mcp_url, token, kept or cfg.tz)
     supervisor = asyncio.create_task(weather.run())
 
     async def stop():
@@ -148,6 +156,7 @@ async def connect(cfg: Config, stack: contextlib.AsyncExitStack, state: AlertSta
     try:
         await asyncio.wait_for(weather.listening.wait(), STARTUP_WAIT)
     except TimeoutError:
+        no_token_yet(cfg, token)
         log.warning("ecobot-mcp at %s isn't reachable yet: questions are told so until it is (the time zone is %s, %s, "
                     "until its station is read)", cfg.mcp_url, "the station's last read" if kept else "TZ's", weather.tz)
     if str(weather.tz) != str(cfg.tz):

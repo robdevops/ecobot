@@ -128,9 +128,11 @@ def test_the_bot_sends_the_first_of_auth_tokens_else_the_retired_one_else_the_ge
     assert ecobot.mcp_token(config(tmp_path, retired_mcp_token="r3tired")) == "r3tired"
     assert "move it into AUTH_TOKENS" in caplog.text and "r3tired" not in caplog.text
     caplog.clear()
-    read = ecobot.mcp_token(config(tmp_path))                          # ecobot-mcp hasn't written its token yet: said, and read again
-    assert callable(read) and read() is None and f"there is no token at {tmp_path / 'auth_token'}" in caplog.text
+    read = ecobot.mcp_token(config(tmp_path))                          # ecobot-mcp hasn't written its token yet: read again later,
+    assert callable(read) and read() is None and "no token" not in caplog.text   # and not said at once (it may be a moment away)
+    assert ecobot.no_token_yet(config(tmp_path), read) and f"there is no token at {tmp_path / 'auth_token'}" in caplog.text   # said
+    caplog.clear()                                                                                    # when ecobot-mcp can't be reached
     token = auth_token.ensure(tmp_path)
-    assert read() == token
+    assert read() == token and not ecobot.no_token_yet(config(tmp_path), read) and "no token" not in caplog.text
     caplog.clear()
     assert ecobot.mcp_token(config(tmp_path))() == token and "no token" not in caplog.text
