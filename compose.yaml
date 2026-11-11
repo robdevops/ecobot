@@ -1,17 +1,31 @@
-# The bot in Docker: `sudo docker compose up -d --build` builds the image and starts the bot, and replaces a running one only when its
-# image or settings changed (README). The commit the log's first line names is read from the clone's .git (see the Dockerfile).
-# Logs: Docker's `local` driver (README: "Docker logging", compose.journald.yaml for the journal), which compresses and rotates its files (5 of 10 MB here); read them with `docker logs -tf ecobot`.
+# ecobot in Docker (README). `sudo docker compose up -d --build` builds the image and starts the weather service; the Telegram bot is
+# optional, under the `bot` profile: `sudo docker compose --profile bot up -d --build`, or COMPOSE_PROFILES=bot in /opt/ecobot/.env.
+# Compose replaces a running container only when its image or settings changed. The commit the log's first line names is read from
+# the clone's .git (see the Dockerfile). Logs: Docker's `local` driver (README: "Docker logging", compose.journald.yaml for the
+# journal), which compresses and rotates its files (5 of 10 MB here); read them with `docker logs -tf ecobot-service` (or `ecobot`).
 services:
-  ecobot:
+  # The weather service (docs/mcp-service.md 3.8, DEVELOPMENT.md "The MCP service"): the sources and their syncers, the alert rules
+  # and the MCP server, on port 8765 of every address the host has, so other machines on the network can reach it too (plain HTTP,
+  # with a token; put TLS in front of it, e.g. Caddy, to reach it over the internet; for this host only, publish 127.0.0.1:8765:8765).
+  # It needs MCP_SERVICE_TOKENS (token,token,..., in /etc/ecobot.env): it listens on all of the container's addresses, which it refuses
+  # to do without tokens. It answers its own name (hostname, below), 127.0.0.1 and localhost; MCP_SERVICE_ALLOWED_HOSTS adds more: the
+  # host's IP address or name, as LAN clients write it in their URL, and a proxy's name.
+  ecobot-service:
     image: ecobot
-    container_name: ecobot
+    container_name: ecobot-service
+    hostname: ecobot-service
     build:
       context: .
       args:
         COMMIT: ${COMMIT:-}
+    command: ["python", "-m", "ecobot_service"]
     restart: unless-stopped
     # Docker's default network is private, where .local names (mDNS) can't be found (README: "Docker networking", compose.host-network.yaml)
     env_file: /etc/ecobot.env
+    environment:
+      MCP_SERVICE_BIND: 0.0.0.0:8765
+    ports:
+      - 8765:8765
     volumes:
       - /var/lib/private/ecobot:/data
     logging:
@@ -20,25 +34,15 @@ services:
         max-size: 10m
         max-file: "5"
 
-  # The MCP service on its own (docs/mcp-service.md 3.8, DEVELOPMENT.md "The MCP service"): the same image, `python -m ecobot_service`,
-  # on port 8765 of every address the host has, so other machines on the network can reach it too (plain HTTP, with a token; put TLS
-  # in front of it, e.g. Caddy, to reach it over the internet; for this host only, publish 127.0.0.1:8765:8765). Off unless asked for
-  # (`sudo docker compose --profile service up -d ecobot-service`). Run it only with the bot as its client (WEATHER_MCP_URL=
-  # http://ecobot-service:8765/mcp and WEATHER_MCP_TOKEN in /etc/ecobot.env, and ecobot-service in MCP_SERVICE_ALLOWED_HOSTS), recreating the
-  # bot first: one process runs the service per data folder (service.lock), so it won't start beside a bot running it. It needs MCP_SERVICE_TOKENS
-  # (token,token,..., in /etc/ecobot.env): it listens on all of the container's addresses, which it refuses to do without tokens.
-  # MCP_SERVICE_ALLOWED_HOSTS: add the host's IP address or name, as LAN clients use it in their URL, and a proxy's name.
-  ecobot-service:
+  # The Telegram bot, a client of the service (WEATHER_MCP_URL, docker/bot.env; WEATHER_MCP_TOKEN, one of MCP_SERVICE_TOKENS, in
+  # /etc/ecobot.env). It keeps its own state (chats, alert settings) in the same data folder.
+  ecobot:
     image: ecobot
-    container_name: ecobot-service
-    profiles: [service]
-    command: ["python", "-m", "ecobot_service"]
+    container_name: ecobot
+    profiles: [bot]
     restart: unless-stopped
-    env_file: /etc/ecobot.env
-    environment:
-      MCP_SERVICE_BIND: 0.0.0.0:8765
-    ports:
-      - 8765:8765
+    depends_on: [ecobot-service]
+    env_file: [docker/bot.env, /etc/ecobot.env]
     volumes:
       - /var/lib/private/ecobot:/data
     logging:

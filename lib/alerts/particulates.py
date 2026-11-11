@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 
 from . import pictures, rules
-from .menu import kinds_of
+from .kinds import kinds_of
 
 log = logging.getLogger(__name__)
 

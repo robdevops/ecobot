@@ -88,7 +88,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 |---|---|---|
 | `MCP_SERVICE_TOKENS` | none | `token,token`: the bearer tokens the service accepts (each client sends one as `Authorization: Bearer <token>`), one per client so one can be revoked alone (take it out and restart). Compared in constant time; a token is never logged, only its name. Unset → no auth, which the service allows only on a loopback `MCP_SERVICE_BIND` |
 | `MCP_SERVICE_BIND` | `127.0.0.1:8765` | `host:port` it listens on (`[::1]:8765` for IPv6). Serve it to other machines through TLS (a reverse proxy such as Caddy) |
-| `MCP_SERVICE_ALLOWED_HOSTS` | `127.0.0.1,localhost` | The `Host` names it answers, any port unless one is given (`weather.lan`, `192.168.1.5:8765`); any other is refused (421), against DNS rebinding. Add the name a proxy or a LAN client uses |
+| `MCP_SERVICE_ALLOWED_HOSTS` | none | More `Host` names it answers, besides `127.0.0.1`, `localhost` and its own hostname (in Docker, `ecobot-service`), any port unless one is given (`weather.lan`, `192.168.1.5:8765`); any other is refused (421), against DNS rebinding. Add the name or IP address a proxy or a LAN client uses |
 
 Chart images are not a setting of the service but of each client: a client whose MCP URL ends `?charts=png` (`http://127.0.0.1:8765/mcp?charts=png`) gets each chart as a PNG beside the figures, drawn in `DARKMODE`'s theme; a call's request `_meta` `chart_image` (`"png"` or `"none"`) overrides its connection's ([mcp-service.md](mcp-service.md) 3.7). They need Pillow (`requirements-charts.txt`, in the Docker image): installed from `requirements.txt` alone the service answers with the charts' JSON and a note, and warns once.
 

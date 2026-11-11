@@ -24,7 +24,7 @@ from datetime import datetime
 from lib.airgradient import AirGradient
 from lib.airgradient import metrics as air_metrics
 from lib.alert_log import AlertLog
-from lib.alerts.menu import LABELS, available_kinds
+from lib.alerts.kinds import LABELS, available_kinds
 from lib.alerts.store import AlertStore
 from lib.compose import Composer
 from lib.config import ROOT, Config

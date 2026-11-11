@@ -18,7 +18,7 @@ from ..ecowitt.rain import rain_amount
 from ..irrigation.tuya import is_paused
 from ..timeutil import local_epoch, now_local, seconds_until, when
 from .forecast import RAIN_FROM_PCT
-from .menu import kinds_of
+from .kinds import kinds_of
 
 log = logging.getLogger(__name__)
 

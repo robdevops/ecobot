@@ -124,6 +124,15 @@ The service runs sandboxed as its own user, and keeps its data in `/var/lib/priv
 
 ### Docker
 
+Docker runs two containers from one image: `ecobot-service`, the weather service (the readings, the alerts, and an MCP server that the
+bot and other AI clients use), and `ecobot`, the Telegram bot, which is optional. Add to `/etc/ecobot.env` one token for the bot to
+reach the service (make it with `openssl rand -hex 16`), the same value twice:
+
+```
+MCP_SERVICE_TOKENS=<token>
+WEATHER_MCP_TOKEN=<token>
+```
+
 ```
 sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
 ```
@@ -136,59 +145,38 @@ sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
 cd /opt/ecobot
 ```
 
+To run the Telegram bot too (leave this out for the service alone):
+
+```
+echo "COMPOSE_PROFILES=bot" | sudo tee -a /opt/ecobot/.env
+```
+
 ```
 sudo docker compose up -d --build
 ```
 
-Watch the logs:
+Watch the logs: `sudo docker logs -tf ecobot-service` shows `MCP: http://...:8765/mcp`, and `sudo docker logs -tf ecobot` shows
+`Weather service: connected`. Then message `/report` to your Telegram bot.
 
-```
-sudo docker logs -tf ecobot
-```
+Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd:
+`sudo docker compose --profile bot down && sudo systemctl start ecobot`. Only one process runs the service on the data folder: started
+beside a bot that runs it itself, it stops, saying so in its log.
 
-Then message `/report` to your Telegram bot.
-
-Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
-
-#### The weather service on its own in Docker (optional)
-
-Not needed: without it the bot runs everything itself, as before. The `ecobot-service` container runs the weather service from the same
-image (an MCP server for other clients, with the bot as one of them) on the bot's data folder, so back that up first:
-`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then:
-
-1. Add to `/etc/ecobot.env` (one token, made with `openssl rand -hex 16`), and the `WEATHER_MCP_URL` line that matches your network:
-   ```
-   MCP_SERVICE_TOKENS=<token>
-   WEATHER_MCP_TOKEN=<token>
-   # Docker's own network (the default):
-   WEATHER_MCP_URL=http://ecobot-service:8765/mcp
-   MCP_SERVICE_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service
-   # or, with compose.host-network.yaml in COMPOSE_FILE:
-   WEATHER_MCP_URL=http://127.0.0.1:8765/mcp
-   ```
-2. Recreate the bot, now the service's client (it waits for the service): `sudo docker compose up -d --force-recreate ecobot`
-3. Start the service: `sudo docker compose --profile service up -d ecobot-service`
-4. Watch both: `sudo docker logs -tf ecobot-service` should show `MCP: http://.../mcp`, and `sudo docker logs -tf ecobot` with
-   `Weather service: connected`. Then message `/report` to the bot.
+#### Other MCP clients
 
 The service is published on port 8765 of every address your machine has, so other devices on your network (Claude Code on a laptop,
-say) can use it with their own token from `MCP_SERVICE_TOKENS`: add your machine's IP address or name, as they write it in the URL, to
-`MCP_SERVICE_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. It is plain HTTP: keep it on your own network.
-Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in `compose.yaml` to
-`127.0.0.1:8765:8765`.
-A client that shows pictures can have the charts as images: add `?charts=png` to its URL (`http://192.168.1.5:8765/mcp?charts=png`).
-The image has Pillow, which draws them; a service installed by hand from `requirements.txt` alone sends the charts' data instead.
-
-From then on, `sudo docker compose --profile service up -d --build` updates both. To go back: `sudo docker compose --profile service down`
-(it stops both), remove the lines from step 1, then `sudo docker compose up -d`.
-Only one process runs the service on the data folder: started beside a bot without `WEATHER_MCP_URL`, it stops, saying so in its log.
+say) can use it: give each its own token, added to `MCP_SERVICE_TOKENS` with a comma, and add your machine's IP address or name, as they
+write it in the URL, to `MCP_SERVICE_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. For Claude Code:
+`claude mcp add --transport http ecobot http://192.168.1.5:8765/mcp --header "Authorization: Bearer <token>"`. It is plain HTTP: keep it
+on your own network. Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in
+`compose.yaml` to `127.0.0.1:8765:8765`. A client that shows pictures can have the charts as images: add `?charts=png` to its URL.
 
 #### Docker logging
 
-Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`):
+Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot-service` or `CONTAINER_NAME=ecobot`):
 
 ```
-echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee /opt/ecobot/.env
+echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee -a /opt/ecobot/.env
 ```
 
 The bot writes warnings and errors to stderr and the rest to stdout, which Docker files in the journal at the priorities err and info, so `journalctl -p warning CONTAINER_NAME=ecobot` shows the warnings and errors alone.
@@ -197,11 +185,13 @@ To use both this and [Docker host network](#docker-networking), set `COMPOSE_FIL
 
 #### Docker networking
 
-`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or reconfigure the container for host network (then run the `docker compose` command again):
+`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or put both containers on the host's network (then run the `docker compose` command again; the bot then reaches the service at 127.0.0.1):
 
 ```
-echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobot/.env
+echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ecobot/.env
 ```
+
+`/opt/ecobot/.env` holds one `COMPOSE_FILE=` line: to use more than one of these files, list them all in it, separated by `:`.
 
 ## Upgrading
 
@@ -233,10 +223,19 @@ cd /opt/ecobot && sudo git pull
 sudo docker compose up -d --build
 ```
 
-Compose replaces the container only if the image or the settings changed. To remove the old images and build cache that upgrades leave behind:
+Compose replaces a container only if its image or settings changed. To remove the old images and build cache that upgrades leave behind:
 
 ```
 sudo docker image prune -f && sudo docker builder prune -f
+```
+
+**From a version before the service ran on its own (November 2026):** the bot ran everything itself; now `ecobot-service` does, and the
+bot is its client, under the `bot` profile. Back up first (`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`), add the
+two token lines from [Docker](#docker) to `/etc/ecobot.env` (remove any `WEATHER_MCP_URL` line: Docker sets it), replace any
+`COMPOSE_PROFILES=service` in `/opt/ecobot/.env` with `COMPOSE_PROFILES=bot` (or add it), then:
+
+```
+sudo docker compose --profile bot down && sudo docker compose up -d --build
 ```
 
 ## Configuration

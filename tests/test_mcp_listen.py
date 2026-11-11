@@ -182,14 +182,16 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
             answered["tools"] = [t.name for t in (await client.list_tools()).tools]
             answered["current"] = json.loads((await client.call_tool("current", {"readings": ["temperature"]})).content[0].text)
             answered["health"] = json.loads((await client.read_resource("ecobot://health")).contents[0].text)
-        answered["direct"] = await post_status(url)   # 127.0.0.1 is not among the allowed hosts here
+        answered["stranger"] = await post_status(url, "evil.example")   # a Host it doesn't answer (127.0.0.1, localhost and its own
+        answered["own name"] = await post_status(url, socket.gethostname())   # hostname always are, beside MCP_SERVICE_ALLOWED_HOSTS)
         await until(lambda: any("Backfill Ecowitt: " in l and " fetched/failed, " in l for l in caplog.text.splitlines())
                     and "Backfill AirGradient:" in caplog.text, 60, "the archives")
         os.kill(os.getpid(), signal.SIGTERM)
 
-    async def post_status(url) -> int:
+    async def post_status(url, host) -> int:
         async with httpx.AsyncClient() as http:
-            return (await http.post(url, headers={"Authorization": "Bearer pr0xy", "Content-Type": "application/json"}, json={})).status_code
+            return (await http.post(url, headers={"Authorization": "Bearer pr0xy", "Content-Type": "application/json", "Host": host},
+                                    json={})).status_code
     asker = asyncio.create_task(ask_then_stop())
     await service_main.main()
     await asker
@@ -198,7 +200,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     assert "MCP 127.0.0.1: POST /mcp tools/call current temperature -> 200" in log and "-> 421, its Host isn't in" in log   # (the request log)
     assert answered["tools"] == ["current", "summary", "readings", "days", "relate", "scan", "outlook", "about"]   # (no forecast, no pollen)
     assert answered["current"]["sensors"]["outdoor"]["temperature"]["unit"]
-    assert answered["direct"] == 421
+    assert answered["stranger"] == 421 and answered["own name"] != 421
     assert "Ecowitt refresh" in answered["health"]["loops"] and answered["health"]["file"]["bytes"] > 0
     assert "Alerts NOT running" not in log and "Telegram" not in log
 

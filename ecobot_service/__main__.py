@@ -12,6 +12,7 @@ import contextlib
 import ipaddress
 import logging
 import signal
+import socket
 
 import uvicorn
 
@@ -75,7 +76,8 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
         server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version())
-        app = http_app(server, tokens=cfg.mcp_service_tokens, allowed_hosts=cfg.mcp_service_allowed_hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
+        hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_service_allowed_hosts)))   # (its own name too: a container's hostname)
+        app = http_app(server, tokens=cfg.mcp_service_tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()
@@ -94,7 +96,7 @@ async def main():
         serving = asyncio.create_task(web.serve())
         log.info("MCP: http://%s:%d/mcp, %s; answering Host %s", host if ":" not in host else f"[{host}]", port,
                  f"{len(cfg.mcp_service_tokens)} token(s)" if cfg.mcp_service_tokens else "no auth (loopback only)",
-                 ", ".join(cfg.mcp_service_allowed_hosts))
+                 ", ".join(hosts))
         waiting = asyncio.create_task(stop.wait())
         await asyncio.wait({serving, waiting}, return_when=asyncio.FIRST_COMPLETED)
         server.listen.close()   # (the listen streams end gracefully: their clients know to listen again)

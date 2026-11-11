@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 
 from ..forecast.source import describe_day
 from ..timeutil import at_hour
-from .menu import kinds_of
+from .kinds import kinds_of
 
 log = logging.getLogger(__name__)
 

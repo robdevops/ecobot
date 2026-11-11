@@ -21,29 +21,13 @@ from itertools import batched
 from telegram import InlineKeyboardMarkup
 
 from ..buttons import button, opener, toggle_button
+from .kinds import LABELS, TYPES, available_kinds, kinds_of  # noqa: F401 (named here too: the menus are built from them)
 
-# kind -> (the name on its button, the source that sends it: a source's name, or Irrigation for the controller), in the order listed
-TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV", "Ecowitt"), "temps": ("temperature crossing", "Ecowitt"),
-         "particulates": ("particulates", "AirGradient"), "pollen_and_asthma": ("pollen & asthma", "Pollen"),
-         "forecast": ("forecast changes", "Forecast"),
-         "irrigation_battery": ("irrigation battery", "Irrigation"), "irrigation_pause": ("irrigation pause", "Irrigation")}
-LABELS = {kind: label for kind, (label, _) in TYPES.items()}
 ALL = "all"
 TITLE = "🔔 Alerts in this chat"
 PER_ROW = 2
 ALERTS, SOUND, BELL = "alerts", "sound", "bell"   # the menus that can be open
 MENUS = {ALERTS: "🔔 Alerts", SOUND: "🔊 Sound"}   # the /alerts buttons
-
-
-def kinds_of(source: str) -> tuple[str, ...]:
-    """The alert types a source (by name) sends: a monitor's KINDS."""
-    return tuple(kind for kind, (_, sender) in TYPES.items() if sender == source)
-
-
-def available_kinds(sources, irrigation: bool = False) -> list[str]:
-    """The alert types the bot sends: those of its sources (by name), and the irrigation ones with a controller configured."""
-    names = {*sources, *(["Irrigation"] if irrigation else [])}
-    return [kind for kind, (_, source) in TYPES.items() if source in names]
 
 
 def _verb(on: bool) -> str:

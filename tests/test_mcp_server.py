@@ -399,11 +399,12 @@ def test_images_are_wanted_per_call_else_per_connection():
     assert chart_images.asked_dark({"chart_dark": True}) is True and chart_images.asked_dark({"chart_dark": "yes"}) is None
 
 
-def test_the_service_imports_no_pillow_until_an_image_is_asked_for(tmp_path):
-    """Importing the server and building its app (as python -m ecobot_service does) imports neither Pillow nor the renderer."""
+def test_the_service_imports_no_pillow_until_an_image_is_asked_for_and_no_telegram_ever(tmp_path):
+    """Importing the server and building its app (as python -m ecobot_service does) imports neither Pillow nor the renderer, nor the
+    Telegram library: the service knows nothing of Telegram."""
     code = ("import sys, ecobot_service.__main__; from zoneinfo import ZoneInfo; from lib.mcp_server import EcobotServer, http_app; "
             "from lib.service.context import Context; http_app(EcobotServer(Context(tz=ZoneInfo('UTC'))), tokens=('t',)); "
-            "print(sorted(m for m in sys.modules if m.split('.')[0] == 'PIL' or m in ('lib.charts', 'lib.draw', 'lib.gauges')))")
+            "print(sorted(m for m in sys.modules if m.split('.')[0] in ('PIL', 'telegram') or m in ('lib.charts', 'lib.draw', 'lib.gauges')))")
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120,
                           env={**os.environ, "DATA_DIR": str(tmp_path)})
     assert done.returncode == 0, done.stderr

@@ -13,7 +13,7 @@ from datetime import timedelta
 
 from ..pollen.parse import LEVEL_EMOJI, LEVELS
 from ..timeutil import at_hour, day_text
-from .menu import kinds_of
+from .kinds import kinds_of
 
 log = logging.getLogger(__name__)
 

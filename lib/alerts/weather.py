@@ -22,7 +22,7 @@ from datetime import timedelta
 
 from ..ecowitt.glance import UVI_ALERT
 from . import pictures, rules
-from .menu import kinds_of
+from .kinds import kinds_of
 from .rules import due, remember
 from ..ecowitt.rain import Rows, duration, rain_amount, wet_flags
 from ..timeutil import at_hour, clock_text, to_local

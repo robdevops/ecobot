@@ -13,10 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
-from telegram import InlineKeyboardMarkup
-from telegram.constants import KeyboardButtonStyle
 
-from .buttons import button
 
 PREFIX = "pd:"
 REMEMBERED = 300   # charts whose call is kept, newest first to stay
@@ -99,9 +96,13 @@ def ends_now(drawn_by: dict | None, now: datetime, tz: tzinfo) -> bool:
 
 
 def periods_keyboard(drawn_by: dict, current: str | None = None, now: datetime | None = None,
-                     tz: tzinfo | None = None) -> InlineKeyboardMarkup | None:
+                     tz: tzinfo | None = None) -> "InlineKeyboardMarkup | None":
     """One button for each period the chart's drawn_by lists, labelled as the service labels it, the chart's own (`current`) shaded.
     When it lists none: a 🔄 that draws it again if its period runs to now (ends_now; `now` and `tz` given), else None."""
+    from telegram import InlineKeyboardMarkup   # (here, not at the top: the service imports this module's call_key, and knows no Telegram)
+    from telegram.constants import KeyboardButtonStyle
+
+    from .buttons import button
     listed = drawn_by.get("periods") or []
     if not listed:
         return InlineKeyboardMarkup([[button("🔄", f"{PREFIX}{RELOAD}")]]) if now and tz and ends_now(drawn_by, now, tz) else None
