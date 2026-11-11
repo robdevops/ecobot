@@ -2095,5 +2095,129 @@
       }
     },
     "note": "the chart and something else to answer (outlook may be called too): chart_answers_it stays unset"
+  },
+  "prompt-now": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "outside now is current (no readings named: everything)"
+  },
+  "prompt-report": {
+    "tools": [
+      "current",
+      "forecast",
+      "pollen"
+    ],
+    "args": {
+      "forecast": {
+        "period": {
+          "regex": "(?i)^today$",
+          "e.g.": "today",
+          "optional": true
+        }
+      }
+    },
+    "note": "a report is current, forecast (today) and pollen, called together"
+  },
+  "prompt-will-it-rain": {
+    "tools": [
+      "outlook"
+    ],
+    "note": "will it rain in the next few hours is outlook"
+  },
+  "prompt-weather-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "every station reading charted over the period is summary's chart"
+  },
+  "prompt-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "one reading charted over a period is summary's chart"
+  },
+  "prompt-rainfall": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "last week"
+        }
+      }
+    },
+    "note": "the rain that fell over a period is summary's total"
+  },
+  "prompt-air": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        }
+      }
+    },
+    "note": "the air over a period is summary of the air sensor's readings, PM2.5 among them"
   }
 }

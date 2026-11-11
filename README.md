@@ -157,9 +157,9 @@ Watch the logs: `sudo docker logs -tf ecobot-mcp` shows `MCP: http://...:8765/mc
 `ecobot-mcp: connected`. Then message `/status` to your Telegram bot.
 
 Docker uses the same data folder as the systemd units, so you can switch between them, one at a time. To go back to systemd:
-`sudo docker compose --profile bot down && sudo systemctl start ecobot-mcp ecobot` (with `BOT_MCP_URL=http://127.0.0.1:8765/mcp` in
-`/etc/ecobot.env`, which Docker sets for itself). Only one ecobot-mcp runs on the data folder: a second stops at start, saying so in its
-log.
+`sudo docker compose --profile bot down && sudo systemctl start ecobot-mcp ecobot`, with `BOT_MCP_URL=http://127.0.0.1:8765/mcp` added to
+`/etc/ecobot.env`. Take that line out again before going back to Docker: Docker sets its own, and one in `/etc/ecobot.env` wins over it.
+Only one ecobot-mcp runs on the data folder: a second stops at start, saying so in its log.
 
 #### Other MCP clients
 

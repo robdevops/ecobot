@@ -196,28 +196,26 @@ def complete_reply(results: list[str]) -> str | None:
     return "\n\n".join(replies) if replies else None
 
 
-def reads_air(name: str, args: dict, result: dict, catalogue) -> bool:
+def reads_air(name: str, args: dict, result: dict) -> bool:
     """Is this call's answer about the air (its live-chart link goes under the reply)? Read from what the call read, never from a
-    refusal (its `words` and `names` list every reading): `current` when a reading it was asked for is the air sensor's alone ("pm2.5",
-    "air"; not every sensor, as for "how warm is it", nor "all"); `summary` when a series is the air's; `readings` and `relate` when
-    their reading is; `days` when a field named is the air sensor's; `scan` always (the air against the weather)."""
-    from .service.days import AIR_DEVICE as DAYS_AIR, DEVICE_OF
-    from .service.names import AIR_DEVICE, _split
+    refusal (its `words` and `names` list every reading): `current` when the air sensor answered a reading named ("pm2.5", "air"; not
+    every sensor, as for "what's it like", nor "all"); `summary` when a series is the air's; `readings` and `relate` when their reading
+    is; `days` when a field named is the air sensor's; `scan` always (the air against the weather). Read from the answer and the air
+    sensor's day fields alone, so the bot loads none of the service's source or storage code."""
+    from .series import AIR   # (the air sensor's readings: its day fields are each with _max, _min or _avg, lib/airgradient/days.py)
     if not isinstance(result, dict) or "error" in result:
         return False
     if name == "current":
-        for word in _split(args.get("readings")):
-            found = catalogue._lookup(word)
-            if not isinstance(found, str) and found and all(r.device == AIR_DEVICE for r in found):
-                return True
-        return False
+        named = args.get("readings")
+        named = [named] if isinstance(named, str) else named or []
+        return "air" in (result.get("sensors") or {}) and bool(named) and "all" not in [str(n).strip().lower() for n in named]
     if name == "summary":
         return any(str(k).startswith("air.") for k in result.get("series") or {})
     if name in ("readings", "relate"):
         return str(result.get("reading") or "").startswith("air.")
     if name == "days":
         fields = [c.get("field") for c in args.get("where") or [] if isinstance(c, dict)] + [args.get("sort_by"), args.get("of")]
-        return any(DEVICE_OF.get(f) == DAYS_AIR for f in fields if isinstance(f, str))
+        return any(f.rpartition("_")[::2] in [(m, k) for m in AIR for k in ("max", "min", "avg")] for f in fields if isinstance(f, str))
     return name == "scan"
 
 
@@ -404,6 +402,7 @@ class Bot:
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.alert_charts = pictures.AlertCharts(self.images, tz=getattr(cfg, "tz", None))   # the alerts' charts, kept with them
         self.preloading: set[str] = set()        # the calls whose other periods are being uploaded (BOT_TELEGRAM_PRELOAD_CHAT)
+        self.fetching: dict[str, asyncio.Event] = {}   # a period's chart being preloaded, by call_key: set once it is kept (or failed); a press waits for it
         self.prompt_commands: dict = {}          # ecobot-mcp's prompts offered as commands: name -> lib/weather.Prompt (publish_commands)
         self._published: list | None = None      # the command menu last given to Telegram
         self.preload_off = False                 # Telegram refused an upload to that chat (not a flood limit or a timeout): no more are tried until restart
@@ -450,10 +449,6 @@ class Bot:
             log.error("Service tool %s failed: %s: %s", tool, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return {"error": f"{type(e).__name__}: {e}"}, None
         return (out, image) if isinstance(out, dict) else ({"error": "not an answer"}, None)
-
-    def _catalogue(self):
-        """The readings the service holds (an answer's calls are read against them: reads_air)."""
-        return self.weather.catalogue()
 
     def _instructions(self) -> str:
         """The server's instructions (from server/discover)."""
@@ -671,8 +666,9 @@ class Bot:
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Any command the bot has no handler of its own for: one of ecobot-mcp's prompts (prompt_commands), whose words after the command
-        fill its arguments (prompt_arguments): the prompt's question is asked of the model as a typed question. Any other command, or one
-        addressed to another bot ("/chart@otherbot"), is left alone."""
+        fill its arguments (prompt_arguments), or follow its question when it takes none: the prompt's question is asked of the model as a
+        typed question. Any other command, or one addressed to another bot ("/chart@otherbot"), is left alone; while ecobot-mcp hasn't
+        been reached (its prompts unknown), a command not the bot's own is told so (SERVICE_DOWN)."""
         msg = update.effective_message
         if not msg or not msg.text:
             return
@@ -683,6 +679,8 @@ class Bot:
             return
         found = self.prompt_commands.get(name.lower())
         if found is None:
+            if not self.prompt_commands and not await self.weather.ready(0) and await self._allowed(update, context):
+                await msg.reply_text(SERVICE_DOWN)   # (ecobot-mcp not reached yet: its prompts, so its commands, aren't known)
             return
         if not await self._allowed(update, context):
             return
@@ -699,6 +697,8 @@ class Bot:
             log.info("%s: /%s %s refused: %s", describe_source(update), found.name, words, why, extra=QUOTES)
             await msg.reply_text(f"Sorry, /{found.name} didn't work: {why}")
             return
+        if words and not found.arguments:   # (a prompt that takes no words: they go with its question, not lost)
+            question = f"{question} ({words})"
         await self.respond(update, context, question)
 
     @staticmethod
@@ -976,6 +976,10 @@ class Bot:
         label = "again" if reload else listed[period]
         key = periods.call_key(tool, args)
         log.debug("Period button %s: %s", label, key, extra=QUOTES)
+        if not (reload or refresh) and (fetching := self.fetching.get(key)) is not None:   # being preloaded: that one waited for, not asked twice
+            await drawing(label)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(fetching.wait(), TURN_SECONDS)
         if not (reload or refresh) and (held := self.images.held(key)) is not None and held.drawn_by:   # drawn lately: not asked again
             await drawing(label)
             began = time.monotonic()
@@ -1265,15 +1269,20 @@ class Bot:
 
             async def upload(period, args):
                 key = periods.call_key(tool, args)
+                self.fetching[key] = fetched = asyncio.Event()
                 try:
                     drawn = await asyncio.wait_for(self._draw_call(tool, args), TURN_SECONDS)
+                    if drawn is None:
+                        return
+                    png, title, caption, newest, by = drawn[:5]
+                    self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL, newest=newest, drawn_by=by, dark=drawn.dark)
                 except Exception as e:
                     log.debug("Couldn't draw %s to preload: %s: %s", key, type(e).__name__, e)
                     return
-                if drawn is None:
-                    return
-                png, title, caption, newest, by = drawn[:5]
-                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL, newest=newest, drawn_by=by, dark=drawn.dark)
+                finally:
+                    fetched.set()
+                    if self.fetching.get(key) is fetched:
+                        del self.fetching[key]
                 if chat is None or self.preload_off:   # (fetched only; or an upload was refused meanwhile)
                     return
                 if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
@@ -1391,8 +1400,7 @@ class Bot:
         used = [m for m in added if m["role"] == "tool"]
         log.info("%s: %s in %.1fs, tools %d, charts %d, %d chars", chat_tag(msg.chat_id), "Replied" if answer.ok else "Error reply",
                  time.monotonic() - started, len(used), len(photos), len(reply))
-        catalogue = self._catalogue()
-        used_air = answer.ok and any(r and reads_air(*r, catalogue) for r in turn.results)   # (an error reply gets no link)
+        used_air = answer.ok and any(r and reads_air(*r) for r in turn.results)   # (an error reply gets no link)
         air_link = self.weather.air_link() if used_air else None
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         single = len(photos) == 1   # a single chart: its period buttons go under it

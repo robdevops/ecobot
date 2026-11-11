@@ -590,3 +590,37 @@ async def test_without_the_preload_chat_a_charts_other_periods_are_fetched_in_th
         pass
     await bot.on_period_button(press(msg, "pd:3m", answer), context)
     assert len(calls(bot)) == asked and edits[0][0] == "Temperature"                       # the 3M held: no new call
+
+
+async def test_a_press_while_its_period_is_being_fetched_waits_for_that_fetch_and_asks_nothing_more(serve, alert_state, monkeypatch):
+    """A period button pressed just after its chart, while that period is still being fetched in the background, waits for that fetch
+    (the press's own call would queue behind it) and puts in the chart it brings: ecobot-mcp is asked for that period once."""
+    bot, uploads, context = await preloading_bot(serve, alert_state, monkeypatch)
+    bot.cfg = NS(tz=TZ)
+    asked, call, gate = [], summary(bot).call, asyncio.Event()
+
+    async def held_back(args, meta=None):
+        asked.append(args.get("period"))
+        if args.get("period") == "3m":
+            await gate.wait()
+        return await call(args, meta)
+    summary(bot).call = held_back
+    sent, edits = [], []
+    msg = chat_message(sent, edits)
+    await ask_chart(bot, NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob")),
+                    context, "7d")
+    for _ in range(50):
+        if "3m" in asked:
+            break
+        await asyncio.sleep(0.01)
+    msg.message_id = 101
+
+    async def answer(text=None):
+        pass
+    pressed = asyncio.create_task(bot.on_period_button(press(msg, "pd:3m", answer), context))
+    await asyncio.sleep(0.05)
+    assert not pressed.done() and asked.count("3m") == 1                                    # waiting for the fetch, not asking again
+    gate.set()
+    await pressed
+    await settle(bot)
+    assert asked.count("3m") == 1 and edits and edits[0][0] == "Temperature"

@@ -4,7 +4,7 @@ measured, and refuses the future by pointing to this tool.
 
 The answer is today's weather_forecast's, in the service's shape: the same `lines` (lib/forecast/source.py day_label and describe_day),
 each day's figures in `days`, `place`, `source` and `fetched_at`, and `text`, the bot's forecast section ("Forecast (Melbourne,
-6:00pm)" and a bullet per line, lib/report.py's report and lookup) written here so a client can send it as it is.
+6:00pm)" and a bullet per line, the old lib/report.py's report and lookup) written here so a client can send it as it is.
 Request `_meta` `fetch: false` answers from the forecast held, fetching nothing (the report's `cached`).
 
 `section` writes a heading and bullets as the bot does for the sources that bring their own lines (pollen.py uses it too), and
@@ -23,7 +23,7 @@ from .common import Refusal, ServiceTool, answer, iso
 log = logging.getLogger(__name__)
 
 DEFAULT = "the next 7 days"   # weather_forecast's default: today and the six days after it
-HEADING = "Forecast"          # the bot's heading for it (lib/report.py SECTIONS)
+HEADING = "Forecast"          # the bot's heading for it (the old lib/report.py SECTIONS)
 NO_FORECAST = "No forecast is available right now."   # (weather_forecast's own words)
 FOR_WHAT_WAS = "summary (or days, for days ranked or counted)"
 
@@ -165,7 +165,7 @@ def day_figures(d: dict) -> dict:
 
 
 def section(heading: str, lines: list[str], *, place: str | None, fetched_at: float | None, tz: tzinfo, today: date) -> str:
-    """A source's lines as the bot writes them in the report and alone (lib/report.py _heading, _own_lines): "Forecast (Melbourne,
+    """A source's lines as the bot wrote them in the report and alone (the old lib/report.py _heading, _own_lines): "Forecast (Melbourne,
     6:00pm)", the place and the time it was fetched (with its day when that isn't `today`), then "• " and each line."""
     stamp = None
     if fetched_at:

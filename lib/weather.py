@@ -7,7 +7,7 @@ sources of its own and never opens the readings file (step 6b). Everything the b
     shortcuts, report, charts drawn ahead and period buttons call them);
   - `names`: the sources ecobot-mcp has ("Ecowitt", "AirGradient", "Forecast", "Pollen", from ecobot://station): which alerts, report
     sections and gauges there are;
-  - `catalogue()`: the readings it holds (a shortcut's words are read against them); `instructions()`: the server's instructions (from
+  - `instructions()`: the server's instructions (from
     `server/discover`); `air_link()`: the AirGradient dashboard (the live-chart link under an answer about the air);
   - `alerts`: the alert feed lib/alerts/notify.AlertDelivery reads (`last_id`, `identity`, `since`, `wait`), and `alert(id)` one event
     (the 🔄 under an alert replays its chart's drawn_by);
@@ -224,7 +224,6 @@ class RemoteWeather:
         self.service = RemoteTools()
         self.station: dict = {}
         self._instructions = ""
-        self._catalogue = None
         self.alerts = RemoteAlerts(self)
         self.forecast = ServiceForecast(self)
         self.listening = asyncio.Event()   # the first connection's listen is up, its tools and station read
@@ -298,7 +297,7 @@ class RemoteWeather:
 
     async def _read_station(self):
         station = await self.resource(STATION_URI, wait=0)
-        self.station, self._catalogue = station, None
+        self.station = station
         if zone := station.get("time_zone"):
             try:
                 read = ZoneInfo(zone)
@@ -440,13 +439,6 @@ class RemoteWeather:
     @property
     def names(self) -> set[str]:
         return set(self.station.get("sources") or {})
-
-    def catalogue(self):
-        if self._catalogue is None:
-            from .service.names import Catalogue
-            sensors = self.station.get("sensors") or {}
-            self._catalogue = Catalogue.listed([r for s in sensors.values() for r in s.get("readings") or []])
-        return self._catalogue
 
     def instructions(self) -> str:
         return self._instructions

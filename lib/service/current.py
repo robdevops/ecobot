@@ -16,7 +16,7 @@ weather_now and air_quality without dates (and the gauges' figures), on their en
     with its day, but not its time of day), so a reading it lacks now is there with its figures alone, as the station's are.
 
 `lines` are each device's readings as bullets, worded as the bot's report, "weather now" and plain lookups word them today
-(lib/report.py weather_lines, air_lines, reading_lines, ported here with the same words): every reading (none named) in the report's
+(the old lib/report.py weather_lines, air_lines, reading_lines, ported here with the same words): every reading (none named) in the report's
 layout, else a line for each reading named. `headings` are the report's section headings, with the time of each device's reading. So a
 client's report is current's headings and lines, then forecast's (today) and pollen's.
 
@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 NAME = "current"
 ARGUMENTS = ("readings", "context")
 ANOTHER_TIME = ("period", "start", "end")   # a call about another time than now: summary's or readings'
-HEADINGS = {STATION: "Weather station", AIR_DEVICE: "Air quality"}       # the report's sections (lib/report.py SECTIONS)
+HEADINGS = {STATION: "Weather station", AIR_DEVICE: "Air quality"}       # the report's sections (the old lib/report.py SECTIONS)
 NOT_AVAILABLE = "• not available right now"                              # ... and a section whose device didn't answer
 UNAVAILABLE = {STATION: "The weather station isn't answering right now.", AIR_DEVICE: "The air sensor isn't answering right now."}
 NOTHING_HELD = {STATION: "No reading of the weather station is held (and `fetch` is off).",
@@ -86,7 +86,7 @@ def parameters(description: str) -> dict:
         "context": CONTEXT}}
 
 
-# ---------- the words, as lib/report.py writes them ----------
+# ---------- the words, as the old lib/report.py wrote them ----------
 def _zero(text: str | None) -> bool:
     """Is this reading missing or zero ("0.0 W/m²", "0")?"""
     try:

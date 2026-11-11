@@ -625,7 +625,7 @@ NOT_THE_BOTS = ("PIL", "lib.charts", "lib.draw", "lib.gauges",                  
 
 def test_the_bot_imports_no_pillow_no_drawing_module_and_no_source_module(tmp_path):
     """The bot draws nothing and runs no source (docs/ecobot-mcp.md steps 6a and 6b): importing its modules, and building it as
-    ecobot-mcp's client with its alert delivery and irrigation check, imports neither Pillow nor lib/charts.py, lib/draw.py or
+    ecobot-mcp's client with its alert delivery and irrigation check, and reading an answer for the air link (reads_air), imports neither Pillow nor lib/charts.py, lib/draw.py or
     lib/gauges.py, nor any module of the sources (lib/ecowitt, lib/airgradient, lib/forecast, lib/pollen) or of the readings file
     (lib/storage); every picture it sends, and every reading, is ecobot-mcp's."""
     import os
@@ -641,6 +641,8 @@ def test_the_bot_imports_no_pillow_no_drawing_module_and_no_source_module(tmp_pa
             "b = Bot(NS(tz=ZoneInfo('UTC')), Agent(None, 'm', model_tools.tools(w)), s, service=w); "
             "AlertDelivery(w.alerts, Notifier(NS(), s, b.alert_charts), s, ZoneInfo('UTC'), weather=w); "
             "IrrigationMonitor(None, s, None, ZoneInfo('UTC'), 18, ServiceRain(w), w.forecast); "
+            "from lib.bot import reads_air; [reads_air(*c) for c in (('current', {'readings': ['pm2.5']}, {'sensors': {'air': {}}}), "
+            "('days', {'sort_by': 'pm2_5_max'}, {}), ('summary', {}, {'series': {}}))]; "
             f"print(sorted(m for m in sys.modules if m.split('.')[0] == 'PIL' or m.startswith({NOT_THE_BOTS!r})))")
     done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120,
                           env={**os.environ, "DATA_DIR": str(tmp_path)})

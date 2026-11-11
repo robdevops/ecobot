@@ -14,7 +14,7 @@ counts the days every named sensor has, and the days whose station figures come 
 the air sensor's midnight to midnight) are left out and counted.
 
 The result is today's day-tool result in 3.2's shape (period, as_of, then its fields), each listed day with its `day_look`, and `answer`:
-the line the bot writes today for a days lookup (lib/report.py `_days`, ported here with the same words), which is also the finished
+the line the bot wrote for a days lookup (the old lib/report.py `_days`, ported here with the same words), which is also the finished
 reply when `chart_answers_it` is set and a chart drawn (unless a note needs the model's words). `group_by` draws the bar chart, which
 carries the call that drew it (`drawn_by`, 3.7).
 
@@ -571,7 +571,7 @@ def needs_words(out: dict) -> bool:
     return bool(notes - CAPTIONED_NOTES)
 
 
-# ---------- the answer line (lib/report.py's days lookup, ported with its words) ----------
+# ---------- the answer line (the old lib/report.py's days lookup, ported with its words) ----------
 def period_words(text: str) -> str:
     """"Tue 29 Sep 2026 - Tue 6 Oct 2026" -> "Tue 29 Sep – Tue 6 Oct 2026" (the first year is dropped only when it is the same year)."""
     years = re.findall(r" (20\d\d)\b", text)

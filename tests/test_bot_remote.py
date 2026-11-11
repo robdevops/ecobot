@@ -134,7 +134,6 @@ async def test_a_question_is_answered_with_the_remote_tools_and_the_instructions
     assert told == json.loads(await world.service["current"].call({"readings": ["temperature"]}))   # the remote tool's own answer
     assert replies == ["It's 14.2 °C."]
     assert bot.names == {"Ecowitt", "AirGradient", "Forecast", "Pollen"} and not hasattr(bot, "sources")   # (from ecobot://station; none here)
-    assert bot._catalogue().names == world.ctx.readings().names
 
 
 async def test_a_charts_picture_comes_from_the_service_with_its_period_buttons(connected, alert_state, monkeypatch):
@@ -246,7 +245,8 @@ async def test_ecobot_mcps_prompts_are_telegram_commands_whose_words_fill_their_
                         ("/chart pm2.5 last two weeks", question("chart", reading="pm2.5", period="last two weeks")),
                         ("/rainfall last week", question("rainfall", period="last week")),
                         ("/rainfall", question("rainfall")), ("/now", question("now")), ("/report@ecobot", question("report")),
-                        ("/air", "How is the air quality now?")):
+                        ("/air", "How is the air quality now?"),
+                        ("/will_it_rain tomorrow", f"{question('will_it_rain')} (tomorrow)")):   # (no arguments: the words follow it)
         update, context, replies = a_chat("group")
         update.effective_message.text, update.effective_message.chat.id, context.bot.username = typed, 1, "ecobot"
         await bot.on_command(update, context)
@@ -258,6 +258,20 @@ async def test_ecobot_mcps_prompts_are_telegram_commands_whose_words_fill_their_
         await bot.on_command(update, context)
         assert replies == (["Sorry, /chart didn't work: The prompt 'chart' needs reading."] if typed == "/chart" else []), typed
     assert len(model.seen) == seen                                                        # none of these asked the model
+
+
+async def test_while_ecobot_mcp_is_unreached_a_command_not_the_bots_own_says_so(alert_state):
+    """Before ecobot-mcp is first reached its prompts (so their commands) aren't known: "/report" is told the service can't be reached,
+    not left unanswered; another bot's command is still left alone."""
+    from lib.bot import SERVICE_DOWN
+    from tests.served import unreached
+    weather = unreached()
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(weather)), alert_state, service=weather)
+    for typed, want in (("/report", [SERVICE_DOWN]), ("/report@otherbot", [])):
+        update, context, replies = a_chat()
+        update.effective_message.text, update.effective_message.chat.id, context.bot.username = typed, 1, "ecobot"
+        await bot.on_command(update, context)
+        assert replies == want, typed
 
 
 async def test_a_prompt_that_is_no_command_name_or_is_one_of_the_bots_is_left_out_with_a_warning(connected, alert_state, caplog):

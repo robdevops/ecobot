@@ -999,5 +999,86 @@
       "q:chart-only",
       "m:pressure"
     ]
+  },
+  {
+    "id": "prompt-now",
+    "ask": "How is it outside now?",
+    "note": "ecobot-mcp's now prompt, as the bot's /now command (and the 📋 Now's question) asks the model",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "q:current",
+      "m:temperature"
+    ]
+  },
+  {
+    "id": "prompt-report",
+    "ask": "Give me a report: the readings now, today's forecast and the pollen.",
+    "note": "ecobot-mcp's report prompt, as the bot's /report command (and the Status button after its gauges) asks the model",
+    "expect": {
+      "effort": "low"
+    },
+    "covers": [
+      "q:report"
+    ]
+  },
+  {
+    "id": "prompt-will-it-rain",
+    "ask": "Will it rain in the next few hours?",
+    "note": "ecobot-mcp's will_it_rain prompt, as the bot's /will_it_rain command (and any client) asks the model",
+    "expect": {
+      "effort": "low"
+    },
+    "covers": [
+      "q:forecast",
+      "m:rain"
+    ]
+  },
+  {
+    "id": "prompt-weather-chart",
+    "ask": "Chart every weather reading, a panel each, over 7d.",
+    "note": "ecobot-mcp's weather_chart prompt, as the bot's /weather_chart command (and \"/weather_chart 7d\") asks the model",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "q:summary",
+      "m:temperature"
+    ]
+  },
+  {
+    "id": "prompt-chart",
+    "ask": "Chart rain over 7d.",
+    "note": "ecobot-mcp's chart prompt, as the bot's /chart command (and \"/chart rain 7d\") asks the model",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "m:rain",
+      "c:line"
+    ]
+  },
+  {
+    "id": "prompt-rainfall",
+    "ask": "How much rain fell over last week?",
+    "note": "ecobot-mcp's rainfall prompt, as the bot's /rainfall command (and \"/rainfall last week\") asks the model",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "m:rain"
+    ]
+  },
+  {
+    "id": "prompt-air",
+    "ask": "How was the air quality over 7d?",
+    "note": "ecobot-mcp's air prompt, as the bot's /air command (and \"/air 7d\") asks the model",
+    "expect": {
+      "effort": "none"
+    },
+    "covers": [
+      "m:air-quality"
+    ]
   }
 ]

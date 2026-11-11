@@ -15,7 +15,7 @@ high_band, average_aqi_us, average_band}, "wind.wind_direction": {most_common, t
 total, total_text, [wettest_day], [daily|monthly]}}, [rain_total_mm], [monthly_note], [note_no_readings], [note_chart], [notes],
 [missing, warning], [caption] or [text], [chart_note, charts], [reply, complete]}.
 
-Words for the person, as the bot writes them today from weather_history's and air_quality's results (lib/report.py, its wording ported
+Words for the person, as the bot wrote them from weather_history's and air_quality's results (the old lib/report.py, its wording ported
 here, as the bot's code goes): `caption` under a chart (report.chart_caption), and `text` when there is none (report.lookup's
 "extremes"). Each chart carries `drawn_by`, the call that draws it again, and the periods it is worth drawing over (3.7).
 """
@@ -262,7 +262,7 @@ class _Query(HistoryQuery):
         return self.rain_bars
 
 
-# ---------- the caption (lib/report.py's chart_caption, its wording kept) ----------
+# ---------- the caption (the old lib/report.py's chart_caption, its wording kept) ----------
 def _year(text: str | None) -> str:
     """"Tue 29 Sep 2026" -> "Tue 29 Sep"."""
     return re.sub(r" 20\d\d\b", "", text or "")
@@ -348,7 +348,7 @@ def _series_label(field: str) -> str:
 
 def _extremes_lines(series: dict, names: list[str]) -> list[str]:
     """The low and high (or the average) of each reading named, each with its day and time: wind, its speed and its gusts. A reading on
-    both sides (indoor, outdoor) has a line for each (lib/report.py's plain lookup of a weather_history result, "extremes")."""
+    both sides (indoor, outdoor) has a line for each (the old lib/report.py's plain lookup of a weather_history result, "extremes")."""
     wanted = [f for r in filter(None, map(find, names)) for f in (r.field, r.band_field) if f] or ["temperature"]
     keys = [k for k in series if k.split(".", 1)[1] in wanted and "low" in series[k]]
     fields = [k.split(".", 1)[1] for k in keys]

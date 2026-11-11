@@ -1,6 +1,6 @@
 """The `summary` tool (lib/service/summary.py): its arguments and defaults, the shape of what it answers, the refusals that teach, the
-periods it reads, its charts with drawn_by (replayed, and over every period it lists), and the caption the bot writes today for the same
-chart (lib/report.py), word for word: held to that oracle until step 6c deleted it (tests/report_words.py), pinned since in
+periods it reads, its charts with drawn_by (replayed, and over every period it lists), and the caption the bot wrote for the same
+chart (the old lib/report.py), word for word: held to that oracle until step 6c deleted it (tests/report_words.py), pinned since in
 tests/summary_words.json."""
 
 import json

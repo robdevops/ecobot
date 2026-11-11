@@ -3,7 +3,7 @@
 
 The answer is today's pollen_asthma's, in the service's shape: the same `lines` (Pollen.lines), each level with its emoji and its
 day in `grass` and `asthma`, `in_season`, `fetched_at`, `place` and `source`, and `text`, the bot's pollen section ("Pollen & asthma
-(Melbourne, 6:00pm)" and a bullet per line, lib/report.py's report and lookup) written here so a client can send it as it is. Out of
+(Melbourne, 6:00pm)" and a bullet per line, the old lib/report.py's report and lookup) written here so a client can send it as it is. Out of
 season (the forecasts run October to December) it answers as pollen_asthma does, with its error. Request `_meta` `fetch: false`
 answers from the page held, fetching nothing (the report's `cached`).
 """
@@ -19,7 +19,7 @@ from .forecast import clock_of, section
 
 log = logging.getLogger(__name__)
 
-HEADING = "Pollen & asthma"   # the bot's heading for it (lib/report.py SECTIONS)
+HEADING = "Pollen & asthma"   # the bot's heading for it (the old lib/report.py SECTIONS)
 NO_LEVELS = "No pollen levels are available right now."   # (pollen_asthma's own words)
 SOURCE = ("melbournepollen.com.au (grass pollen from pollen-trap data; asthma risk from the Victorian Department of Health and BOM, "
           "1 Oct - 31 Dec)")   # (pollen_asthma's)
