@@ -28,11 +28,11 @@ The code targets Python 3.13.5 (`.python-version`). Claude Code sessions build t
 
 ## The MCP service
 The service on its own ([docs/mcp-service.md](docs/mcp-service.md) 3.8, step 5): the sources and their syncers, the alert rules writing the
-alert log, and the MCP server (`lib/mcp_server.py`) at `http://MCP_BIND/mcp` (Streamable HTTP, protocol 2026-07-28 and the older one).
-It reads the bot's settings ([docs/configuration.md](docs/configuration.md)) less the bot's own, and `MCP_TOKENS`, `MCP_BIND`, `MCP_ALLOWED_HOSTS`:
+alert log, and the MCP server (`lib/mcp_server.py`) at `http://MCP_SERVICE_BIND/mcp` (Streamable HTTP, protocol 2026-07-28 and the older one).
+It reads the bot's settings ([docs/configuration.md](docs/configuration.md)) less the bot's own, and `MCP_SERVICE_TOKENS`, `MCP_SERVICE_BIND`, `MCP_SERVICE_ALLOWED_HOSTS`:
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a          # the settings, as the bot reads them
-MCP_TOKENS=me:$(openssl rand -hex 16) python -m ecobot_service      # http://127.0.0.1:8765/mcp
+MCP_SERVICE_TOKENS=$(openssl rand -hex 16) python -m ecobot_service      # http://127.0.0.1:8765/mcp
 sudo docker compose --profile service up -d ecobot-service           # in Docker (compose.yaml), on 127.0.0.1:8765
 ```
 Only one process runs the service on a data folder: it holds `service.lock` there, so `python -m ecobot_service` refuses to start beside
@@ -48,7 +48,7 @@ token and Host checks over HTTP; `python -m ecobot_service` with the fake source
 a proxy's Host name).
 
 ### The bot as the service's client
-With `WEATHER_MCP_URL` (and `WEATHER_MCP_TOKEN`, one of the service's `MCP_TOKENS`) set, the bot runs no sources, syncers or alert rules of
+With `WEATHER_MCP_URL` (and `WEATHER_MCP_TOKEN`, one of the service's `MCP_SERVICE_TOKENS`) set, the bot runs no sources, syncers or alert rules of
 its own and reaches the service over MCP (`lib/weather.RemoteWeather`, [docs/mcp-service.md](docs/mcp-service.md) 3.8): one client pinned
 to protocol 2026-07-28, kept by one supervisor task (`lib/upstream.Upstream`), which discovers by hand for the instructions and listens to
 `ecobot://alerts`, `ecobot://station` and `ecobot://forecast`; when the connection fails or the listen is lost it builds a new client after
@@ -58,11 +58,11 @@ the model's tools and instructions, its shortcuts, report, gauges, charts drawn 
 (lib/alerts/notify.AlertDelivery reads either log) and the irrigation check's rain and forecast (`ServiceRain`, `ServiceForecast`).
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a
-MCP_TOKENS=bot:$TOKEN python -m ecobot_service &                                     # the service, with the sources' settings
+MCP_SERVICE_TOKENS=$TOKEN python -m ecobot_service &                                     # the service, with the sources' settings
 WEATHER_MCP_URL=http://127.0.0.1:8765/mcp WEATHER_MCP_TOKEN=$TOKEN python ecobot.py  # the bot, its client
 ```
-In Docker (compose.yaml): in /etc/ecobot.env set `MCP_TOKENS=bot:<token>`, `WEATHER_MCP_URL=http://ecobot-service:8765/mcp`,
-`WEATHER_MCP_TOKEN=<token>` and `MCP_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service`; then recreate the bot first
+In Docker (compose.yaml): in /etc/ecobot.env set `MCP_SERVICE_TOKENS=<token>`, `WEATHER_MCP_URL=http://ecobot-service:8765/mcp`,
+`WEATHER_MCP_TOKEN=<token>` and `MCP_SERVICE_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service`; then recreate the bot first
 (`sudo docker compose up -d --force-recreate ecobot`, which frees the data folder) and start the service
 (`sudo docker compose --profile service up -d ecobot-service`). Its tests: `tests/test_bot_remote.py`, the bot against the real server (in memory: a
 question answered with the remote tools and the instructions from discover, a chart from a remote result with its buttons, an alert through

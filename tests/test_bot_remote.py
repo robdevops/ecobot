@@ -221,7 +221,7 @@ async def test_a_dropped_connection_is_rebuilt_and_the_alerts_after_the_last_id_
     texts = lambda: [text for _, text in telegram.sent]
     alerts = bare.alert_log
     try:
-        async with Serving(http_app(bare, tokens={"bot": TOKEN}), port) as first:
+        async with Serving(http_app(bare, tokens=(TOKEN,)), port) as first:
             await until(lambda: state.read is not None and bare.listen._streams, what="the listen")
             alerts.append("rain", "first", "Rain started", expires=time.time() + 3600)
             await until(lambda: texts() == ["first"], what="alert 1")
@@ -230,7 +230,7 @@ async def test_a_dropped_connection_is_rebuilt_and_the_alerts_after_the_last_id_
         assert not await remote.ready(0.1)
         alerts.append("gusts", "missed", "Gusts", expires=time.time() + 3600)   # sent while it was down
         alerts.append("uv", "stale", "UV", expires=time.time() - 1)             # ... and expired already: not news
-        async with Serving(http_app(bare, tokens={"bot": TOKEN}), port):
+        async with Serving(http_app(bare, tokens=(TOKEN,)), port):
             await until(lambda: texts() == ["first", "missed"], what="the alert missed, read after the last id")
             await until(lambda: bare.listen._streams, what="the listen again")
             alerts.append("temps", "after", "Temperatures", expires=time.time() + 3600)
@@ -262,7 +262,7 @@ async def test_the_service_back_on_a_fresh_alert_log_while_the_bot_runs_has_its_
     try:
         first = EcobotServer(Context(tz=TZ), old)
         tasks.append(asyncio.create_task(first.watch_alerts()))
-        async with Serving(http_app(first, tokens={"bot": TOKEN}), port):
+        async with Serving(http_app(first, tokens=(TOKEN,)), port):
             await until(lambda: state.read is not None and first.listen._streams, what="the listen")
             for text in ("one", "two", "three"):
                 old.append("rain", text, "Rain", expires=time.time() + 3600)
@@ -277,7 +277,7 @@ async def test_the_service_back_on_a_fresh_alert_log_while_the_bot_runs_has_its_
         new.append("gusts", "while down", "Gusts", expires=time.time() + 3600)
         second = EcobotServer(Context(tz=TZ), new)
         tasks.append(asyncio.create_task(second.watch_alerts()))
-        async with Serving(http_app(second, tokens={"bot": TOKEN}), port):
+        async with Serving(http_app(second, tokens=(TOKEN,)), port):
             await until(lambda: texts()[3:] == ["while down"], what="the new log's alert logged while it was down")
             await until(lambda: second.listen._streams, what="the listen again")
             new.append("temps", "after", "Temperatures", expires=time.time() + 3600)
@@ -353,7 +353,7 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
         bare.alert_log.append("rain", "🌧️ Raining", "Rain started", expires=time.time() + 3600)
         await until(lambda: app.sent, what="the alert sent")
     try:
-        async with Serving(http_app(bare, tokens={"bot": TOKEN}), port):
+        async with Serving(http_app(bare, tokens=(TOKEN,)), port):
             stopper = asyncio.create_task(alert_then_stop())
             await ecobot.main()
             await stopper
@@ -417,7 +417,7 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
         async def serve_late():
             await until(bot_up, what="the bot started without the service")
             assert str(made["bot"].cfg.tz) == "Etc/UTC" and str(made["delivery"].tz) == "Etc/UTC"   # (TZ's, while unread)
-            async with Serving(http_app(server, tokens={"bot": TOKEN}), port):
+            async with Serving(http_app(server, tokens=(TOKEN,)), port):
                 await until_then_stop(lambda: str(made["bot"].cfg.tz) == "Australia/Melbourne", "the station's zone")
         late = asyncio.create_task(serve_late())
         await ecobot.main()

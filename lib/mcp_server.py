@@ -14,8 +14,8 @@ token check.
     `wait`), the station when the catalogue gains a reading.
   - **Prompts** (3.5): PROMPTS, each a question in words with its period an argument; no logic.
   - **HTTP** (`http_app`): `streamable_http_app` at /mcp, its Host header checked against the allowed hosts
-    (TransportSecuritySettings: 127.0.0.1 and localhost unless MCP_ALLOWED_HOSTS says), each request's bearer token against
-    MCP_TOKENS (TokenCheck: a constant-time compare, one token per client, so one can be revoked alone).
+    (TransportSecuritySettings: 127.0.0.1 and localhost unless MCP_SERVICE_ALLOWED_HOSTS says), each request's bearer token against
+    MCP_SERVICE_TOKENS (TokenCheck: a constant-time compare, one token per client, so one can be revoked alone).
 
 `EcobotServer(ctx, alert_log)` builds it over the service's Context; `run()` is its publishing, for as long as it runs. Nothing here
 fetches, alerts or writes: ecobot_service runs the sources and the rules."""
@@ -140,23 +140,22 @@ def tool_result(text: str) -> types.CallToolResult:
 
 # ---------- auth ----------
 class TokenCheck:
-    """The service's TokenVerifier (3.8): a bearer token is one of MCP_TOKENS', compared in constant time against every one of them;
-    the client it names is the AccessToken's client_id. `revoke(name)` takes one out while the service runs (MCP_TOKENS without it does
-    the same at the next start)."""
+    """The service's TokenVerifier (3.8): a bearer token is one of MCP_SERVICE_TOKENS, compared in constant time against every one of
+    them. `revoke(token)` takes one out while the service runs (MCP_SERVICE_TOKENS without it does the same at the next start)."""
 
-    def __init__(self, tokens: dict[str, str] | tuple[tuple[str, str], ...]):
-        self.tokens = dict(tokens)
+    def __init__(self, tokens):
+        self.tokens = list(dict.fromkeys(tokens))
 
-    def revoke(self, name: str):
-        self.tokens.pop(name, None)
+    def revoke(self, token: str):
+        if token in self.tokens:
+            self.tokens.remove(token)
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        found = None
+        found = False
         sent = (token or "").encode()
-        for name, known in list(self.tokens.items()):   # (every one compared: the time says nothing of which matched)
-            if hmac.compare_digest(sent, known.encode()):
-                found = name
-        return AccessToken(token=token, client_id=found, scopes=[]) if found else None
+        for known in list(self.tokens):   # (every one compared: the time says nothing of which matched)
+            found |= hmac.compare_digest(sent, known.encode())
+        return AccessToken(token=token, client_id="client", scopes=[]) if found else None
 
 
 def host_settings(allowed: tuple[str, ...] | list[str]) -> TransportSecuritySettings:
@@ -410,8 +409,7 @@ def prompt(name: str, arguments: dict | None = None) -> types.GetPromptResult:
 
 def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "localhost"), issuer_url: str = "http://127.0.0.1:8765",
              path: str = "/mcp"):
-    """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (MCP_TOKENS:
-    name -> token), every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth
+    """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (MCP_SERVICE_TOKENS), every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth
     metadata is published (resource_server_url=None)."""
     check = TokenCheck(tokens) if tokens else None
     app = server.server.streamable_http_app(

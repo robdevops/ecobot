@@ -1,11 +1,11 @@
 """python -m ecobot_service: the weather and air service on its own (docs/mcp-service.md 3.8). It runs the sources and their syncers
 (ecobot_service/core.py: the keep-warm, the first fetch, the archive, the backfills, Home Assistant's imports), the alert rules writing
-the alert log, and the MCP server (lib/mcp_server.py) at http://MCP_BIND/mcp, Streamable HTTP under uvicorn: put it behind TLS (a
+the alert log, and the MCP server (lib/mcp_server.py) at http://MCP_SERVICE_BIND/mcp, Streamable HTTP under uvicorn: put it behind TLS (a
 reverse proxy such as Caddy) to reach it from elsewhere.
 
 Settings come from the environment, as the bot reads them (lib/config.py, docs/configuration.md), less the bot's own (no Telegram token
-is needed), with MCP_TOKENS (name:token,..., one per client), MCP_BIND (host:port, default 127.0.0.1:8765) and MCP_ALLOWED_HOSTS (the
-Host names it answers, default 127.0.0.1 and localhost). Without MCP_TOKENS it serves without auth, and then only on a loopback address."""
+is needed), with MCP_SERVICE_TOKENS (token,token,..., one per client), MCP_SERVICE_BIND (host:port, default 127.0.0.1:8765) and MCP_SERVICE_ALLOWED_HOSTS (the
+Host names it answers, default 127.0.0.1 and localhost). Without MCP_SERVICE_TOKENS it serves without auth, and then only on a loopback address."""
 
 import asyncio
 import contextlib
@@ -55,10 +55,10 @@ async def main():
     cfg = Config.from_env(bot=False)
     for name in ("ecobot", "lib"):
         logging.getLogger(name).setLevel(cfg.log_level)
-    host, port = cfg.mcp_bind
-    if not cfg.mcp_tokens and not loopback(host):
-        raise SystemExit(f"MCP_BIND is {host}:{port}, which other machines can reach, and MCP_TOKENS is empty: set MCP_TOKENS "
-                         "(name:token,...) or bind to 127.0.0.1")
+    host, port = cfg.mcp_service_bind
+    if not cfg.mcp_service_tokens and not loopback(host):
+        raise SystemExit(f"MCP_SERVICE_BIND is {host}:{port}, which other machines can reach, and MCP_SERVICE_TOKENS is empty: set MCP_SERVICE_TOKENS "
+                         "(token,token,...) or bind to 127.0.0.1")
     configure(cfg)
     async with contextlib.AsyncExitStack() as stack:
         sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
@@ -73,7 +73,7 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
         server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version())
-        app = http_app(server, tokens=cfg.mcp_tokens, allowed_hosts=cfg.mcp_allowed_hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
+        app = http_app(server, tokens=cfg.mcp_service_tokens, allowed_hosts=cfg.mcp_service_allowed_hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()
@@ -91,8 +91,8 @@ async def main():
         web = Uvicorn(server_config(app, host, port))
         serving = asyncio.create_task(web.serve())
         log.info("MCP: http://%s:%d/mcp, %s; answering Host %s", host if ":" not in host else f"[{host}]", port,
-                 f"tokens for {', '.join(name for name, _ in cfg.mcp_tokens)}" if cfg.mcp_tokens else "no auth (loopback only)",
-                 ", ".join(cfg.mcp_allowed_hosts))
+                 f"{len(cfg.mcp_service_tokens)} token(s)" if cfg.mcp_service_tokens else "no auth (loopback only)",
+                 ", ".join(cfg.mcp_service_allowed_hosts))
         waiting = asyncio.create_task(stop.wait())
         await asyncio.wait({serving, waiting}, return_when=asyncio.FIRST_COMPLETED)
         server.listen.close()   # (the listen streams end gracefully: their clients know to listen again)

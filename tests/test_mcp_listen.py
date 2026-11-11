@@ -91,7 +91,7 @@ async def test_a_client_that_listens_hears_an_alert_and_after_a_lost_listen_list
     up = Upstream(url, TOKENS["bot"], on_event=read_new, on_listening=listening)
     supervisor = asyncio.create_task(up.run())
     try:
-        async with Serving(http_app(service, tokens=TOKENS), port) as first:
+        async with Serving(http_app(service, tokens=TOKENS.values()), port) as first:
             await until(lambda: connections and service.listen._streams, what="the listen")
             alerts.append("rain", "🌧️ It's started raining", "Rain started", expires=time.time() + 3600)
             await until(lambda: handled == [1], what="alert 1")
@@ -99,7 +99,7 @@ async def test_a_client_that_listens_hears_an_alert_and_after_a_lost_listen_list
         await until(lambda: not up.connected.is_set(), what="the client to notice")
         alerts.append("gusts", "💨 A gust of 72 km/h", "Gusts", expires=time.time() + 3600)   # missed while it was down
         alerts.append("uv", "UV 9", "UV", expires=time.time() - 1)         # ... and already expired: never news
-        async with Serving(http_app(service, tokens=TOKENS), port):
+        async with Serving(http_app(service, tokens=TOKENS.values()), port):
             await until(lambda: len(connections) == 2, what="the client to listen again")
             await until(lambda: handled == [1, 2], what="alert 2, read after its last id")
             alerts.append("temps", "Warmer outside", "Temperatures", expires=time.time() + 3600)
@@ -114,7 +114,7 @@ async def test_a_client_that_listens_hears_an_alert_and_after_a_lost_listen_list
 async def test_a_request_without_the_token_with_a_wrong_or_revoked_one_or_to_a_host_not_allowed_is_refused(service):
     port = free_port()
     url = f"http://127.0.0.1:{port}/mcp"
-    app = http_app(service, tokens=TOKENS, allowed_hosts=("127.0.0.1", "weather.lan"))
+    app = http_app(service, tokens=TOKENS.values(), allowed_hosts=("127.0.0.1", "weather.lan"))
     body = {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28"}}}
 
@@ -132,7 +132,7 @@ async def test_a_request_without_the_token_with_a_wrong_or_revoked_one_or_to_a_h
         assert await post(TOKENS["phone"], host="evil.example") == 421                 # DNS rebinding: a Host not allowed
         async with Client(http_transport(url, TOKENS["phone"]), mode="2026-07-28") as client:
             assert not (await client.call_tool("about", {})).is_error
-        app.state.tokens.revoke("phone")                                                # one client's token revoked alone
+        app.state.tokens.revoke(TOKENS["phone"])                                                # one client's token revoked alone
         assert await post(TOKENS["phone"]) == 401
         with pytest.raises(BaseException):
             async with Client(http_transport(url, TOKENS["phone"]), mode="2026-07-28") as client:
@@ -142,7 +142,7 @@ async def test_a_request_without_the_token_with_a_wrong_or_revoked_one_or_to_a_h
 
 
 async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_proxys_name(tmp_path, monkeypatch, caplog):
-    """A deploy check: `python -m ecobot_service` (main) with the fake sources, MCP_ALLOWED_HOSTS the name a reverse proxy sends, a
+    """A deploy check: `python -m ecobot_service` (main) with the fake sources, MCP_SERVICE_ALLOWED_HOSTS the name a reverse proxy sends, a
     tool call with a token through that name answered, the archives run, then SIGTERM closes it all."""
     import ecobot_service.__main__ as service_main
     from ecobot_service import core
@@ -152,8 +152,8 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     from tests.fakes import air_transport, config, ecowitt_transport
     caplog.set_level("INFO")
     port = free_port()
-    cfg = config(tmp_path, telegram_token="", mcp_tokens=(("proxy", "pr0xy"),), mcp_bind=("127.0.0.1", port),
-                 mcp_allowed_hosts=("weather.lan",))
+    cfg = config(tmp_path, telegram_token="", mcp_service_tokens=("pr0xy",), mcp_service_bind=("127.0.0.1", port),
+                 mcp_service_allowed_hosts=("weather.lan",))
     eco_t, _ = ecowitt_transport(history_days=10)
     air_t, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
@@ -193,7 +193,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     await service_main.main()
     await asker
     log = caplog.text
-    assert "Ecowitt: 'Fairleigh' (" in log and "Service tools: current, summary" in log and "tokens for proxy" in log
+    assert "Ecowitt: 'Fairleigh' (" in log and "Service tools: current, summary" in log and "1 token(s)" in log
     assert answered["tools"] == ["current", "summary", "readings", "days", "relate", "scan", "outlook", "about"]   # (no forecast, no pollen)
     assert answered["current"]["sensors"]["outdoor"]["temperature"]["unit"]
     assert answered["direct"] == 421
@@ -205,7 +205,7 @@ async def test_the_service_will_not_serve_without_tokens_on_an_address_others_ca
     import ecobot_service.__main__ as service_main
     from lib.config import Config
     from tests.fakes import config
-    cfg = config(tmp_path, telegram_token="", mcp_bind=("0.0.0.0", free_port()))
+    cfg = config(tmp_path, telegram_token="", mcp_service_bind=("0.0.0.0", free_port()))
     monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
-    with pytest.raises(SystemExit, match="MCP_TOKENS"):
+    with pytest.raises(SystemExit, match="MCP_SERVICE_TOKENS"):
         await service_main.main()

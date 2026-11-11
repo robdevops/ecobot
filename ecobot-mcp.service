@@ -2,11 +2,11 @@
 # and the MCP server at http://127.0.0.1:8765/mcp. Install it beside ecobot.service, from the same checkout and venv (see that file):
 #   sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
 # Only one process runs the service on a data folder (service.lock): before enabling this, make the bot its client (WEATHER_MCP_URL
-# and WEATHER_MCP_TOKEN in /etc/ecobot.env, with the token in MCP_TOKENS) and restart it; otherwise this one stops at start, saying so.
+# and WEATHER_MCP_TOKEN in /etc/ecobot.env, with the token in MCP_SERVICE_TOKENS) and restart it; otherwise this one stops at start, saying so.
 # The data folder is the bot's own, /var/lib/private/ecobot (StateDirectory=ecobot): User=ecobot gives this unit the same dynamic user
 # as ecobot.service, so the two share the folder's owner and neither takes it from the other when it starts.
-# It reads /etc/ecobot.env as the bot does, less the bot's own secrets (UnsetEnvironment=). MCP_BIND defaults to 127.0.0.1:8765; to
-# reach it from other machines set MCP_BIND=0.0.0.0:8765 (refused without MCP_TOKENS) and put TLS in front of it.
+# It reads /etc/ecobot.env as the bot does, less the bot's own secrets (UnsetEnvironment=). MCP_SERVICE_BIND defaults to 127.0.0.1:8765; to
+# reach it from other machines set MCP_SERVICE_BIND=0.0.0.0:8765 (refused without MCP_SERVICE_TOKENS) and put TLS in front of it.
 [Unit]
 Description=ecobot weather service (MCP)
 After=network-online.target

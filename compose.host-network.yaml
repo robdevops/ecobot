@@ -6,5 +6,5 @@ services:
   ecobot-service:
     network_mode: host
     environment:
-      MCP_BIND: 127.0.0.1:8765
+      MCP_SERVICE_BIND: 127.0.0.1:8765
     ports: !reset []

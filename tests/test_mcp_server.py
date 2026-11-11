@@ -261,14 +261,13 @@ async def test_the_prompts_are_questions_in_words_with_their_period_an_argument(
 
 
 # ---------- auth and hosts ----------
-async def test_a_token_is_one_of_mcp_tokens_named_by_its_client_and_one_can_be_revoked_alone():
-    check = TokenCheck((("bot", "s3cret-bot"), ("phone", "s3cret-phone")))
-    assert (await check.verify_token("s3cret-bot")).client_id == "bot"
-    assert (await check.verify_token("s3cret-phone")).client_id == "phone"
+async def test_a_token_is_one_of_mcp_service_tokens_and_one_can_be_revoked_alone():
+    check = TokenCheck(("s3cret-bot", "s3cret-phone"))
+    assert await check.verify_token("s3cret-bot") and await check.verify_token("s3cret-phone")
     for wrong in ("", "s3cret", "s3cret-bot ", "S3CRET-BOT"):
         assert await check.verify_token(wrong) is None
-    check.revoke("phone")
-    assert await check.verify_token("s3cret-phone") is None and (await check.verify_token("s3cret-bot")).client_id == "bot"
+    check.revoke("s3cret-phone")
+    assert await check.verify_token("s3cret-phone") is None and await check.verify_token("s3cret-bot")
 
 
 def test_the_allowed_hosts_take_any_port_unless_one_is_named():
@@ -283,23 +282,22 @@ def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch,
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     for key, value in {"ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", "TELEGRAM_BOT_TOKEN": ""}.items():
         monkeypatch.setenv(key, value)
-    for key in ("MCP_TOKENS", "MCP_BIND", "MCP_ALLOWED_HOSTS"):
+    for key in ("MCP_SERVICE_TOKENS", "MCP_SERVICE_BIND", "MCP_SERVICE_ALLOWED_HOSTS"):
         monkeypatch.delenv(key, raising=False)
     with pytest.raises(SystemExit, match="TELEGRAM_BOT_TOKEN is not set"):
         Config.from_env()                                                   # the bot can't start without it ...
     cfg = Config.from_env(bot=False)                                        # ... the service can
-    assert cfg.mcp_tokens == () and cfg.mcp_bind == ("127.0.0.1", 8765) and cfg.mcp_allowed_hosts == ("127.0.0.1", "localhost")
-    monkeypatch.setenv("MCP_TOKENS", " bot:s3cret , phone:t0k:en, broken, :nameless")
-    monkeypatch.setenv("MCP_BIND", "0.0.0.0:9000")
-    monkeypatch.setenv("MCP_ALLOWED_HOSTS", "weather.lan, 192.168.1.5:9000")
+    assert cfg.mcp_service_tokens == () and cfg.mcp_service_bind == ("127.0.0.1", 8765) and cfg.mcp_service_allowed_hosts == ("127.0.0.1", "localhost")
+    monkeypatch.setenv("MCP_SERVICE_TOKENS", " s3cret , t0k:en,, s3cret")
+    monkeypatch.setenv("MCP_SERVICE_BIND", "0.0.0.0:9000")
+    monkeypatch.setenv("MCP_SERVICE_ALLOWED_HOSTS", "weather.lan, 192.168.1.5:9000")
     cfg = Config.from_env(bot=False)
-    assert cfg.mcp_tokens == (("bot", "s3cret"), ("phone", "t0k:en"))
-    assert "MCP_TOKENS: ignoring entry 3, entry 4" in caplog.text and "broken" not in caplog.text and "nameless" not in caplog.text
-    assert cfg.mcp_bind == ("0.0.0.0", 9000) and cfg.mcp_allowed_hosts == ("weather.lan", "192.168.1.5:9000")
+    assert cfg.mcp_service_tokens == ("s3cret", "t0k:en") and "s3cret" not in caplog.text
+    assert cfg.mcp_service_bind == ("0.0.0.0", 9000) and cfg.mcp_service_allowed_hosts == ("weather.lan", "192.168.1.5:9000")
     for value, want in (("[::1]:8800", ("::1", 8800)), ("9001", ("127.0.0.1", 9001)), ("host:port", ("127.0.0.1", 8765)),
                         ("h:70000", ("127.0.0.1", 8765))):
-        monkeypatch.setenv("MCP_BIND", value)
-        assert Config.from_env(bot=False).mcp_bind == want, value
+        monkeypatch.setenv("MCP_SERVICE_BIND", value)
+        assert Config.from_env(bot=False).mcp_service_bind == want, value
 
 
 def test_one_service_per_data_folder(tmp_path):

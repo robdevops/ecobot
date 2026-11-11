@@ -65,20 +65,10 @@ def _required(value: str, default: str, name: str) -> str:
 REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: the service (python -m ecobot_service) runs without them
 
 
-def _tokens(value: str, default: tuple, name: str) -> tuple[tuple[str, str], ...]:
-    """"bot:s3cret, phone:t0ken" -> (("bot", "s3cret"), ("phone", "t0ken")): one token per client, each named, so one can be revoked
-    alone. An entry without a name or a token is ignored and logged by its place in the list, never its text (an entry without a colon
-    may be a bare token); a name given twice keeps the last."""
-    found, bad = {}, []
-    for n, part in enumerate(filter(None, (p.strip() for p in value.split(","))), 1):
-        who, colon, token = part.partition(":")
-        if colon and who.strip() and token.strip():
-            found[who.strip()] = token.strip()
-        else:
-            bad.append(f"entry {n}")
-    if bad:
-        log.warning("%s: ignoring %s (each entry is name:token)", name, ", ".join(bad))
-    return tuple(found.items()) or default
+def _tokens(value: str, default: tuple, name: str) -> tuple[str, ...]:
+    """"s3cret, t0ken" -> ("s3cret", "t0ken"): the bearer tokens the service accepts, one per client, so one can be revoked alone (take
+    it out and restart). Blank entries are skipped; a token given twice counts once."""
+    return tuple(dict.fromkeys(filter(None, (p.strip() for p in value.split(","))))) or default
 
 
 def _bind(value: str, default: tuple[str, int], name: str) -> tuple[str, int]:
@@ -285,12 +275,12 @@ class Config:
     log_width: int = _setting("LOG_WIDTH", 24, _whole)             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the bot's own debug lines; the libraries keep theirs
     # The MCP service (python -m ecobot_service: docs/mcp-service.md 3.8)
-    mcp_tokens: tuple[tuple[str, str], ...] = _setting("MCP_TOKENS", (), _tokens)   # "name:token,...", one per client; none: no auth, loopback only
-    mcp_bind: tuple[str, int] = _setting("MCP_BIND", ("127.0.0.1", 8765), _bind)    # host:port the service listens on
-    mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
+    mcp_service_tokens: tuple[str, ...] = _setting("MCP_SERVICE_TOKENS", (), _tokens)   # "token,token,...", one per client; none: no auth, loopback only
+    mcp_service_bind: tuple[str, int] = _setting("MCP_SERVICE_BIND", ("127.0.0.1", 8765), _bind)    # host:port the service listens on
+    mcp_service_allowed_hosts: tuple[str, ...] = _setting("MCP_SERVICE_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
     # The bot as the service's client (docs/mcp-service.md step 5): set, the bot runs no sources, syncers or alert rules of its own
     weather_mcp_url: str = _setting("WEATHER_MCP_URL", "", _url)    # the service's MCP endpoint, e.g. http://127.0.0.1:8765/mcp; unset: the service runs inside the bot
-    weather_mcp_token: str = _setting("WEATHER_MCP_TOKEN", "")      # the bearer token the bot sends it (one of the service's MCP_TOKENS)
+    weather_mcp_token: str = _setting("WEATHER_MCP_TOKEN", "")      # the bearer token the bot sends it (one of the service's MCP_SERVICE_TOKENS)
 
     @property
     def alert_state_path(self) -> Path:

@@ -106,7 +106,7 @@ bot's data folder, so back that up first: `sudo cp -a /var/lib/private/ecobot /v
 
 1. Add to `/etc/ecobot.env` (one token, made with `openssl rand -hex 16`):
    ```
-   MCP_TOKENS=bot:<token>
+   MCP_SERVICE_TOKENS=<token>
    WEATHER_MCP_URL=http://127.0.0.1:8765/mcp
    WEATHER_MCP_TOKEN=<token>
    ```
@@ -158,11 +158,11 @@ image (an MCP server for other clients, with the bot as one of them) on the bot'
 
 1. Add to `/etc/ecobot.env` (one token, made with `openssl rand -hex 16`), and the `WEATHER_MCP_URL` line that matches your network:
    ```
-   MCP_TOKENS=bot:<token>
+   MCP_SERVICE_TOKENS=<token>
    WEATHER_MCP_TOKEN=<token>
    # Docker's own network (the default):
    WEATHER_MCP_URL=http://ecobot-service:8765/mcp
-   MCP_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service
+   MCP_SERVICE_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service
    # or, with compose.host-network.yaml in COMPOSE_FILE:
    WEATHER_MCP_URL=http://127.0.0.1:8765/mcp
    ```
@@ -246,7 +246,7 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
 | `AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
 | `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
-| `WEATHER_MCP_URL`, `WEATHER_MCP_TOKEN` | Optional. The bot as a client of the weather service running on its own (`python -m ecobot_service`, e.g. `http://127.0.0.1:8765/mcp`, and one of its `MCP_TOKENS`): the bot then fetches nothing and runs no alert rules itself, and needs none of the source settings above. Unset (the default), the bot runs everything itself, as before. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-the-services-client). |
+| `WEATHER_MCP_URL`, `WEATHER_MCP_TOKEN` | Optional. The bot as a client of the weather service running on its own (`python -m ecobot_service`, e.g. `http://127.0.0.1:8765/mcp`, and one of its `MCP_SERVICE_TOKENS`): the bot then fetches nothing and runs no alert rules itself, and needs none of the source settings above. Unset (the default), the bot runs everything itself, as before. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-the-services-client). |
 
 After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 
