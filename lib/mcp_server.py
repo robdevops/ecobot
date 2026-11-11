@@ -255,7 +255,7 @@ class EcobotServer:
             pngs = await asyncio.to_thread(lambda: [chart_images.render(c, self.ctx.zone, dark)[0] for c in charts])
         except Exception as e:
             log.error("MCP: %s's chart couldn't be drawn: %s: %s", params.name, type(e).__name__, e)
-            return tool_result(text, note=chart_images.NOT_DRAWN_NOTE)
+            return tool_result(await tool.call(params.arguments or {}, meta), note=chart_images.NOT_DRAWN_NOTE)   # (as if off)
         return tool_result(text, pngs, dark)
 
     async def refresh_catalogue(self) -> bool:

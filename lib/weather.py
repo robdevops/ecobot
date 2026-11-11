@@ -262,6 +262,8 @@ class RemoteAlerts:
             return False
 
 
+PICTURE_WAIT = 8.0   # seconds an alert's picture waits for the service to draw it again, before it is drawn here from the alert's data
+
 class RemoteWeather:
     """The service at `target` (its MCP URL; in tests, a Server in-process), as the bot's interface. `run()` is the supervisor (the
     lib/upstream.py's Upstream: one client, discovered by hand for the instructions, listening; on a transport error or a lost or ended listen it
@@ -385,8 +387,9 @@ class RemoteWeather:
         """A tool's answer as its JSON text (the first text block: the tool's JSON, a refusal's too). A background request (nobody
         waiting) doesn't wait for the service."""
         meta = dict(meta or {})
+        meta.setdefault("chart_image", chart_images.NO_IMAGE)   # (the JSON, even if WEATHER_MCP_URL asks for images: the bot draws these)
         client = await self._client(0 if meta.get("priority") == BACKGROUND else CALL_WAIT)
-        result = await client.call_tool(name, args or {}, meta=meta or None)
+        result = await client.call_tool(name, args or {}, meta=meta)
         for block in result.content:
             if getattr(block, "type", None) == "text":
                 return block.text
@@ -425,7 +428,9 @@ class RemoteWeather:
         dark = bot_dark() if dark is None else dark
         if isinstance(by := chart.get("drawn_by"), dict) and by.get("tool"):
             try:
-                out, image = await self.chart_image(by["tool"], by.get("arguments") or {}, {"chart_points": AS_DRAWN, "chart_dark": dark})
+                out, image = await asyncio.wait_for(   # (an alert waits on this: nothing fetched for it, and not for long)
+                    self.chart_image(by["tool"], by.get("arguments") or {}, {"chart_points": AS_DRAWN, "chart_dark": dark, "fetch": False}),
+                    PICTURE_WAIT)
             except ChartNotDrawn:
                 raise
             except Exception as e:   # (the service away, or its answer broken: the chart as it came is drawn here)
