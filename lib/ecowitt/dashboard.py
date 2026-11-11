@@ -9,6 +9,7 @@ The service's `current` with `context` gives these figures (lib/service/current.
 from that result (lib/gauge_sheet.py), with GAUGES' scales and colours.
 """
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -18,7 +19,16 @@ PRESSURE = ("#C5CAFA", "#A5ABF7", "#8087F5", "#5C5CF0", "#3F2FD0")
 WIND = ("#E8E8E8", "#C8CDD2", "#A2ABB4", "#7C8790", "#56626C")
 SUN = ("#FBE79A", "#F5D45A", "#F2A53C", "#D27A2A", "#A9501F")
 UV = ("#A9E34B", "#F7E04A", "#F4A93B", "#E8562A", "#9A1F5A", "#7A2CF0")
-DEGREES = (60, 40, 20, 0, -20, -40)
+DEGREES = (40, 30, 20, 10, 0)          # a thermometer's scale as it starts (THERMOMETER), before it widens to take in the reading
+THERMOMETER = (0, 40, 10)               # a thermometer's scale: its ends and its step, in °C; widened a step at a time to the reading
+
+
+def degree_colour(lower: float) -> str:
+    """The colour of a thermometer's band of 10 degrees, from its lower end: blues below 0, pinks to reds above."""
+    for top, colour in ((-10, "#7DE7FF"), (0, "#B2EEFA"), (10, "#F7C9C9"), (20, "#F2A0A0"), (30, "#EE7070"), (40, "#E04A42")):
+        if lower < top:
+            return colour
+    return "#D32F27"
 
 
 @dataclass(frozen=True)
@@ -47,24 +57,38 @@ class Gauge:
 
 
 GAUGES = (
-    Gauge("Temperature", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "temperature"), "temp_max", "temp_min"),
+    Gauge("Temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "temperature"), "temp_max", "temp_min"),
     Gauge("Humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("outdoor", "humidity"), "humidity_max", "humidity_min", 0),
     Gauge("Atmospheric pressure", "hPa", "dial", 950, 1050, PRESSURE, (950, 970, 990, 1010, 1030, 1050), ("pressure", "relative"),
           "pressure_max", "pressure_min"),
-    Gauge("Dew point", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
-    Gauge("Feels like", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
+    Gauge("Dew point", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
+    Gauge("Feels like", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
     Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0,
           counted=("wind", "wind_gust")),
     Gauge("Rain", "mm", "beaker", 0, 100, WATER, (100, 80, 60, 40, 20, 0), ("rainfall", "daily"), "rain", None, 1, True),
     Gauge("Rain rate", "mm/h", "dial", 0, 50, WATER, (0, 10, 20, 30, 40, 50), ("rainfall", "rain_rate"), "rain_rate_max"),
     Gauge("Solar radiation", "W/m²", "dial", 0, 1500, SUN, (0, 300, 600, 900, 1200, 1500), ("solar_and_uvi", "solar"), "solar_max", None, 0),
     Gauge("UV index", "", "dial", 0, 12, UV, (0, 3, 6, 8, 11), ("solar_and_uvi", "uvi"), "uv_max"),
-    Gauge("Indoor temperature", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("indoor", "temperature"), "indoor_temp_max", "indoor_temp_min"),
+    Gauge("Indoor temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("indoor", "temperature"), "indoor_temp_max", "indoor_temp_min"),
     Gauge("Indoor humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("indoor", "humidity"), "indoor_humidity_max",
           "indoor_humidity_min", 0),
 )
 PERIODS = ("Daily", "Monthly", "Yearly")
 STATUS = ("Temperature", "Humidity", "Rain")   # the gauges the report ("status") carries
+
+
+def scale(gauge: Gauge, value: float | None) -> tuple[float, float, tuple[str, ...], tuple[float, ...]]:
+    """(low end, high end, the bands' colours from the low end, the numbers) of a gauge's scale for this reading. A thermometer's is
+    0 to 40 °C, widened by 10 degrees at a time to take in a reading outside it (-3 °C: -10 to 40), its bands coloured by their
+    degrees; every other gauge's is fixed."""
+    if gauge.kind != "thermometer":
+        return gauge.low, gauge.high, gauge.colours, gauge.ticks
+    low, high, step = THERMOMETER
+    if value is not None:
+        low = min(low, math.floor(value / step) * step)
+        high = max(high, math.ceil(value / step) * step)
+    bands = range(int(low), int(high), step)
+    return low, high, tuple(degree_colour(b) for b in bands), tuple(range(int(high), int(low) - 1, -step))
 
 
 def gauges_of(titles=None) -> list[Gauge]:

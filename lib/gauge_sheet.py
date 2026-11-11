@@ -6,7 +6,7 @@ A tile is left out when current has neither a reading nor a figure for it (no in
 no reading now. The whole dashboard is every gauge's; the report's picture its three (STATUS).
 """
 
-from .ecowitt.dashboard import GAUGES, PERIODS, STATUS, Gauge, gauges_of
+from .ecowitt.dashboard import GAUGES, PERIODS, STATUS, Gauge, gauges_of, scale
 from .specs import Dashboard, Tile
 
 ROWS = dict(zip(PERIODS, ("today", "month", "year")))   # a tile's rows, as current's context names them
@@ -51,7 +51,8 @@ def sheet(result: dict, titles=None) -> Dashboard | None:
         if now is None and all(f is None for figures in rows.values() for f in figures):
             continue
         columns = ("Max", "Total") if gauge.total else ("Max", "Min") if gauge.lowest else ("Max",)
-        tiles.append(Tile(gauge.title, gauge.unit, now, gauge.kind, gauge.low, gauge.high, gauge.colours, columns, rows, gauge.ticks, gauge.decimals))
+        low, high, colours, ticks = scale(gauge, now)   # (a thermometer's widens to take in the reading)
+        tiles.append(Tile(gauge.title, gauge.unit, now, gauge.kind, low, high, colours, columns, rows, ticks, gauge.decimals))
     return Dashboard(tiles) if tiles else None
 
 

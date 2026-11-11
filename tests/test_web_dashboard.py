@@ -88,7 +88,7 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert [t["title"] for t in got["tiles"]][:3] == ["Temperature", "Humidity", "Atmospheric pressure"]
     t = got["tiles"][0]
     assert (t["kind"], t["value"], t["unit"], t["columns"], t["faded"]) == ("thermometer", 12.9, "°C", ["Max", "Min"], False)
-    assert set(t["rows"]) == {"Daily", "Monthly", "Yearly"} and len(t["colours"]) == 5
+    assert set(t["rows"]) == {"Daily", "Monthly", "Yearly"} and (t["low"], t["high"], t["ticks"]) == (0, 40, [40, 30, 20, 10, 0])   # (12.9: 0 to 40)
     assert mcp.status_code == 421 and no_token.status_code == 401                  # /mcp: the Host, then the token, as before
 
 
