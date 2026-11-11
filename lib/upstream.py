@@ -20,8 +20,15 @@ CONNECT_WAIT = 10.0             # how long a request waits for the service to be
 BACKOFF = (1, 2, 5, 10, 30)     # seconds between attempts to reach it again, the last repeated
 
 
-def http_transport(url: str, token: str | None = None):
-    """The Streamable HTTP transport to the service, its bearer token sent with every request, its read timeout READ_SECONDS."""
+REFUSED = {401: "401: WEATHER_MCP_TOKEN isn't one of the service's MCP_SERVICE_TOKENS",
+           403: "403: the token was refused",
+           421: "421: the service doesn't answer to this address: add its host part to the service's MCP_SERVICE_ALLOWED_HOSTS",
+           404: "404: nothing at this path: the URL ends in /mcp"}
+
+
+def http_transport(url: str, token: str | None = None, refused: dict | None = None):
+    """The Streamable HTTP transport to the service, its bearer token sent with every request, its read timeout READ_SECONDS.
+    refused: given, its "status" is set to an HTTP error the service answered with (the SDK reports any of them as one message)."""
     import httpx2
     from mcp.client.streamable_http import streamable_http_client
     from mcp.shared._httpx_utils import create_mcp_http_client
@@ -30,6 +37,11 @@ def http_transport(url: str, token: str | None = None):
     async def connect():
         headers = {"Authorization": f"Bearer {token}"} if token else None
         async with create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(30.0, read=READ_SECONDS)) as http:
+            if refused is not None:
+                async def note(response):
+                    if response.status_code >= 400:
+                        refused["status"] = response.status_code
+                http.event_hooks["response"].append(note)
             async with streamable_http_client(url, http_client=http) as streams:
                 yield streams
     return connect()
@@ -55,14 +67,16 @@ class Upstream:
         self.client: Client | None = None
         self.connected = asyncio.Event()
         self.attempts = 0
+        self.refused: dict = {}   # the HTTP error the service last answered with
 
     def _client(self) -> Client:
-        server = http_transport(self.target, self.token) if isinstance(self.target, str) else self.target
+        server = http_transport(self.target, self.token, self.refused) if isinstance(self.target, str) else self.target
         return Client(server, mode=VERSION, cache=None)
 
     async def run(self):
         """Keep a connection, until cancelled."""
         while True:
+            self.refused.clear()
             try:
                 async with self._client() as client:
                     raw = await client.session.send_discover(VERSION)
@@ -82,8 +96,9 @@ class Upstream:
                     raise
                 if (me := asyncio.current_task()) is not None and me.cancelling():   # cancelled while connecting: the SDK may have
                     raise asyncio.CancelledError() from e                           # wrapped it (an exception group): stop all the same
-                cause = _leaf(e)
-                log.warning("Weather service: the service at %s isn't reachable (%s: %s); trying again", self.target, type(cause).__name__, cause)
+                cause, status = _leaf(e), self.refused.get("status")
+                why = (REFUSED.get(status, f"HTTP {status}") if status else f"{type(cause).__name__}: {cause}")
+                log.warning("Weather service: the service at %s isn't reachable (%s); trying again", self.target, why)
             finally:
                 self.client = None
                 self.connected.clear()

@@ -5,6 +5,7 @@ reads the alerts after its last id, once; a request without the token, with a wr
 refused; and `python -m ecobot_service` runs the sources and answers a tool call through the name a proxy uses."""
 
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -209,3 +210,22 @@ async def test_the_service_will_not_serve_without_tokens_on_an_address_others_ca
     monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True: cfg))
     with pytest.raises(SystemExit, match="MCP_SERVICE_TOKENS"):
         await service_main.main()
+
+
+async def test_the_bot_s_warning_says_why_the_service_refused_it(service, monkeypatch, caplog):
+    """The SDK reports every HTTP error as "Server returned an error response": the warning names the status and what to change."""
+    monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
+    port = free_port()
+    async with Serving(http_app(service, tokens=TOKENS.values(), allowed_hosts=("localhost",)), port):
+        for url, token, want in ((f"http://localhost:{port}/mcp", "wrong", "401: WEATHER_MCP_TOKEN"),
+                                 (f"http://127.0.0.1:{port}/mcp", TOKENS["bot"], "421: the service doesn't answer to this address")):
+            caplog.clear()
+            task = asyncio.create_task(Upstream(url, token).run())
+            for _ in range(100):
+                if want in caplog.text:
+                    break
+                await asyncio.sleep(0.05)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            assert want in caplog.text, caplog.text
