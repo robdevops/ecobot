@@ -13,7 +13,7 @@ from lib.alerts.store import AlertStore
 from lib.alerts.weather import WeatherMonitor
 from lib.entities import with_link
 from tests.fakes import TZ
-from tests import old_tools
+from tests import engines
 
 T0 = int(datetime(2026, 9, 29, 13, 0, tzinfo=TZ).timestamp())  # 1pm Melbourne, a settled day
 
@@ -835,7 +835,7 @@ async def test_the_particulates_chart_draws_pm1_pm25_and_pm10_together(tmp_path)
     air = AirGradient(config(tmp_path), transport=transport)
     await air.start()
     turn = Turn(chart_asked=True)
-    await old_tools.air_quality(air, {"chart": True, "metrics": ["pm2_5", "pm10", "pm1"]}, turn)
+    await engines.air_history(air, {"chart": True, "metrics": ["pm2_5", "pm10", "pm1"]}, turn)
     (panel,) = turn.charts[0].panels
     assert sorted(line.label for line in panel.lines) == ["PM1", "PM10", "PM2.5"]
     await air.close()

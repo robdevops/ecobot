@@ -1,5 +1,5 @@
-"""The service's `readings` tool (lib/service/readings.py): one reading's values at an interval, over a period in words, with the rows
-the bot's readings tool (lib/history.py) gives for the same span."""
+"""The service's `readings` tool (lib/service/readings.py): one reading's values at an interval, over a period in words (its engine,
+lib/history.py, is tests/test_history.py's)."""
 
 import json
 from datetime import datetime
@@ -13,7 +13,6 @@ from lib.service.common import FRESH
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from lib.storage import Storage
-from tests.old_tools import History
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import local_epoch
 from lib.tools import Tools, Turn
@@ -70,20 +69,6 @@ async def ask(storage, meta: dict | None = None, **args) -> dict:
     return json.loads(await tool(storage).call(args, meta))
 
 
-async def old(storage, **args) -> dict:
-    """The bot's readings tool (lib/history.py) over the same file, at the same time (it calls the air sensor's `sensor`)."""
-    station = SimpleNamespace(storage=storage, mac=MAC, tz=TZ)
-    air = SimpleNamespace(store=SimpleNamespace(storage=storage, sensor=lambda: storage.air_sensor(LOC)), tz=TZ)
-    return json.loads(await History(station, air, SENT, now=lambda: NOW).handle(args, Turn()))
-
-
-ROWS = ("columns", "rows", "from", "missing", "note_coarser", "fits", "note_minutes", "note_daily", "note_last", "note")
-
-
-def same_rows(new: dict, before: dict) -> bool:
-    return {k: new.get(k) for k in ROWS} == {k: before.get(k) for k in ROWS} and new["value_is"] == before["value_is"]
-
-
 # ---------- what it takes ----------
 def test_it_takes_one_reading_a_period_in_words_and_an_interval(storage):
     made = tool(storage)
@@ -110,7 +95,6 @@ async def test_the_rows_are_the_bots_readings_over_the_period_the_words_name(sto
     assert list(out)[3:8] == ["reading", "label", "unit", "interval", "value_is"]
     assert (out["reading"], out["label"], out["unit"], out["interval"]) == ("outdoor.humidity", "Outdoor humidity", "%", "1hour")
     assert [r[1] for r in out["rows"]] == [60, 70, 70, 71, 72, 73] and out["from"] == ["5min", "30min"] and "note_last" in out
-    assert same_rows(out, await old(storage, metric="outdoor.humidity", start="2026-11-08 20:47", interval="1hour"))
 
 
 async def test_with_no_period_it_reads_the_last_24_hours(storage):
@@ -118,7 +102,6 @@ async def test_with_no_period_it_reads_the_last_24_hours(storage):
     out = await ask(storage, reading="temperature", interval="1hour")
     assert out["period"]["asked"] == "last 24 hours" and out["period"]["start"] == "2026-11-08T01:47:00+11:00"
     assert len(out["rows"]) == 25 and out["rows"][0][0] == "Sun 8 Nov 2026 1:00am" and out["rows"][-1][0] == "Mon 9 Nov 2026 1:00am"
-    assert same_rows(out, await old(storage, metric="outdoor.temperature", start="2026-11-08 01:47", interval="1hour"))
 
 
 async def test_rain_gusts_and_days_are_read_as_the_bot_reads_them(storage):
@@ -127,14 +110,12 @@ async def test_rain_gusts_and_days_are_read_as_the_bot_reads_them(storage):
     out = await ask(storage, reading="rain", start="2026-11-08 23:00", end="2026-11-09 00:59", interval="hourly")
     assert out["reading"] == "rainfall.rain" and out["interval"] == "1hour" and [r[1] for r in out["rows"]] == [2.0, 0.5]   # the midnight reset
     assert out["value_is"] == "the mm of rain that fell in the interval" and out["columns"] == ["time", "value"]
-    assert same_rows(out, await old(storage, metric="rainfall.rain", start="2026-11-08 23:00", end="2026-11-09 00:59", interval="1hour"))
     put(storage, "wind", "5min", [{"ts": at(8, 22) + 300 * i, "wind_speed": 5.0, "wind_gust": 10.0 + i} for i in range(24)])
     out = await ask(storage, reading="gust", start="2026-11-08 22:00", end="2026-11-08 23:59", interval="1hour")
     assert out["reading"] == "wind.wind_gust" and [r[1] for r in out["rows"]] == [21.0, 33.0]
     put(storage, "outdoor", "5min", [{"ts": at(6, 0) + 300 * i, "temperature": 10.0 + (i % 288 == 180) * 10} for i in range(288 * 2)])
     out = await ask(storage, reading="outdoor.temperature", start="2026-11-06", end="2026-11-07", interval="1day")   # dates: whole days
     assert out["columns"] == ["day", "value", "low", "low_time", "high", "high_time"] and out["rows"][0][:5] == ["Fri 6 Nov 2026", 10.0, 10.0, "12:00am", 20.0]
-    assert same_rows(out, await old(storage, metric="outdoor.temperature", start="2026-11-06 00:00", end="2026-11-07 23:59", interval="1day"))
 
 
 async def test_the_air_sensors_readings_and_its_own_temperature(storage):

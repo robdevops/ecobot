@@ -1,5 +1,6 @@
-"""The `forecast` tool (lib/service/forecast.py): the days ahead in words, read here; today's weather_forecast's lines, each day's
-figures, the bot's forecast section word for word, what is held when the request says not to fetch, and refusals that teach."""
+"""The `forecast` tool (lib/service/forecast.py): the days ahead in words, read here; the forecast source's lines, each day's figures,
+its text, what is held when the request says not to fetch, and refusals that teach. (Until step 6c also held to weather_forecast's
+answers and the bot's old words, tests/old_tools.py and tests/report_words.py, deleted with them.)"""
 
 import json
 from datetime import date, datetime, time as dtime, timedelta
@@ -7,14 +8,12 @@ from datetime import date, datetime, time as dtime, timedelta
 import httpx
 import pytest
 
-from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.forecast import Forecast
 from lib.service.common import FRESH, Refusal
 from lib.service.context import Context
 from lib.service.forecast import DESCRIPTION, PARAMETERS, days_text, read_ahead, tools
 from lib.timeutil import day_text
 from tests.fakes import TZ, config
-from tests import old_tools
 
 NOW = datetime(2026, 11, 10, 14, 5, tzinfo=TZ)   # Tue 10 Nov 2026 2:05pm, as the plan's periods table is asked
 
@@ -132,8 +131,7 @@ async def test_the_lines_are_weather_forecasts_and_each_day_has_its_figures(tmp_
     assert forecast_tool.name == "forecast" and forecast_tool.annotations == {"readOnlyHint": True, "openWorldHint": True}
     out = got(await forecast_tool.call({}))
     assert calls == ["api.open-meteo.com", "ensemble-api.open-meteo.com"]   # nothing held: fetched, as weather_forecast does
-    old = got(await old_tools.forecast(forecast, {}))
-    assert out["lines"] == old["lines"] and len(out["lines"]) == 7 and out["lines"][0].startswith("Today: 🌧️ Rain. 11–16°C")
+    assert out["lines"] == forecast.lines(7) and len(out["lines"]) == 7 and out["lines"][0].startswith("Today: 🌧️ Rain. 11–16°C")
     today = forecast.now().date()
     assert out["period"]["asked"] == "the next 7 days" and out["period"]["text"].startswith("the next 7 days: ")
     assert out["period"]["start"] == datetime.combine(today, dtime(), tzinfo=TZ).isoformat()
@@ -145,15 +143,15 @@ async def test_the_lines_are_weather_forecasts_and_each_day_has_its_figures(tmp_
     fetched = datetime.fromtimestamp(int(forecast.fetched_at), TZ)
     assert out["fetched_at"] == fetched.isoformat() and out["as_of"]["time"] == fetched.isoformat()
     assert list(out) == ["period", "as_of", "fresh", "text", "lines", "days", "place", "source", "fetched_at"]
-    for n in range(1, 8):   # "next N days" is weather_forecast's `days: N`, line for line
-        assert got(await forecast_tool.call({"period": f"next {n} days"}))["lines"] == got(await old_tools.forecast(forecast, {"days": n}))["lines"]
+    for n in range(1, 8):   # "next N days" is the source's first N lines, line for line
+        assert got(await forecast_tool.call({"period": f"next {n} days"}))["lines"] == forecast.lines(n)
     await forecast.close()
 
 
 async def test_a_day_ahead_has_its_own_line_as_weather_forecast_writes_it(tmp_path):
     forecast, _, ctx = make(tmp_path)
-    week = got(await old_tools.forecast(forecast, {"days": 7}))["lines"]
-    tomorrow = got(await tool(ctx).call({"period": "tomorrow"}))
+    tomorrow = got(await tool(ctx).call({"period": "tomorrow"}))   # (fetched: nothing was held)
+    week = forecast.lines(7)
     assert tomorrow["lines"] == [week[1]] and tomorrow["period"]["text"].startswith("tomorrow: ")
     day = forecast.now().date() + timedelta(days=4)
     named = got(await tool(ctx).call({"period": f"{day:%A}"}))
@@ -161,33 +159,33 @@ async def test_a_day_ahead_has_its_own_line_as_weather_forecast_writes_it(tmp_pa
     await forecast.close()
 
 
-async def test_its_text_is_the_bots_forecast_section_word_for_word(tmp_path):
+async def test_its_text_is_its_heading_and_a_bullet_per_line(tmp_path):
     forecast, _, ctx = make(tmp_path)
     today = forecast.now().date()
     for words, days in (("next 3 days", 3), ("the next 7 days", 7), ("today", 1)):
         out = got(await tool(ctx).call({"period": words}))
-        old = await old_tools.forecast(forecast, {"days": days, "cached": True})
-        assert out["text"] == report.lookup("forecast", old, [], [], today) == report.report({"weather_forecast": old}, today)
-    assert out["text"].startswith(f"Forecast (Melbourne, {report._stamp(json.loads(old), today)})\n• Today: ")
+        heading, *bullets = out["text"].split("\n")
+        assert heading.startswith("Forecast (Melbourne, ") and bullets == [f"• {line}" for line in forecast.lines(days)], words
+    fetched = datetime.fromtimestamp(int(forecast.fetched_at), TZ)
+    stamp = f"{fetched:%-I:%M%p}".lower()
+    assert out["text"].startswith(f"Forecast (Melbourne, {stamp})\n• Today: ")              # fetched today: its time alone
     later = today + timedelta(days=1)   # asked the next day, the time it was fetched has its day
     assert got(await tool(Context(forecast=forecast, tz=TZ, clock=lambda: datetime.combine(later, dtime(9), tzinfo=TZ).timestamp()))
-               .call({"period": "today"}))["text"].startswith(f"Forecast (Melbourne, {report._stamp(json.loads(old), later)})\n• Today: ")
+               .call({"period": "today"}))["text"].startswith(f"Forecast (Melbourne, {fetched:%a %-d %b} {stamp})\n• Today: ")
     await forecast.close()
 
 
 async def test_with_no_place_the_heading_has_only_the_time(tmp_path):
     forecast, _, ctx = make(tmp_path, place="")
     out = got(await tool(ctx).call({"period": "today"}))
-    old = await old_tools.forecast(forecast, {"days": 1})
-    assert "place" not in out and out["text"] == report.lookup("forecast", old, [], [], forecast.now().date())
+    assert "place" not in out and out["text"].split("\n")[0].startswith("Forecast (") and "," not in out["text"].split("\n")[0]
     await forecast.close()
 
 
 async def test_with_fetch_false_it_answers_from_what_is_held_and_fetches_nothing(tmp_path):
     forecast, calls, ctx = make(tmp_path)
     out = got(await tool(ctx).call({}, {"fetch": False}))
-    assert out == {"error": "No forecast is available right now."} and calls == []   # (weather_forecast's words, with cached)
-    assert got(await old_tools.forecast(forecast, {"cached": True})) == out
+    assert out == {"error": "No forecast is available right now."} and calls == []
     await forecast.warm(True)
     calls.clear()
     held = got(await tool(ctx).call({"period": "tomorrow"}, {"fetch": False}))

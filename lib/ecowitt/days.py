@@ -1,5 +1,5 @@
 """The station's day fields and how a day's figures are read from storage (never asks Ecowitt), for the service's `days` and `current`
-and `summary` (lib/service). (weather_days' own engine, find_days, is the tests' oracle now: tests/old_tools.py.)
+and `summary` (lib/service).
 
 Questions like "the hottest day it also rained" or "how many days over 35" compare readings on the
 same day across a long period, which the history tool's summaries can't answer. Each day's figures are

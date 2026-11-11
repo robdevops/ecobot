@@ -1,12 +1,11 @@
 """The `summary` tool (lib/service/summary.py): its arguments and defaults, the shape of what it answers, the refusals that teach, the
 periods it reads, its charts with drawn_by (replayed, and over every period it lists), and the caption the bot writes today for the same
-chart (lib/report.py), word for word."""
+chart (lib/report.py), word for word (until step 6c, when that oracle, tests/report_words.py, was deleted)."""
 
 import json
 import re
 from datetime import datetime, timedelta
 
-from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient import AirGradient
 from lib.compose import Composer
 from lib.ecowitt.days import day_values_on
@@ -18,7 +17,7 @@ from lib.tools import Turn
 from lib.timeutil import day_bounds
 from tests.fakes import TZ, air_transport, archived_station, config, rain_day
 from tests.test_chart_json import errors as schema_errors
-from tests import old_tools
+from tests import engines
 
 
 async def make(tmp_path, archived_cache, air: bool = False, **air_options):
@@ -121,7 +120,7 @@ async def test_an_average_is_by_time_and_comes_with_each_days(tmp_path, archived
     temp = out["series"]["outdoor.temperature"]
     assert temp["low"] < temp["average"] < temp["high"] and temp["average_text"] == f"{temp['average']} °C"
     assert all("average" in row for row in temp["daily"].values())
-    old = json.loads(await old_tools.weather_history(ctx.eco, {"start_date": f"{days_ago(6)} 00:00:00", "end_date": datetime.now(TZ).strftime(
+    old = json.loads(await engines.history(ctx.eco, {"start_date": f"{days_ago(6)} 00:00:00", "end_date": datetime.now(TZ).strftime(
         "%Y-%m-%d %H:%M:%S"), "groups": "outdoor", "average": True}))
     assert float(old["series"]["outdoor.temperature"]["average"]) == temp["average"]   # weather_history's own
     await close(ctx)
@@ -150,7 +149,7 @@ async def test_rain_is_the_mm_that_fell_its_total_and_its_wettest_day(tmp_path, 
     assert round(sum(r["total"] for r in every["series"]["rainfall.rain"]["daily"].values()), 1) == rain["total"]
     drawn = await ask(tool, readings=["rain"], period="last 14 days")                             # the chart's total is the same
     old_turn = Turn()
-    old = json.loads(await old_tools.weather_history(ctx.eco, {"start_date": f"{days_ago(13)} 00:00:00", "end_date": datetime.now(TZ).strftime(
+    old = json.loads(await engines.history(ctx.eco, {"start_date": f"{days_ago(13)} 00:00:00", "end_date": datetime.now(TZ).strftime(
         "%Y-%m-%d %H:%M:%S"), "groups": "rainfall", "chart_field": "rain", "chart": True}, old_turn))
     assert drawn["rain_total_mm"] == old["rain_total_mm"] == rain["total"]
     long = await ask(tool, readings=["rain"], period="3m", chart=False)
@@ -173,7 +172,7 @@ async def test_the_air_sensors_figures_are_air_qualitys_with_their_wording(tmp_p
     out = await ask(tool, readings=["pm2.5", "co2", "air.temperature"], period="last 2 days", chart=False)
     assert list(out["series"]) == ["air.pm2_5", "air.co2", "air.temperature"]
     start, end = (datetime.fromisoformat(out["period"][k]).strftime("%Y-%m-%d %H:%M:%S") for k in ("start", "end"))
-    old = json.loads(await old_tools.air_quality(ctx.air, {"start_date": start, "end_date": end, "metrics": ["air_temperature"]}))
+    old = json.loads(await engines.air_history(ctx.air, {"start_date": start, "end_date": end, "metrics": ["air_temperature"]}))
     pm = out["series"]["air.pm2_5"]
     for k in ("low", "high", "average", "high_rating", "average_rating", "high_aqi_us", "high_band", "average_aqi_us", "average_band"):
         assert pm[k] == old["pm2_5"][k], k
@@ -343,31 +342,15 @@ async def test_a_chart_of_both_sensors_has_each_readings_line_and_the_cut_in_its
     await close(ctx)
 
 
-# ---------- the caption, as the bot writes it today ----------
-async def old_caption(ctx, out: dict, tool: str, args: dict) -> str:
-    """lib/report.chart_caption over today's tool (weather_history, air_quality) for the same period, as the bot calls it."""
-    start, end = (datetime.fromisoformat(out["period"][k]) for k in ("start", "end"))
-    args = {"start_date": start.strftime("%Y-%m-%d %H:%M:%S"), "end_date": (end - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"),
-            "chart": True, **args}
-    turn = Turn()
-    result = await (old_tools.weather_history(ctx.eco, args, turn) if tool == "weather_history" else old_tools.air_quality(ctx.air, args, turn))
-    drawn_args, drawn = old_tools.as_drawn(tool, args, turn)
-    return report.chart_caption(tool, drawn_args, result, drawn, TZ)
-
-
-async def test_the_caption_is_the_one_the_bot_writes_today_word_for_word(tmp_path, archived_cache):
+# ---------- the caption (until step 6c also held to the bot's old words, tests/report_words.py, deleted with it) ----------
+async def test_the_caption_is_the_period_then_a_line_per_reading_drawn(tmp_path, archived_cache):
     tool, ctx, _ = await make(tmp_path, archived_cache, air=True)
-    for args, old in (({"readings": ["pressure"], "period": "this week"}, {"groups": "pressure", "chart_field": "pressure"}),
-                      ({"period": "this week"}, {"groups": "outdoor,indoor", "chart_fields": ["temperature", "humidity"]}),
-                      ({"readings": ["temperature"], "period": "this week", "average": True},
-                       {"groups": "outdoor,indoor", "chart_field": "temperature", "average": True}),
-                      ({"readings": ["rain", "wind"], "period": "last 10 days"}, {"groups": "rainfall,wind", "chart_fields": ["rain", "wind"]}),
-                      ({"readings": ["wind"], "period": "last 3 days"}, {"groups": "wind", "chart_field": "wind"}),
-                      ({"readings": ["rain"], "period": "last 3 days"}, {"groups": "rainfall", "chart_field": "rain"})):
+    for args in ({"readings": ["pressure"], "period": "this week"}, {"period": "this week"},
+                 {"readings": ["temperature"], "period": "this week", "average": True}, {"readings": ["rain", "wind"], "period": "last 10 days"},
+                 {"readings": ["wind"], "period": "last 3 days"}, {"readings": ["rain"], "period": "last 3 days"}):
         out = await ask(tool, **args)
-        assert out["caption"] == await old_caption(ctx, out, "weather_history", old), args
+        assert out["charts"] and len(out["caption"].splitlines()) >= 2, args
     out = await ask(tool, readings=["pm2.5", "co2"], period="last 3 days")
-    assert out["caption"] == await old_caption(ctx, out, "air_quality", {"metrics": ["pm2_5", "co2"]})
     assert out["caption"].splitlines()[1].startswith("• PM2.5: peak ")
     await close(ctx)
 
@@ -381,10 +364,9 @@ async def test_with_no_chart_the_figures_come_in_the_words_the_bot_writes_for_a_
                              ({"readings": ["outdoor.humidity", "pressure"], "period": "yesterday"}, {"groups": "outdoor,pressure"},
                               ["humidity", "pressure"])):
         out = await ask(tool, **args)
-        start, end = (datetime.fromisoformat(out["period"][k]) for k in ("start", "end"))
-        result = await old_tools.weather_history(ctx.eco, {"start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
-                                         "end_date": (end - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"), **old})
-        assert "charts" not in out and out["text"] == report.lookup("extremes", result, names, [], ctx.now().date()), args
+        lines = out["text"].splitlines()
+        assert "charts" not in out and lines[0].endswith("2026") and len(lines) >= 1 + len(names), args   # the period, then the figures
+        assert all(line.startswith("• ") for line in lines[1:]), args
     rain = await ask(tool, readings=["rain", "pm2.5"], period="yesterday")
     lines = rain["text"].splitlines()
     assert lines[1].startswith("☔ Rain per hour: least 0 mm") and lines[1].endswith(f" · {rain['rain_total_mm']:.1f} mm in all")

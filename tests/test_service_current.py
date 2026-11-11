@@ -2,16 +2,15 @@
 lows beside them on request, and the bot's own words for them (its report, "weather now" and plain lookups), unchanged."""
 
 import json
+from pathlib import Path
 import re
 import time
 from datetime import date, datetime
 
 import pytest
 
-from tests import report_words as report   # (the bot's words before step 2: the oracle)
 from lib.airgradient import AirGradient
 from lib.ecowitt.days import day_values_on
-from tests.old_tools import NOW_GROUPS
 from lib.service import current as cur
 from lib.service.common import FRESH
 from lib.service.context import Context
@@ -20,14 +19,13 @@ from lib.service.names import AIR_DEVICE, STATION, Catalogue
 from lib.timeutil import clock_text, to_local
 from tests.clocks import pin
 from tests.fakes import TZ, air_transport, archived_station, config
-from tests import old_tools
 
 WHEN = re.compile(r"^(at|around) \d{1,2}(:\d\d)?[ap]m$|^sometime between ")
 
 
 def live(at: float, **changes) -> dict:
-    """A live reading as Ecowitt's real_time gives it ({group: {field: {time, unit, value}}}): the station's own on a wet night (what
-    tests/test_report.py's NOW was written from), with `changes` ("outdoor.temperature": "36.0", or None to leave a reading out)."""
+    """A live reading as Ecowitt's real_time gives it ({group: {field: {time, unit, value}}}): the station's own on a wet night (what the
+    report written in code was first written from, until step 6c), with `changes` ("outdoor.temperature": "36.0", or None to leave a reading out)."""
     t = str(int(at))
     data = {"outdoor": {"temperature": ("12.3", "℃"), "feels_like": ("12.3", "℃"), "app_temp": ("12.7", "℃"), "dew_point": ("11.3", "℃"),
                         "vpd": ("0.085", "kPa"), "humidity": ("94", "%")},
@@ -52,7 +50,7 @@ DAY = {"solar_and_uvi.solar": "612.5", "solar_and_uvi.uvi": "7", "wind.wind_spee
 HOT = {"outdoor.temperature": "36.0", "outdoor.humidity": "90", "indoor.temperature": "29.0", "indoor.humidity": "20",
        "pressure.relative": "1030.0", "rainfall.rain_rate": "2.0", "rainfall.daily": "3.0", "rainfall.monthly": "9.0",
        "solar_and_uvi.solar": "800.0", "solar_and_uvi.uvi": "10", "wind.wind_speed": "55.0", "wind.wind_gust": "70.0",
-       "wind.wind_direction": "90"}   # every emoji there is (tests/test_report.py)
+       "wind.wind_direction": "90"}   # every emoji there is
 DRY = {"rainfall.rain_rate": "0.0", "rainfall.daily": "0.0", "rainfall.monthly": "12.0", "wind.wind_speed": "12.0",
        "wind.wind_gust": "20.0", "wind.wind_direction": "270"}
 
@@ -186,16 +184,26 @@ async def test_the_readings_listed_are_those_the_file_holds(tmp_path, archived_c
 
 
 # ---------- the words: the bot's, unchanged ----------
+# Each case's lines, as the bot's old words wrote them for the same readings (checked against them, tests/report_words.py, until step
+# 6c deleted that oracle): pinned in tests/current_words.json. "{pm2.5}" stands for the air sensor's PM2.5 line, whose rating and AQI
+# follow the fake's clock: it is written here from the sensor's own reading.
+WORDS = json.loads((Path(__file__).parent / "current_words.json").read_text())
+
+
+async def pinned(air, lines: list[str]) -> list[str]:
+    """`lines` as pinned, the PM2.5 line written from the air sensor's reading now (its rating and US AQI)."""
+    pm = (await air.latest()).reading["pm2_5"]
+    said = f"• PM2.5: {pm['value']} {pm['unit']} {pm['rating']} (AQI {pm['aqi_us']})"
+    return [said if line == "{pm2.5}" else line for line in lines]
+
+
 @pytest.mark.parametrize("changes", [{}, DAY, HOT, DRY], ids=["wet-night", "sunny", "every-emoji", "dry"])
-async def test_the_lines_are_the_reports_and_weather_nows_words(tmp_path, archived_cache, changes):
+async def test_the_lines_are_the_reports_and_weather_nows_words(tmp_path, archived_cache, changes, request):
     tool, _, air = await world(tmp_path, archived_cache, live(time.time(), **changes))
     got = await call(tool)
-    eco, today = tool.ctx.eco, tool.ctx.now().date()
-    weather_now, air_quality = await old_tools.weather_now(eco, {"groups": NOW_GROUPS}), await old_tools.air_quality(air, {})   # today's tools, on the same readings
-    written = "\n\n".join(f"{got['headings'][d]}\n" + "\n".join(got["lines"][d]) for d in (STATION, AIR_DEVICE))
-    assert written == report.report({"weather_now": weather_now, "air_quality": air_quality}, today)
-    assert "\n".join(got["lines"][STATION]) == report.weather_now(weather_now)
-    assert got["lines"][AIR_DEVICE] == report.air_lines(json.loads(air_quality))
+    want = WORDS[request.node.callspec.id]["all"]
+    assert got["lines"][STATION] == want[STATION] and got["lines"][AIR_DEVICE] == await pinned(air, want[AIR_DEVICE])
+    assert list(got["headings"]) == [STATION, AIR_DEVICE] and got["headings"][STATION].startswith("Weather station")
     await close(tool)
 
 
@@ -215,17 +223,15 @@ LOOKUPS = [(["temperature"], ["outdoor", "indoor"], ["temperature"]),           
 
 
 @pytest.mark.parametrize("changes", [{}, DAY, DRY], ids=["wet-night", "sunny", "dry"])
-async def test_named_readings_are_worded_as_the_bots_plain_lookups(tmp_path, archived_cache, changes):
+async def test_named_readings_are_worded_as_the_bots_plain_lookups(tmp_path, archived_cache, changes, request):
     tool, _, air = await world(tmp_path, archived_cache, live(time.time(), **changes))
-    eco, today = tool.ctx.eco, tool.ctx.now().date()
-    weather_now = await old_tools.weather_now(eco, {"groups": NOW_GROUPS})
-    for names, sides, asked in LOOKUPS:
+    want = WORDS[request.node.callspec.id]
+    for (names, sides, asked), lines in zip(LOOKUPS, want["lookups"], strict=True):
         got = await call(tool, readings=asked)
-        assert "\n".join(got["lines"][STATION]) == report.lookup("reading", weather_now, names, sides, today), asked
-    air_quality = await old_tools.air_quality(air, {})
-    for names, asked in ((["pm10"], ["pm10"]), (["co2", "pm2_5"], ["co2", "pm2.5"]), ([], ["air"]), ([], ["airgradient"])):
+        assert got["lines"][STATION] == lines, asked
+    for asked, lines in zip((["pm10"], ["co2", "pm2.5"], ["air"], ["airgradient"]), want["air"], strict=True):
         got = await call(tool, readings=asked)
-        assert "\n".join(got["lines"][AIR_DEVICE]) == report.lookup("air", air_quality, names, [], today), asked
+        assert got["lines"][AIR_DEVICE] == await pinned(air, lines), asked
     await close(tool)
 
 
@@ -245,8 +251,6 @@ def test_the_heading_has_the_time_of_the_reading_with_its_day_when_that_isnt_tod
     assert heading(STATION, datetime(2026, 11, 10, 2, 21, tzinfo=TZ), today) == "Weather station (2:21am)"
     assert heading(AIR_DEVICE, datetime(2026, 11, 9, 23, 45, tzinfo=TZ), today) == "Air quality (Mon 9 Nov 11:45pm)"
     assert heading(STATION, None, today) == "Weather station"
-    old = json.dumps({"time": "Mon 9 Nov 2026 11:45pm", "pm2_5": {"value": 1.0, "unit": "µg/m³"}})
-    assert report.report({"air_quality": old}, today).splitlines()[0] == "Air quality (Mon 9 Nov 11:45pm)"   # (as the report writes it)
 
 
 # ---------- context: the gauges' figures ----------
@@ -397,9 +401,7 @@ async def test_a_device_that_doesnt_answer_is_said_so_and_the_other_still_answer
     assert got["unavailable"] == {STATION: "The weather station isn't answering right now."}
     assert got["lines"][STATION] == ["• not available right now"] and got["headings"][STATION] == "Weather station"
     assert list(got["sensors"]) == ["air"] and got["as_of"]
-    written = "\n\n".join(f"{got['headings'][d]}\n" + "\n".join(got["lines"][d]) for d in (STATION, AIR_DEVICE))
-    assert written == report.report({"weather_now": "Error calling tool: busy", "air_quality": await old_tools.air_quality(air, {})},
-                                    tool.ctx.now().date())                                 # the report's words for it
+    assert got["lines"][AIR_DEVICE] == await pinned(air, WORDS["wet-night"]["all"][AIR_DEVICE])   # the air sensor's, as ever
 
     async def down(extras=()):
         raise RuntimeError("AirGradient current failed: HTTP 500")

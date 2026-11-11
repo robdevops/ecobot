@@ -1,4 +1,5 @@
-"""The readings tool (lib/history.py): one reading's stored values at an interval, each with its time."""
+"""lib/history.py, the engine of the service's `readings` tool (lib/service/readings.py): one reading's stored values at an interval,
+each with its time. Driven through that tool (until step 6c through the old readings tool's handler, tests/old_tools.py, deleted)."""
 
 import json
 from datetime import UTC, datetime
@@ -7,11 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from lib.history import MAX_ROWS, finest_fit, interval_starts
-from tests.old_tools import History
+from lib.service import readings
+from lib.service.context import Context
+from lib.service.names import Catalogue
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import local_epoch, when
-from lib.tools import Turn
 from tests.fakes import TZ
 
 MAC, LOC = "M", "42"
@@ -32,7 +34,7 @@ def storage(tmp_path):
 
 
 class AirStore:
-    """The air sensor's store as History reads it: its file, and its sensor a property (AirReadings.sensor)."""
+    """The air sensor's store as the readings tool reads it: its file, and its sensor a property (AirReadings.sensor)."""
 
     def __init__(self, storage):
         self.storage = storage
@@ -50,18 +52,23 @@ def put(storage, sensor: str, res: str, rows: list[dict]):
     storage.writer.run(write, ())
 
 
-def tool(storage, eco: bool = True, air: bool = True, sent: dict | None = SENT) -> History:
+def tool(storage, eco: bool = True, air: bool = True, sent: dict | None = SENT):
+    """The service's readings tool over the file: the station's sensors (those `sent`) and the air sensor, at NOW."""
     station = SimpleNamespace(storage=storage, mac=MAC, tz=TZ) if eco else None
     sensor = SimpleNamespace(store=AirStore(storage), tz=TZ) if air else None
-    return History(station, sensor, sent if eco else None, now=lambda: NOW)
+    catalogue = Catalogue.of(sent if eco else None, station=eco, air=air)
+    (made,) = readings.tools(Context(eco=station, air=sensor, catalogue=catalogue, tz=TZ, clock=lambda: NOW))
+    made.catalogue = catalogue
+    return made
 
 
-async def ask(history: History, **args) -> dict:
-    return json.loads(await history.handle(args, Turn()))
+async def ask(made, metric: str, **args) -> dict:
+    """The tool's answer for `metric` (its reading) and these arguments (start and end: local times)."""
+    return json.loads(await made.call({"reading": metric, **args}, None))
 
 
-def offered(history: History) -> list[str]:
-    return list(history.metrics)
+def offered(made) -> list[str]:
+    return made.catalogue.names
 
 
 def test_each_sensor_offers_what_it_has_sent_and_rain_as_the_mm_that_fell(storage):
@@ -69,14 +76,14 @@ def test_each_sensor_offers_what_it_has_sent_and_rain_as_the_mm_that_fell(storag
     assert {"outdoor.temperature", "outdoor.humidity", "indoor.temperature", "indoor.app_temp", "wind.wind_gust", "rainfall.rain",
             "rainfall.rain_rate", "air.pm2_5", "air.co2"} <= set(names)
     assert not {"outdoor.dew_point", "indoor.humidity", "rainfall.event", "rainfall.daily"} & set(names)
-    assert {"rainfall_piezo.rain", "solar_and_uvi.uvi", "air.air_temperature"} <= set(names)   # (groups with nothing recorded yet: their whole kind)
+    assert {"rainfall_piezo.rain", "solar_and_uvi.uvi", "air.temperature"} <= set(names)   # (groups with nothing recorded yet: their whole kind)
     assert [n for n in offered(tool(storage, eco=False)) if not n.startswith("air.")] == []
     assert [n for n in offered(tool(storage, air=False)) if n.startswith("air.")] == []
 
 
 async def test_stored_five_minute_readings_come_back_as_they_are_with_their_bands(storage):
     put(storage, "outdoor", "5min", [{"ts": at(9, 1, 5 * i), "humidity": 80 + i, "humidity_lo": 79 + i, "humidity_hi": 81 + i} for i in range(9)])
-    out = await ask(tool(storage), metric="outdoor.humidity", start="2026-11-09 01:00", end="2026-11-09 01:40", interval="5min")
+    out = await ask(tool(storage), metric="outdoor.humidity", start="2026-11-09 01:00", end="2026-11-09 01:41", interval="5min")   # (the end not included)
     assert out["columns"] == ["time", "value", "low", "high"] and out["unit"] == "%" and out["from"] == ["5min"]
     assert out["rows"][0] == ["Mon 9 Nov 2026 1:00am", 80, 79, 81] and out["rows"][-1] == ["Mon 9 Nov 2026 1:40am", 88, 87, 89]
     assert len(out["rows"]) == 9 and "missing" not in out
@@ -91,7 +98,7 @@ async def test_an_hour_is_worked_out_from_the_finer_readings_and_the_last_one_is
                                                                    ("Sun 8 Nov 2026", "10:00pm"), ("Sun 8 Nov 2026", "11:00pm"),
                                                                    ("Mon 9 Nov 2026", "12:00am"), ("Mon 9 Nov 2026", "1:00am")]]
     assert [r[1] for r in out["rows"]] == [60, 70, 70, 71, 72, 73] and out["from"] == ["5min", "30min"]
-    assert "note_last" in out and out["metric"] == "outdoor.humidity"
+    assert "note_last" in out and out["reading"] == "outdoor.humidity"
 
 
 def test_intervals_are_blocks_of_local_time_across_a_clock_change_and_four_hours_are_the_stations_own():
@@ -106,9 +113,9 @@ def test_intervals_are_blocks_of_local_time_across_a_clock_change_and_four_hours
 async def test_too_many_rows_are_refused_with_the_interval_that_fits(storage):
     h = tool(storage)
     out = await ask(h, metric="outdoor.temperature", start="2026-11-07 01:47", interval="5min")
-    assert out["error"] == "too many rows" and out["rows"] > MAX_ROWS and out["fits"] == "30min"
+    assert out["error"].startswith("Too many rows: ") and out["rows"] > MAX_ROWS and out["fits"] == "30min"
     out = await ask(h, metric="outdoor.temperature", start="2024-01-01 00:00", interval="1day")
-    assert out["error"] == "too many rows" and out["fits"] is None
+    assert out["error"].startswith("Too many rows: ") and out["fits"] is None
 
 
 async def test_what_it_cannot_read_is_said(storage):
@@ -124,10 +131,10 @@ async def test_what_it_cannot_read_is_said(storage):
 async def test_minutes_older_than_are_kept_say_so_and_a_coarser_interval_is_offered(storage):
     put(storage, "outdoor", "5min", [{"ts": at(7, 12), "temperature": 12.0}])   # the sensor has readings, none of them here
     h = tool(storage)
-    out = await ask(h, metric="outdoor.temperature", start="2026-11-09 01:00", end="2026-11-09 01:10", interval="1min")
+    out = await ask(h, metric="outdoor.temperature", start="2026-11-09 01:00", end="2026-11-09 01:11", interval="1min")   # (the end not included)
     assert out["missing"] == 11 and "note_minutes" in out and "note" in out and all(r[1] is None for r in out["rows"])
     put(storage, "outdoor", "5min", [{"ts": at(9, 1, 5 * i), "temperature": 12.0} for i in range(3)])
-    out = await ask(h, metric="outdoor.temperature", start="2026-11-09 01:00", end="2026-11-09 01:10", interval="1min")
+    out = await ask(h, metric="outdoor.temperature", start="2026-11-09 01:00", end="2026-11-09 01:11", interval="1min")
     assert out["fits"] == "5min" and "note_coarser" in out
 
 
@@ -216,10 +223,8 @@ async def test_an_air_glitch_at_the_edge_of_the_window_is_still_taken_out(storag
     assert out["rows"] == [["Sun 8 Nov 2026 10:00pm", 5.0, 5.0, 5.0]]
 
 
-async def test_a_sensor_named_is_kept_and_a_time_with_an_offset_is_moved_into_local_time(storage):
+async def test_a_time_with_an_offset_is_moved_into_local_time(storage):
     h = tool(storage)
-    assert h.find("air.humidity").name == "air.air_humidity" and h.find("humidity").name == "outdoor.humidity"
-    assert h.find("indoor.feels_like") is None and h.find("air.temperature").name == "air.air_temperature"
     put(storage, "outdoor", "5min", [{"ts": at(9, 1), "temperature": 12.0}])
     out = await ask(h, metric="outdoor.temperature", start="2026-11-08T14:00:00Z", end="2026-11-08T14:05:00Z", interval="5min")
     assert out["rows"][0] == ["Mon 9 Nov 2026 1:00am", 12.0, 12.0, 12.0]
@@ -229,6 +234,6 @@ async def test_the_interval_offered_instead_is_one_that_is_then_accepted(storage
     h = tool(storage)
     for start in ("2026-08-15 07:15", "2026-09-20 22:00", "2026-10-28 01:47", "2026-01-14 00:00"):   # (the third: 300 hours; the last: 300 days)
         refused = await ask(h, metric="outdoor.temperature", start=start, end="2026-11-09 01:47", interval="1min")
-        assert refused["error"] == "too many rows" and refused["fits"], start
+        assert refused["error"].startswith("Too many rows: ") and refused["fits"], start
         assert "error" not in await ask(h, metric="outdoor.temperature", start=start, end="2026-11-09 01:47", interval=refused["fits"]), start
     assert finest_fit(local_epoch(datetime(2026, 1, 14), TZ), NOW, TZ) == "1day"

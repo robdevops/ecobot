@@ -1,15 +1,12 @@
-import json
 from datetime import datetime, time as dtime
 
 from lib.forecast import Forecast
 from lib.forecast.source import FORECAST_REFRESH_SECONDS
-from lib.pollen import Pollen
 from lib.snapshots import KEEP_SECONDS, Snapshots
 from lib.warm import safely
 from tests.fakes import TZ, config
 from tests.test_forecast import transport as forecast_transport
-from tests.test_pollen import SEASON_DAY, make as make_pollen, page, transport as pollen_transport
-from tests import old_tools
+from tests.test_pollen import SEASON_DAY, make as make_pollen, page
 
 
 def rows(store, kind: str) -> int:
@@ -101,18 +98,6 @@ async def test_the_forecast_is_kept_warm_every_15_minutes_and_a_failure_is_logge
     assert "Forecast.warm failed" in caplog.text
     await forecast.close()
     await broken.close()
-
-
-async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path):
-    calls = []
-    pollen = Pollen(config(tmp_path, pollen=True), pollen_transport(lambda: page(), calls))
-    forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
-    for out in (json.loads(await old_tools.pollen(pollen, {"cached": True})),
-                json.loads(await old_tools.forecast(forecast, {"days": 3, "cached": True}))):
-        assert "error" in out                                # nothing cached yet: the report goes without it, no request made
-    assert calls == []
-    await pollen.close()
-    await forecast.close()
 
 
 async def test_a_forecast_saved_by_the_older_bom_version_still_loads(tmp_path):

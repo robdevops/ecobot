@@ -1,6 +1,7 @@
 """The `days` tool (lib/service/days.py): its arguments and defaults, its result, its refusals, its periods, its charts and their
-`drawn_by`, the merged rule over both sensors, part of each day (`hours`), and its answer line, against today's weather_days and air_days
-(which it replaces) and lib/report.py's days lookup (whose words it keeps), on the fake station's archive with an air sensor added."""
+`drawn_by`, the merged rule over both sensors, part of each day (`hours`), and its answer line, on the fake station's archive with an air
+sensor added. (Until step 6c these were also held to weather_days' and air_days' engines and the bot's old words, tests/old_tools.py and
+tests/report_words.py, deleted with them; tests/test_days.py holds the tool's station answers to the fake station's own figures.)"""
 
 import copy
 import dataclasses
@@ -10,8 +11,6 @@ from datetime import date, datetime, time, timedelta
 
 import pytest
 
-from tests import report_words as report   # (the bot's words before step 2: the oracle)
-from tests.old_tools import find_air_days, find_days   # (weather_days' and air_days' engines: the oracle)
 from lib.airgradient.readings import AirReadings
 from lib.partday import over, parse_stretch
 from lib.service import days as days_tool
@@ -20,8 +19,7 @@ from lib.service.context import Context
 from lib.service.daylook import LOOKS
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD
-from lib.timeutil import day_bounds, day_text, local_epoch, now_local
-from lib.tools import Turn
+from lib.timeutil import day_bounds, day_text, local_epoch
 from tests.clocks import yesterday_at
 from tests.fakes import TZ, archived_station, rain_day, temp
 from tests.test_chart_json import errors as schema_errors
@@ -104,16 +102,6 @@ def truth(d: date) -> tuple[float, float]:
     return max(temp(t) for t in ticks), max(rain_day(t) for t in ticks)
 
 
-def engine_part(out: dict) -> dict:
-    """A days result as weather_days and air_days had it: without the service's head, its answer line, charts, looks and sources."""
-    out = {k: v for k, v in out.items() if k not in ("period", "as_of", "fresh", "answer", "chart_note", "charts", "reply", "complete",
-                                                    "note", "chart", "note_group_by")}
-    for key in ("days", "trace_rain_days"):
-        if key in out:
-            out[key] = [{k: v for k, v in row.items() if k not in ("day_look", "source")} for row in out[key]]
-    return out
-
-
 # ---------- the tool ----------
 async def test_the_tool_offers_the_fields_of_the_sensors_there_are_and_says_what_it_is_for(world):
     t = tool(world)
@@ -168,22 +156,18 @@ STATION_CASES = [
 
 
 @pytest.mark.parametrize("case", STATION_CASES)
-async def test_station_fields_answer_as_weather_days_did(world, case):
+async def test_station_fields_answer_from_the_day_rows(world, case):
     first, last = ago(80), ago(2)
     out = await ask(world, start=str(first), end=str(last), **case)
-    theirs = await find_days(world.storage, world.eco.mac, TZ, {"start_date": str(first), "end_date": str(last), **case}, now_local(TZ),
-                             Turn())
-    assert engine_part(out) == engine_part(theirs)
+    span = [first + timedelta(days=k) for k in range((last - first).days + 1)]
+    assert out["days_checked"] == len([d for d in span if case.get("only") != "weekend" or d.weekday() >= 5]) and out["answer"]
     assert all(r["source"] == "exact" for r in out.get("days", []))
-    assert out["answer"] == report.lookup("days", json.dumps(theirs), [], [], ago(0))   # the bot's words for the same data
 
 
-async def test_the_older_days_say_they_come_from_daily_records_as_weather_days_did(world):
+async def test_the_older_days_say_they_come_from_daily_records(world):
     args = {"where": [{"field": "temp_max", "op": ">", "value": 0}], "limit": 20}
     out = await ask(world, start=str(ago(540)), end=str(ago(2)), **args)
-    theirs = await find_days(world.storage, world.eco.mac, TZ, {"start_date": str(ago(540)), "end_date": str(ago(2)), **args},
-                             now_local(TZ), Turn())
-    assert engine_part(out) == engine_part(theirs) and out["exact_from"] and "10am to 10am" in out["note_daily"]
+    assert out["exact_from"] and "10am to 10am" in out["note_daily"]
     old = await ask(world, start=str(ago(540)), end=str(ago(510)), **args)
     assert old["days"] and all(r["source"] == "daily" for r in old["days"])
 
@@ -196,12 +180,10 @@ AIR_CASES = [
 
 
 @pytest.mark.parametrize("case", AIR_CASES)
-async def test_air_fields_answer_as_air_days_did(world, case):
+async def test_air_fields_answer_from_the_air_sensors_day_rows(world, case):
     first, last = ago(AIR_DAYS + 10), ago(2)
     out = await ask(world, start=str(first), end=str(last), **case)
-    theirs = await find_air_days(world.air.store, TZ, {"start_date": str(first), "end_date": str(last), **case}, now_local(TZ), Turn())
-    assert engine_part(out) == engine_part(theirs) and out["note_missing"] == theirs["note_missing"]   # (the 10 days before the sensor)
-    assert out["answer"] == report.lookup("days", json.dumps(theirs), [], [], ago(0))
+    assert out["note_missing"].startswith("10 day(s)") and out["answer"]                          # (the 10 days before the sensor)
     for row in out.get("days", []):
         assert row["source"] == "exact" and "day_look" in row   # each day's weather, from the station
 
@@ -218,13 +200,8 @@ async def test_an_air_question_shows_and_ranks_by_pm2_5_and_its_days_carry_the_w
 
 
 # ---------- the answer line ----------
-def test_the_answer_line_is_the_bots_days_lookup_word_for_word():
+def test_the_answer_line_says_the_count_and_the_period():
     data = {"period": "Tue 29 Sep 2026 - Tue 6 Oct 2026", "days_checked": 1454, "matching_days": 137, "condition": "UV index ≥ 10"}
-    for out in (data, {**data, "note_averaged": "..."}, {**data, "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": 49.8},
-                {**data, "stat": {"what": "Highest UV index", "of": "uv_max", "unit": ""}, "value": 11.0},
-                {**data, "stat": {"what": "Total rain", "of": "rain", "unit": "mm"}, "value": None}, {**data, "condition": None}):
-        mine = days_tool.answer_line({k: v for k, v in out.items() if k != "period"}, out["period"])
-        assert mine == report.lookup("days", json.dumps(out), [], [], date(2026, 11, 10))
     assert days_tool.answer_line(data, data["period"]) == "137 of 1,454 days with UV index ≥ 10 (Tue 29 Sep – Tue 6 Oct 2026)."
     night, three = parse_stretch("night"), parse_stretch("15:00")
     assert days_tool.answer_line(data, data["period"], night).startswith("Each night (22:00–06:00): 137 of 1,454 days")
