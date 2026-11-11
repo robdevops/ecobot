@@ -429,8 +429,22 @@ def _rpc(body: bytes) -> str:
             continue
         params = m.get("params") if isinstance(m.get("params"), dict) else {}
         target = params.get("name") or params.get("uri")
-        out.append(f"{m['method']} {target}" if isinstance(target, str) else str(m["method"]))
+        line = f"{m['method']} {target}" if isinstance(target, str) else str(m["method"])
+        if isinstance(args := params.get("arguments"), dict) and args:
+            line += " " + _arguments(args)
+        out.append(line)
     return ", ".join(out)
+
+
+def _arguments(args: dict, most: int = 160) -> str:
+    """What a tool call asks for, short: its readings, its dates (the period as written, or start to end) and its interval
+    ("rain 1d", "outdoor.temperature 2026-11-01 to 2026-11-05 5min"), cut at `most` characters."""
+    def text(v) -> str:
+        return ",".join(map(str, v)) if isinstance(v, list) else str(v)
+    metric = args.get("readings") or args.get("reading")
+    dates = args.get("period") or " to ".join(str(args[k]) for k in ("start", "end") if args.get(k))
+    out = " ".join(text(v) for v in (metric, dates, args.get("interval")) if v not in (None, "", []))
+    return out if len(out) <= most else out[:most - 1] + "…"
 
 
 class RequestLog:
