@@ -150,6 +150,31 @@ Then message `/report` to your Telegram bot.
 
 Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
 
+#### The weather service on its own in Docker (optional)
+
+Not needed: without it the bot runs everything itself, as before. The `ecobot-service` container runs the weather service from the same
+image (an MCP server for other clients, with the bot as one of them) on the bot's data folder, so back that up first:
+`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then:
+
+1. Add to `/etc/ecobot.env` (one token, made with `openssl rand -hex 16`), and the `WEATHER_MCP_URL` line that matches your network:
+   ```
+   MCP_TOKENS=bot:<token>
+   WEATHER_MCP_TOKEN=<token>
+   # Docker's own network (the default):
+   WEATHER_MCP_URL=http://ecobot-service:8765/mcp
+   MCP_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service
+   # or, with compose.host-network.yaml in COMPOSE_FILE:
+   WEATHER_MCP_URL=http://127.0.0.1:8765/mcp
+   ```
+2. Recreate the bot, now the service's client (it waits for the service): `sudo docker compose up -d --force-recreate ecobot`
+3. Start the service: `sudo docker compose --profile service up -d ecobot-service`
+4. Watch both: `sudo docker logs -tf ecobot-service` should show `MCP: http://.../mcp`, and `sudo docker logs -tf ecobot` with
+   `Weather service: connected`. Then message `/report` to the bot.
+
+From then on, `sudo docker compose --profile service up -d --build` updates both. To go back: `sudo docker compose --profile service down`
+(it stops both), remove the lines from step 1, then `sudo docker compose up -d`.
+Only one process runs the service on the data folder: started beside a bot without `WEATHER_MCP_URL`, it stops, saying so in its log.
+
 #### Docker logging
 
 Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`):

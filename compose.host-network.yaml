@@ -1,3 +1,10 @@
 services:
   ecobot:
     network_mode: host
+  # On the host's network too (its sources may be .local names), listening on the host's loopback only: the bot reaches it at
+  # http://127.0.0.1:8765/mcp, and nothing else on the network can.
+  ecobot-service:
+    network_mode: host
+    environment:
+      MCP_BIND: 127.0.0.1:8765
+    ports: !reset []
