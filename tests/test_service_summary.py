@@ -1,10 +1,12 @@
 """The `summary` tool (lib/service/summary.py): its arguments and defaults, the shape of what it answers, the refusals that teach, the
 periods it reads, its charts with drawn_by (replayed, and over every period it lists), and the caption the bot writes today for the same
-chart (lib/report.py), word for word (until step 6c, when that oracle, tests/report_words.py, was deleted)."""
+chart (lib/report.py), word for word: held to that oracle until step 6c deleted it (tests/report_words.py), pinned since in
+tests/summary_words.json."""
 
 import json
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from lib.airgradient import AirGradient
 from lib.compose import Composer
@@ -17,7 +19,7 @@ from lib.tools import Turn
 from lib.timeutil import day_bounds
 from tests.fakes import TZ, air_transport, archived_station, config, rain_day
 from tests.test_chart_json import errors as schema_errors
-from tests import engines
+from tests import clocks, engines
 
 
 async def make(tmp_path, archived_cache, air: bool = False, **air_options):
@@ -342,7 +344,7 @@ async def test_a_chart_of_both_sensors_has_each_readings_line_and_the_cut_in_its
     await close(ctx)
 
 
-# ---------- the caption (until step 6c also held to the bot's old words, tests/report_words.py, deleted with it) ----------
+# ---------- the caption and the text: their shape at any time, their words at a pinned one (summary_words.json) ----------
 async def test_the_caption_is_the_period_then_a_line_per_reading_drawn(tmp_path, archived_cache):
     tool, ctx, _ = await make(tmp_path, archived_cache, air=True)
     for args in ({"readings": ["pressure"], "period": "this week"}, {"period": "this week"},
@@ -352,6 +354,24 @@ async def test_the_caption_is_the_period_then_a_line_per_reading_drawn(tmp_path,
         assert out["charts"] and len(out["caption"].splitlines()) >= 2, args
     out = await ask(tool, readings=["pm2.5", "co2"], period="last 3 days")
     assert out["caption"].splitlines()[1].startswith("• PM2.5: peak ")
+    await close(ctx)
+
+
+# The words themselves: each case's caption (a chart drawn) and text (no chart), as the bot's old words wrote them for the same figures,
+# recorded with the clock pinned (conftest's daytime_archive, 2:05pm Tue 10 Nov 2026) from the tree where they were still checked
+# against that oracle (tests/report_words.py, before step 6c deleted it): tests/summary_words.json.
+WORDS = json.loads((Path(__file__).parent / "summary_words.json").read_text())
+
+
+async def test_the_captions_and_texts_are_the_bots_words_pinned(tmp_path, daytime_archive):
+    assert WORDS["clock"] == clocks.DAYTIME.isoformat()
+    tool, ctx, _ = await make(tmp_path, daytime_archive, air=True)
+    for case in WORDS["captions"]:
+        out = await ask(tool, **case["arguments"])
+        assert out["charts"] and out["caption"] == case["caption"], case["arguments"]
+    for case in WORDS["texts"]:
+        out = await ask(tool, **case["arguments"])
+        assert "charts" not in out and out["text"] == case["text"], case["arguments"]
     await close(ctx)
 
 

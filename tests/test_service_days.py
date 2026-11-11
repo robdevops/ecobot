@@ -1,13 +1,15 @@
 """The `days` tool (lib/service/days.py): its arguments and defaults, its result, its refusals, its periods, its charts and their
 `drawn_by`, the merged rule over both sensors, part of each day (`hours`), and its answer line, on the fake station's archive with an air
 sensor added. (Until step 6c these were also held to weather_days' and air_days' engines and the bot's old words, tests/old_tools.py and
-tests/report_words.py, deleted with them; tests/test_days.py holds the tool's station answers to the fake station's own figures.)"""
+tests/report_words.py, deleted with them: their answers for the same cases are pinned since in tests/days_words.json, and
+tests/test_days.py holds the tool's station answers to the fake station's own figures.)"""
 
 import copy
 import dataclasses
 import json
 import shutil
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +22,7 @@ from lib.service.daylook import LOOKS
 from lib.storage import Storage
 from lib.storage.catalogue import CLOUD
 from lib.timeutil import day_bounds, day_text, local_epoch
+from tests import clocks
 from tests.clocks import yesterday_at
 from tests.fakes import TZ, archived_station, rain_day, temp
 from tests.test_chart_json import errors as schema_errors
@@ -45,8 +48,12 @@ def air_row(ts: int) -> dict:
 def air_cache(archived_cache, tmp_path_factory):
     """The archive with an air sensor's readings added (built once for these tests): the last AIR_DAYS days at 5 minutes, and OLD_AIR's
     days as hourly averages."""
-    path = tmp_path_factory.mktemp("days") / "ecobot.sqlite"
-    shutil.copy(archived_cache, path)
+    return with_air(archived_cache, tmp_path_factory.mktemp("days") / "ecobot.sqlite")
+
+
+def with_air(archive, path):
+    """A copy of `archive` at `path` with the air sensor's readings added (AIR_DAYS at 5 minutes, OLD_AIR hourly), up to the clock."""
+    shutil.copy(archive, path)
     storage = Storage(path, TZ)
     today = datetime.now(TZ).date()
 
@@ -77,6 +84,16 @@ async def world(tmp_path, air_cache):
     yield Context(eco=eco, air=Air(eco.storage))
     await eco.close()
     assert fake.calls == []   # answered from the file alone
+
+
+@pytest.fixture
+async def pinned_world(tmp_path, daytime_archive):
+    """world, with the clock pinned at 2:05pm Tue 10 Nov 2026 (conftest's daytime_archive): for the answers pinned word for word."""
+    (tmp_path / "station").mkdir()
+    eco, fake = await archived_station(tmp_path / "station", with_air(daytime_archive, tmp_path / "air.sqlite"))
+    yield Context(eco=eco, air=Air(eco.storage))
+    await eco.close()
+    assert fake.calls == []
 
 
 def tool(ctx):
@@ -197,6 +214,28 @@ async def test_an_air_question_shows_and_ranks_by_pm2_5_and_its_days_carry_the_w
     expected = max(pm(t) for d in (ago(n) for n in range(1, 21)) for t in range(*day_bounds(d, TZ), 300))
     assert air_only["days"][0]["pm2_5_max"] == expected and air_only["units"] == {"pm2_5_max": "µg/m³"}
     assert "day_look" not in air_only["days"][0]   # (no station: no weather to look at)
+
+
+# ---------- the answers, word for word ----------
+# Each STATION_CASES and AIR_CASES result (all but its period and as_of), and the answer line of each kind of result, as weather_days
+# and air_days answered and the bot worded them: recorded with the clock pinned (pinned_world) from the tree where every one was still
+# checked against those engines and words (tests/old_tools.py, tests/report_words.py, before step 6c deleted them): days_words.json.
+WORDS = json.loads((Path(__file__).parent / "days_words.json").read_text())
+
+
+async def test_the_station_and_air_answers_are_as_recorded(pinned_world):
+    assert WORDS["clock"] == clocks.DAYTIME.isoformat()
+    assert [c["arguments"] for c in WORDS["station"]] == STATION_CASES and [c["arguments"] for c in WORDS["air"]] == AIR_CASES
+    for cases, back in ((WORDS["station"], 80), (WORDS["air"], AIR_DAYS + 10)):
+        for case in cases:
+            out = await ask(pinned_world, start=str(ago(back)), end=str(ago(2)), **case["arguments"])
+            assert {k: v for k, v in out.items() if k not in ("period", "as_of")} == case["result"], case["arguments"]
+
+
+@pytest.mark.parametrize("case", WORDS["answer_lines"], ids=["count", "averaged", "total-rain", "highest-uv", "no-value", "no-condition"])
+def test_the_answer_line_is_the_bots_days_lookup_word_for_word(case):
+    data = case["data"]
+    assert days_tool.answer_line({k: v for k, v in data.items() if k != "period"}, data["period"]) == case["answer"]
 
 
 # ---------- the answer line ----------

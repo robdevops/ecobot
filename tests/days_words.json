@@ -1,0 +1,891 @@
+{
+ "clock": "2026-11-10T14:05:00+11:00",
+ "station": [
+  {
+   "arguments": {
+    "where": [
+     {
+      "field": "rain",
+      "op": ">",
+      "value": 0
+     }
+    ],
+    "sort_by": "temp_max",
+    "limit": 3
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "20 of 79 days with rain > 0 mm (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 79,
+    "matching_days": 20,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm"
+    },
+    "condition": "rain > 0 mm",
+    "days": [
+     {
+      "date": "Mon 24 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 0.5
+     },
+     {
+      "date": "Sun 13 Sep 2026",
+      "day_look": {
+       "word": "wet",
+       "emoji": "🌧️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 5.0
+     },
+     {
+      "date": "Sat 3 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 0.5
+     }
+    ],
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  },
+  {
+   "arguments": {
+    "where": [
+     {
+      "field": "rain",
+      "op": ">=",
+      "value": 1
+     }
+    ],
+    "sort_by": "temp_max",
+    "limit": 4
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "10 of 79 days with rain ≥ 1 mm (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 79,
+    "matching_days": 10,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm"
+    },
+    "condition": "rain ≥ 1 mm",
+    "days": [
+     {
+      "date": "Sun 13 Sep 2026",
+      "day_look": {
+       "word": "wet",
+       "emoji": "🌧️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 5.0
+     },
+     {
+      "date": "Fri 23 Oct 2026",
+      "day_look": {
+       "word": "wet",
+       "emoji": "🌧️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 5.0
+     },
+     {
+      "date": "Fri 28 Aug 2026",
+      "day_look": {
+       "word": "wet",
+       "emoji": "🌧️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 5.0
+     },
+     {
+      "date": "Wed 7 Oct 2026",
+      "day_look": {
+       "word": "wet",
+       "emoji": "🌧️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 5.0
+     }
+    ],
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  },
+  {
+   "arguments": {
+    "where": [
+     {
+      "field": "temp_max",
+      "op": ">",
+      "value": 18
+     }
+    ],
+    "count_only": true
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "79 of 79 days with temperature > 18 °C (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 79,
+    "matching_days": 79,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm"
+    },
+    "condition": "temperature > 18 °C",
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  },
+  {
+   "arguments": {
+    "sort_by": "temp_min",
+    "order": "asc",
+    "limit": 2
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "79 of 79 days (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 79,
+    "matching_days": 79,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm"
+    },
+    "days": [
+     {
+      "date": "Wed 26 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0
+     },
+     {
+      "date": "Mon 31 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0
+     }
+    ],
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  },
+  {
+   "arguments": {
+    "stat": "sum",
+    "of": "rain",
+    "group_by": "month"
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "Total rain: 55 mm over 79 days (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 79,
+    "matching_days": 79,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm"
+    },
+    "stat": {
+     "what": "Total rain",
+     "of": "rain",
+     "unit": "mm"
+    },
+    "value": 55.0,
+    "by_month": {
+     "2026-08": 5.5,
+     "2026-09": 22.0,
+     "2026-10": 22.0,
+     "2026-11": 5.5
+    },
+    "chart_note": "The chart's data is in `charts`: draw it if you can, and keep your text to the figures. Don't describe the chart.",
+    "charts": [
+     {
+      "version": 1,
+      "title": "Total rain",
+      "subtitle": "Sat 22 Aug 2026 – Sun 8 Nov 2026  ·  79 days counted  ·  per month",
+      "period": [
+       "2026-08-22",
+       "2026-11-08"
+      ],
+      "source": "Ecowitt weather station",
+      "newest": "2026-11-01T00:00:00+11:00",
+      "panels": [
+       {
+        "label": "Rain",
+        "unit": "mm",
+        "reading": "",
+        "series": [
+         {
+          "name": "Rain",
+          "kind": "bars",
+          "unit": "mm",
+          "width": 2419200,
+          "per": "month",
+          "values": true,
+          "points": [
+           [
+            "2026-08-01T00:00:00+10:00",
+            5.5
+           ],
+           [
+            "2026-09-01T00:00:00+10:00",
+            22.0
+           ],
+           [
+            "2026-10-01T00:00:00+10:00",
+            22.0
+           ],
+           [
+            "2026-11-01T00:00:00+11:00",
+            5.5
+           ]
+          ]
+         }
+        ],
+        "flip_right": false,
+        "peaks": "pills"
+       }
+      ],
+      "drawn_by": {
+       "tool": "days",
+       "arguments": {
+        "where": [],
+        "sort_by": "rain",
+        "order": "desc",
+        "count_only": false,
+        "group_by": "month",
+        "stat": "sum",
+        "of": "rain",
+        "limit": 5,
+        "period": "2026-08-22 to 2026-11-08",
+        "chart_answers_it": false
+       },
+       "periods": [
+        {
+         "period": "3m",
+         "label": "3M"
+        },
+        {
+         "period": "1y",
+         "label": "1Y"
+        },
+        {
+         "period": "on record",
+         "label": "All"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "arguments": {
+    "where": [
+     {
+      "field": "humidity_min",
+      "op": "<",
+      "value": 60
+     }
+    ],
+    "stat": "avg",
+    "of": "humidity_avg"
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "Average humidity: 69.4 % over 79 days (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 79,
+    "matching_days": 79,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm",
+     "humidity_min": "%",
+     "humidity_avg": "%"
+    },
+    "condition": "lowest humidity < 60 %",
+    "stat": {
+     "what": "Average humidity",
+     "of": "humidity_avg",
+     "unit": "%"
+    },
+    "value": 69.4,
+    "days": [
+     {
+      "date": "Tue 25 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0,
+      "humidity_min": 55.0,
+      "humidity_avg": 69.5
+     },
+     {
+      "date": "Wed 26 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0,
+      "humidity_min": 55.0,
+      "humidity_avg": 69.8
+     },
+     {
+      "date": "Sun 30 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0,
+      "humidity_min": 55.0,
+      "humidity_avg": 69.5
+     },
+     {
+      "date": "Mon 31 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0,
+      "humidity_min": 55.0,
+      "humidity_avg": 69.8
+     },
+     {
+      "date": "Fri 4 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0,
+      "humidity_min": 55.0,
+      "humidity_avg": 69.5
+     }
+    ],
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  },
+  {
+   "arguments": {
+    "where": [
+     {
+      "field": "rain",
+      "op": "=",
+      "value": 0
+     }
+    ],
+    "only": "weekend",
+    "limit": 20
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "18 of 24 days with rain = 0 mm (Sat 22 Aug – Sun 8 Nov 2026).",
+    "days_checked": 24,
+    "matching_days": 18,
+    "units": {
+     "temp_max": "°C",
+     "temp_min": "°C",
+     "rain": "mm"
+    },
+    "condition": "rain = 0 mm",
+    "days": [
+     {
+      "date": "Sat 22 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.2,
+      "temp_min": 8.2,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 23 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 29 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 30 Aug 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 6 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.2,
+      "temp_min": 8.2,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 12 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 19 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 20 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 26 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.2,
+      "temp_min": 8.2,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 27 Sep 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 4 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 10 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 17 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 18 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 24 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.0,
+      "temp_min": 8.5,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 25 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.1,
+      "temp_min": 8.1,
+      "rain": 0.0
+     },
+     {
+      "date": "Sun 1 Nov 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.3,
+      "temp_min": 8.3,
+      "rain": 0.0
+     },
+     {
+      "date": "Sat 7 Nov 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "temp_max": 20.4,
+      "temp_min": 8.4,
+      "rain": 0.0
+     }
+    ],
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  }
+ ],
+ "air": [
+  {
+   "arguments": {
+    "where": [
+     {
+      "field": "pm2_5_max",
+      "op": ">",
+      "value": 20
+     }
+    ],
+    "limit": 3
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "18 of 39 days with PM2.5 > 20 µg/m³ (Mon 21 Sep – Sun 8 Nov 2026).",
+    "days_checked": 39,
+    "matching_days": 18,
+    "units": {
+     "pm2_5_max": "µg/m³"
+    },
+    "condition": "PM2.5 > 20 µg/m³",
+    "days": [
+     {
+      "date": "Sat 3 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "pm2_5_max": 33.0
+     },
+     {
+      "date": "Sat 10 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "pm2_5_max": 33.0
+     },
+     {
+      "date": "Sat 17 Oct 2026",
+      "day_look": {
+       "word": "sunny",
+       "emoji": "☀️"
+      },
+      "source": "exact",
+      "pm2_5_max": 33.0
+     }
+    ],
+    "note_missing": "10 day(s) in this period have no stored readings (not downloaded yet, or the sensor was off) and are not counted.",
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  },
+  {
+   "arguments": {
+    "stat": "max",
+    "of": "pm2_5_max",
+    "group_by": "month"
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "Highest PM2.5: 33 µg/m³ over 39 days (Mon 21 Sep – Sun 8 Nov 2026).",
+    "days_checked": 39,
+    "matching_days": 39,
+    "units": {
+     "pm2_5_max": "µg/m³"
+    },
+    "stat": {
+     "what": "Highest PM2.5",
+     "of": "pm2_5_max",
+     "unit": "µg/m³"
+    },
+    "value": 33.0,
+    "by_month": {
+     "2026-10": 33.0,
+     "2026-11": 33.0
+    },
+    "note_missing": "10 day(s) in this period have no stored readings (not downloaded yet, or the sensor was off) and are not counted.",
+    "chart_note": "The chart's data is in `charts`: draw it if you can, and keep your text to the figures. Don't describe the chart.",
+    "charts": [
+     {
+      "version": 1,
+      "title": "Highest PM2.5",
+      "subtitle": "Mon 21 Sep 2026 – Sun 8 Nov 2026  ·  39 days counted  ·  per month",
+      "period": [
+       "2026-09-21",
+       "2026-11-08"
+      ],
+      "source": "AirGradient sensor",
+      "newest": "2026-11-01T00:00:00+11:00",
+      "panels": [
+       {
+        "label": "Pm2.5",
+        "unit": "µg/m³",
+        "reading": "",
+        "series": [
+         {
+          "name": "Pm2.5",
+          "kind": "bars",
+          "unit": "µg/m³",
+          "width": 2419200,
+          "per": "month",
+          "values": true,
+          "points": [
+           [
+            "2026-10-01T00:00:00+10:00",
+            33.0
+           ],
+           [
+            "2026-11-01T00:00:00+11:00",
+            33.0
+           ]
+          ]
+         }
+        ],
+        "flip_right": false,
+        "peaks": "pills"
+       }
+      ],
+      "drawn_by": {
+       "tool": "days",
+       "arguments": {
+        "where": [],
+        "sort_by": "pm2_5_max",
+        "order": "desc",
+        "count_only": false,
+        "group_by": "month",
+        "stat": "max",
+        "of": "pm2_5_max",
+        "limit": 5,
+        "period": "2026-09-21 to 2026-11-08",
+        "chart_answers_it": false
+       },
+       "periods": [
+        {
+         "period": "3m",
+         "label": "3M"
+        },
+        {
+         "period": "1y",
+         "label": "1Y"
+        },
+        {
+         "period": "on record",
+         "label": "All"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "arguments": {
+    "sort_by": "pm10_avg",
+    "order": "asc",
+    "count_only": true
+   },
+   "result": {
+    "fresh": "These figures are as of `as_of`. A follow-up or a challenge (\"that's wrong, it was cooler\") needs this tool called again: never answer it from these.",
+    "answer": "39 of 39 days (Mon 21 Sep – Sun 8 Nov 2026).",
+    "days_checked": 39,
+    "matching_days": 39,
+    "units": {
+     "pm2_5_max": "µg/m³",
+     "pm10_avg": "µg/m³"
+    },
+    "note_missing": "10 day(s) in this period have no stored readings (not downloaded yet, or the sensor was off) and are not counted.",
+    "note_group_by": "One figure for the whole period. If a figure per month or per year was asked for (\"per month\", \"by year\", \"each year\"), call again with group_by \"month\" or \"year\"."
+   }
+  }
+ ],
+ "answer_lines": [
+  {
+   "data": {
+    "period": "Tue 29 Sep 2026 - Tue 6 Oct 2026",
+    "days_checked": 1454,
+    "matching_days": 137,
+    "condition": "UV index ≥ 10"
+   },
+   "answer": "137 of 1,454 days with UV index ≥ 10 (Tue 29 Sep – Tue 6 Oct 2026)."
+  },
+  {
+   "data": {
+    "period": "Tue 29 Sep 2026 - Tue 6 Oct 2026",
+    "days_checked": 1454,
+    "matching_days": 137,
+    "condition": "UV index ≥ 10",
+    "note_averaged": "..."
+   },
+   "answer": "137 of 1,454 days with UV index ≥ 10 (Tue 29 Sep – Tue 6 Oct 2026). Older days use averages, so a count near the limit may fall slightly short."
+  },
+  {
+   "data": {
+    "period": "Tue 29 Sep 2026 - Tue 6 Oct 2026",
+    "days_checked": 1454,
+    "matching_days": 137,
+    "condition": "UV index ≥ 10",
+    "stat": {
+     "what": "Total rain",
+     "of": "rain",
+     "unit": "mm"
+    },
+    "value": 49.8
+   },
+   "answer": "Total rain: 49.8 mm over 1,454 days (Tue 29 Sep – Tue 6 Oct 2026)."
+  },
+  {
+   "data": {
+    "period": "Tue 29 Sep 2026 - Tue 6 Oct 2026",
+    "days_checked": 1454,
+    "matching_days": 137,
+    "condition": "UV index ≥ 10",
+    "stat": {
+     "what": "Highest UV index",
+     "of": "uv_max",
+     "unit": ""
+    },
+    "value": 11.0
+   },
+   "answer": "Highest UV index: 11 over 1,454 days (Tue 29 Sep – Tue 6 Oct 2026)."
+  },
+  {
+   "data": {
+    "period": "Tue 29 Sep 2026 - Tue 6 Oct 2026",
+    "days_checked": 1454,
+    "matching_days": 137,
+    "condition": "UV index ≥ 10",
+    "stat": {
+     "what": "Total rain",
+     "of": "rain",
+     "unit": "mm"
+    },
+    "value": null
+   },
+   "answer": "137 of 1,454 days with UV index ≥ 10 (Tue 29 Sep – Tue 6 Oct 2026)."
+  },
+  {
+   "data": {
+    "period": "Tue 29 Sep 2026 - Tue 6 Oct 2026",
+    "days_checked": 1454,
+    "matching_days": 137,
+    "condition": null
+   },
+   "answer": "137 of 1,454 days (Tue 29 Sep – Tue 6 Oct 2026)."
+  }
+ ]
+}

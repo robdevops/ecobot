@@ -1,0 +1,105 @@
+{
+ "clock": "2026-11-10T14:05:00+11:00",
+ "captions": [
+  {
+   "arguments": {
+    "readings": [
+     "pressure"
+    ],
+    "period": "this week"
+   },
+   "caption": "Wed 4 Nov – Tue 10 Nov 2026\nPressure: low 1006.9 °C, Wed 4 Nov at 6:50am · high 1023.5 °C, Sat 7 Nov at 1:45am"
+  },
+  {
+   "arguments": {
+    "period": "this week"
+   },
+   "caption": "Wed 4 Nov – Tue 10 Nov 2026\nTemperature (outdoor): low 8.1 °C, Wed 4 Nov at 2:25am · high 20.4 °C, Sat 7 Nov at 2:30pm\nTemperature (indoor): low 8.1 °C, Wed 4 Nov at 2:25am · high 20.4 °C, Sat 7 Nov at 2:30pm\nHumidity: low 54 %, Thu 5 Nov at 2:45pm · high 85 %, Wed 4 Nov at 2:15am"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "temperature"
+    ],
+    "period": "this week",
+    "average": true
+   },
+   "caption": "Wed 4 Nov – Tue 10 Nov 2026\nTemperature (outdoor): average 14.1 °C (low 8.1, high 20.4)\nTemperature (indoor): average 14.1 °C (low 8.1, high 20.4)"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "rain",
+     "wind"
+    ],
+    "period": "last 10 days"
+   },
+   "caption": "Sun 1 Nov – Tue 10 Nov 2026\n☔ Rain per 6 hours: least 0 mm (Sun 1 Nov 12am) · most 5 mm (Sun 8 Nov 12pm) · 5.5 mm in all\n🌬️ Wind: strongest gust 48.0 °C, Fri 6 Nov at 3pm\n🧭 Mostly from the N (100%), steady"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "wind"
+    ],
+    "period": "last 3 days"
+   },
+   "caption": "Sun 8 Nov – Tue 10 Nov 2026\n🌬️ Wind: strongest gust 36.0 °C, Mon 9 Nov at 3pm\n🧭 Mostly from the N (100%), steady"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "rain"
+    ],
+    "period": "last 3 days"
+   },
+   "caption": "Sun 8 Nov – Tue 10 Nov 2026\n☔ Rain per hour: least 0 mm (Sun 8 Nov 12am) · most 5 mm (Sun 8 Nov 2pm) · 5.0 mm in all"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "pm2.5",
+     "co2"
+    ],
+    "period": "last 3 days"
+   },
+   "caption": "Sun 8 Nov – Tue 10 Nov 2026\n• PM2.5: peak 16.0 µg/m³ (Sun 8 Nov 10:00am) · 🟡 poor · average 10.4\n• CO₂: peak 450.0 ppm (Sun 8 Nov 12:00am) · 🟢 good · average 450.0"
+  }
+ ],
+ "texts": [
+  {
+   "arguments": {
+    "period": "yesterday"
+   },
+   "text": "Mon 9 Nov – Mon 9 Nov 2026\n• Temperature (outdoor): low 8.1 °C, Mon 9 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm\n• Humidity: low 55 %, Mon 9 Nov at 1:50pm · high 85 %, Mon 9 Nov at 2:15am\n• Temperature (indoor): low 8.1 °C, Mon 9 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "temperature"
+    ],
+    "period": "yesterday",
+    "average": true
+   },
+   "text": "Mon 9 Nov – Mon 9 Nov 2026\n• Temperature (outdoor): average 14.1 °C (low 8.1, high 20.1)\n• Temperature (indoor): average 14.1 °C (low 8.1, high 20.1)"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "wind"
+    ],
+    "period": "yesterday"
+   },
+   "text": "Mon 9 Nov – Mon 9 Nov 2026\n• Wind: low 0.0 °C, Mon 9 Nov at 12am · high 25.0 °C, Mon 9 Nov at 6pm\n• Wind gust: low 26.0 °C, Mon 9 Nov at 12am · high 36.0 °C, Mon 9 Nov at 3pm"
+  },
+  {
+   "arguments": {
+    "readings": [
+     "outdoor.humidity",
+     "pressure"
+    ],
+    "period": "yesterday"
+   },
+   "text": "Mon 9 Nov – Mon 9 Nov 2026\n• Humidity: low 55 %, Mon 9 Nov at 1:50pm · high 85 %, Mon 9 Nov at 2:15am\n• Pressure: low 1009.1 °C, Mon 9 Nov at 8:15pm · high 1015.9 °C, Mon 9 Nov at 12am"
+  }
+ ]
+}
