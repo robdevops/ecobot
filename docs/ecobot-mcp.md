@@ -638,7 +638,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
      (`station_zone`), and a start while the service can't be reached runs in the zone last read, `TZ` only before any. A question's call waits up to 5 seconds while the
      client is being built again, a background one not at all; a question while the service can't be reached is answered that it can't
      (`bot.SERVICE_DOWN`), without the model. The bot's `warm_up` is its charts drawn ahead, every 5 minutes, quietly nothing while the
-     service is away; the poke of the sources is gone (there are none). Irrigation stays in the bot until step 7: its daily check reads the
+     service is away; the poke of the sources is gone (there are none). Irrigation stays in the bot until step 8: its daily check reads the
      measured rain from `summary {readings: ["rain"], period: "last 24 hours"}` (`ServiceRain`) and the forecast from `ecobot://forecast`
      (`ServiceForecast`, read again at each check and on each `ResourceUpdated`; the one last read stands when the service can't be
      reached). Tests: `tests/test_bot_remote.py` (the bot against the real server, in memory and under uvicorn: a question answered with
@@ -662,7 +662,7 @@ Each step ships on its own, with the tests and evals green and the bot working t
      `markdown`, a `ResourceLink` per chart. Tests: `tests/test_mcp_server.py` (in memory and under uvicorn: the link served byte for
      byte as png mode's image, without a token or an allowed Host, `/mcp` still needing both; the override both ways; 404 for an
      unknown or expired id; the base URL from the setting and the proxy's headers; the store's bounds; the bot unaffected).
-   - **Left:** the irrigation server, now step 7; and `show_request` and `report_inputs` as MCP clients.
+   - **Left:** the irrigation server, now step 8; and `show_request` and `report_inputs` as MCP clients.
 6. **The slim bot** (decided November 2026, in place of retiring it: section 4 describes the bot as it was). The Telegram bot is kept, but only as a thin client of ecobot-mcp: it does what only a Telegram bot can do
    (chats, buttons, pushing alerts), and everything about the weather, the air, the alerts' rules and the pictures comes from
    ecobot-mcp over MCP. It never opens the readings file and draws nothing. Sub-steps, each its own change with the checks green:
@@ -728,7 +728,26 @@ Each step ships on its own, with the tests and evals green and the bot working t
 
    **Risks:** a typed chart request ("rain chart 7d") now costs a model call and a second or two, where it was instant; a keyboard
    button's first press waits for ecobot-mcp; the bot does nothing without ecobot-mcp (it says so, as today).
-7. **Irrigation on its own** (was 5b): the irrigation server in its own repository and MCP server (3.9: its tools, the watchdog and the
+7. **Faster: the storage, and the test suite.** The suite (1793 tests, `python -m pytest -q`, 4 workers) takes 46-49 s with the fake
+   archive cached (about 65 s when it is rebuilt after a change to lib/storage, lib/ecowitt or tests/fakes.py), against a wish of
+   20 s. Its setup is cheap now (a test's copy of the archive and its station: 30 ms); the time is the tests' own work, about 154 s of
+   it, much of it the storage code the service runs for real questions, so speeding that up speeds up both. From a profile of the
+   whole suite run serially (November 2026), each its own change, every test and assertion kept:
+   - **7a. Rows into columns in one step** (`lib/storage/read.py` `rows`: 12 s, 42 million list appends): `itertools.groupby` over
+     the rows by sensor and `zip(*rows)`, in C. Written and passing the storage tests; set aside until this step.
+   - **7b. The queries** (21 s in SQLite over 94,000 queries): the largest is writing day rows (`lib/storage/days.py` `_insert`,
+     13 s over 12,800 queries), then the roll-ups (`write.py` `roll_up`, 2 s) and `read.py` `part_days` (1.5 s). EXPLAIN QUERY PLAN
+     each for a table scan or a missing index, and look for the same work done twice within one write or one question.
+   - **7c. Closing the file** (4.5 s over 3,000 closes): likely a WAL checkpoint at each close; any change here touches how writes
+     are made durable, so it needs care.
+   - **7d. Python loops over every reading** for the day figures and summaries (`lib/lines.py` `_summarise`, `lib/ecowitt/reads.py`
+     `readings_on`: about 10 s): the riskiest, as they make the figures people see; checked against a full-size archive before and
+     after, not only the tests.
+   Measured after each. Also waiting (about 42 s of the serial run on timers, servers stopping and a browser; the browser test alone is
+   11 s). If still short of 20 s after 7a-7d: mark the heaviest groups (the browser tests, the reference images, the benchmark, the
+   tests that start servers) `slow`, so plain `pytest` leaves them to `pytest -m slow` and CI, which runs all. The hangs are fixed and
+   a stuck test fails after 60 s (pytest-timeout).
+8. **Irrigation on its own** (was 5b): the irrigation server in its own repository and MCP server (3.9: its tools, the watchdog and the
    daily check, `irrigation://alerts`). The bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`) and listens for its alerts
    the same way; `lib/irrigation` and the bot's `BOT_TUYA_*` and `BOT_IRRIGATION_CHECK_HOUR` go from here.
 
