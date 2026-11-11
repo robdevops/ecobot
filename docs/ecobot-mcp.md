@@ -219,7 +219,9 @@ rain is summarised.
 low_when, high…}], [month…], [year…]}}, "rainfall": {"rain": {…, [today: {total}], [month: {total, wettest_day}], [year…]}}, "wind":
 {"wind_speed": {…, [today: {high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
 bot's gauges show (rain as totals and its wettest day, wind's highest gust); with `context` and no readings named, every gauge's reading
-the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them.
+the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them. The air sensor's
+air-quality readings have their highs and lows with `context` too (from its day rows, with their day but no time of day), so a
+reading it lacks now, or the sensor not answering, still gives its figures with `value` null.
 
 **`outlook`'s result** is the prompt's outlook rules, worked out by the service (`lib/service/outlook.py`) from the reading now and
 the last 3 hours: `{as_of, verdict: "likely"|"possible"|"unlikely", reason: "pressure down 2.4 hPa in 3 hours, humidity 91%",
@@ -394,6 +396,23 @@ Charts are data: the client draws them, or its model does from the numbers.
   don't change; dark per `DARKMODE`, or request `_meta` `chart_dark: true|false`. Pillow is optional on the service
   (`requirements-charts.txt`) and imported at the first image asked for: without it the warning is logged once, and the result is the
   JSON as if no image had been asked for, with `chart_image_note` saying images aren't available on this service.
+- **Or as links, for a client that shows a markdown image but not a tool's.** Some chat apps (LibreChat with an Ollama endpoint) give
+  a tool's image to the model as text, but show a markdown image in the model's reply. Such a client asks with `/mcp?charts=link`, or
+  per call `chart_image: "link"`. So there are three modes, the connection's from its URL (`?charts=png`, `?charts=link`, neither
+  for none) and each call's `chart_image` (`"png"`, `"link"`, `"none"`) overriding it; off by default. With links the charts are
+  drawn as for images (the same renderer, off the event loop; without Pillow, the same JSON and note) and kept in memory under a
+  random, unguessable id (`secrets.token_urlsafe(16)`), for `MCP_CHART_LINK_HOURS` (24) and at most 500 pictures and 64 MB (the
+  oldest dropped first): a restart forgets them. The result's text carries each chart as `{title, period, url, markdown}`
+  (`markdown` is `![<title>](<url>)`) with a `chart_note` asking the model to put each chart in its reply as that markdown image,
+  exactly as given, and keep its text to the figures; then one `ResourceLink` per chart (`uri` the URL, `name` the title,
+  `image/png`), with no image bytes; result `_meta` `"ecobot/charts"` and `"ecobot/chart_dark"` as with images. A complete answer's
+  `reply` (in the JSON and its block for the person) ends with the markdown images, so a client that shows the complete reply shows
+  the chart. The pictures are served at `GET /charts/<id>.png` beside `/mcp`, with no token and any `Host` (read-only, like the
+  dashboard; the id is the key: anyone with a link can open it until it expires), `Cache-Control: private` for at most the link's
+  remaining life, and 404 once it has gone; the request log names them by the id's first characters. The URL is
+  `MCP_CHART_BASE_URL`'s (where a proxy serves `/charts` to browsers, e.g. nginx's `location /ecobot-charts/ { proxy_pass
+  http://127.0.0.1:8765/charts/; }`), else the MCP request's own scheme and host (`X-Forwarded-Proto`, `X-Forwarded-Host` when
+  present) with `/charts`.
 - **Our bot**, while it lives, has the charts its own code asks for (charts drawn ahead, the period buttons, the alerts' pictures and
   their 🔄) drawn by the service: in-process with the same renderer, remote as images (`chart_image: "png"`, in its own theme,
   `chart_dark`, which it keeps with each picture in its image cache), so a remote bot draws none of those itself. A question's charts
@@ -637,7 +656,12 @@ Each step ships on its own, with the tests and evals green and the bot working t
      the image cache keeps the theme the service drew in. The model path is unchanged; a question's charts and the dashboard are still
      drawn by the bot. Tests: `tests/test_mcp_server.py` (in memory and under uvicorn: off unchanged, the URL's `?charts=png`, the
      per-call override both ways, without Pillow, no Pillow imported by the server), `tests/test_bot_remote.py` (the service's PNG
-     byte for byte the bot's own, for a call and an alert's chart).
+     byte for byte the bot's own, for a call and an alert's chart). Then **chart links** (3.7, `?charts=link`, for LibreChat and other
+     chat apps that show a markdown image in the reply but not a tool's image): the same PNGs kept in memory and served at
+     `/charts/<id>.png` (`chart_images.Links`, `MCP_CHART_BASE_URL`, `MCP_CHART_LINK_HOURS`), the text with each chart's `url` and
+     `markdown`, a `ResourceLink` per chart. Tests: `tests/test_mcp_server.py` (in memory and under uvicorn: the link served byte for
+     byte as png mode's image, without a token or an allowed Host, `/mcp` still needing both; the override both ways; 404 for an
+     unknown or expired id; the base URL from the setting and the proxy's headers; the store's bounds; the bot unaffected).
    - **Left:** the irrigation server, now step 7; and `show_request` and `report_inputs` as MCP clients.
 6. **The slim bot** (decided November 2026, in place of retiring it: section 4 describes the bot as it was). The Telegram bot is kept, but only as a thin client of ecobot-mcp: it does what only a Telegram bot can do
    (chats, buttons, pushing alerts), and everything about the weather, the air, the alerts' rules and the pictures comes from
@@ -656,8 +680,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
      The gauges' live page is already ecobot-mcp's: `/dashboard` beside `/mcp` (`lib/web_dashboard.py`, `MCP_DASHBOARD`, on by
      default) is a self-contained HTML5 page drawing the same tiles in the browser (inline SVG, `lib/gauge_look.py`'s colours and
      sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`
-     event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's change detection). Read-only, so no token
-     and no Host check; `/mcp` keeps both.
+     event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's and ecobot://now/air's change detection).
+     Read-only, so no token and no Host check; `/mcp` keeps both. After the station's gauges come the air sensor's
+     (`lib/airgradient/dashboard.py`, on US standards: the US AQI and PM2.5 on the EPA's 2024 categories, PM10 on the EPA's, CO2 on
+     the usual ASHRAE-based indoor guidance, the VOC and NOx indices on bands of Sensirion's index); a tile with no reading now is
+     dimmed at its floor.
    - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,
      the alert rules and the alert log itself) is deleted. Under systemd, `ecobot.service` wants and starts after `ecobot-mcp.service`;
      in Docker this is already the layout. The bot's image installs only its own packages (python-telegram-bot, openai, mcp, httpx).

@@ -175,6 +175,24 @@ token taken out is refused from the next start). Add your machine's IP address o
 on your own network. Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in
 `compose.yaml` to `127.0.0.1:8765:8765`. A client that shows pictures can have the charts as images: add `?charts=png` to its URL.
 
+#### Charts in LibreChat (and other chat apps): `?charts=link`
+
+Some clients (LibreChat, with an Ollama endpoint, say) don't show an image a tool sends, but do show a markdown image in the model's
+reply. For those, add `?charts=link` to the MCP URL (`https://api.example.org/ecobot/mcp?charts=link`): each chart then comes as a
+link to its picture, `/charts/<id>.png` on ecobot-mcp's port, and the model is asked to put it in its reply as a markdown image. Your
+browser loads the picture, so the link has to be one it can reach: set `MCP_CHART_BASE_URL` to where your reverse proxy serves
+`/charts`, e.g. with nginx
+
+```
+location /ecobot-charts/ { proxy_pass http://127.0.0.1:8765/charts/; }
+```
+
+and `MCP_CHART_BASE_URL=https://api.example.org/ecobot-charts`. Unset, the link is built from the address the MCP request came to
+(the proxy's `X-Forwarded-Proto` and `X-Forwarded-Host` when it sends them) with `/charts`. The pictures need no token and answer any
+`Host`: anyone who has a link can open it until it expires, so treat links as you would the chart itself. Each link's id is random
+and unguessable; the pictures are kept in memory for `MCP_CHART_LINK_HOURS` (24 by default), at most 500 of them and 64 MB in all
+(the oldest go first), and a restart of ecobot-mcp forgets them all (an old link then answers 404).
+
 #### Docker logging
 
 Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot-mcp` or `CONTAINER_NAME=ecobot`):
@@ -199,12 +217,36 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ec
 
 ## Web dashboard
 
-ecobot-mcp also serves the station's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
+ecobot-mcp also serves the station's and the air sensor's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
 (your machine's name or IP address). It looks like `/dashboard` in the chat, drawn by the browser (plain HTML5, nothing fetched from
 the internet), and fits every tile on the screen in portrait or landscape where they stay readable (on a phone it scrolls). It
 updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away.
 
-It is read-only (the weather readings, nothing else), so it is open to anyone on your network: no token, and any name or address
+After the weather station's gauges come the air sensor's, when there is one, with their bands on US standards:
+
+- **US AQI** (from PM2.5), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
+  Unhealthy for Sensitive Groups 101-150 orange, Unhealthy 151-200 red, Very Unhealthy 201-300 purple, Hazardous 301-500 maroon), the
+  category's name under the number;
+- **PM2.5** (µg/m³) on the EPA's 2024 breakpoints (9.0, 35.4, 55.4, 125.4, 225.4) and **PM10** on the EPA's (54, 154, 254, 354,
+  424), in the same colours;
+- **CO₂** (ppm): there is no EPA standard, so the usual US indoor guidance (from ASHRAE's): under 800 good, 800-1000 fair, 1000-1500
+  poor, 1500-2000 bad, 2000 and over very bad;
+- **VOC index** and **NOx index**, when the monitor reports them (Sensirion's indices, learnt from its own air: VOC 100 is its
+  average, NOx 1 its baseline): VOC under 100 low, 100-150 average, then elevated, high (250) and very high (400); NOx up to 20 low,
+  then elevated, high (150) and very high (300).
+
+On the air dials every category gets an equal share of the dial (as AirNow's AQI dial draws them), so "good" and "moderate" aren't
+squeezed into a sliver of a scale that runs to 500; the numbers round the dial are the breakpoints. PM1 has no US standard and the
+monitor's own temperature and humidity repeat the station's outdoor ones, so they have no gauge. The US AQI and each category's name
+are of the reading now, so they always agree with the needle and with the PM2.5 dial beside it (the alerts and the bot's words rate
+PM2.5 on the last two readings, so a passing spike isn't called poor). The page's data never asks the air sensor: with its reading
+stale it shows the one it holds.
+
+A tile whose reading is missing just now (the station or the air sensor not sending it) is dimmed, its gauge at its floor (0, or the
+scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes
+back the tile brightens and its gauge rises in place. A reading the station or the monitor has never sent has no tile.
+
+It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
 turn it off, set `MCP_DASHBOARD=off`.

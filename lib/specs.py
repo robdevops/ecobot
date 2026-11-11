@@ -230,7 +230,7 @@ class Tile:
     """One gauge of the dashboard: a reading drawn as a thermometer, a dial or a rain beaker, with its extremes below."""
     title: str
     unit: str
-    value: float | None                    # now; None draws the gauge empty and dimmed
+    value: float | None                    # now; None (no reading now) draws it dimmed, at its floor
     kind: str                              # "thermometer", "dial" or "beaker"
     low: float                             # the scale's ends
     high: float
@@ -239,11 +239,14 @@ class Tile:
     rows: dict[str, tuple[float | None, ...]] = field(default_factory=dict)   # "Daily" / "Monthly" / "Yearly" -> a figure per column
     ticks: tuple[float, ...] = ()          # the scale's labels
     decimals: int = 1
+    bounds: tuple[float, ...] = ()         # the bands' edges, when each band is an equal share of the scale (the air gauges' categories);
+                                           # none: the scale is even, low to high
+    band: str | None = None                # the name of the band the reading is in, shown under it
 
 
 @dataclass
 class Dashboard:
-    """The gauges of the weather station, left to right and top to bottom, three to a row."""
+    """The gauges of the weather station and the air sensor, left to right and top to bottom, `per_row` to a row."""
     tiles: list[Tile]
     per_row: int = 3
 

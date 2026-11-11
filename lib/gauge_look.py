@@ -19,6 +19,7 @@ MERCURY_GAP = 7             # the gap between the outline and the red, the same 
 BAR_WIDTH, BAR_GAP = 13, 12   # the scale's coloured blocks beside a thermometer or beaker: how wide, and how far from its outline
 RING_OUTER, BAND_WIDTH = 130, 22   # a dial's coloured scale: its outer radius and how wide it is (the outline is at 138)
 LABEL_RADIUS = 84           # where a dial's numbers sit, just inside its scale
+BAND_Y, BAND_SIZE = 157, 19  # a dial's band name ("Moderate"): how far below its centre (under its outline), and its size
 WATER = "#4FB3F6"           # the rain beaker's water
 NEEDLE = "#3E86C0"
 CELL_W, CELL_H, MARGIN = 480, 575, 20
@@ -28,20 +29,47 @@ ROWS = ("Daily", "Monthly", "Yearly")
 
 
 def faded(tile: Tile) -> bool:
-    """A tile drawn dimmed (FADE): it has no reading now and no figure either."""
-    return tile.value is None and not any(any(f is not None for f in figures) for figures in tile.rows.values())
+    """A tile drawn dimmed (FADE): it has no reading now (only its figures: lib/gauge_sheet.py leaves out a tile with neither)."""
+    return tile.value is None
+
+
+def floor(tile: Tile) -> float:
+    """Where a gauge with no reading rests, and the number it reads: 0, or the scale's low end where 0 isn't on it (pressure: 950)."""
+    return 0 if tile.low <= 0 <= tile.high else tile.low
+
+
+def shown(tile: Tile) -> float:
+    """The reading a gauge shows: its reading now, else its floor."""
+    return floor(tile) if tile.value is None else tile.value
+
+
+def share(tile: Tile, value: float) -> float:
+    """How far along its scale (0 to 1) a reading sits: in proportion from the low end to the high one, or, on a scale of bands each an
+    equal share (`bounds`: the air gauges), its band's share and in proportion within it. Beyond the ends: at the end."""
+    bounds = tile.bounds
+    if not bounds:
+        return min(max((value - tile.low) / (tile.high - tile.low), 0), 1)
+    if value <= bounds[0]:
+        return 0.0
+    n = len(bounds) - 1
+    for i, (lo, hi) in enumerate(zip(bounds, bounds[1:])):
+        if value <= hi:
+            return (i + (value - lo) / (hi - lo)) / n
+    return 1.0
 
 
 def look() -> dict:
     """The figures above as JSON, for the web page to draw with."""
     return {"bg": BG, "ink": INK, "soft": SOFT, "chip": CHIP, "chips": CHIPS, "marks": MARKS, "fill": FILL, "water": WATER,
             "needle": NEEDLE, "tube_half": TUBE_HALF, "bulb_radius": BULB_RADIUS, "mercury_gap": MERCURY_GAP, "bar_width": BAR_WIDTH,
-            "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS, "cell": [CELL_W, CELL_H],
+            "bar_gap": BAR_GAP, "ring_outer": RING_OUTER, "band_width": BAND_WIDTH, "label_radius": LABEL_RADIUS,
+            "band_y": BAND_Y, "band_size": BAND_SIZE, "cell": [CELL_W, CELL_H],
             "fade": FADE, "sweep": SWEEP, "start": START, "rows": list(ROWS)}
 
 
 def tile_json(tile: Tile) -> dict:
-    """A tile as JSON: specs.Tile's fields, and whether it is dimmed."""
+    """A tile as JSON: specs.Tile's fields, whether it is dimmed and its floor (where it rests with no reading)."""
     out = asdict(tile)
     out["rows"] = {name: list(figures) for name, figures in tile.rows.items()}
-    return {**out, "colours": list(tile.colours), "columns": list(tile.columns), "ticks": list(tile.ticks), "faded": faded(tile)}
+    return {**out, "colours": list(tile.colours), "columns": list(tile.columns), "ticks": list(tile.ticks), "bounds": list(tile.bounds),
+            "faded": faded(tile), "floor": floor(tile)}

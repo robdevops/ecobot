@@ -11,7 +11,9 @@ weather_now and air_quality without dates (and the gauges' figures), on their en
     lib/ecowitt/days.day_values_on, the live reading counted in for today's highs and lows), each high and low with when it happened (the
     day row's own time of it, worded as weather_history words a record) and its day; rain as its totals and its wettest day, wind as its
     highest gust. With no readings named, every gauge's reading the station sends now is there, those its file hasn't recorded yet (not
-    in the catalogue: unrecorded()) too, so a client lays out the gauges (lib/gauge_sheet.py) from this result alone.
+    in the catalogue: unrecorded()) too, so a client lays out the gauges (lib/gauge_sheet.py) from this result alone. The air sensor's
+    air-quality readings (not its own temperature and humidity) have their highs and lows too, from its day rows (air_context_of: each
+    with its day, but not its time of day), so a reading it lacks now is there with its figures alone, as the station's are.
 
 `lines` are each device's readings as bullets, worded as the bot's report, "weather now" and plain lookups word them today
 (lib/report.py weather_lines, air_lines, reading_lines, ported here with the same words): every reading (none named) in the report's
@@ -72,7 +74,8 @@ DESCRIPTION = (
 CONTEXT = {"type": "boolean", "description": "true to add today's, this month's and this year's highs and lows beside each of the "
                                              "weather station's readings that has them (temperature, humidity, pressure, dew point, "
                                              "feels like, wind's highest gust, rain's totals and wettest day, rain rate, solar, UV, "
-                                             "indoor temperature and humidity). Default false."}
+                                             "indoor temperature and humidity) and the air sensor's air-quality readings. Default "
+                                             "false."}
 
 
 def parameters(description: str) -> dict:
@@ -393,6 +396,28 @@ def context_of(name: str, live: dict, values: dict, times: dict, today: date, tz
     return out
 
 
+def air_context_of(column: str, now: float | None, unit: str, values: dict, today: date) -> dict:
+    """{today, month, year} beside one of the air sensor's readings: the highest and lowest of its day rows (values: the air sensor's
+    {"pm2_5_max": {day: value}, ...}, AirReadings.day_figures'), the reading now counted in, each written as the report writes the
+    reading, with its day (month and year). {} when none of its figures is held."""
+    days, out = periods_of(today), {}
+    for row, key in PERIODS:
+        entry: dict = {}
+        for name, part, pick in (("high", "max", max), ("low", "min", min)):
+            held = {d: v for d in days[row] if (v := values.get(f"{column}_{part}", {}).get(d)) is not None}
+            figures = [*held.values(), *([now] if now is not None else [])]
+            if not figures:
+                continue
+            value = pick(figures)
+            entry.update({name: value, f"{name}_text": air_shown(column, value, unit)})
+            on = next((d for d, v in held.items() if v == value), today)
+            if row != "Daily":
+                entry[f"{name}_date"] = day_text(on)
+        if entry:
+            out[key] = entry
+    return out
+
+
 # ---------- the tool ----------
 class CurrentTool:
     """The current tool over a Context: the station's and the air sensor's readings now."""
@@ -431,11 +456,14 @@ class CurrentTool:
 
     async def handle(self, args: dict, meta: dict) -> str:
         asked, named, context = self._asked(args)
-        parts = []
-        if station := [r for r in asked if r.device == STATION]:
+        parts, gauges = [], context and not named   # every gauge: those of a reading the file hasn't recorded yet too
+        if (station := [r for r in asked if r.device == STATION]) or (gauges and STATION in self.devices):
             parts.append(await self._station(station, named, context, meta))
+        if gauges and AIR_DEVICE in self.devices:
+            air_names = {r.name for r in asked}
+            asked = asked + [r for c in AIR if f"air.{c}" not in air_names and (r := CATALOGUE.get(f"air.{c}"))]
         if air := [r for r in asked if r.device == AIR_DEVICE]:
-            parts.append(await self._air(air, named, meta))
+            parts.append(await self._air(air, named, meta, context))
         sensors: dict[str, dict] = {}
         for part in parts:
             for r, entry in part.entries:
@@ -487,28 +515,52 @@ class CurrentTool:
         part.heading = heading(STATION, at, today)
         return part
 
-    async def _air(self, air: list[Reading], named: bool, meta: dict) -> "Part":
-        """The air sensor's part: each reading asked for now, its lines and heading. A reading named that it isn't reading is missing."""
+    async def _air(self, air: list[Reading], named: bool, meta: dict, context: bool = False) -> "Part":
+        """The air sensor's part: each reading asked for now (with its highs and lows beside it, with `context`), its lines and heading.
+        A reading named that it isn't reading is missing; so is one with figures, with `context`, shown with its figures alone (as when
+        the sensor isn't answering)."""
         tz, today = self.ctx.zone, self.ctx.now().date()
+        figures = await self._air_context(air) if context else {}
         try:
             latest = await self._latest([r.column for r in air if r.column in AIR_OWN_METRICS], meta)
-        except NothingHeld:
-            return Part.down(AIR_DEVICE, NOTHING_HELD[AIR_DEVICE], today)
         except Exception as e:
-            log.warning("current: the air sensor's reading failed: %s", e)
-            return Part.down(AIR_DEVICE, UNAVAILABLE[AIR_DEVICE], today)
+            if not isinstance(e, NothingHeld):
+                log.warning("current: the air sensor's reading failed: %s", e)
+            part = Part.down(AIR_DEVICE, NOTHING_HELD[AIR_DEVICE] if isinstance(e, NothingHeld) else UNAVAILABLE[AIR_DEVICE], today)
+            part.entries = [(r, {"value": None, "unit": AIR[r.column].unit, **beside}) for r in air
+                            if r.column in AIR and (beside := air_context_of(r.column, None, AIR[r.column].unit, figures, today))]
+            return part
         reading, at = latest.reading, latest.at.astimezone(tz) if latest.at else None
         part, shown = Part(AIR_DEVICE, at=at), []
         for r in air:
             entry = reading.get(r.column)
-            if isinstance(entry, dict) and entry.get("value") is not None:
-                part.entries.append((r, air_entry(r.column, entry)))
+            now = entry.get("value") if isinstance(entry, dict) else None
+            unit = entry.get("unit", "") if isinstance(entry, dict) else AIR[r.column].unit if r.column in AIR else ""
+            beside = air_context_of(r.column, now, unit, figures, today) if figures and r.column in AIR else {}
+            if now is not None:
+                part.entries.append((r, {**air_entry(r.column, entry), **beside}))
                 shown.append(r)
-            elif named:
+                continue
+            if named or beside:
                 part.missing.append(r.name)
+            if beside:   # (a gauge drawn dimmed: no reading now, its figures still there)
+                part.entries.append((r, {"value": None, "unit": unit, **beside}))
         part.lines = own_air_lines(reading, shown) if named else air_lines(reading)
         part.heading = heading(AIR_DEVICE, at, today)
         return part
+
+    async def _air_context(self, air: list[Reading]) -> dict:
+        """The air sensor's day figures for its air-quality readings among these ({"pm2_5_max": {day: value}, ...}), the year so far,
+        in one read; {} when they can't be read (the readings now are still given)."""
+        names = [f"{r.column}_{part}" for r in air if r.column in AIR for part in ("max", "min")]
+        if not names:
+            return {}
+        days = periods_of(self.ctx.now().date())["Yearly"]
+        try:
+            return (await self.ctx.air.store.day_figures(days[0], days[-1], names)).values
+        except Exception as e:   # (only the figures: the readings now stand)
+            log.warning("current: the air sensor's day figures failed: %s: %s", type(e).__name__, e)
+            return {}
 
     async def _live(self, station: list[Reading], named: bool, meta: dict) -> dict:
         """The station's live reading for every group "weather now" shows (the reading it keeps, while that is fresh) and, only when they
@@ -525,10 +577,13 @@ class CurrentTool:
         return await eco._live_data(groups, urgent=meta["priority"] != BACKGROUND)
 
     async def _latest(self, extras: list[str], meta: dict):
-        """The air sensor's latest reading (AirGradient.latest), with its own temperature and humidity when named; with `fetch` off, only
-        when it holds one (NothingHeld otherwise)."""
-        if not meta["fetch"] and getattr(self.ctx.air, "_current", None) is None:
-            raise NothingHeld()
+        """The air sensor's latest reading (AirGradient.latest), with its own temperature and humidity when named; with `fetch` off, the
+        reading it keeps, whatever its age, rated on the readings before it it already has: nothing fetched (NothingHeld when it keeps
+        none), as the station's (_live)."""
+        if not meta["fetch"]:
+            if getattr(self.ctx.air, "_current", None) is None:
+                raise NothingHeld()
+            return await self.ctx.air.latest(extras, held=True)
         return await self.ctx.air.latest(extras)
 
     async def _context(self, station: list[Reading]) -> tuple[dict, dict]:

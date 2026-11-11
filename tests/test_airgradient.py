@@ -35,7 +35,7 @@ def test_aqi_and_ratings_follow_the_us_scale():
 async def test_current_reading_with_ratings(tmp_path):
     air, _ = await make(tmp_path)
 
-    async def no_previous(ts, count):
+    async def no_previous(ts, count, held=False):
         return []        # the fake history's PM2.5 depends on the hour, so the previous reading would too
     air._previous_rows = no_previous
     reading = json.loads(await old_tools.air_quality(air, {}))
@@ -47,7 +47,7 @@ async def test_current_reading_with_ratings(tmp_path):
 async def test_a_rating_is_the_level_the_last_two_readings_both_reached(tmp_path):
     air, _ = await make(tmp_path)
     for before, band, noted in ((5.0, "good", True), (20.0, "moderate", False)):
-        async def previous(ts, count, before=before):
+        async def previous(ts, count, held=False, before=before):
             return [{"pm2_5": before}]
         air._previous_rows = previous
         reading = json.loads(await old_tools.air_quality(air, {}))
