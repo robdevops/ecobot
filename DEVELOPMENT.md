@@ -5,10 +5,15 @@ How to test the bot and what the GitHub checks do. (Running it is in `README.md`
 ## Tests
 ```
 pip install -r requirements-dev.txt     # requirements.txt (requirements-mcp.txt and requirements-bot.txt), requirements-charts.txt (Pillow) and pytest
-python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process
+python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process; the slow tests left out
+python -m pytest -m ""                 # every test, the slow ones too (as CI runs them): before pushing
+python -m pytest -m slow               # the slow ones alone
 python scripts/eval_prompts.py         # the saved questions: the reasoning effort (made in code) and the tools' expectations, no key needed
 ```
-The suite takes about 25 s on four cores. The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
+Plain `pytest` takes about 19 s on four cores; everything (`-m ""`) about 45 s. The slow tests, 0.5 s or more each run alone (the browser
+tests of the web page, the service evals over every tool, the tests that start servers, the archive's own), are listed in
+`tests/slow_tests.txt` and marked `slow` by `tests/conftest.py`; `python scripts/slow_tests.py` measures every test again and rewrites the
+list (about two and a half minutes). The slowest fixture, the fake station's 18-month archive (`archived_cache` in `tests/conftest.py`),
 is built once an hour and shared by the workers and by later runs: it lives under pytest's own temp folder (`/tmp/pytest-of-<user>/ecobot-archive-*.sqlite`),
 named for the hour and for the code that shapes it, so a change to `lib/storage`, `lib/ecowitt` or `tests/fakes.py` rebuilds it. The first run after
 that pays about 15 s more. Tests of the archive itself use a station a few weeks old (`ecowitt_transport(history_days=...)`); the storage's reader
@@ -18,7 +23,7 @@ The clock: most tests run at the real time, so some answers (just after midnight
 are only tested when the suite happens to run then. To run the whole suite at such a time on purpose, set `ECOBOT_CLOCK` to a Melbourne
 wall-clock time: the clock starts there and runs on, for lib/ and the tests, the archive included (`tests/clocks.py`):
 ```
-ECOBOT_CLOCK="2026-11-11 00:05" python -m pytest -q    # also 23:55 or 23:59, and 00:05 on the 1st of a month and on 1 Jan
+ECOBOT_CLOCK="2026-11-11 00:05" python -m pytest -q -m ""   # also 23:55 or 23:59, and 00:05 on the 1st of a month and on 1 Jan
 ```
 A test whose answer depends on the time of day or the date pins its own clock instead: `daytime_archive` (2:05pm on Tue 10 Nov 2026) or
 `pinned_archive(when)` with `clocks.pin(monkeypatch, when)`, the fake station's archive as it was then, built once for the code that shapes

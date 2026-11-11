@@ -109,9 +109,26 @@ def _summarise(points, key) -> dict:
     return {k: (fmean(v), *extremes[k]) for k, v in means.items()}
 
 
+def day_of(tz: tzinfo):
+    """local_date(ts, tz) for readings mostly in time order: the day a reading is in is worked out once, and its span kept, so the
+    readings after it in the same day are placed by comparing two numbers (a span is kept only when its first and last second are of
+    that day: so where midnight is skipped or comes twice, every reading is still placed as local_date places it)."""
+    span = [1, 0, None]   # [start, end, day]: empty at first
+
+    def key(ts: int) -> date:
+        if span[0] <= ts <= span[1]:
+            return span[2]
+        day = local_date(ts, tz)
+        start, end = day_bounds(day, tz, True)
+        if start <= ts <= end and local_date(start, tz) == day == local_date(end, tz):
+            span[:] = start, end, day
+        return day
+    return key
+
+
 def daily_summary(points, tz: tzinfo) -> dict[date, tuple[float, float, float]]:
     """{local day: (mean, lowest low, highest high)}; see _summarise."""
-    return _summarise(points, lambda ts: local_date(ts, tz))
+    return _summarise(points, day_of(tz))
 
 
 def time_mean(means: dict[date, float], start: int, end: int, tz: tzinfo) -> float | None:

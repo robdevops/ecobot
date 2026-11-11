@@ -18,8 +18,16 @@ del _Storage
 HEAVY = ("test_ecowitt.py", "test_scan.py", "test_startup.py", "test_airgradient.py", "test_airgradient_local.py", "test_minute_lines.py")
 
 
+SLOW = {line.strip() for line in (Path(__file__).parent / "slow_tests.txt").read_text().splitlines() if line.strip() and not line.startswith("#")}
+
+
+@pytest.hookimpl(tryfirst=True)   # (before -m deselects by the marks)
 def pytest_collection_modifyitems(items):
-    """The files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end."""
+    """The slow tests (tests/slow_tests.txt, every parameter of one) marked `slow`: plain `pytest` leaves them out (pytest.ini). Then the
+    files with the slowest tests go first, so with several workers (pytest-xdist) none is left running one of them at the end."""
+    for item in items:
+        if item.nodeid.split("[")[0] in SLOW:
+            item.add_marker(pytest.mark.slow)
     items.sort(key=lambda item: (item.path.name not in HEAVY, HEAVY.index(item.path.name) if item.path.name in HEAVY else 0))
 
 

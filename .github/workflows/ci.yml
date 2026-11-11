@@ -38,7 +38,7 @@ jobs:
           cache-dependency-path: requirements*.txt
       - run: pip install -r requirements-dev.txt
       - name: Tests
-        run: python -m pytest -q   # pytest.ini runs them in parallel (-n auto)
+        run: python -m pytest -q -m ""   # every test, the slow ones too; pytest.ini runs them in parallel (-n auto)
       - name: Prompt and routing evals
         run: python scripts/eval_prompts.py
       - name: Chart pictures that differ
@@ -70,7 +70,7 @@ jobs:
       - run: pip install -r requirements-dev.txt && pip install --upgrade pillow
       - run: pip list | grep -i -E "^pillow "
       - name: Tests (not the chart pictures)
-        run: python -m pytest -q -m "not golden"
+        run: python -m pytest -q -m "not golden"   # (the slow ones too: -m replaces pytest.ini's "not slow")
       - name: Chart pictures
         id: pictures
         continue-on-error: true

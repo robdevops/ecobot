@@ -810,6 +810,19 @@ Each step ships on its own, with the tests and evals green and the bot working t
    11 s). If still short of 20 s after 7a-7d: mark the heaviest groups (the browser tests, the reference images, the benchmark, the
    tests that start servers) `slow`, so plain `pytest` leaves them to `pytest -m slow` and CI, which runs all. The hangs are fixed and
    a stuck test fails after 60 s (pytest-timeout).
+
+   *Done* (measured warm, four workers; serially the tests' own time was 137 s):
+   - 7a as written: 48-50 s to 44.9 s.
+   - 7b: every query reads by the primary key (EXPLAIN QUERY PLAN: no table scan, no missing index); the day rows' cost is the work
+     itself, done after every write a test makes. Nothing changed.
+   - 7c: closing a copy of the archive takes 3 ms (the `PRAGMA optimize` and the close); in the profile of the heaviest test files
+     closes were 0.06 s. Nothing changed.
+   - 7d: `daily_summary` places each reading in its day by the day's span (`lines.day_of`, the same day as `local_date` in every zone,
+     tested), the station's readings rounded inline (`ecowitt/reads.py`) and a row's column names worked out once (`write.py` `put`): a
+     year of 5-minute readings' days in 0.010 s instead of 0.062 s; within the noise for the suite (45.4 s).
+   - The fallback: the 60 tests of 0.5 s or more (`tests/slow_tests.txt`, written by `scripts/slow_tests.py`) are marked `slow` and
+     left out of plain `pytest`: 1731 tests in 19 s. `pytest -m slow` runs them (32 s), `pytest -m ""` everything (about 45 s), as CI
+     does.
 8. **Irrigation on its own** (was 5b): the irrigation server in its own repository and MCP server (3.9: its tools, the watchdog and the
    daily check, `irrigation://alerts`). The bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`) and listens for its alerts
    the same way; `lib/irrigation` and the bot's `BOT_TUYA_*` and `BOT_IRRIGATION_CHECK_HOUR` go from here.

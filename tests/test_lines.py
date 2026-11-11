@@ -72,3 +72,18 @@ def test_a_band_is_drawn_wherever_there_is_a_range_even_for_a_short_part_of_the_
     assert line.low[:100] == line.y[:100] == line.high[:100]                                       # no range before it: nothing shaded
     assert all(lo < y < hi for lo, y, hi in zip(line.low[100:], line.y[100:], line.high[100:]))   # its range after
     assert build_line(readings(144, 300, 300), TZ, 143 * 300).low is None                          # no range anywhere: no band
+
+
+def test_day_of_places_every_reading_in_the_day_local_date_does_in_any_zone():
+    """daily_summary's day of a reading (lines.day_of keeps the day's span) is local_date's, readings in order or not, in zones with
+    clock changes at midnight and offsets of half and three-quarter hours."""
+    import random
+    from zoneinfo import ZoneInfo
+    from lib.lines import day_of
+    from lib.timeutil import local_date
+    rng = random.Random(7)
+    for zone in ("Australia/Melbourne", "America/Santiago", "America/Havana", "Asia/Kathmandu", "Australia/Lord_Howe", "Pacific/Chatham"):
+        tz = ZoneInfo(zone)
+        key = day_of(tz)
+        times = [*range(1_700_000_000, 1_700_000_000 + 86400 * 400, 900), *(rng.randrange(1_600_000_000, 1_800_000_000) for _ in range(3000))]
+        assert [key(t) for t in times] == [local_date(t, tz) for t in times], zone
