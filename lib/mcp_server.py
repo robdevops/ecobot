@@ -25,6 +25,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ from .service.instructions import instructions
 from .service.names import AIR_DEVICE, STATION, Catalogue
 
 log = logging.getLogger(__name__)
+requests_log = logging.getLogger(__name__ + ".requests")   # one line per HTTP request (RequestLog)
 
 NAME = "ecobot"
 COMPLETE = "ecobot/complete"          # result _meta of a complete answer (3.7)
@@ -407,6 +409,76 @@ def prompt(name: str, arguments: dict | None = None) -> types.GetPromptResult:
     return types.GetPromptResult(description=what, messages=[types.PromptMessage(role="user", content=types.TextContent(text=question))])
 
 
+# ---------- the request log ----------
+WHY = {401: "no token, or one that isn't in MCP_SERVICE_TOKENS",
+       421: "its Host isn't in MCP_SERVICE_ALLOWED_HOSTS",
+       404: "nothing at this path, or the session has ended"}
+BODY_READ = 1 << 20   # the most of a request's body read to name its MCP method (the SDK reads it all anyway)
+
+
+def _rpc(body: bytes) -> str:
+    """What a JSON-RPC body asks: its method, and the tool, resource or prompt it names ("tools/call summary")."""
+    try:
+        msg = json.loads(body)
+    except ValueError:
+        return ""
+    msgs = msg if isinstance(msg, list) else [msg]
+    out = []
+    for m in msgs:
+        if not isinstance(m, dict) or "method" not in m:
+            continue
+        params = m.get("params") if isinstance(m.get("params"), dict) else {}
+        target = params.get("name") or params.get("uri")
+        out.append(f"{m['method']} {target}" if isinstance(target, str) else str(m["method"]))
+    return ", ".join(out)
+
+
+class RequestLog:
+    """ASGI middleware, outermost: one line per HTTP request, once its response starts (a listen stream's when it opens). INFO when
+    answered, WARNING when refused, with the reason for a 401 (the token), a 421 (the Host) and a 404. The token itself is never
+    logged; the client's address is the proxy's X-Forwarded-For when uvicorn trusts it."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        start = time.monotonic()
+        held, body = [], b""
+        if scope.get("method") == "POST":   # (read here to name the MCP method, then handed on as it came)
+            while True:
+                message = await receive()
+                held.append(message)
+                if message["type"] != "http.request":
+                    break
+                if len(body) < BODY_READ:
+                    body += message.get("body", b"")
+                if not message.get("more_body"):
+                    break
+
+        async def replay():
+            return held.pop(0) if held else await receive()
+
+        async def sending(message):
+            if message["type"] == "http.response.start":
+                self.record(scope, _rpc(body) if body else "", message["status"], time.monotonic() - start)
+            await send(message)
+        await self.app(scope, replay, sending)
+
+    @staticmethod
+    def record(scope, asked: str, status: int, took: float):
+        headers = dict(scope.get("headers") or [])
+        client = (scope.get("client") or ("?",))[0]
+        host = headers.get(b"host", b"").decode("latin-1")
+        what = f"{scope.get('method')} {scope.get('path')}" + (f" {asked}" if asked else "")
+        if status < 400:
+            requests_log.info("MCP %s: %s -> %d in %.2fs", client, what, status, took)
+        else:
+            why = WHY.get(status)
+            requests_log.warning("MCP %s refused: %s -> %d%s (Host %s)", client, what, status, f", {why}" if why else "", host or "none")
+
+
 def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "localhost"), issuer_url: str = "http://127.0.0.1:8765",
              path: str = "/mcp"):
     """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (MCP_SERVICE_TOKENS), every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth
@@ -416,6 +488,7 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
         streamable_http_path=path, transport_security=host_settings(allowed_hosts),
         auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check)
     app.state.tokens = check
+    app.add_middleware(RequestLog)   # (added last: outermost, so it sees the token's and the Host's refusals too)
     return app
 
 

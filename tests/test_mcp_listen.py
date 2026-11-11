@@ -195,6 +195,7 @@ async def test_the_service_runs_the_sources_and_answers_a_tool_call_through_the_
     await asker
     log = caplog.text
     assert "Ecowitt: 'Fairleigh' (" in log and "Service tools: current, summary" in log and "1 token(s)" in log
+    assert "MCP 127.0.0.1: POST /mcp tools/call current -> 200" in log and "-> 421, its Host isn't in" in log   # (the request log)
     assert answered["tools"] == ["current", "summary", "readings", "days", "relate", "scan", "outlook", "about"]   # (no forecast, no pollen)
     assert answered["current"]["sensors"]["outdoor"]["temperature"]["unit"]
     assert answered["direct"] == 421
@@ -229,3 +230,23 @@ async def test_the_bot_s_warning_says_why_the_service_refused_it(service, monkey
             with contextlib.suppress(asyncio.CancelledError):
                 await task
             assert want in caplog.text, caplog.text
+
+
+async def test_each_request_is_logged_with_who_asked_what_and_a_refusal_with_its_reason(service, caplog):
+    caplog.set_level("INFO", logger="lib.mcp_server.requests")
+    port = free_port()
+    url = f"http://127.0.0.1:{port}/mcp"
+    async with Serving(http_app(service, tokens=TOKENS.values(), allowed_hosts=("127.0.0.1",)), port):
+        async with Client(http_transport(url, TOKENS["bot"]), mode="2026-07-28") as client:
+            assert not (await client.call_tool("about", {})).is_error
+            await client.read_resource("ecobot://health")
+        async with httpx.AsyncClient() as http:
+            await http.post(url, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                            headers={"Authorization": "Bearer wrong", "Accept": "application/json, text/event-stream"})
+            await http.post(url, json={}, headers={"Authorization": f"Bearer {TOKENS['bot']}", "Host": "192.168.1.208:8765"})
+    lines = [r.getMessage() for r in caplog.records if r.name == "lib.mcp_server.requests"]
+    assert any("MCP 127.0.0.1: POST /mcp tools/call about -> 200" in line for line in lines), lines
+    assert any("resources/read ecobot://health -> 200" in line for line in lines), lines
+    assert any("refused: POST /mcp tools/list -> 401, no token, or one that isn't in MCP_SERVICE_TOKENS" in line for line in lines), lines
+    assert any("-> 421, its Host isn't in MCP_SERVICE_ALLOWED_HOSTS (Host 192.168.1.208:8765)" in line for line in lines), lines
+    assert not any(TOKENS["bot"] in line or "wrong" in line for line in lines)
