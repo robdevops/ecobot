@@ -245,6 +245,15 @@ sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/e
 sudo systemctl restart ecobot
 ```
 
+If you run [ecobot-mcp on its own](#ecobot-mcp-on-its-own-optional), copy its unit in again too, then restart it (before November
+2026 the unit ran `python -m ecobot_service`, ecobot-mcp's old name, and dropped the bot's secrets only by their old names):
+
+```
+sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart ecobot-mcp
+```
+
+An old unit not yet copied in still starts, with a warning in its log saying to copy the new one.
+
 ### Docker
 
 ```

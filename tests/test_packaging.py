@@ -54,3 +54,26 @@ def test_the_ecobot_mcp_unit_drops_the_bots_secrets_by_their_new_and_old_names()
     for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "BOT_TUYA_CLIENT_ID", "BOT_TUYA_CLIENT_SECRET"):
         assert {name, by_env[name]} <= unset, name
     assert "AUTH_TOKENS" not in unset and "ExecStart=/opt/ecobot/.venv/bin/python -m ecobot_mcp" in text
+
+
+def test_an_old_ecobot_service_unit_still_starts_ecobot_mcp_without_the_bots_secrets_by_their_new_names(monkeypatch):
+    # an ecobot-mcp.service copied in before the rename runs python -m ecobot_service and unsets the bot's secrets by their old names
+    import ecobot_mcp.__main__
+    import ecobot_service.__main__ as old
+    unit = set(re.search(r"^UnsetEnvironment=(.*)$", (ROOT / "ecobot-mcp.service").read_text(), re.M)[1].split())
+    assert set(old.BOT_SECRETS) <= unit
+    environ = {name: "secret" for name in old.BOT_SECRETS} | {"MCP_ECOWITT_API_KEY": "k", "AUTH_TOKENS": "t"}
+    old.drop_bot_secrets(environ)
+    assert environ == {"MCP_ECOWITT_API_KEY": "k", "AUTH_TOKENS": "t"}
+    ran = []
+    monkeypatch.setattr(ecobot_mcp.__main__, "run", lambda: ran.append(True))
+    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "secret")
+    old.run()
+    assert ran == [True] and "BOT_TELEGRAM_TOKEN" not in __import__("os").environ
+
+
+def test_the_systemd_upgrade_copies_the_ecobot_mcp_unit_in_again():
+    text = (ROOT / "README.md").read_text()
+    upgrade = text.split("### systemd", 2)[2].split("### Docker")[0]
+    assert "sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && " \
+           "sudo systemctl restart ecobot-mcp" in upgrade
