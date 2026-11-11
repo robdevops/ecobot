@@ -304,7 +304,7 @@ For applications that keep an eye on the station rather than ask about it; a mod
 |---|---|---|
 | `ecobot://station` | name, time zone, latitude and longitude, created; the sensors, their readings with labels, units and the words people use for them; each source's mode (HA, cloud, local) and retention; the alert kinds, what each means and its threshold; the AirGradient dashboard link | when the catalogue gains a reading |
 | `ecobot://now/weather` | the live reading as kept, in the service's names (`current`'s, nothing fetched for it): `{as_of, sensors: {sensor: {reading: {value, unit, text, [emoji], [compass]}}}, lines, heading, [unavailable]}` | each new reading (5 s with HA, 60 s cloud only) |
-| `ecobot://now/air` | the latest air reading, the same shape: its time, each reading's rating, PM2.5's AQI and band | each new reading |
+| `ecobot://now/air` | the latest air reading, the same shape: its time, each reading's rating, PM2.5's and PM10's AQI and band (the US AQI is the higher) | each new reading |
 | `ecobot://alerts` (in the resource list) and `ecobot://alerts{?since,expired}` (a template) | the alerts, newest last, kept 30 days; `since` an alert id: those after it; unexpired ones only unless `expired=true` (3.6) | each new alert, on the bare URI |
 | `ecobot://forecast` | the forecast days, structured (min and max, rain chance, chance of at least 1 mm, summary), with `fetched_at` and `place` | each new forecast |
 | `ecobot://pollen` | grass and asthma levels with their days, `fetched_at`, `in_season` | each new page |

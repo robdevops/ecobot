@@ -108,8 +108,8 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
     assert got["tiles"] == [tile_json(t) for t in sheet.tiles] and got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
-    assert titles[:3] == ["Temperature", "Humidity", "Atmospheric pressure"]
-    assert titles[-7:] == ["US AQI", "PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]                    # the air sensor's, after
+    assert titles[:6] == ["Temperature", "Humidity", "Atmospheric pressure", "Rain", "UV index", "US AQI"]   # gauge_sheet.FIRST
+    assert titles[-6:] == ["PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]       # the rest in their order: the air sensor's after
     tiles = {t["title"]: t for t in got["tiles"]}
     aqi, nox = tiles["US AQI"], tiles["NOx index"]
     assert (aqi["value"], aqi["band"], aqi["bounds"], aqi["faded"]) == (56, "Moderate", [0, 50, 100, 150, 200, 300, 500], False)

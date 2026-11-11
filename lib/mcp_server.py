@@ -94,7 +94,7 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
     WEATHER_URI: ("now/weather", "The weather now", "The weather station's live reading: {as_of, sensors: {sensor: {reading: {value, "
                   "unit, text, [emoji], [compass]}}}, lines, heading}. Pushed on each new reading (every 5 s with Home Assistant, 60 s "
                   "from the cloud).", "eco"),
-    AIR_URI: ("now/air", "The air now", "The air sensor's latest reading, with each reading's rating, PM2.5's US AQI and band: {as_of, "
+    AIR_URI: ("now/air", "The air now", "The air sensor's latest reading, with each reading's rating, PM2.5's and PM10's US AQI and band (the US AQI is the higher): {as_of, "
               "sensors: {air: {reading: {value, unit, text, [rating], [aqi_us, band]}}}, lines, heading}. Pushed on each new reading.",
               "air"),
     ALERTS_URI: ("alerts", "Alerts", "The alerts the service has decided, newest last, kept 30 days: {alerts: [{id, kind, time, expires, "

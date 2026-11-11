@@ -5,8 +5,9 @@ Every air gauge is a dial whose coloured bands are its categories, each band an 
 them), the needle placed in proportion within its band: so the bands that matter are as easy to read as the rest, and a scale that runs
 to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The numbers round the dial are the categories' breakpoints.
 
-  - US AQI (from PM2.5 now, by the service's own lib/airgradient/metrics.py pm25_aqi: the AirGradient's `aqi_us` is of the lower of the
-    last two readings, so a dial of it could disagree with the PM2.5 dial beside it): 0-500, the EPA's six categories and colours;
+  - US AQI (the higher of PM2.5's and PM10's now, as AirNow gives it, by the service's own lib/airgradient/metrics.py us_aqi, its band
+    saying "(PM10)" when PM10 sets it; not the AirGradient's `aqi_us`, of PM2.5 alone and of the lower of the last two readings, so a dial
+    of it could disagree with the PM2.5 and PM10 dials beside it): 0-500, the EPA's six categories and colours;
   - PM2.5 (µg/m³): the EPA's 2024 breakpoints, 0-9.0, 9.1-35.4, 35.5-55.4, 55.5-125.4, 125.5-225.4, 225.5+ (to 325.4, AQI 500);
   - PM10 (µg/m³): the EPA's breakpoints, 0-54, 55-154, 155-254, 255-354, 355-424, 425+ (to 604, AQI 500);
   - PM1 (µg/m³): no standard sets bands for it (not the US, Australia or the WHO); it is drawn on PM2.5's, as many air-quality apps do:
@@ -44,7 +45,7 @@ class AirGauge:
     names: tuple[str, ...]            # each band's name, shown under the reading
     step: float                       # the breakpoints' resolution: a reading below an edge + step is still in the band below
     decimals: int = 0
-    aqi: bool = False                 # shows PM2.5's US AQI (pm25_aqi of the reading now), not the reading itself
+    aqi: bool = False                 # shows the US AQI (the higher of PM2.5's and PM10's now: metrics.us_aqi), not the reading itself
 
     @property
     def reading(self) -> str:

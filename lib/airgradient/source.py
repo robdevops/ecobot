@@ -16,7 +16,7 @@ AirGradient's documented API:
 
 Finished days are kept in the bot's file (readings.py, lib/storage), so questions are answered without asking
 AirGradient unless a day is missing. Reports AirGradient's corrected (calibrated) values
-where available, plus a US EPA AQI and band for PM2.5.
+where available, plus a US EPA AQI and band for PM2.5 and for PM10 (the US AQI is the higher).
 """
 
 import asyncio
@@ -44,7 +44,7 @@ from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_loca
 from ..tools import Turn
 from ..warm import Warmer
 from . import metrics
-from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
+from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, AQI_FROM, particle_aqi, rating, value_of, without_spikes
 from .homeassistant import (ANCHORS, MIN_COMPARED, checked, entity_ids, find_prefix, live as ha_live, minutes as ha_minutes, ranges as ha_ranges,
                             same_reading, verdicts)
 from .local import LocalSensor
@@ -562,7 +562,7 @@ class AirGradient(Source):
         return got
 
     async def latest(self, extras: list[str] = (), held: bool = False) -> Latest:
-        """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
+        """The latest reading. A rating (and PM2.5's and PM10's AQI band) is the level the last two readings both reached, so a passing
         spike is not called poor until the next reading agrees; the value shown is always the latest one. The readings before it
         come from today's history: when that can't be read, the latest is rated alone. held: nothing fetched, the reading it keeps
         whatever its age and the readings before it it already has (LookupError when it keeps none)."""
@@ -591,8 +591,8 @@ class AirGradient(Source):
             reading[name] = {"value": v, "unit": unit, "rating": rating(name, rated)}
             if reading[name]["rating"] != rating(name, v):
                 reading[name]["rating_note"] = "rated on the last two readings: the previous one was lower"
-            if name == "pm2_5":
-                aqi, band = pm25_aqi(rated)
+            if name in AQI_FROM:   # (each particle's own US AQI: the US AQI is the higher, us_aqi)
+                aqi, band = particle_aqi(name, rated)
                 reading[name].update(aqi_us=aqi, band=band)
             sustained[name] = min([v, *(r[name] for r in held if name in r)])
         for name in extras:   # the sensor's own temperature and humidity, only when asked for: no rating
@@ -675,7 +675,7 @@ class AirGradient(Source):
 
     def _entry(self, name: str, pts: list[tuple[int, float]], unit: str, span: tuple[int, int]) -> dict:
         """A metric's lowest, highest and average over these readings ((ts, value)) of the period `span` (epochs), with when the extremes
-        happened; a rated metric (METRICS) with the ratings of its high and average, and PM2.5 with their AQI and band too. The average is
+        happened; a rated metric (METRICS) with the ratings of its high and average, and PM2.5 and PM10 with their AQI and band too. The average is
         by time, as the day rows take a day's (lines.readings_mean): an hourly reading of the older history counts for its hour, not as one
         reading among a 5-minute hour's twelve."""
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
@@ -683,9 +683,9 @@ class AirGradient(Source):
                  "average": round(readings_mean(pts, *span, self.tz), 1)}
         if name in METRICS:
             entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
-            if name == "pm2_5":
-                entry["high_aqi_us"], entry["high_band"] = pm25_aqi(hi[1])
-                entry["average_aqi_us"], entry["average_band"] = pm25_aqi(entry["average"])
+            if name in AQI_FROM:
+                entry["high_aqi_us"], entry["high_band"] = particle_aqi(name, hi[1])
+                entry["average_aqi_us"], entry["average_band"] = particle_aqi(name, entry["average"])
         return entry
 
     def _line(self, name: str, rows: list[dict], daily: bool = False) -> tuple[Line, Plotted] | None:

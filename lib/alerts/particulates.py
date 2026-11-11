@@ -64,8 +64,9 @@ class ParticulatesMonitor:
         """The alert, in the log: news until the next check."""
         data = {"unsafe": unsafe, "at": when.astimezone(self.air.tz).isoformat(timespec="seconds") if when else None,
                 **{f"{key}_ugm3": (reading.get(key) or {}).get("value") for key in ("pm2_5", "pm10")}}
-        if "aqi_us" in (reading.get("pm2_5") or {}):
-            data["pm2_5_aqi_us"] = reading["pm2_5"]["aqi_us"]
+        for key in ("pm2_5", "pm10"):
+            if "aqi_us" in (reading.get(key) or {}):
+                data[f"{key}_aqi_us"] = reading[key]["aqi_us"]
         self.alerts.append("particulates", text, title, data, expires=self.alerts.now() + CHECK_SECONDS, link=self.air.link, chart=chart)
 
     async def _chart(self) -> dict | None:
@@ -74,11 +75,11 @@ class ParticulatesMonitor:
 
     @staticmethod
     def _levels(reading: dict) -> str:
-        """Short summary: PM2.5 (with AQI), plus PM10 only when it's elevated."""
+        """Short summary: PM2.5 (with AQI), plus PM10 (with its AQI) only when it's elevated."""
         parts = []
         pm25, pm10 = reading.get("pm2_5") or {}, reading.get("pm10") or {}
         if pm25.get("value") is not None:
             parts.append(f"PM2.5 {pm25['value']:.0f} µg/m³" + (f" (AQI {pm25['aqi_us']})" if "aqi_us" in pm25 else ""))
         if pm10.get("value") is not None and pm10["value"] > SAFE_PM10:
-            parts.append(f"PM10 {pm10['value']:.0f} µg/m³")
+            parts.append(f"PM10 {pm10['value']:.0f} µg/m³" + (f" (AQI {pm10['aqi_us']})" if "aqi_us" in pm10 else ""))
         return (", ".join(parts) + ".") if parts else ""

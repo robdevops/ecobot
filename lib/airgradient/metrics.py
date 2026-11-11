@@ -1,5 +1,6 @@
 """What AirGradient measures, how it is rated, and how a raw reading is normalised."""
 
+import math
 from datetime import datetime
 
 from ..series import AIR, AIR_EXTRA
@@ -73,6 +74,17 @@ PM25_AQI = [
     (225.5, 325.4, 301, 500, "hazardous"),
 ]
 
+# US EPA PM10 breakpoints (µg/m³, a 24-hour average truncated to a whole number): the same bands
+PM10_AQI = [
+    (0, 54, 0, 50, "good"),
+    (55, 154, 51, 100, "moderate"),
+    (155, 254, 101, 150, "unhealthy for sensitive groups"),
+    (255, 354, 151, 200, "unhealthy"),
+    (355, 424, 201, 300, "very unhealthy"),
+    (425, 604, 301, 500, "hazardous"),
+]
+AQI_FROM = {"pm2_5": "PM2.5", "pm10": "PM10"}   # the particles the US AQI is worked out from, as each is named
+
 
 ZONES = ("good", "poor", "very poor")
 _ZONE_EMOJI = ("\U0001f7e2", "\U0001f7e1", "\U0001f534")
@@ -91,12 +103,33 @@ def rating(name: str, value: float) -> str | None:
     return f"{_ZONE_EMOJI[z]} {ZONES[z]}"
 
 
-def pm25_aqi(conc: float) -> tuple[int, str]:
-    c = round(conc, 1)
-    for lo, hi, a_lo, a_hi, band in PM25_AQI:
+def _aqi(table: list, c: float) -> tuple[int, str]:
+    for lo, hi, a_lo, a_hi, band in table:
         if c <= hi:
             return round(a_lo + (a_hi - a_lo) * (max(c, lo) - lo) / (hi - lo)), band
     return 500, "hazardous"
+
+
+def pm25_aqi(conc: float) -> tuple[int, str]:
+    """PM2.5's US AQI and band (its sub-index)."""
+    return _aqi(PM25_AQI, round(conc, 1))
+
+
+def pm10_aqi(conc: float) -> tuple[int, str]:
+    """PM10's US AQI and band (its sub-index)."""
+    return _aqi(PM10_AQI, math.floor(conc))
+
+
+def particle_aqi(name: str, conc: float) -> tuple[int, str]:
+    """The US AQI and band of "pm2_5" or "pm10" (AQI_FROM)."""
+    return (pm25_aqi if name == "pm2_5" else pm10_aqi)(conc)
+
+
+def us_aqi(pm2_5: float | None, pm10: float | None) -> tuple[int, str, str] | None:
+    """The US AQI as AirNow gives it: the higher of PM2.5's and PM10's (PM2.5's on a tie), its band, and which it is from ("PM2.5",
+    "PM10"). None with neither."""
+    found = [(*particle_aqi(name, v), AQI_FROM[name]) for name, v in (("pm2_5", pm2_5), ("pm10", pm10)) if v is not None]
+    return max(found, key=lambda f: f[0]) if found else None   # (max keeps the first of equals: PM2.5)
 
 
 def value_of(row: dict, name: str) -> float | None:

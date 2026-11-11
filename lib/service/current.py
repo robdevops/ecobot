@@ -67,7 +67,8 @@ DESCRIPTION = (
     "a device or reading with a period, \"ecowitt week\", \"weather week\" (summary); values at set times (readings); the days ahead (forecast). Result: sensors.<sensor>.<reading> (sensors.outdoor."
     "temperature) with value, unit, text ready to quote (\"12.3 °C\") and emoji when the reading is one to notice (put it right "
     "before the reading); rainfall.rain is today's rain so far; wind_direction has its compass point; the air "
-    "sensor's have their rating (put it beside the value) and PM2.5 its US aqi_us and band. With context: today, month and year, each "
+    "sensor's have their rating (put it beside the value), PM2.5 and PM10 a US aqi_us and band (the AQI: the higher). With context: "
+    "today, month and year, each "
     "with high and low (_text to quote, _when copied as written, _date the day). lines: each "
     "device's readings as bullet lines, to pass on as they are (headings for a report). missing: readings asked "
     "for that aren't being read now; unavailable: a device not answering.")
@@ -169,7 +170,7 @@ def air_lines(air: dict, only: list[str] | None = None) -> list[str]:
         entry = air.get(key) if only is None or key in only else None
         if not isinstance(entry, dict) or entry.get("value") is None:
             continue
-        aqi = f" (AQI {entry['aqi_us']})" if key == "pm2_5" and "aqi_us" in entry else ""
+        aqi = f" (AQI {entry['aqi_us']})" if "aqi_us" in entry else ""   # (PM2.5's and PM10's: the US AQI is the higher)
         out.append(f"• {label}: {_join([air_shown(key, entry['value'], entry.get('unit', '')), entry.get('rating')], ' ')}{aqi}")
     return out
 

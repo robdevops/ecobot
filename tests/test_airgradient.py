@@ -32,6 +32,18 @@ def test_aqi_and_ratings_follow_the_us_scale():
     assert rating("pm2_5", 5).endswith("good") and rating("pm2_5", 55.5).endswith("very poor")
 
 
+def test_pm10_has_its_own_aqi_and_the_us_aqi_is_the_higher_of_the_two():
+    from lib.airgradient.metrics import pm10_aqi, us_aqi
+    assert [pm10_aqi(c) for c in (0, 54, 54.9, 55, 154, 155, 254, 255, 354, 355, 424, 425, 604, 700)] == [
+        (0, "good"), (50, "good"), (50, "good"), (51, "moderate"), (100, "moderate"), (101, "unhealthy for sensitive groups"),
+        (150, "unhealthy for sensitive groups"), (151, "unhealthy"), (200, "unhealthy"), (201, "very unhealthy"),
+        (300, "very unhealthy"), (301, "hazardous"), (500, "hazardous"), (500, "hazardous")]   # (a whole µg/m³: 54.9 is 54)
+    assert us_aqi(5.0, 200.0) == (*pm10_aqi(200.0), "PM10")                               # dust: PM10 sets it
+    assert us_aqi(40.0, 50.0) == (*pm25_aqi(40.0), "PM2.5")                               # smoke: PM2.5 does
+    assert us_aqi(9.0, 54.0) == (50, "good", "PM2.5")                                     # a tie: PM2.5's
+    assert us_aqi(None, 60.0)[2] == "PM10" and us_aqi(None, None) is None
+
+
 async def test_current_reading_with_ratings(tmp_path):
     air, _ = await make(tmp_path)
 
@@ -40,6 +52,7 @@ async def test_current_reading_with_ratings(tmp_path):
     air._previous_rows = no_previous
     reading = json.loads(await engines.air_history(air, {}))
     assert reading["pm2_5"]["value"] == 12.0 and reading["pm2_5"]["band"] == "moderate"
+    assert (reading["pm10"]["aqi_us"], reading["pm10"]["band"]) == (7, "good")              # PM10 8.0: its own AQI too
     assert set(reading) == {"sensor", "sensor_type", "time", *METRICS} and reading["pm2_5"]["rating"].endswith("poor")
     await air.close()
 
