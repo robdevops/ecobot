@@ -319,9 +319,10 @@ the resource list gives. Only clients on the 2026-07-28 revision can listen; old
 ### 3.5 Prompts
 
 The service also offers MCP prompts, the templates clients show as commands or buttons, each a question in words with its period as an
-argument: `now`, `report`, `will_it_rain`, `weather` (every reading, a panel each), `chart` (a reading and a period), `rain`, `air`.
-They hold no logic: the client's model answers them with the tools, as any question. They replace the bot's keyboard and `/commands`
-for clients that show prompts.
+argument: `now`, `report`, `will_it_rain`, `weather_chart` (every reading, a panel each), `chart` (a reading and a period),
+`rainfall`, `air`. They hold no logic: the client's model answers them with the tools, as any question. Their names are chat
+commands too (step 6c: the bot offers each as a Telegram `/command`), so they keep to Telegram's form (lowercase letters, digits and
+`_`, at most 32) and none takes the name of one of the bot's own commands (`/rain`, `/weather`, …: the keyboard's instant charts).
 
 ### 3.6 Alerts
 
@@ -653,8 +654,16 @@ Each step ships on its own, with the tests and evals green and the bot working t
    - **6c. Less code in the bot.**
      - Typed shortcuts go: anything typed goes to the model (`lib/intent.py`'s pattern matching, `chart_call`, the dashboard and
        report words). Buttons stay instant because each is a fixed call.
-     - `/report` becomes an ecobot-mcp prompt (`report`): the bot asks the model with it, and the model calls the tools. The
-       report written in code (`lib/report.py`, `lib/report_menu.py`) is deleted.
+     - **ecobot-mcp's prompts become Telegram commands.** On connecting, the bot reads the prompt list and sets Telegram's command
+       menu (`setMyCommands`) to its own commands (`/start`, `/alerts`, `/usage`, `/keyboard`, `/reset`, and the keyboard's
+       instant charts: `/rain`, `/weather`, `/temperature`, …) and one command per prompt, with its description; again whenever
+       ecobot-mcp says its prompts changed (`PromptsListChanged`, which the bot already listens for). `/<prompt> <text>` gets the
+       prompt with the words after the command as its arguments, in order, the last taking the rest (`/chart rain 7d` is `chart`
+       with `reading` "rain" and `period` "7d"; `/rainfall last week` is `rainfall` with `period` "last week"; none: the
+       prompt's defaults), and asks the model with it, as a typed question. A prompt whose
+       name isn't a valid Telegram command, or is one of the bot's own, is left out with a warning. So a prompt added to ecobot-mcp
+       appears in Telegram, as in any other client, with no change to the bot.
+     - `/report` is the `report` prompt: the report written in code (`lib/report.py`, `lib/report_menu.py`) is deleted.
      - The charts drawn ahead every 5 minutes go (`draw_buttons_ahead`). Kept: after a chart is sent, its other periods are fetched
        (and, with `BOT_TELEGRAM_PRELOAD_CHAT`, uploaded) in the background, so its period buttons answer at once. A keyboard button's
        first press waits for ecobot-mcp, about half a second.

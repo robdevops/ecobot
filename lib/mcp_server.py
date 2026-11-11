@@ -99,20 +99,21 @@ PUSHED = (WEATHER_URI, AIR_URI, FORECAST_URI, POLLEN_URI)   # compared every PUB
 # ---------- prompts (3.5) ----------
 PERIOD = types.PromptArgument(name="period", description="The period in your own words (\"this week\", \"last 3 months\", \"yesterday\")",
                               required=False)
-PROMPTS = {   # name: (description, arguments, the question: a format string over the arguments, with their defaults)
+PROMPTS = {   # name: (description, arguments, the question: a format string over the arguments, with their defaults). A name is also a
+              # chat command (Telegram's: lowercase, digits and _, at most 32), so none takes a bot command's name (lib/templates.COMMANDS)
     "now": ("The weather and the air now.", [], "How is it outside now?"),
     "report": ("A report: the readings now, today's forecast and the pollen.", [],
                "Give me a report: the readings now, today's forecast and the pollen."),
     "will_it_rain": ("Will it rain in the next few hours: the station's read and the forecast.", [], "Will it rain in the next few hours?"),
-    "weather": ("Every reading of the weather station over a period, a panel each.", [PERIOD],
+    "weather_chart": ("Every reading of the weather station over a period, a panel each.", [PERIOD],
                 "Chart every weather reading, a panel each, over {period}."),
     "chart": ("A chart of a reading over a period.",
               [types.PromptArgument(name="reading", description="The reading (\"temperature\", \"pressure\", \"pm2.5\")", required=True),
                PERIOD], "Chart {reading} over {period}."),
-    "rain": ("How much rain fell over a period, and when.", [PERIOD], "How much rain fell over {period}?"),
+    "rainfall": ("How much rain fell over a period, and when.", [PERIOD], "How much rain fell over {period}?"),
     "air": ("The air quality, now or over a period.", [PERIOD], "How was the air quality over {period}?"),
 }
-PROMPT_DEFAULTS = {"weather": {"period": "the last 7 days"}, "chart": {"period": "the last 24 hours"}, "rain": {"period": "today"}}
+PROMPT_DEFAULTS = {"weather_chart": {"period": "the last 7 days"}, "chart": {"period": "the last 24 hours"}, "rainfall": {"period": "today"}}
 WITHOUT_ARGUMENTS = {"air": "How is the air quality now?"}   # the question when no argument is sent
 
 

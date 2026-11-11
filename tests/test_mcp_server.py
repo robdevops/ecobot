@@ -251,16 +251,16 @@ async def test_a_new_alert_is_published_to_a_listener(tmp_path):
 async def test_the_prompts_are_questions_in_words_with_their_period_an_argument(world):
     async with Client(world.server) as client:
         listed = {p.name: p for p in (await client.list_prompts()).prompts}
-        assert list(listed) == ["now", "report", "will_it_rain", "weather", "chart", "rain", "air"] == list(PROMPTS)
+        assert list(listed) == ["now", "report", "will_it_rain", "weather_chart", "chart", "rainfall", "air"] == list(PROMPTS)
         assert [a.name for a in listed["chart"].arguments] == ["reading", "period"] and listed["chart"].arguments[0].required
         got = await client.get_prompt("chart", {"reading": "pressure", "period": "this week"})
         assert got.messages[0].role == "user" and got.messages[0].content.text == "Chart pressure over this week."
         with pytest.raises(MCPError, match="needs reading"):
             await client.get_prompt("chart", {})
-    assert prompt("rain").messages[0].content.text == "How much rain fell over today?"
+    assert prompt("rainfall").messages[0].content.text == "How much rain fell over today?"
     assert prompt("air").messages[0].content.text == "How is the air quality now?"
     assert prompt("air", {"period": "last week"}).messages[0].content.text == "How was the air quality over last week?"
-    assert prompt("weather").messages[0].content.text == "Chart every weather reading, a panel each, over the last 7 days."
+    assert prompt("weather_chart").messages[0].content.text == "Chart every weather reading, a panel each, over the last 7 days."
     with pytest.raises(MCPError, match="No prompt"):
         prompt("lightning")
 
@@ -429,3 +429,13 @@ async def test_over_http_the_connections_url_asks_for_images_and_a_call_can_say_
     for got in (without, plain):
         assert [b.type for b in got.content] == ["text"] and not ours(got)
         assert got.content[0].text == await world.service["summary"].call(CHARTED)
+
+
+def test_every_prompt_name_is_a_telegram_command_and_none_is_one_of_the_bots_own():
+    """The bot offers each prompt as a /command (docs/ecobot-mcp.md step 6c): Telegram's form, and no clash with the keyboard's."""
+    import re
+    from lib import templates
+    from lib.mcp_server import PROMPTS
+    for name in PROMPTS:
+        assert re.fullmatch(r"[a-z0-9_]{1,32}", name), name
+    assert not set(PROMPTS) & (set(templates.COMMANDS) - {"report"})   # (/report becomes the report prompt, step 6c)
