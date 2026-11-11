@@ -3,8 +3,9 @@
   - GET /dashboard: one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the PNG (lib/gauges.py) has
     them; its tiles laid out to fill the window, portrait or landscape;
-  - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, as the bot
-    lays it out, each tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
+  - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
+    from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the bot lays it out, each
+    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading
     change, told by the server's own change detection for ecobot://now/weather (EcobotServer.publish_changes: nothing is fetched for
     it), so the page fetches the data again and redraws in place. A comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
@@ -56,9 +57,10 @@ class WebDashboard:
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, tiles, look}, or with `unavailable` (and no tiles) when the station gives nothing."""
+        """{as_of, tiles, look}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
-        result = json.loads(await tool.call(gauge_sheet.call(), {})) if tool else {"error": "no current"}
+        result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
         sheet = gauge_sheet.sheet(result)
         out = {"as_of": result.get("as_of"), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look()}
         if sheet is None:

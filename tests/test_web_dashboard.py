@@ -41,7 +41,7 @@ class Station:
         self.eco = NS(_live=(time.time(), self.live), storage=None, tz=TZ)
 
     def current(self, args, meta):
-        assert args == gauge_sheet.call() and meta == {}   # every gauge's reading, with context; the request's defaults
+        assert args == gauge_sheet.call() and meta == {"fetch": False}   # every gauge's reading, with context; from what is held
         return {"as_of": AS_OF, **gauges_result(self.live, self.values, self.today)}
 
     def reads(self, group: str, field: str, value: str):
@@ -99,6 +99,38 @@ async def test_the_data_says_so_when_the_station_gives_nothing(server):
         got = (await get(f"http://127.0.0.1:{port}/dashboard/data")).json()
     assert got["tiles"] == [] and got["unavailable"] == "The weather station isn't answering right now."
 
+
+
+async def test_the_data_is_answered_from_what_is_held_and_never_asks_the_station(tmp_path, daytime_archive):
+    """Any host on the LAN may ask for the data, as often as it likes: with the kept reading stale (the station or the cloud not
+    answering) it is still answered from it, and with none kept the page says the station isn't answering; nothing is fetched."""
+    from lib.ecowitt.source import LIVE_GROUPS
+    from tests.fakes import archived_station
+    eco, fake = await archived_station(tmp_path, daytime_archive)
+    live = await eco._fetch_live(list(LIVE_GROUPS))
+    fake.calls.clear()
+
+    async def asked(*a, **k):
+        raise AssertionError("the dashboard asked the station")
+
+    eco._live_data, eco._fetch_live = asked, asked
+    ctx = Context(eco=eco, tz=eco.tz)
+    ctx.catalogue = Catalogue([])
+    server = EcobotServer(ctx, None)
+    port = free_port()
+    try:
+        async with Serving(http_app(server, tokens=(TOKEN,)), port):
+            eco._live = None
+            nothing = await get(f"http://127.0.0.1:{port}/dashboard/data")
+            eco._live = (time.time() - 3600, live)                                     # an hour old: well past LIVE_FRESH_SECONDS
+            stale = [await get(f"http://127.0.0.1:{port}/dashboard/data") for _ in range(3)]
+    finally:
+        await eco.close()
+    assert nothing.status_code == 200 and nothing.json()["tiles"] == [] and nothing.json()["unavailable"]
+    assert all(r.status_code == 200 for r in stale)
+    tiles = {t["title"]: t for t in stale[0].json()["tiles"]}
+    assert tiles["Temperature"]["value"] is not None and "unavailable" not in stale[0].json()
+    assert fake.calls == []
 
 async def sse_events(url: str, into: list, opened: asyncio.Event):
     """Read a Server-Sent Events stream, keeping each event's name, until it ends."""
