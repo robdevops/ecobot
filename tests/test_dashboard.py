@@ -425,7 +425,8 @@ async def test_a_station_that_gives_nothing_is_not_answering_and_its_report_goes
 def test_the_air_gauges_scales_and_bands_are_the_epas_and_the_us_co2_guidance():
     from lib.airgradient.dashboard import AIR_GAUGES, EPA, EPA_NAMES
     g = {x.title: x for x in AIR_GAUGES}
-    assert list(g) == ["US AQI", "PM2.5", "PM10", "CO₂", "VOC index", "NOx index"]                       # no PM1, no own temperature
+    assert list(g) == ["US AQI", "PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]               # no own temperature
+    assert (g["PM1"].bounds, g["PM1"].colours, g["PM1"].names) == (g["PM2.5"].bounds, g["PM2.5"].colours, g["PM2.5"].names)   # PM2.5's bands
     assert EPA == ("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023")
     assert EPA_NAMES == ("Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous")
     assert g["US AQI"].bounds == (0, 50, 100, 150, 200, 300, 500) and g["US AQI"].colours == EPA and g["US AQI"].aqi
@@ -460,7 +461,7 @@ def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_
     values = {"pm2_5_max": {date(2026, 10, 2): 70.0, TODAY: 30.0}, "pm2_5_min": {TODAY: 5.0}, "co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
     sheet = gauge_sheet.sheet(air_result(latest, values))
     tiles = {t.title: t for t in sheet.tiles}
-    assert list(tiles) == ["Temperature", "US AQI", "PM2.5", "PM10", "CO₂"]                     # no VOC nor NOx sent: left out; no PM1
+    assert list(tiles) == ["Temperature", "US AQI", "PM2.5", "PM10", "PM1", "CO₂"]              # no VOC nor NOx sent: left out
     aqi = tiles["US AQI"]
     assert (aqi.value, aqi.band, aqi.kind, aqi.low, aqi.high, aqi.columns) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", "dial",
                                                                                0, 500, ("Max", "Min"))

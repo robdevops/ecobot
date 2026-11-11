@@ -106,7 +106,7 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert got["tiles"] == [tile_json(t) for t in sheet.tiles] and got["as_of"] == AS_OF and got["look"] == look()
     titles = [t["title"] for t in got["tiles"]]
     assert titles[:3] == ["Temperature", "Humidity", "Atmospheric pressure"]
-    assert titles[-6:] == ["US AQI", "PM2.5", "PM10", "CO₂", "VOC index", "NOx index"]                    # the air sensor's, after
+    assert titles[-7:] == ["US AQI", "PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]                    # the air sensor's, after
     tiles = {t["title"]: t for t in got["tiles"]}
     aqi, nox = tiles["US AQI"], tiles["NOx index"]
     assert (aqi["value"], aqi["band"], aqi["bounds"], aqi["faded"]) == (56, "Moderate", [0, 50, 100, 150, 200, 300, 500], False)
@@ -329,19 +329,20 @@ async def test_an_event_is_sent_when_the_air_sensors_gauges_readings_change(serv
         station.air_reads("co2", 910)
         assert await server.publish_changes() == [AIR_URI]
         await until(lambda: events == ["readings"], what="the event")
-        station.air_reads("pm1", 30.0)                                          # PM1 has no gauge: published, but no event
+        station.air_reads("pm1", 30.0)                                          # PM1's gauge: an event
         assert await server.publish_changes() == [AIR_URI]
+        await until(lambda: events == ["readings"] * 2, what="the second event")
         station.air_reads("nox_index", 4)                                       # a reading the sensor didn't have: an event
         await server.publish_changes()
-        await until(lambda: events == ["readings", "readings"], what="the second event")
+        await until(lambda: events == ["readings"] * 3, what="the third event")
         await serving.stop()
         await asyncio.wait_for(reader, 5)
-    assert events == ["readings", "readings", "(ended)"]
+    assert events == ["readings"] * 3 + ["(ended)"]
 
 
 def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
     latest, _ = _air(date(2026, 10, 27))
     row = {RAW[k]: e["value"] for k, e in latest.items()}
     assert air_readings_of(None) is None and air_readings_of({}) is None
-    assert air_readings_of(row) == (12.0, 18.0, 520, 112, None)                 # PM2.5 (the AQI's too), PM10, CO2, VOC, NOx
-    assert air_readings_of({**row, "pm01": 99}) == air_readings_of(row)         # PM1: no gauge
+    assert air_readings_of(row) == (12.0, 18.0, 7.0, 520, 112, None)           # PM2.5 (the AQI's too), PM10, PM1, CO2, VOC, NOx
+    assert air_readings_of({**row, "atmp": 99}) == air_readings_of(row)         # its own temperature: no gauge

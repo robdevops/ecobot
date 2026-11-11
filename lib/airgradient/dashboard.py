@@ -9,6 +9,8 @@ to 500 (or 600 µg/m³) doesn't squeeze "good" and "moderate" into a sliver. The
     last two readings, so a dial of it could disagree with the PM2.5 dial beside it): 0-500, the EPA's six categories and colours;
   - PM2.5 (µg/m³): the EPA's 2024 breakpoints, 0-9.0, 9.1-35.4, 35.5-55.4, 55.5-125.4, 125.5-225.4, 225.5+ (to 325.4, AQI 500);
   - PM10 (µg/m³): the EPA's breakpoints, 0-54, 55-154, 155-254, 255-354, 355-424, 425+ (to 604, AQI 500);
+  - PM1 (µg/m³): no standard sets bands for it (not the US, Australia or the WHO); it is drawn on PM2.5's, as many air-quality apps do:
+    PM1 is part of PM2.5, so its reading is never above PM2.5's and the scale is a fair, if lenient, guide, not an official rating;
   - CO2 (ppm): there is no EPA standard for it; the bands are the usual US indoor guidance, from ASHRAE's (ventilation keeps a room
     within about 700 ppm of outdoors): under 800 good, 800-1000 fair, 1000-1500 poor, 1500-2000 bad, 2000+ very bad, on a 400-2500 dial
     (400: outdoor air);
@@ -67,6 +69,7 @@ AIR_GAUGES = (
     AirGauge("US AQI", "", "pm2_5", (0, *(a_hi for *_, a_hi, _ in PM25_AQI)), EPA, EPA_NAMES, 1, aqi=True),
     AirGauge("PM2.5", "µg/m³", "pm2_5", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1),
     AirGauge("PM10", "µg/m³", "pm10", (0, 54, 154, 254, 354, 424, 604), EPA, EPA_NAMES, 1),
+    AirGauge("PM1", "µg/m³", "pm1", (0, *(hi for _, hi, *_ in PM25_AQI)), EPA, EPA_NAMES, 0.1, 1),   # (on PM2.5's bands: no standard of its own)
     AirGauge("CO₂", "ppm", "co2", (400, 800, 1000, 1500, 2000, 2500), EPA[:5], ("Good", "Fair", "Poor", "Bad", "Very bad"), 0),
     AirGauge("VOC index", "", "voc_index", (1, 100, 150, 250, 400, 500), VOC_COLOURS,
              ("Low", "Average", "Elevated", "High", "Very high"), 0),
