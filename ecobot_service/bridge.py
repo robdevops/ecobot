@@ -60,6 +60,13 @@ def http_transport(url: str, token: str | None = None):
     return connect()
 
 
+def _leaf(e: BaseException) -> BaseException:
+    """The first real error inside an exception group (a refused connection, a 401, a 421), not the group's "unhandled errors"."""
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:
+        e = e.exceptions[0]
+    return e
+
+
 class Upstream:
     """The one client of the service, owned by one supervisor task (`run`): built, discovered and listening; dropped when it fails or
     its listen is lost or ends, and built again after a backoff. `target`: the service's URL, or (in tests) a Server in-process."""
@@ -100,7 +107,8 @@ class Upstream:
                     raise
                 if (me := asyncio.current_task()) is not None and me.cancelling():   # cancelled while connecting: the SDK may have
                     raise asyncio.CancelledError() from e                           # wrapped it (an exception group): stop all the same
-                log.warning("Bridge: the service at %s isn't reachable (%s: %s); trying again", self.target, type(e).__name__, e)
+                cause = _leaf(e)
+                log.warning("Bridge: the service at %s isn't reachable (%s: %s); trying again", self.target, type(cause).__name__, cause)
             finally:
                 self.client = None
                 self.connected.clear()

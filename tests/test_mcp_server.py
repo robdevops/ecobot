@@ -315,7 +315,7 @@ def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch,
     monkeypatch.setenv("MCP_ALLOWED_HOSTS", "weather.lan, 192.168.1.5:9000")
     cfg = Config.from_env(bot=False)
     assert cfg.mcp_tokens == (("bot", "s3cret"), ("phone", "t0k:en"))
-    assert "MCP_TOKENS: ignoring broken, (no name)" in caplog.text and "s3cret" not in caplog.text and "nameless" not in caplog.text
+    assert "MCP_TOKENS: ignoring entry 3, entry 4" in caplog.text and "broken" not in caplog.text and "nameless" not in caplog.text
     assert cfg.mcp_bind == ("0.0.0.0", 9000) and cfg.mcp_allowed_hosts == ("weather.lan", "192.168.1.5:9000")
     for value, want in (("[::1]:8800", ("::1", 8800)), ("9001", ("127.0.0.1", 9001)), ("host:port", ("127.0.0.1", 8765)),
                         ("h:70000", ("127.0.0.1", 8765))):
@@ -332,3 +332,18 @@ async def test_the_bridge_refuses_a_request_while_the_service_cant_be_reached(mo
         async with Client(bridge.server) as client:
             with pytest.raises(MCPError, match="isn't reachable"):
                 await client.call_tool("current", {})
+
+
+def test_one_service_per_data_folder(tmp_path):
+    """The bot running the service in-process and python -m ecobot_service on one folder would both fetch and both write each alert."""
+    import contextlib
+    from types import SimpleNamespace
+
+    from ecobot_service.core import hold_data_folder
+    cfg = SimpleNamespace(state_path=tmp_path / "bot_state.json")
+    with contextlib.ExitStack() as first:
+        hold_data_folder(cfg, first)
+        with contextlib.ExitStack() as second, pytest.raises(SystemExit, match="already runs the weather service"):
+            hold_data_folder(cfg, second)
+    with contextlib.ExitStack() as again:   # free once the first has closed
+        hold_data_folder(cfg, again)

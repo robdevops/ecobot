@@ -36,8 +36,9 @@ MCP_TOKENS=me:$(openssl rand -hex 16) python -m ecobot_service      # http://127
 python -m ecobot_service.bridge                        # the same on stdio (WEATHER_MCP_URL, WEATHER_MCP_TOKEN), for a desktop client
 sudo docker compose --profile service up -d ecobot-service           # in Docker (compose.yaml), on 127.0.0.1:8765
 ```
-Don't run it beside a bot that runs the service itself (`WEATHER_MCP_URL` unset) on the same data folder: both would fetch twice and write
-each alert twice; make the bot its client (below). A desktop client (Claude Desktop, Claude Code) starts the bridge as its command, with
+Only one process runs the service on a data folder: it holds `service.lock` there, so `python -m ecobot_service` refuses to start beside
+a bot that runs the service itself (`WEATHER_MCP_URL` unset), and the other way round. Make the bot its client first (below): set
+`WEATHER_MCP_URL` and restart the bot, then start the service; the bot waits for it and connects when it is up. A desktop client (Claude Desktop, Claude Code) starts the bridge as its command, with
 `WEATHER_MCP_TOKEN` in its environment, e.g. `claude mcp add ecobot -e WEATHER_MCP_TOKEN=... -- python -m ecobot_service.bridge` from the clone.
 To look at it by hand: `npx @modelcontextprotocol/inspector` against the URL with the header `Authorization: Bearer <token>`.
 
@@ -61,8 +62,10 @@ set -a; . <(sudo cat /etc/ecobot.env); set +a
 MCP_TOKENS=bot:$TOKEN python -m ecobot_service &                                     # the service, with the sources' settings
 WEATHER_MCP_URL=http://127.0.0.1:8765/mcp WEATHER_MCP_TOKEN=$TOKEN python ecobot.py  # the bot, its client
 ```
-In Docker (compose.yaml): start `ecobot-service` (its profile), add `ecobot-service` to its `MCP_ALLOWED_HOSTS` and set the bot's
-`WEATHER_MCP_URL=http://ecobot-service:8765/mcp`. Its tests: `tests/test_bot_remote.py`, the bot against the real server (in memory: a
+In Docker (compose.yaml): in /etc/ecobot.env set `MCP_TOKENS=bot:<token>`, `WEATHER_MCP_URL=http://ecobot-service:8765/mcp`,
+`WEATHER_MCP_TOKEN=<token>` and `MCP_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service`; then recreate the bot first
+(`sudo docker compose up -d --force-recreate ecobot`, which frees the data folder) and start the service
+(`sudo docker compose --profile service up -d ecobot-service`). Its tests: `tests/test_bot_remote.py`, the bot against the real server (in memory: a
 question answered with the remote tools and the instructions from discover, a chart from a remote result with its buttons, an alert through
 the listen, the irrigation check's inputs; under uvicorn: a dropped connection rebuilt and the alerts after the last id read once, the
 service down, `ecobot.main()` as a client).

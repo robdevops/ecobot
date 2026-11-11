@@ -47,6 +47,7 @@ from lib.weather import RemoteWeather, ServiceRain
 _format = LogFormat("%(levelname)s %(message)s", priority=on_journal())   # DEBUG and INFO to stdout, WARN and ERROR to stderr
 logging.basicConfig(level=logging.INFO, handlers=stream_handlers(_format))
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)   # the MCP client's: a line per request otherwise
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")
 

@@ -148,6 +148,23 @@ class Health:
 
 
 # ---------- the service ----------
+def hold_data_folder(cfg: Config, stack):
+    """One service per data folder: the bot running it in-process and `python -m ecobot_service` on the same folder would both fetch
+    and both write each alert (sent twice). The lock is the kernel's, so it goes with the process, however that ends."""
+    import fcntl
+    path = cfg.state_path.parent / "service.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    held = open(path, "w")
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        held.close()
+        raise SystemExit(f"Another process already runs the weather service on {path.parent} (the bot without WEATHER_MCP_URL, or "
+                         f"python -m ecobot_service). Stop it first, or set WEATHER_MCP_URL to use it.")
+    stack.callback(held.close)
+
+
+
 @dataclass
 class Core:
     """The service as it runs: its settings, sources, alert log, tools and their Context, the alert rules once started."""
@@ -168,6 +185,7 @@ class Core:
     @classmethod
     async def open(cls, cfg: Config, sources: list[Source], stack, tasks: Tasks) -> "Core":
         """The alert log (closed by `stack`) and the ten tools over the sources that started."""
+        hold_data_folder(cfg, stack)
         by_name = {s.name: s for s in sources}
         eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
         composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources

@@ -23,8 +23,8 @@ services:
   # The MCP service on its own (docs/mcp-service.md 3.8, DEVELOPMENT.md "The MCP service"): the same image, `python -m ecobot_service`,
   # at http://127.0.0.1:8765/mcp on the host (put TLS in front of it, e.g. Caddy, to reach it from elsewhere). Off unless asked for
   # (`sudo docker compose --profile service up -d ecobot-service`). Run it only with the bot as its client (WEATHER_MCP_URL=
-  # http://ecobot-service:8765/mcp and WEATHER_MCP_TOKEN in /etc/ecobot.env, and ecobot-service in MCP_ALLOWED_HOSTS): a bot that runs
-  # the sources and the alert rules itself, on the same data folder, would fetch twice and write each alert twice. It needs MCP_TOKENS
+  # http://ecobot-service:8765/mcp and WEATHER_MCP_TOKEN in /etc/ecobot.env, and ecobot-service in MCP_ALLOWED_HOSTS), recreating the
+  # bot first: one process runs the service per data folder (service.lock), so it won't start beside a bot running it. It needs MCP_TOKENS
   # (name:token,..., in /etc/ecobot.env): it listens on all of the container's addresses, which it refuses to do without tokens.
   # MCP_ALLOWED_HOSTS: add the name a proxy or a LAN client uses for it.
   ecobot-service:

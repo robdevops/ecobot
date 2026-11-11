@@ -67,14 +67,15 @@ REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: the service (pyt
 
 def _tokens(value: str, default: tuple, name: str) -> tuple[tuple[str, str], ...]:
     """"bot:s3cret, phone:t0ken" -> (("bot", "s3cret"), ("phone", "t0ken")): one token per client, each named, so one can be revoked
-    alone. An entry without a name or a token is ignored (and logged by its name, never its token); a name given twice keeps the last."""
+    alone. An entry without a name or a token is ignored and logged by its place in the list, never its text (an entry without a colon
+    may be a bare token); a name given twice keeps the last."""
     found, bad = {}, []
-    for part in filter(None, (p.strip() for p in value.split(","))):
-        who, _, token = part.partition(":")
-        if who.strip() and token.strip():
+    for n, part in enumerate(filter(None, (p.strip() for p in value.split(","))), 1):
+        who, colon, token = part.partition(":")
+        if colon and who.strip() and token.strip():
             found[who.strip()] = token.strip()
         else:
-            bad.append(who.strip() if token.strip() == "" and who.strip() else "(no name)")
+            bad.append(f"entry {n}")
     if bad:
         log.warning("%s: ignoring %s (each entry is name:token)", name, ", ".join(bad))
     return tuple(found.items()) or default

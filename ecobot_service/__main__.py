@@ -73,7 +73,7 @@ async def main():
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
         server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version())
-        app = http_app(server, tokens=cfg.mcp_tokens, allowed_hosts=cfg.mcp_allowed_hosts, issuer_url=f"http://{host}:{port}")
+        app = http_app(server, tokens=cfg.mcp_tokens, allowed_hosts=cfg.mcp_allowed_hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}")
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()
@@ -107,6 +107,7 @@ def run():
     _format = LogFormat("%(levelname)s %(message)s", priority=on_journal())
     logging.basicConfig(level=logging.INFO, handlers=stream_handlers(_format))
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())
 
