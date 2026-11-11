@@ -684,8 +684,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
    - **The gauges.** The Telegram dashboard goes: the Dashboard button, `/dashboard`, the whole gauge sheet as a picture and its
      tables. The dashboard is the web page now (below). Kept: the Status picture's three gauges (Temperature, Humidity, Rain),
      without the Daily/Monthly/Yearly Max/Min tables under them. ecobot-mcp draws it (a `status` picture: a tool or resource that
-     returns the PNG, its readings as text), and the bot sends it with Status (`/status`, `/report`), followed by the `report`
-     prompt's answer (6c). The PNG drawing (`lib/gauges.py`) then lives only in ecobot-mcp and draws only those
+     returns the PNG, its readings as text), and the bot sends it with Status (`/status`), the report ecobot-mcp
+     writes as its caption. The PNG drawing (`lib/gauges.py`) then lives only in ecobot-mcp and draws only those
      three; `lib/gauge_sheet.py`'s tiles still feed the web page, which keeps every gauge and its tables.
      *Done:* a resource, `ecobot://status` (3.4, `lib/status.py`): its readings as JSON text, then the PNG as a blob. A resource, not
      a tool, because it is for the client, not the model: a tool would join every client's tool list (and the evals'), and a model
@@ -752,8 +752,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
      (`templates.MENU`: `/status`, the charts, `/alerts`, `/usage`, `/keyboard`, `/reset`) with one per prompt after the charts', and
      again when it changes (a prompt whose name Telegram won't take, or that is one of the bot's own, left out with a warning);
      `Bot.on_command` answers `/<prompt> <words>` (`prompt_arguments`: in order, the last taking the rest; a refusal such as `/chart`
-     with no reading is said in the chat; another bot's command is left alone). `/report` is the `report` prompt; Status is
-     `ecobot://status`'s picture at once, then the report prompt's answer (`Bot.status`). `lib/report.py`, `lib/report_menu.py` and
+     with no reading is said in the chat; another bot's command is left alone). `/report` is the `report` prompt; Status is a
+     keyboard button, so a fixed read with no model: one message, `ecobot://status`'s picture with the report ecobot-mcp writes in
+     code as its caption (its `report`: current's sections, today's forecast, the pollen) and a 🔄 that reads it again in place
+     (`Bot.status`, `Bot.on_status_button`). (Built first as the picture, then the report prompt's answer as a second message: two
+     messages, no 🔄 and a model call for a button; changed.) `lib/report.py`, `lib/report_menu.py` and
      `scripts/report_inputs.py` are deleted (an old report's 🔄 is out of date). `draw_buttons_ahead`, its loop and the alert charts kept
      warm are gone; after any chart is sent its other periods are fetched in the background, with or without
      `BOT_TELEGRAM_PRELOAD_CHAT` (`Bot.preload_soon`). Without the model a typed question gets `NO_MODEL`, one line. The evals' cases

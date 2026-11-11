@@ -77,7 +77,7 @@ its reasoning effort is read from the words (`lib/intent.py`).
 The bot draws nothing ([docs/ecobot-mcp.md](docs/ecobot-mcp.md) step 6a): every chart it sends comes drawn by ecobot-mcp
 (`call_images`, `chart_image`: the remote one sends its PNGs, `chart_image: "png"` in the request's `_meta`, in the bot's own theme,
 `chart_dark` from `DARKMODE`, `lib/theme.py`), the model's answers' charts too (the model is sent the text alone), and the Status
-picture of three gauges is ecobot-mcp's `ecobot://status` (`lib/status.py`, drawn by `lib/gauges.py`). Importing the bot, and building
+picture of three gauges is ecobot-mcp's `ecobot://status` (`lib/status.py`, drawn by `lib/gauges.py`), with the report it writes. Importing the bot, and building
 it with its alert delivery and irrigation check, imports neither Pillow nor `lib/charts.py`, `lib/draw.py` or `lib/gauges.py`, nor any
 source module (`lib/ecowitt`, `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/storage`; `tests/test_bot.py`); its packages are
 `requirements-bot.txt` alone (python-telegram-bot, openai, mcp, httpx), and its Docker image has nothing else.
@@ -99,7 +99,7 @@ in-memory transport: `bot = Bot(cfg, agent, state, service=await serve(...))`. A
 nothing, builds the bot over `tests.served.unreached()`. A keyboard button is `bot.press(update, context, sentence)`; a chart over
 any period as a button answers it, `bot.respond(update, context, text, call=(tool, args))`. `tests/test_bot_remote.py` is the bot
 against the real server (in memory: a question answered with the remote tools and the instructions from discover, ecobot-mcp's prompts
-as Telegram commands, Status's gauges and the report prompt, a chart from a remote result with its buttons, ecobot-mcp's
+as Telegram commands, Status as one message (the gauges with the report as their caption), a chart from a remote result with its buttons, ecobot-mcp's
 PNG of a chart byte for byte as its renderer draws it, an alert through the listen, the irrigation check's inputs; under uvicorn: a
 dropped connection rebuilt and the alerts after the last id read once, ecobot-mcp down, `ecobot.main()`); `tests/test_startup.py` runs
 both programs' main(): ecobot-mcp's over the fake sources, the bot's against ecobot-mcp under uvicorn.

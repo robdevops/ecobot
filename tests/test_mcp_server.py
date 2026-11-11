@@ -181,8 +181,9 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
 
 
 async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_as_json(world, monkeypatch):
-    """ecobot://status: the station's temperature, humidity and rain gauges drawn as a PNG (lib/gauges.py, from current with context,
-    the three readings named), after their readings and highs and lows as JSON; without Pillow, the JSON alone with a note."""
+    """ecobot://status: the report in words (current's sections, today's forecast, the pollen: written in code, no model) and the
+    station's temperature, humidity and rain gauges drawn as a PNG (lib/gauges.py, from current with context, the three readings named),
+    after their readings and highs and lows as JSON; without Pillow, the JSON alone with a note."""
     import io
     from PIL import Image
     from lib import gauge_sheet, gauges, status
@@ -198,8 +199,10 @@ async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_a
         (entry,) = [r for r in (await client.list_resources()).resources if str(r.uri) == mcp_server.STATUS_URI]
         assert entry.mime_type == "image/png"
         text, blob = (await client.read_resource(mcp_server.STATUS_URI)).contents
-    assert asked == [gauge_sheet.call(gauge_sheet.STATUS)]
+    assert sorted(asked, key=len) == [{}, gauge_sheet.call(gauge_sheet.STATUS)]           # the report's readings now, and the gauges'
     data = json.loads(text.text)
+    assert data["report"] == await status.report(world.service) and data["report"].startswith("Weather station (")   # written in code
+    assert "\n\nForecast (" in data["report"]
     sheet = gauge_sheet.sheet(json.loads(await real(gauge_sheet.call(gauge_sheet.STATUS))), gauge_sheet.STATUS)
     assert data["gauges"] == [status.gauge(t) for t in sheet.tiles] and data["lines"] == [status.line(t) for t in sheet.tiles]
     assert data["gauges"][0]["value"] == sheet.tiles[0].value and set(data["gauges"][0]["rows"]) == {"Daily", "Monthly", "Yearly"}

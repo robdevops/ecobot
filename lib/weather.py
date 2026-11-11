@@ -19,8 +19,8 @@ sources of its own and never opens the readings file (step 6b). Everything the b
     replaying its drawn_by). Asked with request `_meta` `chart_image: "png"` (the images from the result's ImageContent, the charts' JSON
     and theme from its `_meta`), in the bot's own theme (`chart_dark`: its DARKMODE, lib/theme.py, so its image cache's theme holds). The
     bot draws nothing: a service that sends no image (no Pillow there) gives the answer without its pictures;
-  - `status_picture()`: the Status picture (ecobot://status: the station's temperature, humidity and rain gauges), as ecobot-mcp draws
-    it; None without one;
+  - `status()`: Status as ecobot-mcp gives it (ecobot://status): its report in words (written by ecobot-mcp, no model) and the picture
+    of the station's temperature, humidity and rain gauges (None without one);
   - `prompts`: ecobot-mcp's prompts (name, description, argument names: `Prompt`), read on each connection and again when it says they
     changed (PromptsListChanged; `on_prompts()` is called after each read), and `prompt(name, arguments)` one's question in words (the
     bot offers each as a Telegram command, step 6c).
@@ -31,6 +31,7 @@ can't be reached), docs 3.9."""
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 from datetime import date, datetime
@@ -414,14 +415,19 @@ class RemoteWeather:
             raise ChartNotDrawn(f"{by['tool']} drew no chart again: {out.get('error') or out.get('chart_image_note') or 'no image'}")
         return image
 
-    async def status_picture(self) -> bytes | None:
-        """ecobot://status's PNG (its blob); None when it sends none (no station, or no Pillow there)."""
+    async def status(self) -> tuple[str, bytes | None]:
+        """Status as ecobot-mcp gives it (ecobot://status): (its report in words, the picture of the station's three gauges or None: no
+        station, or no Pillow there)."""
         client = await self._client(CALL_WAIT)
         read = await client.read_resource(STATUS_URI)
+        report, png = "", None
         for content in read.contents:
             if getattr(content, "blob", None) and getattr(content, "mime_type", None) == chart_images.PNG:
-                return base64.b64decode(content.blob)
-        return None
+                png = base64.b64decode(content.blob)
+            elif getattr(content, "text", None):
+                with contextlib.suppress(ValueError):
+                    report = str(json.loads(content.text).get("report") or "")
+        return report, png
 
     async def prompt(self, name: str, arguments: dict[str, str] | None = None) -> str:
         """A prompt's question in words: the text of its messages, its `arguments` filled in (the prompt's defaults for those not given). A

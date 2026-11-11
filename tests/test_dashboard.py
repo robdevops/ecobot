@@ -190,42 +190,52 @@ async def no_action(*a, **k):
 CONTEXT = NS(bot=NS(send_chat_action=no_action, send_message_draft=no_action, id=99))   # a Telegram bot that shows "typing..." and takes drafts
 
 
-async def test_status_is_its_gauges_then_the_report_prompts_answer_from_the_model(serve, alert_state):
-    """Status (the button, /status): the three gauges' picture at once, then ecobot-mcp's `report` prompt asked of the model as a typed
-    question, its answer a message of its own (step 6c: the report written in code, its caption and its 🔄 are gone)."""
-    from lib.mcp_server import prompt
-    bot, tools = await report_bot(serve, alert_state, three_gauges)
-    sent = []
-    msg, update = chat(sent)
-    await bot.status(update, CONTEXT)
-    question = prompt("report").messages[0].content.text
-    assert bot.agent.asked == [question]
-    assert [(k, photo, text) for k, photo, text, _ in sent] == [("photo", b"\x89PNG", None), ("text", None, "Weather station\n• Outdoor: 12.3 °C")]
-    assert "reply_markup" not in sent[0][3] and sent[1][3].get("reply_markup") is None                       # no 🔄, no period buttons
-    history = bot.chats[(1, None)].history
-    assert history[-2] == {"role": "user", "content": question} and history[-1]["content"] == "Weather station\n• Outdoor: 12.3 °C"
+REPORT = "Weather station\n• Outdoor: 12.3 °C\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"   # (no forecast nor pollen here)
 
 
-async def test_status_without_the_model_sends_its_gauges_and_the_line_saying_so(serve, alert_state):
-    from lib.bot import NO_MODEL
+async def test_status_is_one_message_its_gauges_with_the_report_ecobot_mcp_writes_and_a_refresh_and_no_model(serve, alert_state):
+    """Status (the button, /status) is a keyboard button: a fixed read of ecobot://status, no model. One message: the three gauges'
+    picture, the report ecobot-mcp writes from its own answers as its caption (each section's heading in bold), and a 🔄."""
+    from lib.bot import STATUS_REFRESH
     bot, _ = await report_bot(serve, alert_state, three_gauges)
-    bot.agent = NS(ready=False)
     sent = []
     msg, update = chat(sent)
     await bot.status(update, CONTEXT)
-    assert [(k, photo, text) for k, photo, text, _ in sent] == [("photo", b"\x89PNG", None), ("text", None, NO_MODEL)]
+    assert bot.agent.asked == []                                                                # no model
+    assert [(k, photo, text) for k, photo, text, _ in sent] == [("photo", b"\x89PNG", REPORT)]
+    kw = sent[0][3]
+    assert [[b.callback_data for b in row] for row in kw["reply_markup"].inline_keyboard] == [[STATUS_REFRESH]]
+    bold = [REPORT.encode("utf-16-le")[e.offset * 2:(e.offset + e.length) * 2].decode("utf-16-le") for e in kw["caption_entities"]]
+    assert bold == ["Weather station", "Air quality"]
+    assert bot.chats[(1, None)].history[-1] == {"role": "assistant", "content": REPORT}           # (a follow-up knows what was shown)
 
 
-async def test_status_without_its_gauges_is_the_report_alone(serve, alert_state, caplog):
+async def test_statuss_refresh_reads_it_again_into_the_same_message(serve, alert_state):
+    from lib.bot import STATUS_REFRESH
+    bot, now = await report_bot(serve, alert_state, three_gauges)
+    edits, toasts = [], []
+
+    async def edit_media(media, reply_markup=None):
+        edits.append((media.media.input_file_content[:4] if hasattr(media.media, "input_file_content") else media.media, media.caption,
+                      reply_markup))
+
+    async def answer(text=None, **kw):
+        toasts.append(text)
+    message = NS(chat_id=1, message_id=7, photo=[NS(file_id="old")], edit_media=edit_media)
+    now.reading = "14.0 °C"
+    await bot.on_status_button(NS(callback_query=NS(data=STATUS_REFRESH, message=message, answer=answer)), CONTEXT)
+    assert len(edits) == 1 and edits[0][1] == REPORT.replace("12.3", "14.0") and toasts == ["Refreshed"]
+    assert bot.agent.asked == []
+
+
+async def test_status_without_its_gauges_is_the_report_alone_with_its_refresh(serve, alert_state):
     def broken():
         raise RuntimeError("no cache")
     bot, _ = await report_bot(serve, alert_state, broken)
     sent = []
     msg, update = chat(sent)
     await bot.status(update, CONTEXT)
-    assert [(k, text) for k, _, text, _ in sent] == [("text", "Weather station\n• Outdoor: 12.3 °C")]
-    assert "The report's gauges failed (MCPError: Internal server error)" in caplog.text   # (refused by ecobot-mcp, which logs why:)
-    assert "RuntimeError: no cache" in caplog.text
+    assert [(k, text) for k, _, text, _ in sent] == [("text", REPORT)] and sent[0][3]["reply_markup"] is not None
 
 
 async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes_in_the_month(tmp_path):

@@ -16,13 +16,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import NamedTuple
 
-from telegram import BotCommand, InputMediaPhoto, Message, ReplyKeyboardRemove, Update
+from telegram import BotCommand, InlineKeyboardMarkup, InputMediaPhoto, Message, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction, ChatType
 from telegram.error import BadRequest, ChatMigrated, NetworkError, RetryAfter, TelegramError, TimedOut
 from telegram.ext import CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import intent, periods, prompt, templates
 from .admins import Admins
+from .buttons import button
 from .alerts import menu, pictures
 from .alerts.notify import AlertState
 from .irrigation import IrrigationError, Watchdog
@@ -52,6 +53,12 @@ IRRIGATION_SETTLE_SECONDS = 3   # after any irrigation action, the controller is
 NOT_ADMIN = "Sorry, only group admins can use this bot."
 NOT_ADMIN_TOAST = "Only group admins can use this bot"
 STALE_BUTTON = "That button is out of date, please ask again"
+STATUS_PREFIX = "st:"
+STATUS_REFRESH = f"{STATUS_PREFIX}refresh"   # the 🔄 under Status: its gauges and report again, in the same message
+
+
+def status_row() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[button("🔄", STATUS_REFRESH)]])
 CHART_FAILED = "Sorry, I couldn't draw that chart, please ask again"   # a period button's chart that couldn't be drawn or sent
 NOT_DRAWN = "Sorry, I couldn't draw that chart. Please try again in a moment."   # a button's chart that couldn't be drawn
 MAX_CALLBACK_BYTES = 64       # Telegram's own limit on a button's data
@@ -298,6 +305,26 @@ class Draft:
 class Delivered(NamedTuple):
     carried: bool                 # the keyboard (markup) went with the reply
     photo: Message | None = None  # the single chart, as sent
+
+
+_HEADING = re.compile(r"(?:\A|(?<=\n\n))([^\n•(]+?)(?= \(|\n|\Z)")   # a section's first line, up to its brackets
+
+
+def headings_bold(text: str) -> list:
+    """Bold entities over each section's heading in Status's report (its first line's name: "Weather station" of "Weather station
+    (1:02am)"), as the report always showed them."""
+    from telegram import MessageEntity
+    return [MessageEntity(MessageEntity.BOLD, utf16_len(text[:m.start(1)]), utf16_len(m.group(1))) for m in _HEADING.finditer(text)]
+
+
+def fitted_caption(text: str, link: tuple[str, str] | None = None) -> tuple[str, list]:
+    """(caption, entities) of `text` cut to fit a caption: whole lines dropped from the end, "…" in their place, while it is too long."""
+    lines = text.strip().splitlines()
+    while lines:
+        if fitted := caption_of("\n".join(lines) + ("" if len(lines) == len(text.strip().splitlines()) else "\n…"), "", link):
+            return fitted
+        lines.pop()
+    return "…", []
 
 
 def caption_of(text: str, title: str = "", link: tuple[str, str] | None = None):
@@ -547,9 +574,10 @@ class Bot:
 
     def buttons(self) -> dict:
         """Every family of buttons the bot draws: the start of its data -> what handles it. The only way into any of them is on_button.
-        (The 🔄 under the report written in code, rp:, and under the Telegram dashboard are no more: their presses are out of date.)"""
+        (The 🔄 under the report written in code, rp:, and under the Telegram dashboard are no more: their presses are out of date. The
+        🔄 under Status is st:.)"""
         return {"al:": self.on_alert_button, **({"ir:": self.on_irrigation_button} if self.irrigation else {}),
-                periods.PREFIX: self.on_period_button}
+                periods.PREFIX: self.on_period_button, STATUS_PREFIX: self.on_status_button}
 
     async def on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """The one place every button press comes in: believed (_press), a known family (a prefix nobody handles is refused, so a
@@ -644,25 +672,69 @@ class Bot:
             await self.respond(update, context, sentence, call=templates.call(sentence))
 
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Status (the button, /status): the Status picture (the station's three gauges, ecobot://status) at once, then the answer to
-        ecobot-mcp's `report` prompt, asked of the model as a typed question (without the model: the one line saying so)."""
+        """Status (the button, /status): a fixed read, no model (ecobot://status): one message, the Status picture (the station's three
+        gauges) with the report ecobot-mcp writes (the readings now, today's forecast, the pollen) as its caption, and a 🔄 under it
+        (on_status_button). Without the picture, the report alone, with the 🔄."""
         msg = update.effective_message
-        gauges = asyncio.create_task(self._status_gauges())
+        log.info("%s: Status", describe_source(update), extra=QUOTES)
+        started = time.monotonic()
         try:
-            question = await self.weather.prompt("report")
-        except Exception as e:   # (ecobot-mcp away, or it has no report prompt): respond says what it can
-            log.warning("%s: the report prompt couldn't be read (%s: %s)", chat_tag(msg.chat_id), type(e).__name__, e)
-            question = None
-        if photo := await gauges:
-            try:
-                await msg.reply_photo(photo)
-            except TelegramError as e:
-                log.error("Couldn't send the Status picture: %s: %s", type(e).__name__, e)
-        if question:
-            await self.respond(update, context, question)
-        elif not photo:
+            report, photo = await asyncio.wait_for(self.weather.status(), TURN_SECONDS)
+        except Exception as e:
+            log.warning("%s: Status couldn't be read: %s: %s", chat_tag(msg.chat_id), type(e).__name__, e, exc_info=isinstance(e, BUGS))
             with contextlib.suppress(TelegramError):
                 await msg.reply_text(SERVICE_DOWN if not await self.weather.ready(0) else "Sorry, I couldn't get the report. Please try again in a moment.")
+            return
+        report = report.strip() or "Nothing to report right now."
+        try:
+            if photo:
+                body, _ = fitted_caption(report)
+                await msg.reply_photo(photo, caption=body, caption_entities=headings_bold(body) or None, reply_markup=status_row())
+            else:
+                await msg.reply_text(report, entities=headings_bold(report) or None, reply_markup=status_row(), disable_web_page_preview=True)
+        except TelegramError as e:
+            log.error("Couldn't send Status: %s: %s", type(e).__name__, e)
+            return
+        chat = self.chats[self._key(msg)]   # (in the conversation, so a follow-up question knows what was shown)
+        chat.history = trim_history([*chat.history, {"role": "user", "content": self._content(msg, templates.STATUS, context.bot.id)},
+                                     {"role": "assistant", "content": report}])
+        log.info("%s: Status sent in %.1fs, %d chars%s", chat_tag(msg.chat_id), time.monotonic() - started, len(report),
+                 "" if photo else " (no picture)")
+
+    async def on_status_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """The 🔄 under Status: its picture and report read again (ecobot://status), in the same message. A failure leaves it as it was,
+        said in a toast."""
+        query = update.callback_query
+        message = query.message
+        if query.data != STATUS_REFRESH:
+            await answer_query(query, STALE_BUTTON)
+            return
+        try:
+            report, photo = await asyncio.wait_for(self.weather.status(), TURN_SECONDS)
+        except Exception as e:
+            log.warning("%s: Status refresh failed: %s: %s", chat_tag(message.chat_id), type(e).__name__, e, exc_info=isinstance(e, BUGS))
+            await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
+            return
+        report = report.strip() or "Nothing to report right now."
+        try:
+            body = fitted_caption(report)[0] if getattr(message, "photo", None) else report
+            bold = headings_bold(body) or None
+            if getattr(message, "photo", None) and photo:
+                await message.edit_media(InputMediaPhoto(photo, caption=body, caption_entities=bold), reply_markup=status_row())
+            elif getattr(message, "photo", None):   # (no picture this time: the old one stays, its words new)
+                await message.edit_caption(caption=body, caption_entities=bold, reply_markup=status_row())
+            else:
+                await message.edit_text(body, entities=bold, reply_markup=status_row(), disable_web_page_preview=True)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                log.error("Couldn't refresh Status: %s: %s", type(e).__name__, e)
+                await answer_query(query, "Couldn't refresh, please try again")
+                return
+        except TelegramError as e:
+            log.error("Couldn't refresh Status: %s: %s", type(e).__name__, e)
+            await answer_query(query, "Couldn't refresh, please try again")
+            return
+        await answer_query(query, "Refreshed")
 
     async def on_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Any command the bot has no handler of its own for: one of ecobot-mcp's prompts (prompt_commands), whose words after the command
@@ -1177,17 +1249,6 @@ class Bot:
             return f"({reply}) {text}" if reply else text
         sender = msg.from_user.full_name if msg.from_user else "Someone"
         return f"{sender} ({reply}): {text}" if reply else f"{sender}: {text}"
-
-    async def _status_gauges(self) -> bytes | None:
-        """The report's picture: the weather station's temperature, humidity and rain gauges, the Status picture the service draws
-        (ecobot://status, lib/status.py). None without the station, or when it sends none (the report then goes as text alone)."""
-        if "Ecowitt" not in self.names:
-            return None
-        try:
-            return await self.weather.status_picture()
-        except Exception as e:
-            log.error("The report's gauges failed (%s: %s); sending it without them", type(e).__name__, e, exc_info=isinstance(e, BUGS))
-            return None
 
     async def _warn(self, msg: Message, tokens: int):
         """A heads-up before a big job: the question has pulled in a lot of data. Sent now, silently; the answer follows by itself."""

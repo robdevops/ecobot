@@ -429,7 +429,7 @@ def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(t
                 assert 0 < len(data.encode()) <= MAX_CALLBACK_BYTES and data.isprintable(), data
                 assert sum(data.startswith(prefix) for prefix in table) == 1, data
                 assert bot._on_keyboard(NS(reply_markup=markup), data)
-    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX}   # (rp:, the report's 🔄, gone with step 6c)
+    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX, "st:"}   # (rp:, the old report's 🔄, gone; st:, Status's)
     assert "ir:" not in make(tmp_path, irrigation=None)[0].buttons()
 
 

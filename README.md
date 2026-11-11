@@ -30,7 +30,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?" Anything you type is answered by the AI model with ecobot-mcp's tools.
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
-- **Buttons for the usual:** in a private chat a keyboard of instant charts (Rain, Weather, Temperature, Humidity, Air Quality, Particulates, Wind), and Status: a picture of the temperature, humidity and rain gauges, then a report of the weather, air quality, pollen and forecast. Each is a command too (`/rain`, `/status` ...).
+- **Buttons for the usual:** in a private chat a keyboard of instant charts (Rain, Weather, Temperature, Humidity, Air Quality, Particulates, Wind), and Status: one message, a picture of the temperature, humidity and rain gauges with a report of the weather, air quality, forecast and pollen under it, and a 🔄 to read it again (no AI model: it's instant). Each is a command too (`/rain`, `/status` ...).
 - **Commands from ecobot-mcp:** its prompts appear in Telegram's `/` menu: `/report`, `/now`, `/will_it_rain`, `/chart rain 7d`, `/rainfall last week` ... The words after the command fill the prompt in, and a prompt added to ecobot-mcp appears with no change to the bot.
 - **Web dashboard:** the gauges as a live page in any browser on your network, laid out to fill a phone, a tablet or a screen.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.

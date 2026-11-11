@@ -200,13 +200,13 @@ async def test_the_models_charts_come_from_the_service_as_pictures_and_the_model
     assert bot.charted.get(1, 9)["drawn_by"] == out["charts"][0]["drawn_by"]
 
 
-async def test_status_sends_the_services_picture_of_three_gauges_then_the_report_prompts_answer(connected, world, alert_state, monkeypatch):
-    """Status (/status): the Status picture is ecobot://status's PNG, byte for byte, then the model's answer to ecobot-mcp's `report`
-    prompt (got over MCP), asked as a typed question (step 6c: the report written in code, its caption and 🔄 are gone)."""
+async def test_status_is_one_message_ecobot_mcps_picture_with_its_report_as_the_caption_and_no_model(connected, world, alert_state):
+    """Status (/status, the button): ecobot://status's PNG, byte for byte, with the report ecobot-mcp writes (current's sections, today's
+    forecast, the pollen) as its caption and a 🔄: one message, no model."""
     import base64
-    from lib.mcp_server import prompt
+    from lib.bot import STATUS_REFRESH
     photos = []
-    model = Model([], "Weather station: 14.2 °C.")
+    model = Model([], "unused")
     bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), alert_state, service=connected)
     update, context, replies = a_chat("group")
     reply_photo = update.effective_message.reply_photo
@@ -218,8 +218,11 @@ async def test_status_sends_the_services_picture_of_three_gauges_then_the_report
     await bot.status(update, context)
     contents = (await connected.upstream.client.read_resource("ecobot://status")).contents
     (png,) = [base64.b64decode(c.blob) for c in contents if getattr(c, "blob", None)]
-    assert photos == [png] and png.startswith(b"\x89PNG") and replies == [(None, None), "Weather station: 14.2 °C."]
-    assert model.seen[0]["messages"][-1]["content"] == f"Rob: {prompt('report').messages[0].content.text}"   # (a group: its sender named)
+    report = json.loads(contents[0].text)["report"]
+    assert photos == [png] and png.startswith(b"\x89PNG") and model.seen == []
+    ((caption, markup),) = replies
+    assert caption == report and caption.startswith("Weather station (") and "\n\nForecast (" in caption and "\n\nPollen & asthma (" in caption
+    assert [[b.callback_data for b in row] for row in markup.inline_keyboard] == [[STATUS_REFRESH]]
 
 
 async def test_ecobot_mcps_prompts_are_telegram_commands_whose_words_fill_their_arguments(connected, world, alert_state, caplog):

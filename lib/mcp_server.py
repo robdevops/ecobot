@@ -104,8 +104,9 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                    "rain_chance_pct, rain_1mm_pct, summary, text}]}. Pushed on each new forecast.", "forecast"),
     POLLEN_URI: ("pollen", "Pollen and thunderstorm asthma", "Grass pollen and thunderstorm asthma levels: {in_season, fetched_at, "
                  "grass: {level, emoji, date}, asthma: {level, emoji, updated}, lines}. Pushed on each new page.", "pollen"),
-    STATUS_URI: ("status", "The Status picture", "The weather station's temperature, humidity and rain gauges in a row, as a picture "
-                 "(image/png, a blob), with their readings as JSON text first: {gauges: [{title, value, unit, rows: {Daily, Monthly, "
+    STATUS_URI: ("status", "Status", "The report in words and the weather station's temperature, humidity and rain gauges in a row, as a "
+                 "picture (image/png, a blob), with JSON text first: {report (the readings now, today's forecast and the pollen, each "
+                 "section a heading then its lines: to send as it is), gauges: [{title, value, unit, rows: {Daily, Monthly, "
                  "Yearly: {Max, Min} or {Max, Total}}}], lines}; the picture shows the readings now, the text their highs and lows too. "
                  "Without the picture (no Pillow here) the text has `image_note`. Not pushed.", "eco"),
     HEALTH_URI: ("health", "Health", "Each loop's last success and failure, the archive's progress, the readings file's size and the "
