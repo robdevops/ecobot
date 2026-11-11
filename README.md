@@ -204,7 +204,21 @@ Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) ar
 
 In November 2026 every setting got the name of the program that reads it: `MCP_` for ecobot-mcp's, `BOT_` for the bot's, and none
 for the few both read. The old names still work: when a new name is unset and its old one is set, the old one is used, and the log says
-once at start which to rename (never their values). Rename them in `/etc/ecobot.env` when convenient:
+once at start which to rename (never their values). Rename them in `/etc/ecobot.env` when convenient, by hand from the table, or with the script, which shows what it
+would change (secrets masked) and changes the file only with `--write`, keeping a backup beside it:
+
+```
+sudo python3 /opt/ecobot/scripts/migrate_env.py /etc/ecobot.env
+```
+
+```
+sudo python3 /opt/ecobot/scripts/migrate_env.py /etc/ecobot.env --write
+```
+
+Then restart ecobot-mcp and the bot. Beyond the renames it moves `WEATHER_MCP_TOKEN` into `AUTH_TOKENS` (first, the token the bot
+sends) and changes the old container name `ecobot-service` in a URL or allowed host to `ecobot-mcp`; it stops, changing nothing, where
+an old and a new name are both set to different values.
+
 
 | Old name | New name |
 |---|---|
@@ -261,8 +275,11 @@ cd /opt/ecobot && sudo git pull
 ```
 
 ```
-sudo docker compose up -d --build
+sudo docker rm -f ecobot-service 2>/dev/null; sudo docker compose up -d --build
 ```
+
+(The first part removes the container ecobot-mcp had before November 2026, `ecobot-service`, which would keep port 8765; once it's gone
+it does nothing.)
 
 Compose replaces a container only if its image or settings changed. To remove the old images and build cache that upgrades leave behind:
 
@@ -271,15 +288,7 @@ sudo docker image prune -f && sudo docker builder prune -f
 ```
 
 **From the layout with a container named `ecobot-service` (November 2026):** that container is now `ecobot-mcp`, from an image of
-its own (`ecobot-mcp`; the bot's is still `ecobot`). Remove the old container first, or it keeps port 8765:
-
-```
-sudo docker rm -f ecobot-service
-```
-
-```
-sudo docker compose up -d --build
-```
+its own (`ecobot-mcp`; the bot's is still `ecobot`). The command above removes the old container first, which would otherwise keep port 8765.
 
 Your token lines still work (`MCP_SERVICE_TOKENS` is read as `AUTH_TOKENS`, and `WEATHER_MCP_TOKEN` is ignored once that is set, with
 a warning): rename `MCP_SERVICE_TOKENS` to `AUTH_TOKENS` and delete `WEATHER_MCP_TOKEN`, or delete both to use the token ecobot-mcp

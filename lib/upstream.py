@@ -29,7 +29,7 @@ REFUSED = {401: "401: the token the bot sends isn't one ecobot-mcp accepts: give
 
 def http_transport(url: str, token: str | None = None, refused: dict | None = None):
     """The Streamable HTTP transport to ecobot-mcp, its bearer token sent with every request, its read timeout READ_SECONDS.
-    refused: given, its "status" is set to an HTTP error the service answered with (the SDK reports any of them as one message)."""
+    refused: given, its "status" is set to an HTTP error ecobot-mcp answered with (the SDK reports any of them as one message)."""
     import httpx2
     from mcp.client.streamable_http import streamable_http_client
     from mcp.shared._httpx_utils import create_mcp_http_client
@@ -63,13 +63,13 @@ class Upstream:
     def __init__(self, target, token=None, on_event=None, on_discover=None, on_listening=None, resources=None):
         """Callbacks: on_discover(DiscoverResult), each new connection's, before it is used; on_listening(), once its listen is
         acknowledged (what was missed is read from here: an event from now on isn't); on_event(event), each listen event. Async.
-        resources: the URIs listened to, of those the service lists (None: every one)."""
+        resources: the URIs listened to, of those ecobot-mcp lists (None: every one)."""
         self.target, self.token, self.resources = target, token, resources
         self.on_event, self.on_discover, self.on_listening = on_event, on_discover, on_listening
         self.client: Client | None = None
         self.connected = asyncio.Event()
         self.attempts = 0
-        self.refused: dict = {}   # the HTTP error the service last answered with
+        self.refused: dict = {}   # the HTTP error ecobot-mcp last answered with
 
     def _client(self) -> Client:
         token = self.token() if callable(self.token) else self.token   # (a function: read again for each connection)
@@ -89,7 +89,7 @@ class Upstream:
                         await self.on_discover(discovered)
                     self.client, self.attempts = client, 0
                     self.connected.set()
-                    log.info("ecobot-mcp: connected to %s", self.target if isinstance(self.target, str) else "the service")
+                    log.info("ecobot-mcp: connected to %s", self.target if isinstance(self.target, str) else "in-process")
                     await self._listen(client)
                     log.warning("ecobot-mcp ended the listen; connecting again")
             except asyncio.CancelledError:
@@ -109,7 +109,7 @@ class Upstream:
             self.attempts += 1
 
     async def _listen(self, client: Client):
-        """Listen to every resource the service lists and its lists' changes, passing each event on, until the stream ends."""
+        """Listen to every resource ecobot-mcp lists and its lists' changes, passing each event on, until the stream ends."""
         uris = [r.uri for r in (await client.list_resources()).resources if self.resources is None or str(r.uri) in self.resources]
         async with client.listen(tools_list_changed=True, prompts_list_changed=True, resources_list_changed=True,
                                  resource_subscriptions=uris) as sub:
@@ -120,7 +120,7 @@ class Upstream:
                     await self.on_event(event)
 
     async def get(self) -> Client:
-        """The connected client; refused (MCPError) when the service can't be reached within CONNECT_WAIT."""
+        """The connected client; refused (MCPError) when ecobot-mcp can't be reached within CONNECT_WAIT."""
         if self.client is None:
             try:
                 await asyncio.wait_for(self.connected.wait(), CONNECT_WAIT)

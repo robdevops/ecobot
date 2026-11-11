@@ -640,8 +640,52 @@ Each step ships on its own, with the tests and evals green and the bot working t
      byte for byte the bot's own, for a call and an alert's chart).
    - **Left: 5b**, the irrigation server in its own repository (3.9: its tools, the watchdog and the daily check, `irrigation://alerts`),
      the bot connecting to both and `lib/irrigation` going from here; and `show_request` and `report_inputs` as MCP clients.
-6. **The bot retired** (section 4), its code and tests deleted; the repository is the service. The renderer stays, for the service's
-   chart images (3.7), and the gauges go with the bot unless they move to the service first.
+6. **The slim bot** (decided November 2026, in place of retiring it: section 4 describes the bot as it was). The Telegram bot is kept, but only as a thin client of ecobot-mcp: it does what only a Telegram bot can do
+   (chats, buttons, pushing alerts), and everything about the weather, the air, the alerts' rules and the pictures comes from
+   ecobot-mcp over MCP. It never opens the readings file and draws nothing. Sub-steps, each its own change with the checks green:
+
+   - **6a. Every picture from ecobot-mcp.** The charts in the model's answers and in the keyboard's answers come from ecobot-mcp as
+     images (request `_meta` `chart_image: "png"`): the bot keeps the image blocks and `ecobot/charts` (for the period buttons) and
+     gives the model only the text (`for_model`, as today). The dashboard's gauges move to ecobot-mcp the same way: a tool or resource
+     that returns the gauge sheet as a PNG, its figures as text. The bot then imports neither Pillow nor `lib/charts.py`,
+     `lib/draw.py` or `lib/gauges.py`.
+   - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,
+     the alert rules and the alert log itself) is deleted. Under systemd, `ecobot.service` wants and starts after `ecobot-mcp.service`;
+     in Docker this is already the layout. The bot's image installs only its own packages (python-telegram-bot, openai, mcp, httpx).
+   - **6c. Less code in the bot.**
+     - Typed shortcuts go: anything typed goes to the model (`lib/intent.py`'s pattern matching, `chart_call`, the dashboard and
+       report words). Buttons stay instant because each is a fixed call.
+     - `/report` becomes an ecobot-mcp prompt (`report`): the bot asks the model with it, and the model calls the tools. The
+       report written in code (`lib/report.py`, `lib/report_menu.py`) is deleted.
+     - The charts drawn ahead every 5 minutes go (`draw_buttons_ahead`). Kept: after a chart is sent, its other periods are fetched
+       (and, with `BOT_TELEGRAM_PRELOAD_CHAT`, uploaded) in the background, so its period buttons answer at once. A keyboard button's
+       first press waits for ecobot-mcp, about half a second.
+     - Without `BOT_OPENROUTER_API_KEY` the bot answers the buttons and sends alerts; a typed question gets one line saying the
+       model isn't set up (the no-model fallbacks go).
+     - The test-only oracles from step 3 (`tests/old_tools.py`, `tests/report_words.py`) are deleted.
+   - **6d. Irrigation** is step 5b's: its own repository and MCP server, which the bot connects to as a second server
+     (`BOT_IRRIGATION_MCP_URL`), listening for its alerts the same way.
+
+   **What the bot keeps:**
+   - **Telegram:** who may use it (`BOT_ADMIN_ONLY`, `BOT_ADMIN_CHAT_IDS`, group admins), private and group chats, the keyboard, the
+     per-chat state (`bot_state.json`: chats, alert subscriptions and sound, each chart message's `drawn_by`, the last alert read).
+   - **Questions:** the model loop with ecobot-mcp's tools, its instructions (from discover) and a short persona prompt (tone,
+     Telegram formatting, group-chat names, the chart caption rule).
+   - **Alerts:** listening to `ecobot://alerts`, sending each to the chats subscribed to its kind with its picture, the alert menus
+     (on/off and sound per kind), 🔄 under an alert's chart.
+   - **Charts:** the keyboard's chart buttons (each a fixed call), the period buttons and 🔄 (replaying `drawn_by`), and Help from
+     `about`.
+
+   **What it leaves:** about a fifth of today's bot code: `lib/bot.py` (much smaller), `lib/weather.py` (the remote half),
+   `lib/upstream.py`, `lib/model_tools.py`, `lib/llm.py`, `lib/prompt.py`, `lib/alerts/notify.py` and `menu.py`, `lib/periods.py`
+   (the buttons), `lib/templates.py` (the keyboard), `lib/admins.py`, `lib/buttons.py`, `lib/config.py` (its `BOT_` settings).
+
+   **Gates:** the offline evals (every typed case now goes to the model: the "answered in code" cases become model cases, their
+   expected calls unchanged); a live eval run on the production model only after asking (the typed shortcuts' cases are the ones
+   that change); the remote-bot tests over uvicorn; a check that the bot imports no Pillow and no source module.
+
+   **Risks:** a typed chart request ("rain chart 7d") now costs a model call and a second or two, where it was instant; a keyboard
+   button's first press waits for ecobot-mcp; the bot does nothing without ecobot-mcp (it says so, as today).
 
 ## 7. Testing
 
