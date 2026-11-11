@@ -4,7 +4,7 @@ How to test the bot and what the GitHub checks do. (Running it is in `README.md`
 
 ## Tests
 ```
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt     # requirements.txt, requirements-charts.txt (Pillow) and pytest
 python -m pytest                       # runs in parallel (pytest.ini); `-n0` for one process
 python scripts/eval_prompts.py         # the saved questions: decisions made in code and the service expectations, no key needed
 ```
@@ -39,10 +39,14 @@ Only one process runs the service on a data folder: it holds `service.lock` ther
 a bot that runs the service itself (`WEATHER_MCP_URL` unset), and the other way round. Make the bot its client first (below): set
 `WEATHER_MCP_URL` and restart the bot, then start the service; the bot waits for it and connects when it is up.
 Claude Code connects over HTTP: `claude mcp add --transport http ecobot http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"`.
+A client that shows pictures can have the charts as images: `http://127.0.0.1:8765/mcp?charts=png` (or, per call, request `_meta`
+`chart_image: "png"`; docs 3.7). Pillow (`requirements-charts.txt`) is imported only then: a service installed from `requirements.txt` alone
+answers with the charts' JSON and a `chart_image_note`, and warns once.
 To look at it by hand: `npx @modelcontextprotocol/inspector` against the URL with the header `Authorization: Bearer <token>`.
 
 Its tests: `tests/test_mcp_server.py` (the SDK's in-memory transport: every tool listed and answering as the ServiceTool does, each resource,
-the alerts' template, the prompts, the publishing, the tokens) and `tests/test_mcp_listen.py` (the real app under uvicorn
+the alerts' template, the prompts, the publishing, the tokens; the chart images asked per call and, under uvicorn, by the URL's
+`?charts=png`, without Pillow, and that importing the server imports no Pillow) and `tests/test_mcp_listen.py` (the real app under uvicorn
 on a free localhost port: a client that listens loses its listen when the service stops and reads what it missed when it is back; the
 token and Host checks over HTTP; `python -m ecobot_service` with the fake sources, a tool call through
 a proxy's Host name).
@@ -56,6 +60,10 @@ a backoff, listens again and reads the alerts after the last id it handled. Unse
 (`lib/weather.LocalWeather`). Both are one interface, `lib/weather.py`, which everything the bot asks of the service goes through:
 the model's tools and instructions, its shortcuts, report, gauges, charts drawn ahead and period buttons, Help and `/usage`, the alerts
 (lib/alerts/notify.AlertDelivery reads either log) and the irrigation check's rain and forecast (`ServiceRain`, `ServiceForecast`).
+The charts the bot's own code asks for (charts drawn ahead, the period buttons, the alerts' pictures and their 🔄) come drawn by the
+service (`chart_image`: the remote one sends its PNG, `chart_image: "png"` in the request's `_meta`, in the bot's own theme, `chart_dark`;
+in-process, the same `lib/charts.render_data`); a question's charts (the model's answer, or a sentence answered in code) and the dashboard
+(`lib/gauges.py`) are still drawn by the bot.
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a
 MCP_SERVICE_TOKENS=$TOKEN python -m ecobot_service &                                     # the service, with the sources' settings
@@ -65,17 +73,17 @@ In Docker (compose.yaml): in /etc/ecobot.env set `MCP_SERVICE_TOKENS=<token>`, `
 `WEATHER_MCP_TOKEN=<token>` and `MCP_SERVICE_ALLOWED_HOSTS=127.0.0.1,localhost,ecobot-service`; then recreate the bot first
 (`sudo docker compose up -d --force-recreate ecobot`, which frees the data folder) and start the service
 (`sudo docker compose --profile service up -d ecobot-service`). Its tests: `tests/test_bot_remote.py`, the bot against the real server (in memory: a
-question answered with the remote tools and the instructions from discover, a chart from a remote result with its buttons, an alert through
+question answered with the remote tools and the instructions from discover, a chart from a remote result with its buttons, the service's PNG of a chart byte for byte the bot's own, an alert through
 the listen, the irrigation check's inputs; under uvicorn: a dropped connection rebuilt and the alerts after the last id read once, the
 service down, `ecobot.main()` as a client).
 
 ## GitHub Actions (`.github/workflows/ci.yml`, and `docker.yml` for `image`)
 | Job | When | What |
 |---|---|---|
-| `test` | every push to `main` and every pull request | the exact versions in `requirements.txt`: pytest (chart pictures included) and the offline evals. The gate. |
+| `test` | every push to `main` and every pull request | the exact versions in `requirements.txt` and `requirements-charts.txt`: pytest (chart pictures included) and the offline evals. The gate. |
 | `newest` | Sundays 21:17 UTC, or the Run workflow button | the tests with the newest Pillow. Advisory. |
 | `live-evals` | Sundays 21:17 UTC, or the Run workflow button | asks the real model the six questions in `tests/evals/weekly.txt` as the bot asks it (`python scripts/eval_prompts.py --live`: its prompt and the service's ten tools) and checks which tool it calls against `tests/evals/service_cases.json`; a failure is asked once more before it is reported. Advisory. The button's "all cases" box asks all 94. Skipped until the secrets below exist. |
-| `image` | pushes that change `Dockerfile`, `.dockerignore` or `requirements.txt` (any branch), or the Run workflow button | builds the Docker image, checks the bot starts in it and names the commit, draws the sample charts in it (they must be in Inter and match `tests/charts`); the image's size goes in the run's summary. |
+| `image` | pushes that change `Dockerfile`, `.dockerignore`, `requirements.txt` or `requirements-charts.txt` (any branch), or the Run workflow button | builds the Docker image, checks the bot starts in it and names the commit, draws the sample charts in it (they must be in Inter and match `tests/charts`); the image's size goes in the run's summary. |
 
 Repository secrets (Settings, Secrets and variables, Actions, New repository secret):
 - `OPENROUTER_API_KEY`: for `live-evals`. `OPENROUTER_MODEL` is optional (default `deepseek/deepseek-v4.1-flash-1017`): add it only if production runs another model.
@@ -84,4 +92,4 @@ Repository secrets (Settings, Secrets and variables, Actions, New repository sec
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the Python packages and the actions. `Pillow` comes in a group of its own, because the chart pictures depend on it.
 
 ## Chart pictures
-Ten fixed sample charts and dashboards (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with Pillow's own font (so they match on any machine; it lacks a few characters, such as ₂ and µ, shown as boxes there only), shrunk to 40% and cut to 64 colours, so each is 7 to 46 KB (about 220 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `Pillow` is pinned in `requirements.txt` because the pictures depend on it (charts and the dashboard are drawn with it, `lib/draw.py`); a Dependabot update whose chart test fails is the cue to redo the images.
+Ten fixed sample charts and dashboards (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with Pillow's own font (so they match on any machine; it lacks a few characters, such as ₂ and µ, shown as boxes there only), shrunk to 40% and cut to 64 colours, so each is 7 to 46 KB (about 220 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `Pillow` is pinned in `requirements-charts.txt` because the pictures depend on it (charts and the dashboard are drawn with it, `lib/draw.py`; the service needs it only for its chart images, so it is a file of its own); a Dependabot update whose chart test fails is the cue to redo the images.

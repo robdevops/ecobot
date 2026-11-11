@@ -4,7 +4,11 @@ changes, the auth and the allowed hosts. The listen over the network is tests/te
 as docs 7 asks)."""
 
 import asyncio
+import base64
 import json
+import os
+import subprocess
+import sys
 import time
 from types import SimpleNamespace as NS
 from zoneinfo import ZoneInfo
@@ -15,11 +19,12 @@ from mcp import Client
 from mcp.server.subscriptions import ResourceUpdated, ToolsListChanged
 from mcp.shared.exceptions import MCPError
 
-from lib import mcp_server
+from lib import chart_images, charts, mcp_server
+from lib.config import ROOT
 from lib.alert_log import AlertLog
 from lib.mcp_server import (ALERTS_TEMPLATE, ALERTS_URI, COMPLETE, PROMPTS, EcobotServer, TokenCheck, host_settings, prompt,
                             tool_result)
-from lib.service.common import CHART_POINTS
+from lib.service.common import AS_DRAWN, CHART_POINTS
 from lib.service.context import Context
 from lib.service.names import Catalogue
 from tests import evalkit, evalworld
@@ -313,3 +318,113 @@ def test_one_service_per_data_folder(tmp_path):
             hold_data_folder(cfg, second)
     with contextlib.ExitStack() as again:   # free once the first has closed
         hold_data_folder(cfg, again)
+
+
+# ---------- chart images (3.7) ----------
+CHARTED = {"readings": ["temperature"], "period": "last 7 days", "chart": True}
+
+
+def ours(result) -> dict:
+    """The result's _meta that is the service's own (not the SDK's serverInfo)."""
+    return {k: v for k, v in (result.meta or {}).items() if k.startswith("ecobot/")}
+
+
+def images_of(result) -> list[bytes]:
+    return [base64.b64decode(b.data) for b in result.content if b.type == "image"]
+
+
+async def test_without_images_asked_a_chart_comes_as_json_alone_as_before(world):
+    async with Client(world.server) as client:
+        plain = await client.call_tool("summary", CHARTED)
+        none = await client.call_tool("summary", CHARTED, meta={"chart_image": "none"})
+    for got in (plain, none):
+        assert [b.type for b in got.content] == ["text"] and not ours(got)
+        assert got.content[0].text == await world.service["summary"].call(CHARTED)
+
+
+async def test_a_call_asking_for_images_gets_each_chart_as_a_png_after_the_figures_and_the_charts_json_in_meta(world):
+    async with Client(world.server) as client:
+        got = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
+        dark = await client.call_tool("summary", CHARTED, meta={"chart_image": "png", "chart_dark": True})
+    told = json.loads(got.content[0].text)
+    whole = json.loads(await world.service["summary"].call(CHARTED, {"chart_points": AS_DRAWN}))   # (drawn from every point, as the bot's)
+    assert told["charts"] == [{"title": c["title"], "period": c["period"]} for c in whole["charts"]]
+    assert told["chart_note"] == chart_images.IMAGE_NOTE and told["caption"] == whole["caption"]
+    assert {k: v for k, v in told.items() if k not in ("charts", "chart_note")} == {k: v for k, v in whole.items() if k not in ("charts", "chart_note")}
+    assert got.meta[chart_images.CHARTS_META] == whole["charts"] and got.meta[chart_images.DARK_META] is False
+    (png,) = images_of(got)
+    assert got.content[1].mime_type == "image/png" and png.startswith(b"\x89PNG")
+    assert png == charts.render_data(whole["charts"][0], TZ, dark=False)   # the bot's renderer, byte for byte
+    assert dark.meta[chart_images.DARK_META] is True and images_of(dark)[0] == charts.render_data(whole["charts"][0], TZ, dark=True)
+    assert not got.is_error and COMPLETE not in got.meta
+
+
+async def test_a_complete_answer_with_images_still_carries_its_reply_for_the_person_last(world):
+    args = {"readings": ["pressure"], "period": "this week", "chart_answers_it": True}
+    async with Client(world.server) as client:
+        got = await client.call_tool("summary", args, meta={"chart_image": "png"})
+    data = json.loads(got.content[0].text)
+    assert [b.type for b in got.content] == ["text", "image", "text"] and data["complete"] is True
+    assert got.content[2].text == data["reply"] and got.content[2].annotations.audience == ["user"]
+    assert got.meta[COMPLETE] is True and len(got.meta[chart_images.CHARTS_META]) == 1
+
+
+async def test_a_refusal_or_an_answer_without_a_chart_is_as_it_was_with_images_asked(world):
+    async with Client(world.server) as client:
+        refused = await client.call_tool("summary", {"period": "the age of the dinosaurs"}, meta={"chart_image": "png"})
+        plain = await client.call_tool("current", {"readings": ["temperature"]}, meta={"chart_image": "png"})
+    assert refused.is_error and [b.type for b in refused.content] == ["text"] and not ours(refused)
+    assert [b.type for b in plain.content] == ["text"] and not ours(plain) and "charts" not in json.loads(plain.content[0].text)
+
+
+async def test_without_pillow_images_asked_for_give_the_json_with_a_note_and_one_warning(world, monkeypatch, caplog):
+    monkeypatch.setitem(sys.modules, "lib.charts", None)   # (as if Pillow weren't installed: the import fails)
+    monkeypatch.setattr(chart_images, "_warned", False)
+    async with Client(world.server) as client:
+        first = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
+        again = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
+    for got in (first, again):
+        data = json.loads(got.content[0].text)
+        assert [b.type for b in got.content] == ["text"] and not ours(got)
+        assert data["chart_image_note"] == chart_images.UNAVAILABLE_NOTE
+        assert {k: v for k, v in data.items() if k != "chart_image_note"} == json.loads(await world.service["summary"].call(CHARTED))
+    warned = [r for r in caplog.records if r.name == "lib.chart_images" and r.levelname == "WARNING"]
+    assert len(warned) == 1 and "requirements-charts.txt" in warned[0].getMessage()
+
+
+def test_images_are_wanted_per_call_else_per_connection():
+    assert not chart_images.wanted({}) and not chart_images.wanted({}, "json") and chart_images.wanted({}, "png")
+    assert chart_images.wanted({"chart_image": "png"}) and chart_images.wanted({"chart_image": "PNG"}, None)
+    assert not chart_images.wanted({"chart_image": "none"}, "png") and chart_images.wanted({"chart_image": "jpeg"}, "png")
+    assert chart_images.asked_dark({"chart_dark": True}) is True and chart_images.asked_dark({"chart_dark": "yes"}) is None
+
+
+def test_the_service_imports_no_pillow_until_an_image_is_asked_for(tmp_path):
+    """Importing the server and building its app (as python -m ecobot_service does) imports neither Pillow nor the renderer."""
+    code = ("import sys, ecobot_service.__main__; from zoneinfo import ZoneInfo; from lib.mcp_server import EcobotServer, http_app; "
+            "from lib.service.context import Context; http_app(EcobotServer(Context(tz=ZoneInfo('UTC'))), tokens=('t',)); "
+            "print(sorted(m for m in sys.modules if m.split('.')[0] == 'PIL' or m in ('lib.charts', 'lib.draw', 'lib.gauges')))")
+    done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120,
+                          env={**os.environ, "DATA_DIR": str(tmp_path)})
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "[]"
+
+
+async def test_over_http_the_connections_url_asks_for_images_and_a_call_can_say_otherwise(world):
+    from lib.upstream import http_transport
+    from tests.test_mcp_listen import Serving, free_port
+    port = free_port()
+    base = f"http://127.0.0.1:{port}/mcp"
+    async with Serving(mcp_server.http_app(world, tokens=("t",)), port):
+        async with Client(http_transport(f"{base}?charts=png", "t"), mode="2026-07-28") as client:
+            images = await client.call_tool("summary", CHARTED)
+            without = await client.call_tool("summary", CHARTED, meta={"chart_image": "none"})
+        async with Client(http_transport(base, "t"), mode="2026-07-28") as client:
+            plain = await client.call_tool("summary", CHARTED)
+            asked = await client.call_tool("summary", CHARTED, meta={"chart_image": "png"})
+    for got in (images, asked):
+        assert [b.type for b in got.content] == ["text", "image"] and len(got.meta[chart_images.CHARTS_META]) == 1
+        assert images_of(got)[0] == charts.render_data(got.meta[chart_images.CHARTS_META][0], TZ, dark=False)
+    for got in (without, plain):
+        assert [b.type for b in got.content] == ["text"] and not ours(got)
+        assert got.content[0].text == await world.service["summary"].call(CHARTED)

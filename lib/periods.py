@@ -16,7 +16,6 @@ from datetime import date, datetime, timedelta, tzinfo
 from telegram import InlineKeyboardMarkup
 from telegram.constants import KeyboardButtonStyle
 
-from . import charts
 from .buttons import button
 
 PREFIX = "pd:"
@@ -136,6 +135,13 @@ class Charted:
             self.save()
 
 
+def dark_now() -> bool:
+    """Are charts drawn dark now (DARKMODE: lib/charts.dark_now, imported when first asked: the service imports this module for
+    call_key, and draws nothing)?"""
+    from . import charts
+    return charts.dark_now()
+
+
 @dataclass
 class Drawn:
     """A chart in the ImageCache."""
@@ -172,7 +178,7 @@ class ImageCache:
 
     def _kept(self, entry: Drawn | None) -> bool:
         """Is there a chart, still within its time to live, in the theme charts are drawn in now?"""
-        return entry is not None and self.age(entry) <= entry.ttl and entry.dark == charts.dark_now()
+        return entry is not None and self.age(entry) <= entry.ttl and entry.dark == dark_now()
 
     def get(self, key: str | None) -> tuple[bytes | str, str] | None:
         """(the picture: Telegram's file id once it has been sent, else the PNG; its title), or None."""
@@ -202,7 +208,7 @@ class ImageCache:
         """The chart made in code for this call in the last FRESH seconds (for someone's question, or uploaded ahead to
         TELEGRAM_PRELOAD_CHAT), with the text that went with it; None if there is none."""
         entry = self.items.get(key) if key else None
-        if entry is None or entry.caption is None or self.age(entry) > self.FRESH or entry.dark != charts.dark_now():
+        if entry is None or entry.caption is None or self.age(entry) > self.FRESH or entry.dark != dark_now():
             return None
         self.items.move_to_end(key)
         return entry
@@ -211,12 +217,14 @@ class ImageCache:
         return self.clock() - entry.at
 
     def put(self, key: str | None, png: bytes, title: str, caption: str | None = None, ttl: float | None = None, newest: int | None = None,
-            drawn_by: dict | None = None):
+            drawn_by: dict | None = None, dark: bool | None = None):
         """caption: the answer's text, only for a chart made in code (then it can be ready). newest: the time of the newest reading
-        drawn, when known. drawn_by: the call that drew it (it is kept under that call's key too)."""
+        drawn, when known. drawn_by: the call that drew it (it is kept under that call's key too). dark: the theme it was drawn in (the
+        service says which, lib/weather.py); None: the one charts are drawn in now."""
         if key is None:
             return
-        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL, newest=newest, dark=charts.dark_now(),
+        self.items[key] = Drawn(self.clock(), png, title, caption=caption, ttl=ttl or self.CHART_TTL, newest=newest,
+                                dark=dark_now() if dark is None else dark,
                                 drawn_by=drawn_by)
         self.items.move_to_end(key)
         self._trim()

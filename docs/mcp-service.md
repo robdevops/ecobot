@@ -375,8 +375,23 @@ Charts are data: the client draws them, or its model does from the numbers.
   turn*. Our bot follows the rule while it lives, and any bot can; a client that doesn't (a desktop assistant) gives the result to its
   model as usual, which then has the reply ready to repeat. A result with no chart, an error or a note that needs the model's words is
   never complete.
-- **Our bot**, while it lives, draws `charts` with its renderer (`lib/charts.py`, reading the JSON) and sends the picture; the rain
-  caption reads its bars. The renderer leaves with the bot.
+- **Or as images, for a client that asks.** A client that shows pictures but can't draw JSON asks for the charts drawn: per connection
+  with its MCP URL's query, `/mcp?charts=png` (any client can set a URL; not all can set headers), or per call with request `_meta`
+  `chart_image: "png"` (or `"none"`, which overrides the connection's). Off by default: without it the result is as above, unchanged.
+  With it, a result with charts carries its JSON text with each chart's data replaced by `{title, period}` and a `chart_note` that fits
+  the image (the chart is the image attached: keep the text to the figures, don't describe it), then one `ImageContent` (`image/png`,
+  base64) per chart, in order; the full chart JSON, each with its `drawn_by` (what the period buttons replay), is in result `_meta`
+  `"ecobot/charts"`, for applications, and the theme in `"ecobot/chart_dark"`. A complete answer keeps its `reply` block for the
+  person, after the images, and `"ecobot/complete"`. The pictures are the bot's: the same renderer (`lib/charts.render_data`, Pillow,
+  run off the event loop), from every point (`chart_points` `"drawn"` unless the call says otherwise), so they and the golden images
+  don't change; dark per `DARKMODE`, or request `_meta` `chart_dark: true|false`. Pillow is optional on the service
+  (`requirements-charts.txt`) and imported at the first image asked for: without it the warning is logged once, and the result is the
+  JSON as if no image had been asked for, with `chart_image_note` saying images aren't available on this service.
+- **Our bot**, while it lives, has the charts its own code asks for (charts drawn ahead, the period buttons, the alerts' pictures and
+  their 🔄) drawn by the service: in-process with the same renderer, remote as images (`chart_image: "png"`, in its own theme,
+  `chart_dark`, which it keeps with each picture in its image cache), so a remote bot draws none of those itself. A question's charts
+  (the model's answer, or a sentence answered in code) it still draws from `charts` (`lib/charts.py`, reading the JSON); the rain caption
+  reads its bars; the model is sent the charts' titles, never an image. The dashboard's gauges (`lib/gauges.py`) stay the bot's for now.
 
 ### 3.8 Connecting
 
@@ -605,9 +620,22 @@ Each step ships on its own, with the tests and evals green and the bot working t
      the remote tools and the instructions from discover, a chart from a remote result with its buttons, an alert through the listen, a
      dropped connection rebuilt and the alerts after the last id read once, the service down, `ecobot.main()` as a client); the path
      with the setting unset is the rest of the suite, unchanged.
+   - **Chart images (done).** The service draws a result's charts as PNGs for a client that asks (3.7: `?charts=png` on its URL, or
+     request `_meta` `chart_image`; `chart_dark`; the full JSON in result `_meta` `"ecobot/charts"`, the theme in `"ecobot/chart_dark"`),
+     with `lib/chart_images.py`, which imports Pillow and the renderer only at the first image (Pillow is `requirements-charts.txt`;
+     without it, the JSON with a note and one warning). `lib/weather.py` gains `chart_image(name, args, meta)` and `picture(chart)`
+     (`ChartImage`: the PNG, the chart's JSON, the theme): `LocalWeather` draws in-process with `lib/charts.render_data`,
+     `RemoteWeather` asks the service and takes the PNG from the `ImageContent` and the chart and theme from `_meta` (an alert's
+     chart by replaying its `drawn_by`; a service that sends no image has it drawn here). The bot's `_draw_call` (charts drawn ahead,
+     preloads, the 🔄 under an alert), the period buttons and the alerts' pictures (`lib/alerts/pictures.py`, `AlertDelivery`) use it;
+     the image cache keeps the theme the service drew in. The model path is unchanged; a question's charts and the dashboard are still
+     drawn by the bot. Tests: `tests/test_mcp_server.py` (in memory and under uvicorn: off unchanged, the URL's `?charts=png`, the
+     per-call override both ways, without Pillow, no Pillow imported by the server), `tests/test_bot_remote.py` (the service's PNG
+     byte for byte the bot's own, for a call and an alert's chart).
    - **Left: 5b**, the irrigation server in its own repository (3.9: its tools, the watchdog and the daily check, `irrigation://alerts`),
      the bot connecting to both and `lib/irrigation` going from here; and `show_request` and `report_inputs` as MCP clients.
-6. **The bot retired** (section 4), its code and tests deleted; the repository is the service.
+6. **The bot retired** (section 4), its code and tests deleted; the repository is the service. The renderer stays, for the service's
+   chart images (3.7), and the gauges go with the bot unless they move to the service first.
 
 ## 7. Testing
 
@@ -633,6 +661,9 @@ Each step ships on its own, with the tests and evals green and the bot working t
   connection can't fail there, and the in-memory HTTP transport buffers a listen stream): the listen is lost, the client listens again
   and reads the alerts after its last id; the bot's model request carries the instructions from discover.
 - **A deploy check:** a tool call through the proxy's name succeeds (the allowed hosts and the token).
+- **Chart images:** off, a result is as it was; asked by the URL (under uvicorn) or per call, each chart comes as a PNG byte for byte
+  the bot's own render, its JSON in `_meta`; a call overrides its connection both ways; without Pillow, the JSON with a note and one
+  warning; importing the server imports no Pillow.
 
 ## 8. Risks
 

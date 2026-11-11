@@ -67,7 +67,7 @@ def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, core: Co
         feed, station, forecast = core.alert_log, bot.by_name.get("Ecowitt"), bot.by_name.get("Forecast")
     else:
         running, feed, station, forecast = [], weather.alerts, ServiceRain(weather), weather.forecast
-    delivery = AlertDelivery(feed, notify, bot.state, cfg.tz)
+    delivery = AlertDelivery(feed, notify, bot.state, cfg.tz, weather=bot.weather)   # (its charts drawn by the service)
     zoned: list = [delivery]
     tasks.start(delivery.run())
     if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run

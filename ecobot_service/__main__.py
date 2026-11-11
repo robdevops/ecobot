@@ -15,6 +15,7 @@ import signal
 
 import uvicorn
 
+from lib import chart_images
 from lib.config import Config
 from lib.logs import LogFormat, on_journal, stream_handlers
 
@@ -62,6 +63,7 @@ async def main():
     configure(cfg)
     async with contextlib.AsyncExitStack() as stack:
         sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
+        chart_images.configure(cfg.dark_mode, cfg.tz)   # DARKMODE for the charts' images, when a client asks for them (Pillow not imported yet)
         for source in sources:
             stack.push_async_callback(source.close)
         if not sources:

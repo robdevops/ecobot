@@ -2,7 +2,7 @@ name: Docker image
 
 on:
   push:   # any branch, so a pull request's commits carry the check too
-    paths: [Dockerfile, .dockerignore, requirements.txt, .github/workflows/docker.yml]
+    paths: [Dockerfile, .dockerignore, requirements.txt, requirements-charts.txt, .github/workflows/docker.yml]
   workflow_dispatch:
 
 permissions:

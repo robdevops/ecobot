@@ -26,7 +26,7 @@ env:
 
 jobs:
   test:
-    # The gate: the exact versions in requirements.txt (the ones production runs), tests and chart images included.
+    # The gate: the exact versions in requirements.txt and requirements-charts.txt (the ones production runs), tests and chart images included.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -58,7 +58,7 @@ jobs:
 
   newest:
     # Advisory, never blocks: the same tests with the newest Pillow. If the chart pictures differ, a new release
-    # draws things differently: look at the artifact, then bump the pins in requirements.txt and run scripts/update_charts.py.
+    # draws things differently: look at the artifact, then bump the pin in requirements-charts.txt and run scripts/update_charts.py.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     continue-on-error: true

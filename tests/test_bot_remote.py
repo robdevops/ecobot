@@ -150,6 +150,46 @@ async def test_a_chart_is_drawn_from_a_remote_result_with_its_period_buttons(con
     assert bot.charted.get(1, 9)["drawn_by"] == chart["drawn_by"]
 
 
+async def test_a_remote_bot_sends_the_services_picture_of_a_chart_byte_for_byte_the_one_it_would_draw_itself(connected, world, alert_state,
+                                                                                                                monkeypatch):
+    from lib.alerts import pictures
+    call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
+    local = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(world.service)), [], alert_state, service=world.service)
+    for _ in range(3):   # (what a call fetches inline, fetched first: the charts are then the same each time)
+        here = await local._draw_call(*call)
+        if here.png == (await local._draw_call(*call)).png:
+            break
+    event_chart = await pictures.chart_data(None, "Wind chart 1d", TZ, world.service)   # (an alert's chart, as its event carries it)
+    drawn_here = await pictures.picture_of(event_chart, TZ)
+
+    def not_here(*a, **k):
+        raise AssertionError("a remote bot doesn't draw the service's charts itself")
+    monkeypatch.setattr("lib.bot.render_data", not_here)
+    monkeypatch.setattr(weather_module, "draw_here", not_here)
+    monkeypatch.setattr(pictures, "render_data", not_here)
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    made = await bot._draw_call(*call)
+    assert made.png == here.png and made.png.startswith(b"\x89PNG") and made.dark is False   # the service's PNG, as the bot draws it
+    assert (made.title, made.caption, made.newest, made.drawn_by) == (here.title, here.caption, here.newest, here.drawn_by)
+    assert made.out["charts"] == here.out["charts"]                                          # the chart's JSON, from the result's _meta
+    alert = await pictures.picture_of(event_chart, TZ, connected)                            # an alert's chart: its drawn_by replayed
+    assert (alert.png, alert.title, alert.drawn_by, alert.dark) == (drawn_here.png, drawn_here.title, event_chart["drawn_by"], False)
+    typed = await pictures.chart(None, "Wind chart 1d", TZ, connected)                       # the 🔄 under an alert from before the log
+    assert typed.png == drawn_here.png
+
+
+async def test_a_service_without_pillow_sends_the_charts_json_and_the_remote_bot_draws_it_itself(connected, world, alert_state, monkeypatch):
+    from types import SimpleNamespace
+    from lib import chart_images, mcp_server
+    call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
+    local = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(world.service)), [], alert_state, service=world.service)
+    here = await local._draw_call(*call)
+    monkeypatch.setattr(mcp_server, "chart_images", SimpleNamespace(**{**vars(chart_images), "renderer": lambda: None}))   # (no Pillow there)
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    made = await bot._draw_call(*call)
+    assert made.out["chart_image_note"] == chart_images.UNAVAILABLE_NOTE and made.png == here.png and made.drawn_by == here.drawn_by
+
+
 async def test_an_alert_reaches_the_subscribed_chats_through_the_listen(connected, world, tmp_path):
     publishing = asyncio.create_task(world.watch_alerts())
     state = AlertState(tmp_path / "bot_state.json")

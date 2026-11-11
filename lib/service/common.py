@@ -331,6 +331,17 @@ def with_charts(charts: list[specs.Chart], tz: tzinfo, meta: dict | None = None)
     return {"chart_note": CHART_NOTE, "charts": charts_field(charts, tz, meta)} if charts else {}
 
 
+def charts_as_titles(out: dict, note: str) -> dict:
+    """An answer with its charts' data left out: `charts` as [{title, period}] and `chart_note` as `note` (the chart goes another way:
+    the bot sends it, or the service attaches its image), everything else as it is. An answer without charts as it is."""
+    if not isinstance(out.get("charts"), list):
+        return out
+    told = {**out, "charts": [{"title": c.get("title"), "period": c.get("period")} for c in out["charts"] if isinstance(c, dict)]}
+    if "chart_note" in out:
+        told["chart_note"] = note
+    return told
+
+
 def complete(reply: str) -> dict:
     """The fields of an answer that is complete (3.7: `chart_answers_it` set and a chart made, with no error and no note that needs
     the model's words): {"reply": the finished reply for the person, "complete": True}. A client may send `reply` with the chart and end
@@ -339,5 +350,5 @@ def complete(reply: str) -> dict:
 
 
 __all__ = ["AS_DRAWN", "BACKGROUND", "CHART_NOTE", "CHART_POINTS", "FRESH", "IGNORED_DATES", "SAME_DATES", "SET_ASIDE", "MAX_CHART_POINTS", "META", "NORMAL", "PERIOD_FORMS", "Refusal",
-           "ServiceTool", "WHOLE_DAY_FORMS", "answer", "as_of_field", "charts_field", "complete", "iso", "period_field", "period_properties",
+           "ServiceTool", "WHOLE_DAY_FORMS", "answer", "as_of_field", "charts_as_titles", "charts_field", "complete", "iso", "period_field", "period_properties",
            "read_period", "refuse", "sends_period", "refuse_period", "request_meta", "turn_meta", "with_charts"]

@@ -7,7 +7,7 @@ the chart from data it is no longer sent; the bot sends the picture with the rep
 
 import json
 
-from .service.common import AS_DRAWN
+from .service.common import AS_DRAWN, charts_as_titles
 from .tools import Tool, Tools, Turn, json_result
 
 
@@ -18,12 +18,7 @@ BOT_CHART_NOTE = ("The bot sends this chart with your reply as its caption: keep
 def for_model(out: dict) -> dict:
     """A result as the model is sent it: `charts` as [{title, period}] (the bot draws them) and `chart_note` saying so (BOT_CHART_NOTE),
     everything else as it is."""
-    if not isinstance(out.get("charts"), list):
-        return out
-    told = {**out, "charts": [{"title": c.get("title"), "period": c.get("period")} for c in out["charts"] if isinstance(c, dict)]}
-    if "chart_note" in out:
-        told["chart_note"] = BOT_CHART_NOTE
-    return told
+    return charts_as_titles(out, BOT_CHART_NOTE)
 
 
 def tool(service_tool) -> Tool:

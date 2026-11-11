@@ -272,10 +272,12 @@ class AlertDelivery:
     the log can also be replaced while the bot runs (the service back on another alerts.sqlite): that is looked for on every pass, and
     delivery goes on in the new log with what came since the old one was last read (_switched)."""
 
-    def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time):
+    def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time, weather=None):
         """log: the alert log in this process (lib/alert_log.py), or the remote service's read over MCP (lib/weather.RemoteAlerts, whose
-        reads are coroutines: it is looked at when `run` starts). now: the epoch clock (the events' times are compared with it)."""
-        self.log, self.notify, self.state, self.tz, self.now = log, notify, state, tz, now
+        reads are coroutines: it is looked at when `run` starts). now: the epoch clock (the events' times are compared with it).
+        weather: the service as the bot reaches it (lib/weather.py), which draws the events' charts (a remote one, on the service);
+        without it they are drawn here."""
+        self.log, self.notify, self.state, self.tz, self.now, self.weather = log, notify, state, tz, now, weather
         self.begun = False
         self.seen_at: float | None = None   # when the log was last read through (a pass of deliver_new began): see _switched
         if not getattr(log, "remote", False):
@@ -378,5 +380,5 @@ class AlertDelivery:
                 since = None
 
             async def chart() -> Picture | None:
-                return await picture_of(data, self.tz)
+                return await (picture_of(data, self.tz) if self.weather is None else picture_of(data, self.tz, self.weather))
         return await self.notify(event["text"], kind=event["kind"], link=link, chart=chart, since=since, event=event["id"])

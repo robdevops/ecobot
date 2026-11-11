@@ -41,7 +41,7 @@ from .timeutil import clock_text, day_text, now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
 from .warm import Tasks   # (the service's too: ecobot_service)
-from .weather import UNREACHABLE, LocalWeather, ServiceUnreachable
+from .weather import UNREACHABLE, ChartImage, ChartNotDrawn, LocalWeather, ServiceUnreachable
 
 log = logging.getLogger(__name__)
 
@@ -387,6 +387,17 @@ async def deliver(msg: Message, text: str, photos: list[bytes], link: tuple[str,
     return Delivered(on_text and bool(text), sent)
 
 
+class CallChart(NamedTuple):
+    """The chart a service call draws (Bot._draw_call)."""
+    png: bytes
+    title: str
+    caption: str | None      # its words (the answer's caption, or answer)
+    newest: int | None       # the time of its newest reading
+    drawn_by: dict | None    # the call that draws it again
+    out: dict                # the whole answer
+    dark: bool | None = None   # drawn in the dark theme (None: as charts are drawn now)
+
+
 class Bot:
     def __init__(self, cfg: Config, agent: Agent, sources: list[Source], state: AlertState, irrigation=None, tasks: Tasks | None = None,
                  service: Service | None = None, alert_log=None):
@@ -400,7 +411,7 @@ class Bot:
         chart's drawn_by in."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
         self.weather = service if getattr(service, "is_weather", False) else \
-            LocalWeather(sources, service, alert_log, tz=getattr(cfg, "tz", None))
+            LocalWeather(sources, service, alert_log, tz=getattr(cfg, "tz", None), render=self._render)
         self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
@@ -432,20 +443,33 @@ class Bot:
     async def _service_call(self, tool: str, args: dict, ahead: bool = False) -> dict:
         """A service tool's answer as data: its charts as drawn (AS_DRAWN, so its pictures are as they were),
         a chart drawn ahead (nobody waiting) as a background request. {"error": ...} when it refuses or fails."""
+        return (await self._call(tool, args, ahead))[0]
+
+    async def _chart_call(self, tool: str, args: dict, ahead: bool = False, alone: bool = False) -> tuple[dict, ChartImage | None]:
+        """(a service tool's answer as data, as _service_call; its first chart drawn by the service, lib/weather.py chart_image: None
+        without one, or with more than one when `alone`). ChartNotDrawn when the chart came but can't be drawn."""
+        return await self._call(tool, args, ahead, chart=True, alone=alone)
+
+    async def _call(self, tool: str, args: dict, ahead: bool, chart: bool = False, alone: bool = False) -> tuple[dict, ChartImage | None]:
         found = self.service.get(tool)
         if found is None:
-            return {"error": f"There is no {tool} here."}
+            return {"error": f"There is no {tool} here."}, None
         meta = {"chart_points": AS_DRAWN, **({"priority": BACKGROUND} if ahead else {})}
         log.debug("Service call %s %s", tool, json.dumps(args, ensure_ascii=False), extra=QUOTES)
         try:
-            out = json.loads(await found.call(args, meta))
+            if chart:
+                out, image = await self.weather.chart_image(tool, args, meta, alone=alone)
+            else:
+                out, image = json.loads(await found.call(args, meta)), None
+        except ChartNotDrawn:
+            raise
         except ServiceUnreachable as e:   # (a remote service while it is being reached again: said once the person asks, _answer)
             (log.debug if ahead else log.warning)("Service tool %s: %s", tool, e)
-            return {"error": str(e)}
+            return {"error": str(e)}, None
         except Exception as e:
             log.error("Service tool %s failed: %s: %s", tool, type(e).__name__, e, exc_info=isinstance(e, BUGS))
-            return {"error": f"{type(e).__name__}: {e}"}
-        return out if isinstance(out, dict) else {"error": "not an answer"}
+            return {"error": f"{type(e).__name__}: {e}"}, None
+        return (out, image) if isinstance(out, dict) else ({"error": "not an answer"}, None)
 
     def _catalogue(self):
         """The readings the service holds (the words of a shortcut are read against them)."""
@@ -460,20 +484,31 @@ class Bot:
         return intent.chart_call(text, now, self.cfg.tz, self._catalogue())
 
     def _draw(self, chart: dict, times: dict | None = None) -> tuple[bytes, str, int]:
-        """(PNG, title, the time of its newest reading) of a chart given as data."""
+        """(PNG, title, the time of its newest reading) of a chart given as data (a model's answer's: drawn here)."""
         spec = from_json(chart)
         return render_data(chart, self.cfg.tz, times), spec.caption(now_local(self.cfg.tz).date()), spec.newest
 
-    async def _draw_call(self, tool: str, args: dict, ahead: bool = True) -> tuple[bytes, str, str | None, int, dict | None, dict] | None:
-        """(PNG, title, its words, newest reading, drawn_by, the answer) of the chart a call draws; None when it draws none (the refusal
-        logged)."""
-        out = await self._service_call(tool, args, ahead=ahead)
-        charts = out.get("charts") or []
-        if "error" in out or len(charts) != 1:
+    @staticmethod
+    def _render(chart: dict, tz, dark: bool | None = None) -> tuple[bytes, bool]:
+        """(PNG, dark) of a chart given as data: how the service in this process draws (LocalWeather's render). dark None: as DARKMODE
+        says now."""
+        drawn_dark = periods.dark_now() if dark is None else dark
+        return (render_data(chart, tz) if dark is None else render_data(chart, tz, dark=dark)), drawn_dark
+
+    def _titled(self, chart: dict) -> tuple[str, int | None]:
+        """(title, the time of its newest reading) of a chart given as data."""
+        spec = from_json(chart)
+        return spec.caption(now_local(self.cfg.tz).date()), spec.newest
+
+    async def _draw_call(self, tool: str, args: dict, ahead: bool = True) -> "CallChart | None":
+        """(PNG, title, its words, newest reading, drawn_by, the answer, dark) of the chart a call draws, drawn by the service; None when
+        it draws none (the refusal logged)."""
+        out, image = await self._chart_call(tool, args, ahead=ahead, alone=True)
+        if "error" in out or image is None:
             log.debug("No chart from %s %s: %s", tool, args, out.get("error"))
             return None
-        png, title, newest = await asyncio.to_thread(self._draw, charts[0])
-        return png, title, out.get("caption") or out.get("answer"), newest, charts[0].get("drawn_by"), out
+        title, newest = await asyncio.to_thread(self._titled, image.chart)
+        return CallChart(image.png, title, out.get("caption") or out.get("answer"), newest, image.chart.get("drawn_by"), out, image.dark)
 
     def register(self, app):
         app.add_handler(CommandHandler(["start", "help"], self.on_start))
@@ -741,10 +776,10 @@ class Bot:
             try:
                 if call := await self._alert_call(kind, event):
                     made = await asyncio.wait_for(self._draw_call(*call, ahead=False), TURN_SECONDS)
-                    picture = pictures.Picture(made[0], made[1], made[3], made[4]) if made else None
+                    picture = pictures.Picture(made[0], made[1], made[3], made[4], getattr(made, "dark", None)) if made else None
                 else:
                     picture = await asyncio.wait_for(pictures.chart(self.by_name.get(menu.TYPES[kind][1]), pictures.CHARTS[kind], self.cfg.tz,
-                                                                       self.service), TURN_SECONDS)
+                                                                       self.weather), TURN_SECONDS)
             except TimeoutError:
                 picture = None
             if picture is None:   # (pictures.chart has said why) the message stays as it was
@@ -982,19 +1017,18 @@ class Bot:
                 log.debug("Period button: cached chart sent in %.0f ms%s", (time.monotonic() - began) * 1000,
                           " (Telegram's copy)" if isinstance(held.photo, str) else "")
                 return
-        try:
-            out = await asyncio.wait_for(self._service_call(tool, args), TURN_SECONDS)
+        try:   # (drawn before the toast, so a failure can be toasted)
+            out, image = await asyncio.wait_for(self._chart_call(tool, args), TURN_SECONDS)
         except TimeoutError:
-            out = {"error": "That took too long, please try again"}
-        charts = out.get("charts") or []
-        if "error" in out or not charts:
+            out, image = {"error": "That took too long, please try again"}, None
+        if "error" in out or image is None:
             await toast_quietly(query, fit(str(out.get("error") or "No chart came of it for that period"), TOAST_LIMIT))
             return
-        png, title, newest = await asyncio.to_thread(self._draw, charts[0])   # (drawn before the toast, so a failure can be toasted)
+        png, (title, newest) = image.png, await asyncio.to_thread(self._titled, image.chart)
         await drawing(label)
-        drawn = charts[0].get("drawn_by") or {"tool": tool, "arguments": args, "periods": drawn_by.get("periods")}
+        drawn = image.chart.get("drawn_by") or {"tool": tool, "arguments": args, "periods": drawn_by.get("periods")}
         text = out.get("caption") or out.get("answer") or ""
-        self.images.put(key, png, title, text or None, newest=newest, drawn_by=drawn)
+        self.images.put(key, png, title, text or None, newest=newest, drawn_by=drawn, dark=image.dark)
         row = periods.periods_keyboard(drawn, period, now, self.cfg.tz)
         if not await self._redraw(message, text if words else "", png, title, row, {"drawn_by": drawn, "words": words}, key):
             sent = await deliver(message, text if words else "", [png], titles=[title], period_row=row)
@@ -1267,8 +1301,8 @@ class Bot:
                     return
                 if drawn is None:
                     return
-                png, title, caption, newest, by, _ = drawn
-                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL, newest=newest, drawn_by=by)
+                png, title, caption, newest, by = drawn[:5]
+                self.images.put(key, png, title, caption, ttl=self.images.PRELOAD_TTL, newest=newest, drawn_by=by, dark=drawn.dark)
                 if self.preload_off:   # an upload was refused meanwhile
                     return
                 if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:
@@ -1321,8 +1355,8 @@ class Bot:
                 continue
             if made is None:   # it drew no chart (its source is not there)
                 continue
-            png, title, caption, newest, drawn_by, _ = made
-            self.images.put(key, png, title, caption, newest=newest, drawn_by=drawn_by)
+            png, title, caption, newest, drawn_by = made[:5]
+            self.images.put(key, png, title, caption, newest=newest, drawn_by=drawn_by, dark=made.dark)
             drawn += 1
             if chat is not None and not self.preload_off:
                 if (why := await self._upload_ahead(bot, chat, key, png, title)) is not None:

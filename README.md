@@ -79,7 +79,7 @@ sudo python3.13 -m venv /opt/ecobot/.venv
 ```
 
 ```
-sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/ecobot/requirements-charts.txt
 ```
 
 ```
@@ -176,6 +176,8 @@ say) can use it with their own token from `MCP_SERVICE_TOKENS`: add your machine
 `MCP_SERVICE_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. It is plain HTTP: keep it on your own network.
 Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in `compose.yaml` to
 `127.0.0.1:8765:8765`.
+A client that shows pictures can have the charts as images: add `?charts=png` to its URL (`http://192.168.1.5:8765/mcp?charts=png`).
+The image has Pillow, which draws them; a service installed by hand from `requirements.txt` alone sends the charts' data instead.
 
 From then on, `sudo docker compose --profile service up -d --build` updates both. To go back: `sudo docker compose --profile service down`
 (it stops both), remove the lines from step 1, then `sudo docker compose up -d`.
@@ -214,7 +216,7 @@ cd /opt/ecobot && sudo git pull
 ```
 
 ```
-sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/ecobot/requirements-charts.txt
 ```
 
 ```

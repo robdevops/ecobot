@@ -11,10 +11,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-inter \
  && mkdir /fonts \
  && find /usr/share/fonts -name 'Inter-Regular.*' -o -name 'Inter-SemiBold.*' -o -name 'Inter-Bold.*' | xargs cp -t /fonts
-COPY requirements.txt /tmp/
-# The base image's pip installs into a venv made without one
+COPY requirements.txt requirements-charts.txt /tmp/
+# The base image's pip installs into a venv made without one; with Pillow (requirements-charts.txt): the bot draws its charts, and the
+# service sends them as images when a client asks
 RUN python -m venv --without-pip /opt/venv \
- && pip --python /opt/venv/bin/python install --no-cache-dir --no-compile --root-user-action=ignore -r /tmp/requirements.txt \
+ && pip --python /opt/venv/bin/python install --no-cache-dir --no-compile --root-user-action=ignore -r /tmp/requirements.txt -r /tmp/requirements-charts.txt \
  && find /opt/venv -type d -name tests -prune -exec rm -rf {} +
 
 FROM base

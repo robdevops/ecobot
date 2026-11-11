@@ -8,6 +8,12 @@ token check.
     `_meta` (`chart_points`, `fetch`, `priority`: common.request_meta) and answers its JSON as one text block, unchanged: its charts are
     the full chart JSON (3.7), sized by `chart_points`. A refusal is `isError`. A complete answer (3.7: `chart_answers_it` and a chart)
     also carries its `reply` as a second text block for the person (`audience: ["user"]`) and result `_meta` {"ecobot/complete": true}.
+  - **Chart images** (3.7, lib/chart_images.py), for a connection whose MCP URL asks (`/mcp?charts=png`) or a call whose `_meta` does
+    (`chart_image`: "png", or "none" against the connection's): the text block's charts are each {title, period} with a `chart_note` that
+    fits an attached image, followed by one ImageContent (image/png) per chart in order, drawn as the bot draws them (lib/charts,
+    off the event loop) from every point (`chart_points` "drawn" unless the call says); the full chart JSON, with drawn_by, is in
+    result `_meta` "ecobot/charts" and the theme in "ecobot/chart_dark" (DARKMODE, or the call's `chart_dark`). Pillow is imported at
+    the first image: without it the answer is the JSON as without images, with `chart_image_note` saying so.
   - **Resources** (3.4): RESOURCES, and the alerts with `since` and `expired` (the ALERTS_TEMPLATE). Each is JSON. The live ones are
     published as ResourceUpdated when they change (`publish_changes`, every PUBLISH_SECONDS, from what the sources keep: no request is
     made for it; a reading asked for again and unchanged is not sent), the alerts on each new event (`watch_alerts`, lib/alert_log.py
@@ -21,6 +27,7 @@ token check.
 fetches, alerts or writes: ecobot_service runs the sources and the rules."""
 
 import asyncio
+import base64
 import hmac
 import json
 import logging
@@ -39,13 +46,15 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, Res
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 
+from . import chart_images
 from .config import ROOT
 from .service import Service
 from .service.about import AboutTool, alerts as alert_kinds
-from .service.common import iso
+from .service.common import AS_DRAWN, charts_as_titles, iso
 from .service.current import CurrentTool
 from .service.instructions import instructions
 from .service.names import AIR_DEVICE, STATION, Catalogue
+from .tools import json_result
 
 log = logging.getLogger(__name__)
 requests_log = logging.getLogger(__name__ + ".requests")   # one line per HTTP request (RequestLog)
@@ -125,19 +134,45 @@ def tool_entry(tool) -> types.Tool:
                       annotations=types.ToolAnnotations(read_only_hint=tool.read_only, open_world_hint=tool.open_world))
 
 
-def tool_result(text: str) -> types.CallToolResult:
-    """A ServiceTool's answer as tools/call gives it: the JSON as one text block, unchanged; `isError` for a refusal; a complete answer
-    (3.7) with its reply for the person as a second block (audience user) and result _meta {COMPLETE: true}."""
+def _loads(text: str):
     try:
-        data = json.loads(text)
+        return json.loads(text)
     except ValueError:
-        data = None
-    content: list = [types.TextContent(text=text)]
-    meta = None
+        return None
+
+
+def charts_of(data) -> list[dict]:
+    """The charts of a tool's answer (none for a refusal)."""
+    charts = data.get("charts") if isinstance(data, dict) and "error" not in data else None
+    return charts if isinstance(charts, list) and charts and all(isinstance(c, dict) for c in charts) else []
+
+
+def tool_result(text: str, images: list[bytes] | None = None, dark: bool | None = None, note: str | None = None) -> types.CallToolResult:
+    """A ServiceTool's answer as tools/call gives it: the JSON as one text block, unchanged; `isError` for a refusal; a complete answer
+    (3.7) with its reply for the person as a last block (audience user) and result _meta {COMPLETE: true}. With `images` (a PNG per
+    chart): the charts in the text as {title, period} and chart_note IMAGE_NOTE, an ImageContent per chart after it, and result _meta
+    {CHARTS_META: the full charts, DARK_META: dark}. `note`: why images asked for aren't there (`chart_image_note`)."""
+    data = _loads(text)
+    content: list = []
+    meta = {}
+    if images and (charts := charts_of(data)) and len(images) == len(charts):
+        content.append(types.TextContent(text=json_result(charts_as_titles(data, chart_images.IMAGE_NOTE))))
+        content += [types.ImageContent(data=base64.b64encode(png).decode("ascii"), mime_type=chart_images.PNG) for png in images]
+        meta.update({chart_images.CHARTS_META: charts, chart_images.DARK_META: bool(dark)})
+    elif note and charts_of(data):
+        content.append(types.TextContent(text=json_result({**data, "chart_image_note": note})))
+    else:
+        content.append(types.TextContent(text=text))
     if isinstance(data, dict) and data.get("complete") is True and isinstance(data.get("reply"), str) and "error" not in data:
         content.append(types.TextContent(text=data["reply"], annotations=types.Annotations(audience=["user"])))
-        meta = {COMPLETE: True}
-    return types.CallToolResult(content=content, is_error=isinstance(data, dict) and "error" in data, _meta=meta)
+        meta[COMPLETE] = True
+    return types.CallToolResult(content=content, is_error=isinstance(data, dict) and "error" in data, _meta=meta or None)
+
+
+def connection_query(ctx, name: str) -> str | None:
+    """A query parameter of the connection's MCP URL (`/mcp?charts=png`), from the HTTP request the call came in (None in memory)."""
+    params = getattr(getattr(ctx, "request", None), "query_params", None)
+    return params.get(name) if params is not None else None
 
 
 # ---------- auth ----------
@@ -205,7 +240,23 @@ class EcobotServer:
         tool = self._service.get(params.name)
         if tool is None:
             raise MCPError(types.INVALID_PARAMS, f"No tool {params.name!r}: the tools are {', '.join(t.name for t in self._service)}.")
-        return tool_result(await tool.call(params.arguments or {}, dict(ctx.meta or {})))
+        meta = dict(ctx.meta or {})
+        if not chart_images.wanted(meta, connection_query(ctx, "charts")):
+            return tool_result(await tool.call(params.arguments or {}, meta))
+        render = chart_images.renderer()   # (Pillow imported now, at the first image asked for)
+        if render is None:
+            return tool_result(await tool.call(params.arguments or {}, meta), note=chart_images.UNAVAILABLE_NOTE)
+        text = await tool.call(params.arguments or {}, {"chart_points": AS_DRAWN, **meta})   # (the picture from every point, as the bot's)
+        if not (charts := charts_of(_loads(text))):
+            return tool_result(text)
+        dark = chart_images.asked_dark(meta)
+        dark = render.dark_now() if dark is None else dark
+        try:
+            pngs = await asyncio.to_thread(lambda: [chart_images.render(c, self.ctx.zone, dark)[0] for c in charts])
+        except Exception as e:
+            log.error("MCP: %s's chart couldn't be drawn: %s: %s", params.name, type(e).__name__, e)
+            return tool_result(text, note=chart_images.NOT_DRAWN_NOTE)
+        return tool_result(text, pngs, dark)
 
     async def refresh_catalogue(self) -> bool:
         """Read the file's catalogue of readings again; when it gained a reading (a sensor sent a field it never sent), build the tools
@@ -506,5 +557,5 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
     return app
 
 
-__all__ = ["ALERTS_TEMPLATE", "ALERTS_URI", "COMPLETE", "EcobotServer", "PROMPTS", "RESOURCES", "TokenCheck", "host_settings", "http_app",
-           "prompt", "tool_entry", "tool_result"]
+__all__ = ["ALERTS_TEMPLATE", "ALERTS_URI", "COMPLETE", "EcobotServer", "PROMPTS", "RESOURCES", "TokenCheck", "charts_of", "connection_query",
+           "host_settings", "http_app", "prompt", "tool_entry", "tool_result"]

@@ -70,7 +70,7 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | `CHART_ALL_FEELS_LIKE` | `off` | Add feels-like panel to "weather all week" |
 | `CHART_ALL_VPD` | `off` | Add VPD panel to "weather all week" |
 | `TELEGRAM_PRELOAD_CHAT` | off | Chat id (negative: group/channel) to pre-upload charts to: the other periods of each chart asked for, and, while the bot has been used in the last 15 minutes, the keyboard's charts every 5 minutes. Bot must be able to post there. Copies used for 30 min. Refused upload → no retry until restart |
-| `DARKMODE` | `off` | The charts' colours. `off`: light; `on`: dark; a time range, e.g. `8pm-8am`, `20:00-8:00` or `20-8`: dark between those times in the bot's time zone (the weather station's), light the rest of the day. The dashboard's gauges are dark whatever this says. |
+| `DARKMODE` | `off` | The charts' colours. `off`: light; `on`: dark; a time range, e.g. `8pm-8am`, `20:00-8:00` or `20-8`: dark between those times in the bot's time zone (the weather station's), light the rest of the day. The dashboard's gauges are dark whatever this says. The service reads it too, for the chart images it sends a client that asks for them (a call may say `chart_dark`); the bot as its client asks for its own theme, so this is the bot's setting for its pictures either way. |
 
 ### Storage and logging
 
@@ -90,6 +90,8 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 | `MCP_SERVICE_BIND` | `127.0.0.1:8765` | `host:port` it listens on (`[::1]:8765` for IPv6). Serve it to other machines through TLS (a reverse proxy such as Caddy) |
 | `MCP_SERVICE_ALLOWED_HOSTS` | `127.0.0.1,localhost` | The `Host` names it answers, any port unless one is given (`weather.lan`, `192.168.1.5:8765`); any other is refused (421), against DNS rebinding. Add the name a proxy or a LAN client uses |
 
+Chart images are not a setting of the service but of each client: a client whose MCP URL ends `?charts=png` (`http://127.0.0.1:8765/mcp?charts=png`) gets each chart as a PNG beside the figures, drawn in `DARKMODE`'s theme; a call's request `_meta` `chart_image` (`"png"` or `"none"`) overrides its connection's ([mcp-service.md](mcp-service.md) 3.7). They need Pillow (`requirements-charts.txt`, in the Docker image): installed from `requirements.txt` alone the service answers with the charts' JSON and a note, and warns once.
+
 
 ### The bot as the service's client
 
@@ -97,6 +99,8 @@ At least one of Ecowitt, AirGradient (cloud or local) must be configured.
 |---|---|---|
 | `WEATHER_MCP_URL` | none | The service's MCP endpoint (`http://127.0.0.1:8765/mcp`, or its TLS address behind a proxy). Set: the bot is a client of the service ([mcp-service.md](mcp-service.md) step 5): it starts no sources, syncers or alert rules of its own, so the source settings (`ECOWITT_*`, `HOMEASSISTANT_*`, `AIRGRADIENT_*`, `POLLEN`, `FORECAST` …) are the service's and the bot needs none of them; its tools, the server's instructions, the station (time zone, sensors, which alerts there are) and the alerts come from the service. Unset: the bot runs the service inside itself, as before |
 | `WEATHER_MCP_TOKEN` | none | The bearer token the bot sends: one of the service's `MCP_SERVICE_TOKENS` (give the bot its own) |
+
+The bot asks the service for the pictures of the charts it draws ahead, of the period buttons and of the alerts (request `_meta` `chart_image: "png"`, in its own `DARKMODE` theme), so its `WEATHER_MCP_URL` needs no `?charts=png`; a question's charts and the dashboard it still draws itself.
 
 While the service can't be reached the bot tells whoever asks so, and reconnects by itself (1, 2, 5, 10, then every 30 seconds); the
 alerts sent meanwhile that are still news are delivered once it is back. The irrigation controller (`TUYA_*`) stays the bot's: its daily
