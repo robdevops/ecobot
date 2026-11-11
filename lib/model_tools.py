@@ -3,7 +3,7 @@ and parameters, as they are. The bot draws nothing: over the weather service as 
 each call asks for its charts as images (request `_meta` `chart_image: "png"`, as drawn: `chart_points: "drawn"`), and keeps each
 whole result on the question's Turn (`Turn.results`: the charts' full JSON, for the period buttons, and the complete result that ends
 the turn; a call that gave no JSON object leaves None) with its pictures (`Turn.pictures`, by the result's place: the bot sends them);
-over the service's tools alone (a lib.service.Service, in tests) the result has no pictures. The model is never sent an image: it is
+over the service's tools alone (a lib.service.Service: the evals, scripts/show_request.py) the result has no pictures. The model is never sent an image: it is
 sent the result less the charts' data (`for_model`): each chart as its title and period, with `caption`, `reply` and `complete` as
 they are, and `chart_note` the bot's (BOT_CHART_NOTE: the bot sends the picture with the reply as its caption)."""
 

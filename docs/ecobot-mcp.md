@@ -414,7 +414,7 @@ Charts are data: the client draws them, or its model does from the numbers.
   `MCP_CHART_BASE_URL`'s (where a proxy serves `/charts` to browsers, e.g. nginx's `location /ecobot-charts/ { proxy_pass
   http://127.0.0.1:8765/charts/; }`), else the MCP request's own scheme and host (`X-Forwarded-Proto`, `X-Forwarded-Host` when
   present) with `/charts`.
-- **Our bot** has every chart it sends drawn by the service (step 6a): in-process with the same renderer, remote as images
+- **Our bot** has every chart it sends drawn by the service (step 6a), as images
   (`chart_image: "png"`, in its own theme, `chart_dark`, which it keeps with each picture in its image cache): the charts drawn ahead,
   the period buttons, the alerts' pictures and their 🔄, a sentence answered in code and the model's answers' charts (each call the
   model makes asks for its pictures; the bot keeps them and the charts' JSON from `_meta` for the period buttons, and the model is sent
@@ -705,6 +705,25 @@ Each step ships on its own, with the tests and evals green and the bot working t
    - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,
      the alert rules and the alert log itself) is deleted. Under systemd, `ecobot.service` wants and starts after `ecobot-mcp.service`;
      in Docker this is already the layout. The bot's image installs only its own packages (python-telegram-bot, openai, mcp, httpx).
+     *Done:* without `BOT_MCP_URL` the bot stops at start, saying to run ecobot-mcp and set it (`lib/config.py` `NO_SERVICE`); the bot
+     reads only its own settings (`BOT_`) and the shared ones, ecobot-mcp's (`MCP_`) keeping their defaults in its `Config`.
+     `ecobot.py` only connects (`connect`, `RemoteWeather`): `LocalWeather`, the bot's start of the sources, the syncers, the alert rules
+     and the alert log, the keep-warm, the archive, the backfills, Home Assistant's imports and the data-folder lock from the bot's side are
+     gone, with what only they used (the sources' `wants` and `poke`, the warmer's question-started refresh, `Core.start_alerts`'s move
+     of the rules' state out of the bot's file, the irrigation check reading the station's own rows: it asks `summary` for the rain).
+     `Bot(cfg, agent, state, irrigation, tasks, service=weather)` takes ecobot-mcp as the bot reaches it and nothing else; an alert's
+     picture is always ecobot-mcp's (`lib/alerts/pictures.chart(text, tz, weather)`, `picture_of(data, tz, weather)`). The bot's modules
+     import no source module: `lib/ecowitt/calendar.py` is `lib/public_holidays.py` (the period reader's), `version()` is
+     `lib/version.py`, `RAIN_FROM_PCT` is `lib/alerts/kinds.py`'s. Under systemd `ecobot.service` has `Wants=` and `After=`
+     `ecobot-mcp.service`, and the README installs and enables both, ecobot-mcp first (with upgrade notes for a bot that ran alone). The
+     bot's Docker image installs `requirements-bot.txt` alone (python-telegram-bot, openai, mcp, httpx; `requirements.txt` is both
+     programs', for a systemd install's one venv) and its build checks the bot imports no Pillow and no source module. Tests: the
+     `serve` fixture (`tests/served.py`: the real server over a test's Context or stand-in tools, the bot's `RemoteWeather` connected in
+     memory) is what every test of the bot runs it against; `tests/test_bot.py` (the bot's modules, imported and built with its alert
+     delivery and irrigation check, import no Pillow, no drawing module and no source module, in a subprocess),
+     `tests/test_settings.py` (the bot reads only its own and the shared settings, and stops without `BOT_MCP_URL`),
+     `tests/test_startup.py` (ecobot-mcp's main over the fake sources; the bot's against ecobot-mcp under uvicorn),
+     `tests/test_packaging.py` (requirements-bot.txt, the bot's image, the units and the README's install).
    - **6c. Less code in the bot.**
      - Typed shortcuts go: anything typed goes to the model (`lib/intent.py`'s pattern matching, `chart_call`, the dashboard and
        report words). Buttons stay instant because each is a fixed call.

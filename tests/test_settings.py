@@ -37,10 +37,17 @@ def test_every_setting_is_named_for_the_program_that_reads_it():
 
 
 def bot_settings(monkeypatch, tmp_path):
+    """What both programs need to start: the bot's token and ecobot-mcp's address (the bot's), a station (ecobot-mcp's)."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "1:x")
+    monkeypatch.setenv("BOT_MCP_URL", "http://127.0.0.1:8765/mcp")
     monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
     monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
+
+
+def read_by(name: str) -> dict:
+    """How the program that reads a setting reads its settings: ecobot-mcp's (MCP_) by ecobot-mcp, the others by the bot."""
+    return {"bot": not name.startswith("MCP_")}
 
 
 OLD_AND_NEW = [("ECOWITT_API_KEY", "MCP_ECOWITT_API_KEY", "ecowitt_api_key", "k3y", "k3y"),
@@ -65,13 +72,15 @@ OLD_AND_NEW = [("ECOWITT_API_KEY", "MCP_ECOWITT_API_KEY", "ecowitt_api_key", "k3
 @pytest.mark.parametrize("old, new, attr, text, want", OLD_AND_NEW, ids=[row[0] for row in OLD_AND_NEW])
 def test_a_setting_is_read_by_its_new_name_or_its_old_one_with_a_warning(monkeypatch, tmp_path, caplog, old, new, attr, text, want):
     bot_settings(monkeypatch, tmp_path)
+    if new == "BOT_MCP_URL":
+        monkeypatch.delenv(new)
     monkeypatch.setenv(new, text)
     caplog.clear()
-    assert getattr(Config.from_env(), attr) == want and "Old setting names" not in caplog.text
+    assert getattr(Config.from_env(**read_by(new)), attr) == want and "Old setting names" not in caplog.text
     monkeypatch.delenv(new)
     monkeypatch.setenv(old, text)
     caplog.clear()
-    assert getattr(Config.from_env(), attr) == want
+    assert getattr(Config.from_env(**read_by(new)), attr) == want
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "Old setting names" in r.getMessage()]
     assert len(warnings) == 1 and f"{old} -> {new}" in warnings[0] and (len(text) < 5 or text not in warnings[0])   # (never the value)
     assert env(new) == text.strip()                                     # (the scripts' way in, old names too)
@@ -83,7 +92,7 @@ def test_the_old_names_are_one_warning_and_a_new_name_wins_over_its_old_one(monk
         monkeypatch.setenv(old, value)
     monkeypatch.setenv("BOT_LOG_WIDTH", "30")
     monkeypatch.setenv("LOG_WIDTH", "99")
-    cfg = Config.from_env()
+    cfg = Config.from_env(bot=False)   # (ecobot-mcp reads every name; the bot only its own and the shared ones, below)
     assert cfg.telegram_token == "1:s3cret" and cfg.ecowitt and cfg.log_width == 30
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     renamed = [w for w in warnings if "Old setting names" in w]
@@ -95,6 +104,28 @@ def test_a_value_an_old_name_gives_is_checked_under_that_name(monkeypatch, tmp_p
     bot_settings(monkeypatch, tmp_path)
     monkeypatch.setenv("ADMIN_ONLY", "ture")
     assert Config.from_env().admin_only is False and "ADMIN_ONLY: 'ture' is not on or off" in caplog.text
+
+
+def test_the_bot_reads_only_its_own_settings_and_the_shared_ones_and_cannot_start_without_ecobot_mcp(monkeypatch, tmp_path, caplog):
+    """The bot is ecobot-mcp's client (docs/ecobot-mcp.md step 6b): ecobot-mcp's settings (MCP_, and their old names) are not read by
+    it, and it stops, saying what to do, without BOT_MCP_URL; it needs no source's settings."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "1:x")
+    with pytest.raises(SystemExit, match="BOT_MCP_URL is not set: the bot is a client of ecobot-mcp") as stopped:
+        Config.from_env()
+    assert "python -m ecobot_mcp" in str(stopped.value) and "http://127.0.0.1:8765/mcp" in str(stopped.value)
+    monkeypatch.setenv("BOT_MCP_URL", "http://127.0.0.1:8765/mcp")
+    for name, value in (("MCP_PLACE", "Hobart"), ("RAIN_QUIET_HOURS", "22-6"), ("MCP_ECOWITT_API_KEY", "a"), ("ECOWITT_APP_KEY", "b"),
+                        ("MCP_BIND", "0.0.0.0:9000"), ("DARKMODE", "on"), ("AUTH_TOKENS", "s3cret")):
+        monkeypatch.setenv(name, value)
+    caplog.clear()
+    cfg, service = Config.from_env(), Config.from_env(bot=False)
+    for f in fields(Config):
+        if f.name in MCP_ONLY:
+            assert getattr(cfg, f.name) == f.default, f.name                 # ecobot-mcp's: left at their defaults
+    assert (service.place, service.rain_quiet_hours, service.ecowitt_api_key, service.mcp_bind) == ("Hobart", (22, 6), "a", ("0.0.0.0", 9000))
+    assert cfg.dark_mode == "on" and cfg.auth_tokens == ("s3cret",) and cfg.mcp_url == "http://127.0.0.1:8765/mcp"   # shared, and its own
+    assert sum("RAIN_QUIET_HOURS" in r.getMessage() for r in caplog.records) == 1   # (ecobot-mcp's old name: said by ecobot-mcp alone)
 
 
 # ---------- the token ----------

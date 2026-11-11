@@ -86,8 +86,6 @@ async def main():
         tasks = Tasks()
         core = await Core.open(cfg, sources, stack, tasks)
         stack.push_async_callback(tasks.close)
-        for source in sources:
-            stack.push_async_callback(source.warmer.stop)
         server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version(),
                               chart_base_url=cfg.mcp_chart_base_url, chart_link_hours=cfg.mcp_chart_link_hours)
         hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_allowed_hosts)))   # (its own name too: a container's hostname)

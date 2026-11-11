@@ -1,28 +1,26 @@
-"""ecobot-mcp's tools as the bot reaches them (docs/ecobot-mcp.md section 4 and step 5): one interface, whether they run in this
-process (LocalWeather: lib/service's tools over the bot's own sources, the alert log in this process; BOT_MCP_URL unset, as before)
-or in ecobot-mcp, another program reached over MCP (RemoteWeather: BOT_MCP_URL, a client pinned to protocol 2026-07-28 that one supervisor
-task keeps connected). Everything the bot asks of them goes through it, so the bot doesn't branch on where they run:
+"""ecobot-mcp's tools as the bot reaches them (docs/ecobot-mcp.md section 4, steps 5 and 6): ecobot-mcp is another program, reached over
+MCP at BOT_MCP_URL (RemoteWeather: a client pinned to protocol 2026-07-28 that one supervisor task keeps connected). The bot runs no
+sources of its own and never opens the readings file (step 6b). Everything the bot asks of ecobot-mcp goes through it:
 
-  - `service`: the tools, as lib.service.Service gives them: iterated in order, `get(name)` or `service[name]`, each with its name,
-    description, parameters and `call(args, meta)`, which returns the tool's JSON text (lib/model_tools.py offers them to the model; the
-    bot's shortcuts, report, gauges, charts drawn ahead and period buttons call them);
-  - `names`: the sources the service has ("Ecowitt", "AirGradient", "Forecast", "Pollen"): which alerts, report sections and gauges
-    there are;
+  - `service`: the tools as tools/list gives them: iterated in order, `get(name)` or `service[name]`, each with its name, description,
+    parameters and `call(args, meta)`, which returns the tool's JSON text (lib/model_tools.py offers them to the model; the bot's
+    shortcuts, report, charts drawn ahead and period buttons call them);
+  - `names`: the sources ecobot-mcp has ("Ecowitt", "AirGradient", "Forecast", "Pollen", from ecobot://station): which alerts, report
+    sections and gauges there are;
   - `catalogue()`: the readings it holds (a shortcut's words are read against them); `instructions()`: the server's instructions (from
-    `server/discover` when remote); `air_link()`: the AirGradient dashboard (the live-chart link under an answer about the air);
+    `server/discover`); `air_link()`: the AirGradient dashboard (the live-chart link under an answer about the air);
   - `alerts`: the alert feed lib/alerts/notify.AlertDelivery reads (`last_id`, `identity`, `since`, `wait`), and `alert(id)` one event
     (the 🔄 under an alert replays its chart's drawn_by);
   - `resource(uri)`: a resource's content (ecobot://station, ecobot://forecast ...);
-  - `ready(wait)`: whether it can be reached (in-process, always; remote, once connected, waiting up to `wait` seconds for it);
-  - `call_images(name, args, meta)`: a tool's answer as data (its charts the full JSON, each with its drawn_by) and its charts drawn
-    (ChartImage each: the PNG, the chart's JSON, the theme), the model's calls and the bot's own; `chart_image(name, args, meta)` the
-    same with its first chart alone, and `picture(chart)` a chart's JSON drawn (an alert's). Remote, by the service (request `_meta`
-    `chart_image: "png"`, the images from the result's ImageContent, the charts' JSON and theme from its `_meta`; a chart's picture by
-    replaying its drawn_by), in the bot's own theme (`chart_dark`: its DARKMODE, lib/theme.py, so its image cache's theme holds). The
-    bot draws nothing: a service that sends no image (no Pillow there) gives the answer without its pictures. In-process, ecobot-mcp's
-    part in this process draws them (lib/chart_images.render, or a test's `render`);
-  - `status_picture()`: the Status picture (ecobot://status: the station's temperature, humidity and rain gauges, lib/status.py), as
-    the service draws it; None without one.
+  - `ready(wait)`: whether it can be reached (once connected, waiting up to `wait` seconds for it);
+  - `call_images(name, args, meta)`: a tool's answer as data (its charts the full JSON, each with its drawn_by) and its charts as
+    ecobot-mcp drew them (ChartImage each: the PNG, the chart's JSON, the theme), the model's calls and the bot's own;
+    `chart_image(name, args, meta)` the same with its first chart alone, and `picture(chart)` a chart drawn again (an alert's, by
+    replaying its drawn_by). Asked with request `_meta` `chart_image: "png"` (the images from the result's ImageContent, the charts' JSON
+    and theme from its `_meta`), in the bot's own theme (`chart_dark`: its DARKMODE, lib/theme.py, so its image cache's theme holds). The
+    bot draws nothing: a service that sends no image (no Pillow there) gives the answer without its pictures;
+  - `status_picture()`: the Status picture (ecobot://status: the station's temperature, humidity and rain gauges), as ecobot-mcp draws
+    it; None without one.
 
 For the irrigation check while it is still the bot's (step 8 moves it to its own server): `ServiceRain` (the measured rain, from
 `summary {readings: ["rain"], period: "last 24 hours"}`) and `ServiceForecast` (ecobot://forecast, the last read kept when the service
@@ -38,7 +36,6 @@ from zoneinfo import ZoneInfo
 
 from . import chart_images
 from .service.common import AS_DRAWN, CHART_NOTE
-from .service.instructions import instructions as service_instructions
 from .timeutil import now_local
 
 log = logging.getLogger(__name__)
@@ -77,16 +74,6 @@ def charts_of(out) -> list[dict]:
     return [c for c in charts if isinstance(c, dict)] if isinstance(charts, list) else []
 
 
-async def draw_here(render, chart: dict, tz, dark: bool | None = None) -> ChartImage:
-    """A chart's JSON drawn in this process (off the event loop) by `render(chart, tz, dark)` -> (PNG, dark); ChartNotDrawn when it
-    can't be."""
-    try:
-        png, drawn_dark = await asyncio.to_thread(render, chart, tz, dark)
-    except Exception as e:
-        raise ChartNotDrawn(f"{type(e).__name__}: {e}") from e
-    return ChartImage(png, chart, drawn_dark)
-
-
 def _object(text: str) -> dict | None:
     """A tool's text as the JSON object it is; None when it isn't one."""
     try:
@@ -97,103 +84,9 @@ def _object(text: str) -> dict | None:
 
 
 async def value(x):
-    """x, awaited when it is awaitable: the alert feed's methods are plain in-process and coroutines when remote."""
+    """x, awaited when it is awaitable: the alert feed's methods are plain in an alert log (lib/alert_log.py) and coroutines over MCP
+    (RemoteAlerts)."""
     return await x if asyncio.iscoroutine(x) or isinstance(x, asyncio.Future) else x
-
-
-# ---------- in-process ----------
-class LocalWeather:
-    """The service in this process: its tools (a lib.service.Service, built over `sources` on first use when none is given), the sources
-    it runs over, the alert log."""
-    is_weather, remote = True, False
-
-    def __init__(self, sources=(), service=None, alert_log=None, tz=None, render=None):
-        """render(chart, tz, dark) -> (PNG, dark): how a chart is drawn (None: lib/chart_images.render, as ecobot-mcp draws, read when
-        drawn)."""
-        self.sources, self.alert_log, self.tz = list(sources), alert_log, tz
-        self.by_name = {s.name: s for s in self.sources}
-        self._service = service
-        self.render = render
-
-    @property
-    def service(self):
-        if self._service is None:
-            from .service import Service
-            from .service.context import Context
-            get = self.by_name.get
-            self._service = Service.of(Context(eco=get("Ecowitt"), air=get("AirGradient"), forecast=get("Forecast"), pollen=get("Pollen"),
-                                               tz=self.tz))
-        return self._service
-
-    def __iter__(self):   # (the tools, as the service lists them: lib/model_tools.py follows the list)
-        return iter(self.service)
-
-    @property
-    def names(self) -> set[str]:
-        return set(self.by_name)
-
-    @property
-    def ctx(self):
-        return getattr(self.service, "ctx", None)
-
-    def catalogue(self):
-        if (ctx := self.ctx) is not None:
-            return ctx.readings()
-        from .service.names import Catalogue
-        return Catalogue.of(station="Ecowitt" in self.by_name, air="AirGradient" in self.by_name)
-
-    def instructions(self) -> str:
-        return service_instructions(self.ctx)
-
-    def air_link(self) -> tuple[str, str] | None:
-        return getattr(self.by_name.get("AirGradient"), "link", None)
-
-    @property
-    def alerts(self):
-        return self.alert_log
-
-    async def alert(self, event_id: int) -> dict | None:
-        return self.alert_log.get(event_id) if self.alert_log is not None else None
-
-    async def resource(self, uri: str) -> dict:
-        from .mcp_server import EcobotServer
-        return await EcobotServer(self.ctx, self.alert_log).read(uri)
-
-    async def ready(self, wait: float = 0) -> bool:
-        return True
-
-    async def call_images(self, name: str, args: dict | None = None, meta: dict | None = None) -> tuple[dict | str, list[ChartImage]]:
-        """(the tool's answer as data, each of its charts drawn; the answer's text as it came when it isn't a JSON object)."""
-        meta = dict(meta or {})
-        text = await self.service[name].call(args or {}, meta)
-        out = _object(text)
-        if out is None:
-            return text, []
-        dark, pictures = chart_images.asked_dark(meta), []
-        for chart in charts_of(out):
-            try:
-                pictures.append(await self.picture(chart, dark))
-            except ChartNotDrawn as e:   # (the answer goes without it, as from a service that sends no image)
-                log.error("%s's chart couldn't be drawn: %s", name, e)
-        return out, pictures
-
-    async def chart_image(self, name: str, args: dict | None = None, meta: dict | None = None,
-                          alone: bool = False) -> tuple[dict, ChartImage | None]:
-        """(the tool's answer as data, its first chart drawn; None without a chart, or with more than one when `alone`)."""
-        meta = dict(meta or {})
-        out = json.loads(await self.service[name].call(args or {}, meta))
-        charts = charts_of(out)
-        if not charts or (alone and len(charts) != 1):
-            return out, None
-        return out, await self.picture(charts[0], chart_images.asked_dark(meta))
-
-    async def picture(self, chart: dict, dark: bool | None = None) -> ChartImage:
-        """A chart's JSON drawn (dark None: as DARKMODE says now); ChartNotDrawn when it can't be."""
-        return await draw_here(self.render or chart_images.render, chart, self.tz or getattr(self.ctx, "zone", None), dark)
-
-    async def status_picture(self) -> bytes | None:
-        from .status import status
-        return (await status(self.service))[1]
 
 
 # ---------- over MCP ----------
@@ -241,7 +134,7 @@ class RemoteTools:
 
 
 class RemoteAlerts:
-    """The service's alert log read over MCP (ecobot://alerts and its template with `since`), as AlertDelivery reads the log in process.
+    """The service's alert log read over MCP (ecobot://alerts and its template with `since`), as AlertDelivery reads an alert log.
     A read waits for the service while it can't be reached; `wait` returns when the listen says the alerts changed (ResourceUpdated) or a
     new connection listens (nothing is replayed, so what was missed is read after the last id handled)."""
     remote = True
@@ -305,7 +198,7 @@ class RemoteAlerts:
 PICTURE_WAIT = 8.0   # seconds an alert's picture waits for the service to draw it again, before the alert goes without it
 
 class RemoteWeather:
-    """The service at `target` (its MCP URL; in tests, a Server in-process), as the bot's interface. `run()` is the supervisor (the
+    """The service at `target` (its MCP URL; in tests, a Server in memory), as the bot's interface. `run()` is the supervisor (the
     lib/upstream.py's Upstream: one client, discovered by hand for the instructions, listening; on a transport error or a lost or ended listen it
     is dropped and built again after a backoff, which discovers and listens again). Each new connection reads the tool list and the
     station; the listen's events keep them current (ToolsListChanged, the station's and the forecast's ResourceUpdated) and wake the
@@ -592,4 +485,4 @@ class ServiceForecast:
         return [d for d in (self.days or []) if d["date"] >= today][:count]
 
 
-__all__ = ["ChartImage", "ChartNotDrawn", "LocalWeather", "RemoteWeather", "ServiceForecast", "ServiceRain", "ServiceUnreachable", "UNREACHABLE", "value"]
+__all__ = ["ChartImage", "ChartNotDrawn", "RemoteWeather", "ServiceForecast", "ServiceRain", "ServiceUnreachable", "UNREACHABLE", "value"]

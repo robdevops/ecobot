@@ -273,10 +273,9 @@ class AlertDelivery:
     delivery goes on in the new log with what came since the old one was last read (_switched)."""
 
     def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time, weather=None):
-        """log: the alert log in this process (lib/alert_log.py), or the remote service's read over MCP (lib/weather.RemoteAlerts, whose
-        reads are coroutines: it is looked at when `run` starts). now: the epoch clock (the events' times are compared with it).
-        weather: the service as the bot reaches it (lib/weather.py), which draws the events' charts (a remote one, on the service);
-        without it they are drawn here."""
+        """log: ecobot-mcp's alert log read over MCP (lib/weather.RemoteAlerts, whose reads are coroutines: it is looked at when `run`
+        starts), or an alert log itself (lib/alert_log.py: the tests', whose reads are plain). now: the epoch clock (the events' times are compared with it).
+        weather: ecobot-mcp as the bot reaches it (lib/weather.py), which draws the events' charts; without it they go without."""
         self.log, self.notify, self.state, self.tz, self.now, self.weather = log, notify, state, tz, now, weather
         self.begun = False
         self.seen_at: float | None = None   # when the log was last read through (a pass of deliver_new began): see _switched
@@ -373,7 +372,7 @@ class AlertDelivery:
         """One event to the chats subscribed to its kind; returns how many it reached."""
         link = (event["link"]["label"], event["link"]["url"]) if event.get("link") else None
         chart, data, since = None, event.get("chart"), None
-        if data:
+        if data and self.weather is not None:
             from ..specs import from_json
             try:
                 since = from_json(data).newest
@@ -381,5 +380,5 @@ class AlertDelivery:
                 since = None
 
             async def chart() -> Picture | None:
-                return await (picture_of(data, self.tz) if self.weather is None else picture_of(data, self.tz, self.weather))
+                return await picture_of(data, self.tz, self.weather)
         return await self.notify(event["text"], kind=event["kind"], link=link, chart=chart, since=since, event=event["id"])

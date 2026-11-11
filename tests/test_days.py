@@ -214,7 +214,7 @@ async def test_weekends_and_unknown_places(station):
 
 
 async def test_a_missing_holidays_package_is_explained_not_guessed(station, monkeypatch):
-    from lib.ecowitt import calendar
+    from lib import public_holidays as calendar
     eco, _ = station
     monkeypatch.setattr(calendar, "holidays", None)
     out = await ask(eco, start_date="2026-01-01", end_date="2026-02-01", only="public_holiday")

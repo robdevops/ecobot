@@ -22,7 +22,7 @@ from lib.service.context import Context  # noqa: E402
 
 async def main():
     parser(__doc__).parse_args()
-    cfg = Config.from_env()
+    cfg = Config.from_env(bot=False)   # (ecobot-mcp's settings: the sources)
     sources, cfg = await start_sources(cfg)
     try:
         by_name = {s.name: s for s in sources}

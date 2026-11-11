@@ -14,11 +14,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from ..ecowitt.rain import rain_amount
 from ..irrigation.tuya import is_paused
 from ..timeutil import local_epoch, now_local, seconds_until, when
-from .forecast import RAIN_FROM_PCT
-from .kinds import kinds_of
+from .kinds import RAIN_FROM_PCT, kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -33,9 +31,8 @@ class IrrigationMonitor:
     KINDS = kinds_of("Irrigation")
 
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
-        """station: the Ecowitt source (its recent() gives the measured rain), or, with the weather service remote, what asks it for the
-        measured rain (lib/weather.ServiceRain: rain_mm()); forecast: the Forecast source, or the forecast read from the service
-        (lib/weather.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be None."""
+        """station: what asks ecobot-mcp for the measured rain (lib/weather.ServiceRain: rain_mm()); forecast: the forecast read from
+        it (lib/weather.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be None."""
         self._rezoned = asyncio.Event()
         self.device, self.state, self.notify, self.tz, self.hour = device, state, notify, tz, hour
         self.station, self.forecast = station, forecast
@@ -121,11 +118,7 @@ class IrrigationMonitor:
         """Why the irrigation should be delayed (what rained or will), or None. `now` is local."""
         if self.station is not None:
             try:
-                if (asked := getattr(self.station, "rain_mm", None)) is not None:   # the weather service's summary of the rain
-                    fell = await asked(MEASURED_HOURS)
-                else:
-                    rows = await self.station.recent(MEASURED_HOURS)
-                    fell = rain_amount(rows, rows[0][0], rows[-1][0]) if rows else None
+                fell = await self.station.rain_mm(MEASURED_HOURS)   # the weather service's summary of the rain
             except Exception as e:   # the forecast can still decide
                 log.warning("Irrigation: the measured rain is unavailable (%s: %s)", type(e).__name__, e)
                 fell = None

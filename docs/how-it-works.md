@@ -9,7 +9,9 @@ The bot logs DEBUG and INFO lines to stdout and WARN and ERROR lines to stderr (
 ## Layout
 
 ```
-ecobot.py            wiring and lifecycle
+ecobot.py            the bot's wiring and lifecycle: ecobot-mcp's client (BOT_MCP_URL), it runs no source of its own
+ecobot_mcp/             ecobot-mcp (python -m ecobot_mcp): its startup (core.py: the sources, their syncers, the alert rules), the MCP server
+lib/weather.py          ecobot-mcp as the bot reaches it, over MCP (RemoteWeather); lib/upstream.py keeps the connection
 lib/config.py           settings
 lib/logs.py             how log lines look: the module that spoke, and quoted requests and chat messages cut to BOT_LOG_WIDTH
 lib/bot.py              Telegram handlers and replies; every button press comes in through one entry point that checks it first
@@ -45,7 +47,7 @@ scripts/                ecowitt_metrics.py (which metrics the station reports), 
 
 A design for tappable commands and buttons is in `TELEGRAM_UX.md` (not built yet).
 
-Both sources have the same shape: `start()`, `tools`, `warm()`, `poke()`, `close()`.
+The sources (ecobot-mcp's) have the same shape: `start()`, `warm()`, `close()`, and a `warmer` that refreshes them on a timer.
 
 ## The pollen and forecast sources
 Both are off by default. They are websites, not APIs (the pollen page is parsed), so they are fetched gently: only between 6 am and 6 pm local time, pollen every 30 minutes with a conditional request (a 304 costs the site almost nothing) and the forecast every 15 minutes (a failure is logged), and questions use the last fetch. The forecast's rain figure is the Bureau-style "chance of at least 1 mm": the share of Open-Meteo's ECMWF ensemble members (51) that put 1 mm or more on the day, to the nearest 5% (a second request to `ensemble-api.open-meteo.com`; if it is down, Open-Meteo's own figure, the chance of more than 0.1 mm in the wettest hour, is shown as "chance of rain"). The report never fetches them: it always uses the cache. When a forecast day that was sent to a chat (in a report or an answer) is later revised substantially (rain to dry or dry to rain, or the highest temperature more than 2 degrees different), that chat is told, once per revision (`lib/alerts/forecast.py`). What they returned is kept in `conditions_cache.sqlite` (one row per distinct result), so a restart, even at night, starts from the last fetch. One fetch is made at start (or at the first question) when nothing is cached, even at night. `python scripts/conditions.py --lat .. --lon ..` fetches both once and prints what the report would show: run it before switching them on. Grass pollen and the thunderstorm asthma forecast both run October to December, so the pollen source only fetches, shows (in the report or an answer) and alerts in those months; outside them it makes no requests (not even at start), the report has no Pollen & asthma block, and a pollen question is told they only run October to December.
@@ -57,7 +59,7 @@ Both are off by default. They are websites, not APIs (the pollen page is parsed)
 - The model only reasons for predictions ("will it rain?") and "describe it" questions, or when asked to think, try, reason, predict, estimate, grind or whirl.
 - Simple highs/lows, chart and "air quality now" questions are fetched by the bot first, so the
   model is called once, at the end, just to word the answer.
-- Recent readings are refreshed every minute (the weather station: written to its storage, those still settling as provisional readings the next fetch replaces) and every 4 minutes (the air sensor, in memory); a question that may need them starts a refresh as it arrives (a chart made in code doesn't: it reads just what it needs). A question never waits for a refresh in flight when the storage already holds what it needs (the newest readings for 5 minutes after they were fetched), and its own Ecowitt requests go before the background ones.
+- Recent readings are refreshed every minute (the weather station: written to its storage, those still settling as provisional readings the next fetch replaces) and every 4 minutes (the air sensor, in memory), by ecobot-mcp. A question never waits for a refresh in flight when the storage already holds what it needs (the newest readings for 5 minutes after they were fetched), and its own Ecowitt requests go before the background ones.
 - A chart is drawn when it is asked for (a question, a button, an alert), and uploaded once: sending it again (to the next chat an alert goes to, toggling back to a period drawn lately, the next press of a button) uses Telegram's copy. The keyboard's charts, and the chart of each alert type sent in the last 6 hours, are drawn afresh every 5 minutes once the sources are warm, so a press, or the Refresh under an alert, is answered with a chart already drawn (`Bot.draw_buttons_ahead`); with `BOT_TELEGRAM_PRELOAD_CHAT` they are uploaded ahead too while the bot has been used in the last 15 minutes, as are the other periods of any chart asked for, so the press sends Telegram's copy. An alert's chart is kept with the bot's other charts (`lib/alerts/pictures.py`, `AlertCharts`): an alert whose chart the bot holds with the alert's newest reading sends that (Telegram's copy once it has been sent anywhere), and Refresh sends the chart drawn ahead since the message was last changed, else draws one and keeps it.
 - Each chart reply logs (at DEBUG) where its time went: `Chart ms: data 12, calc 6, draw 112, PNG 41 (22 KB), send 812`, or `Chart ms: drawn 40s ago, send 210 (Telegram's copy)` for one drawn lately.
 - The whole history of both sensors, and the last pollen page and forecast, are kept in one SQLite file, `ecobot.sqlite` (`lib/storage`,

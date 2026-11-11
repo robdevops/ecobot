@@ -31,7 +31,7 @@ from datetime import date, datetime, time, timedelta
 from ..airgradient.days import ALWAYS_SHOWN as AIR_SHOWN, FIELDS as AIR_UNITS
 from ..daytable import MAX_LIMIT, OPS, STATS, analyse, lists_days, prepare
 from ..ecowitt.api import daily_run, unit_text
-from ..ecowitt.calendar import PublicHolidays
+from ..public_holidays import PublicHolidays
 from ..ecowitt.days import ALWAYS_SHOWN as STATION_SHOWN, AVERAGED, COARSER, FIELDS as STATION_FIELDS, PARTS, day_values_on
 from ..partday import ALLOWED, CLOCK_CHANGE, NOT_HELD, NOT_OVER, PartDays, Stretch, over, parse_stretch, stretch_figures
 from ..specs import AIR_SOURCE, CHART_SOURCE, ECOWITT_SOURCE

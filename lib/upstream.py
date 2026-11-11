@@ -60,7 +60,7 @@ def _leaf(e: BaseException) -> BaseException:
 
 class Upstream:
     """The one client of ecobot-mcp, owned by one supervisor task (`run`): built, discovered and listening; dropped when it fails or
-    its listen is lost or ends, and built again after a backoff. `target`: ecobot-mcp's URL, or (in tests) a Server in-process. `token`: the
+    its listen is lost or ends, and built again after a backoff. `target`: ecobot-mcp's URL, or (in tests) a Server in memory. `token`: the
     bearer token, or a function giving it (called for each connection), or None."""
 
     def __init__(self, target, token=None, on_event=None, on_discover=None, on_listening=None, resources=None):

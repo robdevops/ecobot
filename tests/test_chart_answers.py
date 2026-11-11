@@ -34,10 +34,12 @@ class StandIn:
         return json.dumps(self.result, ensure_ascii=False)
 
 
-async def ask(alert_state, script, tools, text=ONLY_A_CHART):
-    """`text` through the bot's model call with a scripted model: (reply, the model's requests, the turn, the conversation)."""
+async def ask(serve, alert_state, script, tools, text=ONLY_A_CHART):
+    """`text` through the bot's model call with a scripted model, `tools` served by ecobot-mcp in memory: (reply, the model's requests,
+    the turn, the conversation)."""
     client = FakeLLM(script)
-    bot = Bot(NS(tz=TZ), llm.Agent(client, "m", model_tools.tools(tools)), [], alert_state)
+    weather = await serve(tools=tools)
+    bot = Bot(NS(tz=TZ), llm.Agent(client, "m", model_tools.tools(weather)), alert_state, service=weather)
     read = intent.read(text, NOW)
     turn = Turn()
     working = [{"role": "user", "content": text}]
@@ -45,42 +47,42 @@ async def ask(alert_state, script, tools, text=ONLY_A_CHART):
     return reply, client.requests, turn, working
 
 
-async def test_a_complete_result_is_the_reply_and_the_model_is_asked_once(alert_state, caplog):
+async def test_a_complete_result_is_the_reply_and_the_model_is_asked_once(serve, alert_state, caplog):
     tool = StandIn()
     assert intent.read(ONLY_A_CHART, NOW).chart is None                       # the model takes it, not a shortcut
     with caplog.at_level(logging.INFO, logger="lib.llm"):
-        reply, requests, turn, working = await ask(alert_state, [[("summary", ASKED)], "the model's own caption"], [tool])
+        reply, requests, turn, working = await ask(serve, alert_state, [[("summary", ASKED)], "the model's own caption"], [tool])
     assert reply == REPLY and len(requests) == 1 and len(tool.seen) == 1
     assert turn.results[0][2]["charts"] == COMPLETE["charts"]                 # the whole result kept, for drawing
     assert working[-1] == {"role": "assistant", "content": REPLY}           # the conversation keeps it as the answer
     assert any("ended on a complete result (summary): no LLM 2" in r.getMessage() for r in caplog.records)
 
 
-async def test_a_result_that_isnt_complete_leaves_the_answer_to_the_model(alert_state):
+async def test_a_result_that_isnt_complete_leaves_the_answer_to_the_model(serve, alert_state):
     for result in ({k: v for k, v in COMPLETE.items() if k not in ("reply", "complete")},   # no chart_answers_it, or a note to word
                    {**COMPLETE, "charts": []},                                              # complete, but no chart
                    {"error": "That period isn't one of the forms."},                         # refused
                    RuntimeError("Ecowitt is down")):                                         # failed
-        reply, requests, _, _ = await ask(alert_state, [[("summary", ASKED)], "The model's answer."], [StandIn(result=result)])
+        reply, requests, _, _ = await ask(serve, alert_state, [[("summary", ASKED)], "The model's answer."], [StandIn(result=result)])
         assert reply == "The model's answer." and len(requests) == 2, result
 
 
-async def test_a_step_with_any_result_that_isnt_complete_goes_back_to_the_model(alert_state):
+async def test_a_step_with_any_result_that_isnt_complete_goes_back_to_the_model(serve, alert_state):
     complete, plain = StandIn(), StandIn("current", {"lines": {"station": ["• Outdoor: 12 °C"]}})
-    reply, requests, _, _ = await ask(alert_state, [[("summary", ASKED), ("current", {})], "The model's answer."], [complete, plain])
+    reply, requests, _, _ = await ask(serve, alert_state, [[("summary", ASKED), ("current", {})], "The model's answer."], [complete, plain])
     assert reply == "The model's answer." and len(requests) == 2
 
 
-async def test_several_complete_results_are_the_reply_in_the_order_called(alert_state):
+async def test_several_complete_results_are_the_reply_in_the_order_called(serve, alert_state):
     other = {**COMPLETE, "reply": "PM2.5: peak 34.2 µg/m³"}
     days = StandIn("days", other)
-    reply, requests, _, _ = await ask(alert_state, [[("summary", ASKED), ("days", {"group_by": "month", "chart_answers_it": True})], "x"],
+    reply, requests, _, _ = await ask(serve, alert_state, [[("summary", ASKED), ("days", {"group_by": "month", "chart_answers_it": True})], "x"],
                                       [StandIn(), days])
     assert reply == f"{REPLY}\n\nPM2.5: peak 34.2 µg/m³" and len(requests) == 1
 
 
-async def test_the_model_is_sent_the_result_less_the_charts_data(alert_state):
-    _, requests, _, _ = await ask(alert_state, [[("summary", {**ASKED, "chart_answers_it": False})], "Low on Monday."],
+async def test_the_model_is_sent_the_result_less_the_charts_data(serve, alert_state):
+    _, requests, _, _ = await ask(serve, alert_state, [[("summary", {**ASKED, "chart_answers_it": False})], "Low on Monday."],
                                   [StandIn(result={k: v for k, v in COMPLETE.items() if k not in ("reply", "complete")})])
     told = json.loads(requests[1]["messages"][-1]["content"])
     assert told["charts"] == [{"title": "Pressure", "period": COMPLETE["charts"][0]["period"]}] and told["caption"] == REPLY

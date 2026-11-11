@@ -63,6 +63,10 @@ def _required(value: str, default: str, name: str) -> str:
 
 
 REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: ecobot-mcp (python -m ecobot_mcp) runs without them
+MCP_PREFIX = "MCP_"   # ecobot-mcp's own settings: the bot doesn't read them (they keep their defaults in its Config)
+NO_SERVICE = ("BOT_MCP_URL is not set: the bot is a client of ecobot-mcp and can't start without it. Run ecobot-mcp (python -m "
+              "ecobot_mcp, the ecobot-mcp.service unit, or the ecobot-mcp container) and set BOT_MCP_URL to its endpoint, e.g. "
+              "http://127.0.0.1:8765/mcp (docs/configuration.md)")
 
 
 def _tokens(value: str, default: tuple, name: str) -> tuple[str, ...]:
@@ -273,8 +277,7 @@ class Config:
     tz: tzinfo
     state_path: Path
     storage_path: Path                                             # the one file of readings, the pollen page and the forecast (lib/storage)
-    # ecobot-mcp's (python -m ecobot_mcp): the sources, the alert rules and the MCP server. The bot reads them too when it runs all of
-    # that in-process (BOT_MCP_URL unset)
+    # ecobot-mcp's (python -m ecobot_mcp): the sources, the alert rules and the MCP server. The bot doesn't read them
     ecowitt_api_key: str = _setting("MCP_ECOWITT_API_KEY", "", old="ECOWITT_API_KEY")
     ecowitt_app_key: str = _setting("MCP_ECOWITT_APP_KEY", "", old="ECOWITT_APP_KEY")
     ecowitt_source: str = _setting("MCP_ECOWITT_SOURCE", "auto", _source, old="ECOWITT_SOURCE")   # auto: Home Assistant if set, Ecowitt's cloud as its fallback if set too; cloud: the cloud only; homeassistant: Home Assistant only
@@ -315,7 +318,7 @@ class Config:
     tuya_client_secret: str = _setting("BOT_TUYA_CLIENT_SECRET", "", old="TUYA_CLIENT_SECRET")
     tuya_base_url: str = _setting("BOT_TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url, old="TUYA_BASE_URL")   # the data centre's address (EU by default)
     irrigation_check_hour: int = _setting("BOT_IRRIGATION_CHECK_HOUR", 18, _hour, old="IRRIGATION_CHECK_HOUR")   # the local hour of the daily check (0 to 23)
-    mcp_url: str = _setting("BOT_MCP_URL", "", _url, old="WEATHER_MCP_URL")    # ecobot-mcp's endpoint, e.g. http://127.0.0.1:8765/mcp: set, the bot is its client and runs no sources, syncers or alert rules of its own; unset: all of that runs inside the bot
+    mcp_url: str = _setting("BOT_MCP_URL", "", _url, old="WEATHER_MCP_URL")    # ecobot-mcp's endpoint, e.g. http://127.0.0.1:8765/mcp (the bot is its client, and stops without it: NO_SERVICE)
     retired_mcp_token: str = _setting(RETIRED_TOKEN, "")            # retired: sent only when AUTH_TOKENS is unset (ecobot.mcp_token)
     # Both read them
     dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the station's time zone
@@ -378,8 +381,9 @@ class Config:
     @classmethod
     def from_env(cls, bot: bool = True) -> "Config":
         """Every setting from its variable, the files in the data folder. Stops, saying why, when one the bot can't run without is
-        missing or the folder can't be written. bot: False for ecobot-mcp (python -m ecobot_mcp), which has no Telegram token. Old
-        names still read are named in one warning (never their values)."""
+        missing or the folder can't be written. bot: False for ecobot-mcp (python -m ecobot_mcp), which has no Telegram token; the bot
+        reads only its own settings (BOT_) and the shared ones, ecobot-mcp's (MCP_) keeping their defaults. Old names still read are
+        named in one warning (never their values)."""
         data = data_dir()
         try:
             data.mkdir(parents=True, exist_ok=True)
@@ -390,14 +394,18 @@ class Config:
             raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
         renamed: list = []
+        read = [f for f in fields(cls) if "env" in f.metadata and not (bot and f.metadata["env"].startswith(MCP_PREFIX))]
         cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", storage_path=data / "ecobot.sqlite",
-                  **{f.name: _from_env(f, renamed) for f in fields(cls) if "env" in f.metadata})
+                  **{f.name: _from_env(f, renamed) for f in read})
         warn_renamed(renamed)
-        for f in fields(cls):
-            if bot and f.name in REQUIRED_BY_BOT:
-                _required(getattr(cfg, f.name), f.default, f.metadata["env"])
-        if not (cfg.ecowitt or cfg.airgradient) and not (bot and cfg.mcp_url):   # (a client of ecobot-mcp needs no source)
+        if bot:
+            for f in fields(cls):
+                if f.name in REQUIRED_BY_BOT:
+                    _required(getattr(cfg, f.name), f.default, f.metadata["env"])
+            if not cfg.mcp_url:
+                raise SystemExit(NO_SERVICE)
+            return cfg
+        if not (cfg.ecowitt or cfg.airgradient):
             raise SystemExit("Set MCP_ECOWITT_API_KEY + MCP_ECOWITT_APP_KEY and/or MCP_HOMEASSISTANT_URL + MCP_HOMEASSISTANT_TOKEN and/or "
-                             "MCP_AIRGRADIENT_API_TOKEN + MCP_AIRGRADIENT_LOCATION_ID and/or MCP_AIRGRADIENT_LOCAL_URL"
-                             + ("" if not bot else ", or BOT_MCP_URL to use ecobot-mcp"))
+                             "MCP_AIRGRADIENT_API_TOKEN + MCP_AIRGRADIENT_LOCATION_ID and/or MCP_AIRGRADIENT_LOCAL_URL")
         return cfg

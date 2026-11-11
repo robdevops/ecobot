@@ -803,22 +803,25 @@ async def test_other_alerts_send_no_picture(tmp_path):
     assert sent.events and all("chart" not in e for e in sent.events) and asked == []
 
 
-async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sources_history(tmp_path, archived_cache):
+async def test_the_alert_charts_are_the_typed_one_day_charts_drawn_from_each_sources_history(serve, tmp_path, archived_cache):
+    """The chart under an alert (and its 🔄) is the typed one-day chart, drawn by ecobot-mcp over each source's history."""
     from lib.airgradient import AirGradient
     from lib.alerts import pictures
+    from lib.service.context import Context
     from tests.fakes import air_transport, archived_station, config
     eco, _ = await archived_station(tmp_path, archived_cache)
+    station = await serve(Context(eco=eco, tz=TZ))
     for text in ("Temperature chart 1d", "Wind chart 1d", "UV chart 1d"):
-        picture = await pictures.chart(eco, text, TZ)
+        picture = await pictures.chart(text, TZ, station)
         assert picture and picture.png[:4] == b"\x89PNG", text
         assert picture.title.startswith(text.split()[0]) and picture.newest and abs(picture.newest - eco.now().timestamp()) < 3600, text
     transport, _ = air_transport(oldest=datetime.now(timezone.utc) - timedelta(days=5))
     (tmp_path / "air").mkdir()
     air = AirGradient(config(tmp_path / "air"), transport=transport)
     await air.start()
-    picture = await pictures.chart(air, "Particulates chart 1d", TZ)
+    picture = await pictures.chart("Particulates chart 1d", TZ, await serve(Context(air=air, tz=TZ)))
     assert picture and picture.png[:4] == b"\x89PNG" and picture.title.startswith("Air quality") and picture.newest
-    assert await pictures.chart(FakeStation(), "Wind chart 1d", TZ) is None        # a source without the tool: no chart, no error
+    assert await pictures.chart("Wind chart 1d", TZ, await serve(tools=[])) is None        # a service without the tool: no chart, no error
     await eco.close()
     await air.close()
 

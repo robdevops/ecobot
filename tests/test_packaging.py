@@ -1,6 +1,7 @@
-"""The two programs as they are installed: two Docker images from one Dockerfile (ecobot-mcp with only its own packages, ecobot with
-everything), compose running each from its own, and the systemd unit of ecobot-mcp without the bot's secrets, by their new and old names.
-(Read as text: the CI workflow docker.yml builds and runs the images themselves.)"""
+"""The two programs as they are installed: two Docker images from one Dockerfile (each with only its own packages: the bot's no Pillow
+and no source's, docs/ecobot-mcp.md step 6b), compose running each from its own, and the systemd units: ecobot-mcp's without the bot's
+secrets, by their new and old names, and the bot's wanting and started after ecobot-mcp's. (Read as text: the CI workflow docker.yml
+builds and runs the images themselves.)"""
 
 import re
 from dataclasses import fields
@@ -22,10 +23,13 @@ def requirements(name: str) -> set[str]:
     return found
 
 
-def test_ecobot_mcp_needs_no_telegram_and_no_model_client_and_the_bot_has_everything():
-    mcp, bot = requirements("requirements-mcp.txt"), requirements("requirements.txt")
+def test_ecobot_mcp_needs_no_telegram_and_no_model_client_and_the_bot_only_its_own_packages():
+    mcp, bot, both = requirements("requirements-mcp.txt"), requirements("requirements-bot.txt"), requirements("requirements.txt")
     assert {"mcp", "uvicorn", "httpx"} <= mcp and not {"python-telegram-bot", "openai"} & mcp
-    assert mcp < bot and {"python-telegram-bot", "openai"} <= bot
+    assert bot == {"python-telegram-bot", "openai", "mcp", "httpx"}            # no Pillow, no source's packages (holidays, zeroconf)
+    assert both == mcp | bot                                                   # (a systemd install's one venv: both programs)
+    pins = lambda name: {line.split("#")[0].strip() for line in (ROOT / name).read_text().splitlines() if line.startswith("mcp")}
+    assert pins("requirements-bot.txt") == pins("requirements-mcp.txt")         # the two sides of MCP upgraded together
 
 
 def test_one_dockerfile_builds_both_images_each_checked_at_build():
@@ -33,9 +37,13 @@ def test_one_dockerfile_builds_both_images_each_checked_at_build():
     assert re.search(r"^FROM app AS ecobot-mcp$", text, re.M) and re.search(r"^FROM app AS ecobot$", text, re.M)
     mcp, bot = text.split("FROM app AS ecobot-mcp")[1].split("FROM app AS ecobot\n")
     assert "requirements-mcp.txt" in text.split("FROM base AS venv-mcp")[1].split("FROM base AS venv-bot")[0]
+    venv_bot = text.split("FROM base AS venv-bot")[1].split("FROM base AS app")[0]
+    assert "-r /tmp/requirements-bot.txt" in venv_bot and not re.search(r"requirements(-mcp|-charts)?\.txt", venv_bot.replace("requirements-bot.txt", ""))
     assert 'CMD ["python", "-m", "ecobot_mcp"]' in mcp and "import ecobot_mcp.__main__" in mcp and "find_spec('telegram') is None" in mcp
-    assert 'CMD ["python", "ecobot.py"]' in bot and "import lib.bot, ecobot" in bot
-    assert "requirements-mcp.txt" in (ROOT / ".dockerignore").read_text()
+    assert 'CMD ["python", "ecobot.py"]' in bot and "import lib.bot, ecobot" in bot and "find_spec('PIL') is None" in bot
+    assert all(f"'{m}'" in bot for m in ("lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage"))
+    ignored = (ROOT / ".dockerignore").read_text()
+    assert "requirements-mcp.txt" in ignored and "requirements-bot.txt" in ignored
 
 
 def test_compose_runs_each_program_from_its_own_image():
@@ -75,5 +83,21 @@ def test_an_old_ecobot_service_unit_still_starts_ecobot_mcp_without_the_bots_sec
 def test_the_systemd_upgrade_copies_the_ecobot_mcp_unit_in_again():
     text = (ROOT / "README.md").read_text()
     upgrade = text.split("### systemd", 2)[2].split("### Docker")[0]
-    assert "sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && " \
-           "sudo systemctl restart ecobot-mcp" in upgrade
+    assert "sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload && " \
+           "sudo systemctl restart ecobot-mcp ecobot" in upgrade
+    assert "BOT_MCP_URL=http://127.0.0.1:8765/mcp" in upgrade and "sudo systemctl enable --now ecobot-mcp.service" in upgrade   # (a bot
+                                                                                                                            # that ran alone)
+
+
+def test_the_bots_unit_wants_ecobot_mcps_and_starts_after_it_and_the_readme_installs_both():
+    """Under systemd the bot is ecobot-mcp's client (step 6b): its unit pulls ecobot-mcp's in and starts after it, and the install
+    enables both, ecobot-mcp first."""
+    unit = (ROOT / "ecobot.service").read_text()
+    wants = re.search(r"^Wants=(.*)$", unit, re.M)[1].split()
+    after = re.search(r"^After=(.*)$", unit, re.M)[1].split()
+    assert "ecobot-mcp.service" in wants and "ecobot-mcp.service" in after
+    readme = (ROOT / "README.md").read_text()
+    install = readme.split("### systemd", 1)[1].split("### ", 1)[0]
+    assert "sudo systemctl enable --now ecobot-mcp.service ecobot.service" in install                     # ecobot-mcp first
+    assert "/opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/" in install
+    assert "BOT_MCP_URL=http://127.0.0.1:8765/mcp" in install and "on its own (optional)" not in readme

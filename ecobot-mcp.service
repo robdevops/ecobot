@@ -1,8 +1,9 @@
-# ecobot-mcp, the MCP server on its own (python -m ecobot_mcp, docs/ecobot-mcp.md step 5): the sources and their syncers, the alert
-# rules and the MCP server at http://127.0.0.1:8765/mcp. Install it beside ecobot.service, from the same checkout and venv (see that file):
-#   sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
-# Only one process runs ecobot-mcp's part on a data folder (mcp.lock): before enabling this, make the bot its client (BOT_MCP_URL in
-# /etc/ecobot.env) and restart it; otherwise this one stops at start, saying so.
+# ecobot-mcp, the MCP server (python -m ecobot_mcp, docs/ecobot-mcp.md step 5): the sources and their syncers, the alert rules and
+# the MCP server at http://127.0.0.1:8765/mcp. Installed with ecobot.service, from the same checkout and venv (see that file), and
+# enabled first: the bot is its client (BOT_MCP_URL), and its unit pulls this one in and starts after it.
+#   sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now ecobot-mcp.service ecobot.service
+# Only one ecobot-mcp runs on a data folder (mcp.lock): a second stops at start, saying so.
 # The data folder is the bot's own, /var/lib/private/ecobot (StateDirectory=ecobot): User=ecobot gives this unit the same dynamic user
 # as ecobot.service, so the two share the folder's owner and neither takes it from the other when it starts. The token: the first of
 # AUTH_TOKENS, which the bot sends and this accepts; with AUTH_TOKENS unset, the one this generates at its first start in the data

@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import lru_cache
 
-from .ecowitt.calendar import PublicHolidays
+from .public_holidays import PublicHolidays
 from .timeutil import clock_text, day_text
 
 DAY = timedelta(days=1)

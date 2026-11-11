@@ -29,7 +29,6 @@ from typing import NamedTuple
 
 import httpx
 
-from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
@@ -273,10 +272,6 @@ class AirGradient(Source):
                 log.warning("AirGradient: %s's %s isn't the reading the bot keeps (it agreed in %d of %d five minutes), so it fills no gaps: %s",
                             SOURCE_NAMES[src], label, v[1], v[0], FIX.get(name, "check the correction each applies"))
         return [row for r in rows if len(row := self._allowed(r, src)) > 1]
-
-    def wants(self, text: str) -> bool:
-        """Should a question start refreshing this source? Only air-quality questions."""
-        return intent.mentions_air(text)
 
     async def _get(self, kind: str, **params) -> dict | list:
         """The reply: an object for "current", a list of readings for "past". A period with no readings is an empty list (AirGradient

@@ -1,11 +1,10 @@
 """The chart that goes with an alert: the same picture a typed request for it would give ("Wind chart 1d" is what the Wind button sends), so what an
 alert shows is defined once, by the button sentences, each a fixed service call (lib/intent.chart_call: "Wind chart 1d" is summary
 {readings: ["wind"], period: "1d", chart: true}), which the service draws: the rule puts the chart's data, with its drawn_by, in the alert's
-event (chart_data), and the bot has it drawn (picture_of: by the weather service it reaches, lib/weather.py, which a remote service draws
-by replaying the chart's drawn_by). AlertCharts keeps those charts with the bot's other charts (the ImageCache,
-by call), so one is drawn once and uploaded once however many times it is sent."""
+event (chart_data), and the bot has it drawn (picture_of: by ecobot-mcp, lib/weather.py, replaying the chart's drawn_by). AlertCharts
+keeps those charts with the bot's other charts (the ImageCache, by call), so one is drawn once and uploaded once however many times it
+is sent."""
 
-import asyncio
 import json
 import logging
 import time
@@ -22,12 +21,6 @@ log = logging.getLogger(__name__)
 # The alert types that carry a chart, and the request it answers: what the alert is sent with, and what its Refresh draws again
 CHARTS = {"gusts": "Wind chart 1d", "uv": "UV chart 1d", "temps": "Temperature chart 1d", "particulates": "Particulates chart 1d"}
 CHART_POINTS = "drawn"   # every point, as drawn (lib/service/common.py AS_DRAWN): the bot's picture
-
-
-def render_data(data: dict, tz, *args, **kwargs) -> bytes:
-    """lib/charts.render_data, imported when first drawn: the service imports this module for chart_data, and draws nothing here."""
-    from ..charts import render_data as render
-    return render(data, tz, *args, **kwargs)
 
 
 class Picture(NamedTuple):
@@ -74,34 +67,28 @@ def _picture(image, tz) -> Picture:
     return Picture(image.png, spec.caption(now_local(tz).date()), spec.newest, image.chart.get("drawn_by"), image.dark)
 
 
-async def picture_of(data: dict, tz, weather=None) -> Picture | None:
-    """A chart given as data, drawn: by `weather` (the service as the bot reaches it, lib/weather.py: a remote one draws it), else by
-    the bot's renderer here; None when it cannot be."""
+async def picture_of(data: dict, tz, weather) -> Picture | None:
+    """A chart given as data, drawn again by `weather` (ecobot-mcp as the bot reaches it, lib/weather.py: it replays the chart's
+    drawn_by); None when it cannot be. The bot draws nothing itself."""
     try:
-        if weather is not None:
-            return _picture(await weather.picture(data), tz)
-        spec = from_json(data)
-        return Picture(await asyncio.to_thread(render_data, data, tz), spec.caption(now_local(tz).date()), spec.newest, data.get("drawn_by"))
+        return _picture(await weather.picture(data), tz)
     except Exception as e:
         log.warning("The alert's chart couldn't be drawn: %s: %s", type(e).__name__, e)
         return None
 
 
-async def chart(source, text: str, tz, service=None) -> Picture | None:
-    """The chart for the request `text`, drawn by the service the way the bot would answer it; None when it cannot be made. `service`
-    may be the weather service as the bot reaches it (lib/weather.py), which draws it (a remote one, on the service)."""
-    if getattr(service, "is_weather", False):
-        try:
-            tool, args = call_of(text, now_local(tz), tz)
-            out, image = await service.chart_image(tool, args, {"chart_points": CHART_POINTS})
-            if image is None:
-                raise ValueError(out.get("error") or "no chart")
-            return _picture(image, tz)
-        except Exception as e:
-            log.warning("The chart for the alert (%s) couldn't be made: %s: %s", text, type(e).__name__, e)
-            return None
-    data = await chart_data(source, text, tz, service)
-    return await picture_of(data, tz) if data else None
+async def chart(text: str, tz, weather) -> Picture | None:
+    """The chart for the request `text`, drawn by ecobot-mcp (`weather`, as the bot reaches it: lib/weather.py) the way the bot would
+    answer it; None when it cannot be made."""
+    try:
+        tool, args = call_of(text, now_local(tz), tz)
+        out, image = await weather.chart_image(tool, args, {"chart_points": CHART_POINTS})
+        if image is None:
+            raise ValueError(out.get("error") or "no chart")
+        return _picture(image, tz)
+    except Exception as e:
+        log.warning("The chart for the alert (%s) couldn't be made: %s: %s", text, type(e).__name__, e)
+        return None
 
 
 class AlertCharts:

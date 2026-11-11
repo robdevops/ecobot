@@ -27,18 +27,16 @@ from .alerts import menu, pictures
 from .alerts.notify import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
-from .service import Service
 from .service.common import AS_DRAWN, BACKGROUND
 from .specs import from_json
 from .tools import Turn
 from .config import Config
 from .entities import utf16_len, with_link
-from .sources import Source
 from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
 from .warm import Tasks   # (the service's too: ecobot_mcp)
-from .weather import UNREACHABLE, ChartImage, ChartNotDrawn, LocalWeather, ServiceUnreachable
+from .weather import UNREACHABLE, ChartImage, ChartNotDrawn, RemoteWeather, ServiceUnreachable
 
 log = logging.getLogger(__name__)
 
@@ -398,20 +396,17 @@ class CallChart(NamedTuple):
 
 
 class Bot:
-    def __init__(self, cfg: Config, agent: Agent, sources: list[Source], state: AlertState, irrigation=None, tasks: Tasks | None = None,
-                 service: Service | None = None, alert_log=None):
+    def __init__(self, cfg: Config, agent: Agent, state: AlertState, irrigation=None, tasks: Tasks | None = None, *,
+                 service: RemoteWeather):
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
-        its own when none is given. service: the weather service as the bot reaches it (lib/weather.py: RemoteWeather over MCP, with
-        BOT_MCP_URL; `sources` is then empty; or LocalWeather in this process), or the service's tools in this process (lib/service),
-        which the bot's own code paths call (its shortcuts, report, Status picture, alert charts and period buttons), built over
-        `sources` when none is given (LocalWeather). Every picture the bot sends is drawn by the service: the bot draws nothing.
-        The model is offered the same tools (agent.tools: lib/model_tools.py), with the server's instructions after the bot's persona.
-        alert_log: the service's alert log in this process (lib/alert_log.py), whose events the 🔄 under an alert's chart finds its
-        chart's drawn_by in."""
-        self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
-        self.weather = service if getattr(service, "is_weather", False) else \
-            LocalWeather(sources, service, alert_log, tz=getattr(cfg, "tz", None))
+        its own when none is given. service: ecobot-mcp as the bot reaches it (lib/weather.RemoteWeather, over MCP at BOT_MCP_URL),
+        whose tools the bot's own code paths call (its shortcuts, report, Status picture, alert charts and period buttons), whose alert
+        log the 🔄 under an alert's chart finds its chart's drawn_by in, and which draws every picture the bot sends: the bot runs no
+        sources and draws nothing. The model is offered the same tools (agent.tools: lib/model_tools.py), with the server's
+        instructions after the bot's persona."""
+        self.cfg, self.agent, self.state, self.irrigation = cfg, agent, state, irrigation
+        self.weather = service
         self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
@@ -419,7 +414,6 @@ class Bot:
         self.admins = Admins(state, getattr(cfg, "admin_chat_ids", ()))
         self._refused: set[int] = set()   # the senders BOT_ADMIN_ONLY has turned away, each logged once with its id (for BOT_ADMIN_CHAT_IDS)
         self.chats: dict[tuple, ChatState] = defaultdict(ChatState)
-        self.by_name = {s.name: s for s in sources}
         self.images = periods.ImageCache()   # charts drawn lately, so toggling the period buttons is instant
         self.alert_charts = pictures.AlertCharts(self.images, lambda: now_local(self.cfg.tz),
                                                  tz=getattr(cfg, "tz", None))   # the alerts' charts, kept with them
@@ -429,9 +423,8 @@ class Bot:
         self.charted = periods.Charted(state.charts, state.save)   # the call behind each chart sent (kept across restarts)
 
     @property
-    def service(self) -> Service:
-        """The service's tools (lib/weather.py: in this process, built over the bot's sources on first use when none was given; or the
-        remote service's list)."""
+    def service(self):
+        """ecobot-mcp's tools, as it lists them now (lib/weather.RemoteTools)."""
         return self.weather.service
 
     @property
@@ -476,7 +469,7 @@ class Bot:
         return self.weather.catalogue()
 
     def _instructions(self) -> str:
-        """The server's instructions (lib/service/instructions.py; from server/discover when the service is remote)."""
+        """The server's instructions (from server/discover)."""
         return self.weather.instructions()
 
     def _sentence_call(self, text: str, now: datetime) -> tuple[str, dict] | None:
@@ -766,8 +759,7 @@ class Bot:
                     made = await asyncio.wait_for(self._draw_call(*call, ahead=False), TURN_SECONDS)
                     picture = pictures.Picture(made[0], made[1], made[3], made[4], getattr(made, "dark", None)) if made else None
                 else:
-                    picture = await asyncio.wait_for(pictures.chart(self.by_name.get(menu.TYPES[kind][1]), pictures.CHARTS[kind], self.cfg.tz,
-                                                                       self.weather), TURN_SECONDS)
+                    picture = await asyncio.wait_for(pictures.chart(pictures.CHARTS[kind], self.cfg.tz, self.weather), TURN_SECONDS)
             except TimeoutError:
                 picture = None
             if picture is None:   # (pictures.chart has said why) the message stays as it was
@@ -992,8 +984,9 @@ class Bot:
             out, image = await asyncio.wait_for(self._chart_call(tool, args), TURN_SECONDS)
         except TimeoutError:
             out, image = {"error": "That took too long, please try again"}, None
-        if "error" in out or image is None:
-            await toast_quietly(query, fit(str(out.get("error") or "No chart came of it for that period"), TOAST_LIMIT))
+        if "error" in out or image is None:   # (a chart that came without its picture: ecobot-mcp couldn't draw it)
+            why = out.get("error") or (CHART_FAILED if out.get("charts") else "No chart came of it for that period")
+            await toast_quietly(query, fit(str(why), TOAST_LIMIT))
             return
         png, (title, newest) = image.png, await asyncio.to_thread(self._titled, image.chart)
         await drawing(label)
@@ -1348,9 +1341,6 @@ class Bot:
         read = intent.read(text, now, self.names, self.cfg.tz, self._catalogue())
         log.info("%s%s: %s", describe_source(update), f" (reasoning: {read.effort})" if read.effort != intent.EFFORT_DEFAULT else "",
                  text, extra=QUOTES)
-        for source in self.sources:  # fetch recent readings while the model thinks (in-process: a remote service keeps its own warm)
-            if source.wants(text) and not read.chart:   # a chart made in code reads just what it needs, first in line
-                source.poke()
         if read.chart:
             log.debug("Shortcut: %s %s", read.chart[0], json.dumps(read.chart[1], ensure_ascii=False), extra=QUOTES)
 
@@ -1393,7 +1383,7 @@ class Bot:
         key = periods.call_key(*read.chart) if read.chart else None   # the call the chart is (its cache key)
         if read.chart and (ready := self.images.ready(key)):   # drawn ahead, or for someone's same call
             answer = Answer(ready.caption, [ready.photo], [ready.title], silent=True, ready=ready, drawn_by=[ready.drawn_by], key=key)
-        elif not await self.weather.ready():   # a remote service that can't be reached (in-process: always there)
+        elif not await self.weather.ready():   # ecobot-mcp can't be reached
             log.warning("%s: %s", chat_tag(msg.chat_id), UNREACHABLE)
             answer = Answer(SERVICE_DOWN, ok=False)
         elif read.chart:   # drawn by the service; the chart goes out with just its title (the text is kept for the history)

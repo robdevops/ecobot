@@ -162,17 +162,13 @@ class World:
         pollen, _ = make_pollen(tmp_path, lambda: page(grass="Moderate", asthma="Low"))
         pollen.now = lambda: _datetime.fromtimestamp(FROZEN, TZ).replace(tzinfo=None)
         await pollen.warm(True)
-        self.sources = [eco, air, pollen, forecast]
-        for source in self.sources:   # a question's fetch of the newest readings while it is answered races the answer: not here
-            source.poke = lambda: None
         self.eco, self.air, self.pollen, self.forecast = eco, air, pollen, forecast
         self.composer = Composer(eco, air)
-        from lib import model_tools
         from lib.service import Service
         from lib.service.context import Context
-        self.service = Service.of(await Context.open(eco=eco, air=air, composer=self.composer, forecast=forecast, pollen=pollen, tz=TZ,
-                                                     clock=lambda: FROZEN))
-        self.tools = model_tools.tools(self.service)
+        self.ctx = await Context.open(eco=eco, air=air, composer=self.composer, forecast=forecast, pollen=pollen, tz=TZ,
+                                      clock=lambda: FROZEN)
+        self.service = Service.of(self.ctx)
         self.tz, self.cfg = TZ, cfg
         return self
 
@@ -182,10 +178,8 @@ class World:
             if close:
                 await close()
 
-    def bot(self, alert_state, monkeypatch):
-        from lib import bot as botmod
-        from lib.llm import Agent
-
+    async def ecobot_mcp(self, monkeypatch, serve):
+        """ecobot-mcp in memory over this world, the bot's client of it connected: its charts and Status picture drawn as noted."""
         from lib import chart_images, gauges as gauges_module
 
         def render(data, tz, dark=None):   # (the service's drawing in this process: the bot draws nothing)
@@ -198,7 +192,16 @@ class World:
             return b"gauges"
         monkeypatch.setattr(chart_images, "render", render)
         monkeypatch.setattr(gauges_module, "render", gauges)
-        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), self.sources, alert_state, service=self.service)
+        return await serve(self.ctx)
+
+    async def bot(self, alert_state, monkeypatch, serve):
+        """The bot, ecobot-mcp's client (in memory, over this world), with no model."""
+        from lib import bot as botmod
+        from lib import model_tools
+        from lib.llm import Agent
+        weather = await self.ecobot_mcp(monkeypatch, serve)
+        self.tools = model_tools.tools(weather)
+        return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), alert_state, service=weather)
 
     def message(self, message_id=50):
         world = self
@@ -286,9 +289,9 @@ def period_buttons_are_drawn_bys(world, got: dict):
         assert rows == []
 
 
-async def asked(world, alert_state, monkeypatch, text) -> dict:
+async def asked(serve, world, alert_state, monkeypatch, text) -> dict:
     """Ask the bot `text`, as a group's message to it, and return what it did."""
-    bot = world.bot(alert_state, monkeypatch)
+    bot = await world.bot(alert_state, monkeypatch, serve)
     msg = world.message()
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
     await bot.respond(update, CONTEXT, text)
@@ -328,24 +331,24 @@ CHANGED = {"air quality chart 7d"}   # a shortcut whose words the service reads 
 
 
 @pytest.mark.parametrize("text", TO_THE_MODEL)
-async def test_what_was_answered_in_code_goes_to_the_model(world, alert_state, monkeypatch, text):
+async def test_what_was_answered_in_code_goes_to_the_model(serve, world, alert_state, monkeypatch, text):
     from lib.bot import NO_MODEL
-    got = await asked(world, alert_state, monkeypatch, text)
+    got = await asked(serve, world, alert_state, monkeypatch, text)
     assert got["history"] == NO_MODEL and got["charts"] == [] and got["gauges"] == []
 
 
 @pytest.mark.parametrize("text", KEYBOARD + SHORTCUTS)
-async def test_the_bots_own_answers_are_unchanged(world, alert_state, monkeypatch, text):
-    got = await asked(world, alert_state, monkeypatch, text)
+async def test_the_bots_own_answers_are_unchanged(serve, world, alert_state, monkeypatch, text):
+    got = await asked(serve, world, alert_state, monkeypatch, text)
     pinned(text, got)
     if not RECORD:
         period_buttons_are_drawn_bys(world, got)
 
 
 @pytest.mark.parametrize("question, press", [("Temperature chart 1d", "7D"), ("Rain chart 1d", "1M"), ("humidity 7d", "1Y")])
-async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_state, monkeypatch, question, press):
+async def test_a_period_button_redraws_the_same_chart_as_before(serve, world, alert_state, monkeypatch, question, press):
     """A press on a period button under a chart: the chart over that period, put into the same message."""
-    bot = world.bot(alert_state, monkeypatch)
+    bot = await world.bot(alert_state, monkeypatch, serve)
     msg = world.message()
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
     await bot.respond(update, CONTEXT, question)
@@ -367,13 +370,12 @@ async def test_a_period_button_redraws_the_same_chart_as_before(world, alert_sta
 
 
 @pytest.mark.parametrize("kind", ["gusts", "uv", "temps", "particulates"])
-async def test_an_alerts_chart_is_the_same_as_before(world, monkeypatch, kind):
+async def test_an_alerts_chart_is_the_same_as_before(serve, world, monkeypatch, kind):
+    """An alert's chart (and its 🔄), drawn by ecobot-mcp: the chart drawn is the one pinned."""
     from lib.alerts import pictures
-    captured = []
-    monkeypatch.setattr(pictures, "render_data", lambda data, tz, *a, **k: captured.append(summary_of(data)) or b"png")
-    source = world.air if kind == "particulates" else world.eco
-    picture = await pictures.chart(source, pictures.CHARTS[kind], world.tz)
-    got = {"title": picture.title, "newest": picture.newest, "charts": captured}
+    weather = await world.ecobot_mcp(monkeypatch, serve)
+    picture = await pictures.chart(pictures.CHARTS[kind], world.tz, weather)
+    got = {"title": picture.title, "newest": picture.newest, "charts": world.charts}
     if RECORD:
         pinned(f"alert {kind}", got)
         return
@@ -406,13 +408,13 @@ class Scripted:
         return NS(choices=[NS(message=NS(content=self.reply, tool_calls=None))], usage=None)
 
 
-async def asked_the_model(world, alert_state, monkeypatch, text, steps, reply="ok") -> list:
+async def asked_the_model(serve, world, alert_state, monkeypatch, text, steps, reply="ok") -> list:
     """Ask the bot `text` with a scripted model (Scripted), the air sensor's live-chart link configured: the text or caption of each
     message it sent."""
     from lib.llm import Agent
-    bot = world.bot(alert_state, monkeypatch)
+    world.air.link = ("live chart", "https://air.example")   # (ecobot://station names it: read as the bot connects)
+    bot = await world.bot(alert_state, monkeypatch, serve)
     bot.agent = Agent(Scripted(steps, reply), "m", world.tools)
-    world.air.link = ("live chart", "https://air.example")
     msg = world.message()
     update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob", id=7))
     await bot.respond(update, CONTEXT, text)
@@ -434,22 +436,22 @@ LINK_CASES = [   # (question, the model's steps, does the live-chart link go und
 
 
 @pytest.mark.parametrize("text, steps, link", LINK_CASES)
-async def test_the_air_link_goes_under_an_answer_that_read_the_air_and_no_other(world, alert_state, monkeypatch, text, steps, link):
+async def test_the_air_link_goes_under_an_answer_that_read_the_air_and_no_other(serve, world, alert_state, monkeypatch, text, steps, link):
     """The live-chart link follows what was read (as before the swap, when air_quality's call brought it), never a key or a word
     anywhere in a result: not `current` of every sensor, nor a refusal's catalogue of readings."""
-    said = await asked_the_model(world, alert_state, monkeypatch, text, steps)
+    said = await asked_the_model(serve, world, alert_state, monkeypatch, text, steps)
     assert said and all(("live chart" in s) is link for s in said), said
 
 
-async def test_an_error_reply_gets_no_air_link(world, alert_state, monkeypatch):
+async def test_an_error_reply_gets_no_air_link(serve, world, alert_state, monkeypatch):
     """The air was read, then the model timed out: the apology goes alone."""
-    said = await asked_the_model(world, alert_state, monkeypatch, "how's the air", [[("current", {"readings": ["air"]})]], TimeoutError())
+    said = await asked_the_model(serve, world, alert_state, monkeypatch, "how's the air", [[("current", {"readings": ["air"]})]], TimeoutError())
     assert said == ["Sorry, that took too long. Please try again in a moment."]
 
 
 @pytest.mark.parametrize("text", ["temperature 1d", "co2 1d", "pm2.5 1d"])
-async def test_a_bare_reading_and_1d_is_still_its_chart_without_the_model(world, alert_state, monkeypatch, text):
+async def test_a_bare_reading_and_1d_is_still_its_chart_without_the_model(serve, world, alert_state, monkeypatch, text):
     """As before the swap: "temperature 1d" is the chart of the last day, drawn in code (no model needed)."""
     from lib.bot import NO_MODEL
-    got = await asked(world, alert_state, monkeypatch, text)
+    got = await asked(serve, world, alert_state, monkeypatch, text)
     assert got["history"] != NO_MODEL and len(got["charts"]) == 1

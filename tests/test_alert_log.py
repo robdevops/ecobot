@@ -118,13 +118,15 @@ def rows(markup):
 CHART = {"title": "Wind", "drawn_by": {"tool": "summary", "arguments": {"readings": ["wind"], "period": "1d", "chart": True}}}
 
 
-def delivery(tmp_path, clock=None, chats=(1, 2, 3), state=None, monkeypatch=None):
+def delivery(tmp_path, clock=None, chats=(1, 2, 3), state=None, monkeypatch=None, weather=None):
+    """The delivery from a log (the bot's reads ecobot-mcp's over MCP, lib/weather.RemoteAlerts: the same reads), `weather` drawing the
+    events' charts (ecobot-mcp as the bot reaches it)."""
     log = new_log(tmp_path, clock)
     state = state or AlertState(tmp_path / "bot_state.json")
     for chat in chats:
         state.add_chat(chat, str(chat))
     telegram = Telegram()
-    return AlertDelivery(log, Notifier(telegram, state), state, TZ), log, state, telegram
+    return AlertDelivery(log, Notifier(telegram, state), state, TZ, weather=weather), log, state, telegram
 
 
 async def test_each_event_goes_to_the_chats_subscribed_to_its_kind_silently_unless_sound_is_on(tmp_path):
@@ -153,11 +155,11 @@ async def test_an_events_chart_is_drawn_from_its_data_once_and_its_refresh_names
     from lib.alerts import notify
     drawn = []
 
-    async def picture_of(data, tz):
+    async def picture_of(data, tz, weather):
         drawn.append(data)
         return Picture(b"png", "Wind, today", None, data["drawn_by"])
     monkeypatch.setattr(notify, "picture_of", picture_of)
-    d, log, state, telegram = delivery(tmp_path)
+    d, log, state, telegram = delivery(tmp_path, weather=NS())   # (drawn by ecobot-mcp: picture_of, stood in for here)
     state.set_kind(3, "gusts", False)
     log.append("rain", "earlier", "Rain started", expires=T0 + 3600)
     event = log.append("gusts", "💨 Strong gusts: 55 km/h at 3:05pm (alerts above 40 km/h).", "Strong gusts", expires=T0 + 3600, chart=CHART)
@@ -167,14 +169,17 @@ async def test_an_events_chart_is_drawn_from_its_data_once_and_its_refresh_names
     assert rows(telegram.sent[-1][3]["reply_markup"]) == [[("🔔 ▸", "al:open:bell:gusts"), ("🔄", f"al:refresh:gusts:{event['id']}")]]
 
 
-async def test_a_real_chart_in_an_event_is_drawn_as_a_picture(tmp_path, archived_cache):
+async def test_a_real_chart_in_an_event_is_drawn_as_a_picture(serve, tmp_path, archived_cache):
+    """An event's chart is drawn by ecobot-mcp (its drawn_by replayed there: the bot draws nothing), over the fake station."""
     from lib.alerts import pictures
+    from lib.service.context import Context
     from tests.fakes import archived_station
     eco, _ = await archived_station(tmp_path, archived_cache)
     data = await pictures.chart_data(eco, "Wind chart 1d", TZ)
     assert data["drawn_by"]["tool"] == "summary" and data["drawn_by"]["arguments"]["period"]
     (tmp_path / "d").mkdir()
-    d, log, state, telegram = delivery(tmp_path / "d", chats=(1,))
+    weather = await serve(Context(eco=eco, tz=TZ))
+    d, log, state, telegram = delivery(tmp_path / "d", chats=(1,), weather=weather)
     log.append("gusts", "💨 Strong gusts", "Strong gusts", chart=data)
     await d.deliver_new()
     (_, _, photo, _), = telegram.sent
@@ -319,11 +324,12 @@ class ChartQuery:
         self.edits.append(reply_markup)
 
 
-def a_bot(tmp_path, log, monkeypatch):
+async def a_bot(serve, tmp_path, log, monkeypatch):
+    """A bot over ecobot-mcp in memory with the weather station and the alert log `log` (the 🔄 finds an event's drawn_by in it)."""
     from lib.bot import Bot
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "private")
-    bot = Bot(NS(tz=TZ), None, [NS(name="Ecowitt", tz=TZ)], state, alert_log=log)
+    bot = Bot(NS(tz=TZ), None, state, service=await serve(None, log, tools=[], sources=["Ecowitt"]))
     calls = []
 
     async def draw_call(tool, args, ahead=True):
@@ -333,11 +339,11 @@ def a_bot(tmp_path, log, monkeypatch):
     return bot, calls
 
 
-async def test_refresh_under_a_delivered_alert_replays_its_charts_drawn_by(tmp_path, monkeypatch):
+async def test_refresh_under_a_delivered_alert_replays_its_charts_drawn_by(serve, tmp_path, monkeypatch):
     log = new_log(tmp_path)
     drawn_by = {"tool": "summary", "arguments": {"readings": ["wind"], "period": "1d", "chart": True, "points": "auto"}}
     event = log.append("gusts", "💨 Strong gusts", "Strong gusts", chart={"title": "Wind", "drawn_by": drawn_by})
-    bot, calls = a_bot(tmp_path, log, monkeypatch)
+    bot, calls = await a_bot(serve, tmp_path, log, monkeypatch)
     q = ChartQuery(f"al:refresh:gusts:{event['id']}", event=event["id"])
     await bot.on_alert_button(NS(callback_query=q), NS())
     assert calls == [("summary", drawn_by["arguments"], False)]
@@ -345,30 +351,30 @@ async def test_refresh_under_a_delivered_alert_replays_its_charts_drawn_by(tmp_p
     assert media.media.input_file_content == b"replayed png" and markup is q.message.reply_markup and q.toast is None
 
 
-async def test_refresh_of_an_alert_not_in_the_log_draws_its_types_chart(tmp_path, monkeypatch):
+async def test_refresh_of_an_alert_not_in_the_log_draws_its_types_chart(serve, tmp_path, monkeypatch):
     from lib.alerts import pictures
     asked = []
 
-    async def chart(source, text, tz, service=None):
+    async def chart(text, tz, weather):
         asked.append(text)
         return Picture(b"type png", "Wind, today", None)
     monkeypatch.setattr(pictures, "chart", chart)
-    bot, calls = a_bot(tmp_path, new_log(tmp_path), monkeypatch)
+    bot, calls = await a_bot(serve, tmp_path, new_log(tmp_path), monkeypatch)
     q = ChartQuery("al:refresh:gusts:99", event=99)                     # (dropped from the log)
     await bot.on_alert_button(NS(callback_query=q), NS())
     assert calls == [] and asked == ["Wind chart 1d"] and q.media[0][0].media.input_file_content == b"type png"
 
 
-async def test_the_bell_under_a_delivered_alert_keeps_the_event_in_its_refresh(tmp_path, monkeypatch):
-    bot, _ = a_bot(tmp_path, new_log(tmp_path), monkeypatch)
+async def test_the_bell_under_a_delivered_alert_keeps_the_event_in_its_refresh(serve, tmp_path, monkeypatch):
+    bot, _ = await a_bot(serve, tmp_path, new_log(tmp_path), monkeypatch)
     q = ChartQuery("al:open:bell:gusts", event=7)
     await bot.on_alert_button(NS(callback_query=q), NS())
     assert rows(q.edits[0])[0] == [("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts:7")]
 
 
 @pytest.mark.parametrize("data", ["al:refresh:gusts:x", "al:refresh:gusts:1:2"])
-async def test_a_refresh_with_a_malformed_id_does_nothing(tmp_path, monkeypatch, data):
-    bot, calls = a_bot(tmp_path, new_log(tmp_path), monkeypatch)
+async def test_a_refresh_with_a_malformed_id_does_nothing(serve, tmp_path, monkeypatch, data):
+    bot, calls = await a_bot(serve, tmp_path, new_log(tmp_path), monkeypatch)
     q = ChartQuery(data)
     await bot.on_alert_button(NS(callback_query=q), NS())
     assert calls == [] and q.media == [] and q.toast is None

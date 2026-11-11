@@ -5,6 +5,7 @@ from types import SimpleNamespace as NS
 from lib import intent, templates
 from lib.bot import Bot
 from tests.fakes import EVERY_SOURCE, TZ
+from tests.served import unreached
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
@@ -49,7 +50,7 @@ def test_the_keyboard_is_persistent_and_has_every_button():
 
 class Recorder(Bot):
     def __init__(self, state):
-        super().__init__(NS(tz=TZ), None, [], state)
+        super().__init__(NS(tz=TZ), None, state, service=unreached())   # (it asks nothing: respond is recorded)
         self.asked, self.alerts = [], 0
 
     async def respond(self, update, context, text):
@@ -142,7 +143,7 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
     from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
-    bot = Bot(NS(tz=TZ), None, [], state)
+    bot = Bot(NS(tz=TZ), None, state, service=unreached())   # (the keyboard alone: ecobot-mcp is asked nothing)
     msg = Replies()
     assert bot._keyboard_stale(msg)                                    # never had it
     state.set_keyboard(1, "old1234")
@@ -158,7 +159,7 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
     from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
-    bot = Bot(NS(tz=TZ), None, [], state)
+    bot = Bot(NS(tz=TZ), None, state, service=unreached())   # (the keyboard alone: ecobot-mcp is asked nothing)
     update, _ = message("/keyboard off")
     await bot.on_keyboard(update, NS(args=["off"]))
     assert state.keyboard(1) == templates.HIDDEN
@@ -171,7 +172,7 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
     assert state.keyboard(1) == templates.version()
 
 
-async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
+async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(serve, tmp_path):
     from lib.alerts.notify import AlertState
 
     class Agent:
@@ -180,7 +181,7 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     state.set_keyboard(1, "old1234")
-    bot = Bot(NS(tz=TZ), Agent(), [], state)
+    bot = Bot(NS(tz=TZ), Agent(), state, service=await serve())
 
     async def ask():
         update, sent = message("how hot is it")

@@ -16,7 +16,7 @@ from ..sources import Source
 from ..timeutil import local_epoch, naive_local
 from ..warm import FAST_REFRESH_SECONDS, Warmer, safely
 from .api import FINE_CYCLES, EcowittAPI, GROUPS, unit_text
-from .calendar import PublicHolidays
+from ..public_holidays import PublicHolidays
 from .fetch import Fetcher, Recent
 from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
@@ -286,10 +286,6 @@ class Ecowitt(Source):
         await asyncio.gather(*(fetchers[cycle].get(cycle, start, now, refresh=fresh and cycle in FINE_CYCLES, load=False)
                                for cycle, start in windows.items()))
         return f"Ecowitt {sum(f.calls for f in fetchers.values())} req"
-
-    def wants(self, text: str) -> bool:
-        """Should a question start refreshing this source? Weather data is used by nearly all."""
-        return True
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
                        groups: list[str] | None = None) -> list[tuple[int, dict]]:

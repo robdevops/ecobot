@@ -2,7 +2,7 @@ name: Docker images
 
 on:
   push:   # any branch, so a pull request's commits carry the check too
-    paths: [Dockerfile, .dockerignore, requirements.txt, requirements-mcp.txt, requirements-charts.txt, .github/workflows/docker.yml]
+    paths: [Dockerfile, .dockerignore, requirements.txt, requirements-bot.txt, requirements-mcp.txt, requirements-charts.txt, .github/workflows/docker.yml]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,8 @@ permissions:
 jobs:
   image:
     # Both images build from the Dockerfile (each target's build imports its program, ecobot-mcp's with no Telegram and no model
-    # client in it), each program starts in its image, and the charts drawn there are the approved ones, in Inter
+    # client in it, the bot's with no Pillow and no source), each program starts in its image, and the charts ecobot-mcp draws are the
+    # approved ones, in Inter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,12 +27,12 @@ jobs:
           grep -q "Starting ecobot-mcp ${GITHUB_SHA::7}" start-mcp.log
       - name: The bot starts and names this commit
         run: |
-          docker run --rm --network none -e BOT_TELEGRAM_TOKEN=0:x -e BOT_OPENROUTER_API_KEY=x ecobot > start.log 2>&1 || true   # stops: no data source set
+          docker run --rm --network none -e BOT_TELEGRAM_TOKEN=0:x -e BOT_OPENROUTER_API_KEY=x ecobot > start.log 2>&1 || true   # stops: no BOT_MCP_URL
           cat start.log
           grep -q "Starting ecobot ${GITHUB_SHA::7}" start.log
-      - name: Charts drawn in each image
+      - name: Charts drawn in ecobot-mcp's image (the bot's draws none: it has no Pillow)
         run: |
-          for image in ecobot ecobot-mcp; do
+          for image in ecobot-mcp; do
           docker run --rm --network none -v "$PWD/tests:/app/tests:ro" "$image" python -c '
           from PIL import Image
           from lib import charts

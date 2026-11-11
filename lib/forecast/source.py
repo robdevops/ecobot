@@ -3,7 +3,6 @@ local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once at the start (or
 
 import logging
 import math
-import re
 import time
 from datetime import date
 
@@ -88,10 +87,6 @@ class Forecast(Source):
             self.summary = f"{SOURCE}: {len(self.days or [])} days (every {self.warmer.interval:g}s)"
         except Exception as e:
             log.warning("Forecast not readable yet: %s", e)
-
-    def wants(self, text: str) -> bool:
-        """Only forecast questions start a refresh; the report always uses what is cached."""
-        return bool(re.search(r"\bforecast\w*|\btomorrow\b|\bthis week\b", text, re.I))
 
     # ---------- kept on disk ----------
     def _load(self):

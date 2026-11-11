@@ -103,7 +103,8 @@ async def test_reset_forgets_only_that_chat(alert_state):
 
     async def reply_text(text, **kw):
         sent.append(text)
-    bot = Bot(None, None, [], alert_state)
+    from tests.served import unreached
+    bot = Bot(None, None, alert_state, service=unreached())   # (only the chats' memory: ecobot-mcp is asked nothing)
     bot.chats[(1, None)].history.append({"role": "user", "content": "hi"})
     bot.chats[(2, None)].history.append({"role": "user", "content": "other chat"})
     bot.chats[(1, 7)].history.append({"role": "user", "content": "topic 7"})

@@ -1,6 +1,6 @@
-"""What a data source is to the bot: a name, a local clock and a Warmer that keeps it fresh; started once, poked
-when a question wants it, closed at the end. The bot (bot.py) and the startup (ecobot.py) use nothing else of the four sources:
-the weather station (lib/ecowitt), the air sensor (lib/airgradient), the pollen page (lib/pollen) and the forecast (lib/forecast)."""
+"""What a data source is to ecobot-mcp: a name, a local clock and a Warmer that keeps it fresh; started once, closed at the end. Its
+startup (ecobot_mcp/core.py) uses nothing else of the four sources: the weather station (lib/ecowitt), the air sensor (lib/airgradient),
+the pollen page (lib/pollen) and the forecast (lib/forecast). The bot has none (docs/ecobot-mcp.md step 6b)."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime, tzinfo
@@ -27,19 +27,11 @@ class Source(ABC):
         without it); one that only means "not yet" is logged, and the next refresh tries again."""
 
     @abstractmethod
-    def wants(self, text: str) -> bool:
-        """Should a question start refreshing this source?"""
-
-    @abstractmethod
     async def warm(self, fresh: bool = True) -> str:
         """Fetch what questions usually need, if it is due (`fresh`: a timed refresh, not a question's); says what it did."""
 
     def now(self) -> datetime:
         return now_local(self.tz)
-
-    def poke(self):
-        """A question that wants this source arrived: refresh it in the background (Warmer.poke)."""
-        self.warmer.poke()
 
     async def close(self):
         await self.client.aclose()

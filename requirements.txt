@@ -1,5 +1,4 @@
-# Everything: the bot (ecobot.py), which can also run ecobot-mcp's part in-process, and ecobot-mcp itself; the systemd install and
-# the Docker image ecobot. With requirements-charts.txt (Pillow).
+# Everything, in one venv: ecobot-mcp (requirements-mcp.txt) and the bot (requirements-bot.txt), for the systemd install, which runs
+# both from one checkout. With requirements-charts.txt (Pillow) for ecobot-mcp's chart images and Status picture.
 -r requirements-mcp.txt
-openai
-python-telegram-bot>=22.8
+-r requirements-bot.txt

@@ -2,7 +2,7 @@
 real server (lib/mcp_server.EcobotServer): over the SDK's in-memory transport for a question answered with the remote tools, a chart drawn
 from a remote result with its buttons, an alert delivered through the listen and the irrigation check's inputs; under uvicorn on a localhost
 port (a connection can fail there) for a dropped connection rebuilt with the alerts after the last id read once, the service down (the bot
-says so), and ecobot.main() as a client. The path with BOT_MCP_URL unset is the rest of the suite's."""
+says so), and ecobot.main(), always a client (step 6b). The rest of the suite runs the bot against ecobot-mcp in memory (tests/served.py)."""
 
 import asyncio
 import json
@@ -124,7 +124,7 @@ class Model:
 # ---------- in memory ----------
 async def test_a_question_is_answered_with_the_remote_tools_and_the_instructions_from_discover(connected, world, alert_state):
     model = Model([("current", {"readings": ["temperature"]})])
-    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), alert_state, service=connected)
     update, context, replies = a_chat("group")   # (no draft streamed: the model's answer comes whole)
     await bot.respond(update, context, "how warm is it outside?")
     first = model.seen[0]
@@ -133,7 +133,7 @@ async def test_a_question_is_answered_with_the_remote_tools_and_the_instructions
     told = json.loads(model.seen[1]["messages"][-1]["content"])
     assert told == json.loads(await world.service["current"].call({"readings": ["temperature"]}))   # the remote tool's own answer
     assert replies == ["It's 14.2 °C."]
-    assert bot.names == {"Ecowitt", "AirGradient", "Forecast", "Pollen"} and bot.sources == []   # (from ecobot://station; no sources here)
+    assert bot.names == {"Ecowitt", "AirGradient", "Forecast", "Pollen"} and not hasattr(bot, "sources")   # (from ecobot://station; none here)
     assert bot._catalogue().names == world.ctx.readings().names
 
 
@@ -147,8 +147,7 @@ async def test_a_charts_picture_comes_from_the_service_with_its_period_buttons(c
         got.append(images)
         return out, images
     monkeypatch.setattr(connected, "call_images", call_images)
-    monkeypatch.setattr(weather_module, "draw_here", lambda *a, **k: pytest.fail("the bot draws nothing"))
-    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
     update, context, replies = a_chat("group")
     reply_photo = update.effective_message.reply_photo
 
@@ -180,9 +179,8 @@ async def test_the_models_charts_come_from_the_service_as_pictures_and_the_model
         metas.append(meta)
         return await calling(name, args, meta=meta, **k)
     monkeypatch.setattr(connected.upstream.client, "call_tool", call_tool)
-    monkeypatch.setattr(weather_module, "draw_here", lambda *a, **k: pytest.fail("the bot draws nothing"))
     model = Model([call], "Humid all week.")
-    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), alert_state, service=connected)
     update, context, replies = a_chat("group")
     reply_photo = update.effective_message.reply_photo
 
@@ -207,7 +205,7 @@ async def test_status_sends_the_services_picture_of_three_gauges_with_the_report
     """/status and /report: the Status picture is ecobot://status's PNG, byte for byte, the report its caption."""
     import base64
     photos = []
-    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
     update, context, replies = a_chat("group")
     reply_photo = update.effective_message.reply_photo
 
@@ -223,50 +221,60 @@ async def test_status_sends_the_services_picture_of_three_gauges_with_the_report
     assert [b.callback_data for b in markup.inline_keyboard[0]] == ["rp:refresh"]
 
 
-async def test_a_remote_bot_sends_the_services_picture_of_a_chart_byte_for_byte_the_one_it_would_draw_itself(connected, world, alert_state,
-                                                                                                                monkeypatch):
-    from lib.alerts import pictures
-    call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
-    local = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(world.service)), [], alert_state, service=world.service)
-    for _ in range(3):   # (what a call fetches inline, fetched first: the charts are then the same each time)
-        here = await local._draw_call(*call)
-        if here.png == (await local._draw_call(*call)).png:
+async def drawn_by_the_service(world, call) -> tuple[dict, bytes]:
+    """(a call's answer as the bot asks it, every point as drawn; its chart as ecobot-mcp's renderer draws it, light): what the bot is to
+    be sent. Asked until two answers draw the same (what a call fetches inline, fetched first: the charts are then the same each time)."""
+    from lib import chart_images
+    for _ in range(3):
+        out = json.loads(await world.service[call[0]].call(call[1], {"chart_points": "drawn"}))
+        png = (await asyncio.to_thread(chart_images.render, out["charts"][0], TZ, False))[0]
+        again = json.loads(await world.service[call[0]].call(call[1], {"chart_points": "drawn"}))
+        if (await asyncio.to_thread(chart_images.render, again["charts"][0], TZ, False))[0] == png:
             break
+    return out, png
+
+
+async def test_the_bot_sends_the_services_picture_of_a_chart_byte_for_byte_as_its_renderer_draws_it(connected, world, alert_state,
+                                                                                                      monkeypatch):
+    """The bot draws nothing: a chart's picture is the PNG ecobot-mcp's renderer draws (lib/chart_images.render), its title, words,
+    newest reading and drawn_by from the chart's JSON (the result's _meta); an alert's chart is its drawn_by replayed."""
+    from lib import chart_images
+    from lib.alerts import pictures
+    from lib.specs import from_json
+    from lib.timeutil import now_local
+    call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
+    out, png = await drawn_by_the_service(world, call)
+    chart = out["charts"][0]
     event_chart = await pictures.chart_data(None, "Wind chart 1d", TZ, world.service)   # (an alert's chart, as its event carries it)
-    drawn_here = await pictures.picture_of(event_chart, TZ)
-
-    def not_here(*a, **k):
-        raise AssertionError("a remote bot doesn't draw the service's charts itself")
-    monkeypatch.setattr(weather_module, "draw_here", not_here)
-    monkeypatch.setattr(pictures, "render_data", not_here)
-    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    event_png = (await asyncio.to_thread(chart_images.render, event_chart, TZ, False))[0]
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
     made = await bot._draw_call(*call)
-    assert made.png == here.png and made.png.startswith(b"\x89PNG") and made.dark is False   # the service's PNG, as the bot draws it
-    assert (made.title, made.caption, made.newest, made.drawn_by) == (here.title, here.caption, here.newest, here.drawn_by)
-    assert made.out["charts"] == here.out["charts"]                                          # the chart's JSON, from the result's _meta
+    spec = from_json(chart)
+    assert made.png == png and made.png.startswith(b"\x89PNG") and made.dark is False   # the service's PNG, as its renderer draws it
+    assert (made.title, made.caption, made.newest, made.drawn_by) == (spec.caption(now_local(TZ).date()), out.get("caption"), spec.newest,
+                                                                      chart["drawn_by"])
+    assert made.out["charts"] == out["charts"]                                               # the chart's JSON, from the result's _meta
     alert = await pictures.picture_of(event_chart, TZ, connected)                            # an alert's chart: its drawn_by replayed
-    assert (alert.png, alert.title, alert.drawn_by, alert.dark) == (drawn_here.png, drawn_here.title, event_chart["drawn_by"], False)
-    typed = await pictures.chart(None, "Wind chart 1d", TZ, connected)                       # the 🔄 under an alert from before the log
-    assert typed.png == drawn_here.png
+    assert (alert.png, alert.drawn_by, alert.dark) == (event_png, event_chart["drawn_by"], False)
+    assert alert.title == from_json(event_chart).caption(now_local(TZ).date())
+    typed = await pictures.chart("Wind chart 1d", TZ, connected)                             # the 🔄 under an alert from before the log
+    assert typed.png == event_png
 
 
-async def test_a_service_without_pillow_sends_the_charts_json_and_the_remote_bot_sends_no_picture(connected, world, alert_state,
-                                                                                                    monkeypatch):
+async def test_a_service_without_pillow_sends_the_charts_json_and_the_bot_sends_no_picture(connected, world, alert_state, monkeypatch):
     """The bot draws nothing (docs/ecobot-mcp.md step 6a): a service that can't draw (no Pillow there) gives the answer with its charts'
     JSON and no picture, and the bot sends none; an alert's chart goes without its picture."""
     from types import SimpleNamespace
     from lib import chart_images, mcp_server
     from lib.alerts import pictures
     call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
-    local = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(world.service)), [], alert_state, service=world.service)
-    here = await local._draw_call(*call)
+    here = json.loads(await world.service["summary"].call(call[1], {"chart_points": "drawn"}))["charts"][0]
     event_chart = await pictures.chart_data(None, "Wind chart 1d", TZ, world.service)
     monkeypatch.setattr(mcp_server, "chart_images", SimpleNamespace(**{**vars(chart_images), "renderer": lambda: None}))   # (no Pillow there)
-    monkeypatch.setattr(weather_module, "draw_here", lambda *a, **k: pytest.fail("the bot draws nothing"))
-    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), alert_state, service=connected)
     assert await bot._draw_call(*call) is None
     out, images = await connected.call_images(*call)
-    assert out["chart_image_note"] == chart_images.UNAVAILABLE_NOTE and images == [] and out["charts"][0]["drawn_by"] == here.drawn_by
+    assert out["chart_image_note"] == chart_images.UNAVAILABLE_NOTE and images == [] and out["charts"][0]["drawn_by"] == here["drawn_by"]
     assert await pictures.picture_of(event_chart, TZ, connected) is None
 
 
@@ -419,7 +427,7 @@ async def test_with_the_service_down_the_bot_says_so_and_carries_on(alert_state,
     supervisor = asyncio.create_task(remote.run())
     try:
         model = Model([("current", {})])
-        bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(remote)), [], alert_state, service=remote)
+        bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(remote)), alert_state, service=remote)
         for text in ("how warm is it?", "weather now", "Humidity chart 7d"):
             update, context, replies = a_chat()
             await bot.respond(update, context, text)
@@ -435,8 +443,8 @@ async def test_with_the_service_down_the_bot_says_so_and_carries_on(alert_state,
 
 
 async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bare, tmp_path, monkeypatch, caplog):
-    """ecobot.main() with BOT_MCP_URL: no source is started (no keys are set), the service's station names the time zone, the
-    bot draws its keyboard's charts ahead, and an alert the service logs reaches a chat."""
+    """ecobot.main(), ecobot-mcp's client at BOT_MCP_URL: no source is started (the bot has none: no keys are set), the service's
+    station names the time zone, the bot draws its keyboard's charts ahead, and an alert the service logs reaches a chat."""
     import os
     import signal
     import ecobot
@@ -457,8 +465,6 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
     monkeypatch.setattr(ecobot.Bot, "draw_buttons_ahead", note)
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(app)))
-    started = []
-    monkeypatch.setattr(ecobot, "start_sources", lambda *a: started.append(a))
     publishing = asyncio.create_task(bare.watch_alerts())
 
     async def alert_then_stop():
@@ -480,7 +486,7 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
     finally:
         publishing.cancel()
         await asyncio.gather(publishing, return_exceptions=True)
-    assert started == [] and "Ecowitt: " not in caplog.text and "Telegram: @testbot" in caplog.text
+    assert "Ecowitt: " not in caplog.text and "Telegram: @testbot" in caplog.text
     assert f"ecobot-mcp: {cfg.mcp_url}" in caplog.text
     assert [(chat, text) for chat, text, _ in app.sent] == [(5, "🌧️ Raining")]
     assert drawn == [app.bot]
@@ -506,7 +512,6 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
     monkeypatch.setattr(ecobot, "STARTUP_WAIT", 0.3)
     monkeypatch.setattr(ecobot._format, "width", ecobot._format.width)
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
-    monkeypatch.setattr(ecobot, "start_sources", lambda *a: pytest.fail("no sources when remote"))
     monkeypatch.setattr(theme, "ZONE", theme.ZONE)   # (put back after)
     made = {}
 
@@ -585,14 +590,14 @@ async def test_the_irrigation_check_is_timed_again_in_a_zone_read_later(tmp_path
     assert waits == [12 * 3600, 3600]   # 12 hours to 18:00 UTC; then the hour to 18:00 in Melbourne
 
 
-def test_a_client_of_the_service_needs_no_source_settings(monkeypatch, tmp_path):
+def test_the_bot_needs_ecobot_mcps_address_and_no_source_settings(monkeypatch, tmp_path):
     from lib.config import Config
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("BOT_TELEGRAM_TOKEN", "1:x")
     for name in ("MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY", "MCP_HOMEASSISTANT_URL", "MCP_HOMEASSISTANT_TOKEN", "MCP_AIRGRADIENT_API_TOKEN",
                  "MCP_AIRGRADIENT_LOCATION_ID", "MCP_AIRGRADIENT_LOCAL_URL", "BOT_MCP_URL"):
         monkeypatch.delenv(name, raising=False)
-    with pytest.raises(SystemExit, match="MCP_ECOWITT_API_KEY"):
+    with pytest.raises(SystemExit, match="BOT_MCP_URL is not set"):   # (the bot is only ever ecobot-mcp's client: step 6b)
         Config.from_env()
     monkeypatch.setenv("BOT_MCP_URL", "http://127.0.0.1:8765/mcp/")
     monkeypatch.setenv("AUTH_TOKENS", "t0ken, other")

@@ -55,6 +55,19 @@ def alert_state(tmp_path):
     return AlertState(tmp_path / "state.json")
 
 
+@pytest.fixture
+async def serve():
+    """ecobot-mcp in memory, the bot's client of it connected (tests/served.py): `weather = await serve(ctx, alert_log, tools=...,
+    sources=...)`, each closed when the test ends."""
+    import contextlib
+
+    from tests.served import ecobot_mcp
+    async with contextlib.AsyncExitStack() as stack:
+        async def start(*args, **kwargs):
+            return await stack.enter_async_context(ecobot_mcp(*args, **kwargs))
+        yield start
+
+
 @pytest.fixture(scope="session")
 def archived_cache(tmp_path_factory):
     """The bot's file (ecobot.sqlite) holding the fake station's whole archive, built once an hour and shared by every worker and run

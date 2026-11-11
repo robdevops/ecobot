@@ -150,7 +150,7 @@ async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
 
 def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely(monkeypatch, tmp_path):
     assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
-    env = {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b"}
+    env = {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "BOT_MCP_URL": "http://127.0.0.1:8765/mcp"}
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     for value, hour in (("", 18), ("6", 6), ("0", 0), ("23", 23), ("24", 18), ("noon", 18), ("-1", 18)):
@@ -269,11 +269,13 @@ class Station:
             total += rise
             self.rows.append((1_000_000 + i * 300, {"rainfall.daily": total}))
 
-    async def recent(self, hours):
+    async def rain_mm(self, hours):
+        """The measured rain as ecobot-mcp's summary of the rain gives it (lib/weather.ServiceRain): the rises of the daily total."""
+        from lib.ecowitt.rain import rain_amount
         assert hours == 24
         if self.fail:
             raise RuntimeError("Ecowitt is down")
-        return self.rows
+        return rain_amount(self.rows, self.rows[0][0], self.rows[-1][0]) if self.rows else None
 
 
 class Forecast:
@@ -479,11 +481,23 @@ class Remote(Device):
         self.status_now.update(switch=True, work_state="manual", countdown=minutes * 60)
 
 
+WEATHER = None
+
+
+@pytest.fixture(autouse=True)
+async def ecobot_mcp(serve):
+    """ecobot-mcp in memory with the weather station, the bot's client of it connected: what the bots here run over."""
+    global WEATHER
+    WEATHER = await serve(tools=[], sources=["Ecowitt"])
+    yield WEATHER
+    WEATHER = None
+
+
 def irrigation_bot(tmp_path, device=None):
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     device = device or Remote()
-    return Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], state, device), state, device
+    return Bot(NS(tz=TZ), None, state, device, service=WEATHER), state, device
 
 
 async def press(bot, data, **kw):
@@ -597,7 +611,7 @@ async def test_a_controller_that_cannot_be_reached_gives_a_toast_not_a_traceback
     q.fail = BadRequest("Message to edit not found")
     with pytest.raises(BadRequest):
         await bot.on_irrigation_button(NS(callback_query=q), NS())
-    plain = Bot(NS(tz=TZ), None, [], AlertState(tmp_path / "t.json"))                    # no controller configured: nothing happens
+    plain = Bot(NS(tz=TZ), None, AlertState(tmp_path / "t.json"), service=WEATHER)       # no controller configured: nothing happens
     q = await press(plain, "ir:delay:24h")
     assert q.edits == [] and plain.watchdog is None
 
@@ -607,7 +621,7 @@ async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_
     added = []
     app = NS(add_handler=lambda h, group=0: added.append(h), add_error_handler=lambda h: None)
     bot.register(app)
-    plain = Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], AlertState(tmp_path / "t.json"))
+    plain = Bot(NS(tz=TZ), None, AlertState(tmp_path / "t.json"), service=WEATHER)
     added_plain = []
     plain.register(NS(add_handler=lambda h, group=0: added_plain.append(h), add_error_handler=lambda h: None))
     assert len(added) == len(added_plain)                                                    # one entry point for every button, with or without a controller
@@ -683,11 +697,11 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
     async def quiet(*a, **k):
         pass
     ctx = NS(bot=NS(username="testbot", id=99, send_chat_action=quiet, send_message_draft=quiet))   # the model is asked: "typing..." and a draft go first
-    bot = Bot(NS(tz=TZ), Agent(), [], state, Remote())
+    bot = Bot(NS(tz=TZ), Agent(), state, Remote(), service=WEATHER)
     update, sent = private_message("how much water did the rain add this week")
     await bot.on_message(update, ctx)
     assert asked == ["how much water did the rain add this week"]
-    plain = Bot(NS(tz=TZ), Agent(), [], AlertState(tmp_path / "t.json"))
+    plain = Bot(NS(tz=TZ), Agent(), AlertState(tmp_path / "t.json"), service=WEATHER)
     update, sent = private_message("irrigation")
     await plain.on_message(update, ctx)
     assert asked[-1] == "irrigation"                                                       # nothing to show: the model answers as before

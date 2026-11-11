@@ -4,39 +4,24 @@ import logging
 from lib.warm import Warmer, every, safely
 
 
-async def test_a_warmer_runs_one_refresh_at_a_time():
-    """A timed refresh waits for a question's to finish, and a question that arrives during a refresh starts none of its own."""
-    release, started, seen = asyncio.Event(), asyncio.Event(), []
+async def test_a_warmer_refreshes_every_interval_as_a_timed_refresh_then_runs_its_checks_and_a_failure_stops_neither():
+    seen = []
 
     async def refresh(fresh):
-        seen.append(("start", fresh))
-        started.set()
-        await release.wait()
-        seen.append(("end", fresh))
+        seen.append(("refresh", fresh))
+        if len(seen) == 1:
+            raise ConnectionError("no route to host")
+
+    async def check():
+        seen.append(("check",))
     warmer = Warmer(refresh, interval=0)
-    warmer.poke()
-    await started.wait()                            # a question's refresh is running
-    timer = asyncio.create_task(warmer.run())       # and the timed one falls due at once
-    warmer.poke()                                   # another question meanwhile
-    for _ in range(5):
+    warmer.after.append(check)
+    task = asyncio.create_task(warmer.run())
+    for _ in range(20):
         await asyncio.sleep(0)
-    assert seen == [("start", False)]
-    release.set()
-    for _ in range(10):
-        await asyncio.sleep(0)
-    timer.cancel()
-    assert seen[:3] == [("start", False), ("end", False), ("start", True)]
-    assert all(a[0] != b[0] for a, b in zip(seen, seen[1:]))   # every refresh ends before the next starts
-
-
-async def test_stopping_a_warmer_cancels_the_refresh_a_question_started():
-    async def refresh(fresh):
-        await asyncio.Event().wait()                     # never ends by itself
-    warmer = Warmer(refresh)
-    warmer.poke()
-    await asyncio.sleep(0)
-    await warmer.stop()
-    assert warmer._task.cancelled()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert seen[:4] == [("refresh", True), ("check",), ("refresh", True), ("check",)]
 
 
 async def test_a_background_failure_has_its_traceback_logged_only_when_it_points_at_code(caplog):

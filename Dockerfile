@@ -2,8 +2,9 @@
 # suites, and bytecode for only what its program imports at start (bytecode for everything is 48 MB more; none adds ~2 s to every start):
 #   ecobot-mcp (target ecobot-mcp): python -m ecobot_mcp, the sources, the alert rules and the MCP server; requirements-mcp.txt and
 #     Pillow (requirements-charts.txt), no Telegram and no model client;
-#   ecobot (target ecobot, the default): the Telegram bot, python ecobot.py; requirements.txt (everything: it draws charts, and runs
-#     ecobot-mcp's part in-process when BOT_MCP_URL is unset) and Pillow.
+#   ecobot (target ecobot, the default): the Telegram bot, python ecobot.py, a client of ecobot-mcp (BOT_MCP_URL); requirements-bot.txt
+#     alone (Telegram, the model's client, the MCP client, httpx): it draws nothing and runs no source, so no Pillow and no source's
+#     packages (docs/ecobot-mcp.md step 6b).
 #   docker build --target ecobot-mcp -t ecobot-mcp .
 #   docker build --target ecobot -t ecobot .
 #   docker compose up -d --build   (compose.yaml builds both)
@@ -25,9 +26,9 @@ RUN python -m venv --without-pip /opt/venv \
  && find /opt/venv -type d -name tests -prune -exec rm -rf {} +
 
 FROM base AS venv-bot
-COPY requirements.txt requirements-mcp.txt requirements-charts.txt /tmp/
+COPY requirements-bot.txt /tmp/
 RUN python -m venv --without-pip /opt/venv \
- && pip --python /opt/venv/bin/python install --no-cache-dir --no-compile --root-user-action=ignore -r /tmp/requirements.txt -r /tmp/requirements-charts.txt \
+ && pip --python /opt/venv/bin/python install --no-cache-dir --no-compile --root-user-action=ignore -r /tmp/requirements-bot.txt \
  && find /opt/venv -type d -name tests -prune -exec rm -rf {} +
 
 # What both run: the user, the fonts, the shared code. The program reads the running commit for its start-up log line from .git (HEAD,
@@ -60,11 +61,15 @@ ENV DATA_DIR=/data
 USER 10001:10001
 CMD ["python", "-m", "ecobot_mcp"]
 
-# The bot (the default target). The same: the bytecode of what it loads at start, the client of ecobot-mcp and the in-process part included
+# The bot (the default target). The same: the bytecode of what it loads at start, and a check that it needs nothing but its own packages
+# and imports no source and no drawing (no Pillow: it is not in this venv)
 FROM app AS ecobot
 COPY --from=venv-bot /opt/venv /opt/venv
 COPY ecobot.py ./
-RUN DATA_DIR=/tmp/build python -c "import lib.bot, ecobot, ecobot_mcp.__main__, lib.upstream, lib.mcp_server" \
+RUN DATA_DIR=/tmp/build python -c "import sys, importlib.util; import lib.bot, ecobot, lib.upstream, lib.weather, lib.alerts.irrigation; \
+assert not [m for m in sys.modules if m.split('.')[0] == 'PIL' or m.startswith(('lib.ecowitt', 'lib.airgradient', 'lib.forecast', \
+'lib.pollen', 'lib.storage', 'lib.charts', 'lib.draw', 'lib.gauges'))], 'the bot imported a source or the drawing'; \
+assert importlib.util.find_spec('PIL') is None" \
  && rm -rf /tmp/build
 ENV DATA_DIR=/data
 USER 10001:10001

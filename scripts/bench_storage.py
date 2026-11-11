@@ -69,7 +69,7 @@ def settings(folder: Path) -> Config:
     os.environ["DATA_DIR"] = str(folder)
     for name in ("BOT_TELEGRAM_TOKEN", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY"):   # (never used: nothing is asked of them)
         os.environ.setdefault(name, "bench")
-    cfg = Config.from_env()
+    cfg = Config.from_env(bot=False)   # (ecobot-mcp's settings: the sources)
     location = None
     if cfg.storage_path.exists():   # the air sensor the bot's file holds
         db = sqlite3.connect(f"file:{cfg.storage_path}?mode=ro", uri=True)

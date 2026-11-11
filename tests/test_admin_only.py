@@ -51,11 +51,24 @@ class Asked(Bot):
         self.asked.append(text.strip())
 
 
+@pytest.fixture(autouse=True)
+async def ecobot_mcp(serve):
+    """ecobot-mcp in memory with the weather station (its alerts are the menus' types), the bot's client of it connected: what `make`
+    builds every bot over."""
+    global WEATHER
+    WEATHER = await serve(tools=[], sources=["Ecowitt"])
+    yield WEATHER
+    WEATHER = None
+
+
+WEATHER = None
+
+
 def make(tmp_path, admin_only=True, extra=(), irrigation=None, groups=(GROUP,), tg=None):
     state = AlertState(tmp_path / "s.json")
     for group in groups:
         state.add_chat(group, "Home")
-    bot = Asked(NS(tz=TZ, admin_only=admin_only, admin_chat_ids=frozenset(extra)), None, [NS(name="Ecowitt")], state, irrigation)
+    bot = Asked(NS(tz=TZ, admin_only=admin_only, admin_chat_ids=frozenset(extra)), None, state, irrigation, service=WEATHER)
     bot.asked = []
     return bot, state, tg or TG()
 
@@ -106,7 +119,7 @@ def board(*data):
 
 # ---------- the settings ----------
 def test_admin_only_is_off_unless_switched_on_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
-    for k, v in {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "MCP_ECOWITT_API_KEY": "a", "MCP_ECOWITT_APP_KEY": "b"}.items():
+    for k, v in {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "BOT_MCP_URL": "http://127.0.0.1:8765/mcp"}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("BOT_ADMIN_ONLY", raising=False)
     assert Config.from_env().admin_only is False and Config.from_env().admin_chat_ids == frozenset()

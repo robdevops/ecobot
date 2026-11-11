@@ -1,5 +1,5 @@
-"""ecobot-mcp's startup (docs/ecobot-mcp.md step 5: "ecobot.py's warm_up() is split"), shared by ecobot-mcp (python -m ecobot_mcp)
-and the bot (ecobot.py), which runs it in-process unless it is ecobot-mcp's client (BOT_MCP_URL):
+"""ecobot-mcp's startup (docs/ecobot-mcp.md step 5: "ecobot.py's warm_up() is split"), run by ecobot-mcp (python -m ecobot_mcp): the
+bot is only ever its client (step 6b):
 
   1. `configure(cfg)`: the settings the engines read as module values (the anti-spike rule, what "all" draws, what `about` says);
   2. `start_sources(cfg)`: every configured source that starts, the weather station first (its time zone wins);
@@ -27,7 +27,7 @@ from lib.alert_log import AlertLog
 from lib.alerts.kinds import LABELS, available_kinds
 from lib.alerts.store import AlertStore
 from lib.compose import Composer
-from lib.config import ROOT, Config
+from lib.config import Config
 from lib.ecowitt import Archive, Ecowitt
 from lib.ecowitt.source import HA_IMPORT_SECONDS
 from lib.forecast import Forecast
@@ -40,6 +40,7 @@ from lib.service.alerts import AlertRules
 from lib.service.context import Context
 from lib.sources import Source
 from lib.storage import Storage
+from lib.version import commit_in, version   # noqa: F401 (the running commit: ecobot-mcp's and the bot's)
 from lib.warm import Tasks, every, safely
 
 log = logging.getLogger("ecobot.mcp")   # (under the bot's own logger: LOG_LEVEL reaches it)
@@ -149,8 +150,8 @@ class Health:
 
 # ---------- ecobot-mcp ----------
 def hold_data_folder(cfg: Config, stack):
-    """One ecobot-mcp per data folder: the bot running it in-process and `python -m ecobot_mcp` on the same folder would both fetch
-    and both write each alert (sent twice). The lock is the kernel's, so it goes with the process, however that ends."""
+    """One ecobot-mcp per data folder: two on the same folder would both fetch and both write each alert (sent twice). The lock is the
+    kernel's, so it goes with the process, however that ends."""
     import fcntl
     path = cfg.state_path.parent / "mcp.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,15 +160,15 @@ def hold_data_folder(cfg: Config, stack):
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         held.close()
-        raise SystemExit(f"Another process already runs ecobot-mcp's work (the sources and the alert rules) on {path.parent} (the bot without BOT_MCP_URL, or "
-                         f"python -m ecobot_mcp). Stop it first, or set BOT_MCP_URL to use it.")
+        raise SystemExit(f"Another ecobot-mcp (python -m ecobot_mcp) already runs on {path.parent}: stop it first, or give this one "
+                         f"another DATA_DIR.")
     stack.callback(held.close)
 
 
 
 @dataclass
 class Core:
-    """ecobot-mcp as it runs (in its own process or the bot's): its settings, sources, alert log, tools and their Context, the alert rules once started."""
+    """ecobot-mcp as it runs: its settings, sources, alert log, tools and their Context, the alert rules once started."""
     cfg: Config
     sources: list[Source]
     alert_log: AlertLog
@@ -208,11 +209,10 @@ class Core:
             for line in source.startup_lines():
                 log.info("%s", line)
 
-    def start_alerts(self, moved_from=None) -> list[str]:
+    def start_alerts(self) -> list[str]:
         """The alert rules over every source that started (lib/service/alerts.py), writing the alert log; the weather's start in
-        warm_up, once the station has been read. moved_from: the bot's state, whose rules' state the first start moves (AlertStore).
-        Returns the alert types now running (a list warm_up adds the weather's to)."""
-        store = AlertStore(self.cfg.alert_state_path, moved_from=moved_from)
+        warm_up, once the station has been read. Returns the alert types now running (a list warm_up adds the weather's to)."""
+        store = AlertStore(self.cfg.alert_state_path)
         self.rules = AlertRules(self.by_name, store, self.alert_log, self.cfg.alert_cooldown_minutes * 60, self.cfg.rain_quiet_hours,
                                 self.service)
         self.running = self.rules.start(self.tasks)
@@ -284,33 +284,10 @@ class Core:
             return fetched, failed
         return run
 
-    def missing_alerts(self, running: list[str] | None = None, irrigation: bool = False) -> list[str]:
+    def missing_alerts(self, running: list[str] | None = None) -> list[str]:
         """The alert types the sources have that are not running (their labels): a rule that could not start."""
         running = self.running if running is None else running
-        return [LABELS[k] for k in available_kinds(self.by_name, irrigation) if k not in running]
-
-
-# ---------- the running code ----------
-def version() -> str:
-    """The checked-out commit, so the log shows which code is running."""
-    return commit_in(ROOT / ".git")
-
-
-def commit_in(git_dir) -> str:
-    """The short hash HEAD points at, read from the repository's files rather than by running git (which refuses a folder owned by
-    another user, as when the program runs as its own user). "unknown" when it cannot be read."""
-    try:
-        head = (git_dir / "HEAD").read_text().strip()
-        if head.startswith("ref:"):
-            ref = head.split(None, 1)[1]
-            try:
-                head = (git_dir / ref).read_text().strip()
-            except FileNotFoundError:   # after `git pack-refs` or gc the branch is a line in packed-refs
-                head = next(line.split()[0] for line in (git_dir / "packed-refs").read_text().splitlines()
-                            if line.endswith(f" {ref}"))
-        return head[:7] if len(head) >= 7 and all(c in "0123456789abcdef" for c in head.lower()) else "unknown"
-    except Exception:
-        return "unknown"
+        return [LABELS[k] for k in available_kinds(self.by_name) if k not in running]
 
 
 __all__ = ["Core", "Health", "commit_in", "configure", "start_sources", "version"]

@@ -343,7 +343,7 @@ def test_the_service_reads_its_settings_and_needs_no_telegram_token(monkeypatch,
 
 
 def test_one_service_per_data_folder(tmp_path):
-    """The bot running the service in-process and python -m ecobot_mcp on one folder would both fetch and both write each alert."""
+    """Two of python -m ecobot_mcp on one folder would both fetch and both write each alert."""
     import contextlib
     from types import SimpleNamespace
 
@@ -351,7 +351,7 @@ def test_one_service_per_data_folder(tmp_path):
     cfg = SimpleNamespace(state_path=tmp_path / "bot_state.json")
     with contextlib.ExitStack() as first:
         hold_data_folder(cfg, first)
-        with contextlib.ExitStack() as second, pytest.raises(SystemExit, match="already runs ecobot-mcp.s work"):
+        with contextlib.ExitStack() as second, pytest.raises(SystemExit, match="Another ecobot-mcp .* already runs on"):
             hold_data_folder(cfg, second)
     with contextlib.ExitStack() as again:   # free once the first has closed
         hold_data_folder(cfg, again)

@@ -16,7 +16,7 @@ from lib.airgradient.metrics import EXTRA
 from lib.captions import wants_chart
 from lib.daytable import analyse, lists_days, prepare
 from lib.ecowitt.api import GROUPS, daily_run
-from lib.ecowitt.calendar import PublicHolidays
+from lib.public_holidays import PublicHolidays
 from lib.ecowitt.days import ALWAYS_SHOWN, AVERAGED, FIELD_UNITS, day_values_on
 from lib.ecowitt.glance import glance
 from lib.ecowitt.link import link

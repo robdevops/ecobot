@@ -7,6 +7,7 @@ TYPES = {"rain": ("rain", "Ecowitt"), "gusts": ("gusts", "Ecowitt"), "uv": ("UV"
          "forecast": ("forecast changes", "Forecast"),
          "irrigation_battery": ("irrigation battery", "Irrigation"), "irrigation_pause": ("irrigation pause", "Irrigation")}
 LABELS = {kind: label for kind, (label, _) in TYPES.items()}
+RAIN_FROM_PCT = 50   # a day's rain is likely from this chance of at least 1 mm (the forecast alert's, and the irrigation check's)
 
 
 def kinds_of(source: str) -> tuple[str, ...]:

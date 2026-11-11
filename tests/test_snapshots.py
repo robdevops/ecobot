@@ -107,7 +107,6 @@ async def test_the_report_always_uses_the_cache_for_pollen_and_forecast(tmp_path
     calls = []
     pollen = Pollen(config(tmp_path, pollen=True), pollen_transport(lambda: page(), calls))
     forecast = Forecast(config(tmp_path, forecast=True, forecast_lat=-37.8, forecast_lon=144.9), None, forecast_transport(calls))
-    assert not pollen.wants("report") and not forecast.wants("sitrep") and pollen.wants("pollen today") and forecast.wants("forecast")
     for out in (json.loads(await old_tools.pollen(pollen, {"cached": True})),
                 json.loads(await old_tools.forecast(forecast, {"days": 3, "cached": True}))):
         assert "error" in out                                # nothing cached yet: the report goes without it, no request made

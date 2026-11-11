@@ -4,7 +4,7 @@ ecobot is configured only through environment variables. They live in one file, 
 
 Each setting is named for the program that reads it:
 
-- `MCP_...`: read by **ecobot-mcp** (`python -m ecobot_mcp`: the sources, the alert rules, the MCP server). The bot reads them too while it runs all of that in-process (`BOT_MCP_URL` unset, the default under systemd).
+- `MCP_...`: read by **ecobot-mcp** (`python -m ecobot_mcp`: the sources, the alert rules, the MCP server) alone. The bot, its client, doesn't read them.
 - `BOT_...`: read by the **bot** (`ecobot.py`: Telegram, the model, the irrigation controller) alone.
 - No prefix: read by **both**.
 
@@ -105,7 +105,7 @@ Every request to `/mcp` needs a token (`AUTH_TOKENS`, below). Chart images are n
 
 | Variable | Default | Description |
 |---|---|---|
-| `BOT_MCP_URL` | none (Docker: `http://ecobot-mcp:8765/mcp`) | ecobot-mcp's endpoint (`http://127.0.0.1:8765/mcp`, or its TLS address behind a proxy). Set: the bot is ecobot-mcp's client ([ecobot-mcp.md](ecobot-mcp.md) step 5): it starts no sources, syncers or alert rules of its own, so the `MCP_` settings are ecobot-mcp's and the bot needs none of them; its tools, the server's instructions, the station (time zone, sensors, which alerts there are) and the alerts come from ecobot-mcp. Unset: the bot runs ecobot-mcp's part inside itself, as before |
+| `BOT_MCP_URL` | required (Docker: `http://ecobot-mcp:8765/mcp`) | ecobot-mcp's endpoint (systemd: `http://127.0.0.1:8765/mcp`; or its TLS address behind a proxy). The bot is only ever ecobot-mcp's client ([ecobot-mcp.md](ecobot-mcp.md) steps 5 and 6b): it starts no sources, syncers or alert rules of its own and never opens the readings file, so the `MCP_` settings are ecobot-mcp's and the bot reads none of them; its tools, the server's instructions, the station (time zone, sensors, which alerts there are), the alerts and every picture come from ecobot-mcp. Unset: the bot stops at start, saying to run ecobot-mcp and set it |
 
 The bot asks ecobot-mcp for the picture of every chart it sends, the model's answers' included (request `_meta` `chart_image: "png"`, in its own `DARKMODE` theme), and for the Status picture (`ecobot://status`), so its `BOT_MCP_URL` needs no `?charts=png`; it draws nothing itself.
 
@@ -119,6 +119,6 @@ check asks ecobot-mcp for the rain measured and the forecast.
 |---|---|---|
 | `AUTH_TOKENS` | generated | `token,token`: the bearer tokens ecobot-mcp accepts (each client sends one as `Authorization: Bearer <token>`), one per client so one can be revoked alone (take it out and restart); the bot sends the first. Compared in constant time; a token is never logged. Unset: ecobot-mcp generates one at its first start and keeps it in the data folder (`DATA_DIR/auth_token`, mode 0600, the same one every start after; its path is logged, never its value), and the bot, with `AUTH_TOKENS` unset too, reads it from there (the same data folder: systemd's units and Docker's containers share it), warning when it can't. For another client: `sudo cat /var/lib/private/ecobot/auth_token`. (Replaces `MCP_SERVICE_TOKENS` and the bot's `WEATHER_MCP_TOKEN`; the latter, if set, is still sent while `AUTH_TOKENS` is unset, with a warning to move it into `AUTH_TOKENS`, and is ignored, with a warning, once `AUTH_TOKENS` is set) |
 | `TZ` | system zone | Only used without Ecowitt (the station's zone wins; a mismatch is logged). IANA name, e.g. `Australia/Melbourne`. With `BOT_MCP_URL`, ecobot-mcp's station's zone wins once read (and is kept for a start while ecobot-mcp is down); `TZ` only until it has ever been read |
-| `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | State (`bot_state.json`), the alert log, the SQLite caches and the generated token. Relative paths from the working dir. Created if missing. Both programs use the same one |
+| `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | The bot's state (`bot_state.json`); ecobot-mcp's alert log, SQLite caches and generated token. Relative paths from the working dir. Created if missing. Both programs use the same one |
 | `DARKMODE` | `off` | The charts' colours. `off`: light; `on`: dark; a time range, e.g. `8pm-8am`, `20:00-8:00` or `20-8`: dark between those times in the station's time zone, light the rest of the day. The gauges (the Status picture, the web dashboard) are dark whatever this says. ecobot-mcp reads it for the chart images it sends a client that asks for them (a call may say `chart_dark`); the bot as its client asks for its own theme, so this is the bot's setting for its pictures either way |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the program's own lines (chart timings) |

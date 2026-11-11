@@ -74,7 +74,9 @@ start with `BOT_` by the Telegram bot; the few without either, such as `TZ`, by 
 
 ### systemd
 
-Needs Python 3.13.
+Needs Python 3.13. Two units run from one checkout and one venv: `ecobot-mcp` (`python -m ecobot_mcp`: the readings, the alerts, and an
+MCP server at `http://127.0.0.1:8765/mcp` that the bot and [other MCP clients](#other-mcp-clients) use) and `ecobot`, the Telegram bot,
+its client. The bot's unit pulls ecobot-mcp's in and starts after it.
 
 ```
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
@@ -88,46 +90,39 @@ sudo python3.13 -m venv /opt/ecobot/.venv
 sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/ecobot/requirements-charts.txt
 ```
 
+Tell the bot where ecobot-mcp is: add to `/etc/ecobot.env` (`sudoedit /etc/ecobot.env`)
+
 ```
-sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+BOT_MCP_URL=http://127.0.0.1:8765/mcp
+```
+
+No token is needed between them: at its first start ecobot-mcp makes one and keeps it in the data folder
+(`/var/lib/private/ecobot/auth_token`), where the bot reads it. To choose your own instead, set `AUTH_TOKENS=<token>` (both read it;
+the bot sends the first).
+
+Install both units, ecobot-mcp first:
+
+```
+sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
 ```
 
 ```
-sudo systemctl enable --now ecobot
+sudo systemctl enable --now ecobot-mcp.service ecobot.service
 ```
 
 Watch the logs:
 
 ```
-journalctl -fu ecobot
+journalctl -fu ecobot-mcp -u ecobot
 ```
 
-Warnings and errors alone: `journalctl -p warning -u ecobot`.
+Warnings and errors alone: `journalctl -p warning -u ecobot-mcp -u ecobot`.
 
-#### ecobot-mcp on its own (optional)
-
-Not needed: without it the bot runs everything itself, as before. `ecobot-mcp.service` runs ecobot-mcp as its own program
-(`python -m ecobot_mcp`, an MCP server at `http://127.0.0.1:8765/mcp`) for other MCP clients, with the bot as one of them. It uses the
-bot's data folder, so back that up first: `sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then:
-
-1. Add to `/etc/ecobot.env`:
-   ```
-   BOT_MCP_URL=http://127.0.0.1:8765/mcp
-   ```
-   No token is needed: at its first start ecobot-mcp makes one and keeps it in the data folder (`/var/lib/private/ecobot/auth_token`),
-   where the bot reads it. To choose your own instead, set `AUTH_TOKENS=<token>` (both read it; the bot sends the first).
-2. Restart the bot, now ecobot-mcp's client (it waits for it): `sudo systemctl restart ecobot`
-3. Start ecobot-mcp: `sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ecobot-mcp`
-4. Check that both run as the same user and the folder's owner is unchanged (the three numbers match):
-   `systemctl show -p UID --value ecobot ecobot-mcp; stat -c %u /var/lib/private/ecobot`
-
-Logs: `journalctl -fu ecobot-mcp`. To go back: `sudo systemctl disable --now ecobot-mcp`, remove the `BOT_MCP_URL` line, `sudo systemctl restart ecobot`.
-Only one process runs ecobot-mcp's part on the data folder: started beside a bot without `BOT_MCP_URL`, it stops, saying so in its log.
+Both run sandboxed as one user of their own, and keep their data in `/var/lib/private/ecobot`. Check that they run as the same user
+and the folder's owner is unchanged (the three numbers match): `systemctl show -p UID --value ecobot-mcp ecobot; stat -c %u /var/lib/private/ecobot`.
 The token for [other MCP clients](#other-mcp-clients): `sudo cat /var/lib/private/ecobot/auth_token`.
 
 Then message `/report` to your Telegram bot.
-
-The bot runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
 
 ### Docker
 
@@ -161,8 +156,9 @@ Watch the logs: `sudo docker logs -tf ecobot-mcp` shows `MCP: http://...:8765/mc
 `ecobot-mcp: connected`. Then message `/report` to your Telegram bot.
 
 Docker uses the same data folder as the systemd units, so you can switch between them, one at a time. To go back to systemd:
-`sudo docker compose --profile bot down && sudo systemctl start ecobot`. Only one process runs ecobot-mcp's part on the data folder:
-started beside a bot that runs it itself, it stops, saying so in its log.
+`sudo docker compose --profile bot down && sudo systemctl start ecobot-mcp ecobot` (with `BOT_MCP_URL=http://127.0.0.1:8765/mcp` in
+`/etc/ecobot.env`, which Docker sets for itself). Only one ecobot-mcp runs on the data folder: a second stops at start, saying so in its
+log.
 
 #### Other MCP clients
 
@@ -311,18 +307,34 @@ cd /opt/ecobot && sudo git pull
 sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/ecobot/requirements-charts.txt
 ```
 
-```
-sudo systemctl restart ecobot
-```
-
-If you run [ecobot-mcp on its own](#ecobot-mcp-on-its-own-optional), copy its unit in again too, then restart it (before November
-2026 the unit ran `python -m ecobot_service`, ecobot-mcp's old name, and dropped the bot's secrets only by their old names):
+Copy both units in again (they change now and then), then restart ecobot-mcp and the bot:
 
 ```
-sudo cp /opt/ecobot/ecobot-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart ecobot-mcp
+sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart ecobot-mcp ecobot
 ```
 
-An old unit not yet copied in still starts, with a warning in its log saying to copy the new one.
+(Before November 2026 ecobot-mcp's unit ran `python -m ecobot_service`, its old name, and dropped the bot's secrets only by their old
+names: an old unit not yet copied in still starts, with a warning in its log saying to copy the new one.)
+
+**From a bot that ran alone (no `ecobot-mcp.service` installed):** the bot no longer runs the sources and the alerts
+itself: ecobot-mcp does, and the bot is its client. Without `BOT_MCP_URL` the new bot stops at start, saying so. Your `MCP_` settings
+stay where they are: ecobot-mcp reads them from the same `/etc/ecobot.env` (the bot no longer does), and it uses the bot's data folder
+(the readings, the alert log and the rules' state carry over; both units run as the same user). Back that up first:
+`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then, after the `git pull` and `pip install` above:
+
+1. Add to `/etc/ecobot.env`:
+   ```
+   BOT_MCP_URL=http://127.0.0.1:8765/mcp
+   ```
+2. Install ecobot-mcp's unit beside the bot's, and start it, then the bot:
+   ```
+   sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+   ```
+   ```
+   sudo systemctl enable --now ecobot-mcp.service && sudo systemctl restart ecobot
+   ```
+3. Check that both run as the same user and the folder's owner is unchanged (the three numbers match):
+   `systemctl show -p UID --value ecobot-mcp ecobot; stat -c %u /var/lib/private/ecobot`
 
 ### Docker
 
@@ -374,10 +386,10 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 | `MCP_AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
 | `MCP_AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
 | `MCP_POLLEN`, `MCP_FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
-| `BOT_MCP_URL` | Optional. The bot as a client of ecobot-mcp running on its own (`python -m ecobot_mcp`, e.g. `http://127.0.0.1:8765/mcp`): the bot then fetches nothing and runs no alert rules itself, and needs none of the `MCP_` settings above. Unset (the default), the bot runs everything itself, as before. Docker sets it. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-ecobot-mcps-client). |
+| `BOT_MCP_URL` | Required by the bot (systemd: `http://127.0.0.1:8765/mcp`; Docker sets it). ecobot-mcp's address: the bot is its client, fetches nothing and runs no alert rules itself, and reads none of the `MCP_` settings above. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-ecobot-mcps-client). |
 | `AUTH_TOKENS` | Optional. The tokens ecobot-mcp accepts (`token,token,...`, one per client); the bot sends the first. Unset, ecobot-mcp generates one at its first start and keeps it in the data folder (`auth_token`), where the bot reads it. |
 
-After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
+After editing the file, restart: `sudo systemctl restart ecobot-mcp ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 
 Every setting is in [docs/configuration.md](docs/configuration.md).
 

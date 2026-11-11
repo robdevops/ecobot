@@ -80,11 +80,11 @@ async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(
     await eco.close()
 
 
-async def test_the_old_dashboards_refresh_is_out_of_date_and_changes_nothing(alert_state):
+async def test_the_old_dashboards_refresh_is_out_of_date_and_changes_nothing(serve, alert_state):
     """The Telegram dashboard is no more (the gauges' live page is ecobot-mcp's /dashboard): the 🔄 under one sent before is out of
     date, and its message stays as it was."""
     from lib.bot import STALE_BUTTON
-    bot, _ = report_bot(alert_state, three_gauges)
+    bot, _ = await report_bot(serve, alert_state, three_gauges)
     edits = []
 
     class Query:
@@ -127,7 +127,7 @@ async def test_the_reports_gauges_read_the_years_day_rows_in_one_go_and_only_wha
     await eco.close()
 
 
-def report_bot(alert_state, gauges_now):
+async def report_bot(serve, alert_state, gauges_now):
     """A bot whose service gives the report's readings now (its `reading`, the outdoor temperature, which a test may change) and, with
     context, its gauges (`gauges`: current's result with context, or raises; gauges_now to begin with)."""
     now = NS(reading="12.3 °C", gauges=gauges_now)
@@ -143,9 +143,7 @@ def report_bot(alert_state, gauges_now):
     class Agent:
         pass
 
-    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt"),
-               NS(name="AirGradient", wants=lambda t: True, poke=lambda: None, describe=lambda: "AirGradient")]
-    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state, service=service)
+    bot = Bot(NS(tz=TZ), Agent(), alert_state, service=await serve(tools=service, sources=["Ecowitt", "AirGradient"]))
     alert_state.add_chat(1, "Rob")
     alert_state.set_keyboard(1, bot.keyboard_version)
     return bot, now
@@ -176,9 +174,9 @@ async def no_action(*a, **k):
 CONTEXT = NS(bot=NS(send_chat_action=no_action, send_message_draft=no_action, id=99))   # a Telegram bot that shows "typing..." and takes drafts
 
 
-async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_refresh_redraws_both(alert_state, monkeypatch):
+async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_refresh_redraws_both(serve, alert_state, monkeypatch):
     from lib import report_menu
-    bot, tools = report_bot(alert_state, three_gauges)
+    bot, tools = await report_bot(serve, alert_state, three_gauges)
     sent = []
     msg, update = chat(sent)
     await bot.respond(update, CONTEXT, "report")
@@ -216,17 +214,18 @@ async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_ref
     assert edits[-1][0] == "caption" and "14.0 °C" in edits[-1][1]                                             # no new picture: the caption alone
 
 
-async def test_a_report_without_its_gauges_is_the_text_report_as_before(alert_state, caplog):
+async def test_a_report_without_its_gauges_is_the_text_report_as_before(serve, alert_state, caplog):
     from lib import report_menu
 
     def broken():
         raise RuntimeError("no cache")
-    bot, _ = report_bot(alert_state, broken)
+    bot, _ = await report_bot(serve, alert_state, broken)
     sent = []
     msg, update = chat(sent)
     await bot.respond(update, CONTEXT, "report")
     assert [k for k, *_ in sent] == ["text"] and sent[0][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
-    assert "The report's gauges failed (RuntimeError: no cache)" in caplog.text
+    assert "The report's gauges failed (MCPError: Internal server error)" in caplog.text   # (refused by ecobot-mcp, which logs why:)
+    assert "RuntimeError: no cache" in caplog.text
 
 
 async def test_a_report_too_long_for_a_caption_goes_after_its_gauges_with_the_refresh_button_on_the_text():
@@ -315,7 +314,7 @@ def test_the_gauges_sheet_is_drawn_from_currents_readings_and_their_context():
     assert gauge_sheet.sheet({**GAUGE_RESULT, "unavailable": {"station": "The weather station isn't answering right now."}}) is None
 
 
-async def test_the_reports_gauges_are_the_services_current_with_context(alert_state, monkeypatch):
+async def test_the_reports_gauges_are_the_services_current_with_context(serve, alert_state, monkeypatch):
     """The report's gauges are drawn from current {context: true} (the station's own dashboard() is not asked), its three readings
     named, by the service (lib/status.py)."""
     from tests.fakes import StandInService
@@ -327,11 +326,7 @@ async def test_the_reports_gauges_are_the_services_current_with_context(alert_st
             return GAUGE_RESULT
         return {"lines": {"station": ["• Outdoor: 12.3 °C"]}, "headings": {"station": "Weather station"}}
     service = StandInService(current=current)
-
-    async def no_dashboard(titles=None):
-        raise AssertionError("the gauges come from the service's current")
-    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt", dashboard=no_dashboard)]
-    bot = Bot(NS(tz=TZ), NS(), sources, alert_state, service=service)
+    bot = Bot(NS(tz=TZ), NS(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
     sent = []
     msg, update = chat(sent)
     await bot.respond(update, CONTEXT, "report")
@@ -339,13 +334,12 @@ async def test_the_reports_gauges_are_the_services_current_with_context(alert_st
     assert ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True}) in service.calls
 
 
-async def test_a_station_that_gives_nothing_sends_its_report_without_gauges(alert_state):
+async def test_a_station_that_gives_nothing_sends_its_report_without_gauges(serve, alert_state):
     from tests.fakes import StandInService
     down = {"sensors": {}, "lines": {"station": ["• not available right now"]}, "headings": {"station": "Weather station"},
             "unavailable": {"station": "The weather station isn't answering right now."}}
     service = StandInService(current=down)
-    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
-    bot = Bot(NS(tz=TZ), NS(), sources, alert_state, service=service)
+    bot = Bot(NS(tz=TZ), NS(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
     sent = []
     msg, update = chat(sent)
     await bot.respond(update, CONTEXT, "report")

@@ -11,7 +11,6 @@ from datetime import date
 
 import httpx
 
-from .. import intent
 from ..config import Config
 from ..snapshots import Snapshots
 from ..sources import Source
@@ -60,10 +59,6 @@ class Pollen(Source):
             self.summary = f"Melbourne Pollen: {'/'.join(l.split(' forecast')[0] for l in self.lines()) or 'no levels on the page'} ({self.warmer.interval:g}s)"
         except Exception as e:  # the site may just be briefly unreachable
             log.warning("Pollen not readable yet: %s", e)
-
-    def wants(self, text: str) -> bool:
-        """Only pollen questions start a refresh; the report always uses what is cached."""
-        return intent.mentions_pollen(text)
 
     # ---------- kept on disk ----------
     def _load(self):

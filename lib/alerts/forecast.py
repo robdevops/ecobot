@@ -17,12 +17,11 @@ from datetime import date, datetime, timedelta
 
 from ..forecast.source import describe_day
 from ..timeutil import at_hour
-from .kinds import kinds_of
+from .kinds import RAIN_FROM_PCT, kinds_of
 
 log = logging.getLogger(__name__)
 
-RAIN_FROM_PCT = 50   # rain is likely from this chance ...
-DRY_BELOW_PCT = 30   # ... and unlikely again only at or under this one (from likely)
+DRY_BELOW_PCT = 30   # rain unlikely again (from likely: RAIN_FROM_PCT, lib/alerts/kinds.py) only at or under this one (from likely)
 TEMP_CHANGE_C = 2.0
 BASELINE_HOUR = 6   # the first forecast fetched from this hour (local) is the day's baseline
 DAYS = 2            # today and tomorrow
