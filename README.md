@@ -171,6 +171,12 @@ image (an MCP server for other clients, with the bot as one of them) on the bot'
 4. Watch both: `sudo docker logs -tf ecobot-service` should show `MCP: http://.../mcp`, and `sudo docker logs -tf ecobot` with
    `Weather service: connected`. Then message `/report` to the bot.
 
+The service is published on port 8765 of every address your machine has, so other devices on your network (Claude Code on a laptop,
+say) can use it with their own token from `MCP_SERVICE_TOKENS`: add your machine's IP address or name, as they write it in the URL, to
+`MCP_SERVICE_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. It is plain HTTP: keep it on your own network.
+Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in `compose.yaml` to
+`127.0.0.1:8765:8765`.
+
 From then on, `sudo docker compose --profile service up -d --build` updates both. To go back: `sudo docker compose --profile service down`
 (it stops both), remove the lines from step 1, then `sudo docker compose up -d`.
 Only one process runs the service on the data folder: started beside a bot without `WEATHER_MCP_URL`, it stops, saying so in its log.

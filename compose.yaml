@@ -21,12 +21,13 @@ services:
         max-file: "5"
 
   # The MCP service on its own (docs/mcp-service.md 3.8, DEVELOPMENT.md "The MCP service"): the same image, `python -m ecobot_service`,
-  # at http://127.0.0.1:8765/mcp on the host (put TLS in front of it, e.g. Caddy, to reach it from elsewhere). Off unless asked for
+  # on port 8765 of every address the host has, so other machines on the network can reach it too (plain HTTP, with a token; put TLS
+  # in front of it, e.g. Caddy, to reach it over the internet; for this host only, publish 127.0.0.1:8765:8765). Off unless asked for
   # (`sudo docker compose --profile service up -d ecobot-service`). Run it only with the bot as its client (WEATHER_MCP_URL=
   # http://ecobot-service:8765/mcp and WEATHER_MCP_TOKEN in /etc/ecobot.env, and ecobot-service in MCP_SERVICE_ALLOWED_HOSTS), recreating the
   # bot first: one process runs the service per data folder (service.lock), so it won't start beside a bot running it. It needs MCP_SERVICE_TOKENS
   # (token,token,..., in /etc/ecobot.env): it listens on all of the container's addresses, which it refuses to do without tokens.
-  # MCP_SERVICE_ALLOWED_HOSTS: add the name a proxy or a LAN client uses for it.
+  # MCP_SERVICE_ALLOWED_HOSTS: add the host's IP address or name, as LAN clients use it in their URL, and a proxy's name.
   ecobot-service:
     image: ecobot
     container_name: ecobot-service
@@ -37,7 +38,7 @@ services:
     environment:
       MCP_SERVICE_BIND: 0.0.0.0:8765
     ports:
-      - 127.0.0.1:8765:8765
+      - 8765:8765
     volumes:
       - /var/lib/private/ecobot:/data
     logging:

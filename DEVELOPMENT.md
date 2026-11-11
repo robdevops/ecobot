@@ -33,7 +33,7 @@ It reads the bot's settings ([docs/configuration.md](docs/configuration.md)) les
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a          # the settings, as the bot reads them
 MCP_SERVICE_TOKENS=$(openssl rand -hex 16) python -m ecobot_service      # http://127.0.0.1:8765/mcp
-sudo docker compose --profile service up -d ecobot-service           # in Docker (compose.yaml), on 127.0.0.1:8765
+sudo docker compose --profile service up -d ecobot-service           # in Docker (compose.yaml), on the host's port 8765
 ```
 Only one process runs the service on a data folder: it holds `service.lock` there, so `python -m ecobot_service` refuses to start beside
 a bot that runs the service itself (`WEATHER_MCP_URL` unset), and the other way round. Make the bot its client first (below): set
