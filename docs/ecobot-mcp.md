@@ -777,7 +777,8 @@ Each step ships on its own, with the tests and evals green and the bot working t
    - **Charts:** the keyboard's chart buttons (each a fixed call), the period buttons and 🔄 (replaying `drawn_by`), Status's picture
      of three gauges (from ecobot-mcp), and Help from `about`.
 
-   **What it leaves:** about a fifth of today's bot code: `lib/bot.py` (much smaller), `lib/weather.py` (the remote half),
+   **What it leaves** (measured: the bot's files went from 3,676 lines of code to 3,413; steps 3 to 5 had already moved the weather
+   work to ecobot-mcp, so what was left was mostly Telegram's): `lib/bot.py`, `lib/weather.py` (the remote half),
    `lib/upstream.py`, `lib/model_tools.py`, `lib/llm.py`, `lib/prompt.py`, `lib/alerts/notify.py` and `menu.py`, `lib/periods.py`
    (the buttons), `lib/templates.py` (the keyboard), `lib/admins.py`, `lib/buttons.py`, `lib/config.py` (its `BOT_` settings).
 
