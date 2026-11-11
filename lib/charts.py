@@ -18,10 +18,10 @@ import threading
 import time
 from bisect import bisect_left
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from statistics import fmean
 
-from . import draw
+from . import draw, theme
 from .draw import DPI, PT, Canvas, blend, nice_ticks, rgb
 from .specs import Chart, Compass, Line, Panel, from_json
 
@@ -83,27 +83,10 @@ def _use(theme: Theme):
     RAIN, RAIN_TEXT, WIND_STEPS, _LINES = theme.rain, theme.rain_text, theme.wind_steps, theme.lines
 
 
-# DARKMODE: "off" (light), "on" (dark), or (from, until): dark between those times of day (minutes past midnight) in the bot's time zone
-MODE: str | tuple[int, int] = "off"
-ZONE: tzinfo | None = None
+# DARKMODE (lib/theme.py: held apart from the renderer, so the bot reads its theme without Pillow)
+configure, dark_now = theme.configure, theme.dark_now
 
 
-def configure(mode: str | tuple[int, int], tz: tzinfo | None = None):
-    """The dark-mode setting, and the time zone a time range is read in."""
-    global MODE, ZONE
-    MODE, ZONE = mode, tz
-
-
-def dark_now(at: datetime | None = None) -> bool:
-    """Are charts drawn dark now?"""
-    if MODE == "on":
-        return True
-    if not isinstance(MODE, tuple):
-        return False
-    start, end = MODE
-    local = (at or datetime.now(UTC)).astimezone(ZONE)
-    now = local.hour * 60 + local.minute
-    return start <= now < end if start < end else now >= start or now < end   # a range past midnight wraps
 W_IN, H_IN = 6.4, 3.6            # 1280 x 720 px
 AX_RECT = [0.075, 0.13, 0.905, 0.64]  # left, bottom, width, height (figure fraction) of a single chart
 PANEL_IN = 1.1                   # each panel past two adds this much height (inches)

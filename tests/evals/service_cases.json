@@ -777,7 +777,7 @@
         }
       }
     },
-    "note": "the bot's gauges (drawn in code) are the bot's; a plain client shows current, with context the gauges' highs and lows"
+    "note": "the gauges' live page is ecobot-mcp's /dashboard; a client shows current, with context the gauges' highs and lows"
   },
   "weather-report-for-a-day": {
     "any_tools": [

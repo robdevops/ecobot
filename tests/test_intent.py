@@ -1,5 +1,5 @@
 """intent: the reasoning effort from the words, and the few shortcuts the bot answers in code (docs/ecobot-mcp.md 4): the report,
-the gauges, "weather now" and a named reading's chart and a period, each a fixed call to a service tool. Everything else is the
+"weather now" and a named reading's chart and a period, each a fixed call to a service tool. Everything else is the
 model's."""
 
 from datetime import datetime
@@ -80,15 +80,15 @@ def test_the_reports_calls_are_the_readings_now_the_pollen_and_the_next_three_da
     assert not intent.read("report for last week", NOW, EVERY_SOURCE).report
 
 
-def test_weather_now_and_the_gauges_are_the_stations_and_a_period_makes_them_the_models():
+def test_weather_now_is_the_stations_and_a_period_makes_it_the_models():
     for text in ("weather", "weather now", "Weather Now", "current weather", "ecowitt", "ecowitt now", "show me the weather now please"):
         r = intent.read(text, NOW, EVERY_SOURCE)
         assert r.weather_now and r.chart is None and r.shortcut, text
-    for text in ("dashboard", "gauges", "show me the dashboard"):
-        assert intent.read(text, NOW, EVERY_SOURCE).dashboard, text
     for text in ("weather today", "how's the weather now", "weather tomorrow", "weather this week vs last week", "dashboard last week"):
         r = intent.read(text, NOW, EVERY_SOURCE)
-        assert not (r.weather_now or r.dashboard or r.report), text
+        assert not (r.weather_now or r.report), text
+    for text in ("dashboard", "gauges", "show me the dashboard"):                  # the Telegram dashboard is no more: the model's
+        assert not intent.read(text, NOW, EVERY_SOURCE).shortcut, text
     assert not intent.read("weather now", NOW, ["AirGradient"]).weather_now   # (no station)
 
 

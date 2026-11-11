@@ -148,18 +148,12 @@ def _air(today: date) -> tuple[dict, dict]:
     return latest, values
 
 
-def dashboard():
-    """The station's gauges, thermometers, dials and the rain beaker, then the air sensor's dials (its NOx index dimmed: no reading now)."""
-    live, values, today = _station()
-    return sheet(gauges_result(live, values, today, *_air(today)))
-
-
 def status():
-    """The report's picture: the temperature, humidity and rain gauges in a row."""
+    """The Status picture (ecobot://status): the temperature, humidity and rain gauges in a row, no tables."""
     return sheet(gauges_result(*_station()), STATUS)
 
 
 SAMPLES = {"temperature": temperature, "humidity_rain": humidity_rain, "all_week": all_week, "quarter": quarter, "air": air,
-           "wind": wind, "counts": counts, "two_scales": two_scales, "dashboard": dashboard, "status": status}
+           "wind": wind, "counts": counts, "two_scales": two_scales, "status": status}
 SAMPLES |= {f"{name}_dark": SAMPLES[name] for name in ("temperature", "all_week", "air", "wind")}   # DARKMODE's theme: a name
 # ending _dark is drawn dark (imagecmp.snapshot)

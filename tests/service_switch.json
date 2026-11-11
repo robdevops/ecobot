@@ -1221,27 +1221,6 @@
   "newest": 1794279900,
   "title": "UV index, since Mon 9 Nov 2026"
  },
- "dashboard": {
-  "charts": [],
-  "gauges": [
-   "86ae5b0b74e8b76d"
-  ],
-  "history": "Weather station dashboard, Tue 10 Nov 2026 2:05pm",
-  "sent": [
-   [
-    "photo",
-    "Weather station dashboard, Tue 10 Nov 2026 2:05pm",
-    [
-     [
-      [
-       "🔄",
-       "rp:dashboard"
-      ]
-     ]
-    ]
-   ]
-  ]
- },
  "humidity 7d": {
   "charts": [
    {

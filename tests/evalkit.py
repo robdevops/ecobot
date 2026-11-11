@@ -1,7 +1,7 @@
 """Saved questions with what should happen to them, so every fix we make for a real report stays fixed.
 
 tests/evals/cases.json holds the questions (real ones from the logs) and the decisions the bot still makes in code (docs/ecobot-mcp.md 4):
-the reasoning effort from the words, and its few shortcuts (the report, the gauges, "weather now", a named reading's chart and a
+the reasoning effort from the words, and its few shortcuts (the report, "weather now", a named reading's chart and a
 period, each a fixed call to a service tool). pytest checks them (`deterministic`).
 tests/evals/service_cases.json holds, for the same case ids, what a model offered the service's ten tools (lib/service) should call:
 checked offline by tests/test_service_evals.py, and asked of a model by `python scripts/eval_prompts.py --live` three ways:
@@ -131,7 +131,7 @@ def check_calls(calls: list[tuple[str, dict]], expect: dict) -> list[str]:
     return fails
 
 
-DECISIONS = {"effort", "report", "dashboard", "weather_now", "chart"}   # what cases.json's `expect` may say
+DECISIONS = {"effort", "report", "weather_now", "chart"}   # what cases.json's `expect` may say
 
 
 def read(case: Case):
@@ -151,7 +151,7 @@ def deterministic(case: Case) -> list[str]:
     r = read(case)
     if "effort" in e and r.effort != e["effort"]:
         fails.append(f"effort {r.effort}, expected {e['effort']}")
-    for key in ("report", "dashboard", "weather_now"):
+    for key in ("report", "weather_now"):
         if key in e and getattr(r, key) != e[key]:
             fails.append(f"{key} {getattr(r, key)}, expected {e[key]}")
     if "chart" in e:
@@ -162,13 +162,10 @@ def deterministic(case: Case) -> list[str]:
 
 
 def shortcut_calls(r) -> list[tuple[str, dict]] | None:
-    """The service calls the bot makes itself for a question it answers in code (the report, the gauges, weather now, a chart), else
-    None: the model takes it."""
-    from lib import gauge_sheet
+    """The service calls the bot makes itself for a question it answers in code (the report, weather now, a chart), else None: the
+    model takes it."""
     if r.report:
         return intent.report_calls(EVERY_SOURCE)
-    if r.dashboard:
-        return [("current", gauge_sheet.call())]
     if r.weather_now:
         return [intent.WEATHER_NOW_CALL]
     return [r.chart] if r.chart else None

@@ -137,10 +137,9 @@ class Charted:
 
 
 def dark_now() -> bool:
-    """Are charts drawn dark now (DARKMODE: lib/charts.dark_now, imported when first asked: the service imports this module for
-    call_key, and draws nothing)?"""
-    from . import charts
-    return charts.dark_now()
+    """Are charts drawn dark now (DARKMODE: lib/theme.py, not the renderer: the bot draws nothing)?"""
+    from . import theme
+    return theme.dark_now()
 
 
 @dataclass

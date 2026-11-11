@@ -137,18 +137,90 @@ async def test_a_question_is_answered_with_the_remote_tools_and_the_instructions
     assert bot._catalogue().names == world.ctx.readings().names
 
 
-async def test_a_chart_is_drawn_from_a_remote_result_with_its_period_buttons(connected, alert_state, monkeypatch):
-    drawn = []
-    monkeypatch.setattr("lib.bot.Bot._draw", lambda self, c, times=None: drawn.append(c) or (b"png", c["title"], 0))
+async def test_a_charts_picture_comes_from_the_service_with_its_period_buttons(connected, alert_state, monkeypatch):
+    """The bot draws nothing: the chart's picture is the service's (asked for as an image), its JSON from the result's _meta."""
+    got, photos = [], []
+    asked = connected.call_images
+
+    async def call_images(*a, **k):
+        out, images = await asked(*a, **k)
+        got.append(images)
+        return out, images
+    monkeypatch.setattr(connected, "call_images", call_images)
+    monkeypatch.setattr(weather_module, "draw_here", lambda *a, **k: pytest.fail("the bot draws nothing"))
     bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
     update, context, replies = a_chat("group")
+    reply_photo = update.effective_message.reply_photo
+
+    async def kept(photo, **kw):
+        photos.append(photo)
+        return await reply_photo(photo, **kw)
+    update.effective_message.reply_photo = kept
     await bot.respond(update, context, "Humidity chart 7d")     # (a shortcut: a fixed summary call, no model)
     (caption, markup), = replies
-    (chart,) = drawn
+    ((image,),) = got
+    chart = image.chart
+    assert photos == [image.png] and image.png.startswith(b"\x89PNG")
     assert chart["drawn_by"]["tool"] == "summary" and chart["drawn_by"]["arguments"]["period"] == "7d"
     assert len(max((s["points"] for p in chart["panels"] for s in p["series"]), key=len)) > 150   # (asked as drawn, not 150 points)
     assert [b.callback_data for b in markup.inline_keyboard[0]] == ["pd:1d", "pd:7d", "pd:1m", "pd:3m", "pd:1y"]
     assert bot.charted.get(1, 9)["drawn_by"] == chart["drawn_by"]
+
+
+async def test_the_models_charts_come_from_the_service_as_pictures_and_the_model_gets_only_their_text(connected, world, alert_state,
+                                                                                                      monkeypatch):
+    """A chart in the model's answer: its call asked for the picture (chart_image "png"), the bot sends the service's PNG with its period
+    buttons, and the model is sent the result's text alone (each chart's title and period, BOT_CHART_NOTE), never the image."""
+    from lib import chart_images
+    call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
+    metas, photos = [], []
+    calling = connected.upstream.client.call_tool
+
+    async def call_tool(name, args, meta=None, **k):
+        metas.append(meta)
+        return await calling(name, args, meta=meta, **k)
+    monkeypatch.setattr(connected.upstream.client, "call_tool", call_tool)
+    monkeypatch.setattr(weather_module, "draw_here", lambda *a, **k: pytest.fail("the bot draws nothing"))
+    model = Model([call], "Humid all week.")
+    bot = Bot(NS(tz=TZ), Agent(model, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    update, context, replies = a_chat("group")
+    reply_photo = update.effective_message.reply_photo
+
+    async def kept(photo, **kw):
+        photos.append(photo)
+        return await reply_photo(photo, **kw)
+    update.effective_message.reply_photo = kept
+    await bot.respond(update, context, "how humid was it this week? chart it")
+    assert [m["chart_image"] for m in metas] == [chart_images.IMAGE]
+    sent_to_model = model.seen[1]["messages"][-1]["content"]
+    told = json.loads(sent_to_model)
+    assert [set(c) for c in told["charts"]] == [{"title", "period"}] and told["chart_note"] == model_tools.BOT_CHART_NOTE
+    assert "image" not in sent_to_model and "base64" not in sent_to_model
+    (caption, markup), = replies
+    out, (image,) = await connected.call_images(*call, {"chart_points": "drawn"})
+    assert photos == [image.png] and image.png.startswith(b"\x89PNG") and "Humid all week." in caption
+    assert [b.callback_data for b in markup.inline_keyboard[0]] == ["pd:1d", "pd:7d", "pd:1m", "pd:3m", "pd:1y"]
+    assert bot.charted.get(1, 9)["drawn_by"] == out["charts"][0]["drawn_by"]
+
+
+async def test_status_sends_the_services_picture_of_three_gauges_with_the_report(connected, world, alert_state, monkeypatch):
+    """/status and /report: the Status picture is ecobot://status's PNG, byte for byte, the report its caption."""
+    import base64
+    photos = []
+    bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
+    update, context, replies = a_chat("group")
+    reply_photo = update.effective_message.reply_photo
+
+    async def kept(photo, **kw):
+        photos.append(photo)
+        return await reply_photo(photo, **kw)
+    update.effective_message.reply_photo = kept
+    await bot.respond(update, context, "status")
+    (caption, markup), = replies
+    contents = (await connected.upstream.client.read_resource("ecobot://status")).contents
+    (png,) = [base64.b64decode(c.blob) for c in contents if getattr(c, "blob", None)]
+    assert photos == [png] and png.startswith(b"\x89PNG") and caption.startswith("Weather station")
+    assert [b.callback_data for b in markup.inline_keyboard[0]] == ["rp:refresh"]
 
 
 async def test_a_remote_bot_sends_the_services_picture_of_a_chart_byte_for_byte_the_one_it_would_draw_itself(connected, world, alert_state,
@@ -165,7 +237,6 @@ async def test_a_remote_bot_sends_the_services_picture_of_a_chart_byte_for_byte_
 
     def not_here(*a, **k):
         raise AssertionError("a remote bot doesn't draw the service's charts itself")
-    monkeypatch.setattr("lib.bot.render_data", not_here)
     monkeypatch.setattr(weather_module, "draw_here", not_here)
     monkeypatch.setattr(pictures, "render_data", not_here)
     bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
@@ -179,16 +250,24 @@ async def test_a_remote_bot_sends_the_services_picture_of_a_chart_byte_for_byte_
     assert typed.png == drawn_here.png
 
 
-async def test_a_service_without_pillow_sends_the_charts_json_and_the_remote_bot_draws_it_itself(connected, world, alert_state, monkeypatch):
+async def test_a_service_without_pillow_sends_the_charts_json_and_the_remote_bot_sends_no_picture(connected, world, alert_state,
+                                                                                                    monkeypatch):
+    """The bot draws nothing (docs/ecobot-mcp.md step 6a): a service that can't draw (no Pillow there) gives the answer with its charts'
+    JSON and no picture, and the bot sends none; an alert's chart goes without its picture."""
     from types import SimpleNamespace
     from lib import chart_images, mcp_server
+    from lib.alerts import pictures
     call = ("summary", {"readings": ["humidity"], "period": "7d", "chart": True})
     local = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(world.service)), [], alert_state, service=world.service)
     here = await local._draw_call(*call)
+    event_chart = await pictures.chart_data(None, "Wind chart 1d", TZ, world.service)
     monkeypatch.setattr(mcp_server, "chart_images", SimpleNamespace(**{**vars(chart_images), "renderer": lambda: None}))   # (no Pillow there)
+    monkeypatch.setattr(weather_module, "draw_here", lambda *a, **k: pytest.fail("the bot draws nothing"))
     bot = Bot(NS(tz=TZ), Agent(None, "m", model_tools.tools(connected)), [], alert_state, service=connected)
-    made = await bot._draw_call(*call)
-    assert made.out["chart_image_note"] == chart_images.UNAVAILABLE_NOTE and made.png == here.png and made.drawn_by == here.drawn_by
+    assert await bot._draw_call(*call) is None
+    out, images = await connected.call_images(*call)
+    assert out["chart_image_note"] == chart_images.UNAVAILABLE_NOTE and images == [] and out["charts"][0]["drawn_by"] == here.drawn_by
+    assert await pictures.picture_of(event_chart, TZ, connected) is None
 
 
 async def test_an_alert_reaches_the_subscribed_chats_through_the_listen(connected, world, tmp_path):
@@ -415,7 +494,7 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
     import signal
     from zoneinfo import ZoneInfo
     import ecobot
-    from lib import charts
+    from lib import theme
     from tests.fakes import config
     from tests.test_startup import FakeApp, FakeBuilder
     caplog.set_level("INFO")
@@ -428,7 +507,7 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
     monkeypatch.setattr(ecobot._format, "width", ecobot._format.width)
     monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
     monkeypatch.setattr(ecobot, "start_sources", lambda *a: pytest.fail("no sources when remote"))
-    monkeypatch.setattr(charts, "ZONE", charts.ZONE)   # (put back after)
+    monkeypatch.setattr(theme, "ZONE", theme.ZONE)   # (put back after)
     made = {}
 
     class Kept(ecobot.Bot):
@@ -464,7 +543,7 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
         await ecobot.main()
         await late
         bot, delivery = made["bot"], made["delivery"]
-        assert str(bot.cfg.tz) == str(delivery.tz) == str(bot.alert_charts.tz) == str(charts.ZONE) == "Australia/Melbourne"
+        assert str(bot.cfg.tz) == str(delivery.tz) == str(bot.alert_charts.tz) == str(theme.ZONE) == "Australia/Melbourne"
         assert json.loads(cfg.state_path.read_text())["station_zone"] == "Australia/Melbourne"
         assert "isn't reachable yet" in caplog.text and "TZ's, Etc/UTC" in caplog.text
 
@@ -474,7 +553,7 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
         stopper = asyncio.create_task(until_then_stop(bot_up, "the bot to start again"))
         await ecobot.main()
         await stopper
-        assert str(made["bot"].cfg.tz) == str(made["delivery"].tz) == str(charts.ZONE) == "Australia/Melbourne"
+        assert str(made["bot"].cfg.tz) == str(made["delivery"].tz) == str(theme.ZONE) == "Australia/Melbourne"
         assert "the station's last read, Australia/Melbourne" in caplog.text
     finally:
         alerts.close()

@@ -5,11 +5,11 @@ Pillow is optional on the service (requirements-charts.txt): nothing here import
 is asked for (`renderer`). Without it `renderer()` is None, said once as a warning, and the service answers with the charts' JSON as if
 no image had been asked for, with UNAVAILABLE_NOTE.
 
-  - `configure(mode, tz)`: the service's DARKMODE (lib/config.py's dark_mode) and the zone a time range is read in, handed to
-    lib.charts (charts.configure) when it is first imported here, or at once when it already is (the bot's process configures it itself);
+  - `configure(mode, tz)`: the service's DARKMODE (lib/config.py's dark_mode) and the zone a time range is read in (lib/theme.py,
+    which lib.charts reads when it draws);
   - `wanted(meta, query)`: does a tool call want images, and how: the request's `_meta` `chart_image` ("png", "link" or "none"),
     else the connection's MCP URL's query (`?charts=png`, `?charts=link`), else not: "png", "link" or None;
-  - `render(chart, tz, dark)`: (PNG, dark), as the bot draws it; dark None: as DARKMODE says now (charts.dark_now);
+  - `render(chart, tz, dark)`: (PNG, dark), as the bot draws it; dark None: as DARKMODE says now (theme.dark_now);
   - `Links`: the PNGs of link mode, kept in memory for their lifetime (MCP_CHART_LINK_HOURS) under a random id each, at most
     LINKS_MOST of them and LINKS_BYTES in all (the oldest dropped first), served at GET /charts/<id>.png (lib/mcp_server.py) and gone
     at a restart; `markdown(title, url)`: the image as the model puts it in its reply."""
@@ -17,10 +17,11 @@ no image had been asked for, with UNAVAILABLE_NOTE.
 import importlib
 import logging
 import secrets
-import sys
 import time
 from collections import OrderedDict
 from datetime import tzinfo
+
+from . import theme
 
 log = logging.getLogger(__name__)
 
@@ -35,29 +36,16 @@ LINK_NOTE = ("Each chart is a picture at its `url`: put each in your reply as it
              "the person sees it. Keep your text to the figures; don't describe the chart.")
 UNAVAILABLE_NOTE = "Chart images aren't available on this service: the chart's data is in `charts`."
 NOT_DRAWN_NOTE = "The chart's image couldn't be drawn: the chart's data is in `charts`."
-MODE: str | tuple[int, int] | None = None   # the service's DARKMODE, once configured (None: as lib.charts is)
-ZONE: tzinfo | None = None
 _warned = False
-_handed: tuple | None = None   # the (MODE, ZONE) last handed to lib.charts
 
 
 def configure(mode: str | tuple[int, int], tz: tzinfo | None = None):
-    """The service's DARKMODE and the zone it is read in, for its images (lib.charts.configure once lib.charts is imported)."""
-    global MODE, ZONE
-    MODE, ZONE = mode, tz
-    if (charts := sys.modules.get("lib.charts")) is not None:
-        _hand(charts)
-
-
-def _hand(charts):
-    global _handed
-    if MODE is not None and _handed != (MODE, ZONE):
-        charts.configure(MODE, ZONE)
-        _handed = (MODE, ZONE)
+    """The service's DARKMODE and the zone it is read in, for its images (lib/theme.py, which lib.charts reads when it draws)."""
+    theme.configure(mode, tz)
 
 
 def renderer():
-    """lib.charts, imported now if it hasn't been (and given the service's DARKMODE); None when Pillow isn't installed (said once)."""
+    """lib.charts, imported now if it hasn't been; None when Pillow isn't installed (said once)."""
     global _warned
     try:
         charts = importlib.import_module("lib.charts")
@@ -67,7 +55,6 @@ def renderer():
             log.warning("Chart images were asked for but can't be drawn here (%s): install requirements-charts.txt (Pillow); "
                         "the charts are sent as JSON alone", e)
         return None
-    _hand(charts)
     return charts
 
 
@@ -93,7 +80,7 @@ def render(chart: dict, tz: tzinfo, dark: bool | None = None) -> tuple[bytes, bo
     charts = renderer()
     if charts is None:
         raise ImportError("Pillow isn't installed: chart images can't be drawn")
-    dark = charts.dark_now() if dark is None else dark
+    dark = theme.dark_now() if dark is None else dark
     return charts.render_data(chart, tz, dark=dark), dark
 
 

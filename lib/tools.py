@@ -36,6 +36,8 @@ class Turn:
     meta: dict = field(default_factory=dict)     # the request's metadata, all a service tool reads (lib/service/common.py: chart_points,
                                                  # fetch, priority); over MCP, the request's _meta
     results: list = field(default_factory=list)  # the bot's model: (tool, arguments, its whole result as data) of each call it made
+    pictures: dict = field(default_factory=dict)  # ... and the charts the service drew for it, by its place in `results`
+                                                  # (lib/weather.ChartImage each: the PNG, the chart's JSON, the theme)
     result_chars: int = 0                        # the size of every result the model was sent so far this question
 
 

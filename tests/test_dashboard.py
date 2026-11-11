@@ -21,16 +21,6 @@ TODAY = date(2026, 10, 27)
 NOW = datetime(2026, 10, 27, 12, tzinfo=TZ)
 
 
-def test_a_dashboard_is_asked_for_in_a_word_or_two_and_is_not_the_report():
-    for said in ("dashboard", "Dashboard", "show me the dashboard", "gauges", "weather dashboard", "dashboard now"):
-        read = intent.read(said, NOW)
-        assert read.dashboard and not read.report, said
-    for said in ("report", "status", "dashboard for last week", "how do I use the dashboard on my phone", "weather"):
-        assert not intent.read(said, NOW).dashboard, said
-    assert intent.read("report", NOW).report
-    assert not intent.read("dashboard", NOW, ("AirGradient",)).dashboard          # the station's gauges need the station
-
-
 def test_the_rows_cover_the_day_the_month_so_far_and_the_year_so_far():
     days = dash.periods_of(TODAY)
     assert days["Daily"] == [TODAY] and days["Monthly"][0] == date(2026, 10, 1) and days["Monthly"][-1] == TODAY
@@ -70,7 +60,7 @@ def test_the_gauges_are_drawn_as_a_png_of_the_size_their_tiles_make():
     tile = Tile("Humidity", "%", 70, "dial", 0, 100, ("#DFFBFF", "#2C7592"), ("Max", "Min"), {"Daily": (87, 48)}, (0, 50, 100), 0)
     dull = Tile("Rain", "mm", None, "beaker", 0, 100, ("#DFFBFF", "#2C7592"), ("Max", "Total"), {}, (100, 0))
     image = Image.open(io.BytesIO(gauges.render(Dashboard([tile, tile, tile, dull]))))
-    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, 2 * gauges.CELL_H + 2 * gauges.MARGIN)
+    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, 2 * gauges.TILE_H + 2 * gauges.MARGIN)   # (no tables under them)
     assert image.convert("RGB").getpixel((2, 2)) == (0x14, 0x19, 0x1D)
 
 
@@ -90,76 +80,24 @@ async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(
     await eco.close()
 
 
-class Tools:
-    async def call(self, *a, **k):
-        raise AssertionError("the dashboard is drawn in code")
-
-    call_all = call
-
-
-async def test_the_dashboard_command_sends_one_picture_with_no_period_buttons_and_asks_no_model(alert_state, monkeypatch):
-    sent = []
-    service = StandInService(current={"sensors": {"outdoor": {"humidity": {"value": 70, "unit": "%", "today": {"high": 87, "low": 60}}}}})
-
-    class Agent:
-        tools = Tools()
-
-        async def run(self, *a, **k):
-            raise AssertionError("no model for the dashboard")
-    source = NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")
-    bot = Bot(NS(tz=TZ), Agent(), [source], alert_state, service=service)
-
-    async def reply_photo(photo, caption=None, **kw):
-        sent.append((photo[:4], caption, kw.get("reply_markup")))
-        return NS(message_id=7)
-    msg = NS(chat_id=1, message_id=50, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo, text="Dashboard",
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-
-    context = CONTEXT
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    await bot.respond(update, context, "Dashboard")
-    assert service.calls == [("current", gauge_sheet.call())] and len(sent) == 1
-    photo, caption, markup = sent[0]
-    assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ")
-    assert not isinstance(markup, InlineKeyboardMarkup)                         # a chat whose keyboard is out of date gets that instead
-    assert bot.charted.get(1, 7) is None
-    bot.state.add_chat(1, "private")
-    bot.state.set_keyboard(1, bot.keyboard_version)
-    await bot.respond(update, context, "Dashboard")
-    from lib import report_menu
-    assert [b.callback_data for b in sent[-1][2].inline_keyboard[0]] == [report_menu.DASHBOARD]   # its 🔄, no period buttons
-
-
-async def test_the_dashboards_refresh_draws_it_again_in_the_same_message_and_a_station_that_fails_leaves_it(alert_state):
-    from lib import report_menu
+async def test_the_old_dashboards_refresh_is_out_of_date_and_changes_nothing(alert_state):
+    """The Telegram dashboard is no more (the gauges' live page is ecobot-mcp's /dashboard): the 🔄 under one sent before is out of
+    date, and its message stays as it was."""
     from lib.bot import STALE_BUTTON
-    bot, now = report_bot(alert_state, three_gauges)
+    bot, _ = report_bot(alert_state, three_gauges)
     edits = []
 
     class Query:
-        data, message, toast = report_menu.DASHBOARD, NS(photo=[NS(file_id="x")]), "unset"
+        data, message, toast = "rp:dashboard", NS(photo=[NS(file_id="x")]), "unset"
 
         async def answer(self, text=None, **k):
             self.toast = text
 
-        async def edit_message_media(self, media, reply_markup=None):
-            edits.append((media.media.input_file_content[:4], media.caption, reply_markup))
+        async def edit_message_media(self, *a, **k):
+            edits.append(a)
     query = Query()
     await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    (photo, caption, markup), = edits
-    assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ") and query.toast is None
-    assert markup.inline_keyboard[0][0].callback_data == report_menu.DASHBOARD                               # the 🔄 stays
-
-    def failing():
-        raise RuntimeError("station down")
-    now.gauges = failing
-    query = Query()
-    await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    assert len(edits) == 1 and "Couldn't refresh" in query.toast                                              # left as it was
-    query = Query()
-    query.message = NS(photo=None)
-    await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    assert len(edits) == 1 and query.toast == STALE_BUTTON
+    assert query.toast == STALE_BUTTON and edits == []
 
 
 def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
@@ -168,7 +106,7 @@ def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
     sheet = gauge_sheet.sheet(gauges_result(live, {}, TODAY), dash.STATUS)
     assert [t.title for t in sheet.tiles] == ["Temperature", "Humidity", "Rain"] and sheet.per_row == 3
     image = Image.open(io.BytesIO(gauges.render(sheet)))
-    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, gauges.CELL_H + 2 * gauges.MARGIN)   # one row
+    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, gauges.TILE_H + 2 * gauges.MARGIN)   # one row
 
 
 async def test_the_reports_gauges_read_the_years_day_rows_in_one_go_and_only_what_its_three_show(tmp_path, archived_cache):
@@ -288,7 +226,7 @@ async def test_a_report_without_its_gauges_is_the_text_report_as_before(alert_st
     msg, update = chat(sent)
     await bot.respond(update, CONTEXT, "report")
     assert [k for k, *_ in sent] == ["text"] and sent[0][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
-    assert "Service tool current failed: RuntimeError: no cache" in caplog.text
+    assert "The report's gauges failed (RuntimeError: no cache)" in caplog.text
 
 
 async def test_a_report_too_long_for_a_caption_goes_after_its_gauges_with_the_refresh_button_on_the_text():
@@ -377,9 +315,9 @@ def test_the_gauges_sheet_is_drawn_from_currents_readings_and_their_context():
     assert gauge_sheet.sheet({**GAUGE_RESULT, "unavailable": {"station": "The weather station isn't answering right now."}}) is None
 
 
-async def test_the_dashboard_and_the_reports_gauges_are_the_services_current_with_context(alert_state, monkeypatch):
-    """The bot draws its gauges from current {context: true} (the station's own dashboard() is not asked): the whole dashboard from
-    every gauge's reading, the report's from its three."""
+async def test_the_reports_gauges_are_the_services_current_with_context(alert_state, monkeypatch):
+    """The report's gauges are drawn from current {context: true} (the station's own dashboard() is not asked), its three readings
+    named, by the service (lib/status.py)."""
     from tests.fakes import StandInService
     drawn = []
     monkeypatch.setattr(gauges, "render", lambda sheet: drawn.append(sheet) or b"\x89PNG")
@@ -396,17 +334,12 @@ async def test_the_dashboard_and_the_reports_gauges_are_the_services_current_wit
     bot = Bot(NS(tz=TZ), NS(), sources, alert_state, service=service)
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "dashboard")
-    assert [k for k, *_ in sent] == ["photo"] and sent[0][2].startswith("Weather station dashboard, ")
-    from lib import gauge_sheet
-    assert drawn[-1] == gauge_sheet.sheet(GAUGE_RESULT)
-    assert ("current", {"context": True}) in service.calls   # every gauge's, the station's and the air sensor's: no readings named
     await bot.respond(update, CONTEXT, "report")
     assert sent[-1][0] == "photo" and [t.title for t in drawn[-1].tiles] == list(STATUS_TITLES)
     assert ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True}) in service.calls
 
 
-async def test_a_station_that_gives_nothing_is_not_answering_and_its_report_goes_without_gauges(alert_state):
+async def test_a_station_that_gives_nothing_sends_its_report_without_gauges(alert_state):
     from tests.fakes import StandInService
     down = {"sensors": {}, "lines": {"station": ["• not available right now"]}, "headings": {"station": "Weather station"},
             "unavailable": {"station": "The weather station isn't answering right now."}}
@@ -415,8 +348,6 @@ async def test_a_station_that_gives_nothing_is_not_answering_and_its_report_goes
     bot = Bot(NS(tz=TZ), NS(), sources, alert_state, service=service)
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "dashboard")
-    assert [(k, text) for k, _, text, _ in sent] == [("text", "The weather station isn't answering right now.")]
     await bot.respond(update, CONTEXT, "report")
     assert sent[-1][0] == "text"                                                                 # the report as text alone
 

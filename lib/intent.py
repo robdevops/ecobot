@@ -1,7 +1,7 @@
 """What the bot decides about a message with patterns rather than the model (docs/ecobot-mcp.md 4):
 
   - how much the model should think (only predictions, analysis and "describe it" questions get reasoning);
-  - the few shortcuts the bot answers in code, each a fixed call to a service tool: the report, the gauges, "weather now", and a
+  - the few shortcuts the bot answers in code, each a fixed call to a service tool: the report, "weather now", and a
     named reading's chart and a period ("humidity chart 7d", "chart rain this month", "humidity 7d", the keyboard's and the alerts'
     sentences: `chart_call`). Anything not clearly matched goes to the model, so strictness is the point.
 
@@ -92,14 +92,6 @@ REPORT = re.compile(_only(r"status|report|sitrep|overview|summary|everything|wha
 
 def wants_report(text: str) -> bool:
     return bool(REPORT.search(text)) and not TIME_WORDS.search(text)
-
-
-# "dashboard", "gauges": the station's readings as gauges, with each one's highs and lows (drawn in code from the station alone)
-DASHBOARD = re.compile(_only(r"(weather\s+)?(dashboard|gauges?|dials?)(\s+(now|right now))?", _ASK), I)
-
-
-def wants_dashboard(text: str) -> bool:
-    return bool(DASHBOARD.search(text)) and not TIME_WORDS.search(text)
 
 
 # "weather", "weather now", "current weather", "ecowitt": every reading the station has right now (the weather half of the report)
@@ -208,14 +200,13 @@ class Intent:
     """Everything decided about one message before the model sees it."""
     effort: str = EFFORT_DEFAULT
     report: bool = False                  # "status": the report, written in code
-    dashboard: bool = False               # "dashboard": the station's gauges, one picture
     weather_now: bool = False             # "weather now": every reading the station has now, written in code
     chart: tuple[str, dict] | None = None   # a named reading's chart and a period: the service call that draws it
 
     @property
     def shortcut(self) -> bool:
         """Is it answered in code (no model)?"""
-        return bool(self.report or self.dashboard or self.weather_now or self.chart)
+        return bool(self.report or self.weather_now or self.chart)
 
 
 def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGradient"), tz: tzinfo | None = None,
@@ -226,15 +217,14 @@ def read(text: str, now: datetime, sources: Collection[str] = ("Ecowitt", "AirGr
     ecowitt = "Ecowitt" in sources
     tz = tz or now.tzinfo
     report = wants_report(text) and bool(report_calls(sources))
-    shortcut = report or (ecowitt and (wants_dashboard(text) or wants_weather_now(text)))
+    shortcut = report or (ecowitt and wants_weather_now(text))
     try:
         chart = None if shortcut or tz is None or not ({"Ecowitt", "AirGradient"} & set(sources)) else chart_call(text, now, tz, catalogue)
     except Exception as e:
         log.error("Couldn't read %r as a chart (%s: %s); the model takes it", text, type(e).__name__, e)
         chart = None
-    return Intent(effort=reasoning_effort(text), report=report, dashboard=ecowitt and wants_dashboard(text),
-                  weather_now=ecowitt and wants_weather_now(text) and not report, chart=chart)
+    return Intent(effort=reasoning_effort(text), report=report, weather_now=ecowitt and wants_weather_now(text) and not report, chart=chart)
 
 
 __all__ = ["EFFORT_DEFAULT", "Intent", "chart_call", "lower_effort", "mentions_air", "mentions_pollen", "read", "reasoning_effort",
-           "report_calls", "wants_dashboard", "wants_report", "wants_weather_now"]
+           "report_calls", "wants_report", "wants_weather_now"]

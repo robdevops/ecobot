@@ -7,7 +7,7 @@ from types import SimpleNamespace as NS
 from lib import intent
 from lib.bot import Bot
 from lib.tools import Turn
-from tests.fakes import TZ
+from tests.fakes import draws, TZ
 
 
 class RaisingAgent:
@@ -320,7 +320,7 @@ async def test_a_plain_chart_request_is_drawn_and_captioned_in_code_and_the_mode
 
     async def reply_photo(photo, caption=None, **kw):
         sent.append(caption)
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
+    draws(monkeypatch, lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -345,7 +345,7 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
 
     async def reply(*a, **k):
         return NS(message_id=7)
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
+    draws(monkeypatch, lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: pokes.append(1), describe=lambda: "Ecowitt")]
     msg = NS(chat_id=1, message_thread_id=None, is_topic_message=False, reply_photo=reply, reply_text=reply,
              chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
@@ -361,7 +361,8 @@ async def test_a_chart_made_in_code_starts_no_refresh_and_other_questions_do(ale
 
 
 async def test_a_chart_reply_logs_how_long_each_step_took(alert_state, tmp_path, monkeypatch, caplog):
-    """One line per chart reply: the calculation (the service's call), drawing, the PNG (and its size) and sending it."""
+    """One line per chart reply: the calculation (the service's call, its drawing included: the bot draws nothing), the picture's size
+    and sending it."""
     import re
     from lib.ecowitt import Ecowitt, api
     from lib.service import Service
@@ -393,7 +394,7 @@ async def test_a_chart_reply_logs_how_long_each_step_took(alert_state, tmp_path,
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Chart ms:")]
     assert len(sent) == 1 and len(lines) == 1, lines
     kb = round(len(sent[0]) / 1024)
-    assert re.fullmatch(rf"Chart ms: calc \d+, draw \d+, PNG \d+ \({kb} KB\), send \d+", lines[0])
+    assert re.fullmatch(rf"Chart ms: calc \d+, {kb} KB, send \d+", lines[0])
 
 
 async def _ask_with(alert_state, answer, text, monkeypatch=None):
@@ -536,7 +537,7 @@ async def test_weather_all_week_and_a_plain_chart_are_sent_with_just_their_title
 
     async def reply_photo(photo, caption=None, **kw):
         sent.append(caption)
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
+    draws(monkeypatch, lambda data, tz, times=None: b"png")
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     for text in ("weather 30d", "temperature chart 7d"):
         sent.clear()
@@ -622,16 +623,20 @@ async def test_a_button_press_too_old_to_answer_is_only_logged_and_other_errors_
 
 
 class ChartingAgent(StreamingAgent):
-    """The model's first step drew a chart (a result with `charts` kept on the Turn); then it streams its answer."""
+    """The model's first step drew a chart (a result with `charts` kept on the Turn, and its picture as the service drew it); then it
+    streams its answer."""
 
     async def run(self, messages, system, effort, *, turn=None, **k):
-        turn.results.append(("summary", {"readings": ["humidity"]}, {"caption": "c", "charts": [{"title": "Humidity"}]}))
+        from lib.weather import ChartImage
+        from tests.fakes import chart_data
+        chart = chart_data("Humidity")
+        turn.results.append(("summary", {"readings": ["humidity"]}, {"caption": "c", "charts": [chart]}))
+        turn.pictures[len(turn.results) - 1] = [ChartImage(b"png", chart, False)]
         return await super().run(messages, system, effort, turn=turn, **k)
 
 
 async def test_an_answer_that_comes_with_a_chart_is_not_streamed_into_the_draft(alert_state, monkeypatch):
     monkeypatch.setattr("lib.bot.DRAFT_MIN_GAP", 0.01)
-    monkeypatch.setattr("lib.bot.Bot._draw", lambda self, chart, times=None: (b"png", "Humidity", 0))
     bot = DraftBot()
     assert await ask_private(alert_state, ChartingAgent(), bot, text="plot humidity for a week") == ["It is 12 degrees."]
     assert bot.drafts and all(t is None for _, t in bot.drafts)         # only "Thinking...": no text to be followed by a picture and a second message
@@ -663,11 +668,12 @@ async def test_a_chart_kept_by_its_question_from_before_the_swap_is_out_of_date(
 
 
 async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_sent_their_titles_alone(alert_state, monkeypatch):
-    """The model's call drew a chart: the model sees its title and period (no points); the bot draws it from the whole result, with
-    the period buttons its drawn_by lists, and keeps the call behind them."""
+    """The model's call drew a chart: the model sees its title and period (no points), never the picture; the bot sends the picture
+    the service drew (asked for as an image), with the period buttons its drawn_by lists, and keeps the call behind them."""
     import json
     from lib import model_tools
     from lib.llm import Agent
+    from lib.weather import LocalWeather, RemoteTools
     from tests.fakes import chart_data
     drawn_by = {"tool": "summary", "arguments": {"readings": ["humidity"], "period": "7d", "chart": True},
                 "periods": [{"period": "1d", "label": "1D"}, {"period": "7d", "label": "7D"}]}
@@ -679,6 +685,9 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
         async def call(self, args, meta):
             assert meta["chart_points"] == "drawn"
             return json.dumps({"caption": "c", "charts": [chart], "chart_note": "note"})
+    drawn = []
+    draws(monkeypatch, lambda c, tz: drawn.append(c) or b"png")   # (the service's drawing, in this process)
+    weather = LocalWeather(service=RemoteTools([Summary()]), tz=TZ)
     seen, sent = [], []
 
     class Model:
@@ -694,7 +703,6 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
             return NS(choices=[NS(message=NS(content="Humid all week.", tool_calls=None))], usage=None)
 
     client = NS(chat=NS(completions=Model()))
-    monkeypatch.setattr("lib.bot.Bot._draw", lambda self, c, times=None: (b"png", c["title"], 0))
 
     async def reply_photo(photo, caption=None, reply_markup=None, **kw):
         sent.append((caption, reply_markup))
@@ -705,11 +713,34 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
 
     async def send_chat_action(*a, **k):
         pass
-    bot = Bot(NS(tz=TZ), Agent(client, "m", model_tools.tools([Summary()])), [], alert_state)
+    bot = Bot(NS(tz=TZ), Agent(client, "m", model_tools.tools(weather)), [], alert_state, service=weather)
     await bot.respond(update, NS(bot=telegram(send_chat_action)), "how humid was it this week?")
     told = json.loads(seen[-1]["content"])
     assert told["charts"] == [{"title": "Humidity", "period": chart["period"]}] and told["chart_note"] == model_tools.BOT_CHART_NOTE
+    assert drawn == [chart] and "png" not in seen[-1]["content"]
     (caption, markup), = sent
     assert caption.startswith("Humidity") and "Humid all week." in caption
     assert [b.callback_data for b in markup.inline_keyboard[0]] == ["pd:1d", "pd:7d"]
     assert bot.charted.get(1, 9)["drawn_by"] == drawn_by
+
+
+def test_the_bot_imports_no_pillow_and_no_drawing_module(tmp_path):
+    """The bot draws nothing (docs/ecobot-mcp.md step 6a): importing its modules, and building it as ecobot-mcp's client, imports
+    neither Pillow nor lib/charts.py, lib/draw.py or lib/gauges.py; every picture it sends is ecobot-mcp's."""
+    import os
+    import subprocess
+    import sys
+    from lib.config import ROOT
+    modules = ["ecobot", "lib.bot", "lib.weather", "lib.upstream", "lib.model_tools", "lib.llm", "lib.prompt", "lib.alerts.notify",
+               "lib.alerts.menu", "lib.periods", "lib.templates", "lib.admins", "lib.buttons", "lib.config", "lib.intent", "lib.report",
+               "lib.report_menu"]
+    code = (f"import sys, importlib; [importlib.import_module(m) for m in {modules!r}]; "
+            "from types import SimpleNamespace as NS; from zoneinfo import ZoneInfo; from lib.alerts.notify import AlertState; "
+            "from lib.bot import Bot; from lib.llm import Agent; from lib import model_tools; from lib.weather import RemoteWeather; "
+            "w = RemoteWeather('http://127.0.0.1:9/mcp', 't'); "
+            f"Bot(NS(tz=ZoneInfo('UTC')), Agent(None, 'm', model_tools.tools(w)), [], AlertState({str(tmp_path / 's.json')!r}), service=w); "
+            "print(sorted(m for m in sys.modules if m.split('.')[0] == 'PIL' or m in ('lib.charts', 'lib.draw', 'lib.gauges')))")
+    done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=120,
+                          env={**os.environ, "DATA_DIR": str(tmp_path)})
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().splitlines()[-1] == "[]"

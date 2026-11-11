@@ -89,7 +89,7 @@ async def main():
 
     banner("DECISIONS MADE IN CODE")
     print(f"reasoning effort: {effort}   answered in code (no model): "
-          f"{'the report' if r.report else 'the gauges' if r.dashboard else 'weather now' if r.weather_now else r.chart or 'no'}")
+          f"{'the report' if r.report else 'weather now' if r.weather_now else r.chart or 'no'}")
     first = client.requests[0]
     banner("REQUEST 1: settings")
     print(json.dumps({k: v for k, v in first.items() if k not in ("messages", "tools")}, indent=2))

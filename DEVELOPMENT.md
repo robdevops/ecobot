@@ -64,13 +64,15 @@ the token ecobot-mcp generated in the data folder they share (read again for eac
 hand for the instructions and listens to `ecobot://alerts`, `ecobot://station` and `ecobot://forecast`; when the connection fails or the
 listen is lost it builds a new client after a backoff, listens again and reads the alerts after the last id it handled. Unset, the bot
 runs ecobot-mcp's part in-process as before (`lib/weather.LocalWeather`, over `ecobot_mcp/core.py`). Both are one interface,
-`lib/weather.py`, which everything the bot asks for goes through: the model's tools and instructions, its shortcuts, report, gauges,
-charts drawn ahead and period buttons, Help and `/usage`, the alerts (lib/alerts/notify.AlertDelivery reads either log) and the
-irrigation check's rain and forecast (`ServiceRain`, `ServiceForecast`).
-The charts the bot's own code asks for (charts drawn ahead, the period buttons, the alerts' pictures and their 🔄) come drawn by
-ecobot-mcp (`chart_image`: the remote one sends its PNG, `chart_image: "png"` in the request's `_meta`, in the bot's own theme,
-`chart_dark`; in-process, the same `lib/charts.render_data`); a question's charts (the model's answer, or a sentence answered in code)
-and the dashboard (`lib/gauges.py`) are still drawn by the bot.
+`lib/weather.py`, which everything the bot asks for goes through: the model's tools and instructions, its shortcuts, report, Status
+picture, charts drawn ahead and period buttons, Help and `/usage`, the alerts (lib/alerts/notify.AlertDelivery reads either log) and
+the irrigation check's rain and forecast (`ServiceRain`, `ServiceForecast`).
+The bot draws nothing ([docs/ecobot-mcp.md](docs/ecobot-mcp.md) step 6a): every chart it sends comes drawn by ecobot-mcp
+(`call_images`, `chart_image`: the remote one sends its PNGs, `chart_image: "png"` in the request's `_meta`, in the bot's own theme,
+`chart_dark` from `DARKMODE`, `lib/theme.py`; in-process, ecobot-mcp's part draws them with `lib/chart_images.render`), the model's
+answers' charts too (the model is sent the text alone), and the Status picture of three gauges is ecobot-mcp's `ecobot://status`
+(`lib/status.py`, drawn by `lib/gauges.py`). Importing the bot imports neither Pillow nor `lib/charts.py`, `lib/draw.py` or
+`lib/gauges.py` (`tests/test_bot.py`).
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a
 export DATA_DIR=/tmp/ecobot
@@ -107,4 +109,4 @@ Repository secrets (Settings, Secrets and variables, Actions, New repository sec
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for the Python packages and the actions. `Pillow` comes in a group of its own, because the chart pictures depend on it.
 
 ## Chart pictures
-Ten fixed sample charts and dashboards (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with Pillow's own font (so they match on any machine; it lacks a few characters, such as ₂ and µ, shown as boxes there only), shrunk to 40% and cut to 64 colours, so each is 7 to 46 KB (about 220 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `Pillow` is pinned in `requirements-charts.txt` because the pictures depend on it (charts and the dashboard are drawn with it, `lib/draw.py`; ecobot-mcp needs it only for its chart images, so it is a file of its own); a Dependabot update whose chart test fails is the cue to redo the images.
+Ten fixed sample charts and the Status picture (`tests/chart_samples.py`, made-up data, no clock) are drawn and compared with reference images in `tests/charts/` (`tests/test_chart_images.py`, marker `golden`). They are drawn with Pillow's own font (so they match on any machine; it lacks a few characters, such as ₂ and µ, shown as boxes there only), shrunk to 40% and cut to 64 colours, so each is 7 to 46 KB (about 220 KB in all). A chart passes when under 0.1% of its pixels differ noticeably; a failure leaves the new picture and a red-on-grey picture of the difference in `chart-diffs/` (CI uploads it as the `chart-diffs` artifact). After an intended change to how charts look, run `python scripts/update_charts.py` (or name charts: `... wind air`) and commit the changed images: GitHub shows old and new side by side in the pull request. `Pillow` is pinned in `requirements-charts.txt` because the pictures depend on it (charts and the Status picture are drawn with it, `lib/draw.py`; ecobot-mcp needs it only for its pictures, the bot not at all, so it is a file of its own); a Dependabot update whose chart test fails is the cue to redo the images.

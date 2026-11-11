@@ -396,3 +396,10 @@ async def archived_station(tmp_path, cache_file):
     await eco.start()
     fake.calls.clear()
     return eco, fake
+
+
+def draws(monkeypatch, render):
+    """The service's drawing in this process (lib/chart_images.render, which the bot's LocalWeather draws with: the bot draws nothing
+    itself) stood in for by render(chart, tz) -> PNG bytes (or anything the test sends as the picture)."""
+    from lib import chart_images
+    monkeypatch.setattr(chart_images, "render", lambda chart, tz, dark=None: (render(chart, tz), bool(dark)))

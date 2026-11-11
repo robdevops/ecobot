@@ -24,6 +24,8 @@ token check.
     published as ResourceUpdated when they change (`publish_changes`, every PUBLISH_SECONDS, from what the sources keep: no request is
     made for it; a reading asked for again and unchanged is not sent), the alerts on each new event (`watch_alerts`, lib/alert_log.py
     `wait`), the station when the catalogue gains a reading.
+    ecobot://status is the Status picture (lib/status.py): its readings as a JSON text content, then the PNG as a blob (image/png),
+    Pillow imported at the first read.
   - **Prompts** (3.5): PROMPTS, each a question in words with its period an argument; no logic.
   - **HTTP** (`http_app`): `streamable_http_app` at /mcp, its Host header checked against the allowed hosts
     (TransportSecuritySettings: 127.0.0.1 and localhost unless MCP_ALLOWED_HOSTS says), each request's bearer token against
@@ -57,7 +59,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from . import chart_images
+from . import chart_images, theme
 from .config import ROOT
 from .service import Service
 from .service.about import AboutTool, alerts as alert_kinds
@@ -83,6 +85,7 @@ JSON = "application/json"
 STATION_URI, WEATHER_URI, AIR_URI = "ecobot://station", "ecobot://now/weather", "ecobot://now/air"
 ALERTS_URI, FORECAST_URI, POLLEN_URI = "ecobot://alerts", "ecobot://forecast", "ecobot://pollen"
 HEALTH_URI, SCHEMA_URI = "ecobot://health", "ecobot://schema/chart"
+STATUS_URI = "ecobot://status"
 ALERTS_TEMPLATE = "ecobot://alerts{?since,expired}"
 RESOURCES = {   # uri: (name, title, description, the source it needs: None for always)
     STATION_URI: ("station", "The station", "Its name, time zone, location and when it was set up; the sensors with their readings (name, "
@@ -101,6 +104,10 @@ RESOURCES = {   # uri: (name, title, description, the source it needs: None for 
                    "rain_chance_pct, rain_1mm_pct, summary, text}]}. Pushed on each new forecast.", "forecast"),
     POLLEN_URI: ("pollen", "Pollen and thunderstorm asthma", "Grass pollen and thunderstorm asthma levels: {in_season, fetched_at, "
                  "grass: {level, emoji, date}, asthma: {level, emoji, updated}, lines}. Pushed on each new page.", "pollen"),
+    STATUS_URI: ("status", "The Status picture", "The weather station's temperature, humidity and rain gauges in a row, as a picture "
+                 "(image/png, a blob), with their readings as JSON text first: {gauges: [{title, value, unit, rows: {Daily, Monthly, "
+                 "Yearly: {Max, Min} or {Max, Total}}}], lines}; the picture shows the readings now, the text their highs and lows too. "
+                 "Without the picture (no Pillow here) the text has `image_note`. Not pushed.", "eco"),
     HEALTH_URI: ("health", "Health", "Each loop's last success and failure, the archive's progress, the readings file's size and the "
                  "alert log's newest id. Not pushed.", None),
     SCHEMA_URI: ("schema/chart", "Chart JSON Schema", "The JSON Schema of the charts in the tools' results and the alerts "
@@ -294,7 +301,7 @@ class EcobotServer:
         if not (charts := charts_of(_loads(text))):
             return tool_result(text)
         dark = chart_images.asked_dark(meta)
-        dark = render.dark_now() if dark is None else dark
+        dark = theme.dark_now() if dark is None else dark
         try:
             pngs = await asyncio.to_thread(lambda: [chart_images.render(c, self.ctx.zone, dark)[0] for c in charts])
         except Exception as e:
@@ -344,7 +351,7 @@ class EcobotServer:
 
     async def _list_resources(self, ctx, params) -> types.ListResourcesResult:
         return types.ListResourcesResult(resources=[
-            types.Resource(uri=uri, name=name, title=title, description=what, mime_type=JSON)
+            types.Resource(uri=uri, name=name, title=title, description=what, mime_type=chart_images.PNG if uri == STATUS_URI else JSON)
             for uri, (name, title, what, need) in RESOURCES.items() if self._there(need) and (uri != ALERTS_URI or self.alert_log)])
 
     async def _list_templates(self, ctx, params) -> types.ListResourceTemplatesResult:
@@ -357,6 +364,12 @@ class EcobotServer:
 
     async def _read_resource(self, ctx, params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
         uri = str(params.uri)
+        if uri == STATUS_URI and self._there(RESOURCES[STATUS_URI][3]):   # the readings as JSON, then the picture
+            data, png = await self.status()
+            contents = [types.TextResourceContents(uri=uri, mime_type=JSON, text=_json(data))]
+            if png is not None:
+                contents.append(types.BlobResourceContents(uri=uri, mime_type=chart_images.PNG, blob=base64.b64encode(png).decode("ascii")))
+            return types.ReadResourceResult(contents=contents)
         return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, mime_type=JSON, text=_json(await self.read(uri)))])
 
     async def read(self, uri: str) -> dict:
@@ -370,6 +383,8 @@ class EcobotServer:
         if entry is None or parts.query or key == ALERTS_URI or not self._there(entry[3]):
             raise MCPError(RESOURCE_NOT_FOUND, f"No resource {uri!r}: there are "
                                                f"{', '.join(u for u, e in RESOURCES.items() if self._there(e[3]))}, and {ALERTS_TEMPLATE}.")
+        if key == STATUS_URI:
+            return (await self.status())[0]
         return await {STATION_URI: self.station, WEATHER_URI: lambda: self.now(STATION), AIR_URI: lambda: self.now(AIR_DEVICE),
                       FORECAST_URI: self.forecast, POLLEN_URI: self.pollen, HEALTH_URI: self.health, SCHEMA_URI: self.schema}[key]()
 
@@ -409,6 +424,11 @@ class EcobotServer:
                 "sensors": sensors, "words": catalogue.words(), "sources": sources, "history": await about.history(),
                 "alerts": alert_kinds(about.sources),
                 "airgradient_dashboard": c.air.link[1] if c.air and c.air.link else None}
+
+    async def status(self) -> tuple[dict, bytes | None]:
+        """ecobot://status: (its readings as JSON, the Status picture's PNG or None), lib/status.py."""
+        from .status import status
+        return await status(self.service)
 
     async def now(self, device: str) -> dict:
         """ecobot://now/weather, ecobot://now/air: the device's reading as kept (nothing is fetched for it)."""

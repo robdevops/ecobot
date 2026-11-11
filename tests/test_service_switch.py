@@ -3,7 +3,7 @@ at a fixed time (Tue 10 Nov 2026 2:05pm, Melbourne), so moving them onto the ser
 nothing the person sees but what is meant to change.
 
 What is pinned, for each question the bot answers in code (its keyboard's charts, the shortcuts and plain lookups intent.read answers,
-the report, the dashboard, an alert's chart, a period button's redraw): every message sent (its text or caption, and its buttons), the
+the report with its Status picture, an alert's chart, a period button's redraw): every message sent (its text or caption, and its buttons), the
 text the answer leaves in the chat's history, and each chart as JSON (specs.to_json, less `drawn_by`, which only the service's charts
 carry) and the gauges' sheet. They are recorded in tests/service_switch.json: `ECOBOT_RECORD_SWITCH=1 pytest tests/test_service_switch.py`
 writes it afresh (only ever on purpose).
@@ -186,16 +186,18 @@ class World:
         from lib import bot as botmod
         from lib.llm import Agent
 
-        def render(data, tz, times=None, dark=None):
+        from lib import chart_images, gauges as gauges_module
+
+        def render(data, tz, dark=None):   # (the service's drawing in this process: the bot draws nothing)
             self.charts.append(summary_of(data))
             self.drawn_by.append(data.get("drawn_by"))
-            return b"png"
+            return b"png", bool(dark)
 
-        def gauges(sheet):
+        def gauges(sheet):   # (the Status picture, drawn by the service: lib/status.py)
             self.sheets.append(hashlib.sha256(repr(sheet).encode()).hexdigest()[:16])
             return b"gauges"
-        monkeypatch.setattr(botmod, "render_data", render)
-        monkeypatch.setattr(botmod.gauges, "render", gauges)
+        monkeypatch.setattr(chart_images, "render", render)
+        monkeypatch.setattr(gauges_module, "render", gauges)
         return botmod.Bot(NS(tz=self.tz), Agent(None, "m", self.tools), self.sources, alert_state, service=self.service)
 
     def message(self, message_id=50):
@@ -296,21 +298,19 @@ async def asked(world, alert_state, monkeypatch, text) -> dict:
 
 
 # Every question the bot answers in code: the keyboard's charts (templates.chart_sentences, the same with irrigation: only Wind goes),
-# then each of intent's shortcuts (bot._answer: a named reading's chart and a period, the dashboard, the report and "weather now")
+# then each of intent's shortcuts (bot._answer: a named reading's chart and a period, the report and "weather now")
 from lib import templates  # noqa: E402
 
 KEYBOARD = templates.chart_sentences(False)
 SHORTCUTS = [
     # the report and "weather now" (written in code from current, pollen and forecast)
     "Report", "weather now", "status",
-    # the gauges
-    "dashboard",
     # a named reading's chart and a period (summary with the words as they are; the caption goes with it)
     "temperature chart 7d", "humidity 7d", "rain chart 7d", "pressure chart this month", "temperature and rain chart 7d",
     "weather 30d", "indoor temperature chart 7d", "wind direction plot 3m", "temperature chart last month", "air quality chart 7d",
     "pm2.5 chart 3d",
 ]
-# What the bot answered in code until step 3 and the model answers now (with no model: NO_MODEL)
+# What the bot answered in code until step 3 (the dashboard until step 6) and the model answers now (with no model: NO_MODEL)
 TO_THE_MODEL = [
     "how hot is it", "is it raining", "humidity", "wind", "indoor temperature", "uv", "pressure",          # a reading now
     "air quality now", "co2", "how's the air",                                                             # the air now
@@ -322,6 +322,7 @@ TO_THE_MODEL = [
     "strongest gust today", "temps today",
     "weather all week", "average temperature 7d", "plot uv and solar on two axes 7d", "lowest temperature on record",    # charts beside
     "highest humidity this week", "temps this week", "chart weather",                                                   # a question
+    "dashboard",                                       # the Telegram dashboard, until step 6 (its live page is ecobot-mcp's /dashboard)
 ]
 CHANGED = {"air quality chart 7d"}   # a shortcut whose words the service reads as every air reading now (until step 3: PM2.5 alone)
 

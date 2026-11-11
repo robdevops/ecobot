@@ -27,17 +27,14 @@ from .alerts import menu, pictures
 from .alerts.notify import AlertState
 from .irrigation import IrrigationError, Watchdog
 from .irrigation import menu as irrigation_menu
-from . import gauges
-from .charts import render_data
 from .service import Service
 from .service.common import AS_DRAWN, BACKGROUND
 from .specs import from_json
-from . import gauge_sheet
 from .tools import Turn
 from .config import Config
 from .entities import utf16_len, with_link
 from .sources import Source
-from .timeutil import clock_text, day_text, now_local
+from .timeutil import now_local
 from .llm import Agent, shorten_old, strip_tool_turns, trim_history
 from .logs import BUGS, QUOTES, fit
 from .warm import Tasks   # (the service's too: ecobot_mcp)
@@ -69,7 +66,7 @@ HELP = ("Hi! Message me directly, or in groups @mention me or reply to me.\n"
         "In a private chat the buttons under the message box ask common questions; /keyboard off hides them.\n"
         "Your user ID: {user} | Chat ID: {chat}")
 NO_MODEL = ("Sorry, that one needs the AI model, and this bot has none set up.\n"
-            "Without it I can still do: /report, /dashboard, the chart commands (/rain, /weather, /temperature, /humidity, /air_quality, "
+            "Without it I can still do: /report, the chart commands (/rain, /weather, /temperature, /humidity, /air_quality, "
             "/particulates, /wind), \"weather now\" and a reading's chart over a period like \"rain chart 7d\" or \"humidity 30d\", "
             "as well as all the alerts.")
 OUT_OF_DATE = "That chart is out of date, please ask again"
@@ -92,16 +89,18 @@ class Answer:
     ready: periods.Drawn | None = None       # a chart drawn moments ago, sent as it is
     made: float | None = None                # seconds the tool took to make the chart in code, for the timing line
     ok: bool = True                          # False: the reply says something went wrong
-    charts: list[dict] = field(default_factory=list)   # the charts a service tool drew, as data (each with its drawn_by), still to draw
+    pictures: list = field(default_factory=list)       # the charts as the service drew them (lib/weather.ChartImage: each PNG with its
+                                                       # chart's JSON and drawn_by), still to send
     drawn_by: list = field(default_factory=list)       # each photo's drawn_by (the call that draws it again), None for one with none
     key: str | None = None                   # the call a chart made in code was read as (periods.call_key): the picture cache's key
 
 
 @dataclass
 class Made:
-    """What a service tool gave for a question answered in code: its words (a caption, an answer, lines) and its charts as data."""
+    """What a service tool gave for a question answered in code: its words (a caption, an answer, lines) and its charts as the service
+    drew them."""
     text: str | None
-    charts: list[dict] = field(default_factory=list)
+    pictures: list = field(default_factory=list)
 
 
 async def answer_query(query, *args, **kwargs) -> bool:
@@ -139,16 +138,16 @@ def _short(text: str, limit: int) -> str:
     return fit(" ".join(text.split()), limit)
 
 
-def chart_times(times: dict, made: float | None, pngs: list[bytes], sending: float) -> str:
-    """A reply's chart timings for the log: "data 12, calc 3, draw 98, PNG 41 (23 KB), send 812" (ms). times is the question's Turn.times;
-    made is how long the tool took when the chart was made in code (the calculation is that less its data), else None. A step that
-    wasn't timed is left out."""
+def chart_times(times: dict, made: float | None, pngs: list, sending: float) -> str:
+    """A reply's chart timings for the log: "data 12, calc 3, 23 KB, send 812" (ms). times is the question's Turn.times; made is how
+    long the call took when the chart was made in code (its drawing by the service included: the calculation is that less its data),
+    else None. A step that wasn't timed is left out; the size is the pictures' (none for Telegram's copy)."""
     ms = lambda seconds: f"{seconds * 1000:.0f}"
     parts = [f"data {ms(times['data'])}"] if "data" in times else []
     if made is not None:
         parts.append(f"calc {ms(max(0.0, made - times.get('data', 0.0)))}")
-    if "draw" in times:
-        parts += [f"draw {ms(times['draw'])}", f"PNG {ms(times['png'])} ({sum(map(len, pngs)) / 1024:.0f} KB)"]
+    if size := sum(len(p) for p in pngs if isinstance(p, bytes)):
+        parts.append(f"{size / 1024:.0f} KB")
     return ", ".join([*parts, f"send {ms(sending)}"])
 
 
@@ -404,14 +403,15 @@ class Bot:
         """state: the known chats and their settings. irrigation: the Tuya client of the irrigation controller, when one is
         configured (its button replaces Wind). tasks: where the bot's background work runs (the uploads of a chart's other periods);
         its own when none is given. service: the weather service as the bot reaches it (lib/weather.py: RemoteWeather over MCP, with
-        BOT_MCP_URL; `sources` is then empty), or the service's tools in this process (lib/service), which the bot's own code paths
-        call (its shortcuts, report, gauges, alert charts and period buttons), built over `sources` when none is given (LocalWeather).
+        BOT_MCP_URL; `sources` is then empty; or LocalWeather in this process), or the service's tools in this process (lib/service),
+        which the bot's own code paths call (its shortcuts, report, Status picture, alert charts and period buttons), built over
+        `sources` when none is given (LocalWeather). Every picture the bot sends is drawn by the service: the bot draws nothing.
         The model is offered the same tools (agent.tools: lib/model_tools.py), with the server's instructions after the bot's persona.
         alert_log: the service's alert log in this process (lib/alert_log.py), whose events the 🔄 under an alert's chart finds its
         chart's drawn_by in."""
         self.cfg, self.agent, self.sources, self.state, self.irrigation = cfg, agent, sources, state, irrigation
         self.weather = service if getattr(service, "is_weather", False) else \
-            LocalWeather(sources, service, alert_log, tz=getattr(cfg, "tz", None), render=self._render)
+            LocalWeather(sources, service, alert_log, tz=getattr(cfg, "tz", None))
         self.tasks = tasks or Tasks()
         self.watchdog = Watchdog(irrigation, state) if irrigation else None   # closes the valve after a run, however it ends
         self.keyboard_version = templates.version(irrigation is not None)
@@ -482,18 +482,6 @@ class Bot:
     def _sentence_call(self, text: str, now: datetime) -> tuple[str, dict] | None:
         """The call a keyboard sentence ("Wind chart 1d") is: a named reading's chart and a period (intent.chart_call); None for any other."""
         return intent.chart_call(text, now, self.cfg.tz, self._catalogue())
-
-    def _draw(self, chart: dict, times: dict | None = None) -> tuple[bytes, str, int]:
-        """(PNG, title, the time of its newest reading) of a chart given as data (a model's answer's: drawn here)."""
-        spec = from_json(chart)
-        return render_data(chart, self.cfg.tz, times), spec.caption(now_local(self.cfg.tz).date()), spec.newest
-
-    @staticmethod
-    def _render(chart: dict, tz, dark: bool | None = None) -> tuple[bytes, bool]:
-        """(PNG, dark) of a chart given as data: how the service in this process draws (LocalWeather's render). dark None: as DARKMODE
-        says now."""
-        drawn_dark = periods.dark_now() if dark is None else dark
-        return (render_data(chart, tz) if dark is None else render_data(chart, tz, dark=dark)), drawn_dark
 
     def _titled(self, chart: dict) -> tuple[str, int | None]:
         """(title, the time of its newest reading) of a chart given as data."""
@@ -909,11 +897,12 @@ class Bot:
             await _edit_quietly(query.edit_message_text(text, reply_markup=markup, **({"entities": entities} if entities else {})))
 
     async def on_report_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """A press on 🔄 under the report (or the dashboard: _redraw_dashboard): read everything again and redraw the report in the
-        same message. The chat's conversation is not touched (this is not a new question)."""
+        """A press on 🔄 under the report: read everything again and redraw the report in the same message (its Status picture too).
+        The chat's conversation is not touched (this is not a new question). Any other button of the family (the 🔄 under a Telegram
+        dashboard, which is no more) is out of date."""
         query = update.callback_query
-        if query.data == report_menu.DASHBOARD:
-            await self._redraw_dashboard(query)
+        if query.data != report_menu.REFRESH:
+            await answer_query(query, STALE_BUTTON)
             return
         pictured = bool(getattr(getattr(query, "message", None), "photo", None))   # the report is the caption of its gauges: they are drawn again too
         try:
@@ -927,24 +916,6 @@ class Bot:
             await self._recaption(query, text, gauge)
         else:
             await self._edit(query, text, report_menu.keyboard(), report.heading_entities(text))
-
-    async def _redraw_dashboard(self, query):
-        """A press on 🔄 under the dashboard: its gauges drawn again with the latest readings, and the time in its title, in the same
-        message. When the station doesn't answer, the message stays as it was."""
-        if "Ecowitt" not in self.names or not getattr(getattr(query, "message", None), "photo", None):   # no station any more, or not the dashboard's picture
-            await answer_query(query, STALE_BUTTON)
-            return
-        try:
-            answer = await asyncio.wait_for(self._dashboard(), TURN_SECONDS)
-        except Exception as e:
-            log.warning("Dashboard refresh failed: %s: %s", type(e).__name__, e)
-            answer = None
-        if answer is None or not answer.ok:
-            await answer_query(query, "Couldn't refresh, please try again", show_alert=True)
-            return
-        await answer_query(query)   # no toast: the time in the title shows it was drawn again
-        await _edit_quietly(query.edit_message_media(InputMediaPhoto(answer.photos[0], caption=answer.titles[0]),
-                                                     reply_markup=report_menu.dashboard_keyboard()))
 
     @staticmethod
     async def _recaption(query, text: str, photo: bytes | None):
@@ -1205,13 +1176,12 @@ class Bot:
         return await asyncio.wait_for(written, TURN_SECONDS), None
 
     async def _status_gauges(self) -> bytes | None:
-        """The report's picture: the weather station's temperature, humidity and rain gauges (gauge_sheet.STATUS), from the service's
-        current with context. None without the station, or when they can't be drawn (the report then goes as text alone)."""
+        """The report's picture: the weather station's temperature, humidity and rain gauges, the Status picture the service draws
+        (ecobot://status, lib/status.py). None without the station, or when it sends none (the report then goes as text alone)."""
         if "Ecowitt" not in self.names:
             return None
         try:
-            sheet = await self._gauge_sheet(gauge_sheet.STATUS)
-            return await asyncio.to_thread(gauges.render, sheet) if sheet else None
+            return await self.weather.status_picture()
         except Exception as e:
             log.error("The report's gauges failed (%s: %s); sending it without them", type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return None
@@ -1226,23 +1196,19 @@ class Bot:
     async def _chart_in_code(self, call: tuple[str, dict]) -> Made | None:
         """A named reading's chart and a period (intent.chart_call): the service draws it and its caption goes with it. None (the model
         then takes the question) when it drew nothing or has nothing to say."""
-        out = await self._service_call(*call)
-        text, charts = out.get("caption") or out.get("answer"), out.get("charts") or []
-        return Made(text, charts) if "error" not in out and charts and text else None
-
-    async def _gauge_sheet(self, titles=None):
-        """The gauges of these titles (all when None) laid out from the service's current with context (lib/gauge_sheet.py); None when
-        the station gives nothing."""
-        return gauge_sheet.sheet(await self._service_call("current", gauge_sheet.call(titles)), titles)
-
-    async def _dashboard(self) -> Answer:
-        """The station's gauges as one picture, sent with just its title (no period buttons: it is the state now)."""
-        sheet = await self._gauge_sheet()
-        if sheet is None:
-            return Answer("The weather station isn't answering right now.", ok=False)
-        now = now_local(self.cfg.tz)
-        title = f"Weather station dashboard, {day_text(now)} {clock_text(now)}"
-        return Answer(title, [await asyncio.to_thread(gauges.render, sheet)], [title], silent=True)
+        tool, args = call
+        try:
+            out, pictures = await self.weather.call_images(tool, args, {"chart_points": AS_DRAWN})
+        except ServiceUnreachable as e:
+            log.warning("Service tool %s: %s", tool, e)
+            return None
+        except Exception as e:
+            log.error("Service tool %s failed: %s: %s", tool, type(e).__name__, e, exc_info=isinstance(e, BUGS))
+            return None
+        if not isinstance(out, dict) or "error" in out:
+            return None
+        text = out.get("caption") or out.get("answer")
+        return Made(text, pictures) if pictures and text else None
 
     @staticmethod
     def _complete(calls: list[dict], results: list[str]) -> str | None:
@@ -1269,6 +1235,7 @@ class Bot:
                 log.warning("No answer in %ds at reasoning %s; asking again at %s", budget, effort, lower)
                 working[:] = before          # the unfinished attempt's turns are dropped
                 turn.results.clear()
+                turn.pictures.clear()
                 turn.result_chars = 0
                 effort, budget, retried = lower, RETRY_SECONDS, True
 
@@ -1398,14 +1365,15 @@ class Bot:
             try:
                 answer = await self._answer(msg, read, turn, working, draft)
                 chat.history = shorten_old(trim_history(strip_tool_turns(working)))
-                for chart in answer.charts[:MAX_CHARTS]:   # the charts, drawn from their data while "typing..." is still showing
+                for picture in answer.pictures[:MAX_CHARTS]:   # the charts as the service drew them, each titled from its JSON
                     try:
-                        png, title, _ = await asyncio.to_thread(self._draw, chart, turn.times)
-                        answer.photos.append(png)
-                        answer.titles.append(title)
-                        answer.drawn_by.append(chart.get("drawn_by"))
+                        title, _ = self._titled(picture.chart)
                     except Exception as e:
                         log.error("Chart failed (%s: %s); sending the answer without it", type(e).__name__, e, exc_info=isinstance(e, BUGS))
+                        continue
+                    answer.photos.append(picture.png)
+                    answer.titles.append(title)
+                    answer.drawn_by.append(picture.chart.get("drawn_by"))
             except TimeoutError:
                 log.error("%s: gave up after %ds on: %s", chat_tag(msg.chat_id), TURN_SECONDS, text, extra=QUOTES)
                 answer = Answer("Sorry, that took too long. Please try again in a moment.", ok=False)
@@ -1420,8 +1388,8 @@ class Bot:
 
     async def _answer(self, msg: Message, read, turn: Turn, working: list[dict], draft) -> Answer:
         """The answer, from the first way that gives one: a chart drawn moments ago, a named reading's chart drawn by the service, the
-        gauges, the report or "weather now" written in code, else the model with the service's tools. `working` is the conversation, the
-        question last; the answer joins it."""
+        report or "weather now" written in code, else the model with the service's tools (its charts as the service drew them).
+        `working` is the conversation, the question last; the answer joins it."""
         key = periods.call_key(*read.chart) if read.chart else None   # the call the chart is (its cache key)
         if read.chart and (ready := self.images.ready(key)):   # drawn ahead, or for someone's same call
             answer = Answer(ready.caption, [ready.photo], [ready.title], silent=True, ready=ready, drawn_by=[ready.drawn_by], key=key)
@@ -1431,9 +1399,7 @@ class Bot:
         elif read.chart:   # drawn by the service; the chart goes out with just its title (the text is kept for the history)
             began = time.monotonic()
             made = await asyncio.wait_for(self._chart_in_code(read.chart), TURN_SECONDS)
-            answer = Answer(made.text, silent=True, made=time.monotonic() - began, charts=made.charts, key=key) if made else Answer()
-        elif read.dashboard:
-            answer = await asyncio.wait_for(self._dashboard(), TURN_SECONDS)
+            answer = Answer(made.text, silent=True, made=time.monotonic() - began, pictures=made.pictures, key=key) if made else Answer()
         elif read.report or read.weather_now:   # written in code from the service's results, no model (the report: with its gauges)
             text, gauge = await self._report(read.report, read.report)
             answer = Answer(text, [gauge] if gauge else [], [""] if gauge else [])
@@ -1448,8 +1414,7 @@ class Bot:
             return answer
         system = prompt.build(datetime.now(self.cfg.tz), self._instructions())
         answer.reply = await self._ask_model(working, system, read, turn, draft, lambda tokens: self._warn(msg, tokens))
-        kept = [r for r in turn.results if r]
-        answer.charts = [chart for _, _, out in kept for chart in out.get("charts") or [] if isinstance(chart, dict)]
+        answer.pictures = [picture for slot, result in enumerate(turn.results) if result for picture in turn.pictures.get(slot, ())]
         return answer
 
     async def _send(self, msg: Message, bot, read, turn: Turn, answer: Answer, added: list[dict], now: datetime, started: float):
@@ -1470,7 +1435,7 @@ class Bot:
         air_link = self.weather.air_link() if used_air else None
         markup = templates.keyboard(self.irrigation is not None) if self._keyboard_stale(msg) else None
         refresh = answer.ok and read.report and 0 < len(reply) <= TG_LIMIT and not markup   # the report, to be refreshed in place
-        single = len(photos) == 1 and not (read.dashboard or read.report)   # a single chart: its period buttons go under it
+        single = len(photos) == 1 and not read.report   # a single chart: its period buttons go under it
         drawn_by = answer.drawn_by[0] if single and answer.drawn_by else None
         if drawn_by:   # the periods its call lists, the chart's own shaded; none when it lists none
             row = periods.periods_keyboard(drawn_by, periods.own_period(drawn_by, now, self.cfg.tz), now, self.cfg.tz)
@@ -1486,8 +1451,7 @@ class Bot:
         try:
             began = time.monotonic()
             sent = await deliver(msg, reply, photos, link=air_link,
-                                 markup=markup or (report_menu.keyboard() if refresh else report_menu.dashboard_keyboard()
-                                                   if answer.ok and read.dashboard and photos else None), titles=titles, period_row=row,
+                                 markup=markup or (report_menu.keyboard() if refresh else None), titles=titles, period_row=row,
                                  bold_headings=answer.ok and read.report, photos_first=read.report)
             carried_keyboard = sent.carried and bool(markup)   # the refresh button is not the chat's keyboard
             if answer.ready:

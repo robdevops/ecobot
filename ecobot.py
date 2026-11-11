@@ -26,7 +26,7 @@ from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
 from ecobot_mcp.core import Core, commit_in, configure, start_sources, version   # noqa: F401 (commit_in, start_sources: named here for the tests)
-from lib import charts
+from lib import theme   # (DARKMODE: the bot asks ecobot-mcp for charts in its own theme)
 from lib.airgradient import AirGradient   # noqa: F401 (the sources, named here for the startup tests)
 from lib.alerts.irrigation import IrrigationMonitor
 from lib.alerts.notify import AlertDelivery, AlertState, Notifier
@@ -42,7 +42,7 @@ from lib.pollen import Pollen   # noqa: F401
 from lib.service.alerts import AlertRules
 from lib import model_tools
 from lib.warm import every, safely
-from lib.weather import RemoteWeather, ServiceRain
+from lib.weather import LocalWeather, RemoteWeather, ServiceRain
 
 
 _format = LogFormat("%(levelname)s %(message)s", priority=on_journal())   # DEBUG and INFO to stdout, WARN and ERROR to stderr
@@ -104,7 +104,7 @@ def follow_zone(weather: RemoteWeather, bot: Bot, state: AlertState, zoned: list
         log.info("The weather station's time zone is %s: the bot runs in it from now on (it was %s)", zone, bot.cfg.tz)
         bot.cfg = dataclasses.replace(bot.cfg, tz=zone)
         bot.alert_charts.tz = zone
-        charts.configure(bot.cfg.dark_mode, zone)
+        theme.configure(bot.cfg.dark_mode, zone)
         for keeper in zoned:
             keeper.tz = zone
     weather.on_zone = apply
@@ -217,7 +217,7 @@ async def main():
         if not sources and weather is None:
             handshake.cancel()
             raise SystemExit("No data source is working - nothing to talk about")
-        charts.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
+        theme.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
         client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
         if client:
             stack.push_async_callback(safely, client.close)
@@ -234,9 +234,10 @@ async def main():
         irrigation = Tuya(cfg) if cfg.irrigation else None
         if irrigation:
             stack.push_async_callback(safely, irrigation.close)
-        service = weather if weather is not None else core.service
+        # (in-process, the same interface over core's tools: the model's charts come drawn from it, as from ecobot-mcp)
+        service = weather if weather is not None else LocalWeather(sources, core.service, core.alert_log, tz=cfg.tz)
         bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(service)), sources, state, irrigation, tasks,
-                  service=service, alert_log=core.alert_log if core else None)
+                  service=service)
 
         bot.register(app)
         stop = asyncio.Event()

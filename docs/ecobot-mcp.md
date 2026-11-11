@@ -308,6 +308,7 @@ For applications that keep an eye on the station rather than ask about it; a mod
 | `ecobot://alerts` (in the resource list) and `ecobot://alerts{?since,expired}` (a template) | the alerts, newest last, kept 30 days; `since` an alert id: those after it; unexpired ones only unless `expired=true` (3.6) | each new alert, on the bare URI |
 | `ecobot://forecast` | the forecast days, structured (min and max, rain chance, chance of at least 1 mm, summary), with `fetched_at` and `place` | each new forecast |
 | `ecobot://pollen` | grass and asthma levels with their days, `fetched_at`, `in_season` | each new page |
+| `ecobot://status` | the Status picture (step 6): the station's temperature, humidity and rain gauges in a row as a PNG (a blob, `image/png`, `lib/gauges.py`), after their readings as JSON text (`{gauges: [{title, value, unit, rows}], lines}`: the reading now and the day's, month's and year's highs and lows, which the picture leaves out); from `current` with context, read as a call is; without Pillow, the text with `image_note` | no |
 | `ecobot://health` | each loop's last success and failure, archive progress, the file's size | no |
 | `ecobot://schema/chart` | the chart data's JSON Schema (3.7) | no |
 
@@ -413,11 +414,12 @@ Charts are data: the client draws them, or its model does from the numbers.
   `MCP_CHART_BASE_URL`'s (where a proxy serves `/charts` to browsers, e.g. nginx's `location /ecobot-charts/ { proxy_pass
   http://127.0.0.1:8765/charts/; }`), else the MCP request's own scheme and host (`X-Forwarded-Proto`, `X-Forwarded-Host` when
   present) with `/charts`.
-- **Our bot**, while it lives, has the charts its own code asks for (charts drawn ahead, the period buttons, the alerts' pictures and
-  their 🔄) drawn by the service: in-process with the same renderer, remote as images (`chart_image: "png"`, in its own theme,
-  `chart_dark`, which it keeps with each picture in its image cache), so a remote bot draws none of those itself. A question's charts
-  (the model's answer, or a sentence answered in code) it still draws from `charts` (`lib/charts.py`, reading the JSON); the rain caption
-  reads its bars; the model is sent the charts' titles, never an image. The dashboard's gauges (`lib/gauges.py`) stay the bot's for now.
+- **Our bot** has every chart it sends drawn by the service (step 6a): in-process with the same renderer, remote as images
+  (`chart_image: "png"`, in its own theme, `chart_dark`, which it keeps with each picture in its image cache): the charts drawn ahead,
+  the period buttons, the alerts' pictures and their 🔄, a sentence answered in code and the model's answers' charts (each call the
+  model makes asks for its pictures; the bot keeps them and the charts' JSON from `_meta` for the period buttons, and the model is sent
+  the text alone, the charts' titles, never an image). The Status picture is `ecobot://status`'s. The bot draws nothing and imports no
+  Pillow: a service that sends no image gives an answer without its picture.
 
 ### 3.8 Connecting
 
@@ -671,12 +673,27 @@ Each step ships on its own, with the tests and evals green and the bot working t
      images (request `_meta` `chart_image: "png"`): the bot keeps the image blocks and `ecobot/charts` (for the period buttons) and
      gives the model only the text (`for_model`, as today). The bot then imports neither Pillow nor `lib/charts.py`,
      `lib/draw.py` or `lib/gauges.py`.
+     *Done:* `lib/weather.py` `call_images` (every chart of a call, as `ChartImage`s; remote from the `ImageContent`s and `_meta`,
+     in-process drawn by ecobot-mcp's part with `lib/chart_images.render`) is what the model's tools call (`lib/model_tools.py`: the
+     pictures kept on `Turn.pictures`, the model sent `for_model` of the text) and what a typed chart uses; a service that sends no
+     image gives the answer without its picture (the bot no longer draws one itself, nor an alert's). `DARKMODE` moved to
+     `lib/theme.py`, so the bot keeps its theme without the renderer; in-process, `ecobot.py` hands the bot a `LocalWeather`. Tests:
+     `tests/test_bot.py` (the bot's modules, imported and built as a client, import no Pillow and no drawing module, in a subprocess),
+     `tests/test_bot_remote.py` (the model's chart is the service's PNG, asked with `chart_image: "png"`, the model sent the text
+     alone; a service without Pillow: no picture).
    - **The gauges.** The Telegram dashboard goes: the Dashboard button, `/dashboard`, the whole gauge sheet as a picture and its
      tables. The dashboard is the web page now (below). Kept: the Status picture's three gauges (Temperature, Humidity, Rain),
      without the Daily/Monthly/Yearly Max/Min tables under them. ecobot-mcp draws it (a `status` picture: a tool or resource that
      returns the PNG, its readings as text), and the bot sends it with Status (`/status`, `/report`), followed by the `report`
      prompt's answer (6c). The PNG drawing (`lib/gauges.py`) then lives only in ecobot-mcp and draws only those
      three; `lib/gauge_sheet.py`'s tiles still feed the web page, which keeps every gauge and its tables.
+     *Done:* a resource, `ecobot://status` (3.4, `lib/status.py`): its readings as JSON text, then the PNG as a blob. A resource, not
+     a tool, because it is for the client, not the model: a tool would join every client's tool list (and the evals'), and a model
+     has `current` for the readings; a resource is read by the client when its person asks for Status, and a model never sees it.
+     The picture has no tables (`lib/gauges.py`, tiles `TILE_H` high); the resource's text keeps the highs and lows. The Telegram
+     dashboard's button, command, words, picture and 🔄 are gone ("dashboard" typed goes to the model; an old 🔄 says it is out
+     of date). Tests: `tests/test_mcp_server.py` (the resource, its PNG and JSON, without Pillow), `tests/test_bot_remote.py` (Status
+     sends ecobot://status's PNG byte for byte), `tests/test_dashboard.py`, the reference image `tests/charts/status.png`.
      The gauges' live page is already ecobot-mcp's: `/dashboard` beside `/mcp` (`lib/web_dashboard.py`, `MCP_DASHBOARD`, on by
      default) is a self-contained HTML5 page drawing the same tiles in the browser (inline SVG, `lib/gauge_look.py`'s colours and
      sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`

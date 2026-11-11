@@ -481,10 +481,10 @@
   {
     "id": "dashboard",
     "ask": "dashboard",
-    "note": "the station's gauges, drawn in code with no model; it used to mean the report",
+    "note": "the station's gauges were drawn in code with no model until the Telegram dashboard went (step 6): the model answers it now; it used to mean the report",
     "expect": {
       "report": false,
-      "dashboard": true
+      "chart": null
     },
     "covers": [
       "q:dashboard"

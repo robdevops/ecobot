@@ -14,12 +14,15 @@ task keeps connected). Everything the bot asks of them goes through it, so the b
     (the 🔄 under an alert replays its chart's drawn_by);
   - `resource(uri)`: a resource's content (ecobot://station, ecobot://forecast ...);
   - `ready(wait)`: whether it can be reached (in-process, always; remote, once connected, waiting up to `wait` seconds for it);
-  - `chart_image(name, args, meta)`: a tool's answer as data with its first chart drawn (ChartImage: the PNG, the chart's JSON with its
-    drawn_by, the theme), and `picture(chart)` a chart's JSON drawn (an alert's): in-process by lib/charts.render_data (the bot's
-    `render`, so its tests can stand in for it); remote by the service (request `_meta` `chart_image: "png"`, the image from the result's
-    ImageContent, the chart's JSON and theme from its `_meta`; a chart's picture by replaying its drawn_by), in the bot's own theme
-    (`chart_dark`: its DARKMODE, so its image cache's theme holds). A service that sends no image (no Pillow there) has its chart drawn
-    here.
+  - `call_images(name, args, meta)`: a tool's answer as data (its charts the full JSON, each with its drawn_by) and its charts drawn
+    (ChartImage each: the PNG, the chart's JSON, the theme), the model's calls and the bot's own; `chart_image(name, args, meta)` the
+    same with its first chart alone, and `picture(chart)` a chart's JSON drawn (an alert's). Remote, by the service (request `_meta`
+    `chart_image: "png"`, the images from the result's ImageContent, the charts' JSON and theme from its `_meta`; a chart's picture by
+    replaying its drawn_by), in the bot's own theme (`chart_dark`: its DARKMODE, lib/theme.py, so its image cache's theme holds). The
+    bot draws nothing: a service that sends no image (no Pillow there) gives the answer without its pictures. In-process, ecobot-mcp's
+    part in this process draws them (lib/chart_images.render, or a test's `render`);
+  - `status_picture()`: the Status picture (ecobot://status: the station's temperature, humidity and rain gauges, lib/status.py), as
+    the service draws it; None without one.
 
 For the irrigation check while it is still the bot's (step 8 moves it to its own server): `ServiceRain` (the measured rain, from
 `summary {readings: ["rain"], period: "last 24 hours"}`) and `ServiceForecast` (ecobot://forecast, the last read kept when the service
@@ -41,6 +44,7 @@ from .timeutil import now_local
 log = logging.getLogger(__name__)
 
 STATION_URI, ALERTS_URI, FORECAST_URI = "ecobot://station", "ecobot://alerts", "ecobot://forecast"   # (as lib/mcp_server.py's)
+STATUS_URI = "ecobot://status"   # the Status picture (lib/status.py)
 LISTENED = (STATION_URI, ALERTS_URI, FORECAST_URI)   # what the bot listens to (not the live readings, pushed every few seconds)
 CALL_WAIT = 5.0          # how long a question's call waits for the service while it is being reached again, before it is refused
 BACKGROUND = "background"   # request _meta priority of a call nobody waits for (lib/service/common.py): refused at once while down
@@ -83,6 +87,15 @@ async def draw_here(render, chart: dict, tz, dark: bool | None = None) -> ChartI
     return ChartImage(png, chart, drawn_dark)
 
 
+def _object(text: str) -> dict | None:
+    """A tool's text as the JSON object it is; None when it isn't one."""
+    try:
+        out = json.loads(text)
+    except ValueError:
+        return None
+    return out if isinstance(out, dict) else None
+
+
 async def value(x):
     """x, awaited when it is awaitable: the alert feed's methods are plain in-process and coroutines when remote."""
     return await x if asyncio.iscoroutine(x) or isinstance(x, asyncio.Future) else x
@@ -95,11 +108,12 @@ class LocalWeather:
     is_weather, remote = True, False
 
     def __init__(self, sources=(), service=None, alert_log=None, tz=None, render=None):
-        """render(chart, tz, dark) -> (PNG, dark): how a chart is drawn (lib/chart_images.render: lib/charts.render_data)."""
+        """render(chart, tz, dark) -> (PNG, dark): how a chart is drawn (None: lib/chart_images.render, as ecobot-mcp draws, read when
+        drawn)."""
         self.sources, self.alert_log, self.tz = list(sources), alert_log, tz
         self.by_name = {s.name: s for s in self.sources}
         self._service = service
-        self.render = render or chart_images.render
+        self.render = render
 
     @property
     def service(self):
@@ -148,6 +162,21 @@ class LocalWeather:
     async def ready(self, wait: float = 0) -> bool:
         return True
 
+    async def call_images(self, name: str, args: dict | None = None, meta: dict | None = None) -> tuple[dict | str, list[ChartImage]]:
+        """(the tool's answer as data, each of its charts drawn; the answer's text as it came when it isn't a JSON object)."""
+        meta = dict(meta or {})
+        text = await self.service[name].call(args or {}, meta)
+        out = _object(text)
+        if out is None:
+            return text, []
+        dark, pictures = chart_images.asked_dark(meta), []
+        for chart in charts_of(out):
+            try:
+                pictures.append(await self.picture(chart, dark))
+            except ChartNotDrawn as e:   # (the answer goes without it, as from a service that sends no image)
+                log.error("%s's chart couldn't be drawn: %s", name, e)
+        return out, pictures
+
     async def chart_image(self, name: str, args: dict | None = None, meta: dict | None = None,
                           alone: bool = False) -> tuple[dict, ChartImage | None]:
         """(the tool's answer as data, its first chart drawn; None without a chart, or with more than one when `alone`)."""
@@ -160,7 +189,11 @@ class LocalWeather:
 
     async def picture(self, chart: dict, dark: bool | None = None) -> ChartImage:
         """A chart's JSON drawn (dark None: as DARKMODE says now); ChartNotDrawn when it can't be."""
-        return await draw_here(self.render, chart, self.tz or getattr(self.ctx, "zone", None), dark)
+        return await draw_here(self.render or chart_images.render, chart, self.tz or getattr(self.ctx, "zone", None), dark)
+
+    async def status_picture(self) -> bytes | None:
+        from .status import status
+        return (await status(self.service))[1]
 
 
 # ---------- over MCP ----------
@@ -269,7 +302,7 @@ class RemoteAlerts:
             return False
 
 
-PICTURE_WAIT = 8.0   # seconds an alert's picture waits for the service to draw it again, before it is drawn here from the alert's data
+PICTURE_WAIT = 8.0   # seconds an alert's picture waits for the service to draw it again, before the alert goes without it
 
 class RemoteWeather:
     """The service at `target` (its MCP URL; in tests, a Server in-process), as the bot's interface. `run()` is the supervisor (the
@@ -394,7 +427,7 @@ class RemoteWeather:
         """A tool's answer as its JSON text (the first text block: the tool's JSON, a refusal's too). A background request (nobody
         waiting) doesn't wait for the service."""
         meta = dict(meta or {})
-        meta.setdefault("chart_image", chart_images.NO_IMAGE)   # (the JSON, even if BOT_MCP_URL asks for images: the bot draws these)
+        meta.setdefault("chart_image", chart_images.NO_IMAGE)   # (the JSON, even if BOT_MCP_URL asks for images: no picture wanted here)
         client = await self._client(0 if meta.get("priority") == BACKGROUND else CALL_WAIT)
         result = await client.call_tool(name, args or {}, meta=meta)
         for block in result.content:
@@ -402,50 +435,80 @@ class RemoteWeather:
                 return block.text
         return json.dumps({"error": f"The service's {name} gave no answer."})
 
-    async def chart_image(self, name: str, args: dict | None = None, meta: dict | None = None,
-                          alone: bool = False) -> tuple[dict, ChartImage | None]:
-        """(the tool's answer as data, its first chart as the service drew it; None without a chart, or with more than one when
-        `alone`). Asked with `chart_image: "png"` and, unless `meta` says, `chart_dark` the bot's own theme now; the answer's charts are
-        the full JSON from the result's _meta (the text carries only their titles). A service that sent no image has it drawn here."""
+    async def _with_images(self, name: str, args: dict | None, meta: dict | None):
+        """(the call's result, its text block, the meta it was asked with): asked with `chart_image: "png"` and, unless `meta` says,
+        `chart_dark` the bot's own theme now."""
         meta = {**(meta or {}), "chart_image": chart_images.IMAGE}
         if chart_images.asked_dark(meta) is None:
             meta["chart_dark"] = bot_dark()
         client = await self._client(0 if meta.get("priority") == BACKGROUND else CALL_WAIT)
         result = await client.call_tool(name, args or {}, meta=meta)
         text = next((b.text for b in result.content if getattr(b, "type", None) == "text"), None)
-        out = json.loads(text) if text is not None else {"error": f"The service's {name} gave no answer."}
+        return result, text, meta
+
+    async def call_images(self, name: str, args: dict | None = None, meta: dict | None = None) -> tuple[dict | str, list[ChartImage]]:
+        """(the tool's answer as data, each of its charts as the service drew it). The answer's charts are the full JSON from the
+        result's _meta (the text carries only their titles), its chart_note the one without images; the answer's text as it came when it
+        isn't a JSON object. A service that sent no image (no Pillow there) gives none: the bot draws nothing."""
+        result, text, meta = await self._with_images(name, args, meta)
+        if text is None:
+            return {"error": f"The service's {name} gave no answer."}, []
+        out = _object(text)
+        if out is None:
+            return text, []
         extra = result.meta or {}
-        if isinstance(out, dict) and isinstance(full := extra.get(chart_images.CHARTS_META), list):
+        if isinstance(full := extra.get(chart_images.CHARTS_META), list):
             out["charts"] = full
             if "chart_note" in out:
                 out["chart_note"] = CHART_NOTE
         charts = charts_of(out)
-        if not charts or (alone and len(charts) != 1):
-            return out, None
         pngs = [base64.b64decode(b.data) for b in result.content if getattr(b, "type", None) == "image"]
-        if pngs:
-            dark = extra.get(chart_images.DARK_META)
-            return out, ChartImage(pngs[0], charts[0], dark if isinstance(dark, bool) else meta["chart_dark"])
-        log.debug("ecobot-mcp: %s sent no chart image (%s); drawn here", name, out.get("chart_image_note"))
-        return out, await draw_here(chart_images.render, charts[0], self.tz, meta["chart_dark"])
+        if charts and len(pngs) != len(charts):
+            log.warning("ecobot-mcp: %s sent %d chart images for %d charts (%s); the answer goes without them", name, len(pngs),
+                        len(charts), out.get("chart_image_note") or "no note")
+            return out, []
+        dark = extra.get(chart_images.DARK_META)
+        dark = dark if isinstance(dark, bool) else meta["chart_dark"]
+        return out, [ChartImage(png, chart, dark) for png, chart in zip(pngs, charts)]
+
+    async def chart_image(self, name: str, args: dict | None = None, meta: dict | None = None,
+                          alone: bool = False) -> tuple[dict, ChartImage | None]:
+        """(the tool's answer as data, its first chart as the service drew it; None without a chart, or with more than one when
+        `alone`, or when the service sent no image)."""
+        out, images = await self.call_images(name, args, meta)
+        if not isinstance(out, dict):
+            return {"error": f"The service's {name} gave no answer."}, None
+        charts = charts_of(out)
+        if not charts or (alone and len(charts) != 1) or not images:
+            return out, None
+        return out, images[0]
 
     async def picture(self, chart: dict, dark: bool | None = None) -> ChartImage:
-        """A chart's JSON drawn by the service: its drawn_by replayed (as drawn: the same chart, with any newer reading); drawn here
-        when it has none, or the service draws no chart of it, or can't be reached. ChartNotDrawn when it can't be."""
+        """A chart's JSON drawn by the service: its drawn_by replayed (as drawn: the same chart, with any newer reading). ChartNotDrawn
+        when it can't be (it has no drawn_by, the service draws no chart of it, sends no image, or can't be reached): the bot draws
+        nothing itself."""
         dark = bot_dark() if dark is None else dark
-        if isinstance(by := chart.get("drawn_by"), dict) and by.get("tool"):
-            try:
-                out, image = await asyncio.wait_for(   # (an alert waits on this: nothing fetched for it, and not for long)
-                    self.chart_image(by["tool"], by.get("arguments") or {}, {"chart_points": AS_DRAWN, "chart_dark": dark, "fetch": False}),
-                    PICTURE_WAIT)
-            except ChartNotDrawn:
-                raise
-            except Exception as e:   # (the service away, or its answer broken: the chart as it came is drawn here)
-                out, image = {"error": f"{type(e).__name__}: {e}"}, None
-            if image is not None:
-                return image
-            log.debug("ecobot-mcp: %s drew no chart again (%s); drawn here", by["tool"], out.get("error"))
-        return await draw_here(chart_images.render, chart, self.tz, dark)
+        by = chart.get("drawn_by")
+        if not isinstance(by, dict) or not by.get("tool"):
+            raise ChartNotDrawn("the chart has no drawn_by for the service to draw it again")
+        try:
+            out, image = await asyncio.wait_for(   # (an alert waits on this: nothing fetched for it, and not for long)
+                self.chart_image(by["tool"], by.get("arguments") or {}, {"chart_points": AS_DRAWN, "chart_dark": dark, "fetch": False}),
+                PICTURE_WAIT)
+        except Exception as e:   # (the service away, or its answer broken)
+            raise ChartNotDrawn(f"{type(e).__name__}: {e}") from e
+        if image is None:
+            raise ChartNotDrawn(f"{by['tool']} drew no chart again: {out.get('error') or out.get('chart_image_note') or 'no image'}")
+        return image
+
+    async def status_picture(self) -> bytes | None:
+        """ecobot://status's PNG (its blob); None when it sends none (no station, or no Pillow there)."""
+        client = await self._client(CALL_WAIT)
+        read = await client.read_resource(STATUS_URI)
+        for content in read.contents:
+            if getattr(content, "blob", None) and getattr(content, "mime_type", None) == chart_images.PNG:
+                return base64.b64decode(content.blob)
+        return None
 
     async def resource(self, uri: str, wait=AS_A_CALL) -> dict:
         """A resource's content; `wait`: how long to wait for the service (CALL_WAIT; None as long as it takes)."""

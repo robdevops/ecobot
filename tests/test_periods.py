@@ -9,7 +9,7 @@ from lib.bot import Bot
 from lib.service import Service
 from lib.service.summary import OVER_TIME
 from lib.specs import Chart, Line, Panel, to_json
-from tests.fakes import TZ
+from tests.fakes import draws, TZ
 
 NOW = datetime(2026, 10, 2, 12, 0)
 SORRY = "Sorry, I couldn't draw that chart, please ask again"
@@ -82,7 +82,7 @@ def make_bot(alert_state, monkeypatch):
     class Agent:
         async def run(self, *a, **k):
             raise AssertionError("no model for a plain chart")
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: str(data["drawn_by"]["arguments"].get("period")
+    draws(monkeypatch, lambda data, tz, times=None: str(data["drawn_by"]["arguments"].get("period")
                                                                                       or data["drawn_by"]["arguments"]["start"]).encode())
     sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt")]
     return Bot(NS(tz=TZ), Agent(), sources, alert_state, service=Service([Summary()]))
@@ -183,13 +183,13 @@ async def test_a_replayed_chart_that_cannot_be_drawn_or_sent_says_sorry_on_the_b
 
     def broken(data, tz, times=None):
         raise ValueError("no panels")
-    monkeypatch.setattr(botmod, "render_data", broken)
+    draws(monkeypatch, broken)
     await bot.on_period_button(press(msg, "pd:3m", answer), CONTEXT)   # a chart that fails to render
     assert answers == [SORRY] and edits == []
 
     async def offline(media, reply_markup=None):
         raise NetworkError("connection reset")
-    monkeypatch.setattr(botmod, "render_data", lambda data, tz, times=None: b"png")
+    draws(monkeypatch, lambda data, tz, times=None: b"png")
     said = []
 
     async def reply_text(text, **k):
@@ -552,12 +552,12 @@ async def test_the_chart_of_an_alert_sent_lately_is_drawn_ahead_with_the_keyboar
 
 
 def test_a_chart_drawn_in_one_theme_is_not_sent_again_after_the_theme_changes(monkeypatch):
-    from lib import charts
+    from lib import theme
     images = periods.ImageCache(lambda: 0.0)
-    monkeypatch.setattr(charts, "MODE", "off")
+    monkeypatch.setattr(theme, "MODE", "off")
     images.put("summary {}", b"light", "T", "caption")
     assert images.get("summary {}") and images.ready("summary {}")
-    monkeypatch.setattr(charts, "MODE", "on")                                      # 8pm under DARKMODE=8pm-8am
+    monkeypatch.setattr(theme, "MODE", "on")                                      # 8pm under DARKMODE=8pm-8am
     assert images.ready("summary {}") is None and images.get("summary {}") is None
 
 

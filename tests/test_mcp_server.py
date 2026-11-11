@@ -152,9 +152,14 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
         assert listed == list(mcp_server.RESOURCES)
         read = {}
         for uri in listed:
-            (content,) = (await client.read_resource(uri)).contents
+            contents = (await client.read_resource(uri)).contents
+            content = contents[0]
             assert content.mime_type == "application/json" and content.uri == uri
             read[uri] = json.loads(content.text)
+            if uri == mcp_server.STATUS_URI:   # the Status picture: its readings as JSON, then the picture (test_the_status_picture...)
+                assert [c.mime_type for c in contents] == ["application/json", "image/png"]
+            else:
+                assert len(contents) == 1
     station = read["ecobot://station"]
     assert station["name"] == world.ctx.eco.station_name and station["time_zone"] == "Australia/Melbourne"
     assert {"station", "air"} == set(station["sensors"]) and "temperature" in station["words"]
@@ -172,6 +177,40 @@ async def test_each_resource_is_listed_and_readable_as_json(world):
     health = read["ecobot://health"]
     assert health["file"]["bytes"] > 0 and health["alert_log"] == {"last_id": 1} and "Ecowitt refresh" in health["loops"]
     assert read["ecobot://schema/chart"]["$id"] == "ecobot://schema/chart"
+    assert [g["title"] for g in read[mcp_server.STATUS_URI]["gauges"]] == ["Temperature", "Humidity", "Rain"]
+
+
+async def test_the_status_picture_is_three_gauges_as_a_png_with_their_readings_as_json(world, monkeypatch):
+    """ecobot://status: the station's temperature, humidity and rain gauges drawn as a PNG (lib/gauges.py, from current with context,
+    the three readings named), after their readings and highs and lows as JSON; without Pillow, the JSON alone with a note."""
+    import io
+    from PIL import Image
+    from lib import gauge_sheet, gauges, status
+    asked = []
+    current = world.service["current"]
+    real = current.call
+
+    async def call(args=None, meta=None):
+        asked.append(args)
+        return await real(args, meta)
+    monkeypatch.setattr(current, "call", call)
+    async with Client(world.server) as client:
+        (entry,) = [r for r in (await client.list_resources()).resources if str(r.uri) == mcp_server.STATUS_URI]
+        assert entry.mime_type == "image/png"
+        text, blob = (await client.read_resource(mcp_server.STATUS_URI)).contents
+    assert asked == [gauge_sheet.call(gauge_sheet.STATUS)]
+    data = json.loads(text.text)
+    sheet = gauge_sheet.sheet(json.loads(await real(gauge_sheet.call(gauge_sheet.STATUS))), gauge_sheet.STATUS)
+    assert data["gauges"] == [status.gauge(t) for t in sheet.tiles] and data["lines"] == [status.line(t) for t in sheet.tiles]
+    assert data["gauges"][0]["value"] == sheet.tiles[0].value and set(data["gauges"][0]["rows"]) == {"Daily", "Monthly", "Yearly"}
+    assert data["lines"][0].startswith(f"Temperature: {sheet.tiles[0].value:.1f} °C (Daily: Max ")
+    png = base64.b64decode(blob.blob)
+    assert png == gauges.render(sheet) and Image.open(io.BytesIO(png)).size == (3 * gauges.CELL_W + 2 * gauges.MARGIN,
+                                                                               gauges.TILE_H + 2 * gauges.MARGIN)
+    monkeypatch.setattr(status, "_renderer", lambda: None)   # (no Pillow)
+    async with Client(world.server) as client:
+        (alone,) = (await client.read_resource(mcp_server.STATUS_URI)).contents
+    assert json.loads(alone.text)["image_note"] == status.UNAVAILABLE_NOTE
 
 
 async def test_a_resource_there_is_none_of_is_refused_naming_those_there_are(tmp_path):
@@ -179,7 +218,7 @@ async def test_a_resource_there_is_none_of_is_refused_naming_those_there_are(tmp
     async with Client(server.server) as client:
         listed = [r.uri for r in (await client.list_resources()).resources]
         assert listed == ["ecobot://station", ALERTS_URI, "ecobot://health", "ecobot://schema/chart"]   # (no sensor, no forecast, no pollen)
-        for uri in ("ecobot://now/weather", "ecobot://nowhere", "ecobot://health?x=1"):
+        for uri in ("ecobot://now/weather", "ecobot://status", "ecobot://nowhere", "ecobot://health?x=1"):
             with pytest.raises(MCPError, match="No resource") as e:
                 await client.read_resource(uri)
             assert e.value.error.code == mcp_server.RESOURCE_NOT_FOUND

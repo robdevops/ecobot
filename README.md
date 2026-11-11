@@ -30,7 +30,7 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
 
 - **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
-- **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message, under gauges of the temperature, humidity and rain. `/dashboard` draws the station's gauges with the day's, month's and year's highs and lows.
+- **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message, under gauges of the temperature, humidity and rain.
 - **Web dashboard:** the same gauges as a live page in any browser on your network, laid out to fill a phone, a tablet or a screen.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.
 - **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast.
@@ -218,7 +218,7 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ec
 ## Web dashboard
 
 ecobot-mcp also serves the station's and the air sensor's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
-(your machine's name or IP address). It looks like `/dashboard` in the chat, drawn by the browser (plain HTML5, nothing fetched from
+(your machine's name or IP address). It shows every gauge with the day's, month's and year's highs and lows, drawn by the browser (plain HTML5, nothing fetched from
 the internet), and fits every tile on the screen in portrait or landscape where they stay readable (on a phone it scrolls). It
 updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away.
 

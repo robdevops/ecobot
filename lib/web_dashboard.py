@@ -1,10 +1,10 @@
 """The gauges as a live web page, served by ecobot-mcp beside /mcp (lib/mcp_server.py http_app), read-only and open to the LAN:
 
   - GET /dashboard: one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
-    the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the PNG (lib/gauges.py) has
-    them; its tiles laid out to fill the window, portrait or landscape;
+    the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
+    (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
-    from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the bot lays it out, each
+    from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
     tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air

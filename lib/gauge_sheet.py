@@ -1,13 +1,13 @@
-"""The gauges' sheet (specs.Dashboard, what lib/gauges.py draws), laid out by the bot as a client of the service (docs/ecobot-mcp.md
-3.1, 4): each gauge's scale and colours (the weather station's, lib/ecowitt/dashboard.py GAUGES, then the air sensor's,
+"""The gauges' sheet (specs.Dashboard), laid out from the service's own `current` (docs/ecobot-mcp.md 3.1, 4) for the web page's
+gauges (lib/web_dashboard.py) and the Status picture's three (lib/status.py, drawn by lib/gauges.py): each gauge's scale and colours (the weather station's, lib/ecowitt/dashboard.py GAUGES, then the air sensor's,
 lib/airgradient/dashboard.py AIR_GAUGES) filled from the service's `current` with `context`, its reading now and the highs and lows of
 today, the month and the year beside it (rain: its totals and wettest day; wind: its highest gust; the US AQI: PM2.5's, as AQI). An air
 gauge's band is named from its own reading now, and the US AQI is worked out from PM2.5 now: both dials agree with their needles (the
 service's `aqi_us` and `band` are of the lower of the last two readings, for its ratings).
 
 A tile is left out when current has neither a reading nor a figure for it (no indoor sensor, no air sensor, a reading the air sensor
-never sent), and drawn dimmed at its floor when it has figures but no reading now. The whole dashboard is every gauge's; the report's
-picture its three (STATUS).
+never sent), and drawn dimmed at its floor when it has figures but no reading now. The web page's dashboard is every gauge's; the
+Status picture its three (STATUS).
 """
 
 import math
