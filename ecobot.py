@@ -15,6 +15,7 @@ import contextlib
 import dataclasses
 import logging
 import signal
+from zoneinfo import ZoneInfo
 
 from lib.config import Config
 
@@ -53,29 +54,68 @@ STARTUP_WAIT = 30.0   # seconds the bot waits for a remote service at start (its
 
 
 def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, core: Core | None,
-                 weather: RemoteWeather | None = None) -> tuple[list[str], AlertRules | None]:
+                 weather: RemoteWeather | None = None) -> tuple[list[str], AlertRules | None, list]:
     """In-process (`core`): hook up the service's alert rules over every source that started (core.start_alerts: they append to the
     alert log); the weather rules start in warm_up, once the station has been read. Remote (`weather`): the rules are the service's, and
     its alert log is read over MCP. Either way the bot delivers from the log (AlertDelivery), and runs the irrigation controller's check
     and watchdog (sent by the bot itself until it is a server of its own, step 5b; remote, its rain and forecast are asked of the
-    service). Returns the alert types now running here, and the rules (None when remote)."""
+    service). Returns the alert types now running here, the rules (None when remote), and what keeps the time zone (the delivery, the
+    irrigation check: follow_zone)."""
     if core is not None:
         running = core.start_alerts(moved_from=bot.state)   # (the first start moves the rules' state out of bot_state.json)
         feed, station, forecast = core.alert_log, bot.by_name.get("Ecowitt"), bot.by_name.get("Forecast")
     else:
         running, feed, station, forecast = [], weather.alerts, ServiceRain(weather), weather.forecast
-    tasks.start(AlertDelivery(feed, notify, bot.state, cfg.tz).run())
+    delivery = AlertDelivery(feed, notify, bot.state, cfg.tz)
+    zoned: list = [delivery]
+    tasks.start(delivery.run())
     if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, station, forecast).run())
+        monitor = IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, station, forecast)
+        zoned.append(monitor)
+        tasks.start(monitor.run())
         tasks.start(every(VALVE_CHECK_SECONDS, bot.watchdog.check))
         running += IrrigationMonitor.KINDS
-    return running, core.rules if core is not None else None
+    return running, core.rules if core is not None else None, zoned
 
 
-async def connect(cfg: Config, stack: contextlib.AsyncExitStack) -> tuple[RemoteWeather, Config]:
+def _zone(name: str | None):
+    try:
+        return ZoneInfo(name) if name else None
+    except Exception:
+        return None
+
+
+def follow_zone(weather: RemoteWeather, bot: Bot, state: AlertState, zoned: list):
+    """Remote: the bot in the station's time zone whenever it is read (the first read, if the service couldn't be reached at start, or
+    another zone later): the bot's settings, the charts, the alerts' charts, and what start_alerts started (`zoned`: AlertDelivery,
+    IrrigationMonitor, whose wait for the check time is timed again). The zone is kept in bot_state.json, for a start while the service
+    can't be reached (connect)."""
+    def apply(zone):
+        if state.zone != str(zone):
+            state.zone = str(zone)
+            try:
+                state.save()
+            except Exception as e:
+                log.warning("Couldn't save the station's time zone (%s: %s)", type(e).__name__, e)
+        if str(zone) == str(bot.cfg.tz):
+            return
+        log.info("The weather station's time zone is %s: the bot runs in it from now on (it was %s)", zone, bot.cfg.tz)
+        bot.cfg = dataclasses.replace(bot.cfg, tz=zone)
+        bot.alert_charts.tz = zone
+        charts.configure(bot.cfg.dark_mode, zone)
+        for keeper in zoned:
+            keeper.tz = zone
+    weather.on_zone = apply
+    if weather.station_tz is not None:   # (read before this was hooked up)
+        apply(weather.station_tz)
+
+
+async def connect(cfg: Config, stack: contextlib.AsyncExitStack, state: AlertState) -> tuple[RemoteWeather, Config]:
     """The bot as the service's client (WEATHER_MCP_URL): the supervisor started (closed by `stack`), the first connection waited for up to
-    STARTUP_WAIT seconds; the settings in the station's time zone once it has been read (else TZ's, with a warning)."""
-    weather = RemoteWeather(cfg.weather_mcp_url, cfg.weather_mcp_token or None, cfg.tz)
+    STARTUP_WAIT seconds; the settings in the station's time zone once it has been read, else in the one last read (kept in
+    bot_state.json), else in TZ's, with a warning. Read later, it is followed then (follow_zone)."""
+    kept = _zone(state.zone)
+    weather = RemoteWeather(cfg.weather_mcp_url, cfg.weather_mcp_token or None, kept or cfg.tz)
     supervisor = asyncio.create_task(weather.run())
 
     async def stop():
@@ -86,10 +126,10 @@ async def connect(cfg: Config, stack: contextlib.AsyncExitStack) -> tuple[Remote
     try:
         await asyncio.wait_for(weather.listening.wait(), STARTUP_WAIT)
     except TimeoutError:
-        log.warning("The weather service at %s isn't reachable yet: questions are told so until it is (the time zone is TZ's, %s)",
-                    cfg.weather_mcp_url, cfg.tz)
-    if weather.station_tz is not None and str(weather.station_tz) != str(cfg.tz):
-        cfg = dataclasses.replace(cfg, tz=weather.station_tz)
+        log.warning("The weather service at %s isn't reachable yet: questions are told so until it is (the time zone is %s, %s, "
+                    "until its station is read)", cfg.weather_mcp_url, "the station's last read" if kept else "TZ's", weather.tz)
+    if str(weather.tz) != str(cfg.tz):
+        cfg = dataclasses.replace(cfg, tz=weather.tz)
     return weather, cfg
 
 
@@ -131,10 +171,11 @@ async def main():
                .build())
         handshake = asyncio.create_task(app.initialize())   # Telegram is asked who the bot is while the sources start
         weather = None   # (WEATHER_MCP_URL: the service, reached over MCP)
+        state = AlertState(cfg.state_path)
         try:
             if cfg.weather_mcp_url:   # a client of the service: no sources of its own
                 sources = []
-                weather, cfg = await connect(cfg, stack)
+                weather, cfg = await connect(cfg, stack, state)
             else:
                 sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
         except BaseException:
@@ -151,7 +192,6 @@ async def main():
             stack.push_async_callback(safely, client.close)
         else:
             log.warning("OPENROUTER_API_KEY is not set: running without the model, so answers are limited")
-        state = AlertState(cfg.state_path)
         if cfg.admin_only and not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
             log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                         "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
@@ -194,7 +234,9 @@ async def main():
             log.info("Weather service: %s (%s)", cfg.weather_mcp_url, ", ".join(sorted(weather.names)) or "not reached yet")
         notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
         await bot.publish_commands(app.bot)   # the / menu
-        running, rules = start_alerts(cfg, bot, notify, tasks, core, weather)
+        running, rules, zoned = start_alerts(cfg, bot, notify, tasks, core, weather)
+        if weather is not None:
+            follow_zone(weather, bot, state, zoned)
         if core is not None:
             core.start_warmers()   # keeping warm: everything questions need, refreshed before they arrive
             tasks.start(warm_up(bot, core, running, tasks, app.bot))

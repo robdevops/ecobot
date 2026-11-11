@@ -36,8 +36,32 @@ class IrrigationMonitor:
         """station: the Ecowitt source (its recent() gives the measured rain), or, with the weather service remote, what asks it for the
         measured rain (lib/weather.ServiceRain: rain_mm()); forecast: the Forecast source, or the forecast read from the service
         (lib/weather.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be None."""
+        self._rezoned = asyncio.Event()
         self.device, self.state, self.notify, self.tz, self.hour = device, state, notify, tz, hour
         self.station, self.forecast = station, forecast
+
+    @property
+    def tz(self):
+        return self._tz
+
+    @tz.setter
+    def tz(self, zone):
+        """The station's zone; another one (the remote service's station read late) wakes the wait for the check time, timed again in it."""
+        self._tz = zone
+        self._rezoned.set()
+
+    async def _sleep(self, seconds: float):
+        """Until the check time (`seconds`), or until the zone changes."""
+        self._rezoned.clear()
+        sleeper, woken = asyncio.ensure_future(asyncio.sleep(seconds)), asyncio.ensure_future(self._rezoned.wait())
+        try:
+            await asyncio.wait((sleeper, woken), return_when=asyncio.FIRST_COMPLETED)
+            slept = sleeper.done()
+        finally:
+            for task in (sleeper, woken):
+                task.cancel()
+        if slept:
+            sleeper.result()   # (its own failure or cancellation, raised here)
 
     def _memory(self) -> dict:
         return self.state.monitor.setdefault("irrigation_monitor", {})
@@ -61,7 +85,7 @@ class IrrigationMonitor:
                     await asyncio.sleep(min(RETRY_SECONDS, self.seconds_until_next(now)))
                     continue
                 now = now_local(self.tz)
-            await asyncio.sleep(self.seconds_until_next(now))
+            await self._sleep(self.seconds_until_next(now))
 
     async def check(self, now: datetime | None = None):
         """One check: the battery, then the rain. Raises when the controller can't be reached (nothing is recorded then)."""

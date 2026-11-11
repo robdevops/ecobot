@@ -593,7 +593,12 @@ Each step ships on its own, with the tests and evals green and the bot working t
      gauges, period buttons and 🔄 replays, charts drawn ahead and preloads call the same tools. Alert delivery
      (`AlertDelivery`) reads `ecobot://alerts?since=<last id handled>`, woken by the listen's `ResourceUpdated` for `ecobot://alerts`
      and by each new connection (nothing is replayed), resuming from the id kept in `bot_state.json` as before; the 🔄 under an alert
-     finds its event with the template (`since` the id before it, `expired=true`). A question's call waits up to 5 seconds while the
+     finds its event with the template (`since` the id before it, `expired=true`). Each read is checked against the log's identity, so
+     the service back on another `alerts.sqlite` while the bot runs (removed, moved, redeployed) is noticed at once: delivery goes on in
+     the new log with its events from after the old one was last read, with a warning. The station's time zone is the bot's whenever
+     it is read: one read after the start (the service not up within 30 seconds) moves the bot's settings, the charts, the alert
+     delivery and the irrigation check (its wait for the check time timed again) into it; it is kept in `bot_state.json`
+     (`station_zone`), and a start while the service can't be reached runs in the zone last read, `TZ` only before any. A question's call waits up to 5 seconds while the
      client is being built again, a background one not at all; a question while the service can't be reached is answered that it can't
      (`bot.SERVICE_DOWN`), without the model. The bot's `warm_up` is its charts drawn ahead, every 5 minutes, quietly nothing while the
      service is away; the poke of the sources is gone (there are none). Irrigation stays in the bot until 5b: its daily check reads the

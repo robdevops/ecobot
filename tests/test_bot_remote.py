@@ -243,6 +243,57 @@ async def test_a_dropped_connection_is_rebuilt_and_the_alerts_after_the_last_id_
     assert texts() == ["first", "missed", "after"] and state.read == 4    # each once, the expired one skipped
 
 
+async def test_the_service_back_on_a_fresh_alert_log_while_the_bot_runs_has_its_new_alerts_delivered(tmp_path, caplog):
+    """The service stops and comes back on a new alerts.sqlite (deleted, moved, redeployed: its ids start again at 1) while the bot runs:
+    delivery goes on in the new log with what came after the old one was last read (one logged while it was down included), not after
+    the old last id (3, which the new ids would take weeks to pass). An event of the new log from before then is not news."""
+    port = free_port()
+    path = tmp_path / "service" / "alerts.sqlite"
+    path.parent.mkdir()
+    old = AlertLog(path, TZ)
+    remote = RemoteWeather(f"http://127.0.0.1:{port}/mcp", TOKEN, TZ)
+    state = AlertState(tmp_path / "bot_state.json")
+    state.add_chat(1, "private")
+    telegram = Telegram()
+    supervisor = asyncio.create_task(remote.run())
+    delivery = asyncio.create_task(AlertDelivery(remote.alerts, Notifier(telegram, state), state, TZ).run())
+    texts = lambda: [text for _, text in telegram.sent]
+    tasks = [delivery, supervisor]
+    try:
+        first = EcobotServer(Context(tz=TZ), old)
+        tasks.append(asyncio.create_task(first.watch_alerts()))
+        async with Serving(http_app(first, tokens={"bot": TOKEN}), port):
+            await until(lambda: state.read is not None and first.listen._streams, what="the listen")
+            for text in ("one", "two", "three"):
+                old.append("rain", text, "Rain", expires=time.time() + 3600)
+            await until(lambda: texts() == ["one", "two", "three"] and state.read == 3, what="the old log's alerts")
+            old_identity = old.identity
+        old.close()
+        for leftover in path.parent.iterdir():   # (alerts.sqlite and its -wal, -shm)
+            leftover.unlink()
+        new = AlertLog(path, TZ)
+        assert new.identity != old_identity
+        new.append("uv", "old news", "UV", expires=time.time() + 3600, time=time.time() - 3600)   # (from before the bot last read)
+        new.append("gusts", "while down", "Gusts", expires=time.time() + 3600)
+        second = EcobotServer(Context(tz=TZ), new)
+        tasks.append(asyncio.create_task(second.watch_alerts()))
+        async with Serving(http_app(second, tokens={"bot": TOKEN}), port):
+            await until(lambda: texts()[3:] == ["while down"], what="the new log's alert logged while it was down")
+            await until(lambda: second.listen._streams, what="the listen again")
+            new.append("temps", "after", "Temperatures", expires=time.time() + 3600)
+            await until(lambda: texts()[3:] == ["while down", "after"], what="the new log's next alert")
+            await asyncio.sleep(0.3)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await remote.close()
+    assert texts() == ["one", "two", "three", "while down", "after"]
+    assert (state.read, state.read_log) == (3, new.identity) and AlertState(state.path).read_log == new.identity
+    assert "is another than the one the last alert delivered (3) is from" in caplog.text
+    new.close()
+
+
 async def test_with_the_service_down_the_bot_says_so_and_carries_on(alert_state, caplog):
     remote = RemoteWeather(f"http://127.0.0.1:{free_port()}/mcp", TOKEN, TZ)   # (nothing listens there)
     supervisor = asyncio.create_task(remote.run())
@@ -313,6 +364,105 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
     assert f"Weather service: {cfg.weather_mcp_url}" in caplog.text
     assert [(chat, text) for chat, text, _ in app.sent] == [(5, "🌧️ Raining")]
     assert drawn == [app.bot]
+
+
+async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_zone_once_read_and_keeps_it(tmp_path, monkeypatch, caplog):
+    """ecobot.main() with WEATHER_MCP_URL and the service not up within STARTUP_WAIT starts in TZ's zone (UTC here, as a container's); once
+    the service is reached, its station's zone (Melbourne) is the bot's, the charts', the alert delivery's and the irrigation check's,
+    and it is kept in bot_state.json: the next start with the service down runs in it, not in UTC."""
+    import os
+    import signal
+    from zoneinfo import ZoneInfo
+    import ecobot
+    from lib import charts
+    from tests.fakes import config
+    from tests.test_startup import FakeApp, FakeBuilder
+    caplog.set_level("INFO")
+    utc = ZoneInfo("Etc/UTC")
+    port = free_port()
+    cfg = config(tmp_path, tz=utc, weather_mcp_url=f"http://127.0.0.1:{port}/mcp", weather_mcp_token=TOKEN, ecowitt_api_key="",
+                 ecowitt_app_key="", airgradient_token="", airgradient_location="", state_path=tmp_path / "bot" / "bot_state.json")
+    (tmp_path / "bot").mkdir()
+    monkeypatch.setattr(ecobot, "STARTUP_WAIT", 0.3)
+    monkeypatch.setattr(ecobot._format, "width", ecobot._format.width)
+    monkeypatch.setattr(ecobot.Config, "from_env", classmethod(lambda cls: cfg))
+    monkeypatch.setattr(ecobot, "start_sources", lambda *a: pytest.fail("no sources when remote"))
+    monkeypatch.setattr(charts, "ZONE", charts.ZONE)   # (put back after)
+    made = {}
+
+    class Kept(ecobot.Bot):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made["bot"] = self
+
+    class Delivery(ecobot.AlertDelivery):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            made["delivery"] = self
+    monkeypatch.setattr(ecobot, "Bot", Kept)
+    monkeypatch.setattr(ecobot, "AlertDelivery", Delivery)
+
+    async def until_then_stop(check, what):
+        try:
+            await until(check, what=what)
+        finally:
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    alerts = AlertLog(tmp_path / "alerts.sqlite", TZ)
+    server = EcobotServer(Context(tz=TZ), alerts)   # (its station: Australia/Melbourne)
+    try:
+        monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(FakeApp())))
+        bot_up = lambda: "delivery" in made and made["bot"].cfg.tz is not None
+
+        async def serve_late():
+            await until(bot_up, what="the bot started without the service")
+            assert str(made["bot"].cfg.tz) == "Etc/UTC" and str(made["delivery"].tz) == "Etc/UTC"   # (TZ's, while unread)
+            async with Serving(http_app(server, tokens={"bot": TOKEN}), port):
+                await until_then_stop(lambda: str(made["bot"].cfg.tz) == "Australia/Melbourne", "the station's zone")
+        late = asyncio.create_task(serve_late())
+        await ecobot.main()
+        await late
+        bot, delivery = made["bot"], made["delivery"]
+        assert str(bot.cfg.tz) == str(delivery.tz) == str(bot.alert_charts.tz) == str(charts.ZONE) == "Australia/Melbourne"
+        assert json.loads(cfg.state_path.read_text())["station_zone"] == "Australia/Melbourne"
+        assert "isn't reachable yet" in caplog.text and "TZ's, Etc/UTC" in caplog.text
+
+        made.clear()   # the next start, the service down: the zone last read, not UTC
+        caplog.clear()
+        monkeypatch.setattr(ecobot.Application, "builder", staticmethod(lambda: FakeBuilder(FakeApp())))
+        stopper = asyncio.create_task(until_then_stop(bot_up, "the bot to start again"))
+        await ecobot.main()
+        await stopper
+        assert str(made["bot"].cfg.tz) == str(made["delivery"].tz) == str(charts.ZONE) == "Australia/Melbourne"
+        assert "the station's last read, Australia/Melbourne" in caplog.text
+    finally:
+        alerts.close()
+
+
+async def test_the_irrigation_check_is_timed_again_in_a_zone_read_later(tmp_path, monkeypatch):
+    """The irrigation check's wait for 18:00 is cut short when the station's zone arrives, and timed again in it."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from lib.alerts import irrigation as monitor_module
+    from lib.alerts.irrigation import IrrigationMonitor
+    utc = ZoneInfo("Etc/UTC")
+    monitor = IrrigationMonitor(None, NS(monitor={"irrigation_monitor": {}}), None, utc, 18)
+    waits = []
+
+    def now_local(tz):
+        return datetime(2026, 11, 10, 6, 0) if str(tz) == "Etc/UTC" else datetime(2026, 11, 10, 17, 0)   # (06:00 UTC: 17:00 there)
+    monkeypatch.setattr(monitor_module, "now_local", now_local)
+    timed = monitor.seconds_until_next
+    monitor.seconds_until_next = lambda now: waits.append(timed(now)) or waits[-1]   # (the waits themselves are real)
+    task = asyncio.create_task(monitor.run())
+    try:
+        await until(lambda: waits, what="the first wait")
+        monitor.tz = TZ
+        await until(lambda: len(waits) == 2, what="the wait timed again")
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert waits == [12 * 3600, 3600]   # 12 hours to 18:00 UTC; then the hour to 18:00 in Melbourne
 
 
 def test_a_client_of_the_service_needs_no_source_settings(monkeypatch, tmp_path):

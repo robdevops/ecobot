@@ -224,6 +224,7 @@ class RemoteWeather:
         self.alerts = RemoteAlerts(self)
         self.forecast = ServiceForecast(self)
         self.listening = asyncio.Event()   # the first connection's listen is up, its tools and station read
+        self.on_zone = None   # on_zone(zone): the station's time zone, called when it is first read and when it changes (ecobot.py)
         self._background: set[asyncio.Task] = set()
 
     def __iter__(self):   # (the tools, as the service lists them now: lib/model_tools.py follows the list)
@@ -285,9 +286,12 @@ class RemoteWeather:
         self.station, self._catalogue = station, None
         if zone := station.get("time_zone"):
             try:
-                self.station_tz = ZoneInfo(zone)
+                read = ZoneInfo(zone)
             except Exception:   # (an offset only: TZ stands)
-                pass
+                return
+            first_or_new, self.station_tz = str(read) != str(self.station_tz), read
+            if first_or_new and self.on_zone:
+                self.on_zone(read)
 
     @property
     def tz(self):

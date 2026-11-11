@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Collection
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from telegram.error import BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError, TimedOut
 
@@ -30,6 +30,14 @@ log = logging.getLogger(__name__)
 
 RETRY_SECONDS = 3       # before sending an alert again after a dropped connection
 FLOOD_WAIT_MAX = 60     # Telegram's flood limit asks to wait: a longer wait is not waited out (that chat misses the alert)
+
+
+def _epoch(iso: str | None) -> float:
+    """An event's time (ISO, with its offset) as an epoch; 0 when it has none."""
+    try:
+        return datetime.fromisoformat(iso).timestamp() if iso else 0.0
+    except ValueError:
+        return 0.0
 
 
 def _flood_wait(e: RetryAfter) -> float:
@@ -50,12 +58,15 @@ class AlertState:
         self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
         self.read: int | None = data.get("alerts_read")       # the id of the last alert in the log the bot handled (AlertDelivery)
         self.read_log: str | None = data.get("alerts_log")    # ... and that log's identity (AlertLog.identity): ids start again in a new one
+        self.zone: str | None = data.get("station_zone")      # the remote service's station's time zone, last read (ecobot.py: a start
+                                                              # while the service can't be reached runs in it, not in TZ's)
 
     def save(self):
         """Written in full to a new file that then replaces the old one, on disk first, so a crash leaves one or the other whole."""
         write(self.path, {"chats": {str(k): v for k, v in self.chats.items()}, "monitor": self.monitor, "charts": self.charts,
                           **({"alerts_read": self.read} if self.read is not None else {}),
-                          **({"alerts_log": self.read_log} if self.read_log is not None else {})})
+                          **({"alerts_log": self.read_log} if self.read_log is not None else {}),
+                          **({"station_zone": self.zone} if self.zone is not None else {})})
 
     def add_chat(self, chat_id: int, title: str):
         """A message from this chat (or the bot added to it): known from now on, and back if it was gone."""
@@ -257,13 +268,16 @@ class AlertDelivery:
     restart resumes after it; the events that expired meanwhile are skipped (the morning's rain is not news by the afternoon). With no id
     kept (the first start) it begins after the newest event: what came before is not news either. So does a start on another log than the
     one the id is from (alerts.sqlite removed or replaced: its ids start again at 1, and waiting for them to pass the old id would send
-    nothing for as long), noticed by the log's identity kept with the id, or by the id being past the log's newest."""
+    nothing for as long), noticed by the log's identity kept with the id, or by the id being past the log's newest. With the service remote
+    the log can also be replaced while the bot runs (the service back on another alerts.sqlite): that is looked for on every pass, and
+    delivery goes on in the new log with what came since the old one was last read (_switched)."""
 
-    def __init__(self, log, notify: "Notifier", state: AlertState, tz):
+    def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time):
         """log: the alert log in this process (lib/alert_log.py), or the remote service's read over MCP (lib/weather.RemoteAlerts, whose
-        reads are coroutines: it is looked at when `run` starts)."""
-        self.log, self.notify, self.state, self.tz = log, notify, state, tz
+        reads are coroutines: it is looked at when `run` starts). now: the epoch clock (the events' times are compared with it)."""
+        self.log, self.notify, self.state, self.tz, self.now = log, notify, state, tz, now
         self.begun = False
+        self.seen_at: float | None = None   # when the log was last read through (a pass of deliver_new began): see _switched
         if not getattr(log, "remote", False):
             self._begin(self.log.last_id())
 
@@ -276,13 +290,29 @@ class AlertDelivery:
         self.begun = True
         if self.state.read is None:
             self._handled(newest)
-        elif (self.state.read_log not in (None, self.log.identity)) or self.state.read > newest:
-            logging.getLogger(__name__).warning(   # (`log` here is the alert log)
-                "Alerts: the alert log is not the one the last alert delivered (%s) is from; starting after its newest (%s)",
-                self.state.read, newest)
+        elif self._other_log(newest):
+            log.warning("Alerts: the alert log is not the one the last alert delivered (%s) is from; starting after its newest (%s)",
+                        self.state.read, newest)
             self._handled(newest)
         elif self.state.read_log is None:   # (kept before the log had an identity: this one)
             self._handled(self.state.read)
+
+    def _other_log(self, newest: int) -> bool:
+        """Is the log read now another than the one the last id handled is from (its identity, or its newest id behind that id)?"""
+        return self.state.read is not None and (self.state.read_log not in (None, self.log.identity) or self.state.read > newest)
+
+    async def _switched(self, newest: int):
+        """The log was replaced while the bot runs (remote: the service came back on another alerts.sqlite, deleted, moved or
+        redeployed; its ids start again at 1). Delivery goes on in the new log after the events from before the bot last read the old
+        one through (`seen_at`): the new log began after that, so those that came since are news, and they are sent; none known (the
+        first pass), after its newest, as at a start."""
+        start = newest
+        if self.seen_at is not None:
+            fresh = [e for e in await value(self.log.since(0)) if _epoch(e.get("time")) >= self.seen_at]
+            start = fresh[0]["id"] - 1 if fresh else newest
+        log.warning("Alerts: the service's alert log is another than the one the last alert delivered (%s) is from; "
+                    "going on in it after %s", self.state.read, start)
+        self._handled(start)
 
     @property
     def last(self) -> int:
@@ -312,10 +342,19 @@ class AlertDelivery:
                 await asyncio.sleep(self.RETRY_SECONDS)
 
     async def deliver_new(self) -> int:
-        """Send each unexpired event after the last handled, oldest first; returns how many were sent."""
-        newest = await value(self.log.last_id())
+        """Send each unexpired event after the last handled, oldest first; returns how many were sent. A log replaced since the last
+        pass (its identity another) is noticed here, while the bot runs, not only when it starts (_switched)."""
+        started = self.now()
+        while True:
+            newest = await value(self.log.last_id())
+            if self._other_log(newest):
+                await self._switched(newest)
+            identity = self.log.identity
+            events = await value(self.log.since(self.last))
+            if self.log.identity == identity:   # (else replaced again between the reads: looked at once more)
+                break
         sent = 0
-        for event in await value(self.log.since(self.last)):
+        for event in events:
             try:
                 await self.deliver(event)
                 sent += 1
@@ -324,6 +363,7 @@ class AlertDelivery:
             self._handled(event["id"])
         if newest > self.last:   # (only expired events after the last handled: skipped)
             self._handled(newest)
+        self.seen_at = started
         return sent
 
     async def deliver(self, event: dict) -> int:
