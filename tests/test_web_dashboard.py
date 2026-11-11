@@ -7,6 +7,7 @@ console error. With ECOBOT_SCREENSHOTS set, its screenshots are kept in that fol
 
 import asyncio
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -99,7 +100,9 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
     html = page.text
     assert html.startswith("<!DOCTYPE html>") and "<script>" in html and "EventSource" in html
-    assert "https://" not in html and "<link" not in html and " src=" not in html                  # nothing fetched from elsewhere
+    links = re.findall(r'<link[^>]*href="([^"]*)"', html)                                            # (the icon, carried in the page)
+    assert "https://" not in html and " src=" not in html and links and all(h.startswith("data:image/png;base64,") for h in links)
+    assert "<title>Weather Dashboard</title>" in html                                                 # nothing fetched from elsewhere
     assert data.status_code == 200
     got = data.json()
     sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
