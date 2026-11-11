@@ -175,6 +175,24 @@ token taken out is refused from the next start). Add your machine's IP address o
 on your own network. Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in
 `compose.yaml` to `127.0.0.1:8765:8765`. A client that shows pictures can have the charts as images: add `?charts=png` to its URL.
 
+#### Charts in LibreChat (and other chat apps): `?charts=link`
+
+Some clients (LibreChat, with an Ollama endpoint, say) don't show an image a tool sends, but do show a markdown image in the model's
+reply. For those, add `?charts=link` to the MCP URL (`https://api.example.org/ecobot/mcp?charts=link`): each chart then comes as a
+link to its picture, `/charts/<id>.png` on ecobot-mcp's port, and the model is asked to put it in its reply as a markdown image. Your
+browser loads the picture, so the link has to be one it can reach: set `MCP_CHART_BASE_URL` to where your reverse proxy serves
+`/charts`, e.g. with nginx
+
+```
+location /ecobot-charts/ { proxy_pass http://127.0.0.1:8765/charts/; }
+```
+
+and `MCP_CHART_BASE_URL=https://api.example.org/ecobot-charts`. Unset, the link is built from the address the MCP request came to
+(the proxy's `X-Forwarded-Proto` and `X-Forwarded-Host` when it sends them) with `/charts`. The pictures need no token and answer any
+`Host`: anyone who has a link can open it until it expires, so treat links as you would the chart itself. Each link's id is random
+and unguessable; the pictures are kept in memory for `MCP_CHART_LINK_HOURS` (24 by default), at most 500 of them and 64 MB in all
+(the oldest go first), and a restart of ecobot-mcp forgets them all (an old link then answers 404).
+
 #### Docker logging
 
 Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot-mcp` or `CONTAINER_NAME=ecobot`):

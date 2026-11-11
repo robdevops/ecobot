@@ -88,7 +88,8 @@ async def main():
         stack.push_async_callback(tasks.close)
         for source in sources:
             stack.push_async_callback(source.warmer.stop)
-        server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version())
+        server = EcobotServer(core.ctx, core.alert_log, health=core.health.report, version=version(),
+                              chart_base_url=cfg.mcp_chart_base_url, chart_link_hours=cfg.mcp_chart_link_hours)
         hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_allowed_hosts)))   # (its own name too: a container's hostname)
         app = http_app(server, tokens=tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}",
                        dashboard=cfg.mcp_dashboard)
@@ -114,6 +115,8 @@ async def main():
                  ", ".join(hosts))
         if cfg.mcp_dashboard:
             log.info("Dashboard: http://%s:%d/dashboard (read-only, no token, any Host; MCP_DASHBOARD=off turns it off)", shown, port)
+        log.info("Chart links (?charts=link): %s/<id>.png, kept %d h in memory (no token: an id is its key)",
+                 cfg.mcp_chart_base_url or f"http://{shown}:{port}/charts (or as the MCP request reached it)", cfg.mcp_chart_link_hours)
         waiting = asyncio.create_task(stop.wait())
         await asyncio.wait({serving, waiting}, return_when=asyncio.FIRST_COMPLETED)
         server.listen.close()   # (the listen streams end gracefully: their clients know to listen again)

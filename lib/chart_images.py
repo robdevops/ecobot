@@ -7,23 +7,32 @@ no image had been asked for, with UNAVAILABLE_NOTE.
 
   - `configure(mode, tz)`: the service's DARKMODE (lib/config.py's dark_mode) and the zone a time range is read in, handed to
     lib.charts (charts.configure) when it is first imported here, or at once when it already is (the bot's process configures it itself);
-  - `wanted(meta, query)`: does a tool call want images: the request's `_meta` `chart_image` ("png" or "none"), else the connection's
-    MCP URL's query (`?charts=png`), else not;
-  - `render(chart, tz, dark)`: (PNG, dark), as the bot draws it; dark None: as DARKMODE says now (charts.dark_now)."""
+  - `wanted(meta, query)`: does a tool call want images, and how: the request's `_meta` `chart_image` ("png", "link" or "none"),
+    else the connection's MCP URL's query (`?charts=png`, `?charts=link`), else not: "png", "link" or None;
+  - `render(chart, tz, dark)`: (PNG, dark), as the bot draws it; dark None: as DARKMODE says now (charts.dark_now);
+  - `Links`: the PNGs of link mode, kept in memory for their lifetime (MCP_CHART_LINK_HOURS) under a random id each, at most
+    LINKS_MOST of them and LINKS_BYTES in all (the oldest dropped first), served at GET /charts/<id>.png (lib/mcp_server.py) and gone
+    at a restart; `markdown(title, url)`: the image as the model puts it in its reply."""
 
 import importlib
 import logging
+import secrets
 import sys
+import time
+from collections import OrderedDict
 from datetime import tzinfo
 
 log = logging.getLogger(__name__)
 
 PNG = "image/png"
-IMAGE, NO_IMAGE = "png", "none"          # request _meta chart_image, and the URL's ?charts=: images, or the JSON alone (the default)
+IMAGE, LINK, NO_IMAGE = "png", "link", "none"   # request _meta chart_image, and the URL's ?charts=: images, links to them, or the JSON
+                                                # alone (the default)
 CHARTS_META = "ecobot/charts"            # result _meta with images: the full chart JSON, each with its drawn_by (3.7)
 DARK_META = "ecobot/chart_dark"          # result _meta with images: drawn in the dark theme (true) or the light (false)
 IMAGE_NOTE = ("The chart is the image attached to this result: show it with your reply. Keep your text to the figures; don't describe "
               "the chart.")
+LINK_NOTE = ("Each chart is a picture at its `url`: put each in your reply as its `markdown`, exactly as given (a markdown image), so "
+             "the person sees it. Keep your text to the figures; don't describe the chart.")
 UNAVAILABLE_NOTE = "Chart images aren't available on this service: the chart's data is in `charts`."
 NOT_DRAWN_NOTE = "The chart's image couldn't be drawn: the chart's data is in `charts`."
 MODE: str | tuple[int, int] | None = None   # the service's DARKMODE, once configured (None: as lib.charts is)
@@ -62,13 +71,14 @@ def renderer():
     return charts
 
 
-def wanted(meta: dict | None, query: str | None = None) -> bool:
-    """Images for this call? The request's _meta `chart_image` ("png" or "none") decides; else the connection's (the MCP URL's
-    `?charts=png`, `query`); else not."""
+def wanted(meta: dict | None, query: str | None = None) -> str | None:
+    """Images for this call, and how: IMAGE (attached), LINK (a URL each) or None. The request's _meta `chart_image` ("png", "link" or
+    "none") decides; else the connection's (the MCP URL's `?charts=png` or `?charts=link`, `query`); else none."""
     asked = str((meta or {}).get("chart_image") or "").strip().lower()
-    if asked in (IMAGE, NO_IMAGE):
-        return asked == IMAGE
-    return str(query or "").strip().lower() == IMAGE
+    if asked in (IMAGE, LINK, NO_IMAGE):
+        return None if asked == NO_IMAGE else asked
+    query = str(query or "").strip().lower()
+    return query if query in (IMAGE, LINK) else None
 
 
 def asked_dark(meta: dict | None) -> bool | None:
@@ -87,5 +97,55 @@ def render(chart: dict, tz: tzinfo, dark: bool | None = None) -> tuple[bytes, bo
     return charts.render_data(chart, tz, dark=dark), dark
 
 
-__all__ = ["CHARTS_META", "DARK_META", "IMAGE", "IMAGE_NOTE", "NOT_DRAWN_NOTE", "NO_IMAGE", "PNG", "UNAVAILABLE_NOTE", "asked_dark",
-           "configure", "render", "renderer", "wanted"]
+# ---------- link mode: the pictures served at /charts/<id>.png ----------
+LINK_HOURS = 24                 # MCP_CHART_LINK_HOURS' default: how long a chart's link answers
+LINKS_MOST = 500                # the most pictures kept ...
+LINKS_BYTES = 64 << 20          # ... and the most bytes in all: past either, the oldest go first
+ID_BYTES = 16                   # an id's randomness (secrets.token_urlsafe): unguessable, the link's only key
+
+
+class Links:
+    """The pictures of link mode, in memory: `put(png)` keeps one under a new random id (the oldest dropped while there are more than
+    `most` or more than `most_bytes` in all); `get(id)` is (png, seconds left) until `hours` have passed, else None. Nothing is kept
+    on disk: a restart forgets them all. `clock`: time.time, or a test's."""
+
+    def __init__(self, hours: float = LINK_HOURS, most: int = LINKS_MOST, most_bytes: int = LINKS_BYTES, clock=time.time):
+        self.seconds, self.most, self.most_bytes, self.clock = hours * 3600, most, most_bytes, clock
+        self._kept: OrderedDict[str, tuple[bytes, float]] = OrderedDict()   # id: (png, when it expires), oldest first
+        self.bytes = 0
+
+    def __len__(self) -> int:
+        return len(self._kept)
+
+    def put(self, png: bytes) -> str:
+        self._expire()
+        key = secrets.token_urlsafe(ID_BYTES)
+        self._kept[key] = (png, self.clock() + self.seconds)
+        self.bytes += len(png)
+        while self._kept and (len(self._kept) > self.most or self.bytes > self.most_bytes):
+            self._drop(next(iter(self._kept)))
+        return key
+
+    def get(self, key: str) -> tuple[bytes, float] | None:
+        self._expire()
+        kept = self._kept.get(key)
+        return (kept[0], kept[1] - self.clock()) if kept else None
+
+    def _expire(self):
+        now = self.clock()
+        while self._kept and next(iter(self._kept.values()))[1] <= now:   # (in the order kept: the oldest expire first)
+            self._drop(next(iter(self._kept)))
+
+    def _drop(self, key: str):
+        png, _ = self._kept.pop(key)
+        self.bytes -= len(png)
+
+
+def markdown(title, url: str) -> str:
+    """A chart as a markdown image: ![title](url), the title's brackets and line breaks made harmless."""
+    text = " ".join(str(title or "Chart").split())
+    return f"![{text.replace('[', '(').replace(']', ')')}]({url})"
+
+
+__all__ = ["CHARTS_META", "DARK_META", "IMAGE", "IMAGE_NOTE", "LINK", "LINK_HOURS", "LINK_NOTE", "LINKS_BYTES", "LINKS_MOST", "Links",
+           "NOT_DRAWN_NOTE", "NO_IMAGE", "PNG", "UNAVAILABLE_NOTE", "asked_dark", "configure", "markdown", "render", "renderer", "wanted"]

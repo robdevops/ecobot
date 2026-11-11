@@ -299,6 +299,8 @@ class Config:
     mcp_bind: tuple[str, int] = _setting("MCP_BIND", ("127.0.0.1", 8765), _bind, old="MCP_SERVICE_BIND")    # host:port ecobot-mcp listens on
     mcp_allowed_hosts: tuple[str, ...] = _setting("MCP_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names, old="MCP_SERVICE_ALLOWED_HOSTS")   # the Host names it answers (any port, unless one is given)
     mcp_dashboard: bool = _setting("MCP_DASHBOARD", True, _flag)    # the gauges' live web page at /dashboard beside /mcp: read-only, no token, any Host (off: 404)
+    mcp_chart_base_url: str = _setting("MCP_CHART_BASE_URL", "", _url)   # where people's browsers reach the chart links' pictures (/charts beside /mcp, e.g. through a proxy: https://example.org/ecobot-charts); unset: the MCP request's own address with /charts
+    mcp_chart_link_hours: int = _setting("MCP_CHART_LINK_HOURS", 24, _between(1, 720))   # how long a chart link's picture is kept (in memory: a restart forgets them)
     # The bot's (ecobot.py)
     telegram_token: str = _setting("BOT_TELEGRAM_TOKEN", "", old="TELEGRAM_BOT_TOKEN")                       # (REQUIRED_BY_BOT: it stops without it)
     telegram_preload_chat: int | None = _setting("BOT_TELEGRAM_PRELOAD_CHAT", None, _chat_id, old="TELEGRAM_PRELOAD_CHAT")   # a chat the other periods of each chart are silently uploaded to ahead of the press (none: off)

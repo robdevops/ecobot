@@ -14,6 +14,12 @@ token check.
     off the event loop) from every point (`chart_points` "drawn" unless the call says); the full chart JSON, with drawn_by, is in
     result `_meta` "ecobot/charts" and the theme in "ecobot/chart_dark" (DARKMODE, or the call's `chart_dark`). Pillow is imported at
     the first image: without it the answer is the JSON as without images, with `chart_image_note` saying so.
+  - **Chart links** (3.7), for a client that shows a markdown image in the model's reply but not an image in a tool's result
+    (`/mcp?charts=link`, or `chart_image: "link"`): the charts drawn as for images but kept (chart_images.Links, in memory, for
+    MCP_CHART_LINK_HOURS) and served at GET /charts/<id>.png; the text block's charts are each {title, period, url, markdown} with a
+    `chart_note` asking the model to put each `markdown` in its reply, followed by one ResourceLink per chart (no bytes); result
+    `_meta` as with images. A complete answer's reply carries the markdown images too. The URL is MCP_CHART_BASE_URL's, else the
+    MCP request's own (X-Forwarded-Proto and X-Forwarded-Host when there) with /charts.
   - **Resources** (3.4): RESOURCES, and the alerts with `since` and `expired` (the ALERTS_TEMPLATE). Each is JSON. The live ones are
     published as ResourceUpdated when they change (`publish_changes`, every PUBLISH_SECONDS, from what the sources keep: no request is
     made for it; a reading asked for again and unchanged is not sent), the alerts on each new event (`watch_alerts`, lib/alert_log.py
@@ -22,7 +28,8 @@ token check.
   - **HTTP** (`http_app`): `streamable_http_app` at /mcp, its Host header checked against the allowed hosts
     (TransportSecuritySettings: 127.0.0.1 and localhost unless MCP_ALLOWED_HOSTS says), each request's bearer token against
     AUTH_TOKENS (TokenCheck: a constant-time compare, one token per client, so one can be revoked alone). Beside it, unless MCP_DASHBOARD
-    is off, the gauges' live page at /dashboard (lib/web_dashboard.py): read-only, so neither the token nor the Host is asked.
+    is off, the gauges' live page at /dashboard (lib/web_dashboard.py), and always the chart links' pictures at /charts/<id>.png:
+    read-only, so neither the token nor the Host is asked (a picture's id is random, unguessable, and its only key).
 
 `EcobotServer(ctx, alert_log)` builds it over the service's Context; `run()` is its publishing, for as long as it runs. Nothing here
 fetches, alerts or writes: ecobot_mcp runs the sources and the rules."""
@@ -46,6 +53,9 @@ from mcp.server.lowlevel import Server
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ResourceUpdated, ToolsListChanged
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from . import chart_images
 from .config import ROOT
@@ -150,15 +160,28 @@ def charts_of(data) -> list[dict]:
     return charts if isinstance(charts, list) and charts and all(isinstance(c, dict) for c in charts) else []
 
 
-def tool_result(text: str, images: list[bytes] | None = None, dark: bool | None = None, note: str | None = None) -> types.CallToolResult:
+def tool_result(text: str, images: list[bytes] | None = None, dark: bool | None = None, note: str | None = None,
+                links: list[str] | None = None) -> types.CallToolResult:
     """A ServiceTool's answer as tools/call gives it: the JSON as one text block, unchanged; `isError` for a refusal; a complete answer
     (3.7) with its reply for the person as a last block (audience user) and result _meta {COMPLETE: true}. With `images` (a PNG per
     chart): the charts in the text as {title, period} and chart_note IMAGE_NOTE, an ImageContent per chart after it, and result _meta
-    {CHARTS_META: the full charts, DARK_META: dark}. `note`: why images asked for aren't there (`chart_image_note`)."""
+    {CHARTS_META: the full charts, DARK_META: dark}. With `links` (a picture's URL per chart) instead: the charts in the text as
+    {title, period, url, markdown} and chart_note LINK_NOTE, a ResourceLink per chart after it, the same result _meta, and a complete
+    answer's reply with the markdown images after its words. `note`: why images asked for aren't there (`chart_image_note`)."""
     data = _loads(text)
     content: list = []
     meta = {}
-    if images and (charts := charts_of(data)) and len(images) == len(charts):
+    reply = data.get("reply") if isinstance(data, dict) else None
+    if links and (charts := charts_of(data)) and len(links) == len(charts):
+        told = charts_as_titles(data, chart_images.LINK_NOTE)
+        told["charts"] = [{**c, "url": url, "markdown": chart_images.markdown(c.get("title"), url)} for c, url in zip(told["charts"], links)]
+        if isinstance(reply, str) and reply:
+            told["reply"] = reply = "\n\n".join([reply, *(c["markdown"] for c in told["charts"])])
+        content.append(types.TextContent(text=json_result(told)))
+        content += [types.ResourceLink(uri=url, name=str(c.get("title") or "Chart"), mime_type=chart_images.PNG)
+                    for c, url in zip(told["charts"], links)]
+        meta.update({chart_images.CHARTS_META: charts, chart_images.DARK_META: bool(dark)})
+    elif images and (charts := charts_of(data)) and len(images) == len(charts):
         content.append(types.TextContent(text=json_result(charts_as_titles(data, chart_images.IMAGE_NOTE))))
         content += [types.ImageContent(data=base64.b64encode(png).decode("ascii"), mime_type=chart_images.PNG) for png in images]
         meta.update({chart_images.CHARTS_META: charts, chart_images.DARK_META: bool(dark)})
@@ -167,7 +190,7 @@ def tool_result(text: str, images: list[bytes] | None = None, dark: bool | None 
     else:
         content.append(types.TextContent(text=text))
     if isinstance(data, dict) and data.get("complete") is True and isinstance(data.get("reply"), str) and "error" not in data:
-        content.append(types.TextContent(text=data["reply"], annotations=types.Annotations(audience=["user"])))
+        content.append(types.TextContent(text=reply, annotations=types.Annotations(audience=["user"])))
         meta[COMPLETE] = True
     return types.CallToolResult(content=content, is_error=isinstance(data, dict) and "error" in data, _meta=meta or None)
 
@@ -176,6 +199,21 @@ def connection_query(ctx, name: str) -> str | None:
     """A query parameter of the connection's MCP URL (`/mcp?charts=png`), from the HTTP request the call came in (None in memory)."""
     params = getattr(getattr(ctx, "request", None), "query_params", None)
     return params.get(name) if params is not None else None
+
+
+def request_base(request) -> str:
+    """Where the MCP request came to, as a browser reaches it: the scheme and host of X-Forwarded-Proto and X-Forwarded-Host when
+    a proxy sent them (their first value), else the request's own; "" without a request (in memory)."""
+    if request is None or getattr(request, "headers", None) is None:
+        return ""
+    headers = request.headers
+    first = lambda name: (headers.get(name) or "").split(",")[0].strip()   # noqa: E731
+    scheme = first("x-forwarded-proto") or request.url.scheme
+    host = first("x-forwarded-host") or headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}" if host else ""
+
+
+CHART_PATH = "/charts"   # where the chart links' pictures are served
 
 
 # ---------- auth ----------
@@ -213,8 +251,11 @@ class EcobotServer:
     """The service's MCP server over a Context (lib/service/context.py) and the alert log. health: a callable giving the service's own
     health figures (ecobot_mcp's loops), merged into ecobot://health."""
 
-    def __init__(self, ctx, alert_log=None, *, health: Callable[[], dict] | None = None, version: str = "", bus=None):
+    def __init__(self, ctx, alert_log=None, *, health: Callable[[], dict] | None = None, version: str = "", bus=None,
+                 chart_base_url: str = "", chart_link_hours: float = chart_images.LINK_HOURS, chart_links=None):
         self.ctx, self.alert_log, self.health_of = ctx, alert_log, health
+        self.chart_base_url = chart_base_url.rstrip("/")   # MCP_CHART_BASE_URL: "" for the MCP request's own with CHART_PATH
+        self.chart_links = chart_links if chart_links is not None else chart_images.Links(chart_link_hours)
         self.bus = bus or InMemorySubscriptionBus()
         self.listen = ListenHandler(self.bus)
         self._service = Service.of(ctx)
@@ -244,7 +285,7 @@ class EcobotServer:
         if tool is None:
             raise MCPError(types.INVALID_PARAMS, f"No tool {params.name!r}: the tools are {', '.join(t.name for t in self._service)}.")
         meta = dict(ctx.meta or {})
-        if not chart_images.wanted(meta, connection_query(ctx, "charts")):
+        if not (mode := chart_images.wanted(meta, connection_query(ctx, "charts"))):
             return tool_result(await tool.call(params.arguments or {}, meta))
         render = chart_images.renderer()   # (Pillow imported now, at the first image asked for)
         if render is None:
@@ -259,7 +300,26 @@ class EcobotServer:
         except Exception as e:
             log.error("MCP: %s's chart couldn't be drawn: %s: %s", params.name, type(e).__name__, e)
             return tool_result(await tool.call(params.arguments or {}, meta), note=chart_images.NOT_DRAWN_NOTE)   # (as if off)
+        if mode == chart_images.LINK:
+            base = self.chart_url_base(getattr(ctx, "request", None))
+            return tool_result(text, dark=dark, links=[f"{base}/{self.chart_links.put(png)}.png" for png in pngs])
         return tool_result(text, pngs, dark)
+
+    def chart_url_base(self, request=None) -> str:
+        """Where a chart link's picture is reached, its id and .png to follow: MCP_CHART_BASE_URL, else the MCP request's own scheme
+        and host (request_base) with CHART_PATH (a path alone in memory)."""
+        return self.chart_base_url or request_base(request) + CHART_PATH
+
+    async def chart_picture(self, request: Request) -> Response:
+        """GET /charts/<id>.png: a chart link's picture while it is kept (private, cached for at most what is left of its life); 404
+        for an id not kept (never made, expired, dropped, or before a restart)."""
+        name = request.path_params.get("name", "")
+        kept = self.chart_links.get(name[:-4]) if name.endswith(".png") else None
+        if kept is None:
+            return Response("No such chart: its link has expired, or never was.\n", status_code=404, media_type="text/plain",
+                            headers={"Cache-Control": "no-store"})
+        png, left = kept
+        return Response(png, media_type=chart_images.PNG, headers={"Cache-Control": f"private, max-age={max(0, int(left))}"})
 
     async def refresh_catalogue(self) -> bool:
         """Read the file's catalogue of readings again; when it gained a reading (a sensor sent a field it never sent), build the tools
@@ -501,6 +561,16 @@ def _arguments(args: dict, most: int = 160) -> str:
     return out if len(out) <= most else out[:most - 1] + "…"
 
 
+def _shown_path(path) -> str:
+    """A path as logged: a chart link's id cut to its first characters (/charts/AbCdEf….png), the rest as it is."""
+    path = str(path or "")
+    if path.startswith(CHART_PATH + "/"):
+        name = path[len(CHART_PATH) + 1:]
+        key = name[:-4] if name.endswith(".png") else name
+        return f"{CHART_PATH}/{key[:6]}{'…' if len(key) > 6 else ''}{'.png' if name.endswith('.png') else ''}"
+    return path
+
+
 class RequestLog:
     """ASGI middleware, outermost: one line per HTTP request, once its response starts (a listen stream's when it opens). INFO when
     answered, WARNING when refused, with the reason for a 401 (the token), a 421 (the Host) and a 404. The token itself is never
@@ -539,11 +609,12 @@ class RequestLog:
         headers = dict(scope.get("headers") or [])
         client = (scope.get("client") or ("?",))[0]
         host = headers.get(b"host", b"").decode("latin-1")
-        what = f"{scope.get('method')} {scope.get('path')}" + (f" {asked}" if asked else "")
+        what = f"{scope.get('method')} {_shown_path(scope.get('path'))}" + (f" {asked}" if asked else "")
         if status < 400:
             requests_log.info("MCP %s: %s -> %d in %.2fs", client, what, status, took)
         else:
-            why = WHY.get(status)
+            why = "the chart's link has expired, or never was" if status == 404 and str(scope.get("path")).startswith(CHART_PATH + "/") \
+                else WHY.get(status)
             requests_log.warning("MCP %s refused: %s -> %d%s (Host %s)", client, what, status, f", {why}" if why else "", host or "none")
 
 
@@ -552,13 +623,14 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
     """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS),
     every request's bearer token (TokenCheck). `issuer_url` is required by the SDK with auth but unused: no OAuth metadata is published
     (resource_server_url=None). With `dashboard` (MCP_DASHBOARD), the gauges' live page beside it at /dashboard (lib/web_dashboard.py):
-    read-only, no token, any Host; `app.state.closing` ends its event streams at shutdown."""
+    read-only, no token, any Host; `app.state.closing` ends its event streams at shutdown. Always, the chart links' pictures at
+    /charts/<id>.png (EcobotServer.chart_picture): no token, any Host either."""
     check = TokenCheck(tokens) if tokens else None
     web = WebDashboard(server, (WEATHER_URI, AIR_URI)) if dashboard else None
     app = server.server.streamable_http_app(
         streamable_http_path=path, transport_security=host_settings(allowed_hosts),
         auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check,
-        custom_starlette_routes=web.routes() if web else None)
+        custom_starlette_routes=[*(web.routes() if web else []), Route(f"{CHART_PATH}/{{name}}", server.chart_picture, methods=["GET"])])
     app.state.tokens = check
     app.state.closing = web.close if web else None
     app.add_middleware(RequestLog)   # (added last: outermost, so it sees the token's and the Host's refusals too)
@@ -566,4 +638,4 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
 
 
 __all__ = ["ALERTS_TEMPLATE", "ALERTS_URI", "COMPLETE", "EcobotServer", "PROMPTS", "RESOURCES", "TokenCheck", "charts_of", "connection_query",
-           "host_settings", "http_app", "prompt", "tool_entry", "tool_result"]
+           "host_settings", "http_app", "prompt", "request_base", "tool_entry", "tool_result"]
