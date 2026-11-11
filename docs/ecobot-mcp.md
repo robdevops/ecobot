@@ -219,7 +219,9 @@ rain is summarised.
 low_when, high…}], [month…], [year…]}}, "rainfall": {"rain": {…, [today: {total}], [month: {total, wettest_day}], [year…]}}, "wind":
 {"wind_speed": {…, [today: {high_gust…}]}}, "air": {"pm2_5": {value, unit, rating, aqi_us, band}}}}`: with `context`, everything the
 bot's gauges show (rain as totals and its wettest day, wind's highest gust); with `context` and no readings named, every gauge's reading
-the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them.
+the station sends now, those its file hasn't recorded yet (outside the catalogue) too, as the gauges show them. The air sensor's
+air-quality readings have their highs and lows with `context` too (from its day rows, with their day but no time of day), so a
+reading it lacks now, or the sensor not answering, still gives its figures with `value` null.
 
 **`outlook`'s result** is the prompt's outlook rules, worked out by the service (`lib/service/outlook.py`) from the reading now and
 the last 3 hours: `{as_of, verdict: "likely"|"possible"|"unlikely", reason: "pressure down 2.4 hPa in 3 hours, humidity 91%",
@@ -656,8 +658,11 @@ Each step ships on its own, with the tests and evals green and the bot working t
      The gauges' live page is already ecobot-mcp's: `/dashboard` beside `/mcp` (`lib/web_dashboard.py`, `MCP_DASHBOARD`, on by
      default) is a self-contained HTML5 page drawing the same tiles in the browser (inline SVG, `lib/gauge_look.py`'s colours and
      sizes) from `/dashboard/data` (gauge_sheet's tiles from `current` with context) and redrawing them on each `/dashboard/events`
-     event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's change detection). Read-only, so no token
-     and no Host check; `/mcp` keeps both.
+     event (Server-Sent Events, on the gauges' readings changing in ecobot://now/weather's and ecobot://now/air's change detection).
+     Read-only, so no token and no Host check; `/mcp` keeps both. After the station's gauges come the air sensor's
+     (`lib/airgradient/dashboard.py`, on US standards: the US AQI and PM2.5 on the EPA's 2024 categories, PM10 on the EPA's, CO2 on
+     the usual ASHRAE-based indoor guidance, the VOC and NOx indices on bands of Sensirion's index); a tile with no reading now is
+     dimmed at its floor.
    - **6b. Client only.** `BOT_MCP_URL` is required: the in-process mode (`LocalWeather`, the bot starting the sources, the syncers,
      the alert rules and the alert log itself) is deleted. Under systemd, `ecobot.service` wants and starts after `ecobot-mcp.service`;
      in Docker this is already the layout. The bot's image installs only its own packages (python-telegram-bot, openai, mcp, httpx).

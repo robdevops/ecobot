@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from datetime import date
 from types import SimpleNamespace as NS
 
 import httpx
@@ -19,11 +20,11 @@ import pytest
 
 from lib import gauge_sheet
 from lib.gauge_look import look, tile_json
-from lib.mcp_server import EcobotServer, WEATHER_URI, http_app
+from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from lib.web_dashboard import readings_of
-from tests.chart_samples import _station
+from lib.web_dashboard import air_readings_of, readings_of
+from tests.chart_samples import _air, _station
 from tests.fakes import TZ, StandInService, gauges_result
 from tests.test_mcp_listen import Serving, free_port, until
 
@@ -32,22 +33,40 @@ AS_OF = {"text": "Tue 27 Oct 2026 6:42pm", "time": "2026-10-27T18:42:00+11:00"}
 BROWSER = Path(__file__).with_name("web_dashboard_browser.js")
 
 
+RAW = {"pm2_5": "pm02", "pm10": "pm10", "pm1": "pm01", "co2": "rco2", "voc_index": "tvocIndex", "nox_index": "noxIndex"}   # the monitor's names
+
+
 class Station:
-    """The fake station: its kept live reading (what ecobot://now/weather is compared from) and current's result with context over it
-    (the days' figures of chart_samples' October evening)."""
+    """The fake station and air sensor: the station's kept live reading and the air sensor's latest (what ecobot://now/weather and
+    ecobot://now/air are compared from) and current's result with context over them (the days' figures of chart_samples' October
+    evening: the air sensor sends no NOx index just now)."""
 
     def __init__(self):
         self.live, self.values, self.today = _station()
+        self.latest, self.air_values = _air(self.today)
         self.eco = NS(_live=(time.time(), self.live), storage=None, tz=TZ)
+        self.air = NS(_current=None)
+        self._keep_air()
+
+    def _keep_air(self):
+        row = {"timestamp": "2026-10-27T07:42:00Z", **{RAW[k]: e["value"] for k, e in self.latest.items()}}
+        self.air._current = (row, time.time())
 
     def current(self, args, meta):
         assert args == gauge_sheet.call() and meta == {"fetch": False}   # every gauge's reading, with context; from what is held
-        return {"as_of": AS_OF, **gauges_result(self.live, self.values, self.today)}
+        return {"as_of": AS_OF, **gauges_result(self.live, self.values, self.today, self.latest, self.air_values)}
 
     def reads(self, group: str, field: str, value: str):
         self.live = json.loads(json.dumps(self.live))
         self.live[group][field]["value"] = value
         self.eco._live = (time.time(), self.live)
+
+    def air_reads(self, column: str, value: float | None):
+        """The air sensor's latest has this reading (None: it hasn't)."""
+        self.latest = {k: e for k, e in self.latest.items() if k != column}
+        if value is not None:
+            self.latest[column] = {"value": value, "unit": ""}
+        self._keep_air()
 
 
 @pytest.fixture
@@ -57,7 +76,7 @@ def station():
 
 @pytest.fixture
 def server(station):
-    ctx = Context(eco=station.eco, tz=TZ)
+    ctx = Context(eco=station.eco, air=station.air, tz=TZ)
     ctx.catalogue = Catalogue([])
     server = EcobotServer(ctx, None)
     server._service = StandInService(current=station.current)
@@ -83,9 +102,16 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert "https://" not in html and "<link" not in html and " src=" not in html                  # nothing fetched from elsewhere
     assert data.status_code == 200
     got = data.json()
-    sheet = gauge_sheet.sheet(gauges_result(station.live, station.values, station.today))
+    sheet = gauge_sheet.sheet(station.current(gauge_sheet.call(), {"fetch": False}))
     assert got["tiles"] == [tile_json(t) for t in sheet.tiles] and got["as_of"] == AS_OF and got["look"] == look()
-    assert [t["title"] for t in got["tiles"]][:3] == ["Temperature", "Humidity", "Atmospheric pressure"]
+    titles = [t["title"] for t in got["tiles"]]
+    assert titles[:3] == ["Temperature", "Humidity", "Atmospheric pressure"]
+    assert titles[-6:] == ["US AQI", "PM2.5", "PM10", "CO₂", "VOC index", "NOx index"]                    # the air sensor's, after
+    tiles = {t["title"]: t for t in got["tiles"]}
+    aqi, nox = tiles["US AQI"], tiles["NOx index"]
+    assert (aqi["value"], aqi["band"], aqi["bounds"], aqi["faded"]) == (56, "Moderate", [0, 50, 100, 150, 200, 300, 500], False)
+    assert (nox["value"], nox["faded"], nox["floor"], nox["rows"]["Daily"]) == (None, True, 1, [12, 1])   # no reading now: dimmed
+    assert tiles["Atmospheric pressure"]["floor"] == 950 and tiles["Temperature"]["floor"] == 0
     t = got["tiles"][0]
     assert (t["kind"], t["value"], t["unit"], t["columns"], t["faded"]) == ("thermometer", 12.9, "°C", ["Max", "Min"], False)
     assert set(t["rows"]) == {"Daily", "Monthly", "Yearly"} and (t["low"], t["high"], t["ticks"]) == (0, 40, [40, 30, 20, 10, 0])   # (12.9: 0 to 40)
@@ -234,7 +260,7 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         out, err = await asyncio.wait_for(live.communicate(), 60)
         assert live.returncode == 0, err.decode()
         after = json.loads(out)
-    n = len(gauge_sheet.sheet(gauges_result(*_station())).tiles)
+    n = len(gauge_sheet.sheet(Station().current(gauge_sheet.call(), {"fetch": False})).tiles)
     for name, (width, height) in SIZES.items():
         got = report[name]
         assert got["errors"] == [], (name, got["errors"])
@@ -246,9 +272,76 @@ async def test_the_page_fits_its_tiles_to_the_window_at_each_size_with_no_overfl
         got = report[name]
         assert got["scroll"] == "no" and got["scrollHeight"] <= SIZES[name][1], (name, got)
         assert all(r["bottom"] <= SIZES[name][1] + 0.5 for r in got["rects"]), (name, got)
-        assert min(r["width"] for r in got["rects"]) >= 180, (name, got)
-    assert report["desktop"]["columns"] == "5" and report["tablet-portrait"]["columns"] == "3"
+        assert min(r["width"] for r in got["rects"]) >= 160, (name, got)
+    assert report["desktop"]["columns"] == "6" and report["tablet-portrait"]["columns"] == "4" and report["tablet-landscape"]["columns"] == "6"
     assert report["phone-portrait"]["columns"] == "2"                         # too small for all at once: two to a row, scrolling
     assert before["label"] == "Temperature 12.9 °C" and after["label"] == "Temperature 21.5 °C", (before, after)
     assert after["same_page"] and after["errors"] == [], after
     assert after["same_tile"] and "21.5 °C" in after["shown"], after                 # the gauge moved in place to the new reading
+
+
+@pytest.mark.skipif(not browser_there(), reason="needs node with Playwright's Chromium")
+@pytest.mark.parametrize("comes", [True, False])
+async def test_a_tile_with_no_reading_is_dimmed_at_its_floor_and_a_reading_coming_brightens_it_and_moves_it_up_in_place(server, station,
+                                                                                                                     comes):
+    """The air sensor sends no NOx index: its tile is dimmed (L.fade), its needle at the dial's start and its number the floor (1). A
+    reading arriving: the same tile brightens and its gauge moves up from the floor, frame by frame, nothing drawn again (no flash). A
+    reading going away (the VOC index): it dims and drops to its floor."""
+    title, column, value = ("NOx index", "nox_index", 60) if comes else ("VOC index", "voc_index", None)
+    port = free_port()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        page = await asyncio.create_subprocess_exec("node", str(BROWSER), f"http://127.0.0.1:{port}/dashboard", "--arrive", title,
+                                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        before = json.loads(await asyncio.wait_for(page.stdout.readline(), 60))
+        station.air_reads(column, value)
+        assert await server.publish_changes() == [AIR_URI]                       # the air sensor's change: the page is told
+        page.stdin.write(b"go\n")
+        await page.stdin.drain()
+        out, err = await asyncio.wait_for(page.communicate(), 60)
+        assert page.returncode == 0, err.decode()
+    got = json.loads(out)
+    after, frames = got["after"], got["frames"]
+    assert got["errors"] == [] and got["same_tile"], got                         # moved in place: the same tile, not drawn again
+    numbers = [float(f["number"]) for f in frames]
+    opacities = [f["opacity"] for f in frames]
+    if comes:
+        assert before["faded"] and before["opacity"] == pytest.approx(look()["fade"]) and before["number"] == "1", before
+        assert before["label"] == "NOx index: no reading"
+        assert not after["faded"] and after["opacity"] == 1 and after["number"] == "60" and after["label"] == "NOx index 60"
+        assert numbers == sorted(numbers) and numbers[-1] == 60 and len(set(numbers)) > 3, numbers   # up from the floor, smoothly
+        assert opacities == sorted(opacities) and opacities[0] < 1, opacities                       # brightening, never a flash
+        assert before["needle"] != after["needle"]
+    else:
+        assert not before["faded"] and before["number"] == "112" and "Average" in before["shown"], before
+        assert after["faded"] and after["opacity"] == pytest.approx(look()["fade"]) and after["number"] == "1", after
+        assert "Average" not in after["shown"] and after["label"] == "VOC index: no reading"   # no category without a reading
+        assert numbers == sorted(numbers, reverse=True) and numbers[-1] == 1, numbers              # down to the floor
+        assert opacities == sorted(opacities, reverse=True), opacities
+
+
+async def test_an_event_is_sent_when_the_air_sensors_gauges_readings_change(server, station):
+    port = free_port()
+    events, opened = [], asyncio.Event()
+    async with Serving(http_app(server, tokens=(TOKEN,)), port) as serving:
+        reader = asyncio.create_task(sse_events(f"http://127.0.0.1:{port}/dashboard/events", events, opened))
+        await asyncio.wait_for(opened.wait(), 5)
+        await server.publish_changes()
+        station.air_reads("co2", 910)
+        assert await server.publish_changes() == [AIR_URI]
+        await until(lambda: events == ["readings"], what="the event")
+        station.air_reads("pm1", 30.0)                                          # PM1 has no gauge: published, but no event
+        assert await server.publish_changes() == [AIR_URI]
+        station.air_reads("nox_index", 4)                                       # a reading the sensor didn't have: an event
+        await server.publish_changes()
+        await until(lambda: events == ["readings", "readings"], what="the second event")
+        await serving.stop()
+        await asyncio.wait_for(reader, 5)
+    assert events == ["readings", "readings", "(ended)"]
+
+
+def test_what_the_events_compare_of_the_air_is_its_gauges_readings():
+    latest, _ = _air(date(2026, 10, 27))
+    row = {RAW[k]: e["value"] for k, e in latest.items()}
+    assert air_readings_of(None) is None and air_readings_of({}) is None
+    assert air_readings_of(row) == (12.0, 18.0, 520, 112, None)                 # PM2.5 (the AQI's too), PM10, CO2, VOC, NOx
+    assert air_readings_of({**row, "pm01": 99}) == air_readings_of(row)         # PM1: no gauge

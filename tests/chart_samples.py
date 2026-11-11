@@ -133,9 +133,25 @@ def _station() -> tuple[dict, dict, date]:
     return live, values, today
 
 
+def _air(today: date) -> tuple[dict, dict]:
+    """The air sensor's latest reading and its day figures for the same evening: (latest, values). It sends no NOx index just now (its
+    gauge is dimmed at its floor, with its figures)."""
+    latest = {"pm2_5": {"value": 12.0, "unit": "µg/m³"}, "pm10": {"value": 18.0, "unit": "µg/m³"}, "pm1": {"value": 7.0, "unit": "µg/m³"},
+              "co2": {"value": 520, "unit": "ppm"}, "voc_index": {"value": 112, "unit": ""}}
+    days = {today - timedelta(days=n): n for n in range(300)}
+
+    def series(base: float, swing: float, whole: bool = False) -> dict:
+        return {d: (round if whole else lambda v: round(v, 1))(max(base + swing * math.sin(n / 7), 0)) for d, n in days.items()}
+    values = {"pm2_5_max": series(14, 10), "pm2_5_min": series(3, 2), "pm10_max": series(30, 20), "pm10_min": series(6, 4),
+              "co2_max": series(560, 80, True), "co2_min": series(420, 10, True), "voc_index_max": series(160, 60, True),
+              "voc_index_min": series(60, 30, True), "nox_index_max": series(12, 10, True), "nox_index_min": series(1, 0, True)}
+    return latest, values
+
+
 def dashboard():
-    """The station's gauges: thermometers, dials and the rain beaker."""
-    return sheet(gauges_result(*_station()))
+    """The station's gauges, thermometers, dials and the rain beaker, then the air sensor's dials (its NOx index dimmed: no reading now)."""
+    live, values, today = _station()
+    return sheet(gauges_result(live, values, today, *_air(today)))
 
 
 def status():

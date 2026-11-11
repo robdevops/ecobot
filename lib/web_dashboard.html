@@ -17,7 +17,8 @@
   body { overflow-x: hidden; overflow-y: auto; }
   #grid { display: grid; justify-content: center; align-content: center; padding: var(--pad, 8px);
     padding-bottom: calc(var(--pad, 8px) + var(--status, 18px)); min-height: 100%; }   /* (room under the tiles for the status line) */
-  .tile { position: relative; container-type: inline-size; overflow: hidden; }
+  .tile { position: relative; container-type: inline-size; overflow: hidden; transition: opacity 0.9s ease; }
+  .tile.faded { opacity: var(--fade, 0.4); }   /* no reading now: dimmed towards the card (as the PNG blends its colours) */
   .tile svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .tile svg text { font-family: inherit; }
   .at { position: absolute; display: flex; align-items: center; justify-content: center; white-space: nowrap; line-height: 1; }
@@ -43,28 +44,31 @@
   const BASE = location.pathname.replace(/\/+$/, "");
   const DATA = BASE + "/data", EVENTS = BASE + "/events";
   const REFETCH_MS = 60000;            // the fallback: the data fetched again every minute, events or not
-  const MIN_TILE = 180;                // the narrowest tile (CSS px) worth fitting on one screen: narrower, the page scrolls
+  const MIN_TILE = 160;                // the narrowest tile (CSS px) worth fitting on one screen: narrower, the page scrolls (160: a
+                                       // station with its indoor sensor and the air sensor, 17 tiles, fits a 1024x768 tablet)
   const MIN_SCROLL_TILE = 150;         // ... and then the narrowest a column may be (two on a 320-375 px phone, not one huge one)
   const MOVE_MS = 900;                 // how long a gauge takes to move to a new reading
-  const RISE_MS = 1000;                // ... and, when the page opens, to rise from 0 to its reading
+  const RISE_MS = 1000;                // ... and, when the page opens, to rise from its floor (0) to its reading
   const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const PAD = 8, STATUS = 18;
   const NS = "http://www.w3.org/2000/svg";
   const grid = document.getElementById("grid"), statusLine = document.getElementById("status"), message = document.getElementById("message");
   let L = null, tiles = [], asOf = null, lost = false, drawn = [], opening = true;   // drawn: each tile on the page, to be moved in place
 
-  // ---------- colours ----------
-  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  const hex = (c) => "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
-  const blend = (colour, share, toward) => {   // `share` of the way from colour to `toward` (lib/charts _blend)
-    const a = rgb(colour), b = rgb(toward);
-    return hex(a.map((v, i) => v + (b[i] - v) * share));
-  };
-
   // ---------- geometry (lib/gauges.py) ----------
   const rad = (d) => d * Math.PI / 180;
   const polar = (cx, cy, r, deg) => [cx + r * Math.cos(rad(deg)), cy - r * Math.sin(rad(deg))];
   const clamp01 = (v) => Math.min(Math.max(v, 0), 1);
+  // How far along its scale (0 to 1) a reading sits (lib/gauge_look.py share): in proportion, or, with `bounds` (the air gauges), each
+  // band an equal share and in proportion within it
+  const share = (tile, v) => {
+    const b = tile.bounds || [];
+    if (!b.length) return clamp01((v - tile.low) / (tile.high - tile.low));
+    if (v <= b[0]) return 0;
+    for (let i = 0; i < b.length - 1; i++) if (v <= b[i + 1]) return (i + (v - b[i]) / (b[i + 1] - b[i])) / (b.length - 1);
+    return 1;
+  };
+  const shown = (t) => t.value === null ? t.floor : t.value;   // a gauge with no reading rests at its floor, and reads it
   const figure = (v, decimals) => Number(v).toFixed(decimals);
   const tickText = (t) => String(Number(t));
   const lw = (points) => points * 100 / 72;   // a line width in points at the PNG's 100 DPI, in pixels
@@ -101,17 +105,17 @@
   function thermometer(svg, tile, ink, id) {
     const top = 95, bottom = 238, cx = 285, bulb = 280, half = L.tube_half, radius = L.bulb_radius, gap = L.mercury_gap;
     scaleBar(svg, cx - half - L.bar_gap - L.bar_width, top, bottom, tile, ink);
-    const empty = bulb - Math.sqrt((radius - gap) ** 2 - (half - gap) ** 2);   // no reading: just the bulb
-    const level = (v) => v === null ? empty : top + (1 - clamp01((v - tile.low) / (tile.high - tile.low))) * (bottom - top);
+    const level = (v) => top + (1 - share(tile, v)) * (bottom - top);
     const clip = el("clipPath", {id}, el("defs", {}, svg));
-    const mercury = el("rect", {x: 0, y: level(tile.value), width: L.cell[0], height: L.cell[1]}, clip);
+    const mercury = el("rect", {x: 0, y: level(shown(tile)), width: L.cell[0], height: L.cell[1]}, clip);
     el("path", {d: thermometerPath(cx, top - 10 + gap, half - gap, bulb, radius - gap), fill: ink(L.fill), "clip-path": `url(#${id})`}, svg);
     el("path", {d: thermometerPath(cx, top - 10, half, bulb, radius), fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5),
                 "stroke-linejoin": "round"}, svg);
-    const label = tile.value !== null ? text(svg, cx - 50, bulb, "", 40, ink(L.soft), "end") : null;
+    const label = text(svg, cx - 50, bulb, "", 40, ink(L.soft), "end");
+    label.classList.add("reading");
     return (v) => {   // the gauge at reading v (moved in place, frame by frame)
       mercury.setAttribute("y", level(v).toFixed(2));
-      if (label) label.textContent = `${figure(v, tile.decimals)} ${tile.unit}`;
+      label.textContent = `${figure(v, tile.decimals)} ${tile.unit}`;
     };
   }
 
@@ -120,20 +124,21 @@
     scaleBar(svg, left - L.bar_gap - L.bar_width, top, bottom - 10, tile, ink);
     const jar = `M${left},${top} L${left},${bottom - r} A${r},${r} 0 0 0 ${left + r},${bottom} L${right - r},${bottom} ` +
                 `A${r},${r} 0 0 0 ${right},${bottom - r} L${right},${top}`;
-    const level = (v) => v === null || v <= 0 ? bottom + 1 : bottom - Math.max((v - tile.low) / (tile.high - tile.low), 0.02) * (bottom - 10 - top);
+    const level = (v) => v <= tile.low ? bottom + 1 : bottom - Math.max(share(tile, v), 0.02) * (bottom - 10 - top);
     const clip = el("clipPath", {id}, el("defs", {}, svg));
-    const water = el("rect", {x: 0, y: level(tile.value), width: L.cell[0], height: L.cell[1]}, clip);   // (none at 0 mm)
+    const water = el("rect", {x: 0, y: level(shown(tile)), width: L.cell[0], height: L.cell[1]}, clip);   // (none at 0 mm)
     el("path", {d: jar + " Z", fill: ink(L.water), "clip-path": `url(#${id})`}, svg);
     el("path", {d: jar, fill: "none", stroke: ink(L.soft), "stroke-width": lw(2.5), "stroke-linejoin": "round"}, svg);
-    const label = tile.value !== null ? text(svg, 290, 345, "", 46, ink(L.soft)) : null;
+    const label = text(svg, 290, 345, "", 46, ink(L.soft));
+    label.classList.add("reading");
     return (v) => {
       water.setAttribute("y", level(v).toFixed(2));
-      if (label) label.textContent = `${figure(v, tile.decimals)} ${tile.unit}`;
+      label.textContent = `${figure(v, tile.decimals)} ${tile.unit}`;
     };
   }
 
   function dial(svg, tile, ink) {
-    const cx = 240, cy = 203, angle = (v) => L.start - L.sweep * clamp01((v - tile.low) / (tile.high - tile.low));
+    const cx = 240, cy = 203, angle = (v) => L.start - L.sweep * share(tile, v);
     el("circle", {cx, cy, r: 138, fill: "none", stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
     const n = tile.colours.length, step = L.sweep / n, outer = L.ring_outer, inner = L.ring_outer - L.band_width;
     tile.colours.forEach((colour, i) => {
@@ -149,16 +154,21 @@
       text(svg, x, y, tickText(tick), 17, ink(L.soft));
     }
     text(svg, cx, cy + 64, tile.unit, 18, ink(L.soft));
-    const needle = tile.value !== null ? el("polygon", {fill: ink(L.needle)}, svg) : null;
-    const label = tile.value !== null ? text(svg, cx, cy + 102, "", 50, ink(L.ink)) : null;
+    const needle = el("polygon", {fill: ink(L.needle)}, svg);
+    const label = text(svg, cx, cy + 102, "", 50, ink(L.ink));
+    label.classList.add("reading");
+    const band = text(svg, cx, cy + L.band_y, "", L.band_size, ink(L.soft));   // the air gauges' category ("Moderate")
+    band.classList.add("band");
     el("circle", {cx, cy, r: 25, fill: L.bg, stroke: ink(L.soft), "stroke-width": lw(3)}, svg);
-    return (v) => {
-      if (!needle) return;
+    const at = (v) => {
       const a = angle(v);
       const pts = [polar(cx, cy, outer - L.band_width - 6, a), polar(cx, cy, 10, a + 90), polar(cx, cy, -24, a), polar(cx, cy, 10, a - 90)];
       needle.setAttribute("points", pts.map((p) => p.map((n) => n.toFixed(2)).join(",")).join(" "));
       label.textContent = figure(v, tile.decimals);
     };
+    at.band = (t) => { band.textContent = t.band && t.value !== null ? t.band : ""; };   // (no reading: no category)
+    at.band(tile);
+    return at;
   }
 
   const DRAW = {thermometer, dial, beaker};
@@ -195,14 +205,14 @@
     return fill;
   }
 
-  // What can't change in place (a tile so different is drawn again): its kind and scale, its look, whether it has a reading at all.
-  const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.columns, t.decimals, !!t.faded,
-                                       t.value === null]);
-  const label = (t) => t.value === null ? t.title : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`;
+  // What can't change in place (a tile so different is drawn again): its kind and scale. A reading coming or going doesn't: the tile
+  // brightens or dims (its opacity, eased) and the gauge moves from or to its floor.
+  const shape = (t) => JSON.stringify([t.kind, t.title, t.unit, t.low, t.high, t.colours, t.ticks, t.bounds, t.columns, t.decimals]);
+  const label = (t) => t.value === null ? `${t.title}: no reading` : `${t.title} ${figure(t.value, t.decimals)} ${t.unit}`.trim();
   let clips = 0;
 
   function drawTile(tile) {
-    const ink = tile.faded ? (c) => blend(c, 1 - L.fade, L.bg) : (c) => c;
+    const ink = (c) => c;   // (dimmed by the tile's opacity, L.fade over the card: the PNG's blend towards it)
     const box = document.createElement("section");
     box.className = "tile" + (tile.faded ? " faded" : "");
     box.dataset.kind = tile.kind;
@@ -212,17 +222,18 @@
     const at = DRAW[tile.kind](svg, tile, ink, `clip${clips++}`);
     place(box, 0, 38 - 25, L.cell[0], 50, 38, tile.title, "title", {color: ink(L.ink)});
     const fill = table(box, tile, ink);
-    const drawnTile = {box, shape: shape(tile), value: tile.value, frame: 0};
-    drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change
-      box.setAttribute("aria-label", label(t));
+    const drawnTile = {box, shape: shape(tile), value: shown(tile), frame: 0};
+    drawnTile.update = (t) => {   // the same gauge at a new reading: the needle, mercury or water moves there, the figures change;
+      box.setAttribute("aria-label", label(t));   // a reading come or gone: the tile brightens or dims, the gauge from or to its floor
+      box.classList.toggle("faded", !!t.faded);
       fill(t);
-      move(drawnTile.value, t.value, MOVE_MS);
+      if (at.band) at.band(t);
+      move(drawnTile.value, shown(t), MOVE_MS);
     };
     const move = (from, to, ms) => {
       drawnTile.value = to;
       cancelAnimationFrame(drawnTile.frame);
-      if (to === null) return;
-      if (from === to || STILL || from === null || document.hidden) return at(to);
+      if (from === to || STILL || document.hidden) return at(to);
       const start = performance.now();
       const step = (now) => {
         const p = Math.min((now - start) / ms, 1), eased = 1 - (1 - p) ** 3;
@@ -231,10 +242,8 @@
       };
       drawnTile.frame = requestAnimationFrame(step);
     };
-    if (tile.value !== null) {
-      if (opening) move(0, tile.value, RISE_MS);   // the page just opened: every gauge rises from 0 to its reading
-      else at(tile.value);
-    }
+    if (opening) move(tile.floor, shown(tile), RISE_MS);   // the page just opened: every gauge rises from its floor to its reading
+    else at(shown(tile));
     return drawnTile;
   }
 
@@ -273,6 +282,7 @@
 
   function render(data) {
     L = data.look;
+    document.documentElement.style.setProperty("--fade", L.fade);
     tiles = data.tiles || [];
     asOf = data.as_of && data.as_of.time ? data.as_of.time : null;
     document.body.classList.toggle("unavailable", !tiles.length);

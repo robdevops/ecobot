@@ -554,7 +554,7 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
     (resource_server_url=None). With `dashboard` (MCP_DASHBOARD), the gauges' live page beside it at /dashboard (lib/web_dashboard.py):
     read-only, no token, any Host; `app.state.closing` ends its event streams at shutdown."""
     check = TokenCheck(tokens) if tokens else None
-    web = WebDashboard(server, WEATHER_URI) if dashboard else None
+    web = WebDashboard(server, (WEATHER_URI, AIR_URI)) if dashboard else None
     app = server.server.streamable_http_app(
         streamable_http_path=path, transport_security=host_settings(allowed_hosts),
         auth=AuthSettings(issuer_url=issuer_url, resource_server_url=None) if check else None, token_verifier=check,

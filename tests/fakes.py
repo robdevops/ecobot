@@ -46,18 +46,32 @@ class StandInService:
         return list(names)
 
 
-def gauges_result(live: dict, values: dict, today) -> dict:
+def gauges_result(live: dict, values: dict, today, air: dict | None = None, air_values: dict | None = None) -> dict:
     """current's result with context, as the bot reads it for its gauges, for a live reading ({group: {field: {value, unit}}}) and the
-    days' figures (days.day_values_on's): each gauge's reading now and its figures (lib/service/current.py context_of), through JSON."""
+    days' figures (days.day_values_on's): each gauge's reading now and its figures (lib/service/current.py context_of), through JSON.
+    With the air sensor's latest reading (`air`: {"pm2_5": {"value": 12.0, "unit": "µg/m³", ...}}, AirGradient.latest()'s, PM2.5 with
+    its aqi_us and band worked out when not given) and its day figures ({"pm2_5_max": {day: value}}), its readings too (air_context_of)."""
     import json
+    from lib.airgradient.metrics import pm25_aqi
     from lib.ecowitt.dashboard import GAUGES, live_value
-    from lib.service.current import context_of
+    from lib.series import AIR
+    from lib.service.current import air_context_of, air_entry, context_of
     sensors: dict = {}
     for gauge in GAUGES:
         value, beside = live_value(live, gauge.live), context_of(gauge.reading, live, values, {}, today, TZ)
         if value is not None or beside:
             group, name = gauge.reading.split(".", 1)
             sensors.setdefault(group, {})[name] = {"value": value, "unit": gauge.unit, **beside}
+    for column, metric in AIR.items() if air is not None or air_values else ():
+        entry = dict((air or {}).get(column) or {})
+        now = entry.get("value")
+        if column == "pm2_5" and now is not None and "aqi_us" not in entry:
+            entry["aqi_us"], entry["band"] = pm25_aqi(now)
+        beside = air_context_of(column, now, metric.unit, air_values or {}, today)
+        if now is not None:
+            sensors.setdefault("air", {})[column] = {**air_entry(column, {"unit": metric.unit, **entry}), **beside}
+        elif beside:
+            sensors.setdefault("air", {})[column] = {"value": None, "unit": metric.unit, **beside}
     return json.loads(json.dumps({"sensors": sensors}))
 
 

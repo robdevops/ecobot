@@ -6,11 +6,12 @@
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the bot lays it out, each
     tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
-  - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading
-    change, told by the server's own change detection for ecobot://now/weather (EcobotServer.publish_changes: nothing is fetched for
-    it), so the page fetches the data again and redraws in place. A comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
+  - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
+    air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
+    (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
+    comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
 
-No token is asked for (it is the weather readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP
+No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP
 endpoint keeps both. MCP_DASHBOARD off: none of the three routes is served (404). `close()` ends the open streams, so uvicorn's
 graceful shutdown doesn't wait on them (ecobot_mcp's Uvicorn calls it once it stops accepting connections)."""
 
@@ -24,6 +25,8 @@ from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from . import gauge_sheet
+from .airgradient.dashboard import AIR_GAUGES
+from .airgradient.metrics import value_of
 from .ecowitt.dashboard import GAUGES, live_value
 from .gauge_look import look, tile_json
 
@@ -44,12 +47,20 @@ def readings_of(live: dict | None) -> tuple | None:
     return tuple(live_value(live, where) for g in GAUGES for where in (g.live, *([g.counted] if g.counted else [])))
 
 
-class WebDashboard:
-    """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uri` the
-    resource whose updates are the live reading's (ecobot://now/weather)."""
+def air_readings_of(row: dict | None) -> tuple | None:
+    """What the air gauges show now of the air sensor's latest reading (its raw row, as AirGradient keeps it): each of their readings
+    (the AQI is PM2.5's). None without one."""
+    if not row:
+        return None
+    return tuple(value_of(row, column) for column in dict.fromkeys(g.column for g in AIR_GAUGES))
 
-    def __init__(self, server, uri: str = "ecobot://now/weather"):
-        self.server, self.uri = server, uri
+
+class WebDashboard:
+    """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uris` the
+    resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air)."""
+
+    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air")):
+        self.server, self.uris = server, tuple(uris)
         self._streams: set[asyncio.Queue] = set()
         self._shown = self._readings()
         self.closed = False
@@ -69,19 +80,21 @@ class WebDashboard:
 
     # ---------- the events ----------
     def _readings(self):
+        """(the station's gauges' readings, the air sensor's) as they are kept."""
         try:
             kept = getattr(self.server.ctx.eco, "_live", None)
-            return readings_of(kept[1] if kept else None)
+            air = getattr(self.server.ctx.air, "_current", None)
+            return readings_of(kept[1] if kept else None), air_readings_of(air[0] if air else None)
         except Exception as e:   # (never stops the publishing)
             log.warning("Dashboard: couldn't read the live reading: %s: %s", type(e).__name__, e)
             return None
 
     def _on_event(self, event):
-        """The bus's listener (sync, on the event loop): a weather update whose gauges' readings changed goes to every stream."""
-        if getattr(event, "uri", None) != self.uri:
+        """The bus's listener (sync, on the event loop): a weather or air update whose gauges' readings changed goes to every stream."""
+        if getattr(event, "uri", None) not in self.uris:
             return
         now = self._readings()
-        if now is None or now == self._shown:
+        if now is None or now == (None, None) or now == self._shown:
             return
         self._shown = now
         for queue in list(self._streams):
@@ -130,4 +143,4 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["WebDashboard", "readings_of"]
+__all__ = ["WebDashboard", "air_readings_of", "readings_of"]

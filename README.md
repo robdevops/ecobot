@@ -199,12 +199,33 @@ echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ec
 
 ## Web dashboard
 
-ecobot-mcp also serves the station's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
+ecobot-mcp also serves the station's and the air sensor's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
 (your machine's name or IP address). It looks like `/dashboard` in the chat, drawn by the browser (plain HTML5, nothing fetched from
 the internet), and fits every tile on the screen in portrait or landscape where they stay readable (on a phone it scrolls). It
 updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away.
 
-It is read-only (the weather readings, nothing else), so it is open to anyone on your network: no token, and any name or address
+After the weather station's gauges come the air sensor's, when there is one, with their bands on US standards:
+
+- **US AQI** (from PM2.5), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
+  Unhealthy for Sensitive Groups 101-150 orange, Unhealthy 151-200 red, Very Unhealthy 201-300 purple, Hazardous 301-500 maroon), the
+  category's name under the number;
+- **PM2.5** (µg/m³) on the EPA's 2024 breakpoints (9.0, 35.4, 55.4, 125.4, 225.4) and **PM10** on the EPA's (54, 154, 254, 354,
+  424), in the same colours;
+- **CO₂** (ppm): there is no EPA standard, so the usual US indoor guidance (from ASHRAE's): under 800 good, 800-1000 fair, 1000-1500
+  poor, 1500-2000 bad, 2000 and over very bad;
+- **VOC index** and **NOx index**, when the monitor reports them (Sensirion's indices, learnt from its own air: VOC 100 is its
+  average, NOx 1 its baseline): VOC under 100 low, 100-150 average, then elevated, high (250) and very high (400); NOx up to 20 low,
+  then elevated, high (150) and very high (300).
+
+On the air dials every category gets an equal share of the dial (as AirNow's AQI dial draws them), so "good" and "moderate" aren't
+squeezed into a sliver of a scale that runs to 500; the numbers round the dial are the breakpoints. PM1 has no US standard and the
+monitor's own temperature and humidity repeat the station's outdoor ones, so they have no gauge.
+
+A tile whose reading is missing just now (the station or the air sensor not sending it) is dimmed, its gauge at its floor (0, or the
+scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes
+back the tile brightens and its gauge rises in place. A reading the station or the monitor has never sent has no tile.
+
+It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
 in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
 turn it off, set `MCP_DASHBOARD=off`.

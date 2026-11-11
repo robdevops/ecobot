@@ -2,6 +2,7 @@ import io
 from datetime import date, datetime
 from types import SimpleNamespace as NS
 
+import pytest
 from PIL import Image
 from telegram import InlineKeyboardMarkup
 
@@ -195,7 +196,7 @@ def report_bot(alert_state, gauges_now):
 
     def current(args, meta):
         if args.get("context"):
-            assert args.get("readings") in (gauge_sheet.call(dash.STATUS)["readings"], gauge_sheet.call()["readings"])   # the report's three gauges, or all
+            assert args.get("readings") in (gauge_sheet.call(dash.STATUS)["readings"], None)   # the report's three gauges, or all (none named)
             return now.gauges()
         return {"lines": {"station": [f"• Outdoor: {now.reading}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
                 "headings": {"station": "Weather station", "air": "Air quality"}}
@@ -399,7 +400,7 @@ async def test_the_dashboard_and_the_reports_gauges_are_the_services_current_wit
     assert [k for k, *_ in sent] == ["photo"] and sent[0][2].startswith("Weather station dashboard, ")
     from lib import gauge_sheet
     assert drawn[-1] == gauge_sheet.sheet(GAUGE_RESULT)
-    assert ("current", {"readings": [g.reading for g in dash.GAUGES], "context": True}) in service.calls   # every gauge's: the air isn't asked
+    assert ("current", {"context": True}) in service.calls   # every gauge's, the station's and the air sensor's: no readings named
     await bot.respond(update, CONTEXT, "report")
     assert sent[-1][0] == "photo" and [t.title for t in drawn[-1].tiles] == list(STATUS_TITLES)
     assert ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True}) in service.calls
@@ -418,3 +419,108 @@ async def test_a_station_that_gives_nothing_is_not_answering_and_its_report_goes
     assert [(k, text) for k, _, text, _ in sent] == [("text", "The weather station isn't answering right now.")]
     await bot.respond(update, CONTEXT, "report")
     assert sent[-1][0] == "text"                                                                 # the report as text alone
+
+
+# ---------- the air sensor's gauges, on US standards ----------
+def test_the_air_gauges_scales_and_bands_are_the_epas_and_the_us_co2_guidance():
+    from lib.airgradient.dashboard import AIR_GAUGES, EPA, EPA_NAMES
+    g = {x.title: x for x in AIR_GAUGES}
+    assert list(g) == ["US AQI", "PM2.5", "PM10", "CO₂", "VOC index", "NOx index"]                       # no PM1, no own temperature
+    assert EPA == ("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023")
+    assert EPA_NAMES == ("Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous")
+    assert g["US AQI"].bounds == (0, 50, 100, 150, 200, 300, 500) and g["US AQI"].colours == EPA and g["US AQI"].aqi
+    assert g["PM2.5"].bounds == (0, 9.0, 35.4, 55.4, 125.4, 225.4, 325.4) and g["PM2.5"].colours == EPA   # the 2024 breakpoints
+    assert g["PM10"].bounds == (0, 54, 154, 254, 354, 424, 604) and g["PM10"].colours == EPA
+    assert g["CO₂"].bounds == (400, 800, 1000, 1500, 2000, 2500)
+    for title, readings in {
+            "US AQI": ((0, 0), (50, 0), (51, 1), (100, 1), (101, 2), (150, 2), (151, 3), (200, 3), (201, 4), (300, 4), (301, 5), (480, 5)),
+            "PM2.5": ((0, 0), (9.0, 0), (9.1, 1), (35.4, 1), (35.5, 2), (55.4, 2), (55.5, 3), (125.4, 3), (125.5, 4), (225.4, 4),
+                      (225.5, 5), (500, 5)),
+            "PM10": ((54, 0), (55, 1), (154, 1), (155, 2), (254, 2), (255, 3), (354, 3), (355, 4), (424, 4), (425, 5), (700, 5))}.items():
+        for value, band in readings:
+            assert g[title].band(value) == EPA_NAMES[band], (title, value)
+    co2 = g["CO₂"]
+    assert [co2.band(v) for v in (420, 799, 800, 999, 1000, 1499, 1500, 1999, 2000, 3000)] == \
+        ["Good", "Good", "Fair", "Fair", "Poor", "Poor", "Bad", "Bad", "Very bad", "Very bad"]
+    assert [g["VOC index"].band(v) for v in (1, 99, 100, 150, 250, 400)] == ["Low", "Low", "Average", "Elevated", "High", "Very high"]
+    assert [g["NOx index"].band(v) for v in (1, 20, 21, 150, 151, 300, 301)] == ["Low", "Low", "Elevated", "Elevated", "High", "High",
+                                                                                  "Very high"]
+    assert g["PM2.5"].band(None) is None
+
+
+def air_result(latest: dict | None, air_values: dict | None = None) -> dict:
+    live = {"outdoor": {"temperature": reading(12.0)}}
+    return gauges_result(live, {}, TODAY, latest, air_values)
+
+
+def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_figures():
+    from lib.airgradient.metrics import pm25_aqi
+    latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³"}, "pm10": {"value": 60.0, "unit": "µg/m³"}, "pm1": {"value": 20.0, "unit": "µg/m³"},
+              "co2": {"value": 1200, "unit": "ppm"}}
+    values = {"pm2_5_max": {date(2026, 10, 2): 70.0, TODAY: 30.0}, "pm2_5_min": {TODAY: 5.0}, "co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
+    sheet = gauge_sheet.sheet(air_result(latest, values))
+    tiles = {t.title: t for t in sheet.tiles}
+    assert list(tiles) == ["Temperature", "US AQI", "PM2.5", "PM10", "CO₂"]                     # no VOC nor NOx sent: left out; no PM1
+    aqi = tiles["US AQI"]
+    assert (aqi.value, aqi.band, aqi.kind, aqi.low, aqi.high, aqi.columns) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", "dial",
+                                                                               0, 500, ("Max", "Min"))
+    assert aqi.rows["Daily"] == (pm25_aqi(40.0)[0], pm25_aqi(5.0)[0]) and aqi.rows["Monthly"][0] == pm25_aqi(70.0)[0]
+    assert aqi.ticks == aqi.bounds == (0, 50, 100, 150, 200, 300, 500)
+    pm = tiles["PM2.5"]
+    assert (pm.value, pm.band, pm.decimals, pm.rows["Monthly"]) == (40.0, "Unhealthy for Sensitive Groups", 1, (70.0, 5.0))
+    assert (tiles["PM10"].band, tiles["CO₂"].band, tiles["CO₂"].rows["Daily"]) == ("Moderate", "Poor", (1200.0, 410.0))
+    assert [t.title for t in gauge_sheet.sheet(air_result(None)).tiles] == ["Temperature"]   # no air sensor: no air gauges
+
+
+def test_the_aqi_and_pm25_tiles_name_the_band_the_service_rated():
+    """The service rates PM2.5 (and its AQI) on the last two readings: the band beside the AQI is that one, not the latest's alone."""
+    latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³", "aqi_us": 80, "band": "moderate"}}
+    tiles = {t.title: t for t in gauge_sheet.sheet(air_result(latest)).tiles}
+    assert (tiles["US AQI"].value, tiles["US AQI"].band, tiles["PM2.5"].band) == (80.0, "Moderate", "Moderate")
+
+
+def test_a_tile_with_no_reading_is_dimmed_at_its_floor_in_its_json():
+    from lib.gauge_look import floor, share, shown, tile_json
+    latest = {"pm2_5": {"value": 12.0, "unit": "µg/m³"}}
+    values = {"co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
+    sheet = gauge_sheet.sheet(gauges_result({"outdoor": {"temperature": reading(12.0)}, "pressure": {"relative": reading(1012)}},
+                                            {"humidity_max": {TODAY: 80.0}, "humidity_min": {TODAY: 50.0}, "pressure_max": {TODAY: 1020.0}},
+                                            TODAY, latest, values))
+    tiles = {t.title: t for t in sheet.tiles}
+    humidity, co2, aqi = tiles["Humidity"], tiles["CO₂"], tiles["US AQI"]
+    assert humidity.value is None and co2.value is None and co2.band is None                    # figures, no reading now
+    assert (floor(humidity), floor(co2), floor(tiles["Atmospheric pressure"]), floor(aqi)) == (0, 400, 950, 0)
+    assert shown(co2) == 400 and share(co2, shown(co2)) == 0 and share(humidity, 0) == 0
+    got = tile_json(co2)
+    assert (got["value"], got["faded"], got["floor"], got["rows"]["Daily"]) == (None, True, 400, [900, 410])
+    assert tile_json(aqi)["faded"] is False and tile_json(tiles["Atmospheric pressure"])["floor"] == 950
+
+
+def test_a_band_scale_gives_each_band_an_equal_share_of_the_dial():
+    from lib.gauge_look import share
+    pm = gauge_sheet.sheet(air_result({"pm2_5": {"value": 9.0, "unit": "µg/m³"}})).tiles[2]
+    assert pm.title == "PM2.5"
+    assert [round(share(pm, v), 4) for v in (0, 9.0, 35.4, 55.4, 325.4, 400)] == [0, round(1 / 6, 4), round(2 / 6, 4), 0.5, 1, 1]
+    assert share(pm, 22.2) == pytest.approx((1 + (22.2 - 9) / (35.4 - 9)) / 6) and share(pm, -1) == 0
+
+
+def test_the_png_draws_a_tile_with_no_reading_as_its_floor_dimmed():
+    """The dimmed tile is the same gauge at its floor, every colour FADE of the way from the card: the needle at the dial's start, the
+    mercury at the scale's low end, the beaker empty, the number its floor."""
+    from PIL import ImageChops
+    from lib.gauge_look import BG, FADE
+    for tile in (Tile("Atmospheric pressure", "hPa", None, "dial", 950, 1050, dash.PRESSURE, ("Max", "Min"), {"Daily": (1020.0, 1001.0)},
+                      (950, 1000, 1050)),
+                 Tile("Temperature", "°C", None, "thermometer", 0, 40, dash.COLD_TO_HOT[:4], ("Max", "Min"), {"Daily": (20.0, 8.0)}, dash.DEGREES),
+                 Tile("Rain", "mm", None, "beaker", 0, 100, dash.WATER, ("Max", "Total"), {"Monthly": (6.0, 9.0)}, (100, 0)),
+                 Tile("CO₂", "ppm", None, "dial", 400, 2500, ("#00E400",) * 5, ("Max", "Min"), {"Daily": (900, 410)},
+                      (400, 800, 1000, 1500, 2000, 2500), 0, (400, 800, 1000, 1500, 2000, 2500), "Good")):
+        from lib.gauge_look import floor
+        dimmed = Image.open(io.BytesIO(gauges.render(Dashboard([tile])))).convert("RGB")
+        at_floor = Tile(**{**tile.__dict__, "value": floor(tile), "band": None})
+        bright = Image.open(io.BytesIO(gauges.render(Dashboard([at_floor])))).convert("RGB")
+        expected = Image.blend(bright, Image.new("RGB", bright.size, BG), 1 - FADE)
+        off = ImageChops.difference(dimmed, expected).convert("L").histogram()
+        mean, worst = sum(i * n for i, n in enumerate(off)) / sum(off), max(i for i, n in enumerate(off) if n)
+        assert mean < 0.15 and worst <= 20, (tile.title, mean, worst)   # (but the edges' anti-aliasing; the gauge anywhere else: 80+)
+        assert bright.getdata() != dimmed.getdata()

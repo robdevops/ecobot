@@ -291,7 +291,10 @@ async def test_context_is_the_gauges_figures_with_when_each_happened(tmp_path, d
         wettest, total = tiles["Rain"][row]
         assert rain[key]["total"] == total and rain[key]["wettest_day"]["rain"] == wettest
     assert s["solar_and_uvi"]["uvi"]["year"]["high_text"] == "11"                         # written as the station writes it
-    assert "today" not in s["outdoor"]["vpd"] and "today" not in s["air"]["pm2_5"]       # no gauge, no context
+    assert "today" not in s["outdoor"]["vpd"]                                             # no gauge, no context
+    pm = s["air"]["pm2_5"]                                                                # the air sensor's: its day rows' highs and lows
+    assert pm["today"]["high"] >= pm["value"] >= pm["today"]["low"] and pm["year"]["high"] >= pm["month"]["high"] >= pm["today"]["high"]
+    assert pm["year"]["high_text"] == f"{pm['year']['high']:.1f} µg/m³" and "high_date" in pm["year"] and "high_when" not in pm["year"]
     await close(tool)
 
 
@@ -461,3 +464,35 @@ async def test_the_air_sensor_alone_and_its_own_temperature(tmp_path, archived_c
 
 def test_the_module_says_what_it_offers():
     assert all(hasattr(cur, name) for name in cur.__all__)
+
+
+def test_the_air_sensors_context_is_its_day_rows_highs_and_lows_with_the_reading_now_counted_in():
+    today, first = date(2026, 10, 27), date(2026, 2, 3)
+    values = {"pm2_5_max": {first: 80.0, date(2026, 10, 2): 20.0, today: 9.5}, "pm2_5_min": {first: 2.0, today: 4.0}}
+    got = cur.air_context_of("pm2_5", 12.0, "µg/m³", values, today)
+    assert got["today"] == {"high": 12.0, "high_text": "12.0 µg/m³", "low": 4.0, "low_text": "4.0 µg/m³"}   # 12 now: above today's 9.5
+    assert (got["month"]["high"], got["month"]["high_date"], got["month"]["low"]) == (20.0, "Fri 2 Oct 2026", 4.0)
+    assert (got["year"]["high"], got["year"]["high_date"], got["year"]["low_date"]) == (80.0, "Tue 3 Feb 2026", "Tue 3 Feb 2026")
+    assert cur.air_context_of("co2", None, "ppm", {}, today) == {}                                          # nothing held
+    assert cur.air_context_of("co2", 450, "ppm", {}, today)["year"]["high_text"] == "450 ppm"
+
+
+async def test_with_context_an_air_sensor_not_answering_gives_its_readings_figures_alone(tmp_path, daytime_archive):
+    """A gauge with no reading now is drawn dimmed with its figures: the air sensor not answering, its readings are there with their
+    day rows' highs and lows and no value (and the sensor is said to be unavailable); without context, nothing of it."""
+    tool, _, sensor = await world(tmp_path, daytime_archive, live(time.time(), **DAY))
+    await sensor.store.add_recorded({"ts": int(time.time()) // 300 * 300 - 600, "pm2_5": 48.5, "co2": 610.0})   # the day's own row
+    up = (await call(tool, context=True))["sensors"]["air"]
+    assert up["pm2_5"]["today"]["high"] == 48.5 and up["pm2_5"]["today"]["high_text"] == "48.5 µg/m³"   # from the air sensor's day rows
+    assert up["pm2_5"]["year"]["high"] == 48.5 and up["co2"]["today"]["high"] == 610
+
+    async def down(*a, **k):
+        raise RuntimeError("no answer")
+    sensor.latest = down
+    got = await call(tool, context=True)
+    pm = got["sensors"]["air"]["pm2_5"]
+    assert pm["value"] is None and pm["today"]["high"] == 48.5 and "air" in got["unavailable"]
+    assert "voc_index" not in got["sensors"]["air"]                                                       # no figures held: left out
+    assert "temperature" not in got["sensors"]["air"]                                                     # (its own: no gauge, no context)
+    assert "air" not in (await call(tool))["sensors"]
+    await close(tool)

@@ -2,15 +2,18 @@
 
 A thermometer, a dial or a rain beaker per tile (specs.Tile), three tiles to a row, drawn on one canvas laid out in pixels (the top left
 is 0, 0), in lib/gauge_look.py's colours and sizes (the live web page, lib/web_dashboard.py, draws with them too). A tile with no reading
-is dimmed. Safe to call from several threads, as charts.render is (they share its drawing lock).
+is dimmed, its gauge at its floor (lib/gauge_look.py floor: the mercury at the scale's low end, the needle at its start, the beaker empty)
+reading the floor's number. The air gauges' dials have their bands each an equal share of the dial (Tile.bounds) and the band's name under
+the reading. Safe to call from several threads, as charts.render is (they share its drawing lock).
 """
 
 import math
 
 from .charts import _DRAWING, _blend
 from .draw import PT, Canvas, arc, clip_below, rounded_rect
-from .gauge_look import (BAND_WIDTH, BAR_GAP, BAR_WIDTH, BG, BULB_RADIUS, CELL_H, CELL_W, CHIP, CHIPS, FADE, FILL, INK, LABEL_RADIUS,
-                         MARGIN, MARKS, MERCURY_GAP, NEEDLE, RING_OUTER, ROWS, SOFT, START, SWEEP, TUBE_HALF, WATER, faded)
+from .gauge_look import (BAND_SIZE, BAND_WIDTH, BAND_Y, BAR_GAP, BAR_WIDTH, BG, BULB_RADIUS, CELL_H, CELL_W, CHIP, CHIPS, FADE, FILL,
+                         INK, LABEL_RADIUS, MARGIN, MARKS, MERCURY_GAP, NEEDLE, RING_OUTER, ROWS, SOFT, START, SWEEP, TUBE_HALF, WATER,
+                         faded, share, shown)
 from .specs import Dashboard, Tile
 
 DPI = 100
@@ -56,13 +59,11 @@ def _thermometer(c: Canvas, tile: Tile, ox: float, oy: float, ink):
     half, radius, gap = TUBE_HALF, BULB_RADIUS, MERCURY_GAP
     _scale_bar(c, cx - half - BAR_GAP - BAR_WIDTH, top, bottom, tile, ink)
     inside = _thermometer_shape(cx, top - 10 + gap, half - gap, bulb, radius - gap)
-    level = bulb - math.sqrt((radius - gap) ** 2 - (half - gap) ** 2)   # no reading: just the bulb
-    if tile.value is not None:
-        level = top + (1 - min(max((tile.value - tile.low) / (tile.high - tile.low), 0), 1)) * (bottom - top)
+    value = shown(tile)   # (no reading: the floor)
+    level = top + (1 - share(tile, value)) * (bottom - top)
     c.polygon(clip_below(inside, level), ink(FILL))   # the column and the bulb, one shape, the same gap from the outline all round
     c.polygon(_thermometer_shape(cx, top - 10, half, bulb, radius), None, outline=ink(SOFT), width=_lw(2.5))
-    if tile.value is not None:
-        _text(c, cx - 50, bulb, f"{_figure(tile.value, tile.decimals)} {tile.unit}", 40, ink(SOFT), ha="right")
+    _text(c, cx - 50, bulb, f"{_figure(value, tile.decimals)} {tile.unit}", 40, ink(SOFT), ha="right")
 
 
 def _beaker(c: Canvas, tile: Tile, ox: float, oy: float, ink):
@@ -70,13 +71,13 @@ def _beaker(c: Canvas, tile: Tile, ox: float, oy: float, ink):
     _scale_bar(c, left - BAR_GAP - BAR_WIDTH, top, bottom - 10, tile, ink)
     round_ = 34
     jar = rounded_rect(left, top - round_, right, bottom, round_, 12)
-    if tile.value is not None and tile.value > 0:
-        level = bottom - max((tile.value - tile.low) / (tile.high - tile.low), 0.02) * (bottom - 10 - top)
+    value = shown(tile)   # (no reading: the floor, empty)
+    if value > tile.low:
+        level = bottom - max(share(tile, value), 0.02) * (bottom - 10 - top)
         c.polygon(clip_below(jar, level), ink(WATER))
     c.polygon(jar, None, outline=ink(SOFT), width=_lw(2.5))
     c.rect(left - 8, top - round_ - 2, right + 8, top, BG)   # the jar has no lid
-    if tile.value is not None:
-        _text(c, ox + 290, oy + 345, f"{_figure(tile.value, tile.decimals)} {tile.unit}", 46, ink(SOFT))
+    _text(c, ox + 290, oy + 345, f"{_figure(value, tile.decimals)} {tile.unit}", 46, ink(SOFT))
 
 
 def _polar(cx: float, cy: float, radius: float, degrees: float) -> tuple[float, float]:
@@ -85,7 +86,7 @@ def _polar(cx: float, cy: float, radius: float, degrees: float) -> tuple[float, 
 
 
 def _angle(tile: Tile, value: float) -> float:
-    return START - SWEEP * min(max((value - tile.low) / (tile.high - tile.low), 0), 1)
+    return START - SWEEP * share(tile, value)
 
 
 def _band(cx: float, cy: float, inner: float, outer: float, a0: float, a1: float) -> list[tuple[float, float]]:
@@ -106,12 +107,14 @@ def _dial(c: Canvas, tile: Tile, ox: float, oy: float, ink):
         x, y = _polar(cx, cy, LABEL_RADIUS, _angle(tile, tick))
         _text(c, x, y, f"{tick:g}", 17, ink(SOFT))
     _text(c, cx, cy + 64, tile.unit, 18, ink(SOFT))
-    if tile.value is not None:
-        a = _angle(tile, tile.value)
-        tip, tail = _polar(cx, cy, RING_OUTER - BAND_WIDTH - 6, a), _polar(cx, cy, -24, a)   # the needle reaches nearly to the scale
-        left, right = _polar(cx, cy, 10, a + 90), _polar(cx, cy, 10, a - 90)
-        c.polygon([tip, left, tail, right], ink(NEEDLE))
-        _text(c, cx, cy + 102, _figure(tile.value, tile.decimals), 50, ink(INK))
+    value = shown(tile)   # (no reading: the floor)
+    a = _angle(tile, value)
+    tip, tail = _polar(cx, cy, RING_OUTER - BAND_WIDTH - 6, a), _polar(cx, cy, -24, a)   # the needle reaches nearly to the scale
+    left, right = _polar(cx, cy, 10, a + 90), _polar(cx, cy, 10, a - 90)
+    c.polygon([tip, left, tail, right], ink(NEEDLE))
+    _text(c, cx, cy + 102, _figure(value, tile.decimals), 50, ink(INK))
+    if tile.band and tile.value is not None:   # the air gauges' category ("Moderate")
+        _text(c, cx, cy + BAND_Y, tile.band, BAND_SIZE, ink(SOFT))
     c.circle(cx, cy, 25, BG, outline=ink(SOFT), width=_lw(3))
 
 
