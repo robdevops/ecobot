@@ -48,7 +48,9 @@ def test_one_dockerfile_builds_both_images_each_checked_at_build():
     assert "-r /tmp/requirements-bot.txt" in venv_bot and not re.search(r"requirements(-mcp|-charts)?\.txt", venv_bot.replace("requirements-bot.txt", ""))
     assert 'CMD ["python", "-m", "ecobot_mcp"]' in mcp and "import ecobot_mcp.__main__" in mcp and "find_spec('telegram') is None" in mcp
     assert 'CMD ["python", "ecobot.py"]' in bot and "import lib.bot, ecobot" in bot and "find_spec('PIL') is None" in bot
-    assert all(f"'{m}'" in bot for m in ("lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage"))
+    assert all(f"'{m}'" in bot for m in ("lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage",
+                                         "lib.irrigation.tuya", "lib.irrigation.watchdog", "lib.irrigation.check"))   # (irrigation-mcp's, 8b)
+    assert "lib.irrigation_remote" in bot
     assert 'CMD ["python", "-m", "irrigation_mcp"]' in irrigation and "import irrigation_mcp.__main__" in irrigation
     assert "find_spec('telegram') is None" in irrigation and "find_spec('PIL') is None" in irrigation and "'lib.storage'" in irrigation
     ignored = (ROOT / ".dockerignore").read_text()

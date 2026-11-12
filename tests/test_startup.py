@@ -330,11 +330,14 @@ def test_a_blank_setting_means_its_default_and_a_missing_key_says_which(monkeypa
     for k, v in (("BOT_TELEGRAM_TOKEN", " t "), ("BOT_OPENROUTER_API_KEY", "k"), ("BOT_MCP_URL", "http://127.0.0.1:8765/mcp"),
                  ("MCP_ECOWITT_API_KEY", "a"), ("MCP_ECOWITT_APP_KEY", "b")):
         monkeypatch.setenv(k, v)
-    for k in ("BOT_OPENROUTER_MODEL", "BOT_OPENROUTER_BASE_URL", "PLACE", "MCP_POLLEN_DISTRICT", "BOT_TUYA_BASE_URL"):
+    for k in ("BOT_OPENROUTER_MODEL", "BOT_OPENROUTER_BASE_URL", "PLACE", "MCP_POLLEN_DISTRICT", "IRRIGATION_TUYA_BASE_URL"):
         monkeypatch.setenv(k, "  ")
     monkeypatch.setenv("POLLEN", "enabled")
     cfg, service = Config.from_env(), Config.from_env(bot=False)   # (the bot's settings; ecobot-mcp's)
-    assert (cfg.telegram_token, cfg.openrouter_model, cfg.openrouter_base_url, service.place, service.pollen_district, cfg.tuya_base_url) == (
+    for k, v in (("IRRIGATION_TUYA_DEVICE_ID", "d"), ("IRRIGATION_TUYA_CLIENT_ID", "c"), ("IRRIGATION_TUYA_CLIENT_SECRET", "s")):
+        monkeypatch.setenv(k, v)
+    irrigation = Config.from_env(program="irrigation")   # (irrigation-mcp's)
+    assert (cfg.telegram_token, cfg.openrouter_model, cfg.openrouter_base_url, service.place, service.pollen_district, irrigation.tuya_base_url) == (
         "t", "deepseek/deepseek-v4.1-flash-1017", "https://openrouter.ai/api/v1", "Melbourne", "Central", "https://openapi.tuyaeu.com")
     assert service.pollen is False and "POLLEN: 'enabled' is not on or off; keeping the default (off)" in caplog.text
     monkeypatch.setenv("BOT_OPENROUTER_API_KEY", " ")
@@ -374,34 +377,41 @@ def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monk
     assert Config.from_env(bot=False).chart_all_vpd is True
 
 
-async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog_and_closes_it(tmp_path, monkeypatch, caplog):
-    import httpx
-    from lib.irrigation.check import IrrigationMonitor
-    from lib.irrigation import tuya as tuya_module
-    from lib.irrigation.watchdog import Watchdog
+async def test_main_with_irrigation_mcp_is_its_client_listening_to_its_alerts_and_runs_no_controller_itself(tmp_path, monkeypatch, caplog):
+    """BOT_IRRIGATION_MCP_URL (step 8b): the bot connects to irrigation-mcp (under uvicorn here, with the same token) as it does to
+    ecobot-mcp, its Irrigation button on the keyboard, its alerts delivered (their last id kept apart); no Tuya client, watchdog or daily
+    check runs in the bot."""
+    from lib.irrigation import Watchdog
+    from lib.irrigation import server as irrigation_server
+    from lib.irrigation.state import IrrigationState
+    from lib.alerts.notify import AlertState
+    from tests.fakes import FakeController
     caplog.set_level("INFO")
-    closed, started = [], []
+    app, port = FakeApp(), free_port()
+    device = FakeController()
+    alerts = AlertLog(tmp_path / "irrigation_alerts.sqlite", TZ)
+    server = irrigation_server.IrrigationServer(device, Watchdog(device, IrrigationState(tmp_path / "irrigation_state.json")), alerts, tz=TZ)
+    publishing = asyncio.create_task(server.run())
+    try:
+        async with ecobot_mcp_up(tmp_path) as url, Serving(irrigation_server.http_app(server, tokens=(TOKEN,)), port):
+            bot_settings(tmp_path, monkeypatch, url, app, irrigation_mcp_url=f"http://127.0.0.1:{port}/mcp")
+            await run_bot_until(lambda: "irrigation-mcp" in AlertState(tmp_path / "state.json").marks, "the irrigation alerts' delivery")
+    finally:
+        publishing.cancel()
+        await asyncio.gather(publishing, return_exceptions=True)
+        alerts.close()
+    assert f"irrigation-mcp: connected to http://127.0.0.1:{port}/mcp" in caplog.text and len(app.handlers) == 12
+    assert device.commands == []                                                           # nothing asked of the controller at start
 
-    def tuya(request):
-        if request.url.path.startswith("/v1.0/token"):
-            return httpx.Response(200, json={"success": True, "result": {"access_token": "t", "expire_time": 7200}})
-        return httpx.Response(200, json={"success": True, "result": [{"code": "battery_percentage", "value": 80}]})
+
+async def test_without_bot_irrigation_mcp_url_there_is_no_irrigation_and_old_tuya_settings_are_a_warning(tmp_path, monkeypatch, caplog):
     app = FakeApp()
-    monkeypatch.setattr(tuya_module.Tuya, "__init__", lambda self, c, transport=None, orig=tuya_module.Tuya.__init__: orig(self, c, httpx.MockTransport(tuya)))
-    monkeypatch.setattr(tuya_module.Tuya, "close", lambda self, orig=tuya_module.Tuya.close: closed.append(1) or orig(self))
-
-    async def check(self):
-        started.append("check")
-        await asyncio.sleep(3600)
-    monkeypatch.setattr(IrrigationMonitor, "run", check)
-
-    async def watch(self):
-        started.append("watchdog")
-    monkeypatch.setattr(Watchdog, "check", watch)
+    monkeypatch.setenv("BOT_TUYA_DEVICE_ID", "dev1")                                         # (the bot ran the controller itself before)
     async with ecobot_mcp_up(tmp_path) as url:
-        bot_settings(tmp_path, monkeypatch, url, app, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret="s")
-        await run_bot_until(lambda: {"check", "watchdog"} <= set(started), "the irrigation check and its watchdog")
-    assert len(app.handlers) == 12 and closed == [1]                 # the same handlers (buttons share one entry point), and the client closed at shutdown
+        bot_settings(tmp_path, monkeypatch, url, app)
+        await run_bot_until(lambda: app.menus, "the command menu set")
+    assert "The irrigation controller's settings are set but BOT_IRRIGATION_MCP_URL isn't" in caplog.text
+    assert "irrigation-mcp:" not in caplog.text
 
 
 def test_only_the_lines_that_are_not_ordinary_are_marked_with_their_level():

@@ -2,7 +2,8 @@
 # suites, and bytecode for only what its program imports at start (bytecode for everything is 48 MB more; none adds ~2 s to every start):
 #   ecobot-mcp (target ecobot-mcp): python -m ecobot_mcp, the sources, the alert rules and the MCP server; requirements-mcp.txt and
 #     Pillow (requirements-charts.txt), no Telegram and no model client;
-#   ecobot (target ecobot, the default): the Telegram bot, python ecobot.py, a client of ecobot-mcp (BOT_MCP_URL); requirements-bot.txt
+#   ecobot (target ecobot, the default): the Telegram bot, python ecobot.py, a client of ecobot-mcp (BOT_MCP_URL) and, with
+#     BOT_IRRIGATION_MCP_URL, of irrigation-mcp; requirements-bot.txt
 #     alone (Telegram, the model's client, the MCP client, httpx): it draws nothing and runs no source, so no Pillow and no source's
 #     packages (docs/ecobot-mcp.md step 6b).
 #   irrigation-mcp (target irrigation-mcp): python -m irrigation_mcp, the irrigation controller's MCP server, its watchdog and daily
@@ -10,7 +11,7 @@
 #   docker build --target ecobot-mcp -t ecobot-mcp .
 #   docker build --target irrigation-mcp -t irrigation-mcp .
 #   docker build --target ecobot -t ecobot .
-#   docker compose up -d --build   (compose.yaml builds both)
+#   docker compose up -d --build   (compose.yaml builds the ones its profiles run)
 # Settings come from the environment, as under systemd (README); the state and caches are kept in /data, the folder mounted from the host.
 FROM python:3.13-slim AS base
 
@@ -86,13 +87,14 @@ USER 10001:10001
 CMD ["python", "-m", "irrigation_mcp"]
 
 # The bot (the default target). The same: the bytecode of what it loads at start, and a check that it needs nothing but its own packages
-# and imports no source and no drawing (no Pillow: it is not in this venv)
+# and imports no source, no drawing (no Pillow: it is not in this venv) and none of irrigation-mcp's controller (it is its client)
 FROM app AS ecobot
 COPY --from=venv-bot /opt/venv /opt/venv
 COPY ecobot.py ./
-RUN DATA_DIR=/tmp/build python -c "import sys, importlib.util; import lib.bot, ecobot, lib.upstream, lib.weather, lib.irrigation.check; \
+RUN DATA_DIR=/tmp/build python -c "import sys, importlib.util; import lib.bot, ecobot, lib.upstream, lib.weather, lib.irrigation_remote; \
 assert not [m for m in sys.modules if m.split('.')[0] == 'PIL' or m.startswith(('lib.ecowitt', 'lib.airgradient', 'lib.forecast', \
-'lib.pollen', 'lib.storage', 'lib.charts', 'lib.draw', 'lib.gauges'))], 'the bot imported a source or the drawing'; \
+'lib.pollen', 'lib.storage', 'lib.charts', 'lib.draw', 'lib.gauges', 'lib.irrigation.tuya', 'lib.irrigation.watchdog', \
+'lib.irrigation.check', 'lib.irrigation.server'))], 'the bot imported a source, the drawing or the irrigation controller'; \
 assert importlib.util.find_spec('PIL') is None" \
  && rm -rf /tmp/build
 ENV DATA_DIR=/data

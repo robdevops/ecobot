@@ -8,6 +8,13 @@ bot runs it against this (the `serve` fixture in tests/conftest.py):
     weather = await serve(tools=StandInService(summary=...))   # a test's stand-in tools, served as ecobot-mcp's
     weather = await serve(tools=..., sources=["Ecowitt"])      # ... with ecobot://station naming these sources (the alerts, the shortcuts)
     bot = Bot(NS(tz=TZ), agent, alert_state, service=weather)
+
+irrigation-mcp the same way (step 8b: the bot is its client too, BOT_IRRIGATION_MCP_URL): its real server (lib/irrigation/server.py)
+over a fake controller (tests.fakes.FakeController, or a Tuya client over the fake Tuya cloud), its watchdog and its own alert log, and
+the bot's client of it (lib/irrigation_remote.RemoteIrrigation), connected and listening (the `serve_irrigation` fixture):
+
+    irrigation = await serve_irrigation(tmp_path)                    # the fake controller; irrigation.server.device is it
+    bot = Bot(NS(tz=TZ), agent, alert_state, irrigation, service=weather)
 """
 
 import asyncio
@@ -80,6 +87,34 @@ def stand_in(server: EcobotServer, sources: set[str]):
 def unreached() -> RemoteWeather:
     """ecobot-mcp at an address nothing answers, never connected: for a test of the bot's Telegram side alone, which asks it nothing."""
     return RemoteWeather("http://127.0.0.1:9/mcp", tz=TZ)
+
+
+@contextlib.asynccontextmanager
+async def irrigation_mcp(folder, device=None, *, tz=TZ):
+    """(the bot's client of) irrigation-mcp over `device` (default: a FakeController), its watchdog's state and its alert log in
+    `folder`, publishing its alerts. `.server` is the server behind it (its device, watchdog, alert_log, notify)."""
+    from lib.alert_log import AlertLog
+    from lib.irrigation import Watchdog
+    from lib.irrigation.server import IrrigationServer
+    from lib.irrigation.state import IrrigationState
+    from lib.irrigation_remote import RemoteIrrigation
+    from tests.fakes import FakeController
+    device = device if device is not None else FakeController()
+    folder.mkdir(parents=True, exist_ok=True)
+    alert_log = AlertLog(folder / "irrigation_alerts.sqlite", tz)
+    server = IrrigationServer(device, Watchdog(device, IrrigationState(folder / "irrigation_state.json")), alert_log, tz=tz)
+    remote = RemoteIrrigation(server.server)
+    remote.server = server   # (the test's way to the server behind it)
+    tasks = [asyncio.create_task(server.run()), asyncio.create_task(remote.run())]
+    try:
+        await asyncio.wait_for(remote.listening.wait(), READY_SECONDS)
+        yield remote
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await remote.close()
+        alert_log.close()
 
 
 @contextlib.asynccontextmanager

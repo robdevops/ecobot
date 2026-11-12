@@ -16,22 +16,12 @@ import uuid
 import httpx
 
 from ..config import Config
+from .common import DELAYS, MAX_MINUTES, IrrigationError, is_paused  # noqa: F401 (is_paused: named here too)
 
 log = logging.getLogger(__name__)
 
 TOKEN_PATH = "/v1.0/token?grant_type=1"
 TOKEN_INVALID = {1010, 1011}                # Tuya's "token invalid" and "token expired" codes
-DELAYS = ("24h", "48h", "72h", "cancel")    # the device's weather_delay range
-MAX_MINUTES = 60                            # the longest run asked for from a button
-
-
-def is_paused(status: dict) -> bool:
-    """Is the timer paused: a weather delay other than "cancel" (which is none)?"""
-    return status.get("weather_delay") not in (None, "cancel")
-
-
-class IrrigationError(Exception):
-    """The controller could not be read or told something. The message is safe to log (no secrets, no raw response)."""
 
 
 def sign(client_id: str, secret: str, token: str, timestamp: str, nonce: str, method: str, path: str, body: bytes) -> str:

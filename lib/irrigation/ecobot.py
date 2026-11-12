@@ -7,8 +7,7 @@
     to the station and the forecast): `call_text`, `resource`, `tz` (ecobot://station's time zone once read, TZ before; `on_zone(zone)`
     is called when it is first read and when it changes), `rain` and `forecast` (the two above, over it).
 
-ServiceRain and ServiceForecast work over either client: this one, or the bot's (lib/weather.RemoteWeather) while it runs the check
-itself (until step 8b). Nothing here imports ecobot-mcp's own code: only the MCP client."""
+Nothing here imports ecobot-mcp's own code: only the MCP client."""
 
 import asyncio
 import json

@@ -219,7 +219,7 @@ async def test_the_bot_s_warning_says_why_ecobot_mcp_refused_it(service, monkeyp
     monkeypatch.setattr(upstream, "BACKOFF", (0.1,))
     port = free_port()
     async with Serving(http_app(service, tokens=TOKENS.values(), allowed_hosts=("localhost",)), port):
-        for url, token, want in ((f"http://localhost:{port}/mcp", "wrong", "401: the token the bot sends isn't one ecobot-mcp accepts"),
+        for url, token, want in ((f"http://localhost:{port}/mcp", "wrong", "401: the token sent isn't one ecobot-mcp accepts"),
                                  (f"http://127.0.0.1:{port}/mcp", TOKENS["bot"], "421: ecobot-mcp doesn't answer to this address")):
             caplog.clear()
             task = asyncio.create_task(Upstream(url, token).run())

@@ -196,15 +196,20 @@ async def test_at_its_first_start_the_bots_watchdog_and_check_state_is_copied_on
     assert "copied" not in caplog.text
 
 
-def test_without_the_bots_entries_nothing_is_copied_and_a_damaged_bot_file_is_left_alone(tmp_path, caplog):
+def test_without_the_bots_entries_nothing_is_copied_not_even_at_a_later_start_and_a_damaged_bot_file_is_left_alone(tmp_path, caplog):
     caplog.set_level("INFO")
+    mine = tmp_path / "irrigation_state.json"
     bot_state(tmp_path, {"rain": {"since": 5}})
-    assert IrrigationState(tmp_path / "irrigation_state.json", tmp_path / "bot_state.json").monitor == {}
-    assert IrrigationState(tmp_path / "irrigation_state.json", tmp_path / "none.json").monitor == {}
+    assert IrrigationState(mine, tmp_path / "bot_state.json").monitor == {}
+    assert json.loads(mine.read_text()) == {}                                  # written at the first start, with nothing in it
+    bot_state(tmp_path, {"irrigation_watchdog": {"off_at": 5.0}})              # (an old bot run since): not copied at a later start
+    assert IrrigationState(mine, tmp_path / "bot_state.json").monitor == {} and "copied" not in caplog.text
+    mine.unlink()
+    assert IrrigationState(mine, tmp_path / "none.json").monitor == {}
+    mine.unlink()
     (tmp_path / "bot_state.json").write_text("{not json")
-    assert IrrigationState(tmp_path / "irrigation_state.json", tmp_path / "bot_state.json").monitor == {}
+    assert IrrigationState(mine, tmp_path / "bot_state.json").monitor == {}
     assert (tmp_path / "bot_state.json").read_text() == "{not json" and "copied" not in caplog.text
-    assert not (tmp_path / "irrigation_state.json").exists()
 
 
 # ---------- the daily check, as ecobot-mcp's client ----------

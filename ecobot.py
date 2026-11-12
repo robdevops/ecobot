@@ -5,14 +5,20 @@ answered by a model through OpenRouter, with proactive alerts. Settings come fro
 The bot is a client of ecobot-mcp (python -m ecobot_mcp, docs/ecobot-mcp.md 3.8 and step 6), reached over MCP at BOT_MCP_URL, which
 it can't start without (lib/weather.RemoteWeather): ecobot-mcp runs the sources, the alert log and the alert rules, and draws every
 picture; the bot's tools, instructions, station and alerts come from it. The bot does what only a Telegram bot can: the chats and their
-buttons, the model, delivering the alerts, and the irrigation controller (until it is a server of its own, step 8).
+buttons, the model, and delivering the alerts.
+
+With BOT_IRRIGATION_MCP_URL set it is irrigation-mcp's client too (python -m irrigation_mcp, docs/ecobot-mcp.md 3.9 and step 8b,
+lib/irrigation_remote.py): its Irrigation button and menu call irrigation-mcp's tools, and irrigation://alerts is delivered as
+ecobot://alerts is. The controller itself (Tuya, the watchdog, the daily check) is irrigation-mcp's alone.
 """
 
 import asyncio
 import contextlib
 import dataclasses
 import logging
+import os
 import signal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from lib import auth_token
@@ -24,17 +30,16 @@ from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
 from lib import theme   # (DARKMODE: the bot asks ecobot-mcp for charts in its own theme)
-from lib.irrigation.check import IrrigationMonitor
-from lib.alerts.notify import AlertDelivery, AlertState, Notifier
+from lib.alerts.notify import AlertDelivery, AlertState, Notifier, ReadMark
 from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
-from lib.irrigation import Tuya
-from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
+from lib.irrigation_remote import NAME as IRRIGATION_MCP, RemoteIrrigation
 from lib.llm import Agent
+from lib.netenv import docker_private_network
 from lib.logs import LogFormat, on_journal, stream_handlers
 from lib import model_tools
 from lib.version import commit_in, version   # noqa: F401 (commit_in: named here for the tests)
-from lib.warm import every, safely
-from lib.weather import RemoteWeather, ServiceRain
+from lib.warm import safely
+from lib.weather import RemoteWeather
 
 
 _format = LogFormat("%(levelname)s %(message)s", priority=on_journal())   # DEBUG and INFO to stdout, WARN and ERROR to stderr
@@ -47,23 +52,19 @@ log = logging.getLogger("ecobot")
 STARTUP_WAIT = 30.0   # seconds the bot waits for ecobot-mcp at start (its station names the time zone) before it carries on without
 
 
-def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, weather: RemoteWeather) -> tuple[list[str], list]:
-    """The alert rules are ecobot-mcp's, and its alert log is read over MCP: the bot delivers from it (AlertDelivery), and runs the
-    irrigation controller's check and watchdog (sent by the bot itself until it is a server of its own, step 8; its rain and forecast
-    asked of ecobot-mcp). Returns the alert types running here (the irrigation controller's), and what keeps the time zone (the
-    delivery, the irrigation check: follow_zone)."""
-    running: list[str] = []
+def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, weather: RemoteWeather,
+                 irrigation: RemoteIrrigation | None = None) -> list:
+    """The alerts are the servers': ecobot-mcp's alert log read over MCP (ecobot://alerts) and, with irrigation-mcp, its own
+    (irrigation://alerts), each delivered (AlertDelivery) to the chats subscribed to its kinds, each with its own last id handled in
+    bot_state.json. Returns what keeps the time zone (the deliveries: follow_zone)."""
     delivery = AlertDelivery(weather.alerts, notify, bot.state, cfg.tz, weather=weather)   # (its charts drawn by ecobot-mcp)
     zoned: list = [delivery]
     tasks.start(delivery.run())
-    if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-        monitor = IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, ServiceRain(weather),
-                                    weather.forecast)
-        zoned.append(monitor)
-        tasks.start(monitor.run())
-        tasks.start(every(VALVE_CHECK_SECONDS, bot.watchdog.check))
-        running += IrrigationMonitor.KINDS
-    return running, zoned
+    if irrigation is not None:   # (its alerts have no chart)
+        watering = AlertDelivery(irrigation.alerts, notify, bot.state, cfg.tz, mark=ReadMark(bot.state, IRRIGATION_MCP))
+        zoned.append(watering)
+        tasks.start(watering.run())
+    return zoned
 
 
 def _zone(name: str | None):
@@ -150,6 +151,34 @@ async def connect(cfg: Config, stack: contextlib.AsyncExitStack, state: AlertSta
     return weather, cfg
 
 
+TUYA_NAMES = ("IRRIGATION_TUYA_DEVICE_ID", "BOT_TUYA_DEVICE_ID", "TUYA_DEVICE_ID")   # (any of them set: the bot once ran the controller)
+
+
+def connect_irrigation(cfg: Config, stack: contextlib.AsyncExitStack, token) -> RemoteIrrigation | None:
+    """irrigation-mcp's client (BOT_IRRIGATION_MCP_URL), its supervisor started (closed by `stack`), not waited for: a press while it
+    can't be reached is told so. None without the setting (no Irrigation button, no irrigation alerts); then a Tuya setting still in the
+    environment (the bot ran the controller itself before step 8b) is a warning saying what to do."""
+    if not cfg.irrigation_mcp_url:
+        if any(os.getenv(name, "").strip() for name in TUYA_NAMES):
+            log.warning("The irrigation controller's settings are set but BOT_IRRIGATION_MCP_URL isn't: the controller is irrigation-mcp's "
+                        "now (python -m irrigation_mcp, the irrigation-mcp.service unit, or the irrigation-mcp container). Run it and set "
+                        "BOT_IRRIGATION_MCP_URL (systemd: http://127.0.0.1:8766/mcp) for the Irrigation button and its alerts "
+                        "(docs/configuration.md)")
+        return None
+    if urlsplit(cfg.irrigation_mcp_url).hostname in ("127.0.0.1", "localhost", "::1") and docker_private_network():
+        log.warning("BOT_IRRIGATION_MCP_URL is %s, but in a container on Docker's own network that is the bot's container, not "
+                    "irrigation-mcp's: set it to http://irrigation-mcp:8766/mcp (README: Docker)", cfg.irrigation_mcp_url)
+    irrigation = RemoteIrrigation(cfg.irrigation_mcp_url, token)
+    supervisor = asyncio.create_task(irrigation.run())
+
+    async def stop():
+        supervisor.cancel()
+        await asyncio.gather(supervisor, return_exceptions=True)
+        await irrigation.close()
+    stack.push_async_callback(stop)
+    return irrigation
+
+
 AsyncOpenAI = Timeout = None   # openai's, imported when the model's client is made (_client): the import takes half a second, more than all of lib
 
 
@@ -193,9 +222,7 @@ async def main():
             log.warning("Admin only is on but no group is known yet and BOT_ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
                         "add it to a group, list your user id in BOT_ADMIN_CHAT_IDS, or set BOT_ADMIN_ONLY=off")
         tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
-        irrigation = Tuya(cfg) if cfg.irrigation else None
-        if irrigation:
-            stack.push_async_callback(safely, irrigation.close)
+        irrigation = connect_irrigation(cfg, stack, mcp_token(cfg))   # irrigation-mcp's client (BOT_IRRIGATION_MCP_URL), or None
         # ecobot-mcp's tools over MCP (lib/weather.py): the model is offered them (lib/model_tools.py), and the bot's own code paths
         # call them (the keyboard's charts, the Status picture, the alert charts and the period buttons)
         bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(weather)), state, irrigation, tasks, service=weather)
@@ -220,12 +247,14 @@ async def main():
 
         log.info("Telegram: @%s, Model: %s", app.bot.username, cfg.openrouter_model if client else "none")
         log.info("ecobot-mcp: %s (%s)", cfg.mcp_url, ", ".join(sorted(weather.names)) or "not reached yet")
+        if irrigation:
+            log.info("irrigation-mcp: %s", cfg.irrigation_mcp_url)
         notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
         # the / menu: the bot's own commands and ecobot-mcp's prompts, set again whenever the prompts are read (each connection, and
         # when ecobot-mcp says they changed)
         weather.on_prompts = lambda: tasks.start(bot.publish_commands(app.bot))
         await bot.publish_commands(app.bot)
-        _, zoned = start_alerts(cfg, bot, notify, tasks, weather)
+        zoned = start_alerts(cfg, bot, notify, tasks, weather, irrigation)
         follow_zone(weather, bot, state, zoned)
         await stop.wait()
 

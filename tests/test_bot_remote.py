@@ -1,6 +1,7 @@
 """The bot as the service's client over MCP (BOT_MCP_URL: lib/weather.RemoteWeather, docs/ecobot-mcp.md 3.8 and step 5), against the
 real server (lib/mcp_server.EcobotServer): over the SDK's in-memory transport for a question answered with the remote tools, a chart drawn
-from a remote result with its buttons, an alert delivered through the listen and the irrigation check's inputs; under uvicorn on a localhost
+from a remote result with its buttons and an alert delivered through the listen (and irrigation-mcp's daily check's inputs, read from the
+same real server by its own client, lib/irrigation/ecobot.py); under uvicorn on a localhost
 port (a connection can fail there) for a dropped connection rebuilt with the alerts after the last id read once, the service down (the bot
 says so), and ecobot.main(), always a client (step 6b). The rest of the suite runs the bot against ecobot-mcp in memory (tests/served.py)."""
 
@@ -20,7 +21,7 @@ from lib.bot import SERVICE_DOWN, Bot
 from lib.llm import Agent
 from lib.mcp_server import EcobotServer, http_app
 from lib.service.context import Context
-from lib.weather import RemoteWeather, ServiceForecast, ServiceRain, ServiceUnreachable
+from lib.weather import RemoteWeather, ServiceUnreachable
 from tests import evalworld
 from tests.fakes import TZ
 from tests.test_mcp_listen import Serving, free_port, until
@@ -377,37 +378,26 @@ async def test_an_alert_reaches_the_subscribed_chats_through_the_listen(connecte
     assert telegram.sent == [(1, "🌧️ It's started raining: 0.4 mm so far")] and state.read == 1
 
 
-async def test_the_irrigation_check_reads_the_measured_rain_and_the_forecast_from_the_service(connected, world):
-    rain = await ServiceRain(connected).rain_mm(24)
-    summary = json.loads(await world.service["summary"].call({"readings": ["rain"], "period": "last 24 hours"}))
-    assert rain == summary["rain_total_mm"]
-    await world.ctx.forecast.warm()   # (the service fetches its forecast)
-    forecast = connected.forecast
-    await forecast.refresh()          # (as the check does; the listen's ResourceUpdated does it too)
-    assert forecast.days
-    assert [d["date"] for d in forecast.days] == [d["date"] for d in world.ctx.forecast.days]
-    assert forecast.fetched_at == pytest.approx(world.ctx.forecast.fetched_at, abs=1)
-
-
-async def test_the_irrigation_check_runs_on_the_forecast_last_read_when_the_service_cant_be_reached(caplog):
-    from datetime import date, datetime
-    from lib.irrigation.check import IrrigationMonitor
-
-    class Down:
-        tz = TZ
-
-        async def call_text(self, *a, **k):
-            raise ServiceUnreachable()
-
-        async def resource(self, uri, wait=None):
-            raise ServiceUnreachable()
-    forecast = ServiceForecast(Down())
-    now = datetime(2026, 11, 10, 18, 0, tzinfo=TZ)
-    forecast.days, forecast.fetched_at = [{"date": date(2026, 11, 11), "rain_1mm_pct": 70}], now.timestamp() - 3600   # (read an hour ago)
-    forecast.now = lambda: now
-    monitor = IrrigationMonitor(None, NS(monitor={}), None, TZ, station=ServiceRain(Down()), forecast=forecast)
-    assert await monitor.rain_reason(now) == "70% chance of at least 1 mm tomorrow"
-    assert "the measured rain is unavailable" in caplog.text and "using the one last read" in caplog.text
+async def test_irrigation_mcps_check_reads_the_measured_rain_and_the_forecast_from_the_real_server(world):
+    """(Moved here from the bot's side in step 8b, beside the real server: the check is irrigation-mcp's, asking through its own client.)"""
+    from lib.irrigation.ecobot import EcobotWeather
+    client = EcobotWeather(world.server, tz=None)
+    task = asyncio.create_task(client.run())
+    try:
+        await asyncio.wait_for(client.listening.wait(), 10)
+        rain = await client.rain.rain_mm(24)
+        summary = json.loads(await world.service["summary"].call({"readings": ["rain"], "period": "last 24 hours"}))
+        assert rain == summary["rain_total_mm"]
+        await world.ctx.forecast.warm()   # (the service fetches its forecast)
+        forecast = client.forecast
+        await forecast.refresh()          # (as the check does; the listen's ResourceUpdated does it too)
+        assert forecast.days
+        assert [d["date"] for d in forecast.days] == [d["date"] for d in world.ctx.forecast.days]
+        assert forecast.fetched_at == pytest.approx(world.ctx.forecast.fetched_at, abs=1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await client.close()
 
 
 # ---------- under uvicorn ----------
@@ -571,7 +561,7 @@ async def test_main_as_a_client_runs_no_sources_and_answers_from_the_service(bar
 
 async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_zone_once_read_and_keeps_it(tmp_path, monkeypatch, caplog):
     """ecobot.main() with BOT_MCP_URL and the service not up within STARTUP_WAIT starts in TZ's zone (UTC here, as a container's); once
-    the service is reached, its station's zone (Melbourne) is the bot's, the charts', the alert delivery's and the irrigation check's,
+    the service is reached, its station's zone (Melbourne) is the bot's, the charts' and the alert delivery's,
     and it is kept in bot_state.json: the next start with the service down runs in it, not in UTC."""
     import os
     import signal
@@ -639,32 +629,6 @@ async def test_a_start_while_the_service_cant_be_reached_follows_the_station_s_z
         assert "the station's last read, Australia/Melbourne" in caplog.text
     finally:
         alerts.close()
-
-
-async def test_the_irrigation_check_is_timed_again_in_a_zone_read_later(tmp_path, monkeypatch):
-    """The irrigation check's wait for 18:00 is cut short when the station's zone arrives, and timed again in it."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    from lib.irrigation import check as monitor_module
-    from lib.irrigation.check import IrrigationMonitor
-    utc = ZoneInfo("Etc/UTC")
-    monitor = IrrigationMonitor(None, NS(monitor={"irrigation_monitor": {}}), None, utc, 18)
-    waits = []
-
-    def now_local(tz):
-        return datetime(2026, 11, 10, 6, 0) if str(tz) == "Etc/UTC" else datetime(2026, 11, 10, 17, 0)   # (06:00 UTC: 17:00 there)
-    monkeypatch.setattr(monitor_module, "now_local", now_local)
-    timed = monitor.seconds_until_next
-    monitor.seconds_until_next = lambda now: waits.append(timed(now)) or waits[-1]   # (the waits themselves are real)
-    task = asyncio.create_task(monitor.run())
-    try:
-        await until(lambda: waits, what="the first wait")
-        monitor.tz = TZ
-        await until(lambda: len(waits) == 2, what="the wait timed again")
-    finally:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-    assert waits == [12 * 3600, 3600]   # 12 hours to 18:00 UTC; then the hour to 18:00 in Melbourne
 
 
 def test_the_bot_needs_ecobot_mcps_address_and_no_source_settings(monkeypatch, tmp_path):

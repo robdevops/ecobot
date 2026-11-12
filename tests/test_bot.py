@@ -617,30 +617,33 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
 
 
 BOT_MODULES = ["ecobot", "lib.bot", "lib.weather", "lib.upstream", "lib.model_tools", "lib.llm", "lib.prompt", "lib.alerts.notify",
-               "lib.alerts.menu", "lib.irrigation.check", "lib.irrigation", "lib.irrigation.menu", "lib.periods", "lib.templates",
+               "lib.alerts.menu", "lib.irrigation_menu", "lib.irrigation_remote", "lib.periods", "lib.templates",
                "lib.admins", "lib.buttons", "lib.config", "lib.intent", "lib.version", "lib.theme"]
 NOT_THE_BOTS = ("PIL", "lib.charts", "lib.draw", "lib.gauges",                                       # drawing (step 6a)
-                "lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage")     # the sources and their file (6b)
+                "lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage",     # the sources and their file (6b)
+                "lib.irrigation.tuya", "lib.irrigation.watchdog", "lib.irrigation.check",         # irrigation-mcp's controller (8b)
+                "lib.irrigation.server", "lib.irrigation.state", "lib.irrigation.ecobot")
 
 
 def test_the_bot_imports_no_pillow_no_drawing_module_and_no_source_module(tmp_path):
-    """The bot draws nothing and runs no source (docs/ecobot-mcp.md steps 6a and 6b): importing its modules, and building it as
-    ecobot-mcp's client with its alert delivery and irrigation check, and reading an answer for the air link (reads_air), imports neither Pillow nor lib/charts.py, lib/draw.py or
-    lib/gauges.py, nor any module of the sources (lib/ecowitt, lib/airgradient, lib/forecast, lib/pollen) or of the readings file
-    (lib/storage); every picture it sends, and every reading, is ecobot-mcp's."""
+    """The bot draws nothing, runs no source and no irrigation controller (docs/ecobot-mcp.md steps 6a, 6b and 8b): importing its
+    modules, and building it as ecobot-mcp's and irrigation-mcp's client with both alert deliveries, and reading an answer for the air
+    link (reads_air), imports neither Pillow nor lib/charts.py, lib/draw.py or lib/gauges.py, nor any module of the sources (lib/ecowitt,
+    lib/airgradient, lib/forecast, lib/pollen) or of the readings file (lib/storage), nor irrigation-mcp's Tuya client, watchdog, daily
+    check or server; every picture it sends, and every reading, is ecobot-mcp's, and the controller irrigation-mcp's."""
     import os
     import subprocess
     import sys
     from lib.config import ROOT
     code = (f"import sys, importlib; [importlib.import_module(m) for m in {BOT_MODULES!r}]; "
             "from types import SimpleNamespace as NS; from zoneinfo import ZoneInfo; from lib.alerts.notify import AlertDelivery, "
-            "AlertState, Notifier; from lib.irrigation.check import IrrigationMonitor; from lib.bot import Bot; from lib.llm import Agent; "
-            "from lib import model_tools; from lib.weather import RemoteWeather, ServiceRain; "
-            "w = RemoteWeather('http://127.0.0.1:9/mcp', 't'); "
+            "AlertState, Notifier, ReadMark; from lib.bot import Bot; from lib.llm import Agent; "
+            "from lib import model_tools; from lib.weather import RemoteWeather; from lib.irrigation_remote import RemoteIrrigation; "
+            "w = RemoteWeather('http://127.0.0.1:9/mcp', 't'); i = RemoteIrrigation('http://127.0.0.1:9/mcp', 't'); "
             f"s = AlertState({str(tmp_path / 's.json')!r}); "
-            "b = Bot(NS(tz=ZoneInfo('UTC')), Agent(None, 'm', model_tools.tools(w)), s, service=w); "
+            "b = Bot(NS(tz=ZoneInfo('UTC')), Agent(None, 'm', model_tools.tools(w)), s, i, service=w); "
             "AlertDelivery(w.alerts, Notifier(NS(), s, b.alert_charts), s, ZoneInfo('UTC'), weather=w); "
-            "IrrigationMonitor(None, s, None, ZoneInfo('UTC'), 18, ServiceRain(w), w.forecast); "
+            "AlertDelivery(i.alerts, Notifier(NS(), s, b.alert_charts), s, ZoneInfo('UTC'), mark=ReadMark(s, 'irrigation-mcp')); "
             "from lib.bot import reads_air; [reads_air(*c) for c in (('current', {'readings': ['pm2.5']}, {'sensors': {'air': {}}}), "
             "('days', {'sort_by': 'pm2_5_max'}, {}), ('summary', {}, {'series': {}}))]; "
             f"print(sorted(m for m in sys.modules if m.split('.')[0] == 'PIL' or m.startswith({NOT_THE_BOTS!r})))")

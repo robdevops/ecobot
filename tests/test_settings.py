@@ -160,6 +160,22 @@ def test_irrigation_mcp_reads_only_its_own_settings_and_the_shared_ones_and_cann
     assert service.tuya_device_id == "" and service.irrigation_bind == ("127.0.0.1", 8766)   # ecobot-mcp reads none of irrigation-mcp's
 
 
+def test_the_bot_reads_none_of_irrigation_mcps_settings_and_reaches_it_at_bot_irrigation_mcp_url(monkeypatch, tmp_path, caplog):
+    """Step 8b: the controller is irrigation-mcp's; the bot is its client (BOT_IRRIGATION_MCP_URL, unset: no irrigation), and reads no
+    IRRIGATION_ setting, nor their old names (BOT_TUYA_*, TUYA_*, BOT_IRRIGATION_CHECK_HOUR), so it warns of none of them either."""
+    bot_settings(monkeypatch, tmp_path)
+    for name, value in (("BOT_TUYA_CLIENT_ID", "old"), ("TUYA_DEVICE_ID", "older"), ("BOT_IRRIGATION_CHECK_HOUR", "6"), ("IRRIGATION_BIND", "0.0.0.0:1")):
+        monkeypatch.setenv(name, value)
+    cfg = Config.from_env()
+    for f in fields(Config):
+        if f.metadata.get("env", "").startswith("IRRIGATION_"):
+            assert getattr(cfg, f.name) == f.default, f.name
+    assert cfg.irrigation_mcp_url == "" and not cfg.irrigation and "Old setting names" not in caplog.text
+    monkeypatch.setenv("BOT_IRRIGATION_MCP_URL", "http://127.0.0.1:8766/mcp/")
+    assert Config.from_env().irrigation_mcp_url == "http://127.0.0.1:8766/mcp"
+    assert Config.from_env(program="irrigation").irrigation_mcp_url == ""                # (irrigation-mcp doesn't read the bot's)
+
+
 def test_irrigation_mcp_s_settings_have_their_defaults():
     defaults = {f.name: f.default for f in fields(Config)}
     assert defaults["irrigation_bind"] == ("127.0.0.1", 8766) and defaults["irrigation_allowed_hosts"] == ("127.0.0.1", "localhost")

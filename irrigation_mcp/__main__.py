@@ -19,11 +19,13 @@ import contextlib
 import logging
 import signal
 import socket
+from urllib.parse import urlsplit
 
 from lib import auth_token, mcp_http
 from lib.config import Config
 from lib.logs import LogFormat, on_journal, stream_handlers
 from lib.mcp_http import Uvicorn
+from lib.netenv import docker_private_network
 from lib.version import version
 
 log = logging.getLogger("lib.irrigation.main")   # (under "lib": LOG_LEVEL reaches it)
@@ -63,6 +65,10 @@ async def main():
         device = Tuya(cfg)
         stack.push_async_callback(safely, device.close)
         watchdog = Watchdog(device, state)
+        if urlsplit(cfg.irrigation_ecobot_mcp_url).hostname in ("127.0.0.1", "localhost", "::1") and docker_private_network():
+            log.warning("IRRIGATION_ECOBOT_MCP_URL is %s, but in a container on Docker's own network that is irrigation-mcp's container, "
+                        "not ecobot-mcp's: set it to http://ecobot-mcp:8765/mcp, or leave it out of /etc/ecobot.env (docker/irrigation.env "
+                        "sets it)", cfg.irrigation_ecobot_mcp_url)
         weather = EcobotWeather(cfg.irrigation_ecobot_mcp_url, ecobot_token(cfg), cfg.tz)
         stack.push_async_callback(weather.close)
         tasks = Tasks()

@@ -25,9 +25,8 @@ sources of its own and never opens the readings file (step 6b). Everything the b
     changed (PromptsListChanged; `on_prompts()` is called after each read), and `prompt(name, arguments)` one's question in words (the
     bot offers each as a Telegram command, step 6c).
 
-For the irrigation check while it is still the bot's (step 8b moves it to irrigation-mcp alone): `ServiceRain` (the measured rain, from
-`summary {readings: ["rain"], period: "last 24 hours"}`) and `ServiceForecast` (ecobot://forecast, the last read kept when the service
-can't be reached), docs 3.9: irrigation-mcp's (lib/irrigation/ecobot.py), over this client too."""
+`RemoteAlerts` reads an alert log over MCP as AlertDelivery reads one: ecobot://alerts here, and irrigation://alerts over the bot's client
+of irrigation-mcp (lib/irrigation_remote.py)."""
 
 import asyncio
 import base64
@@ -38,14 +37,13 @@ from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from . import chart_images
-from .irrigation.ecobot import ServiceForecast, ServiceRain
 from .service.common import AS_DRAWN, CHART_NOTE
 
 log = logging.getLogger(__name__)
 
-STATION_URI, ALERTS_URI, FORECAST_URI = "ecobot://station", "ecobot://alerts", "ecobot://forecast"   # (as lib/mcp_server.py's)
+STATION_URI, ALERTS_URI = "ecobot://station", "ecobot://alerts"   # (as lib/mcp_server.py's)
 STATUS_URI = "ecobot://status"   # the Status picture (lib/status.py)
-LISTENED = (STATION_URI, ALERTS_URI, FORECAST_URI)   # what the bot listens to (not the live readings, pushed every few seconds)
+LISTENED = (STATION_URI, ALERTS_URI)   # what the bot listens to (not the live readings, pushed every few seconds)
 CALL_WAIT = 5.0          # how long a question's call waits for the service while it is being reached again, before it is refused
 BACKGROUND = "background"   # request _meta priority of a call nobody waits for (lib/service/common.py): refused at once while down
 AIR_LINK_LABEL = "live chart"   # the AirGradient dashboard link's words (lib/airgradient/source.py)
@@ -144,13 +142,14 @@ class RemoteTools:
 
 
 class RemoteAlerts:
-    """The service's alert log read over MCP (ecobot://alerts and its template with `since`), as AlertDelivery reads an alert log.
-    A read waits for the service while it can't be reached; `wait` returns when the listen says the alerts changed (ResourceUpdated) or a
-    new connection listens (nothing is replayed, so what was missed is read after the last id handled)."""
+    """A server's alert log read over MCP (`uri`, ecobot://alerts or irrigation://alerts, and its template with `since`), as
+    AlertDelivery reads an alert log. `weather`: the client it is read through (its `resource(uri, wait=None)`). A read waits for the
+    server while it can't be reached; `wait` returns when the listen says the alerts changed (ResourceUpdated: `changed()`) or a new
+    connection listens (nothing is replayed, so what was missed is read after the last id handled)."""
     remote = True
 
-    def __init__(self, weather: "RemoteWeather"):
-        self.weather = weather
+    def __init__(self, weather, uri: str = ALERTS_URI):
+        self.weather, self.uri = weather, uri
         self.identity: str | None = None
         self.newest = 0
         self._changed = asyncio.Event()
@@ -165,7 +164,7 @@ class RemoteAlerts:
         again, holding up the alerts of a service that is back in a moment)."""
         from mcp.shared.exceptions import MCPError
         from mcp_types import CONNECTION_CLOSED
-        uri = f"{ALERTS_URI}?since={int(since)}" + ("&expired=true" if expired else "")
+        uri = f"{self.uri}?since={int(since)}" + ("&expired=true" if expired else "")
         while True:
             try:
                 data = await self.weather.resource(uri, wait=None)
@@ -211,7 +210,7 @@ class RemoteWeather:
     """The service at `target` (its MCP URL; in tests, a Server in memory), as the bot's interface. `run()` is the supervisor (the
     lib/upstream.py's Upstream: one client, discovered by hand for the instructions, listening; on a transport error or a lost or ended listen it
     is dropped and built again after a backoff, which discovers and listens again). Each new connection reads the tool list and the
-    station; the listen's events keep them current (ToolsListChanged, the station's and the forecast's ResourceUpdated) and wake the
+    station; the listen's events keep them current (ToolsListChanged, the station's ResourceUpdated) and wake the
     alert delivery (the alerts'). A call while it is being reached waits up to CALL_WAIT seconds (a background one not at all) and is
     then refused with ServiceUnreachable."""
     is_weather, remote = True, True
@@ -225,7 +224,6 @@ class RemoteWeather:
         self.station: dict = {}
         self._instructions = ""
         self.alerts = RemoteAlerts(self)
-        self.forecast = ServiceForecast(self)
         self.listening = asyncio.Event()   # the first connection's listen is up, its tools and station read
         self.on_zone = None   # on_zone(zone): the station's time zone, called when it is first read and when it changes (ecobot.py)
         self.prompts: list[Prompt] = []
@@ -248,14 +246,13 @@ class RemoteWeather:
 
     async def _listening(self):
         """A new connection listens: the tools, the station and the prompts read again, the alerts looked at (what came while it was
-        down is not replayed), the forecast read again."""
+        down is not replayed)."""
         for refresh in (self._read_tools, self._read_station, self._read_prompts):
             try:
                 await refresh()
             except Exception as e:   # (the connection is still good: the listen's events refresh them later)
                 log.warning("ecobot-mcp: couldn't read %s (%s: %s)", refresh.__name__.removeprefix("_read_"), type(e).__name__, e)
         self.alerts.changed()
-        self._soon(self.forecast.refresh)
         self.listening.set()
 
     async def _event(self, event):
@@ -270,8 +267,6 @@ class RemoteWeather:
                 self.alerts.changed()
             elif uri == STATION_URI:
                 self._soon(self._read_station)
-            elif uri == FORECAST_URI:
-                self._soon(self.forecast.refresh)
 
     def _soon(self, fn):
         """fn() in the background (a listen event is not held up by the reads it causes), its failure only logged."""
@@ -465,4 +460,4 @@ class RemoteWeather:
         await asyncio.gather(*self._background, return_exceptions=True)
 
 
-__all__ = ["ChartImage", "ChartNotDrawn", "Prompt", "RemoteWeather", "ServiceForecast", "ServiceRain", "ServiceUnreachable", "UNREACHABLE", "value"]
+__all__ = ["ChartImage", "ChartNotDrawn", "Prompt", "RemoteAlerts", "RemoteWeather", "ServiceUnreachable", "UNREACHABLE", "value"]

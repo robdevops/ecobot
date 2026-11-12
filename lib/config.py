@@ -66,7 +66,7 @@ REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: ecobot-mcp (pyth
 REQUIRED_BY_IRRIGATION = ("tuya_device_id", "tuya_client_id", "tuya_client_secret")   # irrigation-mcp (python -m irrigation_mcp) can't run without them
 MCP_PREFIX = "MCP_"   # ecobot-mcp's own settings: the bot doesn't read them (they keep their defaults in its Config)
 BOT_PREFIX = "BOT_"   # the bot's own
-IRRIGATION_PREFIX = "IRRIGATION_"   # irrigation-mcp's own (the bot reads them too while its own irrigation runs, until step 8b)
+IRRIGATION_PREFIX = "IRRIGATION_"   # irrigation-mcp's own
 PROGRAMS = ("bot", "mcp", "irrigation")
 NO_TUYA = ("irrigation-mcp needs the irrigation controller's Tuya settings: set IRRIGATION_TUYA_DEVICE_ID, IRRIGATION_TUYA_CLIENT_ID "
            "and IRRIGATION_TUYA_CLIENT_SECRET (docs/configuration.md); {missing} not set")
@@ -333,8 +333,9 @@ class Config:
     log_width: int = _setting("BOT_LOG_WIDTH", 24, _whole, old="LOG_WIDTH")             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
     mcp_url: str = _setting("BOT_MCP_URL", "", _url, old="WEATHER_MCP_URL")    # ecobot-mcp's endpoint, e.g. http://127.0.0.1:8765/mcp (the bot is its client, and stops without it: NO_SERVICE)
     retired_mcp_token: str = _setting(RETIRED_TOKEN, "")            # retired: sent only when AUTH_TOKENS is unset (ecobot.mcp_token)
+    irrigation_mcp_url: str = _setting("BOT_IRRIGATION_MCP_URL", "", _url)   # irrigation-mcp's endpoint, e.g. http://127.0.0.1:8766/mcp (unset: no irrigation in the bot)
     # irrigation-mcp's (python -m irrigation_mcp): the irrigation controller, its watchdog and daily check, and its MCP server. The bot
-    # reads them too while it runs the controller itself (until step 8b)
+    # reads none of them: it is irrigation-mcp's client (BOT_IRRIGATION_MCP_URL)
     tuya_device_id: str = _setting("IRRIGATION_TUYA_DEVICE_ID", "", old=("BOT_TUYA_DEVICE_ID", "TUYA_DEVICE_ID"))   # all three switch the irrigation controller on (irrigation-mcp stops without them)
     tuya_client_id: str = _setting("IRRIGATION_TUYA_CLIENT_ID", "", old=("BOT_TUYA_CLIENT_ID", "TUYA_CLIENT_ID"))
     tuya_client_secret: str = _setting("IRRIGATION_TUYA_CLIENT_SECRET", "", old=("BOT_TUYA_CLIENT_SECRET", "TUYA_CLIENT_SECRET"))
@@ -343,7 +344,7 @@ class Config:
     irrigation_bind: tuple[str, int] = _setting("IRRIGATION_BIND", ("127.0.0.1", 8766), _bind)   # host:port irrigation-mcp listens on
     irrigation_allowed_hosts: tuple[str, ...] = _setting("IRRIGATION_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
     irrigation_ecobot_mcp_url: str = _setting("IRRIGATION_ECOBOT_MCP_URL", "http://127.0.0.1:8765/mcp", _url)   # ecobot-mcp, which its daily check asks for the rain and the forecast
-    # Both read them
+    # Every program reads them
     dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the station's time zone
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the program's own debug lines; the libraries keep theirs
     auth_tokens: tuple[str, ...] = _setting("AUTH_TOKENS", (), _tokens, old="MCP_SERVICE_TOKENS")   # "token,token,...": ecobot-mcp accepts each, the bot sends the first; unset: the one ecobot-mcp generates in the data folder (lib/auth_token.py)
@@ -389,6 +390,7 @@ class Config:
 
     @property
     def irrigation(self) -> bool:
+        """irrigation-mcp's controller is set up (its three Tuya settings): it can't start without (NO_TUYA)."""
         return bool(self.tuya_device_id and self.tuya_client_id and self.tuya_client_secret)
 
     @property
@@ -413,11 +415,10 @@ class Config:
 
     @staticmethod
     def reads(program: str, name: str) -> bool:
-        """Whether `program` (PROGRAMS) reads the setting `name`: the bot its own (BOT_), irrigation-mcp's (IRRIGATION_, while it runs
-        the controller itself) and the shared ones; ecobot-mcp every one but irrigation-mcp's; irrigation-mcp its own and the shared
-        ones (not the bot's retired token)."""
+        """Whether `program` (PROGRAMS) reads the setting `name`: the bot its own (BOT_) and the shared ones; ecobot-mcp every one but
+        irrigation-mcp's; irrigation-mcp its own and the shared ones (not the bot's retired token)."""
         if program == "bot":
-            return not name.startswith(MCP_PREFIX)
+            return not name.startswith((MCP_PREFIX, IRRIGATION_PREFIX))
         if program == "irrigation":
             return name.startswith(IRRIGATION_PREFIX) or not name.startswith((MCP_PREFIX, BOT_PREFIX)) and name != RETIRED_TOKEN
         return not name.startswith(IRRIGATION_PREFIX)

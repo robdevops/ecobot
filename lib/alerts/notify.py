@@ -6,9 +6,9 @@ blocked or removed the bot is marked gone: it gets nothing, and has its settings
 settings and the last alert delivered live in a small JSON file (bot_state.json), so restarts neither forget chats nor repeat alerts.
 Alerts are sent silently, with the settings buttons and, when there is one, a small italic footer with a link label.
 
-The alerts themselves are the service's: its rules append them to the alert log (lib/alert_log.py), and AlertDelivery sends each to the
-chats subscribed to its kind. Only the irrigation controller's are still sent here directly (lib/irrigation/check.py), until it is a
-server of its own.
+The alerts themselves are the servers': ecobot-mcp's rules append them to its alert log (lib/alert_log.py, ecobot://alerts), and
+irrigation-mcp's daily check to its own (irrigation://alerts); an AlertDelivery for each sends every new one to the chats subscribed to
+its kind, keeping the last id it handled (ecobot-mcp's in AlertState.read, irrigation-mcp's in a ReadMark of its own).
 """
 
 import asyncio
@@ -47,26 +47,30 @@ def _flood_wait(e: RetryAfter) -> float:
 
 
 class AlertState:
-    """Known chats (with alerts on/off), the irrigation controller's state and the last alert delivered, saved to a JSON file
-    (bot_state.json). The alert rules keep theirs apart (lib/alerts/store.py: alert_state.json)."""
+    """Known chats (with alerts on/off) and the last alert delivered of each server's log, saved to a JSON file (bot_state.json). The
+    alert rules keep theirs apart (lib/alerts/store.py: alert_state.json), and irrigation-mcp its own (irrigation_state.json)."""
 
     def __init__(self, path):
         self.path = path
         data = load(path) or {}
         self.chats: dict[int, dict] = {int(k): v for k, v in data.get("chats", {}).items()}
-        self.monitor: dict = data.get("monitor", {})   # the irrigation controller's (until it is a server of its own)
+        self.monitor: dict = data.get("monitor", {})   # what the bot kept when it ran the irrigation controller itself: kept as it
+                                                       # was, for irrigation-mcp's first start, which copies it (lib/irrigation/state.py)
         self.charts: dict[str, str] = data.get("charts", {})   # the question behind each chart sent, for its period buttons
         self.read: int | None = data.get("alerts_read")       # the id of the last alert in the log the bot handled (AlertDelivery)
         self.read_log: str | None = data.get("alerts_log")    # ... and that log's identity (AlertLog.identity): ids start again in a new one
         self.zone: str | None = data.get("station_zone")      # the remote service's station's time zone, last read (ecobot.py: a start
                                                               # while the service can't be reached runs in it, not in TZ's)
+        marks = data.get("alerts_read_by")
+        self.marks: dict[str, dict] = marks if isinstance(marks, dict) else {}   # another server's log (irrigation-mcp's): ReadMark
 
     def save(self):
         """Written in full to a new file that then replaces the old one, on disk first, so a crash leaves one or the other whole."""
         write(self.path, {"chats": {str(k): v for k, v in self.chats.items()}, "monitor": self.monitor, "charts": self.charts,
                           **({"alerts_read": self.read} if self.read is not None else {}),
                           **({"alerts_log": self.read_log} if self.read_log is not None else {}),
-                          **({"station_zone": self.zone} if self.zone is not None else {})})
+                          **({"station_zone": self.zone} if self.zone is not None else {}),
+                          **({"alerts_read_by": self.marks} if self.marks else {})})
 
     def add_chat(self, chat_id: int, title: str):
         """A message from this chat (or the bot added to it): known from now on, and back if it was gone."""
@@ -179,6 +183,37 @@ class AlertState:
         return [c for c in self.chats if self.subscribed(c, kind)]
 
 
+class ReadMark:
+    """Where AlertDelivery keeps the last alert it handled of another server's log than ecobot-mcp's (whose mark is AlertState's own
+    `read` and `read_log`): its id and the log's identity, in bot_state.json under "alerts_read_by", by the server's name."""
+
+    def __init__(self, state: AlertState, name: str):
+        self.state, self.name = state, name
+
+    def _entry(self) -> dict:
+        entry = self.state.marks.get(self.name)
+        return entry if isinstance(entry, dict) else {}
+
+    @property
+    def read(self) -> int | None:
+        return self._entry().get("read")
+
+    @read.setter
+    def read(self, value: int | None):
+        self.state.marks[self.name] = {**self._entry(), "read": value}
+
+    @property
+    def read_log(self) -> str | None:
+        return self._entry().get("log")
+
+    @read_log.setter
+    def read_log(self, value: str | None):
+        self.state.marks[self.name] = {**self._entry(), "log": value}
+
+    def save(self):
+        self.state.save()
+
+
 class Notifier:
     def __init__(self, bot, state: AlertState, charts: AlertCharts | None = None):
         """charts: the bot's alert charts (AlertCharts), when the alerts' pictures are to be shared with its other charts."""
@@ -272,11 +307,14 @@ class AlertDelivery:
     the log can also be replaced while the bot runs (the service back on another alerts.sqlite): that is looked for on every pass, and
     delivery goes on in the new log with what came since the old one was last read (_switched)."""
 
-    def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time, weather=None):
+    def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time, weather=None,
+                 mark: ReadMark | None = None):
         """log: ecobot-mcp's alert log read over MCP (lib/weather.RemoteAlerts, whose reads are coroutines: it is looked at when `run`
         starts), or an alert log itself (lib/alert_log.py: the tests', whose reads are plain). now: the epoch clock (the events' times are compared with it).
-        weather: ecobot-mcp as the bot reaches it (lib/weather.py), which draws the events' charts; without it they go without."""
+        weather: ecobot-mcp as the bot reaches it (lib/weather.py), which draws the events' charts; without it they go without.
+        mark: where the last id handled is kept (ReadMark: irrigation-mcp's log); none: the state's own (ecobot-mcp's)."""
         self.log, self.notify, self.state, self.tz, self.now, self.weather = log, notify, state, tz, now, weather
+        self.mark = mark or state
         self.begun = False
         self.seen_at: float | None = None   # when the log was last read through (a pass of deliver_new began): see _switched
         if not getattr(log, "remote", False):
@@ -289,18 +327,18 @@ class AlertDelivery:
 
     def _begin(self, newest: int):
         self.begun = True
-        if self.state.read is None:
+        if self.mark.read is None:
             self._handled(newest)
         elif self._other_log(newest):
             log.warning("Alerts: the alert log is not the one the last alert delivered (%s) is from; starting after its newest (%s)",
-                        self.state.read, newest)
+                        self.mark.read, newest)
             self._handled(newest)
-        elif self.state.read_log is None:   # (kept before the log had an identity: this one)
-            self._handled(self.state.read)
+        elif self.mark.read_log is None:   # (kept before the log had an identity: this one)
+            self._handled(self.mark.read)
 
     def _other_log(self, newest: int) -> bool:
         """Is the log read now another than the one the last id handled is from (its identity, or its newest id behind that id)?"""
-        return self.state.read is not None and (self.state.read_log not in (None, self.log.identity) or self.state.read > newest)
+        return self.mark.read is not None and (self.mark.read_log not in (None, self.log.identity) or self.mark.read > newest)
 
     async def _switched(self, newest: int):
         """The log was replaced while the bot runs (remote: the service came back on another alerts.sqlite, deleted, moved or
@@ -313,17 +351,17 @@ class AlertDelivery:
             fresh = [e for e in await value(self.log.since(0)) if _epoch(e.get("time")) >= since]
             start = fresh[0]["id"] - 1 if fresh else newest
         log.warning("Alerts: the service's alert log is another than the one the last alert delivered (%s) is from; "
-                    "going on in it after %s", self.state.read, start)
+                    "going on in it after %s", self.mark.read, start)
         self._handled(start)
 
     @property
     def last(self) -> int:
-        return self.state.read or 0
+        return self.mark.read or 0
 
     def _handled(self, event_id: int):
-        self.state.read, self.state.read_log = event_id, self.log.identity
+        self.mark.read, self.mark.read_log = event_id, self.log.identity
         try:
-            self.state.save()
+            self.mark.save()
         except Exception as e:   # (the next one saved covers it; at worst a restart sends it again)
             log.warning("Couldn't save the last alert delivered (%s: %s)", type(e).__name__, e)
 

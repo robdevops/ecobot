@@ -28,15 +28,19 @@ class IrrigationState:
         self.monitor: dict = {k: v for k, v in data.items() if k in KEYS and isinstance(v, dict)} if isinstance(data, dict) else {}
 
     def _from_the_bot(self, bot_state_path) -> dict:
-        """The bot's entries in bot_state.json, written here at once (so they are copied only this once); {} when it kept none."""
+        """The bot's entries in bot_state.json, written here at once (so they are copied only this once, and nothing is copied at a later
+        start); {} when it kept none."""
         try:   # (read only: the bot's file is the bot's, left as it is even when it can't be read)
             bot = json.loads(Path(bot_state_path).read_text()) if bot_state_path else {}
         except (OSError, ValueError):
             bot = {}
         kept = bot.get("monitor") if isinstance(bot, dict) and isinstance(bot.get("monitor"), dict) else {}
         copied = {k: dict(kept[k]) for k in KEYS if isinstance(kept.get(k), dict) and kept[k]}
-        if copied:
+        try:   # (written even when there was nothing to copy: a later start never copies the bot's entries again)
             write(self.path, copied)
+        except OSError as e:
+            log.warning("Irrigation: couldn't write %s (%s: %s)", self.path, type(e).__name__, e)
+        if copied:
             log.info("Irrigation: the watchdog's and the daily check's state copied from %s to %s (%s), once: from now on it is kept "
                      "here", bot_state_path, self.path, ", ".join(copied))
         return copied

@@ -76,6 +76,19 @@ async def serve():
         yield start
 
 
+@pytest.fixture
+async def serve_irrigation():
+    """irrigation-mcp in memory, the bot's client of it connected (tests/served.py): `irrigation = await serve_irrigation(folder,
+    device)`, each closed when the test ends."""
+    import contextlib
+
+    from tests.served import irrigation_mcp
+    async with contextlib.AsyncExitStack() as stack:
+        async def start(*args, **kwargs):
+            return await stack.enter_async_context(irrigation_mcp(*args, **kwargs))
+        yield start
+
+
 @pytest.fixture(scope="session")
 def archived_cache(tmp_path_factory):
     """The bot's file (ecobot.sqlite) holding the fake station's whole archive, built once an hour and shared by every worker and run

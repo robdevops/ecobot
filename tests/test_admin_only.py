@@ -15,9 +15,8 @@ from lib.alerts import menu
 from lib.alerts.notify import AlertState
 from lib.bot import MAX_CALLBACK_BYTES, NOT_ADMIN, NOT_ADMIN_TOAST, STALE_BUTTON, Bot
 from lib.config import Config, _ids
-from lib.irrigation import menu as irrigation_menu
+from lib import irrigation_menu
 from tests.fakes import TZ
-from tests.test_irrigation import Remote
 
 ADMIN, STRANGER, GROUP, OTHER_GROUP = 1, 7, -5, -6
 ANONYMOUS = 1087968824           # the user Telegram shows for an admin who posts "as the group"
@@ -52,16 +51,25 @@ class Asked(Bot):
 
 
 @pytest.fixture(autouse=True)
-async def ecobot_mcp(serve):
+async def ecobot_mcp(serve, serve_irrigation, tmp_path):
     """ecobot-mcp in memory with the weather station (its alerts are the menus' types), the bot's client of it connected: what `make`
-    builds every bot over."""
-    global WEATHER
-    WEATHER = await serve(tools=[], sources=["Ecowitt"])
+    builds every bot over; and irrigation-mcp in memory over the fake controller (Remote(): the bot's client of it)."""
+    global WEATHER, IRRIGATION
+    WEATHER, IRRIGATION = await serve(tools=[], sources=["Ecowitt"]), await serve_irrigation(tmp_path / "irrigation")
     yield WEATHER
-    WEATHER = None
+    WEATHER = IRRIGATION = None
 
 
-WEATHER = None
+WEATHER = IRRIGATION = None
+
+
+def Remote():
+    """irrigation-mcp in memory, as the bot reaches it; `commands(bot)` is what its controller was told."""
+    return IRRIGATION
+
+
+def commands(irrigation) -> list:
+    return irrigation.server.device.commands
 
 
 def make(tmp_path, admin_only=True, extra=(), irrigation=None, groups=(GROUP,), tg=None):
@@ -448,8 +456,7 @@ FORGED = ["ir:water:30", "ir:delay:72h", "ir:delay:cancel", "ir:sw:off", "ir:ref
           "{0.__class__}", "%s%s%s%n", "ir:water:-1", "ir:water:1e9", "al:off:__class__:unsub", "pd:__import__('os')"]
 
 
-class Spy(Remote):
-    """The controller, recording everything it is asked to do."""
+Spy = Remote   # (irrigation-mcp's controller records everything it is asked to do: commands(spy))
 
 
 async def press_through(bot, tg, data, markup, user=ADMIN, kind="private"):
@@ -462,12 +469,12 @@ async def test_a_forged_press_does_nothing_whoever_sends_it_and_whichever_family
     spy = Spy()
     bot, state, tg = make(tmp_path, irrigation=spy)
     unrelated = alert_keyboard("sub")                                                         # a keyboard that has none of the forged data
-    before = (dict(state.chats), list(spy.commands))
+    before = (dict(state.chats), list(commands(spy)))
     for data in FORGED:
         for user in (ADMIN, STRANGER):
             press = await press_through(bot, tg, data, unrelated, user=user)
             assert press.edits == [] and press.toast == STALE_BUTTON, (data, user, press.toast)       # believed or not comes first, for everyone
-    assert (state.chats, spy.commands) == before and spy.commands == []                       # nothing changed, nothing sent to the controller
+    assert (state.chats, commands(spy)) == before and commands(spy) == []                       # nothing changed, nothing sent to the controller
 
 
 async def test_malformed_presses_are_answered_and_never_raise(tmp_path):
@@ -510,9 +517,9 @@ async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path
                          ("ir:water:10", irrigation_menu.keyboard(True, True, "water"))):
         press = await press_through(bot, tg, data, markup)
         assert press.toast not in (STALE_BUTTON, NOT_ADMIN_TOAST) and press.edits, data
-    assert bot.irrigation.commands == [("water", 10)] and state.muted(ADMIN) == {"rain"}
+    assert commands(bot.irrigation) == [("water", 10)] and state.muted(ADMIN) == {"rain"}
     stale = await press_through(bot, tg, "ir:water:10", irrigation_menu.keyboard(True, True))   # the Water list is not open on this message
-    assert stale.toast == STALE_BUTTON and bot.irrigation.commands == [("water", 10)]
+    assert stale.toast == STALE_BUTTON and commands(bot.irrigation) == [("water", 10)]
 
 
 async def test_random_data_never_gets_past_the_entry_point(tmp_path):
@@ -530,7 +537,7 @@ async def test_random_data_never_gets_past_the_entry_point(tmp_path):
             continue
         press = await press_through(bot, tg, data, rng.choice(boards), user=rng.choice([ADMIN, STRANGER]))
         assert press.toast in (STALE_BUTTON, NOT_ADMIN_TOAST) and press.edits == [], repr(data)
-    assert spy.commands == [] and (dict(state.chats), dict(state.charts)) == before
+    assert commands(spy) == [] and (dict(state.chats), dict(state.charts)) == before
 
 
 def test_a_callback_query_from_python_telegram_bot_is_what_the_checks_read():

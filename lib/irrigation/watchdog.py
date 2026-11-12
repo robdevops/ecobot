@@ -1,7 +1,7 @@
-"""Closing the valve after a run the bot started, even if the controller does not.
+"""Closing the valve after a run irrigation-mcp started (its water tool), even if the controller does not.
 
 `water` asks the device to run for N minutes (its `countdown`), but nothing independent checks that it stops. So the end time is
-written to the bot's state file; a minute-by-minute check (cheap: it only talks to the controller once the time has passed) switches
+written to irrigation-mcp's state file (irrigation_state.json); a minute-by-minute check (cheap: it only talks to the controller once the time has passed) switches
 the valve off if it is still on. Because the time is saved, a restart in the middle of a run still closes the valve.
 """
 

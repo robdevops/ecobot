@@ -28,7 +28,7 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, Res
 from mcp.shared.exceptions import MCPError
 
 from ..mcp_http import RequestLog, TokenCheck, alerts_read, host_settings
-from .tuya import DELAYS, MAX_MINUTES, IrrigationError, is_paused
+from .common import DELAYS, MAX_MINUTES, IrrigationError, is_paused
 
 log = logging.getLogger(__name__)
 requests_log = logging.getLogger(__name__ + ".requests")   # one line per HTTP request (RequestLog)

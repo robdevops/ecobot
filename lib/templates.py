@@ -9,7 +9,7 @@ import hashlib
 from collections.abc import Collection
 
 CAPABILITIES = "\U0001f514 Help & Alerts"  # answered with what the bot can do, then the /alerts status
-IRRIGATION = "\U0001f331 Irrigation"     # answered with the irrigation controller's status and buttons (only when it is configured)
+IRRIGATION = "\U0001f331 Irrigation"     # answered with the irrigation controller's status and buttons (only with irrigation-mcp: BOT_IRRIGATION_MCP_URL)
 STATUS = "Status"                         # the Status button's sentence: the gauges, then the `report` prompt's answer (Bot.status)
 
 # Every button but Help & Alerts and Status is a chart of the last day (the period buttons under it change that)
@@ -46,7 +46,7 @@ HIDDEN = "hidden"
 
 
 def rows(irrigation: bool = False) -> list[list[tuple[str, str]]]:
-    """The button rows. With the irrigation controller configured, its button takes the place of Wind (the last one)."""
+    """The button rows. With irrigation-mcp (BOT_IRRIGATION_MCP_URL), its button takes the place of Wind (the last one)."""
     return [*ROWS[:-1], [*ROWS[-1][:-1], (IRRIGATION, "")]] if irrigation else ROWS
 
 
