@@ -391,7 +391,7 @@ async def test_the_irrigation_check_reads_the_measured_rain_and_the_forecast_fro
 
 async def test_the_irrigation_check_runs_on_the_forecast_last_read_when_the_service_cant_be_reached(caplog):
     from datetime import date, datetime
-    from lib.alerts.irrigation import IrrigationMonitor
+    from lib.irrigation.check import IrrigationMonitor
 
     class Down:
         tz = TZ
@@ -645,8 +645,8 @@ async def test_the_irrigation_check_is_timed_again_in_a_zone_read_later(tmp_path
     """The irrigation check's wait for 18:00 is cut short when the station's zone arrives, and timed again in it."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    from lib.alerts import irrigation as monitor_module
-    from lib.alerts.irrigation import IrrigationMonitor
+    from lib.irrigation import check as monitor_module
+    from lib.irrigation.check import IrrigationMonitor
     utc = ZoneInfo("Etc/UTC")
     monitor = IrrigationMonitor(None, NS(monitor={"irrigation_monitor": {}}), None, utc, 18)
     waits = []

@@ -1,4 +1,6 @@
-"""The irrigation controller, checked once a day (18:00 local by default).
+"""The irrigation controller, checked once a day (18:00 local by default, IRRIGATION_CHECK_HOUR): run by irrigation-mcp
+(irrigation_mcp, lib/irrigation/server.py), and by the bot while it still runs the controller itself (until step 8b). What it tells
+goes to `notify(text, kind=...)`: irrigation-mcp's alert log (irrigation://alerts), the bot's chats.
 
   - a battery below 5% is told to the chats subscribed to "irrigation battery" (kind irrigation_battery) (at most once a day, until it is charged);
   - if more than 1 mm of rain fell in the last 24 hours, or Open-Meteo gives today or tomorrow a 50% or better chance of at least
@@ -6,7 +8,7 @@
     delay (it skips its own schedule) and the chats subscribed to "irrigation pause" are told why. A delay someone set is left alone
     (nothing changes, so nothing is sent); the bot's own from yesterday, seconds from lapsing at the check, is started again.
 
-The bot has no scheduler, so `run` sleeps until the next check time. If the controller can't be reached it tries again every 30 minutes
+There is no scheduler, so `run` sleeps until the next check time. If the controller can't be reached it tries again every 30 minutes
 until it works or the day ends. The date of the last completed check is saved, so a restart neither repeats a day nor skips one.
 """
 
@@ -14,9 +16,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from ..irrigation.tuya import is_paused
+from ..alerts.kinds import RAIN_FROM_PCT, kinds_of
 from ..timeutil import local_epoch, now_local, seconds_until, when
-from .kinds import RAIN_FROM_PCT, kinds_of
+from .tuya import is_paused
 
 log = logging.getLogger(__name__)
 
@@ -31,8 +33,10 @@ class IrrigationMonitor:
     KINDS = kinds_of("Irrigation")
 
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
-        """station: what asks ecobot-mcp for the measured rain (lib/weather.ServiceRain: rain_mm()); forecast: the forecast read from
-        it (lib/weather.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be None."""
+        """state: where its days are kept (`monitor`, `save()`: lib/irrigation/state.IrrigationState, or the bot's AlertState); station:
+        what asks ecobot-mcp for the measured rain (lib/irrigation/ecobot.ServiceRain: rain_mm()); forecast: the forecast read from it
+        (lib/irrigation/ecobot.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be
+        None."""
         self._rezoned = asyncio.Event()
         self.device, self.state, self.notify, self.tz, self.hour = device, state, notify, tz, hour
         self.station, self.forecast = station, forecast

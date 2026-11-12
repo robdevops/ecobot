@@ -376,7 +376,7 @@ def test_vpd_in_chart_all_is_off_by_default_and_a_config_option_turns_it_on(monk
 
 async def test_main_with_the_irrigation_controller_starts_its_check_and_watchdog_and_closes_it(tmp_path, monkeypatch, caplog):
     import httpx
-    from lib.alerts.irrigation import IrrigationMonitor
+    from lib.irrigation.check import IrrigationMonitor
     from lib.irrigation import tuya as tuya_module
     from lib.irrigation.watchdog import Watchdog
     caplog.set_level("INFO")

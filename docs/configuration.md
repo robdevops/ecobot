@@ -5,10 +5,11 @@ ecobot is configured only through environment variables. They live in one file, 
 Each setting is named for the program that reads it:
 
 - `MCP_...`: read by **ecobot-mcp** (`python -m ecobot_mcp`: the sources, the alert rules, the MCP server) alone. The bot, its client, doesn't read them.
-- `BOT_...`: read by the **bot** (`ecobot.py`: Telegram, the model, the irrigation controller) alone.
-- No prefix: read by **both**.
+- `IRRIGATION_...`: read by **irrigation-mcp** (`python -m irrigation_mcp`: the irrigation controller's MCP server, its watchdog and daily check). The bot reads them too while it still runs the controller itself (until step 8b of [ecobot-mcp.md](ecobot-mcp.md)).
+- `BOT_...`: read by the **bot** (`ecobot.py`: Telegram, the model) alone.
+- No prefix: read by **all** of them.
 
-Settings were renamed in November 2026 (README: [Renamed settings](../README.md#renamed-settings)). An old name still works when the new one is unset: it is used, and one warning at start names the new name (never the value). Where both are set, the new one wins and the old one is named as ignored.
+Settings were renamed in November 2026 (README: [Renamed settings](../README.md#renamed-settings)), the irrigation controller's twice (`TUYA_...`, then `BOT_TUYA_...`, now `IRRIGATION_TUYA_...`). An old name still works when the new one is unset: it is used, and one warning at start names the new name (never the value). Where both are set, the new one wins and the old one is named as ignored (of two old names, the newer wins).
 
 ## The environment file
 
@@ -93,13 +94,6 @@ Every request to `/mcp` needs a token (`AUTH_TOKENS`, below). Chart images are n
 | `BOT_ADMIN_ONLY` | `off` | `on`: answer only admins/creators of groups the bot is in. Others get "only group admins" when addressed. `/alerts` is openable by anyone in a group (changes stay admin-only). Admin list cached 10 min |
 | `BOT_ADMIN_CHAT_IDS` | – | Extra allowed ids, comma/space separated. User id: allowed before any group exists. Group id (negative): adds its admins and anonymous admins |
 
-### Irrigation
-
-| Variable | Default | Description |
-|---|---|---|
-| `BOT_TUYA_DEVICE_ID`, `BOT_TUYA_CLIENT_ID`, `BOT_TUYA_CLIENT_SECRET` | – | Enables the irrigation controller (Tuya cloud): Irrigation button, rain delay check, pause/battery alerts |
-| `BOT_TUYA_BASE_URL` | `https://openapi.tuyaeu.com` | Tuya data centre |
-| `BOT_IRRIGATION_CHECK_HOUR` | `18` | Local hour of the daily rain-delay check (0–23) |
 
 ### The bot as ecobot-mcp's client
 
@@ -110,8 +104,24 @@ Every request to `/mcp` needs a token (`AUTH_TOKENS`, below). Chart images are n
 The bot asks ecobot-mcp for the picture of every chart it sends, the model's answers' included (request `_meta` `chart_image: "png"`, in its own `DARKMODE` theme), and for the Status picture (`ecobot://status`), so its `BOT_MCP_URL` needs no `?charts=png`; it draws nothing itself.
 
 While ecobot-mcp can't be reached the bot tells whoever asks so, and reconnects by itself (1, 2, 5, 10, then every 30 seconds); the
-alerts sent meanwhile that are still news are delivered once it is back. The irrigation controller (`BOT_TUYA_*`) stays the bot's: its daily
-check asks ecobot-mcp for the rain measured and the forecast.
+alerts sent meanwhile that are still news are delivered once it is back. Until step 8b the bot also runs the irrigation controller itself
+when the `IRRIGATION_TUYA_*` settings below are set (its Irrigation button, the daily check and the watchdog), as before; its daily check
+asks ecobot-mcp for the rain measured and the forecast.
+
+## irrigation-mcp's settings (`IRRIGATION_`)
+
+irrigation-mcp (`python -m irrigation_mcp`, [ecobot-mcp.md](ecobot-mcp.md) 3.9) is the irrigation controller's own MCP server: the tools `irrigation_status`, `water`, `stop` and `delay`, and `irrigation://alerts`; it runs the valve's watchdog and the daily check whatever any client does. It stops at start, saying which, without the three Tuya settings. Its state is `DATA_DIR/irrigation_state.json` (at its first start, the bot's irrigation entries in `bot_state.json` are copied over once), its alert log `DATA_DIR/irrigation_alerts.sqlite`; one irrigation-mcp runs per data folder (`irrigation.lock`).
+
+| Variable | Default | Description |
+|---|---|---|
+| `IRRIGATION_TUYA_DEVICE_ID`, `IRRIGATION_TUYA_CLIENT_ID`, `IRRIGATION_TUYA_CLIENT_SECRET` | – (required) | The irrigation controller (Tuya cloud). Old names: `BOT_TUYA_...`, and before those `TUYA_...` |
+| `IRRIGATION_TUYA_BASE_URL` | `https://openapi.tuyaeu.com` | Tuya data centre |
+| `IRRIGATION_CHECK_HOUR` | `18` | Local hour of the daily check (0–23): a battery under 5% is an `irrigation_battery` alert; more than 1 mm of rain in the last 24 hours, or a 50% or better chance of at least 1 mm today or tomorrow, pauses the timer for 24 hours (an `irrigation_pause` alert), leaving a delay someone set alone. Old name: `BOT_IRRIGATION_CHECK_HOUR` |
+| `IRRIGATION_BIND` | `127.0.0.1:8766` | host:port its MCP server listens on (`http://IRRIGATION_BIND/mcp`, Streamable HTTP; put TLS in front of it to reach it from elsewhere) |
+| `IRRIGATION_ALLOWED_HOSTS` | `127.0.0.1`, `localhost` | The Host names it answers (any port unless one is given), beside its own hostname, as `MCP_ALLOWED_HOSTS` is ecobot-mcp's |
+| `IRRIGATION_ECOBOT_MCP_URL` | `http://127.0.0.1:8765/mcp` (Docker: `http://ecobot-mcp:8765/mcp`) | ecobot-mcp, which the daily check asks for the rain measured (`summary`) and the forecast (`ecobot://forecast`), and whose station names the time zone. It sends the first of `AUTH_TOKENS`, else the generated token in the data folder. While ecobot-mcp can't be reached the check goes on the forecast it last read, without the measured rain |
+
+It accepts the same tokens as ecobot-mcp: one of `AUTH_TOKENS`, or with that unset the one generated in the data folder they share.
 
 ## Shared settings (no prefix)
 

@@ -24,7 +24,7 @@ from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
 from lib import theme   # (DARKMODE: the bot asks ecobot-mcp for charts in its own theme)
-from lib.alerts.irrigation import IrrigationMonitor
+from lib.irrigation.check import IrrigationMonitor
 from lib.alerts.notify import AlertDelivery, AlertState, Notifier
 from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
 from lib.irrigation import Tuya

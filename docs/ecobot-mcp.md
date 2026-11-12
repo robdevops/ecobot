@@ -9,7 +9,7 @@
 The plan for turning this repository into a weather and air-quality service that any MCP client can use: the readings file, the
 syncers that fill it, and an MCP server over them. Claude Desktop, Claude Code, ChatGPT, Open WebUI or anyone's bot asks it questions
 and gets answers it can pass on. Today's Telegram bot becomes ecobot-mcp's first client while the tools move over, and stays as a
-slim client (step 6): Telegram's chats, buttons and alerts, with everything else from ecobot-mcp. Irrigation becomes a second MCP server in its own repository. This is a design and a sequence of
+slim client (step 6): Telegram's chats, buttons and alerts, with everything else from ecobot-mcp. Irrigation becomes a second MCP server, irrigation-mcp, in this repository as its own package and Docker image (decided November 2026). This is a design and a sequence of
 steps, each shipped on its own, in the manner of [storage-plan.md](storage-plan.md).
 
 Decided:
@@ -17,7 +17,7 @@ Decided:
 - **Charts are data.** Tools return a chart's data; the client draws it (or its model does).
 - **Alerts are decided by the service and published over MCP only**, as a log clients listen to.
 - **This repository becomes ecobot-mcp**, keeping its history; the bot stays as a slim client of it (step 6), its in-process code
-  gone. Irrigation moves to its own repository and server.
+  gone. Irrigation moves to its own server (irrigation-mcp: its own package and image, in this repository).
 - **Separate hosts** are possible: the service runs near Home Assistant and the sensors; clients connect over the network.
 
 ## 1. Why
@@ -444,8 +444,12 @@ Charts are data: the client draws them, or its model does from the numbers.
 
 ### 3.9 Irrigation, its own server
 
-`lib/irrigation` and the irrigation check move to their own repository and MCP server, next to the valve, once the weather service runs
-on its own (step 5).
+`lib/irrigation` and the irrigation check move to their own MCP server, irrigation-mcp (`python -m irrigation_mcp`, its own Docker image
+`irrigation-mcp`), once the weather service runs on its own (step 5). It stays in this repository as its own package (decided November
+2026: not a repository of its own), sharing `lib/upstream.py`, the alert log and the token helpers (`lib/mcp_http.py`), and importing
+nothing of the bot's or of ecobot-mcp's sources and tools. It listens at `http://IRRIGATION_BIND/mcp` (127.0.0.1:8766), with the same
+token check (`AUTH_TOKENS`, or the generated token) and Host check (`IRRIGATION_ALLOWED_HOSTS`) as ecobot-mcp; one runs per data folder
+(`irrigation.lock`); its state is `irrigation_state.json` (the bot's entries copied over once at its first start).
 - **Tools:** `irrigation_status` (battery, weather delay, running or not), `water` (minutes; refused while a weather delay is on, with an
   error that says so), `stop`, `delay` (`24h`, `48h`, `72h`, `cancel`); the last three `destructiveHint`, so a client asks before it
   calls them.
@@ -454,14 +458,18 @@ on its own (step 5).
 - **Rain and forecast** come from the weather service, as its client: the measured rain from `summary{readings: ["rain"], period: "last
   24 hours"}`, the forecast from `ecobot://forecast` (its days' chance of at least 1 mm and `fetched_at`). When the weather service is
   unreachable, the check runs on the forecast it last read and skips the measured rain.
-- **Its alerts** (battery low, paused for rain) are its own `irrigation://alerts`, in the same shape; a client listens to both servers.
+- **Its alerts** (battery low, paused for rain: `irrigation_battery`, `irrigation_pause`) are its own `irrigation://alerts`, in the same
+  shape and with the same listen as `ecobot://alerts`, from an alert log of its own (`irrigation_alerts.sqlite`, its own identity); a
+  client listens to both servers.
+- **The time zone** is ecobot://station's once read, `TZ` before. It reaches ecobot-mcp at `IRRIGATION_ECOBOT_MCP_URL`.
 
 ### 3.10 Configuration
 
 `MCP_ECOWITT_*`, `MCP_HOMEASSISTANT_*`, `MCP_AIRGRADIENT_*`, `MCP_ANTISPIKE_REQUIRE_CONSECUTIVE`, `MCP_POLLEN*`, `MCP_FORECAST_*`, `MCP_PLACE`, `TZ` (until the
 station names one), `DATA_DIR`, the alert settings (cooldowns, quiet hours, thresholds), `MCP_CHART_ALL_FEELS_LIKE`, `MCP_CHART_ALL_VPD`,
-`AUTH_TOKENS`, `MCP_BIND`, `MCP_ALLOWED_HOSTS`. The irrigation server: `IRRIGATION_*` (Tuya), `BOT_MCP_URL`, a token,
-its own `AUTH_TOKENS`.
+`AUTH_TOKENS`, `MCP_BIND`, `MCP_ALLOWED_HOSTS`. The irrigation server: `IRRIGATION_TUYA_*` (old names `BOT_TUYA_*`, then `TUYA_*`),
+`IRRIGATION_CHECK_HOUR` (old `BOT_IRRIGATION_CHECK_HOUR`), `IRRIGATION_BIND`, `IRRIGATION_ALLOWED_HOSTS`, `IRRIGATION_ECOBOT_MCP_URL`, and
+the shared `AUTH_TOKENS`, `DATA_DIR`, `TZ`, `LOG_LEVEL`. The bot: `BOT_IRRIGATION_MCP_URL` (step 8b).
 
 ## 4. The bot (as it was before step 6)
 
@@ -823,9 +831,14 @@ Each step ships on its own, with the tests and evals green and the bot working t
    - The fallback: the 60 tests of 0.5 s or more (`tests/slow_tests.txt`, written by `scripts/slow_tests.py`) are marked `slow` and
      left out of plain `pytest`: 1731 tests in 19 s. `pytest -m slow` runs them (32 s), `pytest -m ""` everything (about 45 s), as CI
      does.
-8. **Irrigation on its own** (was 5b): the irrigation server in its own repository and MCP server (3.9: its tools, the watchdog and the
-   daily check, `irrigation://alerts`). The bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`) and listens for its alerts
-   the same way; `lib/irrigation` and the bot's `BOT_TUYA_*` and `BOT_IRRIGATION_CHECK_HOUR` go from here.
+8. **Irrigation on its own** (was 5b): the irrigation server as its own package, MCP server and Docker image in this repository (3.9).
+   - **8a (done):** irrigation-mcp (`irrigation_mcp/`, `lib/irrigation/server.py`): its tools, the watchdog and the daily check
+     (`lib/irrigation/check.py`, moved from `lib/alerts/irrigation.py`) as ecobot-mcp's client (`lib/irrigation/ecobot.py`),
+     `irrigation://alerts`, its state with the one-time copy from `bot_state.json`, its settings (`IRRIGATION_*`, a setting may have
+     several old names, `scripts/migrate_env.py` too), its image (`--target irrigation-mcp`, compose's `irrigation` profile). What the
+     two servers share over HTTP moved to `lib/mcp_http.py`. The bot keeps its own irrigation meanwhile, reading `IRRIGATION_TUYA_*`.
+   - **8b:** the bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`) and listens for its alerts the same way; its own Tuya
+     client, watchdog, check wiring and menu go, and an import test keeps them out.
 
 ## 7. Testing
 

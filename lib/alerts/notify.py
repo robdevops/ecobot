@@ -7,7 +7,7 @@ settings and the last alert delivered live in a small JSON file (bot_state.json)
 Alerts are sent silently, with the settings buttons and, when there is one, a small italic footer with a link label.
 
 The alerts themselves are the service's: its rules append them to the alert log (lib/alert_log.py), and AlertDelivery sends each to the
-chats subscribed to its kind. Only the irrigation controller's are still sent here directly (lib/alerts/irrigation.py), until it is a
+chats subscribed to its kind. Only the irrigation controller's are still sent here directly (lib/irrigation/check.py), until it is a
 server of its own.
 """
 

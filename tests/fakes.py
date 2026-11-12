@@ -404,3 +404,74 @@ def draws(monkeypatch, render):
     itself) stood in for by render(chart, tz) -> PNG bytes (or anything the test sends as the picture)."""
     from lib import chart_images
     monkeypatch.setattr(chart_images, "render", lambda chart, tz, dark=None: (render(chart, tz), bool(dark)))
+
+
+# ---------- the irrigation controller (lib/irrigation: the bot's and irrigation-mcp's) ----------
+TUYA_SECRET = "s3cret"
+TUYA_STATUS = [{"code": "switch", "value": False}, {"code": "battery_percentage", "value": 100}, {"code": "weather_delay", "value": "cancel"},
+               {"code": "countdown", "value": 0}, {"code": "work_state", "value": "idle"}, {"code": "use_time_one", "value": 40}]   # as the controller answered
+
+
+def tuya_config(tmp_path, **over) -> Config:
+    """The settings with the controller's three (client id "cid", secret TUYA_SECRET, device "dev1")."""
+    return config(tmp_path, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret=TUYA_SECRET, **over)
+
+
+class FakeTuya:
+    """Stands in for the Tuya cloud: records the signed requests it gets and checks each signature."""
+
+    def __init__(self, status=None, fail_token_once=False):
+        self.calls, self.status, self.token_n, self.fail_token_once = [], status if status is not None else TUYA_STATUS, 0, fail_token_once
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        import json
+
+        from lib.irrigation.tuya import sign
+        h, path = request.headers, request.url.raw_path.decode()
+        body = request.content
+        token = h.get("access_token", "")
+        expected = sign("cid", TUYA_SECRET, token, h["t"], h["nonce"], request.method, path, body)   # signed over what was sent
+        assert h["sign"] == expected and h["client_id"] == "cid" and h["sign_method"] == "HMAC-SHA256"
+        if path.startswith("/v1.0/token"):
+            self.token_n += 1
+            return httpx.Response(200, json={"success": True, "result": {"access_token": f"tok{self.token_n}", "expire_time": 7200}})
+        self.calls.append((request.method, path, json.loads(body) if body else None, token))
+        if self.fail_token_once and token == "tok1":
+            self.fail_token_once = False
+            return httpx.Response(200, json={"success": False, "code": 1010, "msg": "token invalid"})
+        if path.endswith("/status"):
+            return httpx.Response(200, json={"success": True, "result": self.status})
+        return httpx.Response(200, json={"success": True, "result": True})
+
+
+class FakeController:
+    """The irrigation controller (lib/irrigation/tuya.Tuya's methods) in memory: its status, the commands it was sent, and `down` (it
+    can't be reached: IrrigationError)."""
+
+    def __init__(self, **status):
+        self.status_now = {"switch": False, "battery_percentage": 100, "weather_delay": "cancel", "work_state": "idle", **status}
+        self.commands, self.down = [], False
+
+    def _reachable(self):
+        from lib.irrigation import IrrigationError
+        if self.down:
+            raise IrrigationError("Tuya request failed (ConnectError)")
+
+    async def status(self):
+        self._reachable()
+        return dict(self.status_now)
+
+    async def delay(self, duration):
+        self._reachable()
+        self.commands.append(("delay", duration))
+        self.status_now["weather_delay"] = duration                      # the controller reports it
+
+    async def set_switch(self, on):
+        self._reachable()
+        self.commands.append(("switch", on))
+        self.status_now["switch"] = on
+
+    async def water(self, minutes):
+        self._reachable()
+        self.commands.append(("water", minutes))
+        self.status_now.update(switch=True, work_state="manual", countdown=minutes * 60)

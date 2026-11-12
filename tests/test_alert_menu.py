@@ -423,7 +423,7 @@ def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_s
     import re
     from pathlib import Path
     from lib.alerts.forecast import ForecastMonitor
-    from lib.alerts.irrigation import IrrigationMonitor
+    from lib.irrigation.check import IrrigationMonitor
     from lib.alerts.particulates import ParticulatesMonitor
     from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
     from lib.alerts.weather import WeatherMonitor

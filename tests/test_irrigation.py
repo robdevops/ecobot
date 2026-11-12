@@ -13,8 +13,8 @@ from telegram.error import BadRequest
 
 import lib.bot as bot_module
 from lib import templates
-from lib.alerts import irrigation as monitor_module
-from lib.alerts.irrigation import IrrigationMonitor
+from lib.irrigation import check as monitor_module
+from lib.irrigation.check import IrrigationMonitor
 from lib.alerts.menu import available_kinds
 from lib.alerts.notify import AlertState
 from lib.bot import Bot
@@ -22,7 +22,7 @@ from lib.buttons import struck as strike
 from lib.config import Config
 from lib.irrigation import IrrigationError, Tuya, Watchdog, menu
 from lib.irrigation.tuya import sign
-from tests.fakes import TZ, config
+from tests.fakes import TUYA_SECRET as SECRET, TZ, FakeController, FakeTuya, config, tuya_config
 
 @pytest.fixture(autouse=True)
 def settle_at_once(monkeypatch):
@@ -30,37 +30,8 @@ def settle_at_once(monkeypatch):
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)
 
 
-SECRET = "s3cret"
-STATUS = [{"code": "switch", "value": False}, {"code": "battery_percentage", "value": 100}, {"code": "weather_delay", "value": "cancel"},
-          {"code": "countdown", "value": 0}, {"code": "work_state", "value": "idle"}, {"code": "use_time_one", "value": 40}]   # as the controller answered
-
-
-def cfg(tmp_path, **over):
-    return config(tmp_path, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret=SECRET, **over)
-
-
-class FakeTuya:
-    """Stands in for the Tuya cloud: records the signed requests it gets and checks each signature."""
-
-    def __init__(self, status=None, fail_token_once=False):
-        self.calls, self.status, self.token_n, self.fail_token_once = [], status if status is not None else STATUS, 0, fail_token_once
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        h, path = request.headers, request.url.raw_path.decode()
-        body = request.content
-        token = h.get("access_token", "")
-        expected = sign("cid", SECRET, token, h["t"], h["nonce"], request.method, path, body)   # signed over what was sent
-        assert h["sign"] == expected and h["client_id"] == "cid" and h["sign_method"] == "HMAC-SHA256"
-        if path.startswith("/v1.0/token"):
-            self.token_n += 1
-            return httpx.Response(200, json={"success": True, "result": {"access_token": f"tok{self.token_n}", "expire_time": 7200}})
-        self.calls.append((request.method, path, json.loads(body) if body else None, token))
-        if self.fail_token_once and token == "tok1":
-            self.fail_token_once = False
-            return httpx.Response(200, json={"success": False, "code": 1010, "msg": "token invalid"})
-        if path.endswith("/status"):
-            return httpx.Response(200, json={"success": True, "result": self.status})
-        return httpx.Response(200, json={"success": True, "result": True})
+cfg = tuya_config
+Device = Remote = FakeController   # (the controller as the check and the bot's buttons see it)
 
 
 def tuya(tmp_path, **kw):
@@ -235,31 +206,6 @@ def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller(
 
 
 # ---------- the daily check ----------
-class Device:
-    def __init__(self, **status):
-        self.status_now = {"switch": False, "battery_percentage": 100, "weather_delay": "cancel", "work_state": "idle", **status}
-        self.commands, self.down = [], False
-
-    async def status(self):
-        if self.down:
-            raise IrrigationError("Tuya request failed (ConnectError)")
-        return dict(self.status_now)
-
-    def _reachable(self):
-        if self.down:
-            raise IrrigationError("Tuya request failed (ConnectError)")
-
-    async def delay(self, duration):
-        self._reachable()
-        self.commands.append(("delay", duration))
-        self.status_now["weather_delay"] = duration                      # the controller reports it
-
-    async def set_switch(self, on):
-        self._reachable()
-        self.commands.append(("switch", on))
-        self.status_now["switch"] = on
-
-
 class Station:
     """The weather station: readings whose daily rain total rises by the given amounts."""
 
@@ -470,15 +416,6 @@ class Query:
         if self.fail:
             raise self.fail
         self.edits.append(("text", text, reply_markup) + ((entities,) if entities else ()))
-
-
-class Remote(Device):
-    """The controller as the bot's buttons see it: also water()."""
-
-    async def water(self, minutes):
-        self._reachable()
-        self.commands.append(("water", minutes))
-        self.status_now.update(switch=True, work_state="manual", countdown=minutes * 60)
 
 
 WEATHER = None

@@ -25,22 +25,21 @@ sources of its own and never opens the readings file (step 6b). Everything the b
     changed (PromptsListChanged; `on_prompts()` is called after each read), and `prompt(name, arguments)` one's question in words (the
     bot offers each as a Telegram command, step 6c).
 
-For the irrigation check while it is still the bot's (step 8 moves it to its own server): `ServiceRain` (the measured rain, from
+For the irrigation check while it is still the bot's (step 8b moves it to irrigation-mcp alone): `ServiceRain` (the measured rain, from
 `summary {readings: ["rain"], period: "last 24 hours"}`) and `ServiceForecast` (ecobot://forecast, the last read kept when the service
-can't be reached), docs 3.9."""
+can't be reached), docs 3.9: irrigation-mcp's (lib/irrigation/ecobot.py), over this client too."""
 
 import asyncio
 import base64
 import contextlib
 import json
 import logging
-from datetime import date, datetime
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from . import chart_images
+from .irrigation.ecobot import ServiceForecast, ServiceRain
 from .service.common import AS_DRAWN, CHART_NOTE
-from .timeutil import now_local
 
 log = logging.getLogger(__name__)
 
@@ -464,51 +463,6 @@ class RemoteWeather:
         for task in list(self._background):
             task.cancel()
         await asyncio.gather(*self._background, return_exceptions=True)
-
-
-# ---------- the irrigation check's inputs (docs 3.9) ----------
-class ServiceRain:
-    """The measured rain as the irrigation check asks the service for it: summary {readings: ["rain"], period: "last N hours"}'s total."""
-
-    def __init__(self, weather):
-        self.weather = weather
-
-    async def rain_mm(self, hours: int = 24) -> float | None:
-        out = json.loads(await self.weather.call_text("summary", {"readings": ["rain"], "period": f"last {hours} hours"}))
-        if "error" in out:
-            raise ValueError(out["error"])
-        return out.get("rain_total_mm")
-
-
-class ServiceForecast:
-    """The forecast as the irrigation check reads it, from ecobot://forecast (its days, each with its chance of at least 1 mm, and when it
-    was fetched), as lib/forecast's source gives them (`days`, `fetched_at`, `now()`, `upcoming()`). `refresh()` reads it again; when the
-    service can't be reached the forecast last read stands."""
-
-    def __init__(self, weather):
-        self.weather = weather
-        self.days: list[dict] | None = None
-        self.fetched_at: float = 0
-        self.place: str | None = None
-
-    async def refresh(self):
-        data = await self.weather.resource(FORECAST_URI)
-        days = []
-        for d in data.get("days") or []:
-            try:
-                days.append({**d, "date": date.fromisoformat(str(d["date"])[:10])})
-            except (KeyError, ValueError):
-                continue
-        fetched = data.get("fetched_at")
-        self.days, self.place = days, data.get("place")
-        self.fetched_at = datetime.fromisoformat(fetched).timestamp() if fetched else 0
-
-    def now(self) -> datetime:
-        return now_local(self.weather.tz)
-
-    def upcoming(self, count: int = 2) -> list[dict]:
-        today = self.now().date()
-        return [d for d in (self.days or []) if d["date"] >= today][:count]
 
 
 __all__ = ["ChartImage", "ChartNotDrawn", "Prompt", "RemoteWeather", "ServiceForecast", "ServiceRain", "ServiceUnreachable", "UNREACHABLE", "value"]

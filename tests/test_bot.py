@@ -617,7 +617,7 @@ async def test_the_models_charts_are_drawn_with_their_buttons_and_the_model_is_s
 
 
 BOT_MODULES = ["ecobot", "lib.bot", "lib.weather", "lib.upstream", "lib.model_tools", "lib.llm", "lib.prompt", "lib.alerts.notify",
-               "lib.alerts.menu", "lib.alerts.irrigation", "lib.irrigation", "lib.irrigation.menu", "lib.periods", "lib.templates",
+               "lib.alerts.menu", "lib.irrigation.check", "lib.irrigation", "lib.irrigation.menu", "lib.periods", "lib.templates",
                "lib.admins", "lib.buttons", "lib.config", "lib.intent", "lib.version", "lib.theme"]
 NOT_THE_BOTS = ("PIL", "lib.charts", "lib.draw", "lib.gauges",                                       # drawing (step 6a)
                 "lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage")     # the sources and their file (6b)
@@ -634,7 +634,7 @@ def test_the_bot_imports_no_pillow_no_drawing_module_and_no_source_module(tmp_pa
     from lib.config import ROOT
     code = (f"import sys, importlib; [importlib.import_module(m) for m in {BOT_MODULES!r}]; "
             "from types import SimpleNamespace as NS; from zoneinfo import ZoneInfo; from lib.alerts.notify import AlertDelivery, "
-            "AlertState, Notifier; from lib.alerts.irrigation import IrrigationMonitor; from lib.bot import Bot; from lib.llm import Agent; "
+            "AlertState, Notifier; from lib.irrigation.check import IrrigationMonitor; from lib.bot import Bot; from lib.llm import Agent; "
             "from lib import model_tools; from lib.weather import RemoteWeather, ServiceRain; "
             "w = RemoteWeather('http://127.0.0.1:9/mcp', 't'); "
             f"s = AlertState({str(tmp_path / 's.json')!r}); "
