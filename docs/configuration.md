@@ -113,7 +113,8 @@ alerts sent meanwhile that are still news are delivered once it is back.
 | `BOT_IRRIGATION_MCP_URL` | none: no irrigation in the bot | irrigation-mcp's endpoint (below): systemd `http://127.0.0.1:8766/mcp`, Docker `http://irrigation-mcp:8766/mcp` (Docker's `docker/bot.env` leaves it empty, so set it in `/etc/ecobot.env` when you run the `irrigation` profile; on the host's network, `compose.host-network.yaml`, it is `http://127.0.0.1:8766/mcp`). Set, the bot is irrigation-mcp's client as it is ecobot-mcp's (the same token): the keyboard's Irrigation button (in Wind's place), typing "irrigation" or "water", the irrigation menu and its buttons call irrigation-mcp's tools, and its alerts (`irrigation://alerts`: `irrigation_battery`, `irrigation_pause`) go to the chats subscribed to them as ecobot-mcp's do; the alert menus, `/usage` and Help offer them. While irrigation-mcp can't be reached the button says it couldn't reach the controller and the rest of the bot carries on; it reconnects by itself, and alerts that are still news are delivered once it is back. The bot runs no controller, watchdog or daily check itself and reads none of the `IRRIGATION_` settings (a Tuya setting left with this unset is a warning at start) |
 
 (Before step 8b, November 2026, the bot ran the controller itself from the `BOT_TUYA_*` settings; `scripts/migrate_env.py` renames them
-and adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` when they are there.)
+and adds `BOT_IRRIGATION_MCP_URL` when the device id is there: `http://127.0.0.1:8766/mcp`, or `http://irrigation-mcp:8766/mcp` in a file
+that names ecobot-mcp's container, as Docker's do.)
 
 ## irrigation-mcp's settings (`IRRIGATION_`)
 

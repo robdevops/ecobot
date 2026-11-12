@@ -84,7 +84,7 @@ def test_a_setting_with_two_old_names_takes_either_and_the_irrigation_check_hour
     assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_ID=c\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n",
                    "IRRIGATION_CHECK_HOUR=7\n"]                                            # (the bot's way to irrigation-mcp added: below)
     out, notes = migrate_env.migrate(["TUYA_CLIENT_SECRET=s\n", "BOT_TUYA_CLIENT_SECRET=s\n"], names)   # both old ones, the same value
-    assert out[0] == "IRRIGATION_TUYA_CLIENT_SECRET=s\n" and len(out) == 2 and any("BOT_TUYA_CLIENT_SECRET removed" in n for n in notes)
+    assert out == ["IRRIGATION_TUYA_CLIENT_SECRET=s\n"] and any("BOT_TUYA_CLIENT_SECRET removed" in n for n in notes)
     out, _ = migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=6\n"], names)
     assert out == ["IRRIGATION_CHECK_HOUR=6\n"]
     with pytest.raises(SystemExit, match="BOT_TUYA_CLIENT_SECRET and TUYA_CLIENT_SECRET"):
@@ -107,5 +107,18 @@ def test_the_irrigation_controllers_settings_bring_the_bots_way_to_irrigation_mc
     assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n"]
     kept = ["IRRIGATION_TUYA_DEVICE_ID=d\n", "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp\n"]
     assert migrate_env.migrate(kept, names) == (kept, [])                                   # one already there (Docker's) is left alone
-    for none in (["TZ=UTC\n"], ["TUYA_DEVICE_ID=\n"], ["# TUYA_DEVICE_ID=d\n"]):        # no controller (unset, or commented out)
+    for none in (["TZ=UTC\n"], ["TUYA_DEVICE_ID=\n"], ["# TUYA_DEVICE_ID=d\n"],   # no controller (unset, or commented out)
+                 ["TUYA_BASE_URL=https://x\n"], ["BOT_TUYA_CLIENT_ID=c\n", "TUYA_CLIENT_SECRET=s\n"]):   # (no device id: no controller)
         assert "BOT_IRRIGATION_MCP_URL" not in "".join(migrate_env.migrate(none, names)[0]), none
+
+
+@pytest.mark.parametrize("named", ["WEATHER_MCP_URL=http://ecobot-service:8765/mcp", "BOT_MCP_URL=http://ecobot-mcp:8765/mcp",
+                                   "MCP_ALLOWED_HOSTS=ecobot-mcp,ecobot.lan", "IRRIGATION_ECOBOT_MCP_URL=http://ecobot-mcp:8765/mcp"])
+def test_in_a_docker_install_s_file_the_bots_way_to_irrigation_mcp_is_its_container(named):
+    """A file that names ecobot-mcp's container (or its old name) in a URL or an allowed host is a Docker install's: there 127.0.0.1 is
+    the bot's own container, so the line added is http://irrigation-mcp:8766/mcp, and the note says so."""
+    out, notes = migrate_env.migrate([named + "\n", "TUYA_DEVICE_ID=d\n"], migrate_env.renames())
+    assert out[-1] == "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp\n"
+    assert any("BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp added" in n and "Docker" in n for n in notes)
+    out, _ = migrate_env.migrate(["BOT_MCP_URL=http://my-ecobot-mcp.lan:8765/mcp\n", "TUYA_DEVICE_ID=d\n"], migrate_env.renames())
+    assert out[-1] == "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n"   # (another name that merely contains it: systemd's)

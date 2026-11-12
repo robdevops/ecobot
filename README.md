@@ -310,8 +310,8 @@ sudo python3 /opt/ecobot/scripts/migrate_env.py /etc/ecobot.env --write
 
 Then restart ecobot-mcp and the bot (and irrigation-mcp). Beyond the renames it moves `WEATHER_MCP_TOKEN` into `AUTH_TOKENS` (first, the token the bot
 sends), changes the old container name `ecobot-service` in a URL or allowed host to `ecobot-mcp`, and, where the irrigation
-controller's settings are and `BOT_IRRIGATION_MCP_URL` isn't, adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` (systemd's; for
-Docker change it to `http://irrigation-mcp:8766/mcp`); it stops, changing nothing, where
+controller's device id is set and `BOT_IRRIGATION_MCP_URL` isn't, adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` (systemd's;
+`http://irrigation-mcp:8766/mcp` in a file that names ecobot-mcp's container, `ecobot-mcp` or `ecobot-service`, as Docker's do); it stops, changing nothing, where
 an old and a new name are both set to different values.
 
 
@@ -429,8 +429,8 @@ sudo docker compose --profile bot down && sudo docker compose up -d --build
 **From a bot that ran the irrigation controller itself (its `BOT_TUYA_...` or `TUYA_...` settings, before irrigation-mcp, November
 2026):** the controller is now the `irrigation-mcp` container's, under the `irrigation` profile, and the bot its client. Until it runs the
 bot has no Irrigation button and says so at start. Rename the Tuya settings to `IRRIGATION_TUYA_...` (by hand, or with the
-[settings script](#renamed-settings), which also adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp`: change that to
-`http://irrigation-mcp:8766/mcp` for Docker), make sure `/etc/ecobot.env` has `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp`,
+[settings script](#renamed-settings), which also adds `BOT_IRRIGATION_MCP_URL`, as `http://irrigation-mcp:8766/mcp` when the file names
+ecobot-mcp's container), make sure `/etc/ecobot.env` has `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp`,
 set `COMPOSE_PROFILES=bot,irrigation` in `/opt/ecobot/.env`, and run `sudo docker compose up -d --build`. At its first start
 irrigation-mcp takes over the bot's watchdog and daily-check state from `bot_state.json`, and says so in its log.
 
