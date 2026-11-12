@@ -72,30 +72,40 @@ file, reads none of the `MCP_` settings, and reaches ecobot-mcp over MCP
 (`lib/weather.RemoteWeather`, [docs/ecobot-mcp.md](docs/ecobot-mcp.md) 3.8), sending the first of `AUTH_TOKENS`, or, with that unset,
 the token ecobot-mcp generated in the data folder they share (read again for each connection, so the bot may start first;
 `ecobot.mcp_token`): one client pinned to protocol 2026-07-28, kept by one supervisor task (`lib/upstream.Upstream`), which discovers by
-hand for the instructions and listens to `ecobot://alerts`, `ecobot://station` and `ecobot://forecast`; when the connection fails or the
+hand for the instructions and listens to `ecobot://alerts` and `ecobot://station`; when the connection fails or the
 listen is lost it builds a new client after a backoff, listens again and reads the alerts after the last id it handled. Everything the
 bot asks for goes through `lib/weather.py`: the model's tools and instructions, the prompts it offers as commands, the keyboard's
 charts (each a fixed call, `lib/templates.py` `CALLS`), the Status picture, the period buttons and the charts' other periods fetched in
-the background, Help and `/usage`, the alerts (lib/alerts/notify.AlertDelivery) and the irrigation check's rain and forecast
-(`ServiceRain`, `ServiceForecast`). The bot answers no typed question in code (step 6c): everything typed goes to the model, and only
+the background, Help and `/usage` and the alerts (lib/alerts/notify.AlertDelivery). The bot answers no typed question in code (step 6c): everything typed goes to the model, and only
 its reasoning effort is read from the words (`lib/intent.py`).
 The bot draws nothing ([docs/ecobot-mcp.md](docs/ecobot-mcp.md) step 6a): every chart it sends comes drawn by ecobot-mcp
 (`call_images`, `chart_image`: the remote one sends its PNGs, `chart_image: "png"` in the request's `_meta`, in the bot's own theme,
 `chart_dark` from `DARKMODE`, `lib/theme.py`), the model's answers' charts too (the model is sent the text alone), and the Status
 picture of three gauges is ecobot-mcp's `ecobot://status` (`lib/status.py`, drawn by `lib/gauges.py`), with the report it writes. Importing the bot, and building
-it with its alert delivery and irrigation check, imports neither Pillow nor `lib/charts.py`, `lib/draw.py` or `lib/gauges.py`, nor any
-source module (`lib/ecowitt`, `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/storage`; `tests/test_bot.py`); its packages are
-`requirements-bot.txt` alone (python-telegram-bot, openai, mcp, httpx), and its Docker image has nothing else.
+it with both alert deliveries, imports neither Pillow nor `lib/charts.py`, `lib/draw.py` or `lib/gauges.py`, nor any source module
+(`lib/ecowitt`, `lib/airgradient`, `lib/forecast`, `lib/pollen`, `lib/storage`), nor irrigation-mcp's controller (`lib/irrigation/tuya`,
+`watchdog`, `check`, `server`; `tests/test_bot.py`); its packages are `requirements-bot.txt` alone (python-telegram-bot, openai, mcp,
+httpx), and its Docker image has nothing else.
+
+With `BOT_IRRIGATION_MCP_URL` the bot is irrigation-mcp's client too (below; `lib/irrigation_remote.RemoteIrrigation`, its own
+`Upstream`, the same token): the Irrigation button, the menu (`lib/irrigation_menu.py`, the bot's UI) and the `ir:` buttons call its
+tools through `status`/`water`/`delay`/`set_switch`, any failure an `IrrigationError` ("Couldn't reach the irrigation controller"), and a
+second `AlertDelivery` reads `irrigation://alerts` (`lib/weather.RemoteAlerts` given its URI), its last id a `ReadMark` of its own in
+`bot_state.json`. Without it the bot has no irrigation at all.
 ```
 set -a; . <(sudo cat /etc/ecobot.env); set +a
 export DATA_DIR=/tmp/ecobot
 python -m ecobot_mcp &                                   # ecobot-mcp, with the sources' settings (it writes the token)
-BOT_MCP_URL=http://127.0.0.1:8765/mcp python ecobot.py   # the bot, its client (it reads the token)
+python -m irrigation_mcp &                               # irrigation-mcp, with the IRRIGATION_TUYA_ settings (optional)
+BOT_MCP_URL=http://127.0.0.1:8765/mcp BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp python ecobot.py   # the bot, their client
 ```
 In Docker (compose.yaml) this is how they run, each from its own image (the Dockerfile's targets `ecobot-mcp` and `ecobot`):
 `ecobot-mcp` always, and the bot (the `bot` profile) as its client, its `BOT_MCP_URL` from docker/bot.env (the container's name,
 `ecobot-mcp`; 127.0.0.1 with compose.host-network.yaml), the token from the data folder both mount. ecobot-mcp answers its own
-hostname, so no `MCP_ALLOWED_HOSTS` is needed for the bot. Under systemd, `ecobot.service` wants `ecobot-mcp.service` and starts after it.
+hostname, so no `MCP_ALLOWED_HOSTS` is needed for the bot. irrigation-mcp is the `irrigation` profile (its own image), and the bot
+reaches it only with `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp` in /etc/ecobot.env (docker/bot.env leaves it empty). Under
+systemd, `ecobot.service` wants `ecobot-mcp.service` and starts after it, and `irrigation-mcp.service` the same way when it is installed
+(Wants= of a unit that isn't there changes nothing).
 
 Its tests run the bot against ecobot-mcp in memory: the `serve` fixture (`tests/served.py`) starts the real server
 (`lib/mcp_server.EcobotServer`) over a test's Context (the fake sources, or none) or a test's stand-in tools (`tests.fakes.StandInService`,
@@ -105,19 +115,25 @@ nothing, builds the bot over `tests.served.unreached()`. A keyboard button is `b
 any period as a button answers it, `bot.respond(update, context, text, call=(tool, args))`. `tests/test_bot_remote.py` is the bot
 against the real server (in memory: a question answered with the remote tools and the instructions from discover, ecobot-mcp's prompts
 as Telegram commands, Status as one message (the gauges with the report as their caption), a chart from a remote result with its buttons, ecobot-mcp's
-PNG of a chart byte for byte as its renderer draws it, an alert through the listen, the irrigation check's inputs; under uvicorn: a
+PNG of a chart byte for byte as its renderer draws it, an alert through the listen, irrigation-mcp's check's inputs; under uvicorn: a
 dropped connection rebuilt and the alerts after the last id read once, ecobot-mcp down, `ecobot.main()`); `tests/test_startup.py` runs
-both programs' main(): ecobot-mcp's over the fake sources, the bot's against ecobot-mcp under uvicorn.
+both programs' main(): ecobot-mcp's over the fake sources, the bot's against ecobot-mcp (and irrigation-mcp) under uvicorn. The bot's
+irrigation tests (`tests/test_irrigation.py`, `tests/test_admin_only.py`) run it against irrigation-mcp in memory the same way: the
+`serve_irrigation` fixture starts its real server over the fake controller and connects the bot's `RemoteIrrigation`
+(`irrigation.server.device` is the controller, `irrigation.server.watchdog` its watchdog).
 
 ## irrigation-mcp
 `python -m irrigation_mcp` (`irrigation_mcp/__main__.py`) is the irrigation controller's MCP server (docs/ecobot-mcp.md 3.9, step 8):
 `lib/irrigation/server.py` (its four tools and `irrigation://alerts`, the low-level SDK as `lib/mcp_server.py`), `watchdog.py` and
 `check.py` (the watchdog and the daily check it runs), `ecobot.py` (its client of ecobot-mcp, `lib/upstream.Upstream`), `state.py`
-(`irrigation_state.json`) and `tuya.py`. What it shares with ecobot-mcp over HTTP (the token and Host checks, the request log, uvicorn, the
+(`irrigation_state.json`), `tuya.py`, and `common.py` (what the bot's menu shares with it, without httpx: `lib/irrigation` loads nothing
+until asked, so the bot importing `common` never loads Tuya). Under systemd it is `irrigation-mcp.service`, in Docker the
+`irrigation-mcp` container. What it shares with ecobot-mcp over HTTP (the token and Host checks, the request log, uvicorn, the
 generated token, the data folder's lock) is `lib/mcp_http.py`. It imports nothing of the bot's and none of ecobot-mcp's sources or tools
 (`tests/test_irrigation_mcp.py` checks it in a subprocess, as the Docker build does). Its tests run its server over the SDK's in-memory
 transport with a fake controller (`tests.fakes.FakeController`, or the fake Tuya cloud `FakeTuya`), and its daily check against
-ecobot-mcp in memory (`tests/served.py`).
+ecobot-mcp in memory (`tests/served.py`); the controller's own code (Tuya, the check, the watchdog) is tested without Telegram in
+`tests/test_irrigation_controller.py`.
 
 ### Settings
 Each is a field of `lib/config.Config`, named for the program that reads it (`MCP_`, `IRRIGATION_`, `BOT_`, or none when all do;

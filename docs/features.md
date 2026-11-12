@@ -27,7 +27,7 @@ Alerts go to every chat the bot is in, silently unless you turn sound on:
 - unhealthy air (two readings in a row), and when it is safe again, with the particulates chart
 - grass pollen or thunderstorm asthma risk reaching High (optional)
 - a forecast day you were told about changing substantially (optional)
-- irrigation battery low, and the bot pausing watering for rain (optional)
+- irrigation battery low, and irrigation-mcp pausing watering for rain (optional)
 
 Every alert carries a 🔔 button that opens its toggles: **Alert** (on or off in this chat) and, in a private chat while that is on, **Sound**. An alert with a chart also has **🔄**, which puts the chart with the latest readings in the same message, the alert's text as it was (anyone in the chat can press it). Every toggle in the bot is a blue button while on and a plain one with its name struck through while off.
 
@@ -41,4 +41,4 @@ By default the bot answers everyone who messages it. `BOT_ADMIN_ONLY=on` answers
 
 - **Pollen and thunderstorm asthma** for Melbourne (October to December), from melbournepollen.com.au: `MCP_POLLEN=on`.
 - **Daily forecast** from Open-Meteo, with the chance of at least 1 mm of rain: `MCP_FORECAST=on`.
-- **Irrigation controller** (a Tuya smart timer): an Irrigation button with its status and buttons to water for 5 to 30 minutes, switch off, pause for 24 to 72 hours, and its own alert toggles. A daily check at 18:00 delays watering 24 hours when rain fell or is likely. Set the `BOT_TUYA_*` variables.
+- **Irrigation controller** (a Tuya smart timer): an Irrigation button with its status and buttons to water for 5 to 30 minutes, switch off, pause for 24 to 72 hours, and its own alert toggles. A daily check at 18:00 delays watering 24 hours when rain fell or is likely. The controller is its own MCP server, irrigation-mcp (README: Irrigation): set the `IRRIGATION_TUYA_*` variables for it, run it, and set `BOT_IRRIGATION_MCP_URL` for the bot. While irrigation-mcp can't be reached the button says it couldn't reach the controller; the rest of the bot carries on.

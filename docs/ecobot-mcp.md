@@ -444,15 +444,18 @@ Charts are data: the client draws them, or its model does from the numbers.
 
 ### 3.9 Irrigation, its own server
 
-`lib/irrigation` and the irrigation check move to their own MCP server, irrigation-mcp (`python -m irrigation_mcp`, its own Docker image
-`irrigation-mcp`), once the weather service runs on its own (step 5). It stays in this repository as its own package (decided November
-2026: not a repository of its own), sharing `lib/upstream.py`, the alert log and the token helpers (`lib/mcp_http.py`), and importing
-nothing of the bot's or of ecobot-mcp's sources and tools. It listens at `http://IRRIGATION_BIND/mcp` (127.0.0.1:8766), with the same
+The irrigation controller (`lib/irrigation`: the Tuya client, the watchdog, the daily check) is its own MCP server, irrigation-mcp
+(`python -m irrigation_mcp`, `irrigation-mcp.service`, its own Docker image `irrigation-mcp` under compose's `irrigation` profile),
+built in step 8. It stays in this repository as its own package (decided November 2026: not a repository of its own), sharing
+`lib/upstream.py`, the alert log and the token helpers (`lib/mcp_http.py`), and importing nothing of the bot's or of ecobot-mcp's sources
+and tools (`requirements-irrigation.txt`: the MCP SDK, uvicorn, httpx). It listens at `http://IRRIGATION_BIND/mcp` (127.0.0.1:8766), with the same
 token check (`AUTH_TOKENS`, or the generated token) and Host check (`IRRIGATION_ALLOWED_HOSTS`) as ecobot-mcp; one runs per data folder
 (`irrigation.lock`); its state is `irrigation_state.json` (the bot's entries copied over once at its first start).
-- **Tools:** `irrigation_status` (battery, weather delay, running or not), `water` (minutes; refused while a weather delay is on, with an
-  error that says so), `stop`, `delay` (`24h`, `48h`, `72h`, `cancel`); the last three `destructiveHint`, so a client asks before it
-  calls them.
+- **Tools:** `irrigation_status` (`readOnlyHint`: `switch`, `countdown` seconds left, `weather_delay` and `paused`,
+  `battery_percentage`, `work_state`, and the watchdog's `off_at` while a run is watched), `water {minutes: 1..60}` (refused while a
+  weather delay is on, with an error that says so; the watchdog armed first), `stop` (the valve off, the watchdog disarmed), `delay
+  {duration: 24h|48h|72h|cancel}`; the last three `destructiveHint`, so a client asks before it calls them. Each answers JSON as one text
+  block, as ecobot-mcp's tools do; a refusal or the controller unreachable is `isError` with `{"error": ...}`, a message safe to show.
 - **The watchdog** (a run must end; a restart mid-run still closes the valve) and the daily check (pause when it rained or will) run in
   that server whatever any client does.
 - **Rain and forecast** come from the weather service, as its client: the measured rain from `summary{readings: ["rain"], period: "last
@@ -461,7 +464,13 @@ token check (`AUTH_TOKENS`, or the generated token) and Host check (`IRRIGATION_
 - **Its alerts** (battery low, paused for rain: `irrigation_battery`, `irrigation_pause`) are its own `irrigation://alerts`, in the same
   shape and with the same listen as `ecobot://alerts`, from an alert log of its own (`irrigation_alerts.sqlite`, its own identity); a
   client listens to both servers.
-- **The time zone** is ecobot://station's once read, `TZ` before. It reaches ecobot-mcp at `IRRIGATION_ECOBOT_MCP_URL`.
+- **The time zone** is ecobot://station's once read, `TZ` before. It reaches ecobot-mcp at `IRRIGATION_ECOBOT_MCP_URL`, sending the
+  first of `AUTH_TOKENS` (else the generated token), as the bot does.
+- **The bot is its client** (`BOT_IRRIGATION_MCP_URL`, `lib/irrigation_remote.py`), as it is ecobot-mcp's: the same token, a supervisor
+  of its own (`lib/upstream.Upstream`), its Irrigation button, menu and `ir:` buttons calling the four tools (`lib/irrigation_menu.py`
+  is the bot's UI; `lib/irrigation/common.py` what both sides share, without the Tuya client), and a second alert delivery reading
+  `irrigation://alerts` after its own last id (kept apart in `bot_state.json`). Unset, the bot has no irrigation: no button, no
+  irrigation alert types. irrigation-mcp unreachable, the button says it couldn't reach the controller and the bot carries on.
 
 ### 3.10 Configuration
 
@@ -469,7 +478,8 @@ token check (`AUTH_TOKENS`, or the generated token) and Host check (`IRRIGATION_
 station names one), `DATA_DIR`, the alert settings (cooldowns, quiet hours, thresholds), `MCP_CHART_ALL_FEELS_LIKE`, `MCP_CHART_ALL_VPD`,
 `AUTH_TOKENS`, `MCP_BIND`, `MCP_ALLOWED_HOSTS`. The irrigation server: `IRRIGATION_TUYA_*` (old names `BOT_TUYA_*`, then `TUYA_*`),
 `IRRIGATION_CHECK_HOUR` (old `BOT_IRRIGATION_CHECK_HOUR`), `IRRIGATION_BIND`, `IRRIGATION_ALLOWED_HOSTS`, `IRRIGATION_ECOBOT_MCP_URL`, and
-the shared `AUTH_TOKENS`, `DATA_DIR`, `TZ`, `LOG_LEVEL`. The bot: `BOT_IRRIGATION_MCP_URL` (step 8b).
+the shared `AUTH_TOKENS`, `DATA_DIR`, `TZ`, `LOG_LEVEL`. The bot: `BOT_IRRIGATION_MCP_URL` (none: no irrigation), and none of the
+`IRRIGATION_` settings; `scripts/migrate_env.py` adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` where the Tuya settings are.
 
 ## 4. The bot (as it was before step 6)
 
@@ -481,9 +491,9 @@ service. Beyond what the steps need, it gets no new features. While it lives it:
 - keeps a few shortcuts for its buttons and commonest typed requests (a named reading's chart and a period, weather now, the report,
   the gauges), each a fixed call to a service tool whose result is already worded, so it writes nothing itself;
 - draws `charts` and the gauges (`current` with `context`) with its renderer;
-- listens to `ecobot://alerts` (and, from step 5, `irrigation://alerts`) and sends each alert to the chats subscribed to its kind, with
-  its chart, its link and a 🔄 that replays its chart's `drawn_by`;
-- builds `/usage`, Help and its alert menu from `ecobot://station` (and whether an irrigation server is configured);
+- listens to `ecobot://alerts` (and, from step 8b, `irrigation://alerts`, irrigation-mcp's) and sends each alert to the chats
+  subscribed to its kind, with its chart, its link and a 🔄 that replays its chart's `drawn_by`;
+- builds `/usage`, Help and its alert menu from `ecobot://station` (and whether irrigation-mcp is configured: `BOT_IRRIGATION_MCP_URL`);
 - keeps per-chat state: subscriptions, admins, and each chart's `drawn_by` behind its period buttons (a press replays it with a new
   `period`).
 
@@ -832,13 +842,25 @@ Each step ships on its own, with the tests and evals green and the bot working t
      left out of plain `pytest`: 1731 tests in 19 s. `pytest -m slow` runs them (32 s), `pytest -m ""` everything (about 45 s), as CI
      does.
 8. **Irrigation on its own** (was 5b): the irrigation server as its own package, MCP server and Docker image in this repository (3.9).
+   *Done.*
    - **8a (done):** irrigation-mcp (`irrigation_mcp/`, `lib/irrigation/server.py`): its tools, the watchdog and the daily check
      (`lib/irrigation/check.py`, moved from `lib/alerts/irrigation.py`) as ecobot-mcp's client (`lib/irrigation/ecobot.py`),
      `irrigation://alerts`, its state with the one-time copy from `bot_state.json`, its settings (`IRRIGATION_*`, a setting may have
      several old names, `scripts/migrate_env.py` too), its image (`--target irrigation-mcp`, compose's `irrigation` profile). What the
-     two servers share over HTTP moved to `lib/mcp_http.py`. The bot keeps its own irrigation meanwhile, reading `IRRIGATION_TUYA_*`.
-   - **8b:** the bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`) and listens for its alerts the same way; its own Tuya
-     client, watchdog, check wiring and menu go, and an import test keeps them out.
+     two servers share over HTTP moved to `lib/mcp_http.py`. The bot kept its own irrigation meanwhile, reading `IRRIGATION_TUYA_*`.
+   - **8b (done):** the bot connects to it as a second server (`BOT_IRRIGATION_MCP_URL`, `lib/irrigation_remote.RemoteIrrigation` over
+     `lib/upstream.Upstream`, which now names its server in its log and refusals) and delivers `irrigation://alerts` as it delivers
+     `ecobot://alerts` (`lib/weather.RemoteAlerts` given the URI; its last id a `ReadMark` of its own in `bot_state.json`). Its own Tuya
+     client, watchdog and check wiring went from `ecobot.py`; the menu moved to `lib/irrigation_menu.py` (the bot's UI), with what it
+     shares with irrigation-mcp in `lib/irrigation/common.py`, and `lib/irrigation` loads nothing until asked, so the bot never loads
+     Tuya: the bot's import test (and its Docker build) keeps `lib/irrigation/tuya`, `watchdog`, `check` and `server` out. The bot reads
+     no `IRRIGATION_` setting (a Tuya setting left without `BOT_IRRIGATION_MCP_URL` is a warning at start), nor the forecast (the check's).
+     Packaging: `irrigation-mcp.service` (wants ecobot-mcp's, before the bot's; the bot's unit wants it only as a wish, and drops the
+     Tuya secrets), compose's host-network and journald files cover irrigation-mcp, `docker/bot.env` leaves `BOT_IRRIGATION_MCP_URL`
+     empty, and `scripts/migrate_env.py` adds it for systemd where the Tuya settings are. Tests: the bot's irrigation tests run against
+     irrigation-mcp in memory over the fake controller (`tests/served.py`), an irrigation alert reaches the chats through the listen once,
+     irrigation-mcp down is said; the controller's own tests (Tuya, the check, the watchdog) are `tests/test_irrigation_controller.py`,
+     without Telegram.
 
 ## 7. Testing
 

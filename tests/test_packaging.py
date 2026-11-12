@@ -164,3 +164,16 @@ def test_docker_leaves_the_bot_without_irrigation_unless_set_and_every_compose_f
     irrigation = services["irrigation-mcp"]
     assert "depends_on: [ecobot-mcp]" in irrigation and "- /var/lib/private/ecobot:/data" in irrigation
     assert "env_file: [docker/irrigation.env, /etc/ecobot.env]" in irrigation   # (/etc/ecobot.env after: its settings win, as the bot's)
+
+
+def test_the_readme_installs_and_upgrades_irrigation_mcp_for_systemd_and_docker():
+    readme = (ROOT / "README.md").read_text()
+    irrigation = readme.split("### Irrigation\n", 1)[1].split("\n## ", 1)[0]
+    assert "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp" in irrigation and "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp" in irrigation
+    assert "sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/" in irrigation and "COMPOSE_PROFILES=bot,irrigation" in irrigation
+    assert "sudo systemctl enable --now irrigation-mcp.service" in irrigation
+    assert all(f"IRRIGATION_TUYA_{n}=" in irrigation for n in ("DEVICE_ID", "CLIENT_ID", "CLIENT_SECRET"))
+    upgrade = readme.split("## Upgrading", 1)[1].split("\n## ", 1)[0]
+    systemd, docker = upgrade.split("### systemd", 1)[1].split("### Docker", 1)
+    assert "irrigation-mcp.service" in systemd and "From a bot that ran the irrigation controller itself" in systemd
+    assert "From a bot that ran the irrigation controller itself" in docker and "http://irrigation-mcp:8766/mcp" in docker

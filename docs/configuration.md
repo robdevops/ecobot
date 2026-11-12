@@ -5,11 +5,11 @@ ecobot is configured only through environment variables. They live in one file, 
 Each setting is named for the program that reads it:
 
 - `MCP_...`: read by **ecobot-mcp** (`python -m ecobot_mcp`: the sources, the alert rules, the MCP server) alone. The bot, its client, doesn't read them.
-- `IRRIGATION_...`: read by **irrigation-mcp** (`python -m irrigation_mcp`: the irrigation controller's MCP server, its watchdog and daily check). The bot reads them too while it still runs the controller itself (until step 8b of [ecobot-mcp.md](ecobot-mcp.md)).
+- `IRRIGATION_...`: read by **irrigation-mcp** (`python -m irrigation_mcp`: the irrigation controller's MCP server, its watchdog and daily check) alone. The bot, its client (`BOT_IRRIGATION_MCP_URL`), doesn't read them.
 - `BOT_...`: read by the **bot** (`ecobot.py`: Telegram, the model) alone.
 - No prefix: read by **all** of them.
 
-Settings were renamed in November 2026 (README: [Renamed settings](../README.md#renamed-settings)), the irrigation controller's twice (`TUYA_...`, then `BOT_TUYA_...`, now `IRRIGATION_TUYA_...`). An old name still works when the new one is unset: it is used, and one warning at start names the new name (never the value). Where both are set, the new one wins and the old one is named as ignored (of two old names, the newer wins).
+Settings were renamed in November 2026 (README: [Renamed settings](../README.md#renamed-settings)), the irrigation controller's twice (`TUYA_...`, then `BOT_TUYA_...`, now `IRRIGATION_TUYA_...`). An old name still works when the new one is unset: it is used, and one warning at start names the new name (never the value). Where both are set, the new one wins and the old one is named as ignored (of two old names, the newer wins). Only the program that reads a setting reads its old names too: since step 8b the bot reads none of the irrigation controller's, by any name (irrigation-mcp does), so a bot left with `BOT_TUYA_...` and no `BOT_IRRIGATION_MCP_URL` has no Irrigation button and says so at start.
 
 ## The environment file
 
@@ -104,9 +104,16 @@ Every request to `/mcp` needs a token (`AUTH_TOKENS`, below). Chart images are n
 The bot asks ecobot-mcp for the picture of every chart it sends, the model's answers' included (request `_meta` `chart_image: "png"`, in its own `DARKMODE` theme), and for the Status picture (`ecobot://status`), so its `BOT_MCP_URL` needs no `?charts=png`; it draws nothing itself.
 
 While ecobot-mcp can't be reached the bot tells whoever asks so, and reconnects by itself (1, 2, 5, 10, then every 30 seconds); the
-alerts sent meanwhile that are still news are delivered once it is back. Until step 8b the bot also runs the irrigation controller itself
-when the `IRRIGATION_TUYA_*` settings below are set (its Irrigation button, the daily check and the watchdog), as before; its daily check
-asks ecobot-mcp for the rain measured and the forecast.
+alerts sent meanwhile that are still news are delivered once it is back.
+
+### The bot as irrigation-mcp's client
+
+| Variable | Default | Description |
+|---|---|---|
+| `BOT_IRRIGATION_MCP_URL` | none: no irrigation in the bot | irrigation-mcp's endpoint (below): systemd `http://127.0.0.1:8766/mcp`, Docker `http://irrigation-mcp:8766/mcp` (Docker's `docker/bot.env` leaves it empty, so set it in `/etc/ecobot.env` when you run the `irrigation` profile; on the host's network, `compose.host-network.yaml`, it is `http://127.0.0.1:8766/mcp`). Set, the bot is irrigation-mcp's client as it is ecobot-mcp's (the same token): the keyboard's Irrigation button (in Wind's place), typing "irrigation" or "water", the irrigation menu and its buttons call irrigation-mcp's tools, and its alerts (`irrigation://alerts`: `irrigation_battery`, `irrigation_pause`) go to the chats subscribed to them as ecobot-mcp's do; the alert menus, `/usage` and Help offer them. While irrigation-mcp can't be reached the button says it couldn't reach the controller and the rest of the bot carries on; it reconnects by itself, and alerts that are still news are delivered once it is back. The bot runs no controller, watchdog or daily check itself and reads none of the `IRRIGATION_` settings (a Tuya setting left with this unset is a warning at start) |
+
+(Before step 8b, November 2026, the bot ran the controller itself from the `BOT_TUYA_*` settings; `scripts/migrate_env.py` renames them
+and adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` when they are there.)
 
 ## irrigation-mcp's settings (`IRRIGATION_`)
 
@@ -121,14 +128,17 @@ irrigation-mcp (`python -m irrigation_mcp`, [ecobot-mcp.md](ecobot-mcp.md) 3.9) 
 | `IRRIGATION_ALLOWED_HOSTS` | `127.0.0.1`, `localhost` | The Host names it answers (any port unless one is given), beside its own hostname, as `MCP_ALLOWED_HOSTS` is ecobot-mcp's |
 | `IRRIGATION_ECOBOT_MCP_URL` | `http://127.0.0.1:8765/mcp` (Docker: `http://ecobot-mcp:8765/mcp`) | ecobot-mcp, which the daily check asks for the rain measured (`summary`) and the forecast (`ecobot://forecast`), and whose station names the time zone. It sends the first of `AUTH_TOKENS`, else the generated token in the data folder. While ecobot-mcp can't be reached the check goes on the forecast it last read, without the measured rain |
 
-It accepts the same tokens as ecobot-mcp: one of `AUTH_TOKENS`, or with that unset the one generated in the data folder they share.
+It accepts the same tokens as ecobot-mcp: one of `AUTH_TOKENS`, or with that unset the one generated in the data folder they share. Under
+systemd it runs from `irrigation-mcp.service` (optional; the bot's unit wants it only if it is installed), in Docker from the
+`irrigation-mcp` container (the `irrigation` profile, port 8766, its `IRRIGATION_ECOBOT_MCP_URL` set by `docker/irrigation.env`: leave
+a systemd value of it out of `/etc/ecobot.env`, or it points the container at itself; its log says so).
 
 ## Shared settings (no prefix)
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_TOKENS` | generated | `token,token`: the bearer tokens ecobot-mcp accepts (each client sends one as `Authorization: Bearer <token>`), one per client so one can be revoked alone (take it out and restart); the bot sends the first. Compared in constant time; a token is never logged. Unset: ecobot-mcp generates one at its first start and keeps it in the data folder (`DATA_DIR/auth_token`, mode 0600, the same one every start after; its path is logged, never its value), and the bot, with `AUTH_TOKENS` unset too, reads it from there (the same data folder: systemd's units and Docker's containers share it), warning when it can't. For another client: `sudo cat /var/lib/private/ecobot/auth_token`. (Replaces `MCP_SERVICE_TOKENS` and the bot's `WEATHER_MCP_TOKEN`; the latter, if set, is still sent while `AUTH_TOKENS` is unset, with a warning to move it into `AUTH_TOKENS`, and is ignored, with a warning, once `AUTH_TOKENS` is set) |
+| `AUTH_TOKENS` | generated | `token,token`: the bearer tokens ecobot-mcp accepts (each client sends one as `Authorization: Bearer <token>`), one per client so one can be revoked alone (take it out and restart); the bot sends the first, to ecobot-mcp and to irrigation-mcp, which accepts the same ones, and irrigation-mcp sends the first to ecobot-mcp. Compared in constant time; a token is never logged. Unset: ecobot-mcp generates one at its first start and keeps it in the data folder (`DATA_DIR/auth_token`, mode 0600, the same one every start after; its path is logged, never its value), and the bot, with `AUTH_TOKENS` unset too, reads it from there (the same data folder: systemd's units and Docker's containers share it), warning when it can't. For another client: `sudo cat /var/lib/private/ecobot/auth_token`. (Replaces `MCP_SERVICE_TOKENS` and the bot's `WEATHER_MCP_TOKEN`; the latter, if set, is still sent while `AUTH_TOKENS` is unset, with a warning to move it into `AUTH_TOKENS`, and is ignored, with a warning, once `AUTH_TOKENS` is set) |
 | `TZ` | system zone | Only used without Ecowitt (the station's zone wins; a mismatch is logged). IANA name, e.g. `Australia/Melbourne`. With `BOT_MCP_URL`, ecobot-mcp's station's zone wins once read (and is kept for a start while ecobot-mcp is down); `TZ` only until it has ever been read |
-| `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | The bot's state (`bot_state.json`); ecobot-mcp's alert log, SQLite caches and generated token. Relative paths from the working dir. Created if missing. Both programs use the same one |
+| `DATA_DIR` | `$STATE_DIRECTORY`, else app dir | The bot's state (`bot_state.json`); ecobot-mcp's alert log, SQLite caches and generated token; irrigation-mcp's state (`irrigation_state.json`) and alert log (`irrigation_alerts.sqlite`). Relative paths from the working dir. Created if missing. Every program uses the same one |
 | `DARKMODE` | `off` | The charts' colours. `off`: light; `on`: dark; a time range, e.g. `8pm-8am`, `20:00-8:00` or `20-8`: dark between those times in the station's time zone, light the rest of the day. The gauges (the Status picture, the web dashboard) are dark whatever this says. ecobot-mcp reads it for the chart images it sends a client that asks for them (a call may say `chart_dark`); the bot as its client asks for its own theme, so this is the bot's setting for its pictures either way |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. `DEBUG` adds the program's own lines (chart timings) |
