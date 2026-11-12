@@ -464,6 +464,37 @@ async def test_an_irrigation_alert_reaches_every_subscribed_chat_through_the_lis
         assert all(len(data.encode()) <= 64 for row in rows(board) for _, data in row)
 
 
+async def test_at_the_bots_first_start_the_irrigation_alerts_not_yet_expired_are_delivered_once(tmp_path):
+    """irrigation-mcp starts before the bot (its unit, and after an upgrade its first daily check can run at once): the alerts it logged
+    before the bot first read its log, those not yet expired, are delivered at the bot's first start (unexpired_first), once; ecobot-mcp's
+    delivery (without it) still begins after the newest."""
+    state, delivered = AlertState(tmp_path / "s.json"), []
+    state.add_chat(1, "1")
+
+    class Telegram:
+        async def send_message(self, chat_id, text, **kw):
+            delivered.append((chat_id, text))
+    irrigation = await SERVE_IRRIGATION(tmp_path)
+    log_ = irrigation.server.alert_log
+    log_.append("irrigation_pause", "☔ an old pause", "Irrigation paused for rain", expires=log_.now() - 60)   # (expired: not news)
+    await irrigation.server.notify("🪫 The irrigation battery is at 3%.", kind="irrigation_battery")
+
+    async def delivering(state, **kw):
+        mark = ReadMark(state, irrigation_remote.NAME)
+        delivery = AlertDelivery(irrigation.alerts, Notifier(Telegram(), state), state, TZ, mark=mark, **kw)
+        task = asyncio.create_task(delivery.run())
+        await until(lambda: delivery.begun and mark.read is not None, what="the delivery to begin")
+        await asyncio.sleep(0.2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return mark
+    assert (await delivering(AlertState(tmp_path / "other.json"))).read == 2 and delivered == []   # (without: after the newest)
+    mark = await delivering(state, unexpired_first=True)
+    assert delivered == [(1, "🪫 The irrigation battery is at 3%.")] and mark.read == 2
+    await delivering(AlertState(tmp_path / "s.json"), unexpired_first=True)                        # a restart: nothing again
+    assert len(delivered) == 1
+
+
 async def test_irrigation_mcp_down_the_button_says_it_cant_reach_the_controller_and_the_bot_carries_on(tmp_path, monkeypatch):
     monkeypatch.setattr(irrigation_remote, "CALL_WAIT", 0.2)
     state = AlertState(tmp_path / "s.json")

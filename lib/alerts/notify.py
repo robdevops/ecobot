@@ -305,30 +305,44 @@ class AlertDelivery:
     one the id is from (alerts.sqlite removed or replaced: its ids start again at 1, and waiting for them to pass the old id would send
     nothing for as long), noticed by the log's identity kept with the id, or by the id being past the log's newest. With the service remote
     the log can also be replaced while the bot runs (the service back on another alerts.sqlite): that is looked for on every pass, and
-    delivery goes on in the new log with what came since the old one was last read (_switched)."""
+    delivery goes on in the new log with what came since the old one was last read (_switched). With `unexpired_first` (irrigation-mcp's
+    log: its battery and pause alerts are the kind still wanted at the bot's first start, which can come after irrigation-mcp's own first
+    daily check) the first start delivers the unexpired events instead."""
 
     def __init__(self, log, notify: "Notifier", state: AlertState, tz, now: Callable[[], float] = time.time, weather=None,
-                 mark: ReadMark | None = None):
+                 mark: ReadMark | None = None, unexpired_first: bool = False):
         """log: ecobot-mcp's alert log read over MCP (lib/weather.RemoteAlerts, whose reads are coroutines: it is looked at when `run`
         starts), or an alert log itself (lib/alert_log.py: the tests', whose reads are plain). now: the epoch clock (the events' times are compared with it).
         weather: ecobot-mcp as the bot reaches it (lib/weather.py), which draws the events' charts; without it they go without.
-        mark: where the last id handled is kept (ReadMark: irrigation-mcp's log); none: the state's own (ecobot-mcp's)."""
+        mark: where the last id handled is kept (ReadMark: irrigation-mcp's log); none: the state's own (ecobot-mcp's).
+        unexpired_first: with no id kept, begin before the log's unexpired events rather than after its newest."""
         self.log, self.notify, self.state, self.tz, self.now, self.weather = log, notify, state, tz, now, weather
         self.mark = mark or state
+        self.unexpired_first = unexpired_first
         self.begun = False
         self.seen_at: float | None = None   # when the log was last read through (a pass of deliver_new began): see _switched
         if not getattr(log, "remote", False):
-            self._begin(self.log.last_id())
+            self._begin(self.log.last_id(), self._first(self.log.since(0)) if self._wants_unexpired() else None)
+
+    def _wants_unexpired(self) -> bool:
+        return self.unexpired_first and self.mark.read is None
+
+    @staticmethod
+    def _first(unexpired: list[dict]) -> int | None:
+        """The id before the oldest unexpired event (none: no event)."""
+        return unexpired[0]["id"] - 1 if unexpired else None
 
     async def begin(self):
         """Where delivery starts (the log looked at), if it hasn't yet."""
         if not self.begun:
-            self._begin(await value(self.log.last_id()))
+            newest = await value(self.log.last_id())
+            self._begin(newest, self._first(await value(self.log.since(0))) if self._wants_unexpired() else None)
 
-    def _begin(self, newest: int):
+    def _begin(self, newest: int, before_unexpired: int | None = None):
+        """before_unexpired: with no id kept, where to begin instead of after the newest (unexpired_first)."""
         self.begun = True
         if self.mark.read is None:
-            self._handled(newest)
+            self._handled(newest if before_unexpired is None else before_unexpired)
         elif self._other_log(newest):
             log.warning("Alerts: the alert log is not the one the last alert delivered (%s) is from; starting after its newest (%s)",
                         self.mark.read, newest)

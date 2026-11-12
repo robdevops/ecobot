@@ -61,7 +61,8 @@ def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, weather:
     zoned: list = [delivery]
     tasks.start(delivery.run())
     if irrigation is not None:   # (its alerts have no chart)
-        watering = AlertDelivery(irrigation.alerts, notify, bot.state, cfg.tz, mark=ReadMark(bot.state, IRRIGATION_MCP))
+        watering = AlertDelivery(irrigation.alerts, notify, bot.state, cfg.tz, mark=ReadMark(bot.state, IRRIGATION_MCP),
+                                 unexpired_first=True)   # (at the first start: the battery or pause alerts of a check that came before)
         zoned.append(watering)
         tasks.start(watering.run())
     return zoned
