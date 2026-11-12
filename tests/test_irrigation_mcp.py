@@ -30,7 +30,7 @@ from lib.irrigation.state import IrrigationState
 from lib.mcp_http import Uvicorn, server_config
 from lib.timeutil import now_local
 from lib.upstream import VERSION, Upstream, http_transport
-from tests.fakes import TUYA_SECRET, TZ, FakeController, FakeTuya, StandInService, tuya_config
+from tests.fakes import TUYA_SECRET, TUYA_STATUS, TZ, FakeController, FakeTuya, StandInService, tuya_config
 from tests.served import ecobot_mcp
 
 TOKENS = ("irrigation-s3cret", "phone-s3cret")
@@ -424,6 +424,7 @@ async def test_python_m_irrigation_mcp_starts_answers_with_the_generated_token_a
         with contextlib.ExitStack() as second:   # (a second on the same folder stops)
             with pytest.raises(SystemExit, match="Another irrigation-mcp"):
                 hold_folder(tmp_path, main_module.LOCK, "irrigation-mcp", "python -m irrigation_mcp", second)
+        await until(lambda: "the daily check at" in caplog.text, 10, "the daily check to start")   # (after STARTUP_WAIT)
         os.kill(os.getpid(), signal.SIGTERM)
     asker = asyncio.create_task(ask_then_stop())
     await main_module.main()
@@ -434,12 +435,68 @@ async def test_python_m_irrigation_mcp_starts_answers_with_the_generated_token_a
     assert (tmp_path / "irrigation.lock").exists()
 
 
-def test_without_the_controllers_settings_irrigation_mcp_stops_saying_which(monkeypatch, tmp_path):
+async def test_at_start_the_watchdog_and_the_tools_dont_wait_for_ecobot_mcp(tmp_path, monkeypatch, caplog):
+    """A restart mid-run with ecobot-mcp unreachable: the run left armed (past its end, the valve still open) is closed at once, and the
+    tools answer, while the daily check still waits for ecobot-mcp's time zone (STARTUP_WAIT, long here); SIGTERM during that wait stops it."""
+    import irrigation_mcp.__main__ as main_module
+    from lib import auth_token
+    from lib.config import Config
+    caplog.set_level("INFO")
+    port = free_port()
+    cfg = tuya_config(tmp_path, irrigation_bind=("127.0.0.1", port), irrigation_ecobot_mcp_url="http://127.0.0.1:9/mcp")
+    (tmp_path / "irrigation_state.json").write_text(json.dumps({"irrigation_watchdog": {"off_at": time.time() - 120}}))
+    monkeypatch.setattr(Config, "from_env", classmethod(lambda cls, bot=True, program=None: cfg))
+    monkeypatch.setattr(main_module, "STARTUP_WAIT", 60)
+    monkeypatch.setattr(main_module, "SHUTDOWN_SECONDS", 0.25)
+    fake = FakeTuya(status=[{"code": "switch", "value": True}, *TUYA_STATUS[1:]])
+    monkeypatch.setattr(Tuya, "__init__", lambda self, c, transport=None, orig=Tuya.__init__: orig(self, c, httpx.MockTransport(fake)))
+    answered = {}
+
+    async def ask_then_stop():
+        started = time.monotonic()
+        await until(lambda: any(p.endswith("/commands") for _, p, _, _ in fake.calls), 10, "the watchdog to close the valve")
+        await until(lambda: "MCP: http://127.0.0.1:" in caplog.text, 10, "irrigation-mcp to listen")
+        async with Client(http_transport(f"http://127.0.0.1:{port}/mcp", auth_token.read(tmp_path)), mode=VERSION) as client:
+            answered["status"] = json.loads((await client.call_tool("irrigation_status", {})).content[0].text)
+        answered["after"] = time.monotonic() - started
+        os.kill(os.getpid(), signal.SIGTERM)
+    asker = asyncio.create_task(ask_then_stop())
+    await asyncio.wait_for(main_module.main(), 30)
+    await asker
+    commands = [body for _, p, body, _ in fake.calls if p.endswith("/commands")]
+    assert commands == [{"commands": [{"code": "switch", "value": False}]}] and "valve was still open" in caplog.text
+    assert "battery_percentage" in answered["status"] and "off_at" not in answered["status"] and answered["after"] < 20
+    assert "the daily check at" not in caplog.text                     # (it was still waiting for ecobot-mcp when stopped)
+    assert json.loads((tmp_path / "irrigation_state.json").read_text())["irrigation_watchdog"] == {}
+
+
+def test_the_watchdog_checks_again_when_the_run_is_due_not_a_whole_minute_later(tmp_path):
+    from lib.irrigation.state import IrrigationState
+    from lib.irrigation.watchdog import CHECK_SECONDS, GRACE_SECONDS
+    now = [1000.0]
+    watchdog = Watchdog(FakeController(), IrrigationState(tmp_path / "irrigation_state.json"), clock=lambda: now[0])
+    assert watchdog.next_check() == CHECK_SECONDS                                     # nothing armed
+    watchdog.arm(1)
+    assert watchdog.next_check() == CHECK_SECONDS                                     # due in 90 s
+    now[0] += 50
+    assert watchdog.next_check() == 60 + GRACE_SECONDS - 50                           # due in 40 s: then
+    now[0] += 39.5
+    assert watchdog.next_check() == 1.0                                               # (never sooner than a second)
+    now[0] += 10
+    assert watchdog.next_check() == CHECK_SECONDS                                     # past it (its check failed): the usual minute
+
+
+def test_without_the_controllers_settings_irrigation_mcp_stops_saying_which_with_the_status_its_unit_doesnt_restart(monkeypatch,
+                                                                                                                    tmp_path, caplog):
+    """Its unit restarts it on a failure, but not on this one (RestartPreventExitStatus=78): until the settings change it would only
+    fail again, every 10 seconds, for good (ecobot.service wants irrigation-mcp.service, so an installed one is started at every boot)."""
     import irrigation_mcp.__main__ as main_module
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("IRRIGATION_TUYA_DEVICE_ID", "dev")
-    with pytest.raises(SystemExit, match="IRRIGATION_TUYA_CLIENT_ID, IRRIGATION_TUYA_CLIENT_SECRET not set"):
+    with pytest.raises(SystemExit) as stopped:
         asyncio.run(main_module.main())
+    assert stopped.value.code == main_module.SETTINGS_EXIT == 78
+    assert "IRRIGATION_TUYA_CLIENT_ID, IRRIGATION_TUYA_CLIENT_SECRET not set" in caplog.text
 
 
 def test_it_sends_ecobot_mcp_the_first_of_auth_tokens_else_the_generated_one(tmp_path):

@@ -5,7 +5,7 @@
 #   sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
 #   sudo systemctl enable --now irrigation-mcp.service && sudo systemctl restart ecobot
 # It needs IRRIGATION_TUYA_DEVICE_ID, IRRIGATION_TUYA_CLIENT_ID and IRRIGATION_TUYA_CLIENT_SECRET in /etc/ecobot.env (it stops at start,
-# saying so, without them), and the bot BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp there to show the Irrigation button and deliver
+# saying so, without them, and isn't restarted until it is started again), and the bot BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp there to show the Irrigation button and deliver
 # its alerts. Its daily check asks ecobot-mcp (IRRIGATION_ECOBOT_MCP_URL, default http://127.0.0.1:8765/mcp) for the rain and the
 # forecast: this unit pulls ecobot-mcp's in and starts after it, and before the bot (the bot's unit wants this one only if it is installed).
 # Only one irrigation-mcp runs on a data folder (irrigation.lock): a second stops at start, saying so.
@@ -35,6 +35,8 @@ CacheDirectory=ecobot
 ExecStart=/opt/ecobot/.venv/bin/python -m irrigation_mcp
 Restart=on-failure
 RestartSec=10
+# Its settings missing or wrong (the Tuya ones, say), it exits 78 and is not restarted: fix /etc/ecobot.env, then start it again
+RestartPreventExitStatus=78
 TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal

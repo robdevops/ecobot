@@ -36,6 +36,13 @@ class Watchdog:
     def off_at(self) -> float | None:
         return self._memory().get("off_at")
 
+    def next_check(self) -> float:
+        """Seconds to the next check: CHECK_SECONDS, or sooner when a run's end (with its grace) comes before that, so the valve is
+        closed on time; a run already past it (its check failed) is tried again after CHECK_SECONDS."""
+        due = self.off_at
+        left = None if due is None else due + GRACE_SECONDS - self.clock()
+        return CHECK_SECONDS if left is None or left <= 0 else min(CHECK_SECONDS, max(left, 1.0))
+
     async def check(self):
         """Switch the valve off if a run is over and it is still on. A failure is tried again at the next check."""
         due = self.off_at

@@ -119,7 +119,7 @@ def test_the_bots_unit_wants_ecobot_mcps_and_starts_after_it_and_the_readme_inst
 
 def unit(name: str) -> tuple[str, dict[str, list[str]]]:
     text = (ROOT / name).read_text()
-    keys = ("Wants", "After", "Before", "UnsetEnvironment", "ExecStart", "User", "StateDirectory")
+    keys = ("Wants", "After", "Before", "UnsetEnvironment", "ExecStart", "User", "StateDirectory", "Restart", "RestartPreventExitStatus")
     return text, {k: (m[1].split() if (m := re.search(rf"^{k}=(.*)$", text, re.M)) else []) for k in keys}
 
 
@@ -136,6 +136,8 @@ def test_irrigation_mcps_unit_runs_it_after_ecobot_mcp_and_before_the_bot_withou
         assert {name, *by_env[name]} <= set(irrigation["UnsetEnvironment"]), name
     assert not any(n.startswith("IRRIGATION_") or n == "AUTH_TOKENS" for n in irrigation["UnsetEnvironment"])
     assert "WantedBy=multi-user.target" in text
+    from irrigation_mcp.__main__ import SETTINGS_EXIT          # (without its settings it isn't restarted every 10 s for good)
+    assert irrigation["Restart"] == ["on-failure"] and irrigation["RestartPreventExitStatus"] == [str(SETTINGS_EXIT)]
 
 
 def test_the_bots_unit_wants_irrigation_mcps_only_as_a_wish_and_drops_the_tuya_secrets():
