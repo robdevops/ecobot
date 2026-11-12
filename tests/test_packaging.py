@@ -1,5 +1,6 @@
-"""The two programs as they are installed: two Docker images from one Dockerfile (each with only its own packages: the bot's no Pillow
-and no source's, docs/ecobot-mcp.md step 6b), compose running each from its own, and the systemd units: ecobot-mcp's without the bot's
+"""The programs as they are installed: three Docker images from one Dockerfile (each with only its own packages: the bot's no Pillow
+and no source's, docs/ecobot-mcp.md step 6b; irrigation-mcp's no Telegram, no model client, no Pillow, step 8), compose running each from
+its own, and the systemd units: ecobot-mcp's without the bot's
 secrets, by their new and old names, and the bot's wanting and started after ecobot-mcp's. (Read as text: the CI workflow docker.yml
 builds and runs the images themselves.)"""
 
@@ -25,31 +26,42 @@ def requirements(name: str) -> set[str]:
 
 def test_ecobot_mcp_needs_no_telegram_and_no_model_client_and_the_bot_only_its_own_packages():
     mcp, bot, both = requirements("requirements-mcp.txt"), requirements("requirements-bot.txt"), requirements("requirements.txt")
+    irrigation = requirements("requirements-irrigation.txt")
     assert {"mcp", "uvicorn", "httpx"} <= mcp and not {"python-telegram-bot", "openai"} & mcp
     assert bot == {"python-telegram-bot", "openai", "mcp", "httpx"}            # no Pillow, no source's packages (holidays, zeroconf)
-    assert both == mcp | bot                                                   # (a systemd install's one venv: both programs)
-    pins = lambda name: {line.split("#")[0].strip() for line in (ROOT / name).read_text().splitlines() if line.startswith("mcp")}
-    assert pins("requirements-bot.txt") == pins("requirements-mcp.txt")         # the two sides of MCP upgraded together
+    assert irrigation == {"mcp", "uvicorn", "httpx"}                           # irrigation-mcp: the server, its client, Tuya's client
+    assert both == mcp | bot | irrigation                                      # (a systemd install's one venv: every program)
+    pins = lambda name: {line.split("#")[0].strip() for line in (ROOT / name).read_text().splitlines() if line.startswith(("mcp", "uvicorn"))}
+    assert {p for p in pins("requirements-mcp.txt") if p.startswith("mcp")} == pins("requirements-bot.txt")   # the sides of MCP upgraded together
+    assert pins("requirements-irrigation.txt") == pins("requirements-mcp.txt")
 
 
 def test_one_dockerfile_builds_both_images_each_checked_at_build():
     text = (ROOT / "Dockerfile").read_text()
     assert re.search(r"^FROM app AS ecobot-mcp$", text, re.M) and re.search(r"^FROM app AS ecobot$", text, re.M)
     mcp, bot = text.split("FROM app AS ecobot-mcp")[1].split("FROM app AS ecobot\n")
+    mcp, irrigation = mcp.split("FROM app AS irrigation-mcp")
     assert "requirements-mcp.txt" in text.split("FROM base AS venv-mcp")[1].split("FROM base AS venv-bot")[0]
-    venv_bot = text.split("FROM base AS venv-bot")[1].split("FROM base AS app")[0]
+    venv_bot = text.split("FROM base AS venv-bot")[1].split("FROM base AS venv-irrigation")[0]
+    venv_irrigation = text.split("FROM base AS venv-irrigation")[1].split("FROM base AS app")[0]
+    assert "-r /tmp/requirements-irrigation.txt" in venv_irrigation and "requirements-charts" not in venv_irrigation
     assert "-r /tmp/requirements-bot.txt" in venv_bot and not re.search(r"requirements(-mcp|-charts)?\.txt", venv_bot.replace("requirements-bot.txt", ""))
     assert 'CMD ["python", "-m", "ecobot_mcp"]' in mcp and "import ecobot_mcp.__main__" in mcp and "find_spec('telegram') is None" in mcp
     assert 'CMD ["python", "ecobot.py"]' in bot and "import lib.bot, ecobot" in bot and "find_spec('PIL') is None" in bot
     assert all(f"'{m}'" in bot for m in ("lib.ecowitt", "lib.airgradient", "lib.forecast", "lib.pollen", "lib.storage"))
+    assert 'CMD ["python", "-m", "irrigation_mcp"]' in irrigation and "import irrigation_mcp.__main__" in irrigation
+    assert "find_spec('telegram') is None" in irrigation and "find_spec('PIL') is None" in irrigation and "'lib.storage'" in irrigation
     ignored = (ROOT / ".dockerignore").read_text()
-    assert "requirements-mcp.txt" in ignored and "requirements-bot.txt" in ignored
+    assert all(f"!{name}" in ignored for name in ("requirements-mcp.txt", "requirements-bot.txt", "requirements-irrigation.txt", "irrigation_mcp/"))
 
 
 def test_compose_runs_each_program_from_its_own_image():
     text = (ROOT / "compose.yaml").read_text()
     services = dict(re.findall(r"^  ([\w-]+):\n((?:    .*\n|\s*\n)+)", text, re.M))
-    mcp, bot = services["ecobot-mcp"], services["ecobot"]
+    mcp, bot, irrigation = services["ecobot-mcp"], services["ecobot"], services["irrigation-mcp"]
+    assert "image: irrigation-mcp" in irrigation and "target: irrigation-mcp" in irrigation and "profiles: [irrigation]" in irrigation
+    assert "IRRIGATION_BIND: 0.0.0.0:8766" in irrigation and "- 8766:8766" in irrigation and "docker/irrigation.env" in irrigation
+    assert "IRRIGATION_ECOBOT_MCP_URL=http://ecobot-mcp:8765/mcp" in (ROOT / "docker" / "irrigation.env").read_text()
     assert "image: ecobot-mcp" in mcp and "target: ecobot-mcp" in mcp and "hostname: ecobot-mcp" in mcp and "- 8765:8765" in mcp
     assert "image: ecobot\n" in bot and "target: ecobot\n" in bot and "profiles: [bot]" in bot and "depends_on: [ecobot-mcp]" in bot
     assert "BOT_MCP_URL=http://ecobot-mcp:8765/mcp" in (ROOT / "docker" / "bot.env").read_text()

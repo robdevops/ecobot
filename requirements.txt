@@ -1,4 +1,5 @@
-# Everything, in one venv: ecobot-mcp (requirements-mcp.txt) and the bot (requirements-bot.txt), for the systemd install, which runs
-# both from one checkout. With requirements-charts.txt (Pillow) for ecobot-mcp's chart images and Status picture.
+# Everything, in one venv: ecobot-mcp (requirements-mcp.txt), the bot (requirements-bot.txt) and irrigation-mcp
+# (requirements-irrigation.txt), for the systemd install, which runs them from one checkout. With requirements-charts.txt (Pillow) for ecobot-mcp's chart images and Status picture.
 -r requirements-mcp.txt
 -r requirements-bot.txt
+-r requirements-irrigation.txt

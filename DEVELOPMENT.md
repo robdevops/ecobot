@@ -109,10 +109,20 @@ PNG of a chart byte for byte as its renderer draws it, an alert through the list
 dropped connection rebuilt and the alerts after the last id read once, ecobot-mcp down, `ecobot.main()`); `tests/test_startup.py` runs
 both programs' main(): ecobot-mcp's over the fake sources, the bot's against ecobot-mcp under uvicorn.
 
+## irrigation-mcp
+`python -m irrigation_mcp` (`irrigation_mcp/__main__.py`) is the irrigation controller's MCP server (docs/ecobot-mcp.md 3.9, step 8):
+`lib/irrigation/server.py` (its four tools and `irrigation://alerts`, the low-level SDK as `lib/mcp_server.py`), `watchdog.py` and
+`check.py` (the watchdog and the daily check it runs), `ecobot.py` (its client of ecobot-mcp, `lib/upstream.Upstream`), `state.py`
+(`irrigation_state.json`) and `tuya.py`. What it shares with ecobot-mcp over HTTP (the token and Host checks, the request log, uvicorn, the
+generated token, the data folder's lock) is `lib/mcp_http.py`. It imports nothing of the bot's and none of ecobot-mcp's sources or tools
+(`tests/test_irrigation_mcp.py` checks it in a subprocess, as the Docker build does). Its tests run its server over the SDK's in-memory
+transport with a fake controller (`tests.fakes.FakeController`, or the fake Tuya cloud `FakeTuya`), and its daily check against
+ecobot-mcp in memory (`tests/served.py`).
+
 ### Settings
-Each is a field of `lib/config.Config`, named for the program that reads it (`MCP_`, `BOT_`, or none when both do;
-docs/configuration.md), with its old name (`_setting(..., old=...)`), still read when the new one is unset and named in one warning at
-start. Scripts that read one directly use `lib.config.env(name)`, which knows the old names too. The test suite unsets every setting's
+Each is a field of `lib/config.Config`, named for the program that reads it (`MCP_`, `IRRIGATION_`, `BOT_`, or none when all do;
+docs/configuration.md), with its old name or names, newest first (`_setting(..., old=...)`, `old=("NEWER", "OLDER")`), still read when
+the new one is unset and named in one warning at start. Scripts that read one directly use `lib.config.env(name)`, which knows the old names too. The test suite unsets every setting's
 variable, new and old, before each test (`tests/conftest.py`). `scripts/eval_prompts.py --live` has its own names, `OPENROUTER_API_KEY`,
 `OPENROUTER_BASE_URL` and `OPENROUTER_MODEL` (the CI secrets'), not the bot's `BOT_OPENROUTER_*`.
 
@@ -122,7 +132,7 @@ variable, new and old, before each test (`tests/conftest.py`). `scripts/eval_pro
 | `test` | every push to `main` and every pull request | the exact versions in `requirements.txt` and `requirements-charts.txt`: pytest (chart pictures included) and the offline evals. The gate. |
 | `newest` | Sundays 21:17 UTC, or the Run workflow button | the tests with the newest Pillow. Advisory. |
 | `live-evals` | Sundays 21:17 UTC, or the Run workflow button | asks the real model the six questions in `tests/evals/weekly.txt` as the bot asks it (`python scripts/eval_prompts.py --live`: its prompt and the ten tools) and checks which tool it calls against `tests/evals/service_cases.json`; a failure is asked once more before it is reported. Advisory. The button's "all cases" box asks all 94. Skipped until the secrets below exist. |
-| `image` | pushes that change `Dockerfile`, `.dockerignore`, `requirements.txt`, `requirements-bot.txt`, `requirements-mcp.txt` or `requirements-charts.txt` (any branch), or the Run workflow button | builds both Docker images (`ecobot-mcp` and `ecobot`; each build imports its program, ecobot-mcp's with no Telegram or model client in it, the bot's with no Pillow and no source module), checks each program starts in its image and names the commit, draws the sample charts in ecobot-mcp's (they must be in Inter and match `tests/charts`); the images' sizes go in the run's summary. |
+| `image` | pushes that change `Dockerfile`, `.dockerignore`, `requirements.txt`, `requirements-bot.txt`, `requirements-mcp.txt`, `requirements-irrigation.txt` or `requirements-charts.txt` (any branch), or the Run workflow button | builds the three Docker images (`ecobot-mcp`, `irrigation-mcp` and `ecobot`; each build imports its program, ecobot-mcp's with no Telegram or model client in it, irrigation-mcp's with neither and no Pillow or source, the bot's with no Pillow and no source module), checks each program starts in its image and names the commit, draws the sample charts in ecobot-mcp's (they must be in Inter and match `tests/charts`); the images' sizes go in the run's summary. |
 
 Repository secrets (Settings, Secrets and variables, Actions, New repository secret):
 - `OPENROUTER_API_KEY`: for `live-evals`. `OPENROUTER_MODEL` is optional (default `deepseek/deepseek-v4.1-flash-1017`): add it only if production runs another model.

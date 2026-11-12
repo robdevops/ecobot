@@ -1,0 +1,6 @@
+# irrigation-mcp's packages (python -m irrigation_mcp: the irrigation controller's MCP server, docs/ecobot-mcp.md 3.9), and the Docker
+# image irrigation-mcp's: the MCP server and client (pinned as ecobot-mcp's: the sides are upgraded together), uvicorn, and httpx (the
+# Tuya cloud's client). No Telegram, no model client, no Pillow, no source's packages.
+httpx
+mcp==2.3.0
+uvicorn==0.54.0

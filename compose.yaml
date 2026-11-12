@@ -1,11 +1,12 @@
 # ecobot in Docker (README). `sudo docker compose up -d --build` builds the images and starts ecobot-mcp; the Telegram bot is
 # optional, under the `bot` profile: `sudo docker compose --profile bot up -d --build`, or COMPOSE_PROFILES=bot in /opt/ecobot/.env.
-# Two images from the one Dockerfile: ecobot-mcp (its target ecobot-mcp: no Telegram, no model client) and ecobot (the bot: its own
-# packages alone, no Pillow and no source).
+# Three images from the one Dockerfile: ecobot-mcp (its target ecobot-mcp: no Telegram, no model client), irrigation-mcp (its own
+# packages alone) and ecobot (the bot: its own packages alone, no Pillow and no source).
 # Compose replaces a running container only when its image or settings changed. The commit the log's first line names is read from
 # the clone's .git (see the Dockerfile). Logs: Docker's `local` driver (README: "Docker logging", compose.journald.yaml for the
 # journal), which compresses and rotates its files (5 of 10 MB here); read them with `docker logs -tf ecobot-mcp` (or `ecobot`).
-# Settings (/etc/ecobot.env, docs/configuration.md): MCP_ ones are ecobot-mcp's, BOT_ ones the bot's, the rest both read.
+# Settings (/etc/ecobot.env, docs/configuration.md): MCP_ ones are ecobot-mcp's, IRRIGATION_ ones irrigation-mcp's, BOT_ ones the bot's,
+# the rest all read.
 services:
   # ecobot-mcp, the MCP server (docs/ecobot-mcp.md 3.8, DEVELOPMENT.md "ecobot-mcp"): the sources and their syncers, the alert rules
   # and the MCP server, on port 8765 of every address the host has, so other machines on the network can reach it too (plain HTTP,
@@ -30,6 +31,36 @@ services:
       MCP_BIND: 0.0.0.0:8765
     ports:
       - 8765:8765
+    volumes:
+      - /var/lib/private/ecobot:/data
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  # irrigation-mcp, the irrigation controller's MCP server (docs/ecobot-mcp.md 3.9), optional, under the `irrigation` profile:
+  # `sudo docker compose --profile irrigation up -d --build` (or COMPOSE_PROFILES=irrigation, or bot,irrigation, in /opt/ecobot/.env).
+  # It needs IRRIGATION_TUYA_DEVICE_ID, _CLIENT_ID and _CLIENT_SECRET in /etc/ecobot.env, runs the controller's watchdog and daily
+  # check, asks ecobot-mcp for the rain and the forecast (by its name on the project's network), and answers on port 8766 with the same
+  # tokens (AUTH_TOKENS, or the generated one in the data folder they share). Its state and alert log are kept in the same folder.
+  irrigation-mcp:
+    image: irrigation-mcp
+    container_name: irrigation-mcp
+    hostname: irrigation-mcp
+    build:
+      context: .
+      target: irrigation-mcp
+      args:
+        COMMIT: ${COMMIT:-}
+    profiles: [irrigation]
+    restart: unless-stopped
+    depends_on: [ecobot-mcp]
+    env_file: [docker/irrigation.env, /etc/ecobot.env]
+    environment:
+      IRRIGATION_BIND: 0.0.0.0:8766
+    ports:
+      - 8766:8766
     volumes:
       - /var/lib/private/ecobot:/data
     logging:
