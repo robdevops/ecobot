@@ -100,7 +100,7 @@ async def test_water_is_refused_while_a_weather_delay_is_on_saying_so(served):
     served.device.status_now["weather_delay"] = "24h"
     async with Client(served.server) as client:
         error, out = await call(client, "water", {"minutes": 5})
-    assert error and "paused (weather delay 24h)" in out["error"] and "cancel" in out["error"]
+    assert error and "paused (weather delay 24h)" in out["error"] and "cancel" in out["error"] and out["refused"] == "paused"
     assert served.device.commands == [] and served.watchdog.off_at is None
 
 
@@ -112,7 +112,8 @@ async def test_water_is_refused_while_a_weather_delay_is_on_saying_so(served):
 async def test_wrong_arguments_are_refused_saying_what_is_wrong_and_nothing_is_sent(served, name, args, says):
     async with Client(served.server) as client:
         error, out = await call(client, name, args)
-    assert error and says in out["error"] and served.device.commands == [] and served.watchdog.off_at is None
+    assert error and says in out["error"] and out["refused"] == "arguments"
+    assert served.device.commands == [] and served.watchdog.off_at is None
 
 
 async def test_a_controller_that_cant_be_reached_is_a_tool_error_safe_to_show_and_a_lost_water_reply_is_still_watched(served, tmp_path):

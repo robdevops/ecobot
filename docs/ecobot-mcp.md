@@ -455,7 +455,8 @@ token check (`AUTH_TOKENS`, or the generated token) and Host check (`IRRIGATION_
   `battery_percentage`, `work_state`, and the watchdog's `off_at` while a run is watched), `water {minutes: 1..60}` (refused while a
   weather delay is on, with an error that says so; the watchdog armed first), `stop` (the valve off, the watchdog disarmed), `delay
   {duration: 24h|48h|72h|cancel}`; the last three `destructiveHint`, so a client asks before it calls them. Each answers JSON as one text
-  block, as ecobot-mcp's tools do; a refusal or the controller unreachable is `isError` with `{"error": ...}`, a message safe to show.
+  block, as ecobot-mcp's tools do; a refusal or the controller unreachable is `isError` with `{"error": ...}`, a message safe to show,
+  a refusal with `"refused"` too (`"paused"` or `"arguments"`: the bot says why, not that it couldn't reach the controller).
 - **The watchdog** (a run must end; a restart mid-run still closes the valve) and the daily check (pause when it rained or will) run in
   that server whatever any client does.
 - **Rain and forecast** come from the weather service, as its client: the measured rain from `summary{readings: ["rain"], period: "last

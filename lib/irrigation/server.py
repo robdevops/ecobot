@@ -6,7 +6,8 @@ low-level SDK as ecobot-mcp's (lib/mcp_server.py), as Streamable HTTP behind the
     refused with an error that says so while a weather delay is on, the watchdog armed first (a command whose reply is lost may still
     have opened the valve); `stop` (the valve off, the watchdog disarmed); `delay {duration: 24h|48h|72h|cancel}`. The last three carry
     destructiveHint, so a client asks before it calls them. Each answers JSON as one text block, as ecobot-mcp's tools do; a refusal,
-    or the controller unreachable (IrrigationError's message, safe to show), is `isError` with {"error": ...}.
+    or the controller unreachable (IrrigationError's message, safe to show), is `isError` with {"error": ...}, a refusal with
+    "refused" too: "paused" (water while a weather delay is on) or "arguments".
   - **Resources**: `irrigation://alerts` (and its template with `since` and `expired`): the alerts its daily check decides
     (irrigation_battery, irrigation_pause), in ecobot://alerts' shape, from an alert log of its own (lib/alert_log.py:
     irrigation_alerts.sqlite, its own identity), published as ResourceUpdated on each new one to whoever listens.
@@ -80,7 +81,11 @@ TOOLS = {   # name: (description, input schema, annotations)
 
 
 class Refused(Exception):
-    """A call refused (its arguments, or the timer paused): its message is the answer's error."""
+    """A call refused (its arguments, or the timer paused): its message is the answer's error, `why` its "refused"."""
+
+    def __init__(self, message: str, why: str = "arguments"):
+        super().__init__(message)
+        self.why = why
 
 
 def _result(data: dict) -> types.CallToolResult:
@@ -138,7 +143,7 @@ class IrrigationServer:
             _check_arguments(name, args)
             return await getattr(self, f"_{name}")(**args)
         except Refused as e:
-            return {"error": str(e)}
+            return {"error": str(e), "refused": e.why}
         except IrrigationError as e:   # (its message is safe to show: no secrets, no raw response)
             log.warning("Irrigation %s failed: %s", name, e)
             return {"error": f"The irrigation controller couldn't be reached: {e}."}
@@ -159,7 +164,7 @@ class IrrigationServer:
         status = await self.device.status()
         if is_paused(status):
             log.info("Irrigation: water %d refused, paused for %s", minutes, status.get("weather_delay"))
-            raise Refused(PAUSED.format(delay=status.get("weather_delay")))
+            raise Refused(PAUSED.format(delay=status.get("weather_delay")), "paused")
         self.watchdog.arm(minutes)   # first: a command whose reply is lost may still have opened the valve
         await self.device.water(minutes)
         log.info("Irrigation: watering for %d minutes", minutes)

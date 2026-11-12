@@ -27,7 +27,7 @@ from .buttons import button
 from .alerts import menu, pictures
 from .alerts.notify import AlertState
 from . import irrigation_menu
-from .irrigation.common import IrrigationError
+from .irrigation.common import IrrigationError, IrrigationRefused
 from .service.common import AS_DRAWN, BACKGROUND
 from .specs import from_json
 from .tools import Turn
@@ -908,9 +908,14 @@ class Bot:
 
     async def _controller(self, query, request, what: str):
         """What the controller answers `request` with (its status, or the toast of an action). When it can't be reached: logged as
-        "Irrigation {what} failed", said in a toast, and None (the press goes no further)."""
+        "Irrigation {what} failed", said in a toast, and None (the press goes no further). Refused (water while a pause began since the
+        status was read): the reason said instead."""
         try:
             return await request
+        except IrrigationRefused as e:
+            log.info("Irrigation %s refused: %s", what, e)
+            await answer_query(query, irrigation_menu.PAUSED_ERROR if e.paused else fit(str(e), TOAST_LIMIT), show_alert=not e.paused)
+            return None
         except IrrigationError as e:
             log.warning("Irrigation %s failed: %s", what, e)
             await answer_query(query, "Couldn't reach the irrigation controller", show_alert=True)

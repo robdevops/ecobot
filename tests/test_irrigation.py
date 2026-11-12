@@ -18,6 +18,7 @@ from lib.alerts.notify import AlertDelivery, AlertState, Notifier, ReadMark
 from lib.bot import Bot
 from lib.buttons import struck as strike
 from lib.irrigation import IrrigationError, Tuya
+from lib.irrigation.common import IrrigationRefused
 from lib.irrigation_remote import RemoteIrrigation
 from tests.fakes import TZ, FakeController, tuya_config
 
@@ -592,6 +593,31 @@ async def test_water_is_refused_while_paused_with_a_toast_and_a_bold_footer_unti
     q = await press(bot, "ir:water:10")
     assert device.commands[-1] == ("water", 10) and q.toast == "Watering for 10 minutes" and "error:" not in q.edits[0][1]
     assert watched(bot) and slept[-1] == 3
+
+
+async def test_water_refused_by_irrigation_mcp_after_the_status_read_says_paused_not_unreachable(tmp_path):
+    """A pause that begins between the bot's status read and its water call (the daily check's): irrigation-mcp refuses the water; the
+    bot says why (the paused toast), not that it couldn't reach the controller. Another refusal's own message is the toast."""
+    bot, state, device = await irrigation_bot(tmp_path)
+    remote = bot.irrigation
+    real = remote.status
+
+    async def read_before_the_pause():
+        status = await real()
+        device.status_now["weather_delay"] = "24h"   # (the pause begins just after the read)
+        return status
+    remote.status = read_before_the_pause
+    q = await press(bot, "ir:water:5")
+    assert q.toast == menu.PAUSED_ERROR and device.commands == [] and watched(bot) is None
+    with pytest.raises(IrrigationRefused, match="paused") as refused:
+        await remote.water(5)
+    assert refused.value.paused
+    with pytest.raises(IrrigationRefused, match="from 1 to 60") as refused:
+        await remote.water(61)
+    assert not refused.value.paused
+    remote.status = real
+    query = Query("ir:water:61")
+    assert await bot._controller(query, remote.water(61), "water 61") is None and query.toast.startswith("minutes is a whole number")
 
 
 async def test_water_while_the_status_cannot_be_read_says_so_and_sends_nothing(tmp_path):

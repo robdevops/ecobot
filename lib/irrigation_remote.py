@@ -6,7 +6,8 @@ the methods the bot always called on the controller:
   - `status()`: irrigation_status ({switch, countdown, weather_delay, paused, battery_percentage, work_state, off_at});
   - `water(minutes)`, `delay(duration)`, `set_switch(False)` (stop): irrigation-mcp watches a run and closes the valve itself;
   - each raises IrrigationError (lib/irrigation/common.py) when irrigation-mcp can't be reached within CALL_WAIT seconds, or answers
-    with an error (the controller unreachable, a refusal): the bot says it couldn't reach the controller;
+    with an error (the controller unreachable): the bot says it couldn't reach the controller; IrrigationRefused, one, when irrigation-mcp
+    refused the call (water while paused): the bot says that instead;
   - `alerts`: irrigation://alerts read as AlertDelivery reads an alert log (lib/weather.RemoteAlerts), woken by the listen.
 
 Nothing here loads the Tuya client, the watchdog or the daily check: they are irrigation-mcp's."""
@@ -15,7 +16,7 @@ import asyncio
 import json
 import logging
 
-from .irrigation.common import IrrigationError
+from .irrigation.common import IrrigationError, IrrigationRefused
 from .weather import RemoteAlerts
 
 log = logging.getLogger(__name__)
@@ -83,7 +84,8 @@ class RemoteIrrigation:
 
     # ---------- the controller ----------
     async def call(self, name: str, args: dict | None = None) -> dict:
-        """A tool's answer as data; IrrigationError when irrigation-mcp can't be reached or the tool answers with an error."""
+        """A tool's answer as data; IrrigationError when irrigation-mcp can't be reached or the tool answers with an error,
+        IrrigationRefused when it refused the call."""
         client = await self._client(CALL_WAIT)
         try:
             result = await client.call_tool(name, args or {})
@@ -96,6 +98,8 @@ class RemoteIrrigation:
             data = None
         if not isinstance(data, dict):
             raise IrrigationError(f"{NAME}'s {name} gave no answer")
+        if (result.is_error or "error" in data) and data.get("refused"):
+            raise IrrigationRefused(str(data.get("error") or f"{NAME} refused {name}"), paused=data["refused"] == "paused")
         if result.is_error or "error" in data:
             raise IrrigationError(str(data.get("error") or f"{NAME}'s {name} failed"))
         return data
