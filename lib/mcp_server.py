@@ -38,22 +38,18 @@ fetches, alerts or writes: ecobot_mcp runs the sources and the rules."""
 
 import asyncio
 import base64
-import hmac
 import json
 import logging
 import os
-import time
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import mcp_types as types
-from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.lowlevel import Server
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ResourceUpdated, ToolsListChanged
-from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from starlette.requests import Request
 from starlette.responses import Response
@@ -61,6 +57,7 @@ from starlette.routing import Route
 
 from . import chart_images, theme
 from .config import ROOT
+from .mcp_http import CHART_PATH, RequestLog, TokenCheck, alerts_read, host_settings
 from .service import Service
 from .service.about import AboutTool, alerts as alert_kinds
 from .service.common import AS_DRAWN, charts_as_titles, iso
@@ -221,39 +218,6 @@ def request_base(request) -> str:
     return f"{scheme}://{host}" if host else ""
 
 
-CHART_PATH = "/charts"   # where the chart links' pictures are served
-
-
-# ---------- auth ----------
-class TokenCheck:
-    """The service's TokenVerifier (3.8): a bearer token is one of AUTH_TOKENS, compared in constant time against every one of
-    them. `revoke(token)` takes one out while the service runs (AUTH_TOKENS without it does the same at the next start)."""
-
-    def __init__(self, tokens):
-        self.tokens = list(dict.fromkeys(tokens))
-
-    def revoke(self, token: str):
-        if token in self.tokens:
-            self.tokens.remove(token)
-
-    async def verify_token(self, token: str) -> AccessToken | None:
-        found = False
-        sent = (token or "").encode()
-        for known in list(self.tokens):   # (every one compared: the time says nothing of which matched)
-            found |= hmac.compare_digest(sent, known.encode())
-        return AccessToken(token=token, client_id="client", scopes=[]) if found else None
-
-
-def host_settings(allowed: tuple[str, ...] | list[str]) -> TransportSecuritySettings:
-    """The Host (and Origin) headers the service answers: each name allowed with any port, unless it names one."""
-    hosts, origins = [], []
-    for name in allowed:
-        bare = name.startswith("[") and name.endswith("]") or ":" not in name.rsplit("]", 1)[-1]
-        hosts += [name, f"{name}:*"] if bare else [name]
-        origins += [f"{scheme}://{h}" for scheme in ("http", "https") for h in ([name, f"{name}:*"] if bare else [name])]
-    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
-
-
 # ---------- the server ----------
 class EcobotServer:
     """The service's MCP server over a Context (lib/service/context.py) and the alert log. health: a callable giving the service's own
@@ -391,13 +355,7 @@ class EcobotServer:
 
     def alerts(self, query: dict | None = None) -> dict:
         """{alerts, last_id, identity}: the alerts after `since` (0), only the unexpired unless `expired` is true."""
-        query = query or {}
-        since = (query.get("since") or ["0"])[-1].strip()
-        expired = (query.get("expired") or ["false"])[-1].strip().lower() in ("true", "1", "yes", "on")
-        if since and not since.isdecimal():
-            raise MCPError(types.INVALID_PARAMS, f"`since` is an alert's id, a whole number, not {since!r}.")
-        log_ = self.alert_log
-        return {"alerts": log_.since(int(since or 0), expired=expired), "last_id": log_.last_id(), "identity": log_.identity}
+        return alerts_read(self.alert_log, query)
 
     async def station(self) -> dict:
         """ecobot://station: what the station is and has (3.4)."""
@@ -544,101 +502,6 @@ def prompt(name: str, arguments: dict | None = None) -> types.GetPromptResult:
     return types.GetPromptResult(description=what, messages=[types.PromptMessage(role="user", content=types.TextContent(text=question))])
 
 
-# ---------- the request log ----------
-WHY = {401: "no token, or one that isn't in AUTH_TOKENS",
-       421: "its Host isn't in MCP_ALLOWED_HOSTS",
-       404: "nothing at this path, or the session has ended"}
-BODY_READ = 1 << 20   # the most of a request's body read to name its MCP method (the SDK reads it all anyway)
-
-
-def _rpc(body: bytes) -> str:
-    """What a JSON-RPC body asks: its method, and the tool, resource or prompt it names ("tools/call summary")."""
-    try:
-        msg = json.loads(body)
-    except ValueError:
-        return ""
-    msgs = msg if isinstance(msg, list) else [msg]
-    out = []
-    for m in msgs:
-        if not isinstance(m, dict) or "method" not in m:
-            continue
-        params = m.get("params") if isinstance(m.get("params"), dict) else {}
-        target = params.get("name") or params.get("uri")
-        line = f"{m['method']} {target}" if isinstance(target, str) else str(m["method"])
-        if isinstance(args := params.get("arguments"), dict) and args:
-            line += " " + _arguments(args)
-        out.append(line)
-    return ", ".join(out)
-
-
-def _arguments(args: dict, most: int = 160) -> str:
-    """What a tool call asks for, short: its readings, its dates (the period as written, or start to end) and its interval
-    ("rain 1d", "outdoor.temperature 2026-11-01 to 2026-11-05 5min"), cut at `most` characters."""
-    def text(v) -> str:
-        return ",".join(map(str, v)) if isinstance(v, list) else str(v)
-    metric = args.get("readings") or args.get("reading")
-    dates = args.get("period") or " to ".join(str(args[k]) for k in ("start", "end") if args.get(k))
-    out = " ".join(text(v) for v in (metric, dates, args.get("interval")) if v not in (None, "", []))
-    return out if len(out) <= most else out[:most - 1] + "…"
-
-
-def _shown_path(path) -> str:
-    """A path as logged: a chart link's id cut to its first characters (/charts/AbCdEf….png), the rest as it is."""
-    path = str(path or "")
-    if path.startswith(CHART_PATH + "/"):
-        name = path[len(CHART_PATH) + 1:]
-        key = name[:-4] if name.endswith(".png") else name
-        return f"{CHART_PATH}/{key[:6]}{'…' if len(key) > 6 else ''}{'.png' if name.endswith('.png') else ''}"
-    return path
-
-
-class RequestLog:
-    """ASGI middleware, outermost: one line per HTTP request, once its response starts (a listen stream's when it opens). INFO when
-    answered, WARNING when refused, with the reason for a 401 (the token), a 421 (the Host) and a 404. The token itself is never
-    logged; the client's address is the proxy's X-Forwarded-For when uvicorn trusts it."""
-
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-        start = time.monotonic()
-        held, body = [], b""
-        if scope.get("method") == "POST":   # (read here to name the MCP method, then handed on as it came)
-            while True:
-                message = await receive()
-                held.append(message)
-                if message["type"] != "http.request":
-                    break
-                if len(body) < BODY_READ:
-                    body += message.get("body", b"")
-                if not message.get("more_body"):
-                    break
-
-        async def replay():
-            return held.pop(0) if held else await receive()
-
-        async def sending(message):
-            if message["type"] == "http.response.start":
-                self.record(scope, _rpc(body) if body else "", message["status"], time.monotonic() - start)
-            await send(message)
-        await self.app(scope, replay, sending)
-
-    @staticmethod
-    def record(scope, asked: str, status: int, took: float):
-        headers = dict(scope.get("headers") or [])
-        client = (scope.get("client") or ("?",))[0]
-        host = headers.get(b"host", b"").decode("latin-1")
-        what = f"{scope.get('method')} {_shown_path(scope.get('path'))}" + (f" {asked}" if asked else "")
-        if status < 400:
-            requests_log.info("MCP %s: %s -> %d in %.2fs", client, what, status, took)
-        else:
-            why = "the chart's link has expired, or never was" if status == 404 and str(scope.get("path")).startswith(CHART_PATH + "/") \
-                else WHY.get(status)
-            requests_log.warning("MCP %s refused: %s -> %d%s (Host %s)", client, what, status, f", {why}" if why else "", host or "none")
-
-
 def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "localhost"), issuer_url: str = "http://127.0.0.1:8765",
              path: str = "/mcp", dashboard: bool = True):
     """The Streamable HTTP app (Starlette) at `path`: the Host header checked against `allowed_hosts`, and, with `tokens` (AUTH_TOKENS),
@@ -654,7 +517,7 @@ def http_app(server: EcobotServer, *, tokens=(), allowed_hosts=("127.0.0.1", "lo
         custom_starlette_routes=[*(web.routes() if web else []), Route(f"{CHART_PATH}/{{name}}", server.chart_picture, methods=["GET"])])
     app.state.tokens = check
     app.state.closing = web.close if web else None
-    app.add_middleware(RequestLog)   # (added last: outermost, so it sees the token's and the Host's refusals too)
+    app.add_middleware(RequestLog, logger=requests_log, hosts_setting="MCP_ALLOWED_HOSTS")   # (added last: outermost, so it sees the token's and the Host's refusals too)
     return app
 
 

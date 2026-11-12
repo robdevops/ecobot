@@ -152,18 +152,8 @@ class Health:
 def hold_data_folder(cfg: Config, stack):
     """One ecobot-mcp per data folder: two on the same folder would both fetch and both write each alert (sent twice). The lock is the
     kernel's, so it goes with the process, however that ends."""
-    import fcntl
-    path = cfg.state_path.parent / "mcp.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    held = open(path, "w")
-    try:
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        held.close()
-        raise SystemExit(f"Another ecobot-mcp (python -m ecobot_mcp) already runs on {path.parent}: stop it first, or give this one "
-                         f"another DATA_DIR.")
-    stack.callback(held.close)
-
+    from lib.mcp_http import hold_folder
+    hold_folder(cfg.state_path.parent, "mcp.lock", "ecobot-mcp", "python -m ecobot_mcp", stack)
 
 
 @dataclass

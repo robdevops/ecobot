@@ -14,56 +14,25 @@ import logging
 import signal
 import socket
 
-import uvicorn
-
-from lib import auth_token, chart_images
+from lib import auth_token, chart_images, mcp_http
 from lib.config import Config
 from lib.logs import LogFormat, on_journal, stream_handlers
+from lib.mcp_http import Uvicorn
 
 from .core import Core, configure, start_sources, version
 
 log = logging.getLogger("ecobot.mcp")
-SHUTDOWN_SECONDS = 3   # how long uvicorn waits for open connections (a listen stream) to end when ecobot-mcp stops
+SHUTDOWN_SECONDS = mcp_http.SHUTDOWN_SECONDS   # how long uvicorn waits for open connections (a listen stream) to end when ecobot-mcp stops
 
 
-class Uvicorn(uvicorn.Server):
-    """uvicorn's server, leaving SIGINT and SIGTERM to ecobot-mcp (which closes everything in order: uvicorn's own handling raises the
-    signal again once it has stopped, ending the process before the sources are closed), and ending the dashboard's event streams as it
-    stops."""
-
-    @contextlib.contextmanager
-    def capture_signals(self):
-        yield
-
-    async def shutdown(self, sockets=None):
-        """uvicorn's graceful shutdown, the app's endless streams (the dashboard's events: `app.state.closing`) ended first, once no new
-        connection is accepted, so it doesn't wait on them."""
-        for server in self.servers:
-            server.close()
-        closing = getattr(getattr(self.config.app, "state", None), "closing", None)
-        if closing is not None:
-            closing()
-        await super().shutdown(sockets)
-
-
-def server_config(app, host: str, port: int) -> uvicorn.Config:
-    """uvicorn's settings for the app: its lifespan on (the MCP session manager runs in it), its own access log off, and an open
-    listen stream given SHUTDOWN_SECONDS to end when it stops (else it would wait for the client to hang up)."""
-    return uvicorn.Config(app, host=host, port=port, lifespan="on", log_level="warning", access_log=False, proxy_headers=True,
-                          timeout_graceful_shutdown=SHUTDOWN_SECONDS)
+def server_config(app, host: str, port: int):
+    """uvicorn's settings for the app (lib/mcp_http.server_config), an open listen stream given SHUTDOWN_SECONDS to end."""
+    return mcp_http.server_config(app, host, port, SHUTDOWN_SECONDS)
 
 
 def generated_token(cfg: Config) -> str:
     """AUTH_TOKENS unset: the token kept in the data folder, made at the first start (its place is logged, never its value)."""
-    folder = cfg.state_path.parent
-    try:
-        token = auth_token.ensure(folder)
-    except OSError as e:
-        raise SystemExit(f"AUTH_TOKENS is not set and a token couldn't be kept in {auth_token.path(folder)} ({type(e).__name__}: {e}): "
-                         "set AUTH_TOKENS (token,token,...), or make the data folder writable") from None
-    log.info("AUTH_TOKENS is not set: accepting the token kept in %s (the bot reads it from there; give it to any other client)",
-             auth_token.path(folder))
-    return token
+    return mcp_http.generated_token(cfg.state_path.parent, log)
 
 
 async def main():
