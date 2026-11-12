@@ -7,7 +7,7 @@ import re
 from dataclasses import fields
 from pathlib import Path
 
-from lib.config import Config
+from lib.config import Config, old_names
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -58,9 +58,9 @@ def test_compose_runs_each_program_from_its_own_image():
 def test_the_ecobot_mcp_unit_drops_the_bots_secrets_by_their_new_and_old_names():
     text = (ROOT / "ecobot-mcp.service").read_text()
     unset = set(re.search(r"^UnsetEnvironment=(.*)$", text, re.M)[1].split())
-    by_env = {f.metadata["env"]: f.metadata.get("old") for f in fields(Config) if f.metadata.get("env")}
-    for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "BOT_TUYA_CLIENT_ID", "BOT_TUYA_CLIENT_SECRET"):
-        assert {name, by_env[name]} <= unset, name
+    by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
+    for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "IRRIGATION_TUYA_CLIENT_ID", "IRRIGATION_TUYA_CLIENT_SECRET"):
+        assert {name, *by_env[name]} <= unset, name
     assert "AUTH_TOKENS" not in unset and "ExecStart=/opt/ecobot/.venv/bin/python -m ecobot_mcp" in text
 
 

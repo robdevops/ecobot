@@ -288,8 +288,8 @@ an old and a new name are both set to different values.
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_PRELOAD_CHAT` | `BOT_TELEGRAM_TOKEN`, `BOT_TELEGRAM_PRELOAD_CHAT` |
 | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL` | `BOT_OPENROUTER_API_KEY`, `BOT_OPENROUTER_BASE_URL`, `BOT_OPENROUTER_MODEL` |
 | `ADMIN_ONLY`, `ADMIN_CHAT_IDS`, `LOG_WIDTH` | `BOT_ADMIN_ONLY`, `BOT_ADMIN_CHAT_IDS`, `BOT_LOG_WIDTH` |
-| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET`, `TUYA_BASE_URL` | the same with `BOT_` in front |
-| `IRRIGATION_CHECK_HOUR` | `BOT_IRRIGATION_CHECK_HOUR` |
+| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET`, `TUYA_BASE_URL`, and their names with `BOT_` in front (November 2026) | the same with `IRRIGATION_` in front (irrigation-mcp's) |
+| `BOT_IRRIGATION_CHECK_HOUR` (November 2026) | `IRRIGATION_CHECK_HOUR` again (irrigation-mcp's) |
 | `WEATHER_MCP_URL` | `BOT_MCP_URL` |
 | `WEATHER_MCP_TOKEN` | retired: the bot sends the first of `AUTH_TOKENS`. Still sent, with a warning, while `AUTH_TOKENS` is unset |
 

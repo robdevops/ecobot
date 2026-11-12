@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import migrate_env  # noqa: E402
 
-from lib.config import Config  # noqa: E402
+from lib.config import Config, old_names  # noqa: E402
 from dataclasses import fields  # noqa: E402
 
 OLD = """# keys
@@ -27,7 +27,7 @@ TZ=Australia/Melbourne
 
 
 def test_every_renamed_setting_is_found_from_the_configs_text():
-    want = {f.metadata["old"]: f.metadata["env"] for f in fields(Config) if f.metadata.get("old")}
+    want = {old: f.metadata["env"] for f in fields(Config) for old in old_names(f)}
     assert migrate_env.renames() == want
 
 
@@ -72,3 +72,21 @@ def test_without_write_nothing_changes_and_secrets_are_masked_with_write_a_backu
     backups = list(tmp_path.glob("ecobot.env.bak-*"))
     assert len(backups) == 1 and backups[0].read_text() == OLD and stat.S_IMODE(backups[0].stat().st_mode) == 0o600
     assert migrate_env.main([str(env), "--write"]) == 0 and "nothing to rename" in capsys.readouterr().out
+
+
+def test_a_setting_with_two_old_names_takes_either_and_the_irrigation_check_hour_keeps_its_name():
+    """IRRIGATION_TUYA_* was BOT_TUYA_*, and before that TUYA_*; IRRIGATION_CHECK_HOUR was BOT_IRRIGATION_CHECK_HOUR (and before that
+    IRRIGATION_CHECK_HOUR itself, which stays as it is)."""
+    names = migrate_env.renames()
+    assert names["BOT_TUYA_DEVICE_ID"] == names["TUYA_DEVICE_ID"] == "IRRIGATION_TUYA_DEVICE_ID"
+    assert names["BOT_IRRIGATION_CHECK_HOUR"] == "IRRIGATION_CHECK_HOUR" and "IRRIGATION_CHECK_HOUR" not in names
+    out, _ = migrate_env.migrate(["TUYA_DEVICE_ID=d\n", "BOT_TUYA_CLIENT_ID=c\n", "IRRIGATION_CHECK_HOUR=7\n"], names)
+    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_ID=c\n", "IRRIGATION_CHECK_HOUR=7\n"]
+    out, notes = migrate_env.migrate(["TUYA_CLIENT_SECRET=s\n", "BOT_TUYA_CLIENT_SECRET=s\n"], names)   # both old ones, the same value
+    assert out == ["IRRIGATION_TUYA_CLIENT_SECRET=s\n"] and any("BOT_TUYA_CLIENT_SECRET removed" in n for n in notes)
+    out, _ = migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=6\n"], names)
+    assert out == ["IRRIGATION_CHECK_HOUR=6\n"]
+    with pytest.raises(SystemExit, match="BOT_TUYA_CLIENT_SECRET and TUYA_CLIENT_SECRET"):
+        migrate_env.migrate(["TUYA_CLIENT_SECRET=a\n", "BOT_TUYA_CLIENT_SECRET=b\n"], names)
+    with pytest.raises(SystemExit, match="BOT_IRRIGATION_CHECK_HOUR and IRRIGATION_CHECK_HOUR"):
+        migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=7\n"], names)

@@ -37,9 +37,9 @@ def no_settings_from_outside(monkeypatch):
     runs (a CI secret named like an old setting, an env file loaded in the shell) changes nothing."""
     from dataclasses import fields
 
-    from lib.config import RETIRED_TOKEN, Config
+    from lib.config import RETIRED_TOKEN, Config, old_names
     for f in fields(Config):
-        for name in (f.metadata.get("env"), f.metadata.get("old")):
+        for name in (f.metadata.get("env"), *old_names(f)):
             if name:
                 monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv(RETIRED_TOKEN, raising=False)

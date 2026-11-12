@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Rename the settings in an environment file (/etc/ecobot.env) to their new names (docs/configuration.md, "Renamed settings"):
-ecobot-mcp's are MCP_..., the bot's BOT_..., the shared ones unprefixed. Values, comments, blank lines and order are kept.
+ecobot-mcp's are MCP_..., irrigation-mcp's IRRIGATION_..., the bot's BOT_..., the shared ones unprefixed. Values, comments, blank lines and order are kept.
 
     sudo python3 scripts/migrate_env.py /etc/ecobot.env            # show what would change (secrets masked); changes nothing
     sudo python3 scripts/migrate_env.py /etc/ecobot.env --write    # change it, after a backup beside it (same owner and mode)
 
 The old names still work (with a warning at start), so this is a tidy-up, not a must. It reads the renames from lib/config.py's text
 (no import: any Python 3.9 or newer, no packages), so it works in a Docker install too. It can be run again: a renamed file is left
-alone. It stops, changing nothing, where it can't tell what you meant: an old and a new name both set to different values.
+alone. It stops, changing nothing, where it can't tell what you meant: an old and a new name (or two old names of one setting, such as
+TUYA_DEVICE_ID and BOT_TUYA_DEVICE_ID, both IRRIGATION_TUYA_DEVICE_ID's) both set to different values.
 
 Beyond the plain renames:
   - the bot's retired token, WEATHER_MCP_TOKEN, goes into AUTH_TOKENS (the shared list, was MCP_SERVICE_TOKENS) as its first token,
@@ -33,9 +34,13 @@ LINE = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*?)\s
 
 
 def renames(config: Path = CONFIG) -> dict[str, str]:
-    """{old name: new name}, from lib/config.py's _setting("NEW", ..., old="OLD") calls."""
+    """{old name: new name}, from lib/config.py's _setting("NEW", ..., old="OLD") and _setting("NEW", ..., old=("OLDER", "OLDEST"))
+    calls."""
     text = config.read_text()
-    found = dict((old, new) for new, old in re.findall(r'_setting\(\s*"([A-Z0-9_]+)"[^\n]*?old="([A-Z0-9_]+)"', text))
+    found = {}
+    for new, one, several in re.findall(r'_setting\(\s*"([A-Z0-9_]+)"[^\n]*?old=(?:"([A-Z0-9_]+)"|\(([^)]*)\))', text):
+        for old in [one] if one else re.findall(r'"([A-Z0-9_]+)"', several):
+            found[old] = new
     if not found:
         raise SystemExit(f"No renamed settings found in {config}: is this the ecobot checkout?")
     return found
@@ -55,11 +60,14 @@ def migrate(lines: list[str], names: dict[str, str]) -> tuple[list[str], list[st
     for m in parsed:
         if m and not m.group(2).startswith("#"):
             values[m.group(2)] = unquoted(m.group(4))[0]
-    conflicts = [f"{old} and {new}" for old, new in names.items()
-                 if old in values and new in values and values[old] != values[new]]
+    conflicts = []
+    for new in dict.fromkeys(names.values()):   # (each setting: its name and every old one, those set all the same value)
+        named = [n for n in (*[old for old, to in names.items() if to == new], new) if n in values]   # (the old ones first)
+        if len({values[n] for n in named}) > 1:
+            conflicts.append(" and ".join(named))
     if conflicts:
         raise SystemExit("Both an old and a new name are set, to different values (keep one, then run this again): " + "; ".join(conflicts))
-    notes, out = [], []
+    notes, out, written = [], [], set()
     token = values.get(RETIRED_TOKEN, "")
     tokens_at = next((i for i, m in enumerate(parsed) if m and names.get(m.group(2), m.group(2)) == TOKENS), None)
     for i, (line, m) in enumerate(zip(lines, parsed)):
@@ -77,9 +85,11 @@ def migrate(lines: list[str], names: dict[str, str]) -> tuple[list[str], list[st
                 notes.append(f"{RETIRED_TOKEN} removed: its token is the first of {TOKENS}, the one the bot sends")
             continue
         new = names.get(key)
-        if new and new in values:   # (the new one is there already, with the same value: the old line goes)
+        if new and (new in values or new in written):   # (the new one is there already, with the same value: the old line goes)
             notes.append(f"{key} removed: {new} is already set to the same value")
             continue
+        if new:
+            written.add(new)
         name = new or key
         if new:
             notes.append(f"{key} -> {new}")

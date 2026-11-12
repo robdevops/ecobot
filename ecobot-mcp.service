@@ -8,7 +8,7 @@
 # as ecobot.service, so the two share the folder's owner and neither takes it from the other when it starts. The token: the first of
 # AUTH_TOKENS, which the bot sends and this accepts; with AUTH_TOKENS unset, the one this generates at its first start in the data
 # folder (/var/lib/private/ecobot/auth_token, readable by that user only), which the bot reads from there.
-# It reads /etc/ecobot.env as the bot does, less the bot's own secrets, by their names and their old ones (UnsetEnvironment=): its
+# It reads /etc/ecobot.env as the bot does, less the bot's and irrigation-mcp's secrets, by their names and their old ones (UnsetEnvironment=): its
 # settings are the MCP_ ones and the shared ones (docs/configuration.md). MCP_BIND defaults to 127.0.0.1:8765; to reach it from other
 # machines set MCP_BIND=0.0.0.0:8765 and put TLS in front of it.
 [Unit]
@@ -23,7 +23,7 @@ User=ecobot
 Group=ecobot
 WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
-UnsetEnvironment=BOT_TELEGRAM_TOKEN TELEGRAM_BOT_TOKEN BOT_OPENROUTER_API_KEY OPENROUTER_API_KEY BOT_TUYA_CLIENT_ID TUYA_CLIENT_ID BOT_TUYA_CLIENT_SECRET TUYA_CLIENT_SECRET WEATHER_MCP_TOKEN
+UnsetEnvironment=BOT_TELEGRAM_TOKEN TELEGRAM_BOT_TOKEN BOT_OPENROUTER_API_KEY OPENROUTER_API_KEY IRRIGATION_TUYA_CLIENT_ID BOT_TUYA_CLIENT_ID TUYA_CLIENT_ID IRRIGATION_TUYA_CLIENT_SECRET BOT_TUYA_CLIENT_SECRET TUYA_CLIENT_SECRET WEATHER_MCP_TOKEN
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
 StateDirectory=ecobot

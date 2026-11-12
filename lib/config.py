@@ -63,7 +63,13 @@ def _required(value: str, default: str, name: str) -> str:
 
 
 REQUIRED_BY_BOT = ("telegram_token",)   # read only by the bot: ecobot-mcp (python -m ecobot_mcp) runs without them
+REQUIRED_BY_IRRIGATION = ("tuya_device_id", "tuya_client_id", "tuya_client_secret")   # irrigation-mcp (python -m irrigation_mcp) can't run without them
 MCP_PREFIX = "MCP_"   # ecobot-mcp's own settings: the bot doesn't read them (they keep their defaults in its Config)
+BOT_PREFIX = "BOT_"   # the bot's own
+IRRIGATION_PREFIX = "IRRIGATION_"   # irrigation-mcp's own (the bot reads them too while its own irrigation runs, until step 8b)
+PROGRAMS = ("bot", "mcp", "irrigation")
+NO_TUYA = ("irrigation-mcp needs the irrigation controller's Tuya settings: set IRRIGATION_TUYA_DEVICE_ID, IRRIGATION_TUYA_CLIENT_ID "
+           "and IRRIGATION_TUYA_CLIENT_SECRET (docs/configuration.md); {missing} not set")
 NO_SERVICE = ("BOT_MCP_URL is not set: the bot is a client of ecobot-mcp and can't start without it. Run ecobot-mcp (python -m "
               "ecobot_mcp, the ecobot-mcp.service unit, or the ecobot-mcp container) and set BOT_MCP_URL to its endpoint, e.g. "
               "http://127.0.0.1:8765/mcp (docs/configuration.md)")
@@ -227,23 +233,35 @@ def _level(value: str, default: str, name: str) -> str:
     return default
 
 
-def _setting(name: str, default=None, read=None, old: str | None = None):
+def _setting(name: str, default=None, read=None, old: str | tuple[str, ...] | None = None):
     """A Config field read from the environment variable `name` by `read` (a reader above; none: the text, blank being the default).
-    old: the name it had before (docs/configuration.md, "Renamed settings"), still read when `name` is unset, with a warning."""
-    return field(default=default, metadata={"env": name, "read": read, "old": old})
+    old: the name it had before (docs/configuration.md, "Renamed settings"), or the names, newest first, still read when `name` is unset,
+    with a warning."""
+    olds = (old,) if isinstance(old, str) else tuple(old or ())
+    return field(default=default, metadata={"env": name, "read": read, "old": olds})
+
+
+def old_names(f) -> tuple[str, ...]:
+    """A setting's old names, newest first (none for one never renamed)."""
+    return tuple(f.metadata.get("old") or ())
 
 
 def _text(f, renamed: list | None = None) -> tuple[str, str]:
-    """The setting's text (stripped) and the variable it was read from: its own name, else its old one (noted in `renamed`)."""
-    name, old = f.metadata["env"], f.metadata.get("old")
-    text = os.getenv(name, "").strip()
-    if not text and old and (text := os.getenv(old, "").strip()):
-        if renamed is not None:
-            renamed.append((old, name))
-        return text, old
-    if text and old and os.getenv(old, "").strip() and renamed is not None:
-        renamed.append((old, None))   # both set: the old one is ignored
-    return text, name
+    """The setting's text (stripped) and the variable it was read from: its own name, else the newest of its old ones that is set (noted
+    in `renamed`); the others set are noted as ignored."""
+    name = f.metadata["env"]
+    text, used = os.getenv(name, "").strip(), name
+    for old in old_names(f):
+        value = os.getenv(old, "").strip()
+        if not value:
+            continue
+        if not text:
+            text, used = value, old
+            if renamed is not None:
+                renamed.append((old, name))
+        elif renamed is not None:
+            renamed.append((old, None))   # a newer name is set too: this one is ignored
+    return text, used
 
 
 def _from_env(f, renamed: list | None = None) -> object:
@@ -258,7 +276,7 @@ def warn_renamed(renamed: list[tuple[str, str | None]]):
     if used:
         log.warning("Old setting names, still read for now: rename %s (docs/configuration.md, \"Renamed settings\")", ", ".join(used))
     if ignored:
-        log.warning("Ignoring %s: the new name%s set", ", ".join(ignored), " is" if len(ignored) == 1 else "s are")
+        log.warning("Ignoring %s: a newer name is set", ", ".join(ignored))
 
 
 def env(name: str) -> str:
@@ -313,13 +331,18 @@ class Config:
     admin_only: bool = _setting("BOT_ADMIN_ONLY", False, _flag, old="ADMIN_ONLY")         # on: the bot answers nobody but the admins of the groups it is in (and BOT_ADMIN_CHAT_IDS)
     admin_chat_ids: frozenset[int] = _setting("BOT_ADMIN_CHAT_IDS", frozenset(), _ids, old="ADMIN_CHAT_IDS")   # more ids allowed besides those admins (a user id, or a group id for its anonymous admins)
     log_width: int = _setting("BOT_LOG_WIDTH", 24, _whole, old="LOG_WIDTH")             # the most characters of a chat message kept in the log, then an ellipsis (…); 0 keeps all
-    tuya_device_id: str = _setting("BOT_TUYA_DEVICE_ID", "", old="TUYA_DEVICE_ID")            # all three switch the irrigation controller on
-    tuya_client_id: str = _setting("BOT_TUYA_CLIENT_ID", "", old="TUYA_CLIENT_ID")
-    tuya_client_secret: str = _setting("BOT_TUYA_CLIENT_SECRET", "", old="TUYA_CLIENT_SECRET")
-    tuya_base_url: str = _setting("BOT_TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url, old="TUYA_BASE_URL")   # the data centre's address (EU by default)
-    irrigation_check_hour: int = _setting("BOT_IRRIGATION_CHECK_HOUR", 18, _hour, old="IRRIGATION_CHECK_HOUR")   # the local hour of the daily check (0 to 23)
     mcp_url: str = _setting("BOT_MCP_URL", "", _url, old="WEATHER_MCP_URL")    # ecobot-mcp's endpoint, e.g. http://127.0.0.1:8765/mcp (the bot is its client, and stops without it: NO_SERVICE)
     retired_mcp_token: str = _setting(RETIRED_TOKEN, "")            # retired: sent only when AUTH_TOKENS is unset (ecobot.mcp_token)
+    # irrigation-mcp's (python -m irrigation_mcp): the irrigation controller, its watchdog and daily check, and its MCP server. The bot
+    # reads them too while it runs the controller itself (until step 8b)
+    tuya_device_id: str = _setting("IRRIGATION_TUYA_DEVICE_ID", "", old=("BOT_TUYA_DEVICE_ID", "TUYA_DEVICE_ID"))   # all three switch the irrigation controller on (irrigation-mcp stops without them)
+    tuya_client_id: str = _setting("IRRIGATION_TUYA_CLIENT_ID", "", old=("BOT_TUYA_CLIENT_ID", "TUYA_CLIENT_ID"))
+    tuya_client_secret: str = _setting("IRRIGATION_TUYA_CLIENT_SECRET", "", old=("BOT_TUYA_CLIENT_SECRET", "TUYA_CLIENT_SECRET"))
+    tuya_base_url: str = _setting("IRRIGATION_TUYA_BASE_URL", "https://openapi.tuyaeu.com", _url, old=("BOT_TUYA_BASE_URL", "TUYA_BASE_URL"))   # the data centre's address (EU by default)
+    irrigation_check_hour: int = _setting("IRRIGATION_CHECK_HOUR", 18, _hour, old="BOT_IRRIGATION_CHECK_HOUR")   # the local hour of the daily check (0 to 23)
+    irrigation_bind: tuple[str, int] = _setting("IRRIGATION_BIND", ("127.0.0.1", 8766), _bind)   # host:port irrigation-mcp listens on
+    irrigation_allowed_hosts: tuple[str, ...] = _setting("IRRIGATION_ALLOWED_HOSTS", ("127.0.0.1", "localhost"), _names)   # the Host names it answers (any port, unless one is given)
+    irrigation_ecobot_mcp_url: str = _setting("IRRIGATION_ECOBOT_MCP_URL", "http://127.0.0.1:8765/mcp", _url)   # ecobot-mcp, which its daily check asks for the rain and the forecast
     # Both read them
     dark_mode: str | tuple[int, int] = _setting("DARKMODE", "off", _dark_mode)   # off: light charts; on: dark; "8pm-8am" (or 20:00-8:00, 20-8): dark those hours in the station's time zone
     log_level: str = _setting("LOG_LEVEL", "INFO", _level)          # DEBUG adds the program's own debug lines; the libraries keep theirs
@@ -334,6 +357,16 @@ class Config:
     def alert_log_path(self) -> Path:
         """The alert log (lib/alert_log.py), beside the bot's state."""
         return self.state_path.parent / "alerts.sqlite"
+
+    @property
+    def irrigation_state_path(self) -> Path:
+        """irrigation-mcp's state (the watchdog's run, the daily check's days: lib/irrigation/state.py), beside the bot's."""
+        return self.state_path.parent / "irrigation_state.json"
+
+    @property
+    def irrigation_alert_log_path(self) -> Path:
+        """irrigation-mcp's alert log (irrigation://alerts), apart from ecobot-mcp's."""
+        return self.state_path.parent / "irrigation_alerts.sqlite"
 
     @property
     def homeassistant(self) -> bool:
@@ -378,12 +411,27 @@ class Config:
         """AirGradient is on with any of its sources: the monitor's own server, Home Assistant, or its cloud account."""
         return self.airgradient_cloud or self.airgradient_local or self.airgradient_homeassistant
 
+    @staticmethod
+    def reads(program: str, name: str) -> bool:
+        """Whether `program` (PROGRAMS) reads the setting `name`: the bot its own (BOT_), irrigation-mcp's (IRRIGATION_, while it runs
+        the controller itself) and the shared ones; ecobot-mcp every one but irrigation-mcp's; irrigation-mcp its own and the shared
+        ones (not the bot's retired token)."""
+        if program == "bot":
+            return not name.startswith(MCP_PREFIX)
+        if program == "irrigation":
+            return name.startswith(IRRIGATION_PREFIX) or not name.startswith((MCP_PREFIX, BOT_PREFIX)) and name != RETIRED_TOKEN
+        return not name.startswith(IRRIGATION_PREFIX)
+
     @classmethod
-    def from_env(cls, bot: bool = True) -> "Config":
-        """Every setting from its variable, the files in the data folder. Stops, saying why, when one the bot can't run without is
-        missing or the folder can't be written. bot: False for ecobot-mcp (python -m ecobot_mcp), which has no Telegram token; the bot
-        reads only its own settings (BOT_) and the shared ones, ecobot-mcp's (MCP_) keeping their defaults. Old names still read are
-        named in one warning (never their values)."""
+    def from_env(cls, bot: bool = True, program: str | None = None) -> "Config":
+        """Every setting from its variable, the files in the data folder. Stops, saying why, when one the program can't run without is
+        missing or the folder can't be written. program: "bot" (the default), "mcp" for ecobot-mcp (python -m ecobot_mcp; bot=False
+        says the same), which has no Telegram token, or "irrigation" for irrigation-mcp (python -m irrigation_mcp). Each reads only the
+        settings it uses (Config.reads), the others keeping their defaults. Old names still read are named in one warning (never their
+        values)."""
+        program = program or ("bot" if bot else "mcp")
+        if program not in PROGRAMS:
+            raise ValueError(f"no program {program!r}: {', '.join(PROGRAMS)}")
         data = data_dir()
         try:
             data.mkdir(parents=True, exist_ok=True)
@@ -394,11 +442,15 @@ class Config:
             raise SystemExit(f"{data} is not writable by this user: set DATA_DIR to a writable folder "
                              "(under systemd with StateDirectory=ecobot that is /var/lib/ecobot)")
         renamed: list = []
-        read = [f for f in fields(cls) if "env" in f.metadata and not (bot and f.metadata["env"].startswith(MCP_PREFIX))]
+        read = [f for f in fields(cls) if "env" in f.metadata and cls.reads(program, f.metadata["env"])]
         cfg = cls(tz=local_tz(), state_path=data / "bot_state.json", storage_path=data / "ecobot.sqlite",
                   **{f.name: _from_env(f, renamed) for f in read})
         warn_renamed(renamed)
-        if bot:
+        if program == "irrigation":
+            if missing := [f.metadata["env"] for f in fields(cls) if f.name in REQUIRED_BY_IRRIGATION and not getattr(cfg, f.name)]:
+                raise SystemExit(NO_TUYA.format(missing=", ".join(missing)))
+            return cfg
+        if program == "bot":
             for f in fields(cls):
                 if f.name in REQUIRED_BY_BOT:
                     _required(getattr(cfg, f.name), f.default, f.metadata["env"])

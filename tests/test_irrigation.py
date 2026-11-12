@@ -154,10 +154,10 @@ def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     for value, hour in (("", 18), ("6", 6), ("0", 0), ("23", 23), ("24", 18), ("noon", 18), ("-1", 18)):
-        monkeypatch.setenv("BOT_IRRIGATION_CHECK_HOUR", value)
+        monkeypatch.setenv("IRRIGATION_CHECK_HOUR", value)
         assert Config.from_env().irrigation_check_hour == hour, value
-    monkeypatch.setenv("BOT_TUYA_BASE_URL", "https://openapi.tuyaus.com/")
-    monkeypatch.setenv("BOT_TUYA_DEVICE_ID", " dev ")
+    monkeypatch.setenv("IRRIGATION_TUYA_BASE_URL", "https://openapi.tuyaus.com/")
+    monkeypatch.setenv("IRRIGATION_TUYA_DEVICE_ID", " dev ")
     assert Config.from_env().tuya_base_url == "https://openapi.tuyaus.com" and Config.from_env().tuya_device_id == "dev"
 
 
