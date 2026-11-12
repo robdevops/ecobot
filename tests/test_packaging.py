@@ -115,3 +115,52 @@ def test_the_bots_unit_wants_ecobot_mcps_and_starts_after_it_and_the_readme_inst
     assert "sudo systemctl enable --now ecobot-mcp.service ecobot.service" in install                     # ecobot-mcp first
     assert "/opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/" in install
     assert "BOT_MCP_URL=http://127.0.0.1:8765/mcp" in install and "on its own (optional)" not in readme
+
+
+def unit(name: str) -> tuple[str, dict[str, list[str]]]:
+    text = (ROOT / name).read_text()
+    keys = ("Wants", "After", "Before", "UnsetEnvironment", "ExecStart", "User", "StateDirectory")
+    return text, {k: (m[1].split() if (m := re.search(rf"^{k}=(.*)$", text, re.M)) else []) for k in keys}
+
+
+def test_irrigation_mcps_unit_runs_it_after_ecobot_mcp_and_before_the_bot_without_the_others_secrets():
+    """Step 8b: irrigation-mcp's own unit, from the same checkout and venv, the same dynamic user and data folder; it wants ecobot-mcp's
+    (its daily check asks it) and starts before the bot's; it drops the bot's and ecobot-mcp's secrets, by every name they have had."""
+    text, irrigation = unit("irrigation-mcp.service")
+    assert irrigation["ExecStart"] == ["/opt/ecobot/.venv/bin/python", "-m", "irrigation_mcp"]
+    assert "ecobot-mcp.service" in irrigation["Wants"] and "ecobot-mcp.service" in irrigation["After"] and "ecobot.service" in irrigation["Before"]
+    assert irrigation["User"] == ["ecobot"] and irrigation["StateDirectory"] == ["ecobot"]          # (the folder and its owner the others')
+    by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
+    for name in ("BOT_TELEGRAM_TOKEN", "BOT_OPENROUTER_API_KEY", "MCP_ECOWITT_API_KEY", "MCP_ECOWITT_APP_KEY", "MCP_AIRGRADIENT_API_TOKEN",
+                 "MCP_HOMEASSISTANT_TOKEN"):
+        assert {name, *by_env[name]} <= set(irrigation["UnsetEnvironment"]), name
+    assert not any(n.startswith("IRRIGATION_") or n == "AUTH_TOKENS" for n in irrigation["UnsetEnvironment"])
+    assert "WantedBy=multi-user.target" in text
+
+
+def test_the_bots_unit_wants_irrigation_mcps_only_as_a_wish_and_drops_the_tuya_secrets():
+    """The bot's unit wants irrigation-mcp's and starts after it (Wants=: a unit that isn't installed changes nothing, so the bot starts
+    without it), and never sees the controller's secrets, by any of their names; ecobot-mcp's starts before irrigation-mcp's."""
+    _, bot = unit("ecobot.service")
+    assert "irrigation-mcp.service" in bot["Wants"] and "irrigation-mcp.service" in bot["After"]
+    assert not re.search(r"^(Requires|BindsTo|Requisite)=.*irrigation", (ROOT / "ecobot.service").read_text(), re.M)
+    by_env = {f.metadata["env"]: old_names(f) for f in fields(Config) if f.metadata.get("env")}
+    for name in ("IRRIGATION_TUYA_CLIENT_ID", "IRRIGATION_TUYA_CLIENT_SECRET"):
+        assert {name, *by_env[name]} <= set(bot["UnsetEnvironment"]), name
+    assert "IRRIGATION_TUYA_DEVICE_ID" not in bot["UnsetEnvironment"]   # (kept: the bot warns when it is set and BOT_IRRIGATION_MCP_URL isn't)
+    assert "irrigation-mcp.service" in unit("ecobot-mcp.service")[1]["Before"]
+
+
+def test_docker_leaves_the_bot_without_irrigation_unless_set_and_every_compose_file_covers_irrigation_mcp():
+    bot_env = (ROOT / "docker" / "bot.env").read_text()
+    assert re.search(r"^BOT_IRRIGATION_MCP_URL=$", bot_env, re.M) and "http://irrigation-mcp:8766/mcp" in bot_env   # (empty; how to set it)
+    host = (ROOT / "compose.host-network.yaml").read_text()
+    irrigation = host.split("  irrigation-mcp:\n")[1]
+    assert "network_mode: host" in irrigation and "ports: !reset []" in irrigation
+    assert "IRRIGATION_ECOBOT_MCP_URL: http://127.0.0.1:8765/mcp" in irrigation and "BOT_IRRIGATION_MCP_URL:" not in host
+    journald = (ROOT / "compose.journald.yaml").read_text()
+    assert all(f"  {name}:\n    logging: !override\n      driver: journald" in journald for name in ("ecobot", "ecobot-mcp", "irrigation-mcp"))
+    services = dict(re.findall(r"^  ([\w-]+):\n((?:    .*\n|\s*\n)+)", (ROOT / "compose.yaml").read_text(), re.M))
+    irrigation = services["irrigation-mcp"]
+    assert "depends_on: [ecobot-mcp]" in irrigation and "- /var/lib/private/ecobot:/data" in irrigation
+    assert "env_file: [docker/irrigation.env, /etc/ecobot.env]" in irrigation   # (/etc/ecobot.env after: its settings win, as the bot's)

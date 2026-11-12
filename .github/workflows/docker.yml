@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   image:
-    # Both images build from the Dockerfile (each target's build imports its program, ecobot-mcp's with no Telegram and no model
-    # client in it, the bot's with no Pillow and no source), each program starts in its image, and the charts ecobot-mcp draws are the
-    # approved ones, in Inter
+    # The three images build from the Dockerfile (each target's build imports its program, ecobot-mcp's with no Telegram and no model
+    # client in it, irrigation-mcp's with neither and no Pillow or source, the bot's with no Pillow, no source and none of
+    # irrigation-mcp's controller), each program starts in its image, and the charts ecobot-mcp draws are the approved ones, in Inter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

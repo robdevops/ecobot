@@ -5,3 +5,6 @@ services:
   ecobot-mcp:
     logging: !override
       driver: journald
+  irrigation-mcp:
+    logging: !override
+      driver: journald

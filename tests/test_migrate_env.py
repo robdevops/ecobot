@@ -81,12 +81,31 @@ def test_a_setting_with_two_old_names_takes_either_and_the_irrigation_check_hour
     assert names["BOT_TUYA_DEVICE_ID"] == names["TUYA_DEVICE_ID"] == "IRRIGATION_TUYA_DEVICE_ID"
     assert names["BOT_IRRIGATION_CHECK_HOUR"] == "IRRIGATION_CHECK_HOUR" and "IRRIGATION_CHECK_HOUR" not in names
     out, _ = migrate_env.migrate(["TUYA_DEVICE_ID=d\n", "BOT_TUYA_CLIENT_ID=c\n", "IRRIGATION_CHECK_HOUR=7\n"], names)
-    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_ID=c\n", "IRRIGATION_CHECK_HOUR=7\n"]
+    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_ID=c\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n",
+                   "IRRIGATION_CHECK_HOUR=7\n"]                                            # (the bot's way to irrigation-mcp added: below)
     out, notes = migrate_env.migrate(["TUYA_CLIENT_SECRET=s\n", "BOT_TUYA_CLIENT_SECRET=s\n"], names)   # both old ones, the same value
-    assert out == ["IRRIGATION_TUYA_CLIENT_SECRET=s\n"] and any("BOT_TUYA_CLIENT_SECRET removed" in n for n in notes)
+    assert out[0] == "IRRIGATION_TUYA_CLIENT_SECRET=s\n" and len(out) == 2 and any("BOT_TUYA_CLIENT_SECRET removed" in n for n in notes)
     out, _ = migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=6\n"], names)
     assert out == ["IRRIGATION_CHECK_HOUR=6\n"]
     with pytest.raises(SystemExit, match="BOT_TUYA_CLIENT_SECRET and TUYA_CLIENT_SECRET"):
         migrate_env.migrate(["TUYA_CLIENT_SECRET=a\n", "BOT_TUYA_CLIENT_SECRET=b\n"], names)
     with pytest.raises(SystemExit, match="BOT_IRRIGATION_CHECK_HOUR and IRRIGATION_CHECK_HOUR"):
         migrate_env.migrate(["BOT_IRRIGATION_CHECK_HOUR=6\n", "IRRIGATION_CHECK_HOUR=7\n"], names)
+
+
+def test_the_irrigation_controllers_settings_bring_the_bots_way_to_irrigation_mcp_once():
+    """Step 8b: the controller is irrigation-mcp's and the bot its client; a file with any Tuya setting (any of its names, set) and no
+    BOT_IRRIGATION_MCP_URL gets it, after them, as systemd reaches irrigation-mcp, with a note (Docker's address in it)."""
+    names = migrate_env.renames()
+    out, notes = migrate_env.migrate(["TUYA_DEVICE_ID=d\n", "BOT_TUYA_CLIENT_SECRET=s\n", "TZ=Australia/Melbourne"], names)
+    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "IRRIGATION_TUYA_CLIENT_SECRET=s\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n",
+                   "TZ=Australia/Melbourne"]
+    assert any("BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp added" in n and "http://irrigation-mcp:8766/mcp" in n for n in notes)
+    again, notes = migrate_env.migrate(out, names)
+    assert again == out and notes == []                                                     # (run again: nothing changes)
+    out, _ = migrate_env.migrate(["IRRIGATION_TUYA_DEVICE_ID=d"], names)                    # the last line, without its newline
+    assert out == ["IRRIGATION_TUYA_DEVICE_ID=d\n", "BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp\n"]
+    kept = ["IRRIGATION_TUYA_DEVICE_ID=d\n", "BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp\n"]
+    assert migrate_env.migrate(kept, names) == (kept, [])                                   # one already there (Docker's) is left alone
+    for none in (["TZ=UTC\n"], ["TUYA_DEVICE_ID=\n"], ["# TUYA_DEVICE_ID=d\n"]):        # no controller (unset, or commented out)
+        assert "BOT_IRRIGATION_MCP_URL" not in "".join(migrate_env.migrate(none, names)[0]), none

@@ -1,0 +1,86 @@
+# irrigation-mcp, the irrigation controller's MCP server (python -m irrigation_mcp, docs/ecobot-mcp.md 3.9 and step 8): the Tuya
+# controller, the watchdog that closes the valve after a run, the daily check (rain, battery) and the MCP server at
+# http://127.0.0.1:8766/mcp. Optional: install it beside ecobot-mcp.service and ecobot.service, from the same checkout and venv (see
+# ecobot.service), only if you have the controller:
+#   sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now irrigation-mcp.service && sudo systemctl restart ecobot
+# It needs IRRIGATION_TUYA_DEVICE_ID, IRRIGATION_TUYA_CLIENT_ID and IRRIGATION_TUYA_CLIENT_SECRET in /etc/ecobot.env (it stops at start,
+# saying so, without them), and the bot BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp there to show the Irrigation button and deliver
+# its alerts. Its daily check asks ecobot-mcp (IRRIGATION_ECOBOT_MCP_URL, default http://127.0.0.1:8765/mcp) for the rain and the
+# forecast: this unit pulls ecobot-mcp's in and starts after it, and before the bot (the bot's unit wants this one only if it is installed).
+# Only one irrigation-mcp runs on a data folder (irrigation.lock): a second stops at start, saying so.
+# The data folder is the bot's own, /var/lib/private/ecobot (StateDirectory=ecobot), shared with the same dynamic user (User=ecobot) as
+# the other two units: irrigation-mcp keeps irrigation_state.json and irrigation_alerts.sqlite there, and the generated token (with
+# AUTH_TOKENS unset) is the one all three use.
+# It reads /etc/ecobot.env as the others do, less the bot's and ecobot-mcp's secrets, by their names and their old ones
+# (UnsetEnvironment=): its settings are the IRRIGATION_ ones and the shared ones (docs/configuration.md). IRRIGATION_BIND defaults to
+# 127.0.0.1:8766; to reach it from other machines set IRRIGATION_BIND=0.0.0.0:8766 and put TLS in front of it.
+[Unit]
+Description=irrigation-mcp (the ecobot irrigation controller's MCP server)
+After=network-online.target ecobot-mcp.service
+Wants=network-online.target ecobot-mcp.service
+Before=ecobot.service
+
+[Service]
+DynamicUser=yes
+User=ecobot
+Group=ecobot
+WorkingDirectory=/opt/ecobot
+EnvironmentFile=/etc/ecobot.env
+UnsetEnvironment=BOT_TELEGRAM_TOKEN TELEGRAM_BOT_TOKEN BOT_OPENROUTER_API_KEY OPENROUTER_API_KEY WEATHER_MCP_TOKEN MCP_ECOWITT_API_KEY ECOWITT_API_KEY MCP_ECOWITT_APP_KEY ECOWITT_APP_KEY MCP_AIRGRADIENT_API_TOKEN AIRGRADIENT_API_TOKEN MCP_HOMEASSISTANT_TOKEN HOMEASSISTANT_TOKEN
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
+StateDirectory=ecobot
+CacheDirectory=ecobot
+ExecStart=/opt/ecobot/.venv/bin/python -m irrigation_mcp
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=irrigation-mcp
+
+# Filesystem isolation
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+InaccessiblePaths=/boot /media /mnt
+UMask=0077
+
+# Privilege restrictions
+AmbientCapabilities=
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
+
+# Kernel and system protection
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Process isolation
+ProtectProc=invisible
+RestrictNamespaces=yes
+
+# Network: HTTPS to the Tuya cloud, ecobot-mcp's MCP port, and its own (AF_UNIX: the local name resolver; AF_NETLINK: listing the
+# network interfaces)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# Resource limits
+TasksMax=32
+MemoryAccounting=yes
+MemoryHigh=150M
+MemoryMax=250M
+
+[Install]
+WantedBy=multi-user.target

@@ -13,7 +13,10 @@ TUYA_DEVICE_ID and BOT_TUYA_DEVICE_ID, both IRRIGATION_TUYA_DEVICE_ID's) both se
 Beyond the plain renames:
   - the bot's retired token, WEATHER_MCP_TOKEN, goes into AUTH_TOKENS (the shared list, was MCP_SERVICE_TOKENS) as its first token,
     the one the bot sends; dropped if it is already there;
-  - the old container's name, ecobot-service, in a URL or an allowed host becomes ecobot-mcp's.
+  - the old container's name, ecobot-service, in a URL or an allowed host becomes ecobot-mcp's;
+  - with the irrigation controller's settings there (any name) and no BOT_IRRIGATION_MCP_URL, that is added after them, as
+    http://127.0.0.1:8766/mcp (systemd: irrigation-mcp on this machine; Docker wants http://irrigation-mcp:8766/mcp, which the note
+    says): the controller is irrigation-mcp's now, and the bot its client.
 """
 
 import argparse
@@ -29,6 +32,8 @@ from pathlib import Path
 CONFIG = Path(__file__).resolve().parent.parent / "lib" / "config.py"
 RETIRED_TOKEN, TOKENS = "WEATHER_MCP_TOKEN", "AUTH_TOKENS"
 OLD_HOST, NEW_HOST = "ecobot-service", "ecobot-mcp"
+IRRIGATION_URL, IRRIGATION_AT = "BOT_IRRIGATION_MCP_URL", "http://127.0.0.1:8766/mcp"   # the bot's way to irrigation-mcp (systemd)
+TUYA = re.compile(r"^(?:IRRIGATION_|BOT_)?TUYA_")   # the controller's settings, by any of their names
 SECRET = re.compile(r"TOKEN|KEY|SECRET|PASSWORD")
 LINE = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*?)\s*$")
 
@@ -102,6 +107,15 @@ def migrate(lines: list[str], names: dict[str, str]) -> tuple[list[str], list[st
             value = value.replace(OLD_HOST, NEW_HOST)
             notes.append(f"{name}: {OLD_HOST} -> {NEW_HOST} (the container's new name)")
         out.append(f"{lead}{name}{eq}{quote}{value}{quote}{end}")
+    tuya = [i for i, line in enumerate(out) if (m := LINE.match(line.rstrip("\n"))) and TUYA.match(m.group(2)) and unquoted(m.group(4))[0]]
+    if tuya and IRRIGATION_URL not in values:
+        at = tuya[-1] + 1
+        if not out[at - 1].endswith("\n"):
+            out[at - 1] += "\n"
+        out.insert(at, f"{IRRIGATION_URL}={IRRIGATION_AT}\n")
+        notes.append(f"{IRRIGATION_URL}={IRRIGATION_AT} added: the irrigation controller is irrigation-mcp's now and the bot its client "
+                     "(install and start irrigation-mcp.service; in Docker make it http://irrigation-mcp:8766/mcp and start the "
+                     "`irrigation` profile)")
     return out, notes
 
 
@@ -152,7 +166,7 @@ def main(argv=None) -> int:
         print("\nNothing changed. Run again with --write to change the file.")
         return 0
     backup = write(args.path, new)
-    print(f"\nChanged {args.path}; the old file is {backup}. Restart ecobot-mcp and the bot to use it.")
+    print(f"\nChanged {args.path}; the old file is {backup}. Restart ecobot-mcp, irrigation-mcp and the bot to use it.")
     return 0
 
 

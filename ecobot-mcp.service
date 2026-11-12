@@ -15,7 +15,7 @@
 Description=ecobot-mcp (the ecobot MCP server: sources, alert rules)
 After=network-online.target
 Wants=network-online.target
-Before=ecobot.service
+Before=ecobot.service irrigation-mcp.service
 
 [Service]
 DynamicUser=yes
