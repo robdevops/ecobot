@@ -99,10 +99,11 @@ python -m ecobot_mcp &                                   # ecobot-mcp, with the 
 python -m irrigation_mcp &                               # irrigation-mcp, with the IRRIGATION_TUYA_ settings (optional)
 BOT_MCP_URL=http://127.0.0.1:8765/mcp BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp python ecobot.py   # the bot, their client
 ```
-In Docker (compose.yaml) this is how they run, each from its own image (the Dockerfile's targets `ecobot-mcp` and `ecobot`):
+In Docker (compose.yaml) this is how they run, each from its own image (the Dockerfile's targets `ecobot-mcp`, `ecobot` and
+`irrigation-mcp`):
 `ecobot-mcp` always, and the bot (the `bot` profile) as its client, its `BOT_MCP_URL` from docker/bot.env (the container's name,
 `ecobot-mcp`; 127.0.0.1 with compose.host-network.yaml), the token from the data folder both mount. ecobot-mcp answers its own
-hostname, so no `MCP_ALLOWED_HOSTS` is needed for the bot. irrigation-mcp is the `irrigation` profile (its own image), and the bot
+hostname, so no `MCP_ALLOWED_HOSTS` is needed for the bot. irrigation-mcp is the `irrigation` profile (its own image, `irrigation-mcp`), and the bot
 reaches it only with `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp` in /etc/ecobot.env (docker/bot.env leaves it empty). Under
 systemd, `ecobot.service` wants `ecobot-mcp.service` and starts after it, and `irrigation-mcp.service` the same way when it is installed
 (Wants= of a unit that isn't there changes nothing).

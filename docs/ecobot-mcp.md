@@ -33,6 +33,8 @@ Decided:
 
 ## 2. What is there now
 
+What the bot was when this plan began, before step 1; section 3 says what each part became (irrigation: 3.9 and 3.10, step 8).
+
 ### 2.1 Who asks for data
 
 | Asker | How | Lives in |
@@ -41,7 +43,7 @@ Decided:
 | Shortcuts in code | `intent.fast_call`, `report_calls`, `model_prefetch`: the same tools through `Tools.call_all`, their JSON parsed by `lib/report.py` | `lib/intent.py`, `lib/bot.py` |
 | Report, dashboard, period buttons, charts drawn ahead | the shortcuts, `Ecowitt.dashboard()`, the same tools with new dates | `lib/report.py`, `lib/ecowitt/dashboard.py`, `lib/bot.py` |
 | Alerts, their charts and 🔄 | `station.recent()`, `live_rain()`, `air.latest()`, `forecast.days`, `pollen.current()`; the charts through the shortcuts' sentences ("Wind chart 1d") | `lib/alerts` |
-| Irrigation | `station.recent(24)` and the forecast, once a day; the valve watchdog every minute; buttons to water, stop and pause | `lib/alerts/irrigation.py`, `lib/irrigation`, `lib/bot.py` |
+| Irrigation | `station.recent(24)` and the forecast, once a day; the valve watchdog every minute; buttons to water, stop and pause | `lib/alerts/irrigation.py` (since step 8 irrigation-mcp's `lib/irrigation/check.py`), `lib/irrigation`, `lib/bot.py` |
 
 ### 2.2 What fills the file
 
