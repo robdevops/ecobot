@@ -292,9 +292,9 @@ To put it on a site of its own behind a reverse proxy, map the site's root to `/
 `location / { proxy_pass http://deb1:8765/dashboard/; }`. The live updates need nothing more: they tell nginx not to buffer them.
 
 A link to the page shared in a chat app previews with its sun icon, "Weather Dashboard" and a line about it (the page's Open Graph
-tags; the icon is a file beside the page, `/dashboard/icon.png`). Behind a proxy, set `MCP_DASHBOARD_URL` to the page's public URL
-(e.g. `MCP_DASHBOARD_URL=https://weather.example.org/`): WhatsApp, Messenger, Telegram, Slack and Discord need the picture's full
-address, and ecobot-mcp can't tell it from the request (nginx sends its own `Host` and `/dashboard/`). Serve the site over https
+tags and its icon, a file beside the page: `/dashboard/icon.png`), behind a proxy too, with nothing to set. The icon is named
+relative to the page, so apps that insist on a full address for the picture and don't fall back to the page's icon (WhatsApp,
+Messenger) show the title and line without it. Serve the site over https
 (Signal shows no preview for plain http). A chat app keeps a preview it has made: to see a new one, share the link with `?v=2` on the end.
 
 ## Upgrading

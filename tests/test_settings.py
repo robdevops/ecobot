@@ -19,7 +19,7 @@ SHARED = {"DARKMODE", "LOG_LEVEL", "AUTH_TOKENS"}
 MCP_ONLY = {"ecowitt_api_key", "ecowitt_app_key", "ecowitt_source", "airgradient_token", "airgradient_location", "airgradient_dashboard",
             "airgradient_local_url", "airgradient_source", "homeassistant_url", "homeassistant_token", "place", "pollen", "pollen_district",
             "forecast", "forecast_lat", "forecast_lon", "rain_quiet_hours", "alert_cooldown_minutes", "antispike_require_consecutive",
-            "chart_all_feels_like", "chart_all_vpd", "mcp_bind", "mcp_allowed_hosts", "mcp_dashboard", "mcp_dashboard_url",
+            "chart_all_feels_like", "chart_all_vpd", "mcp_bind", "mcp_allowed_hosts", "mcp_dashboard",
             "mcp_chart_base_url", "mcp_chart_link_hours"}
 IRRIGATION_ONLY = {"tuya_device_id", "tuya_client_id", "tuya_client_secret", "tuya_base_url", "irrigation_check_hour", "irrigation_bind",
                    "irrigation_allowed_hosts", "irrigation_ecobot_mcp_url"}

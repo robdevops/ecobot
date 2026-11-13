@@ -4,11 +4,12 @@
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
     (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
   - GET /dashboard/icon.png: the page's sun (its original, at ICON_SIZE px: lib/web_dashboard_icon.png) as a file,
-    for a chat app's link preview: the page's Open Graph tags (og:title, og:image...) name it, and a link preview can't take the page's
-    own icon, carried in it as a data: URI. og:image is the icon beside the page as it was asked for (/dashboard: "dashboard/icon.png",
-    /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at; MCP_DASHBOARD_URL, the page's public URL, makes
-    it absolute (and adds og:url), which Facebook's Messenger, WhatsApp and likely Slack, Discord and Telegram need: the request can't
-    say it (nginx's `location / { proxy_pass http://deb1:8765/dashboard/; }` sends ecobot-mcp's own Host and /dashboard/);
+    the page's own icon (favicon and apple-touch-icon) and its link preview's picture: the page's Open Graph tags (og:title, og:image...)
+    name it too. A file, not a data: URI in the page, because a link preview can't fetch one; some apps (Signal, iMessage) take the
+    page's icon as the preview's picture, the way they do a site's /favicon.png. Both name it relative to the path the page was asked for (/dashboard: "dashboard/icon.png",
+    /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at, with no public URL to set (nginx's
+    `location / { proxy_pass http://deb1:8765/dashboard/; }` sends ecobot-mcp's own Host and /dashboard/, which can't give one). Apps
+    that want og:image absolute and don't take the page's icon (WhatsApp, Messenger) preview the title and description alone;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
     tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
@@ -71,9 +72,8 @@ class WebDashboard:
     """The page, its data and its event streams over an EcobotServer (its service's `current`, its bus and its context); `uris` the
     resources whose updates are the station's live reading's and the air sensor's (ecobot://now/weather, ecobot://now/air)."""
 
-    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air"), public_url: str = ""):
+    def __init__(self, server, uris: tuple[str, ...] = ("ecobot://now/weather", "ecobot://now/air")):
         self.server, self.uris = server, tuple(uris)
-        self.public_url = public_url.rstrip("/")   # MCP_DASHBOARD_URL: where people open the page ("": not known)
         self._streams: set[asyncio.Queue] = set()
         self._shown = self._readings()
         self.closed = False
@@ -137,21 +137,22 @@ class WebDashboard:
 
     # ---------- the link preview ----------
     def icon_url(self, path: str) -> str:
-        """Where the icon is for a page asked for at `path`: beside MCP_DASHBOARD_URL's page, else relative to `path` (/dashboard:
-        "dashboard/icon.png", /dashboard/: "icon.png"), which a link preview resolves against the URL it was given."""
-        if self.public_url:
-            return f"{self.public_url}/{ICON_NAME}"
+        """Where the icon is for a page asked for at `path`, relative to it (/dashboard: "dashboard/icon.png", /dashboard/: "icon.png"),
+        which a browser or a link preview resolves against the URL it was given."""
         return ICON_NAME if path.endswith("/") else f"{path.rsplit('/', 1)[-1]}/{ICON_NAME}"
 
     def preview(self, path: str) -> str:
-        """The Open Graph tags (and Twitter's card, read by Slack and Discord: "summary", a small square picture) for a page asked for at
-        `path`."""
+        """The Open Graph tags (and Twitter's card, read by Slack and Discord: "summary", a small square picture) and the page's icon links
+        for a page asked for at `path`."""
         tags = [("og:type", "website"), ("og:title", TITLE), ("og:description", DESCRIPTION),
-                *([("og:url", self.public_url + ("/" if self.public_url.count("/") == 2 else ""))] if self.public_url else []),
                 ("og:image", self.icon_url(path)), ("og:image:type", "image/png"), ("og:image:width", str(ICON_SIZE)),
                 ("og:image:height", str(ICON_SIZE)), ("og:image:alt", "A sun")]
+        icon = html.escape(self.icon_url(path))
         return "\n".join([*(f'<meta property="{k}" content="{html.escape(v)}">' for k, v in tags),
-                          '<meta name="twitter:card" content="summary">'])
+                          '<meta name="twitter:card" content="summary">',
+                          # the page's own icon, the same file: what a browser shows, and what a link preview without og:image takes
+                          # (Signal, iMessage): a data: URI can't be fetched by one, a file beside the page needs no public URL
+                          f'<link rel="icon" type="image/png" href="{icon}">', f'<link rel="apple-touch-icon" href="{icon}">'])
 
     # ---------- the routes ----------
     async def page(self, request: Request):

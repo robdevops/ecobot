@@ -59,7 +59,7 @@ async def main():
                               chart_base_url=cfg.mcp_chart_base_url, chart_link_hours=cfg.mcp_chart_link_hours)
         hosts = tuple(dict.fromkeys(("127.0.0.1", "localhost", socket.gethostname(), *cfg.mcp_allowed_hosts)))   # (its own name too: a container's hostname)
         app = http_app(server, tokens=tokens, allowed_hosts=hosts, issuer_url=f"http://{f'[{host}]' if ':' in host else host}:{port}",
-                       dashboard=cfg.mcp_dashboard, dashboard_url=cfg.mcp_dashboard_url)
+                       dashboard=cfg.mcp_dashboard)
         core.log_startup()
         running = core.start_alerts()
         core.start_warmers()

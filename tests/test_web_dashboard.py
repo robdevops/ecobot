@@ -103,9 +103,9 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
     html = page.text
     assert html.startswith("<!DOCTYPE html>") and "<script>" in html and "EventSource" in html
-    links = re.findall(r'<link[^>]*href="([^"]*)"', html)                                            # (the icon, carried in the page;
-    assert preview_of(html)["og:image"] == "dashboard/icon.png"                                       # only a link preview's is a file beside it)
-    assert "https://" not in html and " src=" not in html and links and all(h.startswith("data:image/png;base64,") for h in links)
+    links = re.findall(r'<link[^>]*href="([^"]*)"', html)                                            # (its icons: the file beside it, as the
+    assert preview_of(html)["og:image"] == "dashboard/icon.png"                                       # link preview's picture)
+    assert "https://" not in html and " src=" not in html and "data:" not in html and links == ["dashboard/icon.png"] * 2
     assert "<title>Weather Dashboard</title>" in html                                                 # nothing fetched from elsewhere
     assert data.status_code == 200
     got = data.json()
@@ -137,7 +137,7 @@ async def test_the_page_answers_at_dashboard_slash_too_so_a_proxy_mapping_a_site
             data = await http.get(f"{base}/dashboard/" + "data")          # the page at the site's root asks for /data: the proxy's /dashboard/data
     assert slash.status_code == 200 and "location" not in slash.headers
     assert preview_of(slash.text)["og:image"] == "icon.png" and preview_of(plain.text)["og:image"] == "dashboard/icon.png"
-    same = lambda page: page.replace('content="icon.png"', 'content="ICON"').replace('content="dashboard/icon.png"', 'content="ICON"')
+    same = lambda page: re.sub(r'="(?:dashboard/)?icon\.png"', '="ICON"', page)   # (og:image and the icon links)
     assert same(slash.text) == same(plain.text)                         # the same page but for its picture, beside it as it was asked for
     assert data.status_code == 200 and "tiles" in data.json()
     script = slash.text
@@ -169,11 +169,13 @@ async def test_the_link_preview_names_the_sun_icon_beside_the_page_as_it_was_ask
         tags = preview_of(page.text)
         assert tags == {"og:type": "website", "og:title": "Weather Dashboard", "og:description": DESCRIPTION, "og:image": image,
                         "og:image:type": "image/png", "og:image:width": "512", "og:image:height": "512", "og:image:alt": "A sun",
-                        "twitter:card": "summary"}                                                   # no og:url: the page's URL isn't known
+                        "twitter:card": "summary"}                                                   # no og:url: the page's public URL isn't known
         head_start = page.text.index("<head>")
         assert page.text.index('property="og:type"') - head_start < 100                              # first in the head: Slack reads 32 KB
         assert page.text.index('name="twitter:card"') < page.text.index('rel="icon"') < 32_768          # (all of them before the icons)
         assert "<!--link preview-->" not in page.text
+        icons = dict(re.findall(r'<link rel="([\w-]+)"[^>]*href="([^"]*)"', page.text))
+        assert icons == {"icon": image, "apple-touch-icon": image}       # the page's own icon is the same file: Signal and iMessage take it
     assert icon.status_code == 200 and icon.headers["content-type"] == "image/png"
     assert icon.content == ICON.read_bytes() and int(icon.headers["content-length"]) == len(icon.content) < 300_000   # WhatsApp: < 300 KB
     assert "max-age=" in icon.headers["cache-control"] and "public" in icon.headers["cache-control"]
@@ -185,36 +187,8 @@ def test_the_icon_is_the_pages_own_sun_at_512_px():
     from PIL import Image
     big = Image.open(io.BytesIO(ICON.read_bytes()))
     assert big.format == "PNG" and big.size == (512, 512)                 # Facebook asks 200 px, WhatsApp 300
-    touch = re.search(r'<link rel="apple-touch-icon" href="data:image/png;base64,([^"]+)"', PAGE.read_text()).group(1)
-    small = Image.open(io.BytesIO(base64.b64decode(touch))).convert("RGBA")
-    assert small.size == (180, 180)
-    again = big.convert("RGBA").resize(small.size, Image.LANCZOS)          # the same picture, drawn bigger
-    diff = [abs(a - b) for p, q in zip(small.getdata(), again.getdata()) for a, b in zip(p, q)]
-    assert sum(diff) / len(diff) < 3 and sorted(diff)[int(len(diff) * 0.99)] < 30
-
-
-async def test_with_mcp_dashboard_url_the_preview_is_absolute_there_whatever_the_request(server):
-    port = free_port()
-    base = f"http://127.0.0.1:{port}"
-    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_url="https://weather.example.org"), port):
-        root = preview_of((await get(f"{base}/dashboard/", Host="192.168.1.208:8765")).text)
-        plain = preview_of((await get(f"{base}/dashboard")).text)
-    assert root == plain
-    assert root["og:image"] == "https://weather.example.org/icon.png" and root["og:url"] == "https://weather.example.org/"
-    under = WebDashboard(server, public_url="https://example.org/dashboard/")
-    assert under.icon_url("/dashboard/") == "https://example.org/dashboard/icon.png"
-    assert preview_of(under.preview("/dashboard"))["og:url"] == "https://example.org/dashboard"
-
-
-def test_mcp_dashboard_url_is_read_without_its_trailing_slash(monkeypatch, tmp_path):
-    from lib.config import Config
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
-    monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
-    monkeypatch.delenv("MCP_DASHBOARD_URL", raising=False)
-    assert Config.from_env(bot=False).mcp_dashboard_url == ""
-    monkeypatch.setenv("MCP_DASHBOARD_URL", "https://weather.example.org/")
-    assert Config.from_env(bot=False).mcp_dashboard_url == "https://weather.example.org"
+    assert big.mode == "RGBA" and big.getpixel((0, 0))[3] == 0 and big.getpixel((256, 256))[3] == 255   # the sun on a clear ground
+    assert "data:" not in PAGE.read_text()                                 # the page carries no icon of its own: it links this one
 
 
 async def test_the_data_says_so_when_the_station_gives_nothing(server):
