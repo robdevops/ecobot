@@ -5,12 +5,13 @@ from lib.ecowitt import Ecowitt
 from lib.ecowitt.api import MINUTE, cycle_seconds
 from lib.tools import Turn
 from tests.fakes import config, ecowitt_transport, home_assistant_transport
+from tests import engines
 
 
 async def chart(eco, hours, groups="outdoor"):
     now = eco.now()
     turn = Turn()
-    out = json.loads(await eco.tools[1].handler({"groups": groups, "chart": True, "start_date": f"{now - timedelta(hours=hours):%Y-%m-%d %H:%M:%S}",
+    out = json.loads(await engines.history(eco, {"groups": groups, "chart": True, "start_date": f"{now - timedelta(hours=hours):%Y-%m-%d %H:%M:%S}",
                                                  "end_date": f"{now:%Y-%m-%d %H:%M:%S}"}, turn))
     return out, turn
 

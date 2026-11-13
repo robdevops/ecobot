@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ecobot://schema/chart",
+  "title": "Chart, version 1",
+  "description": "A chart as data (lib/specs.py: to_json, from_json): one or more panels on a shared time axis, top to bottom. Times are ISO local times with their UTC offset; dates are ISO dates.",
+  "type": "object",
+  "required": ["version", "title", "subtitle", "period", "source", "newest", "panels"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1, "description": "This schema's version: a change that would misread an older chart gets a new one."},
+    "title": {"type": "string", "description": "What is drawn: the panels' names."},
+    "subtitle": {"type": "string", "description": "The period, how the lines were drawn (\"30-minute readings\", \"daily averages\"), what a bar covers and whether a range is shaded."},
+    "period": {
+      "type": ["array", "null"],
+      "description": "The first and last day the chart covers, or null when it doesn't say.",
+      "prefixItems": [{"$ref": "#/$defs/date"}, {"$ref": "#/$defs/date"}],
+      "items": false,
+      "minItems": 2
+    },
+    "source": {"type": "string", "description": "Where the data came from (\"Ecowitt weather station\"), written small in the corner; \"\" for none."},
+    "drawn_by": {"type": "object", "description": "The call that drew this chart, to draw it again: the same tool with these arguments, `period` swapped for one of `periods` to draw it over another stretch. Absent on a chart no tool call drew.",
+                 "required": ["tool", "arguments", "periods"], "additionalProperties": false,
+                 "properties": {
+                   "tool": {"type": "string", "description": "The tool's name (\"summary\")."},
+                   "arguments": {"type": "object", "description": "Every argument the call was given, filled in: readings fully named, the period in words."},
+                   "periods": {"type": "array", "description": "The periods it can be redrawn over, in order; [] when it can't be (a chart over set times).",
+                               "items": {"type": "object", "required": ["period", "label"], "additionalProperties": false,
+                                         "properties": {"period": {"type": "string", "description": "The `period` argument to send (\"7d\")."},
+                                                        "label": {"type": "string", "description": "What to call it on a button (\"7 days\")."}}}}}},
+    "newest": {"$ref": "#/$defs/time", "description": "The time of the newest reading drawn: a line's last point or the start of the last bar."},
+    "panels": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/panel"}}
+  },
+  "$defs": {
+    "date": {"type": "string", "format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "A local time with its UTC offset, e.g. 2026-10-04T03:30:00+11:00.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?([+-]\\d{2}:\\d{2}|Z)$"
+    },
+    "pair": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}], "items": false, "minItems": 2},
+    "value_point": {"type": "array", "prefixItems": [{"$ref": "#/$defs/time"}, {"type": "number"}], "items": false, "minItems": 2},
+    "four_point": {
+      "type": "array",
+      "prefixItems": [{"$ref": "#/$defs/time"}, {"type": "number"}, {"type": "number"}, {"type": "number"}],
+      "items": false,
+      "minItems": 4
+    },
+    "panel": {
+      "type": "object",
+      "description": "One panel: lines (each a line or a band) with rain-style bars behind them on a scale of their own, or bars alone, or a rating alone.",
+      "required": ["label", "unit", "reading", "series", "flip_right", "peaks"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {"type": "string"},
+        "unit": {"type": "string", "description": "The unit of the lines' axis (\"\" when each line carries its own, on two axes)."},
+        "reading": {"type": "string", "description": "Which reading the panel is (\"humidity\", \"pm2_5\" ...), for its colours; \"\" for a mix."},
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"oneOf": [{"$ref": "#/$defs/line"}, {"$ref": "#/$defs/band"}, {"$ref": "#/$defs/bars"}, {"$ref": "#/$defs/rating"}]}
+        },
+        "flip_right": {"type": "boolean", "description": "The right-hand axis runs top to bottom (a line on it falls as its reading rises)."},
+        "peaks": {"enum": ["pills", "aside", "none"], "description": "How the highs and lows are labelled: on the lines, beside them, or not at all."},
+        "zones": {"$ref": "#/$defs/pair", "description": "A rated reading's limits: good up to the first, poor up to the second, very poor above."},
+        "compass": {"$ref": "#/$defs/compass"}
+      }
+    },
+    "line": {
+      "type": "object",
+      "description": "A line of readings: points [time, value].",
+      "required": ["name", "kind", "points", "records", "reading", "smoothed", "indoor", "right", "on_line"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"const": "line"},
+        "points": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/value_point"}},
+        "records": {
+          "type": "object",
+          "description": "The true lowest and highest readings, with when: the labels on the line.",
+          "additionalProperties": false,
+          "properties": {"low": {"$ref": "#/$defs/value_point"}, "high": {"$ref": "#/$defs/value_point"}}
+        },
+        "reading": {"type": "string", "description": "Which reading the line is, for its colour; \"\" for its panel's."},
+        "smoothed": {"type": "boolean", "description": "The line is a light average of the readings, not the readings."},
+        "indoor": {"type": "boolean", "description": "The indoor sensor's line (drawn in its reading's complementary colour)."},
+        "right": {"type": "boolean", "description": "Read against the panel's right-hand axis."},
+        "on_line": {"type": "boolean", "description": "Its peak is marked on the line itself, not on the top of its band."}
+      }
+    },
+    "band": {
+      "type": "object",
+      "description": "A line with the range each point stands for shaded around it: points [time, value, low, high].",
+      "required": ["name", "kind", "points", "records", "reading", "smoothed", "indoor", "right", "on_line"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"const": "band"},
+        "points": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/four_point"}},
+        "records": {"$ref": "#/$defs/line/properties/records"},
+        "reading": {"$ref": "#/$defs/line/properties/reading"},
+        "smoothed": {"$ref": "#/$defs/line/properties/smoothed"},
+        "indoor": {"$ref": "#/$defs/line/properties/indoor"},
+        "right": {"$ref": "#/$defs/line/properties/right"},
+        "on_line": {"$ref": "#/$defs/line/properties/on_line"}
+      }
+    },
+    "bars": {
+      "type": "object",
+      "description": "Bars (rain, or a count or figure per month or year): points [the bar's start, value].",
+      "required": ["name", "kind", "unit", "width", "per", "values", "points"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"const": "bars"},
+        "unit": {"type": "string"},
+        "width": {"type": "integer", "minimum": 1, "description": "The seconds a bar covers."},
+        "per": {"type": "string", "description": "What a bar covers, in words: \"hour\", \"6 hours\", \"day\", \"month\", \"year\"; \"\" when not said."},
+        "values": {"type": "boolean", "description": "Each bar's number is written above it."},
+        "points": {"type": "array", "items": {"$ref": "#/$defs/value_point"}}
+      }
+    },
+    "rating": {
+      "type": "object",
+      "description": "The share of each bar's time in each rating: points [the bar's start, good, poor, very poor] (percent).",
+      "required": ["name", "kind", "width", "per", "points"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"const": "rating"},
+        "width": {"type": "integer", "minimum": 1, "description": "The seconds a bar covers."},
+        "per": {"type": "string"},
+        "points": {"type": "array", "items": {"$ref": "#/$defs/four_point"}}
+      }
+    },
+    "compass": {
+      "type": "object",
+      "description": "A wind rose of the whole period, beside a chart of one panel of lines.",
+      "required": ["rose", "speeds", "speed_steps"],
+      "additionalProperties": false,
+      "properties": {
+        "rose": {
+          "type": "array",
+          "description": "For each of the 16 compass points, N first and clockwise: the readings in each speed step (light, middle, strong).",
+          "minItems": 16,
+          "maxItems": 16,
+          "items": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}
+        },
+        "speeds": {"type": "boolean", "description": "The readings carried a wind speed, so the steps mean something."},
+        "speed_steps": {"$ref": "#/$defs/pair", "description": "Where the middle and strong steps begin (km/h)."}
+      }
+    }
+  }
+}

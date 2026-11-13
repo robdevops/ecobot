@@ -7,7 +7,7 @@ A source's `refresh(fresh)` fetches what questions usually need. A Warmer runs i
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime
 
 from .logs import BUGS
@@ -40,32 +40,41 @@ async def every(delay: float | Callable[[], float], fn: Callable[[], Awaitable])
         await asyncio.sleep(delay() if callable(delay) else delay)
 
 
+class Tasks:
+    """The tasks run in the background (the bot's, the service's): one that stops with an error is logged as it does, and close()
+    cancels them."""
+
+    def __init__(self):
+        self.running: set[asyncio.Task] = set()
+
+    def start(self, work: Coroutine) -> asyncio.Task:
+        task = asyncio.create_task(work, name=getattr(work, "__qualname__", None))
+        self.running.add(task)
+        task.add_done_callback(self._ended)
+        return task
+
+    def _ended(self, task: asyncio.Task):
+        self.running.discard(task)
+        if not task.cancelled() and (error := task.exception()):
+            log.error("%s stopped: %s: %s", task.get_name(), type(error).__name__, error, exc_info=error if isinstance(error, BUGS) else None)
+
+    async def close(self):
+        for task in self.running:
+            task.cancel()
+        await asyncio.gather(*self.running, return_exceptions=True)
+
+
 class Warmer:
+    """A source kept warm: refreshed every `interval` seconds (refresh(True): a timed refresh), the alert checks run after each."""
+
     def __init__(self, refresh: Callable[[bool], Awaitable], interval: float = REFRESH_SECONDS):
         self.refresh, self.interval = refresh, interval
         self.after: list[Callable[[], Awaitable]] = []  # run after each timed refresh (alert checks)
-        self._task: asyncio.Task | None = None
-        self._lock = asyncio.Lock()   # one refresh at a time: a timed one waits for a question's
-
-    async def _refresh(self, fresh: bool):
-        async with self._lock:
-            await safely(self.refresh, fresh)
-
-    async def stop(self):
-        """Cancel a refresh a question started, if one is still running (the timed ones end with their task)."""
-        if self._task is not None:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-
-    def poke(self):
-        """A question arrived: refresh in the background, unless a refresh (a question's or a timed one) is running."""
-        if not self._lock.locked() and (self._task is None or self._task.done()):
-            self._task = asyncio.create_task(self._refresh(False))
 
     async def run(self):
         """Refresh every `interval` seconds until cancelled (startup already fetched once)."""
         while True:
             await asyncio.sleep(self.interval)
-            await self._refresh(True)
+            await safely(self.refresh, True)
             for check in self.after:
                 await safely(check)

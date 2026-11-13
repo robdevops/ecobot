@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from lib.ecowitt.live import BUCKET, readings_in
 from lib.tools import Turn
 from tests.fakes import archived_station
+from tests import engines
 
 T = 1_800_000_000 // BUCKET * BUCKET
 
@@ -29,7 +30,7 @@ async def chart_of_the_last_day(eco):
     now = datetime.now(eco.tz)
     args = {"groups": "outdoor", "start_date": f"{(now - timedelta(days=1)):%Y-%m-%d %H:%M:%S}", "end_date": f"{now:%Y-%m-%d %H:%M:%S}", "chart": True}
     turn = Turn()
-    await eco.tools[1].handler(args, turn)
+    await engines.history(eco, args, turn)
     return turn.charts[0].panels[0].lines[0]
 
 
@@ -68,7 +69,7 @@ async def test_a_chart_of_a_week_has_the_true_extremes_of_each_half_hour_in_its_
 
     async def line():
         turn = Turn()
-        await eco.tools[1].handler(args, turn)
+        await engines.history(eco, args, turn)
         return turn.charts[0].panels[0].lines[0]
     plain = await line()
     slot = plain.x[len(plain.x) // 2]                                           # a half hour in the middle of the period

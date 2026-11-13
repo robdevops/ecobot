@@ -84,11 +84,5 @@ def parse_period(args: dict, today: date, default_days: int) -> tuple[date, date
     return (first, last) if first <= last else "start_date must be before end_date (today isn't final, so the latest day is yesterday)"
 
 
-def period_parameters(default_days: int) -> dict:
-    """The start_date and end_date in a tool's parameters, for a period parse_period reads."""
-    return {"start_date": {"type": "string", "description": f"First day, 'YYYY-MM-DD'. Default: {default_days} days before the end."},
-            "end_date": {"type": "string", "description": "Last day, 'YYYY-MM-DD' (up to yesterday). Default: yesterday."}}
-
-
 SLOT = 1800                                         # the 30-minute slots both devices are lined up on
 MIN_DAY_SLOTS = 24                                  # a day counts for a daily comparison with at least 12 hours of readings

@@ -55,8 +55,7 @@ async def test_the_lines_have_a_level_emoji_and_never_name_the_district(tmp_path
     pollen, _ = make(tmp_path, lambda: page(grass="High", asthma="High"))
     await pollen.start()
     assert pollen.lines() == ["Grass pollen forecast: 🔴 High", "Thunderstorm asthma forecast: 🔴 High"]
-    out = json.loads(await pollen.handle({}))
-    assert out["lines"] == pollen.lines() and "Central" not in json.dumps(out) and out["asthma_updated"] == "1 Oct 2026 4:00pm"
+    assert "Central" not in json.dumps(pollen.lines()) and pollen.current()["asthma"]["updated"] == "1 Oct 2026 4:00pm"
     await pollen.close()
 
 
@@ -65,7 +64,7 @@ async def test_a_forecast_for_another_day_and_a_missing_asthma_forecast_are_said
     with caplog.at_level("WARNING"):
         await pollen.start()
     assert pollen.lines() == ["Grass pollen forecast: 🟠 Moderate (forecast for Wed 11 Nov)"]
-    assert json.loads(await pollen.handle({}))["asthma_note"] == "The page had no thunderstorm asthma level for this district when it was last read."
+    assert pollen.current()["asthma"] is None                                                # (no asthma level to show)
     assert "no thunderstorm asthma level for Central on the page" in caplog.text            # in season the page should have one
     await pollen.close()
 
@@ -84,7 +83,7 @@ async def test_the_district_is_the_sites_whatever_its_case_and_one_it_lacks_is_w
     await pollen.close()
     with caplog.at_level("WARNING"):
         pollen, _ = make(tmp_path, pollen_district="Centrl")
-    assert pollen.district == "Centrl" and "POLLEN_DISTRICT 'Centrl' is not one of the site's districts" in caplog.text
+    assert pollen.district == "Centrl" and "MCP_POLLEN_DISTRICT 'Centrl' is not one of the site's districts" in caplog.text
     await pollen.close()
 
 
@@ -124,18 +123,8 @@ async def test_a_page_that_cannot_be_fetched_does_not_stop_the_source_starting(t
     pollen = Pollen(config(tmp_path, pollen=True), httpx.MockTransport(handler))
     pollen.now = lambda: datetime.combine(SEASON_DAY, dtime(12, 0))
     await pollen.start()
-    assert pollen.lines() == [] and "No pollen levels" in await pollen.handle({})
+    assert pollen.lines() == []
     await pollen.close()
-
-
-def test_pollen_words_need_data_and_a_bare_pollen_question_is_fetched_without_the_model():
-    from lib import intent
-    now = datetime(2026, 10, 1, 12, 0)
-    for text in ("pollen", "Hay fever", "thunderstorm asthma risk"):
-        assert intent.read(text, now, ["Ecowitt", "AirGradient", "Pollen"]).fast[0] == "pollen_asthma"
-    assert intent.read("pollen", now).fast is None
-    for text in ("is the pollen bad today?", "any asthma risk"):
-        assert intent.read(text, now, ["Ecowitt", "AirGradient", "Pollen"]).needs_data
 
 
 def make_on(tmp_path, day, hour=12, html=None):
@@ -157,25 +146,19 @@ async def test_out_of_season_nothing_is_fetched_not_even_at_start_with_an_empty_
     pollen, calls = make_on(tmp_path, date(2027, 2, 10))
     await pollen.start()
     assert await pollen.warm(True) == "Pollen out of season" and await pollen.warm(False) == "Pollen out of season"
-    assert calls == [] and pollen.lines() == []
-    out = json.loads(await pollen.handle({}))
-    assert out == {"error": "Pollen and thunderstorm asthma forecasts only run from October to December."} and calls == []
+    assert calls == [] and pollen.lines() == [] and not pollen.in_season()
     await pollen.close()
 
 
-async def test_last_seasons_page_is_not_shown_and_the_report_leaves_the_block_out(tmp_path):
-    from lib import report
+async def test_last_seasons_page_is_not_shown(tmp_path):
     pollen, _ = make_on(tmp_path, date(2026, 12, 20), html=lambda: page(grass="High", day=date(2026, 12, 20)))
     await pollen.start()
     assert pollen.lines()[0].startswith("Grass pollen forecast: 🔴 High")
-    assert json.loads(await pollen.handle({"cached": True}))["time"]      # when the page was fetched, for the report's heading
+    assert pollen.current()["fetched_at"]                                  # when the page was fetched, for the text's heading
     await pollen.close()
     january, calls = make_on(tmp_path, date(2027, 1, 5))                # the saved page is still in the database
     await january.start()
     assert january.data is not None and january.lines() == [] and january.current()["grass"] is None and calls == []
-    result = await january.handle({"cached": True})
-    assert "error" in json.loads(result)
-    assert "Pollen" not in report.report({"pollen_asthma": result}, date(2027, 1, 5))                       # no block in the report
     await january.close()
 
 

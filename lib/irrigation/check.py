@@ -1,12 +1,14 @@
-"""The irrigation controller, checked once a day (18:00 local by default).
+"""The irrigation controller, checked once a day (18:00 local by default, IRRIGATION_CHECK_HOUR): run by irrigation-mcp
+(irrigation_mcp, lib/irrigation/server.py). What it tells goes to `notify(text, kind=...)`: irrigation-mcp's alert log
+(irrigation://alerts), which the bot delivers to its chats.
 
   - a battery below 5% is told to the chats subscribed to "irrigation battery" (kind irrigation_battery) (at most once a day, until it is charged);
   - if more than 1 mm of rain fell in the last 24 hours, or Open-Meteo gives today or tomorrow a 50% or better chance of at least
     1 mm of rain (in a forecast fetched within the last day: an older one doesn't count), the controller is put on a 24 hour weather
     delay (it skips its own schedule) and the chats subscribed to "irrigation pause" are told why. A delay someone set is left alone
-    (nothing changes, so nothing is sent); the bot's own from yesterday, seconds from lapsing at the check, is started again.
+    (nothing changes, so nothing is sent); its own from yesterday, seconds from lapsing at the check, is started again.
 
-The bot has no scheduler, so `run` sleeps until the next check time. If the controller can't be reached it tries again every 30 minutes
+There is no scheduler, so `run` sleeps until the next check time. If the controller can't be reached it tries again every 30 minutes
 until it works or the day ends. The date of the last completed check is saved, so a restart neither repeats a day nor skips one.
 """
 
@@ -14,11 +16,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from ..ecowitt.rain import rain_amount
-from ..irrigation.tuya import is_paused
+from ..alerts.kinds import RAIN_FROM_PCT, kinds_of
 from ..timeutil import local_epoch, now_local, seconds_until, when
-from .forecast import RAIN_FROM_PCT
-from .menu import kinds_of
+from .common import is_paused
 
 log = logging.getLogger(__name__)
 
@@ -33,9 +33,36 @@ class IrrigationMonitor:
     KINDS = kinds_of("Irrigation")
 
     def __init__(self, device, state, notify, tz, hour: int = 18, station=None, forecast=None):
-        """station: the Ecowitt source (its recent() gives the measured rain); forecast: the Forecast source. Either may be None."""
+        """state: where its days are kept (`monitor`, `save()`: lib/irrigation/state.IrrigationState); station:
+        what asks ecobot-mcp for the measured rain (lib/irrigation/ecobot.ServiceRain: rain_mm()); forecast: the forecast read from it
+        (lib/irrigation/ecobot.ServiceForecast: read again at each check, the one last read standing when it can't be). Either may be
+        None."""
+        self._rezoned = asyncio.Event()
         self.device, self.state, self.notify, self.tz, self.hour = device, state, notify, tz, hour
         self.station, self.forecast = station, forecast
+
+    @property
+    def tz(self):
+        return self._tz
+
+    @tz.setter
+    def tz(self, zone):
+        """The station's zone; another one (the remote service's station read late) wakes the wait for the check time, timed again in it."""
+        self._tz = zone
+        self._rezoned.set()
+
+    async def _sleep(self, seconds: float):
+        """Until the check time (`seconds`), or until the zone changes."""
+        self._rezoned.clear()
+        sleeper, woken = asyncio.ensure_future(asyncio.sleep(seconds)), asyncio.ensure_future(self._rezoned.wait())
+        try:
+            await asyncio.wait((sleeper, woken), return_when=asyncio.FIRST_COMPLETED)
+            slept = sleeper.done()
+        finally:
+            for task in (sleeper, woken):
+                task.cancel()
+        if slept:
+            sleeper.result()   # (its own failure or cancellation, raised here)
 
     def _memory(self) -> dict:
         return self.state.monitor.setdefault("irrigation_monitor", {})
@@ -59,7 +86,7 @@ class IrrigationMonitor:
                     await asyncio.sleep(min(RETRY_SECONDS, self.seconds_until_next(now)))
                     continue
                 now = now_local(self.tz)
-            await asyncio.sleep(self.seconds_until_next(now))
+            await self._sleep(self.seconds_until_next(now))
 
     async def check(self, now: datetime | None = None):
         """One check: the battery, then the rain. Raises when the controller can't be reached (nothing is recorded then)."""
@@ -78,7 +105,7 @@ class IrrigationMonitor:
             current = status.get("weather_delay")
             own = current == "24h" and memory.get("paused") == (now.date() - timedelta(days=1)).isoformat()
             if not is_paused(status) or own:
-                if own:   # the bot's pause from yesterday: ended first, so the new one runs a full day
+                if own:   # its own pause from yesterday: ended first, so the new one runs a full day
                     await self.device.delay("cancel")
                 await self.device.delay("24h")
                 memory["paused"] = today
@@ -95,13 +122,18 @@ class IrrigationMonitor:
         """Why the irrigation should be delayed (what rained or will), or None. `now` is local."""
         if self.station is not None:
             try:
-                rows = await self.station.recent(MEASURED_HOURS)
-                fell = rain_amount(rows, rows[0][0], rows[-1][0]) if rows else None
+                fell = await self.station.rain_mm(MEASURED_HOURS)   # the weather service's summary of the rain
             except Exception as e:   # the forecast can still decide
                 log.warning("Irrigation: the measured rain is unavailable (%s: %s)", type(e).__name__, e)
                 fell = None
             if fell is not None and fell > MEASURED_MM:
                 return f"{fell:g} mm of rain in the last 24 hours"
+        if (refresh := getattr(self.forecast, "refresh", None)) is not None:   # the weather service's forecast, read again
+            try:
+                await refresh()
+            except Exception as e:
+                log.warning("Irrigation: the forecast couldn't be read (%s: %s); %s", type(e).__name__, e,
+                            "using the one last read" if self.forecast.days else "there is none to go on")
         if self.forecast is not None and self.forecast.days:
             if local_epoch(now, self.tz) - self.forecast.fetched_at > FORECAST_TRUSTED_SECONDS:
                 log.info("Irrigation: the forecast is from %s, over a day old: only the measured rain decides",

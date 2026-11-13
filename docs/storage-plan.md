@@ -314,8 +314,8 @@ Left to Python on purpose:
 
 ### 3.12 The AirGradient's sources: the monitor, then Home Assistant, then the cloud
 
-`AIRGRADIENT_SOURCE` does for the air monitor what `ECOWITT_SOURCE` does for the station. `auto` (the default) uses each source that is
-set, in this order: the monitor's own server (`AIRGRADIENT_LOCAL_URL`), Home Assistant (when it has the monitor, found by its entities'
+`MCP_AIRGRADIENT_SOURCE` does for the air monitor what `MCP_ECOWITT_SOURCE` does for the station. `auto` (the default) uses each source that is
+set, in this order: the monitor's own server (`MCP_AIRGRADIENT_LOCAL_URL`), Home Assistant (when it has the monitor, found by its entities'
 names as its ranges are now: `airgradient.homeassistant.find_prefix`), and AirGradient's cloud (its token and location). `local`,
 `homeassistant` or `cloud` is that one alone. Each source fills only what the ones before it lack, which the write rules already do (3.8):
 the bot's own readings rank above Home Assistant's, Home Assistant's above the cloud's, and a lower one only fills a cell a higher one left
@@ -351,7 +351,7 @@ The PM2.5, and the other readings the monitor corrects:
   dashboard. The history from before stays as it came from the cloud, so a chart across the bot's first days can show the step until the
   fix. The check runs again each day on the newest day, so a correction changed on the monitor or the dashboard is followed.
 - **With nothing to check against** (one source alone), its values are taken as they are, and the start-up line says which correction the
-  monitor applies, from its `/config` when `AIRGRADIENT_LOCAL_URL` is set ("PM2.5: the monitor's EPA 2021 correction", "PM2.5: as
+  monitor applies, from its `/config` when `MCP_AIRGRADIENT_LOCAL_URL` is set ("PM2.5: the monitor's EPA 2021 correction", "PM2.5: as
   measured, no correction").
 
 ## 4. How each request reads
@@ -500,7 +500,7 @@ Each step is a commit (or a few) pushed to the dev branch with the tests and eva
    (`test_every_air_day_row_is_what_the_glitch_rule_in_python_gives`). On the stand-in: `air_days` over 4 years 15 ms (was 584 ms,
    662 at the start), one statement; the air charts still load every reading of their period and filter it in Python (1M: 314 ms),
    the lines bucketed by the database, as the station's are, being step 4's, with its rewrite of what the source reads.
-4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `AIRGRADIENT_SOURCE`; its readings, minutes and live
+4. **The AirGradient from the monitor, Home Assistant and the cloud** (3.12). `MCP_AIRGRADIENT_SOURCE`; its readings, minutes and live
    reading from the monitor itself, Home Assistant filling what the bot did not read and the cloud what neither has, each metric checked
    against the source ranked above it before it fills a gap; the settings table and the start-up line. After step 3, since it writes the
    `air` table's rows, minutes and bands by the same rules as the station's, and its readings back to Home Assistant's first state need the

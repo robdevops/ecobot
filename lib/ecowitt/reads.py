@@ -47,8 +47,9 @@ def readings_on(r: Reader, mac: str, groups: list[str], cycle: str, start: int, 
         known = units[group] if units is not None else r.fields(sensor.id, cycle)
         for column, values in got.values.items():
             c, name = BY_NAME[sensor.kind][column], field_of(group, column)
-            written = lambda v: None if v is None else round(v, c.decimals) + 0.0   # (as text() writes it: no "-0.0")
-            pts = {t: Sample(t, written(v), written(lo), written(hi), seconds)
+            d = c.decimals   # (each figure as text() writes it: rounded, no "-0.0"; inline: a year of readings is a million of them)
+            pts = {t: Sample(t, round(v, d) + 0.0, None if lo is None else round(lo, d) + 0.0, None if hi is None else round(hi, d) + 0.0,
+                             seconds)
                    for t, v, lo, hi in zip(got.ts, values, got.lo[column], got.hi[column]) if v is not None}
             if pts:
                 into.setdefault(f"{group}.{name}", {"unit": known.get(name, ""), "pts": {}})["pts"].update(pts)

@@ -1,10 +1,9 @@
-"""The irrigation controller: the Tuya client, the keyboard, the daily check, the watchdog, and the buttons."""
+"""The bot's side of the irrigation controller (step 8b: the controller is irrigation-mcp's, and the bot its client at
+BOT_IRRIGATION_MCP_URL): the status message and its keyboard, the Irrigation button and every ir: button run against irrigation-mcp in
+memory (its real server over the fake controller, tests/served.py), its alerts delivered through the listen, and irrigation-mcp down.
+(The controller's own code, without Telegram, is tests/test_irrigation_controller.py.)"""
 
 import asyncio
-import hashlib
-import hmac
-import json
-from datetime import datetime, timedelta
 from types import SimpleNamespace as NS
 
 import httpx
@@ -12,17 +11,17 @@ import pytest
 from telegram.error import BadRequest
 
 import lib.bot as bot_module
-from lib import templates
-from lib.alerts import irrigation as monitor_module
-from lib.alerts.irrigation import IrrigationMonitor
+from lib import irrigation_menu as menu
+from lib import irrigation_remote, templates
 from lib.alerts.menu import available_kinds
-from lib.alerts.notify import AlertState
+from lib.alerts.notify import AlertDelivery, AlertState, Notifier, ReadMark
 from lib.bot import Bot
 from lib.buttons import struck as strike
-from lib.config import Config
-from lib.irrigation import IrrigationError, Tuya, Watchdog, menu
-from lib.irrigation.tuya import sign
-from tests.fakes import TZ, config
+from lib.irrigation import IrrigationError, Tuya
+from lib.irrigation.common import IrrigationRefused
+from lib.irrigation_remote import RemoteIrrigation
+from tests.fakes import TZ, FakeController, tuya_config
+
 
 @pytest.fixture(autouse=True)
 def settle_at_once(monkeypatch):
@@ -30,135 +29,8 @@ def settle_at_once(monkeypatch):
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 0)
 
 
-SECRET = "s3cret"
-STATUS = [{"code": "switch", "value": False}, {"code": "battery_percentage", "value": 100}, {"code": "weather_delay", "value": "cancel"},
-          {"code": "countdown", "value": 0}, {"code": "work_state", "value": "idle"}, {"code": "use_time_one", "value": 40}]   # as the controller answered
-
-
-def cfg(tmp_path, **over):
-    return config(tmp_path, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret=SECRET, **over)
-
-
-class FakeTuya:
-    """Stands in for the Tuya cloud: records the signed requests it gets and checks each signature."""
-
-    def __init__(self, status=None, fail_token_once=False):
-        self.calls, self.status, self.token_n, self.fail_token_once = [], status if status is not None else STATUS, 0, fail_token_once
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        h, path = request.headers, request.url.raw_path.decode()
-        body = request.content
-        token = h.get("access_token", "")
-        expected = sign("cid", SECRET, token, h["t"], h["nonce"], request.method, path, body)   # signed over what was sent
-        assert h["sign"] == expected and h["client_id"] == "cid" and h["sign_method"] == "HMAC-SHA256"
-        if path.startswith("/v1.0/token"):
-            self.token_n += 1
-            return httpx.Response(200, json={"success": True, "result": {"access_token": f"tok{self.token_n}", "expire_time": 7200}})
-        self.calls.append((request.method, path, json.loads(body) if body else None, token))
-        if self.fail_token_once and token == "tok1":
-            self.fail_token_once = False
-            return httpx.Response(200, json={"success": False, "code": 1010, "msg": "token invalid"})
-        if path.endswith("/status"):
-            return httpx.Response(200, json={"success": True, "result": self.status})
-        return httpx.Response(200, json={"success": True, "result": True})
-
-
-def tuya(tmp_path, **kw):
-    fake = FakeTuya(**kw)
-    return Tuya(cfg(tmp_path), transport=httpx.MockTransport(fake)), fake
-
-
-def test_the_signature_is_hmac_sha256_of_the_ids_the_time_and_the_request():
-    body = b'{"commands":[{"code":"switch","value":true}]}'
-    to_sign = f"POST\n{hashlib.sha256(body).hexdigest()}\n\n/v1.0/devices/d/commands"          # the way the sample script builds it
-    want = hmac.new(b"sec", ("cid" + "tok" + "1700000000000" + "abc" + to_sign).encode(), hashlib.sha256).hexdigest().upper()
-    assert sign("cid", "sec", "tok", "1700000000000", "abc", "POST", "/v1.0/devices/d/commands", body) == want
-    empty = hashlib.sha256(b"").hexdigest()
-    assert sign("cid", "sec", "", "1", "n", "GET", "/v1.0/token?grant_type=1", b"") == hmac.new(
-        b"sec", f"cid1nGET\n{empty}\n\n/v1.0/token?grant_type=1".encode(), hashlib.sha256).hexdigest().upper()
-
-
-async def test_status_is_read_as_code_and_value_and_the_token_is_fetched_once(tmp_path):
-    device, fake = tuya(tmp_path)
-    got = await device.status()
-    assert got == {"switch": False, "battery_percentage": 100, "weather_delay": "cancel", "countdown": 0, "work_state": "idle", "use_time_one": 40}
-    await device.status()
-    assert fake.token_n == 1 and [c[1] for c in fake.calls] == ["/v1.0/devices/dev1/status"] * 2 and fake.calls[0][3] == "tok1"
-    await device.close()
-
-
-async def test_watering_sends_the_length_and_the_switch_in_one_command_and_other_commands_are_exact(tmp_path):
-    device, fake = tuya(tmp_path)
-    await device.water(10)
-    await device.delay("48h")
-    await device.set_switch(False)
-    assert [(m, p, b) for m, p, b, _ in fake.calls] == [
-        ("POST", "/v1.0/devices/dev1/commands", {"commands": [{"code": "countdown", "value": 600}, {"code": "switch", "value": True}]}),
-        ("POST", "/v1.0/devices/dev1/commands", {"commands": [{"code": "weather_delay", "value": "48h"}]}),
-        ("POST", "/v1.0/devices/dev1/commands", {"commands": [{"code": "switch", "value": False}]})]
-    for bad in (0, 61, -5):
-        with pytest.raises(IrrigationError):
-            await device.water(bad)
-    with pytest.raises(IrrigationError):
-        await device.delay("96h")
-    assert len(fake.calls) == 3                                                          # nothing was sent for the bad ones
-
-
-async def test_an_expired_token_is_replaced_and_the_request_repeated_once(tmp_path):
-    device, fake = tuya(tmp_path, fail_token_once=True)
-    assert (await device.status())["battery_percentage"] == 100
-    assert fake.token_n == 2 and [c[3] for c in fake.calls] == ["tok1", "tok2"]
-
-
-async def test_errors_name_the_problem_without_the_secrets(tmp_path):
-    def refuse(request):
-        return httpx.Response(200, json={"success": False, "code": 1004, "msg": "sign invalid"})
-    device = Tuya(cfg(tmp_path), transport=httpx.MockTransport(refuse))
-    with pytest.raises(IrrigationError, match="1004"):
-        await device.status()
-
-    def down(request):
-        raise httpx.ConnectError("no route to host https://openapi.tuyaeu.com?secret=" + SECRET)
-    device = Tuya(cfg(tmp_path), transport=httpx.MockTransport(down))
-    with pytest.raises(IrrigationError) as e:
-        await device.status()
-    assert SECRET not in str(e.value) and "ConnectError" in str(e.value)
-
-
-TOKEN = {"success": True, "result": {"access_token": "tok", "expire_time": 7200}}
-
-
-@pytest.mark.parametrize("token, status", [({"success": True}, None),                         # a token reply with no token
-                                           ({"success": True, "result": ["tok"]}, None),
-                                           ([TOKEN], None),                                    # a reply that isn't an object
-                                           (TOKEN, {"success": True, "result": {"switch": True}}),   # a status that isn't a list
-                                           (TOKEN, "OK")])
-async def test_a_reply_of_an_unexpected_shape_is_an_irrigation_error(tmp_path, token, status):
-    def serve(request):
-        return httpx.Response(200, json=token if request.url.path.startswith("/v1.0/token") else status)
-    device = Tuya(cfg(tmp_path), transport=httpx.MockTransport(serve))
-    with pytest.raises(IrrigationError):
-        await device.status()
-    await device.close()
-
-
-async def test_status_points_with_no_value_or_no_code_are_read_safely(tmp_path):
-    device, fake = tuya(tmp_path, status=[{"code": "switch"}, "battery", {"value": 3}, {"code": "countdown", "value": 60}])
-    assert await device.status() == {"switch": None, "countdown": 60}
-    await device.close()
-
-
-def test_the_controller_is_on_only_with_all_three_settings_and_the_hour_is_read_safely(monkeypatch, tmp_path):
-    assert cfg(tmp_path).irrigation and not config(tmp_path).irrigation and not config(tmp_path, tuya_device_id="d", tuya_client_id="c").irrigation
-    env = {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    for value, hour in (("", 18), ("6", 6), ("0", 0), ("23", 23), ("24", 18), ("noon", 18), ("-1", 18)):
-        monkeypatch.setenv("IRRIGATION_CHECK_HOUR", value)
-        assert Config.from_env().irrigation_check_hour == hour, value
-    monkeypatch.setenv("TUYA_BASE_URL", "https://openapi.tuyaus.com/")
-    monkeypatch.setenv("TUYA_DEVICE_ID", " dev ")
-    assert Config.from_env().tuya_base_url == "https://openapi.tuyaus.com" and Config.from_env().tuya_device_id == "dev"
+cfg = tuya_config
+Remote = FakeController   # (the controller behind irrigation-mcp)
 
 
 # ---------- the status message and its buttons ----------
@@ -234,222 +106,6 @@ def test_the_alert_list_gets_irrigation_battery_only_when_there_is_a_controller(
     assert ("irrigation battery", "al:off:irrigation_battery:alerts") in [b for row in listed for b in row]
 
 
-# ---------- the daily check ----------
-class Device:
-    def __init__(self, **status):
-        self.status_now = {"switch": False, "battery_percentage": 100, "weather_delay": "cancel", "work_state": "idle", **status}
-        self.commands, self.down = [], False
-
-    async def status(self):
-        if self.down:
-            raise IrrigationError("Tuya request failed (ConnectError)")
-        return dict(self.status_now)
-
-    def _reachable(self):
-        if self.down:
-            raise IrrigationError("Tuya request failed (ConnectError)")
-
-    async def delay(self, duration):
-        self._reachable()
-        self.commands.append(("delay", duration))
-        self.status_now["weather_delay"] = duration                      # the controller reports it
-
-    async def set_switch(self, on):
-        self._reachable()
-        self.commands.append(("switch", on))
-        self.status_now["switch"] = on
-
-
-class Station:
-    """The weather station: readings whose daily rain total rises by the given amounts."""
-
-    def __init__(self, *rises, fail=False):
-        total, self.rows, self.fail = 0.0, [], fail
-        for i, rise in enumerate(rises):
-            total += rise
-            self.rows.append((1_000_000 + i * 300, {"rainfall.daily": total}))
-
-    async def recent(self, hours):
-        assert hours == 24
-        if self.fail:
-            raise RuntimeError("Ecowitt is down")
-        return self.rows
-
-
-class Forecast:
-    def __init__(self, *chances):
-        self.days = [{"date": datetime(2026, 10, 8 + i).date(), "rain_1mm_pct": c} for i, c in enumerate(chances)] + [
-            {"date": datetime(2026, 10, 10).date(), "rain_1mm_pct": 90}]               # the day after tomorrow never counts
-        self.fetched_at = datetime(2026, 10, 8, 17, 45, tzinfo=TZ).timestamp()
-
-    def now(self):
-        return datetime(2026, 10, 8, 18, 0)
-
-    def upcoming(self, count=2):
-        return self.days[:count]
-
-
-NOW = datetime(2026, 10, 8, 18, 0)
-
-
-def daily(tmp_path, device, station=None, forecast=None):
-    state, sent = AlertState(tmp_path / "s.json"), []
-
-    async def notify(text, link=None, **kw):
-        sent.append((text, kw))
-    return IrrigationMonitor(device, state, notify, TZ, 18, station, forecast), state, sent
-
-
-@pytest.mark.parametrize("station, forecast, delayed", [
-    (Station(0, 0.5, 0.4), Forecast(10, 20), False),                  # 0.9 mm: not more than 1
-    (Station(0, 0.6, 0.6), Forecast(10, 20), True),                   # 1.2 mm fell
-    (Station(0, 0, 0), Forecast(10, 50), True),                       # tomorrow 50%: at the line
-    (Station(0, 0, 0), Forecast(55, 0), True),                        # today
-    (Station(0, 0, 0), Forecast(45, 49), False),                      # both under the line
-    (Station(0, 0, 0), Forecast(None, None), False),                  # no ensemble figure: nothing to go on
-    (None, Forecast(0, 80), True),                                    # no station: the forecast decides
-    (Station(0, 3, 0), None, True),                                   # no forecast: the measured rain decides
-    (Station(fail=True), Forecast(0, 80), True),                      # the station failing leaves the forecast
-    (Station(fail=True), Forecast(0, 0), False),
-    (None, None, False),
-    (Station(2, 0, 0), Forecast(0, 0), False),                        # the first reading's total fell before the window: only rises count
-])
-async def test_the_check_delays_a_day_when_more_than_1_mm_fell_or_is_likely(tmp_path, station, forecast, delayed):
-    device = Device()
-    m, state, sent = daily(tmp_path, device, station, forecast)
-    await m.check(NOW)
-    assert device.commands == ([("delay", "24h")] if delayed else [])
-    assert [(text.startswith("☔ Irrigation paused for 24 hours: ") and text.endswith("."), kw) for text, kw in sent] == (
-        [(True, {"kind": "irrigation_pause"})] if delayed else [])                  # told once when it paused, never otherwise
-    assert state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
-
-
-async def test_a_delay_already_set_is_never_shortened_or_repeated(tmp_path):
-    device = Device(weather_delay="72h")
-    m, _, sent = daily(tmp_path, device, Station(0, 5), Forecast(90, 90))
-    await m.check(NOW)
-    assert device.commands == [] and sent == []                                          # nothing changed: nothing to tell
-
-
-async def test_the_bots_own_pause_from_yesterday_is_started_again_and_one_someone_set_is_not(tmp_path):
-    device = Device()
-    m, state, sent = daily(tmp_path, device, Station(0, 3))
-    await m.check(NOW)                                                                   # paused at 6pm
-    await m.check(NOW + timedelta(days=1))                                               # 6pm the next day: still on, for seconds
-    assert device.commands == [("delay", "24h"), ("delay", "cancel"), ("delay", "24h")]
-    assert sent[1][0] == "☔ Irrigation paused for another 24 hours: 3 mm of rain in the last 24 hours."
-    m.station = Station(0, 0)
-    await m.check(NOW + timedelta(days=2))                                               # dry: it lapses
-    m.station = Station(0, 3)
-    await m.check(NOW + timedelta(days=4))                                               # a 24h someone set (the bot's is days old)
-    assert len(device.commands) == 3 and len(sent) == 2
-
-
-async def test_a_forecast_more_than_a_day_old_does_not_decide(tmp_path, caplog):
-    stale = Forecast(90, 90)
-    stale.fetched_at -= 25 * 3600
-    device = Device()
-    m, state, sent = daily(tmp_path, device, Station(0, 0), stale)
-    with caplog.at_level("INFO"):
-        await m.check(NOW)
-    assert device.commands == [] and sent == [] and "over a day old: only the measured rain decides" in caplog.text
-
-
-async def test_a_battery_under_5_percent_is_told_once_a_day_to_the_irrigation_alert_type(tmp_path):
-    device = Device(battery_percentage=4)
-    m, state, sent = daily(tmp_path, device)
-    await m.check(NOW)
-    await m.check(NOW)
-    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation_battery"} and "4%" in sent[0][0] and "🪫" in sent[0][0]
-    await m.check(datetime(2026, 10, 9, 18, 0))                                          # the next day: again, until it is charged
-    assert len(sent) == 2
-    device.status_now["battery_percentage"] = 5                                         # 5% is not below 5%
-    await m.check(datetime(2026, 10, 10, 18, 0))
-    assert len(sent) == 2
-
-
-async def test_the_battery_is_still_told_when_the_delay_cannot_be_sent_and_not_told_twice_on_the_retry(tmp_path):
-    class Failing(Device):
-        async def delay(self, duration):
-            raise IrrigationError("Tuya error 28841002: no permission")
-    m, state, sent = daily(tmp_path, Failing(battery_percentage=2), None, Forecast(90, 90))
-    with pytest.raises(IrrigationError):
-        await m.check(NOW)
-    assert len(sent) == 1 and "checked" not in state.monitor["irrigation_monitor"]              # not recorded: the next try repeats the check
-    with pytest.raises(IrrigationError):
-        await m.check(NOW)
-    assert len(sent) == 1 and sent[0][1] == {"kind": "irrigation_battery"}                         # no "paused" alert for a pause that was not made
-
-
-def test_a_check_is_due_once_a_day_after_the_hour_and_the_next_is_the_following_18_00(tmp_path):
-    m, state, _ = daily(tmp_path, Device())
-    assert not m.due(datetime(2026, 10, 8, 17, 59)) and m.due(datetime(2026, 10, 8, 18, 0)) and m.due(datetime(2026, 10, 8, 23, 0))
-    state.monitor["irrigation_monitor"] = {"checked": "2026-10-08"}
-    assert not m.due(datetime(2026, 10, 8, 23, 0)) and not m.due(datetime(2026, 10, 9, 3, 0)) and m.due(datetime(2026, 10, 9, 18, 0))
-    assert m.seconds_until_next(datetime(2026, 10, 8, 17, 0)) == 3600 and m.seconds_until_next(datetime(2026, 10, 8, 18, 0)) == 86400
-    assert m.seconds_until_next(datetime(2026, 10, 8, 23, 30)) == 18.5 * 3600
-    assert m.seconds_until_next(datetime(2026, 10, 3, 18, 0)) == 23 * 3600   # the clocks go forward that night: 23 real hours, not 24
-
-
-async def test_run_checks_when_due_retries_after_a_failure_and_then_waits_for_tomorrow(tmp_path, monkeypatch):
-    device = Device()
-    device.down = True
-    m, state, _ = daily(tmp_path, device, None, Forecast(90, 90))
-    sleeps = []
-
-    async def fake_sleep(seconds):
-        sleeps.append(seconds)
-        if len(sleeps) == 1:
-            device.down = False                                                           # the controller is back after the first wait
-        if len(sleeps) == 3:
-            raise asyncio.CancelledError
-    monkeypatch.setattr(monitor_module.asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(monitor_module, "now_local", lambda tz: NOW)
-    with pytest.raises(asyncio.CancelledError):
-        await m.run()
-    assert sleeps[0] == 1800 and device.commands == [("delay", "24h")]                    # tried, failed, waited 30 minutes, tried, did it
-    assert state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
-    assert sleeps[1] == 86400                                                             # then until 18:00 tomorrow (now is exactly 18:00 here)
-
-
-async def test_the_watchdog_closes_a_valve_that_is_still_open_after_the_run_and_survives_a_restart(tmp_path):
-    clock, state = [1000.0], AlertState(tmp_path / "s.json")
-    device = Device(switch=True)
-    dog = Watchdog(device, state, clock=lambda: clock[0])
-    await dog.check()
-    assert device.commands == []                                                          # nothing armed: the controller is not even asked
-    dog.arm(10)
-    clock[0] = 1000 + 600 + 29
-    await dog.check()
-    assert device.commands == [] and dog.off_at                                           # inside the grace period: the device's own countdown may still end it
-    clock[0] = 1000 + 600 + 31
-    reborn = Watchdog(device, AlertState(tmp_path / "s.json"), clock=lambda: clock[0])    # the bot restarted in the middle of the run
-    await reborn.check()
-    assert device.commands == [("switch", False)] and reborn.off_at is None
-
-
-async def test_the_watchdog_leaves_a_closed_valve_alone_tries_again_on_failure_and_disarms_on_request(tmp_path):
-    clock, state = [0.0], AlertState(tmp_path / "s.json")
-    device = Device(switch=False)
-    dog = Watchdog(device, state, clock=lambda: clock[0])
-    dog.arm(5)
-    clock[0] = 400
-    await dog.check()
-    assert device.commands == [] and dog.off_at is None                                   # it ended by itself
-    dog.arm(5)
-    device.down, device.status_now["switch"] = True, True
-    clock[0] = 800
-    with pytest.raises(IrrigationError):
-        await dog.check()
-    assert dog.off_at is not None                                                         # kept: the next minute tries again
-    device.down = False
-    await dog.check()
-    assert device.commands == [("switch", False)]
-    dog.arm(5)
-    dog.disarm()
-    assert dog.off_at is None
-
-
 # ---------- the buttons in the bot ----------
 class Query:
     def __init__(self, data, chat_id=1, chat_type="private", user=7):
@@ -470,20 +126,31 @@ class Query:
         self.edits.append(("text", text, reply_markup) + ((entities,) if entities else ()))
 
 
-class Remote(Device):
-    """The controller as the bot's buttons see it: also water()."""
-
-    async def water(self, minutes):
-        self._reachable()
-        self.commands.append(("water", minutes))
-        self.status_now.update(switch=True, work_state="manual", countdown=minutes * 60)
+WEATHER = SERVE_IRRIGATION = None
 
 
-def irrigation_bot(tmp_path, device=None):
+@pytest.fixture(autouse=True)
+async def ecobot_mcp(serve, serve_irrigation):
+    """ecobot-mcp in memory with the weather station, the bot's client of it connected: what the bots here run over; and the way to
+    irrigation-mcp in memory (serve_irrigation)."""
+    global WEATHER, SERVE_IRRIGATION
+    WEATHER, SERVE_IRRIGATION = await serve(tools=[], sources=["Ecowitt"]), serve_irrigation
+    yield WEATHER
+    WEATHER = SERVE_IRRIGATION = None
+
+
+async def irrigation_bot(tmp_path, device=None):
+    """A bot whose irrigation is irrigation-mcp in memory over `device` (default: the fake controller): (the bot, its state, the
+    controller behind irrigation-mcp)."""
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
-    device = device or Remote()
-    return Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], state, device), state, device
+    irrigation = await SERVE_IRRIGATION(tmp_path, device or Remote())
+    return Bot(NS(tz=TZ), None, state, irrigation, service=WEATHER), state, irrigation.server.device
+
+
+def watched(bot):
+    """When irrigation-mcp's watchdog closes the valve (None: no run watched)."""
+    return bot.irrigation.server.watchdog.off_at
 
 
 async def press(bot, data, **kw):
@@ -493,7 +160,7 @@ async def press(bot, data, **kw):
 
 
 async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_so(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     sent = []
 
     async def reply_text(body, **kw):
@@ -512,7 +179,7 @@ async def test_the_button_sends_the_status_with_its_buttons_and_a_failure_says_s
 async def test_an_odd_reply_from_the_controller_is_a_toast_not_a_press_left_hanging(tmp_path):
     def odd(request):
         return httpx.Response(200, json=["not", "a", "reply"])
-    bot, state, device = irrigation_bot(tmp_path, Tuya(cfg(tmp_path), transport=httpx.MockTransport(odd)))
+    bot, state, device = await irrigation_bot(tmp_path, Tuya(cfg(tmp_path), transport=httpx.MockTransport(odd)))   # (irrigation-mcp's)
     q = await press(bot, "ir:refresh")
     assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []
     await device.close()
@@ -523,13 +190,13 @@ async def test_a_run_whose_reply_is_lost_is_still_watched(tmp_path):
         async def water(self, minutes):
             await super().water(minutes)                                 # the valve opened
             raise IrrigationError("Tuya request failed (ReadTimeout)")   # but the reply never came
-    bot, state, device = irrigation_bot(tmp_path, Lost())
+    bot, state, device = await irrigation_bot(tmp_path, Lost())
     q = await press(bot, "ir:water:10")
-    assert q.toast == "Couldn't reach the irrigation controller" and bot.watchdog.off_at is not None
+    assert q.toast == "Couldn't reach the irrigation controller" and watched(bot) is not None
 
 
 async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
-    bot, _, device = irrigation_bot(tmp_path)
+    bot, _, device = await irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:water")
     assert q.edits[0][0] == "markup" and rows(q.edits[0][1])[-1][0] == ("5 min", "ir:water:5") and device.commands == []
     q = await press(bot, "ir:close")
@@ -540,13 +207,13 @@ async def test_opening_and_closing_a_section_only_changes_the_buttons(tmp_path):
 
 
 async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh_the_message(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     q = await press(bot, "ir:water:10")
-    assert device.commands == [("water", 10)] and q.toast == "Watering for 10 minutes" and bot.watchdog.off_at
+    assert device.commands == [("water", 10)] and q.toast == "Watering for 10 minutes" and watched(bot)
     assert q.edits[0][0] == "text" and "state: on ✅" in q.edits[0][1] and "mode: manual" in q.edits[0][1]
     assert "state: on ✅ (10 mins until off)" in q.edits[0][1]
     q = await press(bot, "ir:sw:off")
-    assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and bot.watchdog.off_at is None and "state: off ❌" in q.edits[0][1]
+    assert device.commands[-1] == ("switch", False) and q.toast == "Switched off" and watched(bot) is None and "state: off ❌" in q.edits[0][1]
     q = await press(bot, "ir:delay:72h")
     assert device.commands[-1] == ("delay", "72h") and q.toast == "Paused 72h"
     q = await press(bot, "ir:delay:cancel")
@@ -559,7 +226,7 @@ async def test_watering_a_delay_and_the_switch_act_on_the_controller_and_refresh
 
 
 async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_stays_open(tmp_path):
-    bot, state, _ = irrigation_bot(tmp_path)
+    bot, state, _ = await irrigation_bot(tmp_path)
     q = await press(bot, "ir:open:alerts")
     assert q.edits[0][0] == "markup" and [r[0][0] for r in rows(q.edits[0][1])[1:]] == ["battery alerts", "pause alerts"]
     q = await press(bot, "ir:batt:off")
@@ -586,7 +253,7 @@ async def test_the_alerts_menu_toggles_each_alert_type_for_this_chat_alone_and_s
 
 
 async def test_a_controller_that_cannot_be_reached_gives_a_toast_not_a_traceback_and_an_unchanged_message_is_fine(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     device.down = True
     q = await press(bot, "ir:delay:24h")
     assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []
@@ -597,17 +264,17 @@ async def test_a_controller_that_cannot_be_reached_gives_a_toast_not_a_traceback
     q.fail = BadRequest("Message to edit not found")
     with pytest.raises(BadRequest):
         await bot.on_irrigation_button(NS(callback_query=q), NS())
-    plain = Bot(NS(tz=TZ), None, [], AlertState(tmp_path / "t.json"))                    # no controller configured: nothing happens
+    plain = Bot(NS(tz=TZ), None, AlertState(tmp_path / "t.json"), service=WEATHER)       # no controller configured: nothing happens
     q = await press(plain, "ir:delay:24h")
-    assert q.edits == [] and plain.watchdog is None
+    assert q.edits == [] and plain.irrigation is None
 
 
 async def test_the_handler_is_registered_and_the_alert_list_includes_irrigation_only_with_a_controller(tmp_path):
-    bot, state, _ = irrigation_bot(tmp_path)
+    bot, state, _ = await irrigation_bot(tmp_path)
     added = []
     app = NS(add_handler=lambda h, group=0: added.append(h), add_error_handler=lambda h: None)
     bot.register(app)
-    plain = Bot(NS(tz=TZ), None, [NS(name="Ecowitt")], AlertState(tmp_path / "t.json"))
+    plain = Bot(NS(tz=TZ), None, AlertState(tmp_path / "t.json"), service=WEATHER)
     added_plain = []
     plain.register(NS(add_handler=lambda h, group=0: added_plain.append(h), add_error_handler=lambda h: None))
     assert len(added) == len(added_plain)                                                    # one entry point for every button, with or without a controller
@@ -653,7 +320,7 @@ class NoModel:
 
 
 async def test_typing_irrigation_does_what_the_button_does_in_private_chats_and_when_addressed_in_groups(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     bot.agent = NoModel()
     ctx = NS(bot=NS(username="testbot", id=99))
     for text in ("irrigation", "water", "turn the sprinkler on", templates.IRRIGATION):
@@ -683,11 +350,11 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
     async def quiet(*a, **k):
         pass
     ctx = NS(bot=NS(username="testbot", id=99, send_chat_action=quiet, send_message_draft=quiet))   # the model is asked: "typing..." and a draft go first
-    bot = Bot(NS(tz=TZ), Agent(), [], state, Remote())
+    bot = Bot(NS(tz=TZ), Agent(), state, await SERVE_IRRIGATION(tmp_path), service=WEATHER)
     update, sent = private_message("how much water did the rain add this week")
     await bot.on_message(update, ctx)
     assert asked == ["how much water did the rain add this week"]
-    plain = Bot(NS(tz=TZ), Agent(), [], AlertState(tmp_path / "t.json"))
+    plain = Bot(NS(tz=TZ), Agent(), AlertState(tmp_path / "t.json"), service=WEATHER)
     update, sent = private_message("irrigation")
     await plain.on_message(update, ctx)
     assert asked[-1] == "irrigation"                                                       # nothing to show: the model answers as before
@@ -695,17 +362,17 @@ async def test_other_questions_and_a_bot_without_a_controller_still_go_to_the_mo
 
 async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_shows_the_chat_s_battery_alerts(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 3)
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     events = []
 
     async def sleep(seconds):
         events.append(("sleep", seconds))
-    original_status = device.status
+    original_status = bot.irrigation.status
 
-    async def status():
+    async def status():                                                                             # (the bot's reads, over irrigation-mcp)
         events.append(("status",))
         return await original_status()
-    device.status = status
+    bot.irrigation.status = status
     monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
     q = await press(bot, "ir:water:5")
     assert events == [("status",), ("sleep", 3), ("status",)] and q.toast == "Watering for 5 minutes"   # a look at the pause, the command, a wait, the fresh state
@@ -726,7 +393,7 @@ async def test_the_message_is_redrawn_a_couple_of_seconds_after_a_command_and_sh
 
 
 async def test_a_status_that_cannot_be_read_after_a_command_leaves_the_message_alone(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
 
     async def delay(duration):
         device.commands.append(("delay", duration))
@@ -736,59 +403,116 @@ async def test_a_status_that_cannot_be_read_after_a_command_leaves_the_message_a
     assert device.commands == [("delay", "48h")] and q.toast == "Paused 48h" and q.edits == []
 
 
-@pytest.mark.parametrize("station, forecast, why", [
-    (Station(0, 0.6, 0.6), None, "1.2 mm of rain in the last 24 hours"),
-    (None, Forecast(10, 50), "50% chance of at least 1 mm tomorrow"),
-    (None, Forecast(55, 0), "55% chance of at least 1 mm today"),
-    (Station(0, 3, 0), Forecast(90, 90), "3 mm of rain in the last 24 hours"),                    # what fell comes first
-])
-async def test_the_pause_alert_says_why(tmp_path, station, forecast, why):
-    m, _, sent = daily(tmp_path, Device(), station, forecast)
-    await m.check(NOW)
-    assert sent == [(f"☔ Irrigation paused for 24 hours: {why}.", {"kind": "irrigation_pause"})]
+
+async def until(check, seconds: float = 10.0, what: str = "it"):
+    deadline = asyncio.get_running_loop().time() + seconds
+    while not check():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"timed out waiting for {what}")
+        await asyncio.sleep(0.02)
 
 
-async def test_a_pause_that_fails_and_is_retried_is_told_exactly_once(tmp_path):
-    class Flaky(Device):
-        failures = 1                                                                  # the first command is refused, the second goes through
-
-        async def delay(self, duration):
-            if self.failures:
-                self.failures -= 1
-                raise IrrigationError("Tuya request failed (ConnectError)")
-            await super().delay(duration)
-    device = Flaky()
-    m, state, sent = daily(tmp_path, device, None, Forecast(90, 90))
-    with pytest.raises(IrrigationError):
-        await m.check(NOW)
-    assert sent == [] and "checked" not in state.monitor["irrigation_monitor"]               # nothing told for a pause that was not made
-    await m.check(NOW)
-    assert device.commands == [("delay", "24h")] and len(sent) == 1 and state.monitor["irrigation_monitor"]["checked"] == "2026-10-08"
-
-
-async def test_the_pause_alert_reaches_every_subscribed_chat_with_the_usual_menu(tmp_path):
-    from lib.alerts.notify import Notifier
+async def test_an_irrigation_alert_reaches_every_subscribed_chat_through_the_listen_once_with_the_usual_menu(tmp_path):
+    """irrigation-mcp's daily check appends to its own alert log (irrigation://alerts); the bot hears it through its listen and delivers
+    it as it delivers ecobot-mcp's: to the chats subscribed to its kind, with the alert's menu, its last id kept apart in bot_state.json,
+    nothing sent twice (a reconnect reads once; a restart resumes after it)."""
     state, delivered = AlertState(tmp_path / "s.json"), []
     for chat in (1, 2, 3, -7):
         state.add_chat(chat, str(chat))
     state.set_kind(2, "irrigation_pause", False)                       # this chat turned the pause alerts off
-    state.set_kind(3, "irrigation_battery", False)                             # ... and this one only the battery alerts: it still gets the pause
+    state.set_kind(3, "irrigation_battery", False)                     # ... and this one only the battery alerts: it still gets the pause
 
     class Telegram:
         async def send_message(self, chat_id, text, **kw):
             delivered.append((chat_id, text, kw))
-    notifier = Notifier(Telegram(), state)
-    m = IrrigationMonitor(Device(), state, notifier, TZ, 18, None, Forecast(90, 90))
-    await m.check(NOW)
+    irrigation = await SERVE_IRRIGATION(tmp_path)
+    mark = ReadMark(state, irrigation_remote.NAME)
+
+    async def delivering(state, mark):
+        delivery = AlertDelivery(irrigation.alerts, Notifier(Telegram(), state), state, TZ, mark=mark)
+        task = asyncio.create_task(delivery.run())
+        await until(lambda: delivery.begun and mark.read is not None, what="the delivery to begin")
+        return task
+    task = await delivering(state, mark)
+    await irrigation.server.notify("☔ Irrigation paused for 24 hours: 90% chance of at least 1 mm today.", kind="irrigation_pause")
+    await until(lambda: len(delivered) == 3, what="the pause alert")
     assert sorted(c for c, _, _ in delivered) == [-7, 1, 3] and all(text.startswith("☔ Irrigation paused") for _, text, _ in delivered)
-    markup = delivered[0][2]["reply_markup"]
-    assert rows(markup) == [[("🔔 ▸", "al:open:bell:irrigation_pause")]]
+    assert rows(delivered[0][2]["reply_markup"]) == [[("🔔 ▸", "al:open:bell:irrigation_pause")]]
+    await irrigation.server.notify("🪫 The irrigation battery is at 4%.", kind="irrigation_battery")
+    await until(lambda: len(delivered) == 6, what="the battery alert")
+    assert sorted(c for c, text, _ in delivered if "battery" in text) == [-7, 1, 2]
+    saved = AlertState(tmp_path / "s.json")
+    assert saved.marks[irrigation_remote.NAME]["read"] == 2 and saved.read is None   # (ecobot-mcp's own mark untouched)
+    irrigation.alerts.changed()                                                      # (as a reconnect does: read once, nothing new)
+    await asyncio.sleep(0.2)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    restarted = AlertState(tmp_path / "s.json")                                       # the bot restarted: it resumes after the last one
+    task = await delivering(restarted, ReadMark(restarted, irrigation_remote.NAME))
+    await asyncio.sleep(0.2)
+    assert len(delivered) == 6
+    await irrigation.server.notify("☔ Irrigation paused for another 24 hours: 3 mm of rain in the last 24 hours.", kind="irrigation_pause")
+    await until(lambda: len(delivered) == 9, what="the next alert")
+    await asyncio.sleep(0.2)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert len(delivered) == 9 and [t for _, t, _ in delivered].count(delivered[0][1]) == 3   # each alert once per chat
     from lib.alerts.menu import alert_keyboard, keyboard
     kinds = available_kinds({"Ecowitt", "AirGradient", "Pollen", "Forecast", "Irrigation"})
     boards = [keyboard(set(), kinds, section, set()) for section in (None, "alerts", "sound")]
     boards += [alert_keyboard(kind, set(), set(), section) for kind in ("irrigation_pause", "irrigation_battery") for section in (None, "bell")]
     for board in boards:                                                # every button's data fits Telegram's 64 bytes, for the new type too
         assert all(len(data.encode()) <= 64 for row in rows(board) for _, data in row)
+
+
+async def test_at_the_bots_first_start_the_irrigation_alerts_not_yet_expired_are_delivered_once(tmp_path):
+    """irrigation-mcp starts before the bot (its unit, and after an upgrade its first daily check can run at once): the alerts it logged
+    before the bot first read its log, those not yet expired, are delivered at the bot's first start (unexpired_first), once; ecobot-mcp's
+    delivery (without it) still begins after the newest."""
+    state, delivered = AlertState(tmp_path / "s.json"), []
+    state.add_chat(1, "1")
+
+    class Telegram:
+        async def send_message(self, chat_id, text, **kw):
+            delivered.append((chat_id, text))
+    irrigation = await SERVE_IRRIGATION(tmp_path)
+    log_ = irrigation.server.alert_log
+    log_.append("irrigation_pause", "☔ an old pause", "Irrigation paused for rain", expires=log_.now() - 60)   # (expired: not news)
+    await irrigation.server.notify("🪫 The irrigation battery is at 3%.", kind="irrigation_battery")
+
+    async def delivering(state, **kw):
+        mark = ReadMark(state, irrigation_remote.NAME)
+        delivery = AlertDelivery(irrigation.alerts, Notifier(Telegram(), state), state, TZ, mark=mark, **kw)
+        task = asyncio.create_task(delivery.run())
+        await until(lambda: delivery.begun and mark.read is not None, what="the delivery to begin")
+        await asyncio.sleep(0.2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return mark
+    assert (await delivering(AlertState(tmp_path / "other.json"))).read == 2 and delivered == []   # (without: after the newest)
+    mark = await delivering(state, unexpired_first=True)
+    assert delivered == [(1, "🪫 The irrigation battery is at 3%.")] and mark.read == 2
+    await delivering(AlertState(tmp_path / "s.json"), unexpired_first=True)                        # a restart: nothing again
+    assert len(delivered) == 1
+
+
+async def test_irrigation_mcp_down_the_button_says_it_cant_reach_the_controller_and_the_bot_carries_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(irrigation_remote, "CALL_WAIT", 0.2)
+    state = AlertState(tmp_path / "s.json")
+    state.add_chat(1, "Rob")
+    down = RemoteIrrigation("http://127.0.0.1:9/mcp")                   # nothing answers there (its supervisor not even started)
+    bot = Bot(NS(tz=TZ), None, state, down, service=WEATHER)
+    update, sent = private_message(templates.IRRIGATION)
+    await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
+    assert sent == [("Sorry, I couldn't reach the irrigation controller.", {})]
+    q = await press(bot, "ir:water:5")
+    assert q.toast == "Couldn't reach the irrigation controller" and q.edits == []
+    q = await press(bot, "ir:open:water")                                 # what needs no controller still works
+    assert q.edits[0][0] == "markup"
+    q = await press(bot, "ir:batt:off")                                   # and so do the chat's own alert settings
+    assert q.toast == "Irrigation battery alerts off in this chat" and state.muted(1) == {"irrigation_battery"}
+    with pytest.raises(IrrigationError, match="irrigation-mcp isn't reachable"):
+        await down.status()
 
 
 async def test_refresh_reads_the_controller_again_and_redraws_without_sending_anything_or_waiting(tmp_path, monkeypatch):
@@ -798,7 +522,7 @@ async def test_refresh_reads_the_controller_again_and_redraws_without_sending_an
     async def sleep(seconds):
         slept.append(seconds)
     monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     device.status_now.update(switch=True, countdown=300, work_state="auto")              # changed on the controller (its own schedule, or the app)
     q = await press(bot, "ir:refresh")
     assert q.toast == "Refreshed" and device.commands == [] and slept == []
@@ -815,7 +539,7 @@ async def test_refresh_reads_the_controller_again_and_redraws_without_sending_an
 
 
 async def test_every_member_of_a_group_may_use_the_irrigation_buttons(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     state.add_chat(-5, "Home")
     group = dict(chat_id=-5, chat_type="supergroup", user=42)                                 # an ordinary member: no admin check is made
     q = await press(bot, "ir:open:water", **group)
@@ -850,13 +574,13 @@ async def test_water_is_refused_while_paused_with_a_toast_and_a_bold_footer_unti
         slept.append(seconds)
     monkeypatch.setattr(bot_module, "IRRIGATION_SETTLE_SECONDS", 3)
     monkeypatch.setattr(bot_module.asyncio, "sleep", sleep)
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     await press(bot, "ir:delay:48h")                                                       # paused
     device.commands.clear()
     slept.clear()
     for minutes in (5, 30):
         q = await press(bot, f"ir:water:{minutes}")
-        assert device.commands == [] and bot.watchdog.off_at is None and slept == []        # nothing sent, no run to watch, no wait
+        assert device.commands == [] and watched(bot) is None and slept == []        # nothing sent, no run to watch, no wait
         assert q.toast == "error: can not turn on water while paused!"
         kind, text, markup, entities = q.edits[0]
         assert text.startswith("🌱 Irrigation\nmode: idle\nstate: off ❌\npause: 48h") and text.endswith("\n\nerror: can not turn on water while paused!")
@@ -868,11 +592,36 @@ async def test_water_is_refused_while_paused_with_a_toast_and_a_bold_footer_unti
     await press(bot, "ir:delay:cancel")                                                    # unpaused: water works again
     q = await press(bot, "ir:water:10")
     assert device.commands[-1] == ("water", 10) and q.toast == "Watering for 10 minutes" and "error:" not in q.edits[0][1]
-    assert bot.watchdog.off_at and slept[-1] == 3
+    assert watched(bot) and slept[-1] == 3
+
+
+async def test_water_refused_by_irrigation_mcp_after_the_status_read_says_paused_not_unreachable(tmp_path):
+    """A pause that begins between the bot's status read and its water call (the daily check's): irrigation-mcp refuses the water; the
+    bot says why (the paused toast), not that it couldn't reach the controller. Another refusal's own message is the toast."""
+    bot, state, device = await irrigation_bot(tmp_path)
+    remote = bot.irrigation
+    real = remote.status
+
+    async def read_before_the_pause():
+        status = await real()
+        device.status_now["weather_delay"] = "24h"   # (the pause begins just after the read)
+        return status
+    remote.status = read_before_the_pause
+    q = await press(bot, "ir:water:5")
+    assert q.toast == menu.PAUSED_ERROR and device.commands == [] and watched(bot) is None
+    with pytest.raises(IrrigationRefused, match="paused") as refused:
+        await remote.water(5)
+    assert refused.value.paused
+    with pytest.raises(IrrigationRefused, match="from 1 to 60") as refused:
+        await remote.water(61)
+    assert not refused.value.paused
+    remote.status = real
+    query = Query("ir:water:61")
+    assert await bot._controller(query, remote.water(61), "water 61") is None and query.toast.startswith("minutes is a whole number")
 
 
 async def test_water_while_the_status_cannot_be_read_says_so_and_sends_nothing(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     device.down = True
     q = await press(bot, "ir:water:5")
     assert q.toast == "Couldn't reach the irrigation controller" and q.edits == [] and device.commands == []
@@ -887,7 +636,7 @@ def test_a_status_message_says_whether_it_is_paused():
 
 
 async def test_while_paused_the_button_is_unpause_and_one_press_ends_the_pause(tmp_path):
-    bot, state, device = irrigation_bot(tmp_path)
+    bot, state, device = await irrigation_bot(tmp_path)
     update, sent = private_message("irrigation")
     await bot.on_message(update, NS(bot=NS(username="testbot", id=99)))
     assert rows(sent[0][1]["reply_markup"])[0][1] == ("⏸ Pause ▸", "ir:open:delay")               # not paused

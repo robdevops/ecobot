@@ -216,12 +216,13 @@ class Writer:
                                 f"VALUES ({', '.join('?' * (5 + len(keys)))})",
                                 [(sensor.id, res, row["ts"], src, int(row.get("final", final)), *map(row.get, keys)) for row in rows])
         else:
-            names = [c.name for c in KINDS[sensor.kind]]
+            keys = [(c.name, c.name + "_lo", c.name + "_hi") for c in KINDS[sensor.kind]]   # (named once, not for every row)
             args = []
             for row in rows:
                 values = []
-                for c in names:
-                    v, lo, hi = row.get(c), row.get(c + "_lo"), row.get(c + "_hi")
+                get = row.get
+                for c, c_lo, c_hi in keys:
+                    v, lo, hi = get(c), get(c_lo), get(c_hi)
                     if v is not None:   # the value inside its band
                         lo, hi = (None if lo is None else min(lo, v)), (None if hi is None else max(hi, v))
                     values += (v, lo, hi)

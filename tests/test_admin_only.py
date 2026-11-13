@@ -1,4 +1,4 @@
-"""ADMIN_ONLY (who may use the bot), /alerts in groups, /usage, and the checks every button press goes through."""
+"""BOT_ADMIN_ONLY (who may use the bot), /alerts in groups, /usage, and the checks every button press goes through."""
 
 import asyncio
 import random
@@ -8,15 +8,15 @@ import pytest
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 
-from lib import periods, report_menu, templates
+from lib.service.summary import OVER_TIME
+from lib import periods, templates
 from lib.admins import Admins
 from lib.alerts import menu
 from lib.alerts.notify import AlertState
 from lib.bot import MAX_CALLBACK_BYTES, NOT_ADMIN, NOT_ADMIN_TOAST, STALE_BUTTON, Bot
 from lib.config import Config, _ids
-from lib.irrigation import menu as irrigation_menu
+from lib import irrigation_menu
 from tests.fakes import TZ
-from tests.test_irrigation import Remote
 
 ADMIN, STRANGER, GROUP, OTHER_GROUP = 1, 7, -5, -6
 ANONYMOUS = 1087968824           # the user Telegram shows for an admin who posts "as the group"
@@ -46,15 +46,37 @@ class Asked(Bot):
     """A Bot that records the questions it is asked instead of asking a model."""
     asked: list
 
-    async def respond(self, update, context, text, redraw=None):
+    async def respond(self, update, context, text, call=None):
         self.asked.append(text.strip())
+
+
+@pytest.fixture(autouse=True)
+async def ecobot_mcp(serve, serve_irrigation, tmp_path):
+    """ecobot-mcp in memory with the weather station (its alerts are the menus' types), the bot's client of it connected: what `make`
+    builds every bot over; and irrigation-mcp in memory over the fake controller (Remote(): the bot's client of it)."""
+    global WEATHER, IRRIGATION
+    WEATHER, IRRIGATION = await serve(tools=[], sources=["Ecowitt"]), await serve_irrigation(tmp_path / "irrigation")
+    yield WEATHER
+    WEATHER = IRRIGATION = None
+
+
+WEATHER = IRRIGATION = None
+
+
+def Remote():
+    """irrigation-mcp in memory, as the bot reaches it; `commands(bot)` is what its controller was told."""
+    return IRRIGATION
+
+
+def commands(irrigation) -> list:
+    return irrigation.server.device.commands
 
 
 def make(tmp_path, admin_only=True, extra=(), irrigation=None, groups=(GROUP,), tg=None):
     state = AlertState(tmp_path / "s.json")
     for group in groups:
         state.add_chat(group, "Home")
-    bot = Asked(NS(tz=TZ, admin_only=admin_only, admin_chat_ids=frozenset(extra)), None, [NS(name="Ecowitt")], state, irrigation)
+    bot = Asked(NS(tz=TZ, admin_only=admin_only, admin_chat_ids=frozenset(extra)), None, state, irrigation, service=WEATHER)
     bot.asked = []
     return bot, state, tg or TG()
 
@@ -105,19 +127,19 @@ def board(*data):
 
 # ---------- the settings ----------
 def test_admin_only_is_off_unless_switched_on_and_the_listed_ids_are_read_safely(monkeypatch, caplog):
-    for k, v in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "k", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b"}.items():
+    for k, v in {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "k", "BOT_MCP_URL": "http://127.0.0.1:8765/mcp"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.delenv("ADMIN_ONLY", raising=False)
+    monkeypatch.delenv("BOT_ADMIN_ONLY", raising=False)
     assert Config.from_env().admin_only is False and Config.from_env().admin_chat_ids == frozenset()
     for value, on in (("", False), ("on", True), ("ON", True), ("1", True), ("yes", True), ("off", False), ("Off", False), ("0", False),
                       ("no", False), ("false", False), ("ture", False), ("of", False)):   # a typo keeps the default
-        monkeypatch.setenv("ADMIN_ONLY", value)
+        monkeypatch.setenv("BOT_ADMIN_ONLY", value)
         assert Config.from_env().admin_only is on, value
-    assert "ADMIN_ONLY: 'ture' is not on or off; keeping the default (off)" in caplog.text
-    ids = lambda text: _ids(text, frozenset(), "ADMIN_CHAT_IDS")
+    assert "BOT_ADMIN_ONLY: 'ture' is not on or off; keeping the default (off)" in caplog.text
+    ids = lambda text: _ids(text, frozenset(), "BOT_ADMIN_CHAT_IDS")
     assert ids("1, -1001  22,,x, 3.5 -7") == frozenset({1, -1001, 22, -7}) and ids("") == frozenset()
-    assert "ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
-    monkeypatch.setenv("ADMIN_CHAT_IDS", "5 -9")
+    assert "BOT_ADMIN_CHAT_IDS: ignoring 'x', '3.5'" in caplog.text
+    monkeypatch.setenv("BOT_ADMIN_CHAT_IDS", "5 -9")
     assert Config.from_env().admin_chat_ids == frozenset({5, -9})
 
 
@@ -208,16 +230,21 @@ async def test_listed_ids_are_added_to_the_known_admins_never_replacing_them(tmp
 
 
 # ---------- the gate: private chats ----------
-@pytest.mark.parametrize("command, args", [("on_start", []), ("on_reset", []), ("on_keyboard", []), ("on_usage", []), ("on_ask", []), ("on_alerts", [])])
+@pytest.mark.parametrize("command, args", [("on_start", []), ("on_reset", []), ("on_keyboard", []), ("on_usage", []), ("on_ask", []), ("on_alerts", []),
+                                           ("on_command", [])])
 async def test_a_stranger_is_refused_every_command_in_a_private_chat_and_is_not_remembered(tmp_path, command, args):
+    from lib.mcp_server import prompt
     bot, state, tg = make(tmp_path)
-    update, sent = message("/weather" if command == "on_ask" else "/x", user=STRANGER)
+    bot.commands()   # (ecobot-mcp's prompts as commands: /now is one)
+    typed = {"on_ask": "/weather", "on_command": "/now"}.get(command, "/x")
+    update, sent = message(typed, user=STRANGER)
     await getattr(bot, command)(update, ctx(tg, *args))
     assert [body for body, _ in sent] == [NOT_ADMIN] and STRANGER not in state.chats
-    update, sent = message("/weather" if command == "on_ask" else "/x", user=ADMIN)           # an admin of a known group is let in
+    update, sent = message(typed, user=ADMIN)           # an admin of a known group is let in
     await getattr(bot, command)(update, ctx(tg, *args))
-    assert (bot.asked == ["Weather chart 1d"] if command == "on_ask" else sent) and NOT_ADMIN not in [body for body, _ in sent]   # /weather asks for its chart
-    if command in ("on_start", "on_usage", "on_ask", "on_alerts"):
+    asked = {"on_ask": ["Weather chart 1d"], "on_command": [prompt("now").messages[0].content.text]}   # /weather asks for its chart, /now its prompt
+    assert (bot.asked == asked[command] if command in asked else sent) and NOT_ADMIN not in [body for body, _ in sent]
+    if command in ("on_start", "on_usage", "on_ask", "on_alerts", "on_command"):
         assert ADMIN in state.chats
 
 
@@ -246,13 +273,13 @@ async def test_a_refused_sender_is_logged_once_with_the_id_to_list(tmp_path, cap
             update, sent = message("how warm is it", user=STRANGER)
             await bot.on_message(update, ctx(tg))
             assert [b for b, _ in sent] == [NOT_ADMIN]                                     # told every time
-        assert refused() == [f"[Telegram {STRANGER}]: @u: refused: user {STRANGER} (U) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"]
+        assert refused() == [f"[Telegram {STRANGER}]: @u: refused: user {STRANGER} (U) is not a known group admin; add the id to BOT_ADMIN_CHAT_IDS to let them in"]
         update, sent = message("hello", user=8)                                                 # another stranger: its own line
         await bot.on_message(update, ctx(tg))
         assert len(refused()) == 2 and refused()[1].startswith("[Telegram 8]: @u: refused: user 8 (U) is not")
         update, sent = message("@testbot hi", user=ANONYMOUS, kind="supergroup", sender_chat=NS(id=GROUP, title="Home"))   # as the group: the chat
         await bot.on_message(update, ctx(tg))
-        assert refused()[2] == f"[Telegram {GROUP}]: @u, group 'Home': refused: chat {GROUP} (Home) is not a known group admin; add the id to ADMIN_CHAT_IDS to let them in"
+        assert refused()[2] == f"[Telegram {GROUP}]: @u, group 'Home': refused: chat {GROUP} (Home) is not a known group admin; add the id to BOT_ADMIN_CHAT_IDS to let them in"
 
 
 async def test_a_listed_user_can_use_the_bot_before_it_is_in_any_group(tmp_path):
@@ -339,6 +366,12 @@ async def test_usage_is_the_help_and_alerts_button(tmp_path, kind):
 
 
 # ---------- every button comes in through one place ----------
+def period_keyboard(current=None):
+    """The period buttons under a chart of summary's (its drawn_by's periods), `current` shaded."""
+    from lib.service.summary import OVER_TIME
+    return periods.periods_keyboard({"tool": "summary", "arguments": {"period": "7d"}, "periods": [dict(p) for p in OVER_TIME]}, current)
+
+
 def alert_keyboard(opened="alerts"):
     return menu.keyboard(set(), menu.available_kinds({"Ecowitt"}), opened, set())
 
@@ -346,7 +379,7 @@ def alert_keyboard(opened="alerts"):
 async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_let_through(tmp_path):
     bot, state, tg = make(tmp_path, irrigation=Remote())
     state.add_chat(ADMIN, "Rob")
-    cases = [("al:off:rain:alerts", alert_keyboard()), (f"{periods.PREFIX}7", periods.keyboard(1)),
+    cases = [("al:off:rain:alerts", alert_keyboard()), (f"{periods.PREFIX}7d", period_keyboard("1d")),
              ("ir:open:water", irrigation_menu.keyboard(True, True))]
     for data, markup in cases:
         press = Press(data, markup, user=STRANGER)
@@ -359,7 +392,7 @@ async def test_a_stranger_is_refused_on_every_family_of_buttons_and_an_admin_is_
     press = Press("ir:open:water", irrigation_menu.keyboard(True, True), user=STRANGER)
     off = make(tmp_path, admin_only=False, irrigation=Remote())[0]
     await off.on_button(press.update(), ctx(tg))
-    assert press.edits                                                                          # ADMIN_ONLY=off: as before
+    assert press.edits                                                                          # BOT_ADMIN_ONLY=off: as before
 
 
 async def test_alert_buttons_in_a_group_stay_admin_only_even_when_admin_only_is_off(tmp_path):
@@ -389,10 +422,8 @@ def every_keyboard(bot):
             for opened in (None, *irrigation_menu.SECTIONS, "bogus"):
                 for paused in (True, False):
                     yield irrigation_menu.keyboard(battery, pause, opened, paused)
-    for current in (None, *periods.PERIODS):
-        yield periods.keyboard(current)
-    yield report_menu.keyboard()
-    yield report_menu.dashboard_keyboard()
+    for current in (None, *(p["period"] for p in OVER_TIME)):
+        yield period_keyboard(current)
 
 
 def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(tmp_path):
@@ -406,7 +437,7 @@ def test_every_button_the_bot_draws_is_short_plain_and_has_exactly_one_handler(t
                 assert 0 < len(data.encode()) <= MAX_CALLBACK_BYTES and data.isprintable(), data
                 assert sum(data.startswith(prefix) for prefix in table) == 1, data
                 assert bot._on_keyboard(NS(reply_markup=markup), data)
-    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX, report_menu.PREFIX}
+    assert len(seen) > 60 and {p for p in table} == {"al:", "ir:", periods.PREFIX, "st:"}   # (rp:, the old report's 🔄, gone; st:, Status's)
     assert "ir:" not in make(tmp_path, irrigation=None)[0].buttons()
 
 
@@ -425,8 +456,7 @@ FORGED = ["ir:water:30", "ir:delay:72h", "ir:delay:cancel", "ir:sw:off", "ir:ref
           "{0.__class__}", "%s%s%s%n", "ir:water:-1", "ir:water:1e9", "al:off:__class__:unsub", "pd:__import__('os')"]
 
 
-class Spy(Remote):
-    """The controller, recording everything it is asked to do."""
+Spy = Remote   # (irrigation-mcp's controller records everything it is asked to do: commands(spy))
 
 
 async def press_through(bot, tg, data, markup, user=ADMIN, kind="private"):
@@ -439,12 +469,12 @@ async def test_a_forged_press_does_nothing_whoever_sends_it_and_whichever_family
     spy = Spy()
     bot, state, tg = make(tmp_path, irrigation=spy)
     unrelated = alert_keyboard("sub")                                                         # a keyboard that has none of the forged data
-    before = (dict(state.chats), list(spy.commands))
+    before = (dict(state.chats), list(commands(spy)))
     for data in FORGED:
         for user in (ADMIN, STRANGER):
             press = await press_through(bot, tg, data, unrelated, user=user)
             assert press.edits == [] and press.toast == STALE_BUTTON, (data, user, press.toast)       # believed or not comes first, for everyone
-    assert (state.chats, spy.commands) == before and spy.commands == []                       # nothing changed, nothing sent to the controller
+    assert (state.chats, commands(spy)) == before and commands(spy) == []                       # nothing changed, nothing sent to the controller
 
 
 async def test_malformed_presses_are_answered_and_never_raise(tmp_path):
@@ -487,16 +517,16 @@ async def test_a_real_press_on_a_button_the_message_carries_still_works(tmp_path
                          ("ir:water:10", irrigation_menu.keyboard(True, True, "water"))):
         press = await press_through(bot, tg, data, markup)
         assert press.toast not in (STALE_BUTTON, NOT_ADMIN_TOAST) and press.edits, data
-    assert bot.irrigation.commands == [("water", 10)] and state.muted(ADMIN) == {"rain"}
+    assert commands(bot.irrigation) == [("water", 10)] and state.muted(ADMIN) == {"rain"}
     stale = await press_through(bot, tg, "ir:water:10", irrigation_menu.keyboard(True, True))   # the Water list is not open on this message
-    assert stale.toast == STALE_BUTTON and bot.irrigation.commands == [("water", 10)]
+    assert stale.toast == STALE_BUTTON and commands(bot.irrigation) == [("water", 10)]
 
 
 async def test_random_data_never_gets_past_the_entry_point(tmp_path):
     rng = random.Random(7)
     spy = Spy()
     bot, state, tg = make(tmp_path, irrigation=spy)
-    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), periods.keyboard(1), report_menu.keyboard()]
+    boards = [alert_keyboard("sub"), irrigation_menu.keyboard(True, True), period_keyboard("1d")]
     known = {b.callback_data for board_ in boards for row in board_.inline_keyboard for b in row}
     pieces = ["ir", "al", "pd", "on", "off", "water", "delay", "sw", "batt", "pause", "refresh", "open", "close", "all", "sub", "unsub",
               "rain", "uv", "24h", "cancel", "5", "30", "99999", "-1", "", " ", "\n", "é", "💧", "*", "%s", "{}", "\\", ";", "$(x)", "None"]
@@ -507,7 +537,7 @@ async def test_random_data_never_gets_past_the_entry_point(tmp_path):
             continue
         press = await press_through(bot, tg, data, rng.choice(boards), user=rng.choice([ADMIN, STRANGER]))
         assert press.toast in (STALE_BUTTON, NOT_ADMIN_TOAST) and press.edits == [], repr(data)
-    assert spy.commands == [] and (dict(state.chats), dict(state.charts)) == before
+    assert commands(spy) == [] and (dict(state.chats), dict(state.charts)) == before
 
 
 def test_a_callback_query_from_python_telegram_bot_is_what_the_checks_read():

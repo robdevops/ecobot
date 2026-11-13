@@ -1,0 +1,277 @@
+{
+ "wet-night": {
+  "all": {
+   "station": [
+    "• Outdoor: 🧥 12.3 °C, 💦 94 %",
+    "• Indoor: 🧥 18.3 °C, 63 %",
+    "• Pressure: 🗜️ 1025.0 hPa",
+    "• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"
+   ],
+   "air": [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  },
+  "lookups": [
+   [
+    "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C",
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"
+   ],
+   [
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"
+   ],
+   [
+    "• Outdoor: 💦 94 %"
+   ],
+   [
+    "• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"
+   ],
+   [
+    "• Wind: calm"
+   ],
+   [
+    "• UV index: 0"
+   ],
+   [
+    "• Pressure: 🗜️ 1025.0 hPa"
+   ],
+   [
+    "• Solar radiation: 0.0 W/m²"
+   ],
+   [
+    "• Dew point: 11.3 °C"
+   ],
+   [
+    "• Dew point (indoor): 11.1 °C"
+   ],
+   [
+    "• Feels like: 🧥 12.3 °C"
+   ],
+   [
+    "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C",
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C",
+    "• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"
+   ]
+  ],
+  "air": [
+   [
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)"
+   ],
+   [
+    "{pm2.5}",
+    "• CO₂: 450 ppm 🟢 good"
+   ],
+   [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ],
+   [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  ]
+ },
+ "sunny": {
+  "all": {
+   "station": [
+    "• Outdoor: 🧥 12.3 °C, 💦 94 %",
+    "• Indoor: 🧥 18.3 °C, 63 %",
+    "• Pressure: 🗜️ 1025.0 hPa",
+    "• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)",
+    "• Sun: ☀️ solar radiation 612.5 W/m² (high), 😎 UV index 7",
+    "• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h"
+   ],
+   "air": [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  },
+  "lookups": [
+   [
+    "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C",
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"
+   ],
+   [
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"
+   ],
+   [
+    "• Outdoor: 💦 94 %"
+   ],
+   [
+    "• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"
+   ],
+   [
+    "• Wind: 14.0 km/h from 131°, gust 🌬️ 31.0 km/h"
+   ],
+   [
+    "• UV index: 😎 7"
+   ],
+   [
+    "• Pressure: 🗜️ 1025.0 hPa"
+   ],
+   [
+    "• Solar radiation: ☀️ 612.5 W/m²"
+   ],
+   [
+    "• Dew point: 11.3 °C"
+   ],
+   [
+    "• Dew point (indoor): 11.1 °C"
+   ],
+   [
+    "• Feels like: 🧥 12.3 °C"
+   ],
+   [
+    "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C",
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C",
+    "• Rain today: ☔ 6.3 mm (month total 49.8 mm); 🌧️ raining (1.8 mm/h)"
+   ]
+  ],
+  "air": [
+   [
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)"
+   ],
+   [
+    "{pm2.5}",
+    "• CO₂: 450 ppm 🟢 good"
+   ],
+   [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ],
+   [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  ]
+ },
+ "every-emoji": {
+  "all": {
+   "station": [
+    "• Outdoor: 🔥 36.0 °C, 💦 90 %",
+    "• Indoor: 🥵 29.0 °C, 🏜️ 20 %",
+    "• Pressure: 🗜️ 1030.0 hPa",
+    "• Rain today: ☔ 3.0 mm (month total 9.0 mm); 🌧️ raining (2.0 mm/h)",
+    "• Sun: ☀️ solar radiation 800.0 W/m² (high), 🧴 UV index 10",
+    "• Wind: 🌪️ 55.0 km/h from 90°, gust 🌪️ 70.0 km/h"
+   ],
+   "air": [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  }
+ },
+ "dry": {
+  "all": {
+   "station": [
+    "• Outdoor: 🧥 12.3 °C, 💦 94 %",
+    "• Indoor: 🧥 18.3 °C, 63 %",
+    "• Pressure: 🗜️ 1025.0 hPa",
+    "• Rain today: 0.0 mm (month total 12.0 mm)",
+    "• Wind: 12.0 km/h from 270°, gust 🍃 20.0 km/h"
+   ],
+   "air": [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  },
+  "lookups": [
+   [
+    "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C",
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"
+   ],
+   [
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C"
+   ],
+   [
+    "• Outdoor: 💦 94 %"
+   ],
+   [
+    "• Rain today: 0.0 mm (month total 12.0 mm)"
+   ],
+   [
+    "• Wind: 12.0 km/h from 270°, gust 🍃 20.0 km/h"
+   ],
+   [
+    "• UV index: 0"
+   ],
+   [
+    "• Pressure: 🗜️ 1025.0 hPa"
+   ],
+   [
+    "• Solar radiation: 0.0 W/m²"
+   ],
+   [
+    "• Dew point: 11.3 °C"
+   ],
+   [
+    "• Dew point (indoor): 11.1 °C"
+   ],
+   [
+    "• Feels like: 🧥 12.3 °C"
+   ],
+   [
+    "• Outdoor: 🧥 12.3 °C, feels like 12.3 °C",
+    "• Indoor: 🧥 18.3 °C, feels like 18.3 °C",
+    "• Rain today: 0.0 mm (month total 12.0 mm)"
+   ]
+  ],
+  "air": [
+   [
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)"
+   ],
+   [
+    "{pm2.5}",
+    "• CO₂: 450 ppm 🟢 good"
+   ],
+   [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ],
+   [
+    "{pm2.5}",
+    "• PM10: 8.0 µg/m³ 🟢 good (AQI 7)",
+    "• PM1: 3.0 µg/m³ 🟢 good",
+    "• CO₂: 450 ppm 🟢 good",
+    "• VOC index: 100 🟢 good",
+    "• NOx index: 1.0 🟢 good"
+   ]
+  ]
+ }
+}

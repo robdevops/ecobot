@@ -83,8 +83,8 @@ class Trouble:
         self.failing = True
         hint = ""
         if any(m in str(error).lower() for m in NAME_NOT_FOUND):
-            hint = local_name_hint(urlsplit(self.url).hostname or "", "HOMEASSISTANT_URL") or (
-                f". The name in HOMEASSISTANT_URL ({self.url}) can't be found from here: check it, or use the address (http://192.168.x.x:8123)")
+            hint = local_name_hint(urlsplit(self.url).hostname or "", "MCP_HOMEASSISTANT_URL") or (
+                f". The name in MCP_HOMEASSISTANT_URL ({self.url}) can't be found from here: check it, or use the address (http://192.168.x.x:8123)")
         log.warning("Home Assistant: the %s failed (%s)%s%s", what, error, f"; {then}" if then else "", hint)
 
     def ok(self):

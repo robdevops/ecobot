@@ -1,5 +1,10 @@
 # Telegram: using the bot by tapping (design)
 
+> **Historical.** This is an early design, kept for its reasoning. Much of it was built differently and step 6 (docs/ecobot-mcp.md) changed
+> the rest: nothing typed is answered in code any more (`intent.read`'s fast path is gone), `/report` and the other question commands are
+> ecobot-mcp's prompts, the report written in code (and its 🔄) is gone, and Status is one message: ecobot-mcp's gauges with the report it writes (no model) under them, and a 🔄.
+> What the bot does now: README.md and docs/features.md.
+
 Not built yet. This is the plan for making commands and common questions tappable, in three phases. Each phase stands on its own.
 
 ## What exists today

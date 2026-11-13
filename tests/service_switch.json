@@ -1,0 +1,1193 @@
+{
+ "Air quality all metrics 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "PM1, PM2.5, PM10",
+      "series": [
+       [
+        "PM1",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          3.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          3.0
+         ]
+        ]
+       ],
+       [
+        "PM2.5",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          9.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          8.0
+         ]
+        ]
+       ],
+       [
+        "PM10",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          8.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          8.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "µg/m³"
+     },
+     {
+      "label": "CO₂",
+      "series": [
+       [
+        "CO₂",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          450.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          450.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "ppm"
+     },
+     {
+      "label": "VOC index",
+      "series": [
+       [
+        "VOC index",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          100.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          100.0
+         ]
+        ]
+       ]
+      ],
+      "unit": ""
+     },
+     {
+      "label": "NOx index",
+      "series": [
+       [
+        "NOx index",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          1.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          1.0
+         ]
+        ]
+       ]
+      ],
+      "unit": ""
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "eb74a3c6b7c7f982",
+    "source": "AirGradient sensor",
+    "subtitle": "Mon 9 Nov 2026 - Tue 10 Nov 2026  ·  AirGradient readings",
+    "title": "Air quality"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\n• PM2.5: peak 16.0 µg/m³ (Mon 9 Nov 10:00pm) · 🟡 poor · average 10.6\n• PM10: peak 8.0 µg/m³ (Mon 9 Nov 3:00pm) · 🟢 good · average 8.0\n• PM1: peak 3.0 µg/m³ (Mon 9 Nov 3:00pm) · 🟢 good · average 3.0\n• CO₂: peak 450.0 ppm (Mon 9 Nov 3:00pm) · 🟢 good · average 450.0\n• VOC index: peak 100.0 relative index (100 = this sensor's recent average) (Mon 9 Nov 3:00pm) · 🟢 good · average 100.0\n• NOx index: peak 1.0 relative index (1 = baseline) (Mon 9 Nov 3:00pm) · 🟢 good · average 1.0",
+  "sent": [
+   [
+    "photo",
+    "Air quality\nMon 9 – Tue 10 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "Humidity chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Humidity",
+      "series": [
+       [
+        "Outdoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          55.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          55.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "%"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "0c4b899e234ed02a",
+    "source": "Ecowitt weather station",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  5-minute readings  ·  records marked",
+    "title": "Humidity"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\nHumidity: low 55 %, Mon 9 Nov at 2:05pm · high 85 %, Tue 10 Nov at 2:40am",
+  "sent": [
+   [
+    "photo",
+    "Humidity, since Mon 9 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "Particulates chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "PM1, PM2.5, PM10",
+      "series": [
+       [
+        "PM1",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          3.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          3.0
+         ]
+        ]
+       ],
+       [
+        "PM2.5",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          9.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          8.0
+         ]
+        ]
+       ],
+       [
+        "PM10",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          8.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          8.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "µg/m³"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "218963e99fe3d441",
+    "source": "AirGradient sensor",
+    "subtitle": "Mon 9 Nov 2026 - Tue 10 Nov 2026  ·  AirGradient readings",
+    "title": "Air quality"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\n• PM2.5: peak 16.0 µg/m³ (Mon 9 Nov 10:00pm) · 🟡 poor · average 10.6\n• PM10: peak 8.0 µg/m³ (Mon 9 Nov 3:00pm) · 🟢 good · average 8.0\n• PM1: peak 3.0 µg/m³ (Mon 9 Nov 3:00pm) · 🟢 good · average 3.0",
+  "sent": [
+   [
+    "photo",
+    "Air quality, since Mon 9 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "Rain chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Rain",
+      "series": [
+       [
+        "Rain",
+        "bars",
+        25,
+        [
+         [
+          "2026-11-09T14:00:00+11:00",
+          0.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          0.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "mm"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "84f5e24e4493ff27",
+    "source": "Ecowitt weather station",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  rain per hour",
+    "title": "Rain"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\n☔ Rain per hour: least 0 mm (Mon 9 Nov 2pm) · most 0 mm (Mon 9 Nov 2pm) · 0.0 mm in all",
+  "sent": [
+   [
+    "photo",
+    "Rain, since Mon 9 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "Temperature chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Temperature",
+      "series": [
+       [
+        "Outdoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ],
+       [
+        "Indoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "°C"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "d935397aaf78f0d5",
+    "source": "Ecowitt weather station",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  5-minute readings  ·  records marked",
+    "title": "Temperature"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\nTemperature (outdoor): low 8.2 °C, Tue 10 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm\nTemperature (indoor): low 8.2 °C, Tue 10 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm",
+  "sent": [
+   [
+    "photo",
+    "Temperature, since Mon 9 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "Weather chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Temperature",
+      "series": [
+       [
+        "Indoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ],
+       [
+        "Outdoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "°C"
+     },
+     {
+      "label": "Humidity",
+      "series": [
+       [
+        "Humidity",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          55.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          55.0
+         ]
+        ]
+       ],
+       [
+        "Rain",
+        "bars",
+        25,
+        [
+         [
+          "2026-11-09T14:00:00+11:00",
+          0.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          0.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "%"
+     },
+     {
+      "label": "Solar radiation",
+      "series": [
+       [
+        "Solar radiation",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          848.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          848.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "W/m²"
+     },
+     {
+      "label": "Pressure",
+      "series": [
+       [
+        "Pressure",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          1012.1
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          1007.8
+         ]
+        ]
+       ]
+      ],
+      "unit": "hPa"
+     },
+     {
+      "label": "Dew point",
+      "series": [
+       [
+        "Dew point",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "°C"
+     },
+     {
+      "label": "Wind",
+      "series": [
+       [
+        "Wind",
+        "band",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          10.0,
+          10.0,
+          26.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          10.0,
+          10.0,
+          29.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "km/h"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "a5e62602517de50d",
+    "source": "Ecowitt weather station",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  rain per hour  ·  range shaded",
+    "title": "Temperature, Humidity, Solar radiation, Pressure, Rain, Dew point, Wind"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\nTemperature (outdoor): low 8.2 °C, Tue 10 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm\nTemperature (indoor): low 8.2 °C, Tue 10 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm\nHumidity: low 55 %, Mon 9 Nov at 2:05pm · high 85 %, Tue 10 Nov at 2:40am\nSolar radiation: low 0.0 °C, Mon 9 Nov at 7pm · high 880.0 °C, Tue 10 Nov at 12:40pm\nPressure: low 1007.0 °C, Tue 10 Nov at 7:45am · high 1012.1 °C, Mon 9 Nov at 2:05pm\n☔ Rain per hour: least 0 mm (Mon 9 Nov 2pm) · most 0 mm (Mon 9 Nov 2pm) · 0.0 mm in all\nDew point: low 8.2 °C, Tue 10 Nov at 2:25am · high 20.1 °C, Mon 9 Nov at 2:30pm\n🌬️ Wind: strongest gust 36.0 °C, Mon 9 Nov at 3pm\n🧭 Mostly from the N (100%), steady",
+  "sent": [
+   [
+    "photo",
+    "Temperature, Humidity, Solar radiation, Pressure, Rain, Dew point, Wind\nMon 9 – Tue 10 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "Wind chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Wind",
+      "series": [
+       [
+        "Wind",
+        "band",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          10.0,
+          10.0,
+          26.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          10.0,
+          10.0,
+          29.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "km/h"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "0fd7a0b036ac1b81",
+    "source": "Ecowitt weather station",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  5-minute readings, shaded up to the gusts",
+    "title": "Wind"
+   }
+  ],
+  "gauges": [],
+  "history": "Mon 9 Nov – Tue 10 Nov 2026\n🌬️ Wind: strongest gust 36.0 °C, Mon 9 Nov at 3pm\n🧭 Mostly from the N (100%), steady",
+  "sent": [
+   [
+    "photo",
+    "Wind, since Mon 9 Nov 2026",
+    [
+     [
+      [
+       "1D",
+       "pd:1"
+      ],
+      [
+       "7D",
+       "pd:7"
+      ],
+      [
+       "1M",
+       "pd:30"
+      ],
+      [
+       "3M",
+       "pd:90"
+      ],
+      [
+       "1Y",
+       "pd:365"
+      ]
+     ]
+    ]
+   ]
+  ]
+ },
+ "alert gusts": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Wind",
+      "series": [
+       [
+        "Wind",
+        "band",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          10.0,
+          10.0,
+          26.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          10.0,
+          10.0,
+          29.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "km/h"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "785a7105037691ba",
+    "source": "",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  5-minute readings, shaded up to the gusts",
+    "title": "Wind"
+   }
+  ],
+  "newest": 1794279900,
+  "title": "Wind, since Mon 9 Nov 2026"
+ },
+ "alert particulates": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "PM1, PM2.5, PM10",
+      "series": [
+       [
+        "PM1",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          3.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          3.0
+         ]
+        ]
+       ],
+       [
+        "PM2.5",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          9.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          8.0
+         ]
+        ]
+       ],
+       [
+        "PM10",
+        "line",
+        24,
+        [
+         [
+          "2026-11-09T15:00:00+11:00",
+          8.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          8.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "µg/m³"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "ea4787312db7f13c",
+    "source": "",
+    "subtitle": "Mon 9 Nov 2026 - Tue 10 Nov 2026  ·  AirGradient readings",
+    "title": "Air quality"
+   }
+  ],
+  "newest": 1794279600,
+  "title": "Air quality, since Mon 9 Nov 2026"
+ },
+ "alert temps": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Temperature",
+      "series": [
+       [
+        "Outdoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ],
+       [
+        "Indoor",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          19.95
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          20.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "°C"
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "42aab5676fd09bf3",
+    "source": "",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  5-minute readings  ·  records marked",
+    "title": "Temperature"
+   }
+  ],
+  "newest": 1794279900,
+  "title": "Temperature, since Mon 9 Nov 2026"
+ },
+ "alert uv": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "UV index",
+      "series": [
+       [
+        "UV index",
+        "line",
+        289,
+        [
+         [
+          "2026-11-09T14:05:00+11:00",
+          10.6
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:05:00+11:00",
+          10.6
+         ]
+        ]
+       ]
+      ],
+      "unit": ""
+     }
+    ],
+    "period": [
+     "2026-11-09",
+     "2026-11-10"
+    ],
+    "sha": "548b7ec71a831b23",
+    "source": "",
+    "subtitle": "Mon 9 – Tue 10 Nov 2026  ·  5-minute readings  ·  records marked",
+    "title": "UV index"
+   }
+  ],
+  "newest": 1794279900,
+  "title": "UV index, since Mon 9 Nov 2026"
+ },
+ "press 1M under Rain chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Rain",
+      "series": [
+       [
+        "Rain",
+        "bars",
+        119,
+        [
+         [
+          "2026-10-12T00:00:00+11:00",
+          0.0
+         ]
+        ],
+        [
+         [
+          "2026-11-10T12:00:00+11:00",
+          0.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "mm"
+     }
+    ],
+    "period": [
+     "2026-10-12",
+     "2026-11-10"
+    ],
+    "sha": "faca6ea0ee20ddf7",
+    "source": "Ecowitt weather station",
+    "subtitle": "Mon 12 Oct – Tue 10 Nov 2026  ·  rain per 6 hours",
+    "title": "Rain"
+   }
+  ],
+  "edits": [
+   [
+    "photo",
+    "Rain, since Mon 12 Oct 2026"
+   ]
+  ]
+ },
+ "press 1Y under humidity 7d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Humidity",
+      "series": [
+       [
+        "Outdoor",
+        "band",
+        364,
+        [
+         [
+          "2025-11-11T11:00:00+11:00",
+          62.0,
+          54.0,
+          84.0
+         ]
+        ],
+        [
+         [
+          "2026-11-09T10:00:00+11:00",
+          69.76041666666667,
+          55.0,
+          85.0
+         ]
+        ]
+       ]
+      ],
+      "unit": "%"
+     }
+    ],
+    "period": [
+     "2025-11-11",
+     "2026-11-10"
+    ],
+    "sha": "31534a4a0650edb3",
+    "source": "Ecowitt weather station",
+    "subtitle": "Tue 11 Nov 2025 – Tue 10 Nov 2026  ·  daily averages, range shaded  ·  records marked",
+    "title": "Humidity"
+   }
+  ],
+  "edits": [
+   [
+    "photo",
+    "Humidity, since Tue 11 Nov 2025"
+   ]
+  ]
+ },
+ "press 7D under Temperature chart 1d": {
+  "charts": [
+   {
+    "panels": [
+     {
+      "label": "Temperature",
+      "series": [
+       [
+        "Outdoor",
+        "band",
+        317,
+        [
+         [
+          "2026-11-04T00:00:00+11:00",
+          9.8,
+          9.4,
+          9.8
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          20.0,
+          20.0,
+          20.1
+         ]
+        ]
+       ],
+       [
+        "Indoor",
+        "band",
+        317,
+        [
+         [
+          "2026-11-04T00:00:00+11:00",
+          9.8,
+          9.4,
+          9.8
+         ]
+        ],
+        [
+         [
+          "2026-11-10T14:00:00+11:00",
+          20.0,
+          20.0,
+          20.1
+         ]
+        ]
+       ]
+      ],
+      "unit": "°C"
+     }
+    ],
+    "period": [
+     "2026-11-04",
+     "2026-11-10"
+    ],
+    "sha": "4b8bc87c49be3cd2",
+    "source": "Ecowitt weather station",
+    "subtitle": "Wed 4 – Tue 10 Nov 2026  ·  30-minute readings, range shaded  ·  records marked",
+    "title": "Temperature"
+   }
+  ],
+  "edits": [
+   [
+    "photo",
+    "Temperature, since Wed 4 Nov 2026"
+   ]
+  ]
+ }
+}

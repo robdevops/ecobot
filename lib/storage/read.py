@@ -3,6 +3,8 @@ rather than a dict per reading. The database does what is the same for every row
 long line, picking the records; Python is left the time zones and what is drawn and said.
 """
 
+import itertools
+from operator import itemgetter
 from dataclasses import dataclass, field
 from datetime import date
 from .catalogue import KINDS, SLOT
@@ -129,16 +131,12 @@ class Reader:
                                 f"AND ts BETWEEN ? AND ? AND {some_value(names)}{by_src} ORDER BY sensor, ts",
                                 (*sensors, res, start, end, *(srcs or ())))
         out: dict[int, Rows] = {}
-        for sensor, ts, final, *values in found:
-            got = out.get(sensor)
-            if got is None:
-                got = out[sensor] = Rows(values={c: [] for c in names}, lo={c: [] for c in names}, hi={c: [] for c in names})
-            got.ts.append(ts)
-            got.final.append(final)
-            for i, c in enumerate(names):
-                got.values[c].append(values[3 * i])
-                got.lo[c].append(values[3 * i + 1])
-                got.hi[c].append(values[3 * i + 2])
+        for sensor, rows in itertools.groupby(found.fetchall(), key=itemgetter(0)):   # (ordered by sensor: one run of rows each)
+            columns_of = list(zip(*rows))   # (rows into columns in one step: the column of each field, as tuples)
+            got = out[sensor] = Rows(ts=list(columns_of[1]), final=list(columns_of[2]),
+                                     values={c: list(columns_of[3 + 3 * i]) for i, c in enumerate(names)},
+                                     lo={c: list(columns_of[4 + 3 * i]) for i, c in enumerate(names)},
+                                     hi={c: list(columns_of[5 + 3 * i]) for i, c in enumerate(names)})
         for got in out.values():
             _drop_empty(got.values, got.lo, got.hi, keep=columns)
         return out

@@ -1,7 +1,7 @@
-"""Closing the valve after a run the bot started, even if the controller does not.
+"""Closing the valve after a run irrigation-mcp started (its water tool), even if the controller does not.
 
 `water` asks the device to run for N minutes (its `countdown`), but nothing independent checks that it stops. So the end time is
-written to the bot's state file; a minute-by-minute check (cheap: it only talks to the controller once the time has passed) switches
+written to irrigation-mcp's state file (irrigation_state.json); a minute-by-minute check (cheap: it only talks to the controller once the time has passed) switches
 the valve off if it is still on. Because the time is saved, a restart in the middle of a run still closes the valve.
 """
 
@@ -35,6 +35,13 @@ class Watchdog:
     @property
     def off_at(self) -> float | None:
         return self._memory().get("off_at")
+
+    def next_check(self) -> float:
+        """Seconds to the next check: CHECK_SECONDS, or sooner when a run's end (with its grace) comes before that, so the valve is
+        closed on time; a run already past it (its check failed) is tried again after CHECK_SECONDS."""
+        due = self.off_at
+        left = None if due is None else due + GRACE_SECONDS - self.clock()
+        return CHECK_SECONDS if left is None or left <= 0 else min(CHECK_SECONDS, max(left, 1.0))
 
     async def check(self):
         """Switch the valve off if a run is over and it is still on. A failure is tried again at the next check."""

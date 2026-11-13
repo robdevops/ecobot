@@ -1,0 +1,2223 @@
+{
+  "3m-average": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ]
+        },
+        "period": {
+          "means": "3m"
+        },
+        "average": true
+      }
+    },
+    "note": "an average over a period is summary's `average`; 3m is the last 3 months, passed as said"
+  },
+  "3m-wind-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "wind.wind_direction"
+          ]
+        },
+        "period": {
+          "means": "3m"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "a chart over time is summary's; wind direction draws the compass rose"
+  },
+  "temperature-and-rain": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "rainfall.rain"
+            ]
+          },
+          "chart": true
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "rainfall.rain"
+            ]
+          },
+          "chart": true
+        }
+      ]
+    },
+    "note": "both readings drawn, a panel each (the bot once drew only temperature); no period: a chart's default, the last 24 hours"
+  },
+  "humidity-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.humidity"
+          ],
+          "not": [
+            "outdoor.temperature"
+          ]
+        }
+      }
+    },
+    "note": "the lowest and highest of a period are summary's; only humidity (the bot once charted temperature)"
+  },
+  "pressure-rain-correlation": {
+    "tools": [
+      "relate"
+    ],
+    "not_tools": [
+      "days"
+    ],
+    "args": {
+      "relate": {
+        "reading": {
+          "reads": [
+            "pressure.relative"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "\"X against rain\" is relate (pressure is its default), not monthly extremes"
+  },
+  "pressure-vs-rain-graph": {
+    "tools": [
+      "relate"
+    ],
+    "args": {
+      "relate": {
+        "reading": {
+          "reads": [
+            "pressure.relative"
+          ],
+          "optional": true
+        },
+        "chart": true
+      }
+    },
+    "note": "a chart of a reading against rain is relate's, with chart"
+  },
+  "public-holidays": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "only": "public_holiday",
+        "sort_by": {
+          "one_of": [
+            "temp_max",
+            null
+          ]
+        }
+      }
+    },
+    "note": "days filtered to public holidays and ranked; no period: every day on record"
+  },
+  "hottest-day-that-rained": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "sort_by": "temp_max",
+        "order": {
+          "one_of": [
+            "desc",
+            null
+          ]
+        },
+        "where": {
+          "conditions": [
+            {
+              "field": "rain",
+              "op": [
+                ">=",
+                ">"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "note": "a condition on one figure and a ranking on another is days (a rainy day is rain >= 1)"
+  },
+  "wind-direction-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "wind.wind_direction"
+          ]
+        },
+        "period": {
+          "means": "this week"
+        }
+      }
+    },
+    "note": "the most common direction of a period is summary's wind direction"
+  },
+  "will-it-rain": {
+    "tools": [
+      "outlook"
+    ],
+    "note": "will it rain in the next few hours is outlook"
+  },
+  "air-now": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "the air now is current; with no readings named it gives everything, the air included"
+  },
+  "weather-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "this week"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "a bare reading and a period is a chart over the period; \"weather\" is every station reading"
+  },
+  "hello": {
+    "not_tools": [
+      "current",
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan",
+      "outlook",
+      "forecast",
+      "pollen",
+      "about"
+    ],
+    "note": "thanks: no tool"
+  },
+  "chart-pm10-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "air.pm10"
+          ]
+        },
+        "period": {
+          "means": "this week"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "an air chart is summary's like any other"
+  },
+  "weather-4-months": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "4m"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "4 months, passed as said (the bot once read it as 7 days)"
+  },
+  "chart-indoors": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "indoor.temperature"
+            ]
+          },
+          "period": {
+            "means": "this week"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "indoor.temperature"
+            ]
+          },
+          "period": {
+            "means": "this week"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "indoor is the indoor set (temperature and humidity)"
+  },
+  "pressure-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "pressure.relative"
+          ]
+        },
+        "period": {
+          "means": "this week"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "a bare reading and a period: summary, which charts a week by default"
+  },
+  "wind-3m": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "wind.wind_speed"
+          ]
+        },
+        "period": {
+          "means": "3m"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "3m is 3 months (the bot once read it as 3 days)"
+  },
+  "hottest-weekends": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "only": "weekend",
+        "sort_by": {
+          "one_of": [
+            "temp_max",
+            null
+          ]
+        }
+      }
+    },
+    "note": "days filtered to weekends and ranked"
+  },
+  "windiest-day-on-record": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "sort_by": "wind_gust",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "the windiest day is days ranked by the highest gust; no period is every day on record"
+  },
+  "rainy-days-in-september": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": "rain",
+              "op": [
+                ">=",
+                ">"
+              ]
+            }
+          ]
+        },
+        "period": {
+          "means": "September"
+        }
+      }
+    },
+    "note": "days found by a condition, over September (this month: to yesterday)"
+  },
+  "a-day-in-2023": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ]
+        },
+        "start": {
+          "regex": "^2023-11-10 11:00",
+          "e.g.": "2023-11-10 11:00"
+        },
+        "end": {
+          "regex": "^2023-11-11 11:00",
+          "e.g.": "2023-11-11 11:00"
+        }
+      }
+    },
+    "note": "a window with times is start and end, never a period"
+  },
+  "weather-on-june-11": {
+    "any_tools": [
+      "summary",
+      "days"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "11 June"
+        }
+      },
+      "days": {
+        "period": {
+          "means": "11 June"
+        }
+      }
+    },
+    "note": "one known day: its figures and its look (summary), or its day row (days {period: \"5 Sep\"})"
+  },
+  "what-it-would-have-been-like": {
+    "any_tools": [
+      "summary",
+      "days"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "10 Aug"
+        }
+      },
+      "days": {
+        "period": {
+          "means": "10 Aug"
+        }
+      }
+    },
+    "note": "a hypothetical about one day: that day's figures"
+  },
+  "add-an-alert": {
+    "tools": [
+      "about"
+    ],
+    "not_tools": [
+      "current",
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan",
+      "outlook",
+      "forecast",
+      "pollen"
+    ],
+    "note": "alerts can't be added by asking: about lists those there are, with their thresholds"
+  },
+  "metrics-bare": {
+    "any_tools": [
+      "about",
+      "current"
+    ],
+    "not_tools": [
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan"
+    ],
+    "note": "\"metrics\" alone is what is measured (about; the bot answered it from its prompt) or the metrics now (current): a plain client with only the tool list may read it either way, and both answer it (the first live run called current {}); never a period's history"
+  },
+  "most-rain-days-jja": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "sort_by": "rain",
+        "period": {
+          "means": "June to August 2026"
+        }
+      }
+    },
+    "note": "days ranked by rain over three months: \"June to August 2026\", or the same as start and end"
+  },
+  "fastest-gust": {
+    "any_tools": [
+      "summary",
+      "days"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "wind.wind_gust"
+          ]
+        },
+        "period": {
+          "means": "on record"
+        }
+      },
+      "days": {
+        "sort_by": "wind_gust",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "a record with when it happened is summary (on record); the windiest day ranked is days"
+  },
+  "chart-all-airgradient-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "air.pm2_5",
+              "air.co2"
+            ]
+          },
+          "period": {
+            "means": "this week"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "air.pm2_5",
+              "air.co2"
+            ]
+          },
+          "period": {
+            "means": "this week"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "airgradient is the air sensor's usual set"
+  },
+  "rain-on-a-named-day": {
+    "any_tools": [
+      "days",
+      "summary"
+    ],
+    "args": {
+      "days": {
+        "period": {
+          "means": "5 Sep"
+        }
+      },
+      "summary": {
+        "period": {
+          "means": "5 Sep"
+        }
+      }
+    },
+    "note": "one known day: its figures, not a search of the month"
+  },
+  "pushback-cooler-this-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "this week"
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "a challenge: call again (the result's `fresh` says so), don't defend or agree from memory"
+  },
+  "all-time-follow-up": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "on record"
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "a follow-up that keeps the subject with a new period: on record"
+  },
+  "typo-win-direction": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "wind.wind_direction"
+          ]
+        },
+        "period": {
+          "means": "3m"
+        }
+      }
+    },
+    "note": "a typo for wind direction"
+  },
+  "hottest-coldest-this-month": {
+    "any_tools": [
+      "summary",
+      "days"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "this month"
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      },
+      "days": {
+        "period": {
+          "means": "this month"
+        }
+      }
+    },
+    "note": "the highest and lowest with when are summary's; the hottest and coldest days ranked are days'"
+  },
+  "high-low-all-time": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "on record"
+        }
+      }
+    },
+    "note": "the record high and low: summary over on record"
+  },
+  "use-five-minute-data": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "on record"
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "the resolution is the service's (records are refined to 5 minutes where held): call again, there is no argument for it"
+  },
+  "report": {
+    "tools": [
+      "current",
+      "forecast",
+      "pollen"
+    ],
+    "args": {
+      "forecast": {
+        "period": {
+          "regex": "(?i)^today$",
+          "e.g.": "today",
+          "optional": true
+        }
+      }
+    },
+    "note": "a report is current, forecast (today) and pollen, called together"
+  },
+  "dashboard": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "context": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "the gauges' live page is ecobot-mcp's /dashboard; a client shows current, with context the gauges' highs and lows"
+  },
+  "weather-report-for-a-day": {
+    "any_tools": [
+      "summary",
+      "days",
+      "forecast"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": [
+            "Tuesday",
+            "today"
+          ]
+        }
+      },
+      "days": {
+        "period": {
+          "means": "Tuesday"
+        }
+      },
+      "forecast": {
+        "period": {
+          "regex": "(?i)tuesday|today",
+          "e.g.": "Tuesday"
+        }
+      }
+    },
+    "note": "asked on a Tuesday: last Tuesday's figures, or today's report (current, forecast \"today\", pollen: the report as the tool descriptions give it, so pollen is no longer refused). The bot's case kept its own fast path (wants_report) from taking it as the bare report; a plain client has no fast path, and Tuesday is today"
+  },
+  "air-quality-vs-rain": {
+    "tools": [
+      "relate"
+    ],
+    "args": {
+      "relate": {
+        "reading": {
+          "reads_any": [
+            "air.pm2_5",
+            "air.pm10"
+          ]
+        }
+      }
+    },
+    "note": "is the air cleaner after rain: relate with PM2.5 or PM10, both devices together"
+  },
+  "rating-against-rainfall": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "chart_readings": {
+            "regex": "(?s)(?=.*:rating)(?=.*rain)",
+            "e.g.": [
+              "air.pm2_5:rating",
+              "rainfall.rain"
+            ]
+          },
+          "period": {
+            "means": "last 30 days"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "readings": {
+            "regex": "(?s)(?=.*:rating)(?=.*rain)",
+            "e.g.": [
+              "air.pm2_5:rating",
+              "rain"
+            ]
+          },
+          "chart_readings": {
+            "absent": true
+          },
+          "period": {
+            "means": "last 30 days"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "the rating drawn over time is summary's chart (\":rating\"), with rain in a panel below; relate would draw PM2.5, not its rating. summary also takes the \":rating\" in `readings` (summarised, and drawn as its rating when chart_readings isn't sent), as deepseek sent it on 10 Nov 2026"
+  },
+  "air-quality-vs-everything": {
+    "tools": [
+      "scan"
+    ],
+    "not_tools": [
+      "relate"
+    ],
+    "note": "every air reading against every weather reading: scan"
+  },
+  "ecowitt-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "this week"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature",
+            "pressure.relative"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "ecowitt names the weather station: every reading"
+  },
+  "ag-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "ag names the air sensor"
+  },
+  "air-gradient-now": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "air gradient names the air sensor; bare, it is the sensor now"
+  },
+  "ecowitt-all-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity",
+              "solar_and_uvi.solar",
+              "pressure.relative",
+              "rainfall.rain",
+              "outdoor.dew_point",
+              "wind.wind_speed"
+            ]
+          },
+          "period": {
+            "means": "this week"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity",
+              "solar_and_uvi.solar",
+              "pressure.relative",
+              "rainfall.rain",
+              "outdoor.dew_point",
+              "wind.wind_speed"
+            ]
+          },
+          "period": {
+            "means": "this week"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "\"all\" is every station reading in the station's order (the service's, not the model's)"
+  },
+  "sitrep": {
+    "tools": [
+      "current",
+      "forecast",
+      "pollen"
+    ],
+    "args": {
+      "forecast": {
+        "period": {
+          "regex": "(?i)^today$",
+          "e.g.": "today",
+          "optional": true
+        }
+      }
+    },
+    "note": "sitrep is a report: current, forecast (today) and pollen"
+  },
+  "think-hottest-week": {
+    "any_tools": [
+      "summary",
+      "days"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "this week"
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      },
+      "days": {
+        "sort_by": {
+          "one_of": [
+            "temp_max",
+            null
+          ]
+        },
+        "order": {
+          "one_of": [
+            "desc",
+            null
+          ]
+        },
+        "count_only": {
+          "one_of": [
+            false,
+            null
+          ]
+        },
+        "stat": {
+          "absent": true
+        },
+        "period": {
+          "means": "this week"
+        }
+      }
+    },
+    "note": "the hottest of a period with when it was is summary's; the hottest day found by ranking its days is days' (as hottest-coldest-this-month)"
+  },
+  "button-rain-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "the bot's Rain chart button, asked in words"
+  },
+  "button-humidity-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.humidity"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "the bot's Humidity chart button, asked in words"
+  },
+  "button-aq-all-week": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ]
+        },
+        "period": {
+          "means": "this week"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "the bot's AQ all week button: the air sensor's set over the week"
+  },
+  "weather-now-everything": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature",
+            "pressure.relative"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "everything now: current with no readings (or all of them)"
+  },
+  "pollen-now": {
+    "tools": [
+      "pollen"
+    ],
+    "note": "pollen and thunderstorm asthma"
+  },
+  "hay-fever-today": {
+    "tools": [
+      "pollen"
+    ],
+    "note": "a pollen question"
+  },
+  "forecast-tomorrow": {
+    "tools": [
+      "forecast"
+    ],
+    "not_tools": [
+      "outlook"
+    ],
+    "args": {
+      "forecast": {
+        "period": {
+          "regex": "(?i)^tomorrow$",
+          "e.g.": "tomorrow"
+        }
+      }
+    },
+    "note": "the forecast, not the station's own read of the next few hours"
+  },
+  "philosophical-weather": {
+    "not_tools": [
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan"
+    ],
+    "note": "an opinion, not a lookup: no search of the readings (a tool for now is fine)"
+  },
+  "only-that-its-cold": {
+    "not_tools": [
+      "current",
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan",
+      "outlook",
+      "forecast",
+      "pollen"
+    ],
+    "note": "a chat reply, not a request (the bot once answered it with the temperatures)"
+  },
+  "how-cold-is-it": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "a plain question about now"
+  },
+  "now-what": {
+    "not_tools": [
+      "current",
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan",
+      "outlook",
+      "forecast",
+      "pollen"
+    ],
+    "note": "'now' alone is not a weather question"
+  },
+  "chart-with-forecast": {
+    "tools": [
+      "summary",
+      "forecast"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "this week"
+        },
+        "chart_answers_it": {
+          "one_of": [
+            null,
+            false
+          ]
+        }
+      },
+      "forecast": {
+        "period": {
+          "regex": "(?i)^tomorrow$",
+          "e.g.": "tomorrow"
+        }
+      }
+    },
+    "note": "two questions, two tools together: the chart of the week's rain and tomorrow's forecast"
+  },
+  "chart-correlation": {
+    "tools": [
+      "relate"
+    ],
+    "args": {
+      "relate": {
+        "reading": {
+          "reads": [
+            "outdoor.humidity"
+          ]
+        },
+        "chart": true
+      }
+    },
+    "note": "a reading against rain, drawn: relate with chart"
+  },
+  "chart-pressure-30d": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "pressure.relative"
+          ]
+        },
+        "period": {
+          "means": "30d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "a plain chart of one reading"
+  },
+  "lookup-how-hot": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "how hot is it: current, temperature"
+  },
+  "lookup-raining": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads_any": [
+            "rainfall.rain",
+            "rainfall.rain_rate"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "is it raining: current, rain (or rain rate)"
+  },
+  "lookup-air": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "the air now"
+  },
+  "lookup-forecast": {
+    "tools": [
+      "forecast"
+    ],
+    "note": "forecast: the next 7 days by default"
+  },
+  "lookup-about": {
+    "tools": [
+      "about"
+    ],
+    "not_tools": [
+      "summary",
+      "readings",
+      "days",
+      "relate",
+      "scan"
+    ],
+    "note": "what the service can do"
+  },
+  "lookup-judgement": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads_any": [
+            "outdoor.temperature",
+            "outdoor.feels_like"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "a judgement on the conditions now: current, then the model's words"
+  },
+  "lookup-hottest-today": {
+    "any_tools": [
+      "summary",
+      "current"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "today",
+          "optional": true
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      },
+      "current": {
+        "context": true,
+        "readings": {
+          "reads_any": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "the high of a short period: summary (today is its default); or current with context, whose today carries the high and its time"
+  },
+  "lookup-hottest-vs": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "two periods compared: summary for today and yesterday (two calls, or one over both with every_day)"
+  },
+  "average-temp-yesterday": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ]
+        },
+        "period": {
+          "means": "yesterday"
+        },
+        "average": true
+      }
+    },
+    "note": "an average of a period: summary's average"
+  },
+  "highest-humidity-yesterday": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "outdoor.humidity"
+          ]
+        },
+        "period": {
+          "means": "yesterday"
+        }
+      }
+    },
+    "note": "the high of a period with when it was: summary"
+  },
+  "pollen-tomorrow": {
+    "tools": [
+      "pollen"
+    ],
+    "not_tools": [
+      "forecast"
+    ],
+    "note": "pollen gives the grass forecast and the day it is for; the weather forecast has no pollen"
+  },
+  "average-rain": {
+    "any_tools": [
+      "days",
+      "summary"
+    ],
+    "args": {
+      "days": {
+        "stat": "avg",
+        "of": "rain",
+        "period": {
+          "means": "last week"
+        }
+      },
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "last week"
+        }
+      }
+    },
+    "note": "the average daily rain is days' avg of rain; summary gives the week's total (rain has no average there)"
+  },
+  "uv-days-two-years": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": "uv_max",
+              "op": [
+                ">="
+              ],
+              "value": 9
+            }
+          ]
+        },
+        "period": {
+          "means": "past two years"
+        },
+        "count_only": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "how many days a figure reached a limit: days counted"
+  },
+  "uv-days-per-year": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": "uv_max",
+              "op": [
+                ">",
+                ">="
+              ],
+              "value": 10
+            }
+          ]
+        },
+        "group_by": "year",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "a count per year, drawn as bars: group_by year over the whole record"
+  },
+  "rain-per-month": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "stat": "sum",
+        "of": "rain",
+        "group_by": "month",
+        "period": {
+          "means": "this year"
+        }
+      }
+    },
+    "note": "a total per month: days' sum of rain by month, drawn as bars"
+  },
+  "hottest-day-per-year": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "stat": "max",
+        "of": "temp_max",
+        "group_by": "year",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "the highest daily maximum per year, as bars"
+  },
+  "air-days-per-year": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": [
+                "pm2_5_max",
+                "pm2_5_avg"
+              ],
+              "op": [
+                ">",
+                ">="
+              ],
+              "value": 25
+            }
+          ]
+        },
+        "group_by": "year",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "the air sensor's days through the same days tool: a count per year"
+  },
+  "count-pm25-days-per-year": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": [
+                "pm2_5_max",
+                "pm2_5_avg"
+              ],
+              "op": [
+                ">",
+                ">="
+              ],
+              "value": 90
+            }
+          ]
+        },
+        "group_by": "year",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "a count per year of the air sensor's days"
+  },
+  "days-over-limit-by-year": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": "uv_max",
+              "op": [
+                ">",
+                ">="
+              ],
+              "value": 10
+            }
+          ]
+        },
+        "group_by": "year",
+        "period": {
+          "means": "on record",
+          "optional": true
+        }
+      }
+    },
+    "note": "per year over the whole record, not one overall count"
+  },
+  "days-two-readings-go-to-the-model": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "where": {
+          "conditions": [
+            {
+              "field": "temp_max",
+              "op": [
+                ">",
+                ">="
+              ],
+              "value": 35
+            },
+            {
+              "field": "rain",
+              "op": [
+                ">=",
+                ">"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "note": "two conditions on the same day: days' where holds both"
+  },
+  "rain-by-month-two-years": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": [
+        {
+          "stat": "sum",
+          "of": "rain",
+          "group_by": "month",
+          "period": {
+            "means": "2 years"
+          }
+        },
+        {
+          "stat": "sum",
+          "of": "rain",
+          "group_by": "month",
+          "start": {
+            "regex": "^2024-(09|10)-",
+            "e.g.": "2024-10-01"
+          }
+        }
+      ]
+    },
+    "note": "monthly bars, one per month, over the last 2 years"
+  },
+  "avg-temp-per-year": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "stat": "avg",
+        "of": "temp_avg",
+        "group_by": "year"
+      }
+    },
+    "note": "an average per year is days' avg of each day's mean"
+  },
+  "highest-pm25-by-month": {
+    "tools": [
+      "days"
+    ],
+    "args": {
+      "days": {
+        "stat": "max",
+        "of": "pm2_5_max",
+        "group_by": "month"
+      }
+    },
+    "note": "the highest per month, from the air sensor's days"
+  },
+  "two-readings-by-month-go-to-the-model": {
+    "any_tools": [
+      "days",
+      "summary"
+    ],
+    "args": {
+      "days": {
+        "group_by": "month",
+        "stat": {
+          "one_of": [
+            "avg",
+            "max",
+            "min"
+          ]
+        },
+        "of": {
+          "regex": "^(pm2_5|co2)_",
+          "e.g.": "pm2_5_avg"
+        }
+      },
+      "summary": {
+        "readings": {
+          "reads": [
+            "air.pm2_5",
+            "air.co2"
+          ]
+        }
+      }
+    },
+    "note": "two readings by month: a days call for each (a figure per month, with its stat), or summary of both (its breakdown is by month for a long period); the period is the model's choice"
+  },
+  "chart-weather-90d": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity",
+              "solar_and_uvi.solar",
+              "pressure.relative",
+              "rainfall.rain",
+              "outdoor.dew_point",
+              "wind.wind_speed"
+            ]
+          },
+          "period": {
+            "means": "90d"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity",
+              "solar_and_uvi.solar",
+              "pressure.relative",
+              "rainfall.rain",
+              "outdoor.dew_point",
+              "wind.wind_speed"
+            ]
+          },
+          "period": {
+            "means": "90d"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "a chart naming no reading is every reading, a panel each"
+  },
+  "chart-all-90d": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity",
+              "solar_and_uvi.solar",
+              "pressure.relative",
+              "rainfall.rain",
+              "outdoor.dew_point",
+              "wind.wind_speed"
+            ]
+          },
+          "period": {
+            "means": "90d"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "outdoor.temperature",
+              "outdoor.humidity",
+              "solar_and_uvi.solar",
+              "pressure.relative",
+              "rainfall.rain",
+              "outdoor.dew_point",
+              "wind.wind_speed"
+            ]
+          },
+          "period": {
+            "means": "90d"
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "all is every station reading, a panel each"
+  },
+  "two-axes-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "solar_and_uvi.uvi",
+              "solar_and_uvi.solar"
+            ]
+          },
+          "layout": "two_axes",
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "solar_and_uvi.uvi",
+              "solar_and_uvi.solar"
+            ]
+          },
+          "layout": "two_axes",
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "two readings on one panel with a scale each: layout two_axes"
+  },
+  "airgradient-humidity-over-ecowitt": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": [
+        {
+          "readings": {
+            "reads": [
+              "air.humidity",
+              "outdoor.humidity"
+            ]
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        },
+        {
+          "chart_readings": {
+            "reads": [
+              "air.humidity",
+              "outdoor.humidity"
+            ]
+          },
+          "chart": {
+            "one_of": [
+              true,
+              null
+            ]
+          }
+        }
+      ]
+    },
+    "note": "the AirGradient's own humidity is air.humidity; both sensors on one chart"
+  },
+  "humidity-each-hour": {
+    "tools": [
+      "readings"
+    ],
+    "not_tools": [
+      "summary"
+    ],
+    "args": {
+      "readings": [
+        {
+          "reading": {
+            "reads": [
+              "outdoor.humidity"
+            ]
+          },
+          "interval": "1hour",
+          "period": {
+            "means": "last 5 hours"
+          }
+        },
+        {
+          "reading": {
+            "reads": [
+              "outdoor.humidity"
+            ]
+          },
+          "interval": "1hour",
+          "start": {
+            "regex": "^2026-09-29 (08|09)",
+            "e.g.": "2026-09-29 09:00"
+          },
+          "end": {
+            "regex": "^2026-09-29",
+            "e.g.": "2026-09-29 14:05",
+            "optional": true
+          }
+        }
+      ]
+    },
+    "note": "a value per hour is readings (the bot once said it only had extremes)"
+  },
+  "temperature-every-30-minutes": {
+    "tools": [
+      "readings"
+    ],
+    "args": {
+      "readings": {
+        "reading": {
+          "reads": [
+            "outdoor.temperature"
+          ]
+        },
+        "interval": "30min",
+        "period": {
+          "means": "today"
+        }
+      }
+    },
+    "note": "values every 30 minutes, not a highs-and-lows summary"
+  },
+  "chart-only-answers-itself": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "pressure.relative"
+          ]
+        },
+        "period": {
+          "means": "since Sunday"
+        },
+        "chart_answers_it": true,
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "only the chart is asked for: chart_answers_it, and the result carries the reply"
+  },
+  "chart-and-a-question": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "pressure.relative"
+          ]
+        },
+        "period": {
+          "means": "since Sunday"
+        },
+        "chart_answers_it": {
+          "one_of": [
+            null,
+            false
+          ]
+        }
+      }
+    },
+    "note": "the chart and something else to answer (outlook may be called too): chart_answers_it stays unset"
+  },
+  "prompt-now": {
+    "tools": [
+      "current"
+    ],
+    "args": {
+      "current": {
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "outside now is current (no readings named: everything)"
+  },
+  "prompt-report": {
+    "tools": [
+      "current",
+      "forecast",
+      "pollen"
+    ],
+    "args": {
+      "forecast": {
+        "period": {
+          "regex": "(?i)^today$",
+          "e.g.": "today",
+          "optional": true
+        }
+      }
+    },
+    "note": "a report is current, forecast (today) and pollen, called together"
+  },
+  "prompt-will-it-rain": {
+    "tools": [
+      "outlook"
+    ],
+    "note": "will it rain in the next few hours is outlook"
+  },
+  "prompt-weather-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        },
+        "readings": {
+          "reads": [
+            "outdoor.temperature"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "note": "every station reading charted over the period is summary's chart"
+  },
+  "prompt-chart": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        },
+        "chart": {
+          "one_of": [
+            true,
+            null
+          ]
+        }
+      }
+    },
+    "note": "one reading charted over a period is summary's chart"
+  },
+  "prompt-rainfall": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "rainfall.rain"
+          ]
+        },
+        "period": {
+          "means": "last week"
+        }
+      }
+    },
+    "note": "the rain that fell over a period is summary's total"
+  },
+  "prompt-air": {
+    "tools": [
+      "summary"
+    ],
+    "args": {
+      "summary": {
+        "readings": {
+          "reads": [
+            "air.pm2_5"
+          ]
+        },
+        "period": {
+          "means": "7d"
+        }
+      }
+    },
+    "note": "the air over a period is summary of the air sensor's readings, PM2.5 among them"
+  }
+}

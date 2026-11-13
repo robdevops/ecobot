@@ -243,10 +243,11 @@ def test_a_bar_below_zero_has_its_bright_end_at_the_bottom(monkeypatch):
 def test_darkmode_is_off_by_default_on_always_and_a_time_range_dark_between_its_ends(monkeypatch):
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    from lib import charts
+    from lib import charts, theme
     zone = ZoneInfo("Australia/Melbourne")
     at = lambda hour, minute=0: datetime(2026, 11, 1, hour, minute, tzinfo=zone)
-    monkeypatch.setattr(charts, "MODE", "off")
+    monkeypatch.setattr(theme, "MODE", "off")
+    monkeypatch.setattr(theme, "ZONE", None)
     assert not charts.dark_now(at(23))
     charts.configure("on", zone)
     assert charts.dark_now(at(12))

@@ -1,17 +1,17 @@
-"""The dashboard's gauges from the station: each reading as it is now, with its highest and lowest today, this month and this year.
+"""The station's gauges: what each shows (GAUGES: its reading, its scale and colours, the day figures beside it) and their figures, each
+reading as it is now with its highest and lowest today, this month and this year (figures()).
 
 Now is the live reading. The extremes are the day rows' (days.day_values_on: exact days from the 5- or 30-minute readings where they hold
 the day, else the daily buckets; today from what there is so far), which take in the bands the bot and Home Assistant saw between the
-5-minute readings, with the live reading counted in, so the day's figures are never behind the gauge. A tile is left out when the station
-has no such reading at all (no indoor sensor), and drawn dimmed when it has one but not now.
+5-minute readings, with the live reading counted in, so the day's figures are never behind the gauge.
+
+The service's `current` with `context` gives these figures (lib/service/current.py context_of); the bot lays its sheet of gauges out
+from that result (lib/gauge_sheet.py), with GAUGES' scales and colours.
 """
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
-
-from ..specs import Dashboard, Tile
-from ..storage import Storage
-from .days import day_values_on
 
 COLD_TO_HOT = ("#7DE7FF", "#B2EEFA", "#F7C9C9", "#EE7070", "#D32F27")
 WATER = ("#DFFBFF", "#B2EEFA", "#80E5FA", "#4FB3D6", "#2C7592")
@@ -19,7 +19,16 @@ PRESSURE = ("#C5CAFA", "#A5ABF7", "#8087F5", "#5C5CF0", "#3F2FD0")
 WIND = ("#E8E8E8", "#C8CDD2", "#A2ABB4", "#7C8790", "#56626C")
 SUN = ("#FBE79A", "#F5D45A", "#F2A53C", "#D27A2A", "#A9501F")
 UV = ("#A9E34B", "#F7E04A", "#F4A93B", "#E8562A", "#9A1F5A", "#7A2CF0")
-DEGREES = (60, 40, 20, 0, -20, -40)
+DEGREES = (40, 30, 20, 10, 0)          # a thermometer's scale as it starts (THERMOMETER), before it widens to take in the reading
+THERMOMETER = (0, 40, 10)               # a thermometer's scale: its ends and its step, in °C; widened a step at a time to the reading
+
+
+def degree_colour(lower: float) -> str:
+    """The colour of a thermometer's band of 10 degrees, from its lower end: blues below 0, pinks to reds above."""
+    for top, colour in ((-10, "#7DE7FF"), (0, "#B2EEFA"), (10, "#F7C9C9"), (20, "#F2A0A0"), (30, "#EE7070"), (40, "#E04A42")):
+        if lower < top:
+            return colour
+    return "#D32F27"
 
 
 @dataclass(frozen=True)
@@ -36,26 +45,50 @@ class Gauge:
     lowest: str | None = None             # ... whose lowest is its Min (none: no Min column)
     decimals: int = 1
     total: bool = False                   # rain: the Total column, the sum of the days' figures (its Max is the wettest day's)
+    counted: tuple[str, str] | None = None   # the live reading counted into its Max and Min, when not `live` (wind: the gust, as its
+                                             # Max is the highest gust: the speed now would stand in for it before a day row has one)
+
+    @property
+    def reading(self) -> str:
+        """The service's name of the reading it shows (lib/service/names.py): its live reading's, the rain gauge's "daily" being
+        rainfall.rain."""
+        group, field = self.live
+        return f"{group}.{'rain' if field == 'daily' else field}"
 
 
 GAUGES = (
-    Gauge("Temperature", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "temperature"), "temp_max", "temp_min"),
+    Gauge("Temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "temperature"), "temp_max", "temp_min"),
     Gauge("Humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("outdoor", "humidity"), "humidity_max", "humidity_min", 0),
     Gauge("Atmospheric pressure", "hPa", "dial", 950, 1050, PRESSURE, (950, 970, 990, 1010, 1030, 1050), ("pressure", "relative"),
           "pressure_max", "pressure_min"),
-    Gauge("Dew point", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
-    Gauge("Feels like", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
-    Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0),
+    Gauge("Dew point", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "dew_point"), "dew_point_max", "dew_point_min"),
+    Gauge("Feels like", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("outdoor", "feels_like"), "feels_like_max", "feels_like_min"),
+    Gauge("Wind", "km/h", "dial", 0, 100, WIND, (0, 20, 40, 60, 80, 100), ("wind", "wind_speed"), "wind_gust", None, 0,
+          counted=("wind", "wind_gust")),
     Gauge("Rain", "mm", "beaker", 0, 100, WATER, (100, 80, 60, 40, 20, 0), ("rainfall", "daily"), "rain", None, 1, True),
     Gauge("Rain rate", "mm/h", "dial", 0, 50, WATER, (0, 10, 20, 30, 40, 50), ("rainfall", "rain_rate"), "rain_rate_max"),
     Gauge("Solar radiation", "W/m²", "dial", 0, 1500, SUN, (0, 300, 600, 900, 1200, 1500), ("solar_and_uvi", "solar"), "solar_max", None, 0),
     Gauge("UV index", "", "dial", 0, 12, UV, (0, 3, 6, 8, 11), ("solar_and_uvi", "uvi"), "uv_max"),
-    Gauge("Indoor temperature", "°C", "thermometer", -40, 60, COLD_TO_HOT, DEGREES, ("indoor", "temperature"), "indoor_temp_max", "indoor_temp_min"),
+    Gauge("Indoor temperature", "°C", "thermometer", 0, 40, COLD_TO_HOT, DEGREES, ("indoor", "temperature"), "indoor_temp_max", "indoor_temp_min"),
     Gauge("Indoor humidity", "%", "dial", 0, 100, WATER, (0, 20, 40, 60, 80, 100), ("indoor", "humidity"), "indoor_humidity_max",
           "indoor_humidity_min", 0),
 )
 PERIODS = ("Daily", "Monthly", "Yearly")
 STATUS = ("Temperature", "Humidity", "Rain")   # the gauges the report ("status") carries
+
+
+def scale(gauge: Gauge, value: float | None) -> tuple[float, float, tuple[str, ...], tuple[float, ...]]:
+    """(low end, high end, the bands' colours from the low end, the numbers) of a gauge's scale for this reading. A thermometer's is
+    0 to 40 °C, widened by 10 degrees at a time to take in a reading outside it (-3 °C: -10 to 40), its bands coloured by their
+    degrees; every other gauge's is fixed."""
+    if gauge.kind != "thermometer":
+        return gauge.low, gauge.high, gauge.colours, gauge.ticks
+    low, high, step = THERMOMETER
+    if value is not None:
+        low = min(low, math.floor(value / step) * step)
+        high = max(high, math.ceil(value / step) * step)
+    bands = range(int(low), int(high), step)
+    return low, high, tuple(degree_colour(b) for b in bands), tuple(range(int(high), int(low) - 1, -step))
 
 
 def gauges_of(titles=None) -> list[Gauge]:
@@ -88,28 +121,3 @@ def figures(gauge: Gauge, values: dict, days: list[date], now: float | None) -> 
         lows = [values[gauge.lowest][d] for d in days if d in values.get(gauge.lowest, {})] + ([now] if now is not None else [])
         row.append(min(lows) if lows else None)
     return tuple(row)
-
-
-def sheet(live: dict, values: dict, today: date, titles=None) -> Dashboard | None:
-    """The dashboard from a live reading and the days' figures, with the gauges of these titles only (all when None); None when the
-    station has none of the readings."""
-    tiles = []
-    days = periods_of(today)
-    for gauge in gauges_of(titles):
-        now = live_value(live, gauge.live)
-        if now is None and not any(values.get(name) for name in (gauge.highest, gauge.lowest) if name):
-            continue
-        rows = {name: figures(gauge, values, days[name], None if gauge.total else now) for name in PERIODS}
-        if gauge.total and now is not None:   # today's rain is the gauge's own reading, whatever the day's cached figure lags behind
-            rows["Daily"] = (None, now)
-        columns = ("Max", "Total") if gauge.total else ("Max", "Min") if gauge.lowest else ("Max",)
-        tiles.append(Tile(gauge.title, gauge.unit, now, gauge.kind, gauge.low, gauge.high, gauge.colours, columns, rows, gauge.ticks, gauge.decimals))
-    return Dashboard(tiles) if tiles else None
-
-
-async def dashboard(live: dict, storage: Storage, mac: str, today: date, titles=None) -> Dashboard | None:
-    """The gauges (of these titles; all when None) for a live reading ({group: {field: {value, unit}}}, as Ecowitt's real_time gives
-    it), the extremes from the day rows of the year so far: one read."""
-    names = sorted({n for g in gauges_of(titles) for n in (g.highest, g.lowest) if n})
-    values, _ = await storage.read(day_values_on, mac, names, periods_of(today)["Yearly"])
-    return sheet(live, values, today, titles)

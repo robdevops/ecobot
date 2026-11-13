@@ -1,22 +1,26 @@
-"""The chart that goes with an alert: the same picture a typed request for it would give ("Wind chart 1d" is what the Wind button sends), so what an
-alert shows is defined once, by the button sentences and lib/intent. AlertCharts keeps those charts with the bot's other charts (the ImageCache),
-so one is drawn once and uploaded once however many times it is sent."""
+"""The chart that goes with an alert: the same picture a keyboard button gives (the Wind button's fixed call is the gusts alert's), so
+what an alert shows is defined once, by those calls (lib/templates.py CALLS: the Wind button is summary {readings: ["wind"], period: "1d",
+chart: true}), which the service draws: the rule puts the chart's data, with its drawn_by, in the alert's event (chart_data), and the bot
+has it drawn (picture_of: by ecobot-mcp, lib/weather.py, replaying the chart's drawn_by). AlertCharts keeps those charts with the bot's
+other charts (the ImageCache, by call), so one is drawn once and uploaded once however many times it is sent."""
 
-import asyncio
+import json
 import logging
-import time
-from datetime import datetime, timezone
-from typing import Callable, NamedTuple
+from datetime import datetime, timezone, tzinfo
+from typing import NamedTuple
 
-from .. import intent
-from ..charts import render
+from .. import templates
+from ..periods import call_key
+from ..specs import from_json
 from ..timeutil import now_local
-from ..tools import Turn
 
 log = logging.getLogger(__name__)
 
-# The alert types that carry a chart, and the request it answers: what the alert is sent with, and what its Refresh draws again
-CHARTS = {"gusts": "Wind chart 1d", "uv": "UV chart 1d", "temps": "Temperature chart 1d", "particulates": "Particulates chart 1d"}
+# The alert types that carry a chart, and the service call that draws it: what the alert is sent with, and what its Refresh draws again
+# (the Wind, Temperature and Particulates buttons' own calls; UV's has no button)
+CHARTS = {"gusts": templates.CALLS["Wind chart 1d"], "uv": ("summary", {"readings": ["uv"], "period": "1d", "chart": True}),
+          "temps": templates.CALLS["Temperature chart 1d"], "particulates": templates.CALLS["Particulates chart 1d"]}
+CHART_POINTS = "drawn"   # every point, as drawn (lib/service/common.py AS_DRAWN): the bot's picture
 
 
 class Picture(NamedTuple):
@@ -24,52 +28,85 @@ class Picture(NamedTuple):
     png: bytes
     title: str
     newest: int | None   # the time of the newest reading it draws (epoch), when the chart tells it
+    drawn_by: dict | None = None   # the call that draws it again
+    dark: bool | None = None       # drawn in the dark theme (None: the theme charts are drawn in now)
 
 
-async def chart(source, text: str, tz) -> Picture | None:
-    """The chart for the request `text`, made from `source`'s tool the way the bot would answer it; None when it cannot be made (the alert then
-    goes out as text). `source` is the station or the air sensor: the tool is found in its `tools` by the name the request resolves to."""
+def _service_of(source, tz):
+    """The service's tools over one source (the station or the air sensor), for a monitor that has only its source."""
+    from ..service import Service
+    from ..service.context import Context
+    name = getattr(source, "name", "")
+    return Service.of(Context(eco=source if name == "Ecowitt" else None, air=source if name == "AirGradient" else None, tz=tz))
+
+
+async def chart_data(source, call: tuple[str, dict], tz, service=None) -> dict | None:
+    """The chart of the service `call` (one of CHARTS) as data (3.7's JSON, with the `drawn_by` that draws it again), as the service gives it
+    (every point, as drawn): what an alert event carries. None when it cannot be made (the alert then goes out as text). `source` is the
+    station or the air sensor; `service` the service's tools, else built over `source`."""
+    tool, args = call
     try:
-        now = now_local(tz)
-        read = intent.read(text, now)
-        tool, args = read.fast[0], read.fast[1]
-        turn = Turn.of(read, text)
-        handler = next(t for t in source.tools if t.name == tool).handler
-        await handler(args, turn)
-        spec = turn.charts[0]
-        return Picture(await asyncio.to_thread(render, spec, tz), spec.caption(now.date()), spec.newest)
+        service = service or _service_of(source, tz)
+        out = json.loads(await service[tool].call(args, {"chart_points": CHART_POINTS}))
+        if "error" in out:
+            raise ValueError(out["error"])
+        return out["charts"][0]
     except Exception as e:
-        log.warning("The chart for the alert (%s) couldn't be made: %s: %s", text, type(e).__name__, e)
+        log.warning("The chart for the alert (%s %s) couldn't be made: %s: %s", tool, args, type(e).__name__, e)
+        return None
+
+
+def _picture(image, tz) -> Picture:
+    """A lib/weather.ChartImage as an alert's Picture."""
+    spec = from_json(image.chart)
+    return Picture(image.png, spec.caption(now_local(tz).date()), spec.newest, image.chart.get("drawn_by"), image.dark)
+
+
+async def picture_of(data: dict, tz, weather) -> Picture | None:
+    """A chart given as data, drawn again by `weather` (ecobot-mcp as the bot reaches it, lib/weather.py: it replays the chart's
+    drawn_by); None when it cannot be. The bot draws nothing itself."""
+    try:
+        return _picture(await weather.picture(data), tz)
+    except Exception as e:
+        log.warning("The alert's chart couldn't be drawn: %s: %s", type(e).__name__, e)
+        return None
+
+
+async def chart(call: tuple[str, dict], tz, weather) -> Picture | None:
+    """The chart of the service `call` (one of CHARTS), drawn by ecobot-mcp (`weather`, as the bot reaches it: lib/weather.py); None when
+    it cannot be made."""
+    tool, args = call
+    try:
+        out, image = await weather.chart_image(tool, args, {"chart_points": CHART_POINTS})
+        if image is None:
+            raise ValueError(out.get("error") or "no chart")
+        return _picture(image, tz)
+    except Exception as e:
+        log.warning("The chart for the alert (%s %s) couldn't be made: %s: %s", tool, args, type(e).__name__, e)
         return None
 
 
 class AlertCharts:
-    """The charts alerts carry (CHARTS), kept in the bot's ImageCache under their request's key (the keyboard's "Wind chart 1d" is the same
-    chart), so each is drawn once and uploaded once:
+    """The charts alerts carry (CHARTS), kept in the bot's ImageCache under their call (the Wind button's is the same chart), so each is
+    drawn once and uploaded once:
     - an alert sends the chart the bot holds when it has the alert's data (drawn with the newest reading the alert is about, `since`, or a
       later one): Telegram's copy once it has been sent, to this chat or another, or by a button; else its chart is drawn and kept, and
       Telegram's copy remembered from the first chat it goes to;
-    - the chart of every type alerted in the last WARM_SECONDS is drawn ahead with the keyboard's (Bot.draw_buttons_ahead, and uploaded
-      ahead with them), so the Refresh under the alert is answered at once;
     - Refresh sends the held chart when it is newer than the picture shown and fresh (ImageCache.FRESH), else draws one."""
 
-    WARM_SECONDS = 6 * 3600
+    def __init__(self, images, tz: tzinfo | None = None):
+        """images: the bot's ImageCache. tz: the station's zone (its titles' dates)."""
+        self.images, self.tz = images, tz
 
-    def __init__(self, images, now: Callable[[], datetime], clock: Callable[[], float] = time.monotonic):
-        """images: the bot's ImageCache. now: the local time (for the requests' keys). clock: the seconds the warm time is counted in."""
-        self.images, self.now, self.clock = images, now, clock
-        self.alerted: dict[str, float] = {}   # request -> the clock when an alert carrying its chart last went out
+    @staticmethod
+    def call(kind: str) -> tuple[str, dict] | None:
+        """The service call an alert type's chart is drawn by; None for a type without one."""
+        return CHARTS.get(kind)
 
     def key(self, kind: str) -> str | None:
-        """The image key of an alert type's chart; None for a type without one."""
-        text = CHARTS.get(kind)
-        return self.images.canonical(text, self.now()) if text else None
-
-    def warm(self) -> list[str]:
-        """The requests whose charts are kept drawn ahead: those of the alert types sent in the last WARM_SECONDS."""
-        now = self.clock()
-        self.alerted = {text: at for text, at in self.alerted.items() if now - at <= self.WARM_SECONDS}
-        return list(self.alerted)
+        """The image key of an alert type's chart (its call); None for a type without one."""
+        call = self.call(kind)
+        return call_key(*call) if call else None
 
     def held(self, kind: str, since: int | None) -> bytes | str | None:
         """The chart the bot holds for an alert of `kind` when it draws the alert's data (its newest reading is `since` or later): Telegram's
@@ -80,14 +117,11 @@ class AlertCharts:
     def keep(self, kind: str, picture: Picture, since: int | None = None):
         """A chart just drawn for an alert of `kind` (about the reading `since`: it draws that reading, whatever its own time says)."""
         newest = max((t for t in (picture.newest, since) if t is not None), default=None)
-        self.images.put(self.key(kind), picture.png, picture.title, newest=newest)
+        self.images.put(self.key(kind), picture.png, picture.title, newest=newest, drawn_by=picture.drawn_by, dark=picture.dark)
 
-    def sent(self, kind: str, message, alerted: bool = True):
-        """The chart of `kind` went out in `message` (as Telegram returned it): later sends use Telegram's copy. An alert (not a Refresh)
-        starts the WARM_SECONDS its chart is drawn ahead for."""
+    def sent(self, kind: str, message):
+        """The chart of `kind` went out in `message` (as Telegram returned it): later sends use Telegram's copy."""
         self.images.sent(self.key(kind), message)
-        if alerted:
-            self.alerted[CHARTS[kind]] = self.clock()
 
     def newer_than(self, kind: str, message) -> bytes | str | None:
         """What the Refresh under `message` can send without drawing: the held chart of `kind` when it was drawn since the message was last

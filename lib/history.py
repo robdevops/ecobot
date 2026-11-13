@@ -1,7 +1,7 @@
-"""The `readings` tool: one reading's stored values at a fixed interval, each with its time, read straight from the bot's file (lib/storage).
+"""One reading's stored values at a fixed interval, each with its time, read straight from the bot's file (lib/storage): the engine of the
+service's `readings` tool (lib/service/readings.py), and the readings the service knows (Metric, station_metrics, air_metrics).
 
 It answers "humidity each hour for the last 5 hours", "PM2.5 every 30 minutes this morning" and other requests for a table of values.
-weather_history gives a period's highs, lows, averages and charts; this gives the readings themselves.
 
 Every interval is offered for every reading.
 - An interval a sensor stores is read as it is: Ecowitt's 5min, 30min and 4hour, Home Assistant's and the air sensor's minutes, and the
@@ -18,9 +18,7 @@ back as missing rows.
 """
 
 import logging
-import time as clock
 from bisect import bisect_left, bisect_right
-from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import NamedTuple
 
@@ -32,8 +30,7 @@ from .series import AIR, AIR_EXTRA, WEATHER
 from .storage.catalogue import BY_NAME, KINDS, OTHER, RAIN_COUNTERS, Column, column_of, kind_of, text
 from .storage.read import FINE, Reader
 from .storage.schema import q
-from .timeutil import clock_text, day_text, local_date, local_epoch, parse_local, to_local, when
-from .tools import Tool, Turn, json_result
+from .timeutil import clock_text, day_text, local_date, local_epoch, to_local, when
 
 log = logging.getLogger(__name__)
 
@@ -104,37 +101,16 @@ def station_metrics(sent: dict[str, dict[str, str]] | None = None) -> list[Metri
     return out
 
 
+async def station_fields(eco) -> dict[str, dict[str, str]]:
+    """The fields the station (an Ecowitt source, started) has sent, as the file's `fields` table has them: {group: {field: unit}}, the
+    `sent` station_metrics reads."""
+    return await eco.storage.read(lambda r: {s.external: r.fields(s.id) for s in r.sensors(device=eco.mac) if s.kind != AIR_SENSOR})
+
+
 def air_metrics(extra: bool = False) -> list[Metric]:
     """The air sensor's readings, with its own temperature and humidity when `extra` (offered only when a question names them)."""
     names = [*AIR, *(AIR_EXTRA if extra else ())]
     return [Metric(AIR_SENSOR, n, AIR_SENSOR, BY_NAME[AIR_SENSOR][n], AIR_STORED[n][1]) for n in names]
-
-
-def parameters(names: list[str]) -> dict:
-    return {
-        "type": "object",
-        "properties": {
-            "metric": {"type": "string", "enum": names,
-                       "description": "The sensor and reading, e.g. outdoor.humidity, indoor.temperature, pressure.relative, "
-                                      "wind.wind_gust, rainfall.rain (mm that fell in each interval), air.pm2_5. One per call: "
-                                      "outdoor and indoor are two calls, made together."},
-            "start": {"type": "string", "description": "Start, 'YYYY-MM-DD HH:MM' local time."},
-            "end": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM' local time. Default: now."},
-            "interval": {"type": "string", "enum": list(INTERVALS),
-                         "description": "One row per interval, a block of local time (1hour runs from :00 to :00; 4hour follows the station's "
-                                        "own 4-hour records, whose times say where they start). 1min goes back 10 days."},
-        },
-        "required": ["metric", "start", "interval"],
-    }
-
-
-DESCRIPTION = (
-    "The stored readings of ONE metric at a fixed interval, a row per interval with its time: for values at set times or per interval "
-    "(\"humidity each hour for the last 5 hours\", \"PM2.5 every 30 minutes this morning\", \"rain each hour today\", a table of "
-    "values; for one moment such as 3pm, a few minutes either side at 5min). Each row: the interval's average with its lowest and highest (rain: the mm that fell in it; gusts: the "
-    f"highest). At most {MAX_ROWS} rows: pick an interval that fits (5min for a few hours, 1hour for up to 12 days, 4hour for up to 7 "
-    "weeks, 1day for up to 300 days). For a period's highs and lows, records, averages or a chart use weather_history or air_quality.")
-PARAMETERS = parameters([m.name for m in [*station_metrics(), *air_metrics()]])   # the tool as offered before any file is read (the evals)
 
 
 def interval_starts(start: int, end: int, width: int, tz: tzinfo) -> list[int]:
@@ -335,101 +311,4 @@ DAY_VALUE_IS = {RAIN: "the day's rain total, mm", "max": "the day's highest, and
                 "mean": "the day's average, with its lowest and highest and when they happened"}
 
 
-class History:
-    """The `readings` tool over the weather station's and the air sensor's stored readings (either may be missing)."""
-
-    def __init__(self, eco=None, air=None, sent: dict[str, dict[str, str]] | None = None, now: Callable[[], float] = clock.time):
-        """eco, air: the sources (Ecowitt, AirGradient), started. sent: the station's fields as the file has them ({group: {field: unit}};
-        History.open reads them). now: the clock (a test's)."""
-        self.eco, self.air, self.now = eco, air, now
-        self.storage = eco.storage if eco else air.store.storage
-        self.tz = eco.tz if eco else air.tz
-        station = station_metrics(sent) if eco else []
-        self.metrics = {m.name: m for m in [*station, *(air_metrics(extra=True) if air else [])]}
-        offered = [m.name for m in [*station, *(air_metrics() if air else [])]]
-        asked = [m.name for m in [*station, *(air_metrics(extra=True) if air else [])]]
-        self.tools = [Tool("readings", DESCRIPTION, parameters(offered), self.handle,
-                           asked=(lambda: (DESCRIPTION, parameters(asked))) if air else None)]
-
-    @classmethod
-    async def open(cls, eco=None, air=None) -> "History":
-        """The tool, with the readings the station has sent read from the file."""
-        sent = await eco.storage.read(lambda r: {s.external: r.fields(s.id) for s in r.sensors(device=eco.mac) if s.kind != AIR_SENSOR}) if eco else None
-        return cls(eco, air, sent)
-
-    def find(self, name: str) -> Metric | None:
-        """The metric a name means: its own name, else a reading's ("humidity", "uv", "pm2_5", "rain") on the sensor that has it. A sensor
-        named (indoor, air) is kept: "air.humidity" is the air sensor's own, never the outdoor humidity; "indoor.vpd" is none."""
-        name = name.strip().lower()
-        if name in self.metrics:
-            return self.metrics[name]
-        prefix, _, bare = name.rpartition(".")
-        if prefix == AIR_SENSOR and (m := self.metrics.get(f"{AIR_SENSOR}.{AIR_SENSOR}_{bare}")):
-            return m
-        reading = WEATHER.get(bare) or next((r for r in WEATHER.values() if r.field == bare), None)
-        m = (reading and self.metrics.get(f"{reading.group}.{RAIN if reading.field == 'daily' else reading.field}")
-             or self.metrics.get(f"{AIR_SENSOR}.{bare}") or self.metrics.get(f"outdoor.{bare}"))
-        return None if m and prefix in ("indoor", AIR_SENSOR) and m.sensor != prefix else m
-
-    def _sensor(self, m: Metric) -> int | None:
-        if m.air:
-            s = self.air.store.sensor() if self.air else None
-        else:
-            s = self.storage.sensors.find(self.eco.mac, m.sensor) if self.eco else None
-        return s.id if s else None
-
-    def _time(self, value, default: int) -> int:
-        """A start or end as sent ("2026-11-09 01:00", with seconds, a "T", or an offset such as "Z", which is moved into local time)."""
-        if value in (None, ""):
-            return default
-        text = str(value).strip()
-        try:
-            local = parse_local(text, self.tz)
-        except ValueError:   # trailing words ("2026-11-09 01:00 AEDT"): the time alone
-            local = parse_local(text.replace("T", " ")[:19], self.tz)
-        return local_epoch(local, self.tz)
-
-    async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        m = self.find(str(args.get("metric") or ""))
-        if m is None:
-            return json_result({"error": f"unknown metric {args.get('metric')!r}", "metrics": list(self.metrics)})
-        interval = str(args.get("interval") or "").strip().lower()
-        interval = ALIASES.get(interval, interval)
-        if interval not in INTERVALS:
-            return json_result({"error": f"unknown interval {args.get('interval')!r}", "intervals": list(INTERVALS)})
-        now = int(self.now())
-        try:
-            start, end = self._time(args.get("start"), None), min(self._time(args.get("end"), now), now)
-        except (TypeError, ValueError):
-            return json_result({"error": "start and end are 'YYYY-MM-DD HH:MM', local time"})
-        if start is None or start >= end:
-            return json_result({"error": "start must be before end (and before now)"})
-        by_day = interval == "1day" and m.how != "last"   # (a compass point has no day figures: the last reading of each day)
-        n = row_count(start, end, interval, self.tz)
-        too_many = n > (MAX_ROWS if by_day else MAX_ROWS + 1)   # (an interval's count is exact only once listed: the first starts before `start`)
-        marks = [] if too_many or by_day else interval_starts(start, end, INTERVALS[interval], self.tz)
-        if too_many or len(marks) > MAX_ROWS:
-            fits = finest_fit(start, end, self.tz)
-            return json_result({"error": "too many rows", "rows": max(n, len(marks)), "max_rows": MAX_ROWS, "fits": fits,
-                                "note": f"Ask again with interval {fits}." if fits else
-                                        "Too long even for days: split the period, or use weather_history or weather_days."})
-        out = {"metric": m.name, "unit": m.unit, "interval": interval, "value_is": (DAY_VALUE_IS if by_day else VALUE_IS)[m.how]}
-        sensor = self._sensor(m)
-        if sensor is None:
-            return json_result({**out, "rows": [], "note": "Nothing is stored for this sensor yet."})
-        if by_day:
-            first, last = local_date(start, self.tz), local_date(end, self.tz)
-            out |= await self.storage.read(read_days, m, sensor, first, last, self.tz)
-            partial = last == local_date(now, self.tz)
-        else:
-            out |= await self.storage.read(read_intervals, m, sensor, interval, marks, end, now, self.tz)
-            partial = marks[-1] + INTERVALS[interval] > now
-        if partial:
-            out["note_last"] = "The last row is still filling: it runs up to now."
-        if not any(row[1] is not None for row in out["rows"]):
-            out["note"] = (f"No readings at this interval for this period: ask again with interval {out['fits']}." if out.get("fits") else
-                           "No readings are stored for this period at this interval: say so; never fill the gap.")
-        return json_result(out)
-
-
-__all__ = ["DESCRIPTION", "History", "INTERVALS", "MAX_ROWS", "PARAMETERS", "air_metrics", "interval_starts", "parameters", "station_metrics"]
+__all__ = ["INTERVALS", "MAX_ROWS", "air_metrics", "interval_starts", "read_days", "read_intervals", "station_fields", "station_metrics"]

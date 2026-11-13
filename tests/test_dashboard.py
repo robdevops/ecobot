@@ -2,27 +2,23 @@ import io
 from datetime import date, datetime
 from types import SimpleNamespace as NS
 
+import pytest
 from PIL import Image
-from telegram import InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from lib import gauges, intent
+import json
+import time
+
+from lib import gauge_sheet, gauges
 from lib.bot import Bot
 from lib.ecowitt import dashboard as dash
+from lib.service import current as cur
+from lib.service.context import Context
 from lib.specs import Dashboard, Tile
-from tests.fakes import TZ, archived_station
+from tests.fakes import TZ, StandInService, archived_station, gauges_result
 
 TODAY = date(2026, 10, 27)
 NOW = datetime(2026, 10, 27, 12, tzinfo=TZ)
-
-
-def test_a_dashboard_is_asked_for_in_a_word_or_two_and_is_not_the_report():
-    for said in ("dashboard", "Dashboard", "show me the dashboard", "gauges", "weather dashboard", "dashboard now"):
-        read = intent.read(said, NOW)
-        assert read.dashboard and not read.report, said
-    for said in ("report", "status", "dashboard for last week", "how do I use the dashboard on my phone", "weather"):
-        assert not intent.read(said, NOW).dashboard, said
-    assert intent.read("report", NOW).report
-    assert not intent.read("dashboard", NOW, ("AirGradient",)).dashboard          # the station's gauges need the station
 
 
 def test_the_rows_cover_the_day_the_month_so_far_and_the_year_so_far():
@@ -41,7 +37,7 @@ def test_a_tile_has_the_live_reading_and_its_extremes_with_the_live_reading_coun
     values = {"temp_max": {first: 38.0, today: 25.0}, "temp_min": {first: -1.0, today: 9.0},
               "humidity_max": {today: 80.0}, "humidity_min": {today: 40.0},
               "rain": {first: 12.0, date(2026, 10, 3): 6.0, today: 0.4}, "rain_rate_max": {first: 30.0}}
-    tiles = {t.title: t for t in dash.sheet(live, values, today).tiles}
+    tiles = {t.title: t for t in gauge_sheet.sheet(gauges_result(live, values, today)).tiles}
     temperature = tiles["Temperature"]
     assert temperature.value == 31.0 and temperature.columns == ("Max", "Min")
     assert temperature.rows == {"Daily": (31.0, 9.0), "Monthly": (31.0, 9.0), "Yearly": (38.0, -1.0)}   # 31 is now: higher than today's 25
@@ -53,24 +49,29 @@ def test_a_tile_has_the_live_reading_and_its_extremes_with_the_live_reading_coun
 
 def test_a_reading_the_station_never_had_is_left_out_and_one_it_lacks_just_now_is_dimmed():
     live = {"outdoor": {"temperature": reading(12.0)}}
-    sheet = dash.sheet(live, {"solar_max": {TODAY: 900.0}}, TODAY)
+    sheet = gauge_sheet.sheet(gauges_result(live, {"solar_max": {TODAY: 900.0}}, TODAY))
     titles = [t.title for t in sheet.tiles]
     assert titles == ["Temperature", "Solar radiation"] and sheet.tiles[1].value is None      # no indoor sensor, no wind
     assert sheet.tiles[1].rows["Daily"] == (900.0,)
-    assert dash.sheet({}, {}, TODAY) is None
+    assert gauge_sheet.sheet(gauges_result({}, {}, TODAY)) is None
 
 
 def test_the_gauges_are_drawn_as_a_png_of_the_size_their_tiles_make():
     tile = Tile("Humidity", "%", 70, "dial", 0, 100, ("#DFFBFF", "#2C7592"), ("Max", "Min"), {"Daily": (87, 48)}, (0, 50, 100), 0)
     dull = Tile("Rain", "mm", None, "beaker", 0, 100, ("#DFFBFF", "#2C7592"), ("Max", "Total"), {}, (100, 0))
     image = Image.open(io.BytesIO(gauges.render(Dashboard([tile, tile, tile, dull]))))
-    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, 2 * gauges.CELL_H + 2 * gauges.MARGIN)
+    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, 2 * gauges.TILE_H + 2 * gauges.MARGIN)   # (no tables under them)
     assert image.convert("RGB").getpixel((2, 2)) == (0x14, 0x19, 0x1D)
 
 
-async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(tmp_path, archived_cache):
-    eco, _ = await archived_station(tmp_path, archived_cache)
-    sheet = await eco.dashboard()
+async def current_of(eco, args: dict) -> dict:
+    """The service's current over this station, called with these arguments."""
+    return json.loads(await cur.CurrentTool(Context(eco=eco)).tool().call(args, None))
+
+
+async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(tmp_path, daytime_archive):
+    eco, _ = await archived_station(tmp_path, daytime_archive)
+    sheet = gauge_sheet.sheet(await current_of(eco, gauge_sheet.call()))
     temperature = next(t for t in sheet.tiles if t.title == "Temperature")
     assert temperature.value == 12.3                                       # the fake station's live reading
     high, low = temperature.rows["Yearly"]
@@ -79,136 +80,95 @@ async def test_the_station_gives_its_gauges_from_the_live_reading_and_the_cache(
     await eco.close()
 
 
-class Tools:
-    async def call(self, *a, **k):
-        raise AssertionError("the dashboard is drawn in code")
-
-    call_all = call
-
-
-async def test_the_dashboard_command_sends_one_picture_with_no_period_buttons_and_asks_no_model(alert_state, monkeypatch):
-    sent, asked = [], []
-
-    async def sheet():
-        asked.append(1)
-        return Dashboard([Tile("Humidity", "%", 70, "dial", 0, 100, ("#DFFBFF", "#2C7592"), ("Max",), {"Daily": (87,)}, (0, 100), 0)])
-
-    class Agent:
-        tools = Tools()
-
-        async def run(self, *a, **k):
-            raise AssertionError("no model for the dashboard")
-    source = NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt", dashboard=sheet)
-    bot = Bot(NS(tz=TZ), Agent(), [source], alert_state)
-
-    async def reply_photo(photo, caption=None, **kw):
-        sent.append((photo[:4], caption, kw.get("reply_markup")))
-        return NS(message_id=7)
-    msg = NS(chat_id=1, message_id=50, message_thread_id=None, is_topic_message=False, reply_photo=reply_photo, text="Dashboard",
-             chat=NS(type="private", title=None), from_user=NS(full_name="Rob"), reply_to_message=None)
-
-    context = CONTEXT
-    update = NS(effective_message=msg, effective_chat=msg.chat, effective_user=NS(username="rob", full_name="Rob"))
-    await bot.respond(update, context, "Dashboard")
-    assert asked == [1] and len(sent) == 1
-    photo, caption, markup = sent[0]
-    assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ")
-    assert not isinstance(markup, InlineKeyboardMarkup)                         # a chat whose keyboard is out of date gets that instead
-    assert bot.charted.get(1, 7) is None
-    bot.state.add_chat(1, "private")
-    bot.state.set_keyboard(1, bot.keyboard_version)
-    await bot.respond(update, context, "Dashboard")
-    from lib import report_menu
-    assert [b.callback_data for b in sent[-1][2].inline_keyboard[0]] == [report_menu.DASHBOARD]   # its 🔄, no period buttons
-
-
-async def test_the_dashboards_refresh_draws_it_again_in_the_same_message_and_a_station_that_fails_leaves_it(alert_state):
-    from lib import report_menu
+async def test_the_old_dashboards_and_reports_refresh_are_out_of_date_and_change_nothing(serve, alert_state):
+    """The Telegram dashboard is no more (the gauges' live page is ecobot-mcp's /dashboard), nor the report written in code (step 6c):
+    the 🔄 under one sent before is out of date, and its message stays as it was."""
     from lib.bot import STALE_BUTTON
-    bot, _ = report_bot(alert_state, three_tiles)
+    bot, _ = await report_bot(serve, alert_state, three_gauges)
     edits = []
 
     class Query:
-        data, message, toast = report_menu.DASHBOARD, NS(photo=[NS(file_id="x")]), "unset"
+        def __init__(self, data):
+            self.data, self.toast, self.from_user = data, "unset", NS(id=7)
+            self.message = NS(photo=[NS(file_id="x")], reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄", callback_data=data)]]),
+                              chat=NS(id=1, type="private"), chat_id=1)
 
         async def answer(self, text=None, **k):
             self.toast = text
 
-        async def edit_message_media(self, media, reply_markup=None):
-            edits.append((media.media.input_file_content[:4], media.caption, reply_markup))
-    query = Query()
-    await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    (photo, caption, markup), = edits
-    assert photo == b"\x89PNG" and caption.startswith("Weather station dashboard, ") and query.toast is None
-    assert markup.inline_keyboard[0][0].callback_data == report_menu.DASHBOARD                               # the 🔄 stays
+        async def edit_message_media(self, *a, **k):
+            edits.append(a)
 
-    async def failing(titles=None):
-        raise RuntimeError("station down")
-    bot.by_name["Ecowitt"].dashboard = failing
-    query = Query()
-    await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    assert len(edits) == 1 and "Couldn't refresh" in query.toast                                              # left as it was
-    query = Query()
-    query.message = NS(photo=None)
-    await bot.on_report_button(NS(callback_query=query), CONTEXT)
-    assert len(edits) == 1 and query.toast == STALE_BUTTON
+        async def edit_message_caption(self, *a, **k):
+            edits.append(a)
+    for data in ("rp:dashboard", "rp:refresh"):
+        query = Query(data)
+        await bot.on_button(NS(callback_query=query, effective_chat=query.message.chat, effective_user=query.from_user,
+                               effective_message=query.message), CONTEXT)
+        assert query.toast == STALE_BUTTON and edits == [], data
 
 
 def test_the_reports_gauges_are_temperature_humidity_and_rain_in_a_row():
     live = {"outdoor": {"temperature": reading(12.0), "humidity": reading(70)}, "rainfall": {"daily": reading(0.2)},
             "pressure": {"relative": reading(1020)}}
-    sheet = dash.sheet(live, {}, TODAY, dash.STATUS)
+    sheet = gauge_sheet.sheet(gauges_result(live, {}, TODAY), dash.STATUS)
     assert [t.title for t in sheet.tiles] == ["Temperature", "Humidity", "Rain"] and sheet.per_row == 3
     image = Image.open(io.BytesIO(gauges.render(sheet)))
-    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, gauges.CELL_H + 2 * gauges.MARGIN)   # one row
+    assert image.size == (3 * gauges.CELL_W + 2 * gauges.MARGIN, gauges.TILE_H + 2 * gauges.MARGIN)   # one row
 
 
-async def test_the_dashboard_reads_the_years_day_rows_in_one_go_and_only_what_its_gauges_show(monkeypatch):
-    calls = []
+async def test_the_reports_gauges_read_the_years_day_rows_in_one_go_and_only_what_its_three_show(tmp_path, archived_cache):
+    from tests.test_service_current import Station, live
+    eco, _ = await archived_station(tmp_path, archived_cache)
+    Station(eco, live(time.time()))
+    reads, read = [], eco.storage.read
 
-    def day_values_on(r, mac, names, days):
-        calls.append((tuple(names), min(days), max(days)))
-        return {n: {d: 1.0 for d in days} for n in names}, {}
-    monkeypatch.setattr(dash, "day_values_on", day_values_on)
+    async def counted(fn, *args):
+        reads.append((fn, args))
+        return await read(fn, *args)
+    eco.storage.read = counted
+    out = await current_of(eco, gauge_sheet.call(dash.STATUS))
+    (mac, names, days), = [args for fn, args in reads if fn is cur.context_on]                 # one read, the year
+    today = Context(eco=eco).now().date()
+    assert names == ["humidity_max", "humidity_min", "rain", "temp_max", "temp_min"] and (days[0], days[-1]) == (date(today.year, 1, 1), today)
+    assert [t.title for t in gauge_sheet.sheet(out, dash.STATUS).tiles] == list(dash.STATUS)
+    await eco.close()
 
-    class Storage:
-        async def read(self, fn, *args):
-            return fn(None, *args)
-    sheet = await dash.dashboard({"outdoor": {"temperature": reading(12.0)}}, Storage(), "mac", TODAY, dash.STATUS)
-    assert calls == [(("humidity_max", "humidity_min", "rain", "temp_max", "temp_min"), date(2026, 1, 1), TODAY)]   # one read, the year
-    assert [t.title for t in sheet.tiles] == list(dash.STATUS)
+
+class ReportAgent:
+    """The model, answering every question with the report it is asked for (Status: the `report` prompt's question)."""
+
+    def __init__(self):
+        self.asked = []
+
+    async def run(self, messages, system, effort, **k):
+        self.asked.append(messages[-1]["content"])
+        messages.append({"role": "assistant", "content": "Weather station\n• Outdoor: 12.3 °C"})   # (as lib/llm.py's Agent does)
+        return messages[-1]["content"]
 
 
-def report_bot(alert_state, sheet):
-    """A bot whose station gives the report's tool results and, through dashboard(), its gauges (`sheet()`: a Dashboard, or raises)."""
-    import json
+async def report_bot(serve, alert_state, gauges_now):
+    """A bot whose service gives the report's readings now (its `reading`, the outdoor temperature, which a test may change) and, with
+    context, its gauges (`gauges`: current's result with context, or raises; gauges_now to begin with); its model a ReportAgent."""
+    now = NS(reading="12.3 °C", gauges=gauges_now)
 
-    from tests.fakes import StandInTools
-
-    class Tools(StandInTools):
-        reading = "12.3 ℃"
-
-        async def call(self, name, raw, turn=None):
-            return {"weather_now": json.dumps({"outdoor": {"temperature": self.reading}}),
-                    "air_quality": json.dumps({"pm10": {"value": 3.0, "unit": "µg/m³", "rating": "🟢 good"}})}[name]
-
-    class Agent:
-        tools = Tools()
-
-    async def dashboard(titles=None):
-        assert titles in (dash.STATUS, None)   # the report's three gauges, or the whole dashboard
-        return sheet()
-    sources = [NS(name="Ecowitt", wants=lambda t: True, poke=lambda: None, describe=lambda: "Ecowitt", dashboard=dashboard),
-               NS(name="AirGradient", wants=lambda t: True, poke=lambda: None, describe=lambda: "AirGradient")]
-    bot = Bot(NS(tz=TZ), Agent(), sources, alert_state)
+    def current(args, meta):
+        if args.get("context"):
+            assert args.get("readings") in (gauge_sheet.call(dash.STATUS)["readings"], None)   # the report's three gauges, or all (none named)
+            return now.gauges()
+        return {"lines": {"station": [f"• Outdoor: {now.reading}"], "air": ["• PM10: 3.0 µg/m³ 🟢 good"]},
+                "headings": {"station": "Weather station", "air": "Air quality"}}
+    service = StandInService(current=current)
+    bot = Bot(NS(tz=TZ), ReportAgent(), alert_state, service=await serve(tools=service, sources=["Ecowitt", "AirGradient"]))
     alert_state.add_chat(1, "Rob")
     alert_state.set_keyboard(1, bot.keyboard_version)
-    return bot, Agent.tools
+    return bot, now
 
 
-def three_tiles():
-    tile = Tile("Humidity", "%", 70, "dial", 0, 100, ("#DFFBFF", "#2C7592"), ("Max",), {"Daily": (87,)}, (0, 100), 0)
-    return Dashboard([tile, tile, tile])
+def three_gauges():
+    """current's result with context for the report's three gauges."""
+    return {"sensors": {"outdoor": {"temperature": {"value": 12.3, "unit": "°C"}, "humidity": {"value": 70, "unit": "%"}},
+                        "rainfall": {"rain": {"value": 0.2, "unit": "mm"}}}}
 
 
 def chat(sent):
@@ -230,86 +190,58 @@ async def no_action(*a, **k):
 CONTEXT = NS(bot=NS(send_chat_action=no_action, send_message_draft=no_action, id=99))   # a Telegram bot that shows "typing..." and takes drafts
 
 
-async def test_the_report_is_its_gauges_with_the_report_as_their_caption_and_refresh_redraws_both(alert_state, monkeypatch):
-    from lib import report_menu
-    bot, tools = report_bot(alert_state, three_tiles)
+REPORT = "Weather station\n• Outdoor: 12.3 °C\n\nAir quality\n• PM10: 3.0 µg/m³ 🟢 good"   # (no forecast nor pollen here)
+
+
+async def test_status_is_one_message_its_gauges_with_the_report_ecobot_mcp_writes_and_a_refresh_and_no_model(serve, alert_state):
+    """Status (the button, /status) is a keyboard button: a fixed read of ecobot://status, no model. One message: the three gauges'
+    picture, the report ecobot-mcp writes from its own answers as its caption (each section's heading in bold), and a 🔄."""
+    from lib.bot import STATUS_REFRESH
+    bot, _ = await report_bot(serve, alert_state, three_gauges)
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "report")
-    assert len(sent) == 1
-    kind, photo, caption, kw = sent[0]
-    assert kind == "photo" and photo == b"\x89PNG" and caption.startswith("Weather station\n• Outdoor: 12.3 °C")
-    assert [e.type for e in kw["caption_entities"]] == ["bold", "bold"]                                        # the headings, as in the text report
-    assert [b.callback_data for b in kw["reply_markup"].inline_keyboard[0]] == [report_menu.REFRESH]         # Refresh, no period buttons
-    assert bot.charted.get(1, 7) is None
-
-    edits = []
-
-    class Query:
-        data, message = report_menu.REFRESH, NS(photo=[NS(file_id="x")])
-
-        async def answer(self, *a, **k):
-            pass
-
-        async def edit_message_media(self, media, reply_markup=None):
-            edits.append(("media", media.caption, media.caption_entities, reply_markup))
-
-        async def edit_message_caption(self, caption=None, caption_entities=None, reply_markup=None):
-            edits.append(("caption", caption, caption_entities, reply_markup))
-    tools.reading = "13.0 ℃"
-    await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
-    what, caption, entities, markup = edits[-1]
-    assert what == "media" and "13.0 °C" in caption and [e.type for e in entities] == ["bold", "bold"]
-    assert markup.inline_keyboard[0][0].callback_data == report_menu.REFRESH
-
-    async def failing(titles=None):
-        raise RuntimeError("cache gone")
-    bot.by_name["Ecowitt"].dashboard = failing
-    tools.reading = "14.0 ℃"
-    await bot.on_report_button(NS(callback_query=Query()), CONTEXT)
-    assert edits[-1][0] == "caption" and "14.0 °C" in edits[-1][1]                                             # no new picture: the caption alone
+    await bot.status(update, CONTEXT)
+    assert bot.agent.asked == []                                                                # no model
+    assert [(k, photo, text) for k, photo, text, _ in sent] == [("photo", b"\x89PNG", REPORT)]
+    kw = sent[0][3]
+    assert [[b.callback_data for b in row] for row in kw["reply_markup"].inline_keyboard] == [[STATUS_REFRESH]]
+    bold = [REPORT.encode("utf-16-le")[e.offset * 2:(e.offset + e.length) * 2].decode("utf-16-le") for e in kw["caption_entities"]]
+    assert bold == ["Weather station", "Air quality"]
+    assert bot.chats[(1, None)].history[-1] == {"role": "assistant", "content": REPORT}           # (a follow-up knows what was shown)
 
 
-async def test_a_report_without_its_gauges_is_the_text_report_as_before(alert_state, caplog):
-    from lib import report_menu
+async def test_statuss_refresh_reads_it_again_into_the_same_message(serve, alert_state):
+    from lib.bot import STATUS_REFRESH
+    bot, now = await report_bot(serve, alert_state, three_gauges)
+    edits, toasts = [], []
 
+    async def edit_media(media, reply_markup=None):
+        edits.append((media.media.input_file_content[:4] if hasattr(media.media, "input_file_content") else media.media, media.caption,
+                      reply_markup))
+
+    async def answer(text=None, **kw):
+        toasts.append(text)
+    message = NS(chat_id=1, message_id=7, photo=[NS(file_id="old")], edit_media=edit_media)
+    now.reading = "14.0 °C"
+    await bot.on_status_button(NS(callback_query=NS(data=STATUS_REFRESH, message=message, answer=answer)), CONTEXT)
+    assert len(edits) == 1 and edits[0][1] == REPORT.replace("12.3", "14.0") and toasts == ["Refreshed"]
+    assert bot.agent.asked == []
+
+
+async def test_status_without_its_gauges_is_the_report_alone_with_its_refresh(serve, alert_state):
     def broken():
         raise RuntimeError("no cache")
-    bot, _ = report_bot(alert_state, broken)
+    bot, _ = await report_bot(serve, alert_state, broken)
     sent = []
     msg, update = chat(sent)
-    await bot.respond(update, CONTEXT, "report")
-    assert [k for k, *_ in sent] == ["text"] and sent[0][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
-    assert "gauges failed" in caplog.text
-
-
-async def test_a_report_too_long_for_a_caption_goes_after_its_gauges_with_the_refresh_button_on_the_text():
-    from lib.bot import deliver
-    from lib import report_menu
-    sent = []
-    msg, _ = chat(sent)
-    text = "Weather station\n" + "\n".join(f"• line {i} " + "x" * 40 for i in range(30))
-    await deliver(msg, text, [b"\x89PNG"], markup=report_menu.keyboard(), titles=[""], bold_headings=True, photos_first=True)
-    assert [k for k, *_ in sent] == ["photo", "text"]
-    assert "reply_markup" not in sent[0][3] and sent[1][3]["reply_markup"].inline_keyboard[0][0].callback_data == report_menu.REFRESH
-
-
-def test_a_refreshed_report_too_long_for_its_caption_keeps_its_first_sections():
-    from lib.bot import CAPTION_LIMIT, report_caption
-    from lib.entities import utf16_len
-    first = "Weather station (2:21am)\n• Outdoor: 12.3 °C"
-    long = first + "\n\nAir quality\n" + "\n".join(f"• line {i} 🟢" + "x" * 30 for i in range(40))
-    body, entities = report_caption(long)
-    assert body == first and [e.type for e in entities] == ["bold"]
-    body, _ = report_caption(first + "\n\nForecast\n• Today: fine")
-    assert body.endswith("• Today: fine")                                                                  # it fits: all of it
-    body, _ = report_caption("Weather station\n" + "\n".join(f"• {i} " + "y" * 60 for i in range(40)))
-    assert utf16_len(body) <= CAPTION_LIMIT and body.startswith("Weather station\n• 0 ")                    # one long section: its first lines
+    await bot.status(update, CONTEXT)
+    assert [(k, text) for k, _, text, _ in sent] == [("text", REPORT)] and sent[0][3]["reply_markup"] is not None
 
 
 async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes_in_the_month(tmp_path):
     """Between its 5-minute readings the bot (and Home Assistant) saw lower and higher: the day rows take those bands in, so the gauges'
     Daily and Monthly highs and lows do, and the year's."""
+    from lib.ecowitt.days import day_values_on
     from lib.storage import Storage
     from lib.timeutil import day_bounds
     from tests.fakes import MAC
@@ -324,9 +256,208 @@ async def test_the_bands_the_bot_saw_widen_the_gauges_figures_and_the_year_takes
         w.put_ranges(MAC, {"outdoor.temperature": {start + 43200: (4, *band)}})
     storage.writer.run(lambda w: (day(w, earlier, 5.0, 28.0, (3.5, 30.0)), day(w, TODAY, 15.0, 20.0, (14.0, 21.5))), ())
     live = {"outdoor": {"temperature": reading(18.0)}}
-    tile = (await dash.dashboard(live, storage, MAC, TODAY, ("Temperature",))).tiles[0]
+    values, _ = await storage.read(day_values_on, MAC, ["temp_max", "temp_min"], dash.periods_of(TODAY)["Yearly"])
+    tile = gauge_sheet.sheet(gauges_result(live, values, TODAY), ("Temperature",)).tiles[0]
     assert tile.rows == {"Daily": (21.5, 14.0), "Monthly": (30.0, 3.5), "Yearly": (30.0, 3.5)}
     values = {"temp_max": {earlier: 28.0, TODAY: 20.0}, "temp_min": {earlier: 5.0, TODAY: 15.0}}
-    plain = dash.sheet(live, values, TODAY, ("Temperature",)).tiles[0]
+    plain = gauge_sheet.sheet(gauges_result(live, values, TODAY), ("Temperature",)).tiles[0]
     assert plain.rows == {"Daily": (20.0, 15.0), "Monthly": (28.0, 5.0), "Yearly": (28.0, 5.0)}   # the readings alone
     storage.close()
+
+
+# ---------- the gauges from the service's current, with context (docs/ecobot-mcp.md 3.1, 6 step 2) ----------
+STATUS_TITLES = ("Temperature", "Humidity", "Rain")
+GAUGE_RESULT = {
+    "sensors": {
+        "outdoor": {"temperature": {"value": 12.3, "unit": "°C", "text": "12.3 °C",
+                                    "today": {"high": 14.0, "low": 9.5}, "month": {"high": 21.0, "low": 4.0},
+                                    "year": {"high": 38.0, "low": -1.0}},
+                    "humidity": {"value": 94, "unit": "%", "text": "94 %", "today": {"high": 94, "low": 60}}},
+        "rainfall": {"rain": {"value": 6.3, "unit": "mm", "text": "6.3 mm", "today": {"total": 6.3},
+                              "month": {"total": 49.8, "wettest_day": {"rain": 20.1}}, "year": {"total": 400.2, "wettest_day": {"rain": 41.0}}}},
+        "wind": {"wind_speed": {"value": 14, "unit": "km/h", "today": {"high_gust": 31.0}}},
+        "indoor": {"temperature": {"value": None, "unit": "°C", "year": {"high": 30.0, "low": 12.0}}},   # no reading now: dimmed
+        "solar_and_uvi": {"uvi": {"value": None, "unit": ""}}},                                          # nothing at all: left out
+    "lines": {"station": []}, "headings": {"station": "Weather station"}}
+
+
+def test_the_gauges_sheet_is_drawn_from_currents_readings_and_their_context():
+    from lib import gauge_sheet
+    sheet = gauge_sheet.sheet(GAUGE_RESULT)
+    tiles = {t.title: t for t in sheet.tiles}
+    assert list(tiles) == ["Temperature", "Humidity", "Rain", "Wind", "Indoor temperature"]   # the dashboard's order (FIRST, then GAUGES')
+    t = tiles["Temperature"]
+    assert (t.value, t.unit, t.kind, t.columns) == (12.3, "°C", "thermometer", ("Max", "Min"))
+    assert t.rows == {"Daily": (14.0, 9.5), "Monthly": (21.0, 4.0), "Yearly": (38.0, -1.0)}
+    assert tiles["Humidity"].value == 94.0 and isinstance(tiles["Humidity"].value, float)       # as the station's reading was read
+    assert tiles["Humidity"].rows["Monthly"] == (None, None)
+    assert tiles["Wind"].rows == {"Daily": (31.0,), "Monthly": (None,), "Yearly": (None,)}      # its highest gust
+    assert tiles["Rain"].rows == {"Daily": (None, 6.3), "Monthly": (20.1, 49.8), "Yearly": (41.0, 400.2)}
+    assert tiles["Indoor temperature"].value is None and tiles["Indoor temperature"].rows["Yearly"] == (30.0, 12.0)
+    status = gauge_sheet.sheet(GAUGE_RESULT, STATUS_TITLES)
+    assert [t.title for t in status.tiles] == list(STATUS_TITLES)
+    assert gauge_sheet.sheet({"sensors": {}}) is None and gauge_sheet.sheet({"error": "x"}) is None
+    assert gauge_sheet.sheet({**GAUGE_RESULT, "unavailable": {"station": "The weather station isn't answering right now."}}) is None
+
+
+async def test_the_reports_gauges_are_the_services_current_with_context(serve, alert_state, monkeypatch):
+    """Status's gauges are drawn from current {context: true} (the station's own dashboard() is not asked), its three readings
+    named, by the service (lib/status.py)."""
+    from tests.fakes import StandInService
+    drawn = []
+    monkeypatch.setattr(gauges, "render", lambda sheet: drawn.append(sheet) or b"\x89PNG")
+
+    def current(args, meta):
+        if args.get("context"):
+            return GAUGE_RESULT
+        return {"lines": {"station": ["• Outdoor: 12.3 °C"]}, "headings": {"station": "Weather station"}}
+    service = StandInService(current=current)
+    bot = Bot(NS(tz=TZ), ReportAgent(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
+    sent = []
+    msg, update = chat(sent)
+    await bot.status(update, CONTEXT)
+    assert sent[0][0] == "photo" and [t.title for t in drawn[-1].tiles] == list(STATUS_TITLES)
+    assert ("current", {"readings": ["outdoor.temperature", "outdoor.humidity", "rainfall.rain"], "context": True}) in service.calls
+
+
+async def test_a_station_that_gives_nothing_sends_its_report_without_gauges(serve, alert_state):
+    from tests.fakes import StandInService
+    down = {"sensors": {}, "lines": {"station": ["• not available right now"]}, "headings": {"station": "Weather station"},
+            "unavailable": {"station": "The weather station isn't answering right now."}}
+    service = StandInService(current=down)
+    bot = Bot(NS(tz=TZ), ReportAgent(), alert_state, service=await serve(tools=service, sources=["Ecowitt"]))
+    sent = []
+    msg, update = chat(sent)
+    await bot.status(update, CONTEXT)
+    assert [k for k, *_ in sent] == ["text"]                                                     # the report as text alone
+
+
+# ---------- the air sensor's gauges, on US standards ----------
+def test_the_air_gauges_scales_and_bands_are_the_epas_and_the_us_co2_guidance():
+    from lib.airgradient.dashboard import AIR_GAUGES, EPA, EPA_NAMES
+    g = {x.title: x for x in AIR_GAUGES}
+    assert list(g) == ["US AQI", "PM2.5", "PM10", "PM1", "CO₂", "VOC index", "NOx index"]               # no own temperature
+    assert (g["PM1"].bounds, g["PM1"].colours, g["PM1"].names) == (g["PM2.5"].bounds, g["PM2.5"].colours, g["PM2.5"].names)   # PM2.5's bands
+    assert EPA == ("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023")
+    assert EPA_NAMES == ("Good", "Moderate", "Unhealthy for Sensitive Groups", "Unhealthy", "Very Unhealthy", "Hazardous")
+    assert g["US AQI"].bounds == (0, 50, 100, 150, 200, 300, 500) and g["US AQI"].colours == EPA and g["US AQI"].aqi
+    assert g["PM2.5"].bounds == (0, 9.0, 35.4, 55.4, 125.4, 225.4, 325.4) and g["PM2.5"].colours == EPA   # the 2024 breakpoints
+    assert g["PM10"].bounds == (0, 54, 154, 254, 354, 424, 604) and g["PM10"].colours == EPA
+    assert g["CO₂"].bounds == (400, 800, 1000, 1500, 2000, 2500)
+    for title, readings in {
+            "US AQI": ((0, 0), (50, 0), (51, 1), (100, 1), (101, 2), (150, 2), (151, 3), (200, 3), (201, 4), (300, 4), (301, 5), (480, 5)),
+            "PM2.5": ((0, 0), (9.0, 0), (9.1, 1), (35.4, 1), (35.5, 2), (55.4, 2), (55.5, 3), (125.4, 3), (125.5, 4), (225.4, 4),
+                      (225.5, 5), (500, 5)),
+            "PM10": ((54, 0), (55, 1), (154, 1), (155, 2), (254, 2), (255, 3), (354, 3), (355, 4), (424, 4), (425, 5), (700, 5))}.items():
+        for value, band in readings:
+            assert g[title].band(value) == EPA_NAMES[band], (title, value)
+    co2 = g["CO₂"]
+    assert [co2.band(v) for v in (420, 799, 800, 999, 1000, 1499, 1500, 1999, 2000, 3000)] == \
+        ["Good", "Good", "Fair", "Fair", "Poor", "Poor", "Bad", "Bad", "Very bad", "Very bad"]
+    assert [g["VOC index"].band(v) for v in (1, 99, 100, 150, 250, 400)] == ["Low", "Low", "Average", "Elevated", "High", "Very high"]
+    assert [g["NOx index"].band(v) for v in (1, 20, 21, 150, 151, 300, 301)] == ["Low", "Low", "Elevated", "Elevated", "High", "High",
+                                                                                  "Very high"]
+    assert g["PM2.5"].band(None) is None
+
+
+def air_result(latest: dict | None, air_values: dict | None = None) -> dict:
+    live = {"outdoor": {"temperature": reading(12.0)}}
+    return gauges_result(live, {}, TODAY, latest, air_values)
+
+
+def test_the_air_sensors_tiles_come_after_the_stations_with_their_aqi_bands_and_figures():
+    from lib.airgradient.metrics import pm10_aqi, pm25_aqi
+    latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³"}, "pm10": {"value": 60.0, "unit": "µg/m³"}, "pm1": {"value": 20.0, "unit": "µg/m³"},
+              "co2": {"value": 1200, "unit": "ppm"}}
+    values = {"pm2_5_max": {date(2026, 10, 2): 70.0, TODAY: 30.0}, "pm2_5_min": {TODAY: 5.0}, "co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
+    sheet = gauge_sheet.sheet(air_result(latest, values))
+    tiles = {t.title: t for t in sheet.tiles}
+    assert list(tiles) == ["Temperature", "US AQI", "PM2.5", "PM10", "PM1", "CO₂"]              # no VOC nor NOx sent: left out
+    aqi = tiles["US AQI"]
+    assert (aqi.value, aqi.band, aqi.kind, aqi.low, aqi.high, aqi.columns) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", "dial",
+                                                                               0, 500, ("Max", "Min"))
+    assert aqi.rows["Daily"] == (pm25_aqi(40.0)[0], pm10_aqi(60.0)[0]) and aqi.rows["Monthly"][0] == pm25_aqi(70.0)[0]   # (the higher of each)
+    assert aqi.ticks == aqi.bounds == (0, 50, 100, 150, 200, 300, 500)
+    pm = tiles["PM2.5"]
+    assert (pm.value, pm.band, pm.decimals, pm.rows["Monthly"]) == (40.0, "Unhealthy for Sensitive Groups", 1, (70.0, 5.0))
+    assert (tiles["PM10"].band, tiles["CO₂"].band, tiles["CO₂"].rows["Daily"]) == ("Moderate", "Poor", (1200.0, 410.0))
+    assert [t.title for t in gauge_sheet.sheet(air_result(None)).tiles] == ["Temperature"]   # no air sensor: no air gauges
+
+
+def test_the_aqi_and_pm25_tiles_name_the_band_their_needle_is_in_on_a_rise():
+    """The service rates PM2.5 (its aqi_us and band) on the lower of the last two readings; the dials show the reading now, so their
+    numbers and names are of the reading now: a rise from 8 to 40 µg/m³ is Unhealthy for Sensitive Groups on both, not Good."""
+    from lib.airgradient.dashboard import EPA_NAMES
+    from lib.airgradient.metrics import pm25_aqi
+    from lib.gauge_look import share
+    latest = {"pm2_5": {"value": 40.0, "unit": "µg/m³", "aqi_us": pm25_aqi(8.0)[0], "band": "good"}}   # (as latest() gives it after 8.0)
+    tiles = {t.title: t for t in gauge_sheet.sheet(air_result(latest)).tiles}
+    aqi, pm = tiles["US AQI"], tiles["PM2.5"]
+    assert (aqi.value, aqi.band, pm.value, pm.band) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups", 40.0,
+                                                        "Unhealthy for Sensitive Groups")
+    assert 2 / 6 <= share(pm, pm.value) < 3 / 6 and 2 / 6 <= share(aqi, aqi.value) < 3 / 6   # both needles in the orange band
+    for value in (4.0, 9.1, 20.0, 35.5, 45.0, 55.5, 90.0, 125.5, 175.0, 225.5, 300.0):   # each band, and just over each edge
+        tiles = {t.title: t for t in gauge_sheet.sheet(air_result({"pm2_5": {"value": value, "unit": "µg/m³"}})).tiles}
+        pm, aqi = tiles["PM2.5"], tiles["US AQI"]
+        assert pm.band == aqi.band == EPA_NAMES[min(int(share(pm, value) * 6), 5)] == EPA_NAMES[min(int(share(aqi, aqi.value) * 6), 5)]
+
+
+def test_the_us_aqi_is_the_higher_of_pm25s_and_pm10s_and_says_when_pm10_sets_it():
+    """The US AQI is AirNow's: the higher of the two particles' own AQI. Dust (PM10 high, PM2.5 low) is not called Good: its band says
+    PM10 sets it. PM2.5 the higher: its band alone, as ever. PM10 with no PM2.5 still gives a US AQI."""
+    from lib.airgradient.metrics import pm10_aqi, pm25_aqi
+    dust = {"pm2_5": {"value": 5.0, "unit": "µg/m³"}, "pm10": {"value": 200.0, "unit": "µg/m³"}}
+    aqi = {t.title: t for t in gauge_sheet.sheet(air_result(dust)).tiles}["US AQI"]
+    assert (aqi.value, aqi.band) == (pm10_aqi(200.0)[0], "Unhealthy for Sensitive Groups (PM10)")
+    smoke = {"pm2_5": {"value": 40.0, "unit": "µg/m³"}, "pm10": {"value": 50.0, "unit": "µg/m³"}}
+    aqi = {t.title: t for t in gauge_sheet.sheet(air_result(smoke)).tiles}["US AQI"]
+    assert (aqi.value, aqi.band) == (pm25_aqi(40.0)[0], "Unhealthy for Sensitive Groups")
+    alone = {t.title: t for t in gauge_sheet.sheet(air_result({"pm10": {"value": 60.0, "unit": "µg/m³"}})).tiles}
+    assert (alone["US AQI"].value, alone["US AQI"].band) == (pm10_aqi(60.0)[0], "Moderate (PM10)")
+
+
+def test_a_tile_with_no_reading_is_dimmed_at_its_floor_in_its_json():
+    from lib.gauge_look import floor, share, shown, tile_json
+    latest = {"pm2_5": {"value": 12.0, "unit": "µg/m³"}}
+    values = {"co2_max": {TODAY: 900}, "co2_min": {TODAY: 410}}
+    sheet = gauge_sheet.sheet(gauges_result({"outdoor": {"temperature": reading(12.0)}, "pressure": {"relative": reading(1012)}},
+                                            {"humidity_max": {TODAY: 80.0}, "humidity_min": {TODAY: 50.0}, "pressure_max": {TODAY: 1020.0}},
+                                            TODAY, latest, values))
+    tiles = {t.title: t for t in sheet.tiles}
+    humidity, co2, aqi = tiles["Humidity"], tiles["CO₂"], tiles["US AQI"]
+    assert humidity.value is None and co2.value is None and co2.band is None                    # figures, no reading now
+    assert (floor(humidity), floor(co2), floor(tiles["Atmospheric pressure"]), floor(aqi)) == (0, 400, 950, 0)
+    assert shown(co2) == 400 and share(co2, shown(co2)) == 0 and share(humidity, 0) == 0
+    got = tile_json(co2)
+    assert (got["value"], got["faded"], got["floor"], got["rows"]["Daily"]) == (None, True, 400, [900, 410])
+    assert tile_json(aqi)["faded"] is False and tile_json(tiles["Atmospheric pressure"])["floor"] == 950
+
+
+def test_a_band_scale_gives_each_band_an_equal_share_of_the_dial():
+    from lib.gauge_look import share
+    pm = gauge_sheet.sheet(air_result({"pm2_5": {"value": 9.0, "unit": "µg/m³"}})).tiles[2]
+    assert pm.title == "PM2.5"
+    assert [round(share(pm, v), 4) for v in (0, 9.0, 35.4, 55.4, 325.4, 400)] == [0, round(1 / 6, 4), round(2 / 6, 4), 0.5, 1, 1]
+    assert share(pm, 22.2) == pytest.approx((1 + (22.2 - 9) / (35.4 - 9)) / 6) and share(pm, -1) == 0
+
+
+def test_the_png_draws_a_tile_with_no_reading_as_its_floor_dimmed():
+    """The dimmed tile is the same gauge at its floor, every colour FADE of the way from the card: the needle at the dial's start, the
+    mercury at the scale's low end, the beaker empty, the number its floor."""
+    from PIL import ImageChops
+    from lib.gauge_look import BG, FADE
+    for tile in (Tile("Atmospheric pressure", "hPa", None, "dial", 950, 1050, dash.PRESSURE, ("Max", "Min"), {"Daily": (1020.0, 1001.0)},
+                      (950, 1000, 1050)),
+                 Tile("Temperature", "°C", None, "thermometer", 0, 40, dash.COLD_TO_HOT[:4], ("Max", "Min"), {"Daily": (20.0, 8.0)}, dash.DEGREES),
+                 Tile("Rain", "mm", None, "beaker", 0, 100, dash.WATER, ("Max", "Total"), {"Monthly": (6.0, 9.0)}, (100, 0)),
+                 Tile("CO₂", "ppm", None, "dial", 400, 2500, ("#00E400",) * 5, ("Max", "Min"), {"Daily": (900, 410)},
+                      (400, 800, 1000, 1500, 2000, 2500), 0, (400, 800, 1000, 1500, 2000, 2500), "Good")):
+        from lib.gauge_look import floor
+        dimmed = Image.open(io.BytesIO(gauges.render(Dashboard([tile])))).convert("RGB")
+        at_floor = Tile(**{**tile.__dict__, "value": floor(tile), "band": None})
+        bright = Image.open(io.BytesIO(gauges.render(Dashboard([at_floor])))).convert("RGB")
+        expected = Image.blend(bright, Image.new("RGB", bright.size, BG), 1 - FADE)
+        off = ImageChops.difference(dimmed, expected).convert("L").histogram()
+        mean, worst = sum(i * n for i, n in enumerate(off)) / sum(off), max(i for i, n in enumerate(off) if n)
+        assert mean < 0.15 and worst <= 20, (tile.title, mean, worst)   # (but the edges' anti-aliasing; the gauge anywhere else: 80+)
+        assert bright.getdata() != dimmed.getdata()

@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from lib.config import Config
-from lib.tools import Tools
 
 TZ = ZoneInfo("Australia/Melbourne")
 MAC = "AA:BB:CC:DD:EE:FF"
@@ -17,16 +16,78 @@ HISTORY_DAYS = 548  # the fake station is 18 months old: enough for every test, 
 STEP = {"5min": 300, "30min": 1800, "4hour": 14400, "1day": 86400}
 
 
-class StandInTools:
-    """A test's stand-in for lib.tools.Tools: it answers call(name, raw, turn) itself, and call_all is the real one over it."""
-    call_all = Tools.call_all
+class StandInService:
+    """A test's stand-in for the service's tools (lib.service.Service), served by ecobot-mcp in memory (tests/served.py) for the bot to
+    call: `answers` is {tool: its answer}, each a dict (sent as JSON) or a function (args, meta) -> dict; every call is kept in `calls`
+    as (tool, args)."""
+
+    def __init__(self, **answers):
+        self.answers, self.calls = answers, []
+
+    def get(self, name):
+        if name not in self.answers:
+            return None
+        service = self
+
+        class Tool:
+            async def call(self, args=None, meta=None):
+                import json
+                service.calls.append((name, dict(args or {})))
+                answer = service.answers[name]
+                return json.dumps(answer(dict(args or {}), meta) if callable(answer) else answer, ensure_ascii=False)
+        return Tool()
+
+    def __getitem__(self, name):
+        return self.get(name)
+
+    def __contains__(self, name):
+        return name in self.answers
+
+    def held(self, names):
+        return list(names)
+
+
+def gauges_result(live: dict, values: dict, today, air: dict | None = None, air_values: dict | None = None) -> dict:
+    """current's result with context, as the bot reads it for its gauges, for a live reading ({group: {field: {value, unit}}}) and the
+    days' figures (days.day_values_on's): each gauge's reading now and its figures (lib/service/current.py context_of), through JSON.
+    With the air sensor's latest reading (`air`: {"pm2_5": {"value": 12.0, "unit": "µg/m³", ...}}, AirGradient.latest()'s, PM2.5 with
+    its aqi_us and band worked out when not given) and its day figures ({"pm2_5_max": {day: value}}), its readings too (air_context_of)."""
+    import json
+    from lib.airgradient.metrics import pm25_aqi
+    from lib.ecowitt.dashboard import GAUGES, live_value
+    from lib.series import AIR
+    from lib.service.current import air_context_of, air_entry, context_of
+    sensors: dict = {}
+    for gauge in GAUGES:
+        value, beside = live_value(live, gauge.live), context_of(gauge.reading, live, values, {}, today, TZ)
+        if value is not None or beside:
+            group, name = gauge.reading.split(".", 1)
+            sensors.setdefault(group, {})[name] = {"value": value, "unit": gauge.unit, **beside}
+    for column, metric in AIR.items() if air is not None or air_values else ():
+        entry = dict((air or {}).get(column) or {})
+        now = entry.get("value")
+        if column == "pm2_5" and now is not None and "aqi_us" not in entry:
+            entry["aqi_us"], entry["band"] = pm25_aqi(now)
+        beside = air_context_of(column, now, metric.unit, air_values or {}, today)
+        if now is not None:
+            sensors.setdefault("air", {})[column] = {**air_entry(column, {"unit": metric.unit, **entry}), **beside}
+        elif beside:
+            sensors.setdefault("air", {})[column] = {"value": None, "unit": metric.unit, **beside}
+    return json.loads(json.dumps({"sensors": sensors}))
+
+
+def chart_data(title: str = "Temperature", drawn_by: dict | None = None) -> dict:
+    """A chart as a service tool gives it (specs.to_json), with its drawn_by."""
+    from lib.specs import Chart, Line, Panel, to_json
+    data = to_json(Chart(title, "", [Panel(title, "°C", [Line("Outdoor", [1, 2], [1.0, 2.0])])]), TZ)
+    return {**data, "drawn_by": drawn_by or {"tool": "summary", "arguments": {"period": "7d"}, "periods": []}}
 
 
 def config(tmp_path, **over) -> Config:
     base = dict(telegram_token="1:x", openrouter_api_key="k", openrouter_base_url="http://x", openrouter_model="m", tz=TZ,
                 ecowitt_api_key="a", ecowitt_app_key="b", airgradient_token="t", airgradient_location="42",
                 airgradient_dashboard="https://example.com/live", state_path=tmp_path / "state.json",
-                storage_path=tmp_path / "ecobot.sqlite", admin_only=False)   # tests that are about ADMIN_ONLY switch it on
+                storage_path=tmp_path / "ecobot.sqlite", admin_only=False)   # tests that are about BOT_ADMIN_ONLY switch it on
     return Config(**{**base, **over})
 
 
@@ -90,11 +151,17 @@ WHOLE = ("humidity", "wind_direction")   # what the station writes as whole numb
 
 def written(name: str, value: float) -> str:
     """A reading as the station writes it: one decimal, but none for the WHOLE readings, nor for a UV index that is whole."""
+    return writer(name)(value)
+
+
+def writer(name: str):
+    """written(name, ...) as a function of the value alone (the fake history writes a field's every value with it)."""
     base = name.removesuffix("_low").removesuffix("_high")
     if base in WHOLE:
-        return f"{value:.0f}"
-    out = f"{value:.1f}"
-    return out[:-2] if base == "uvi" and out.endswith(".0") else out
+        return "{:.0f}".format
+    if base == "uvi":
+        return lambda value: out[:-2] if (out := f"{value:.1f}").endswith(".0") else out
+    return "{:.1f}".format
 
 
 class FakeEcowitt:
@@ -133,17 +200,27 @@ class FakeEcowitt:
         parse = lambda s: int(datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ).timestamp())
         start, end = parse(p["start_date"]), parse(p["end_date"])
         first = start - start % step if p["cycle_type"] == "1day" else start + -start % step  # on the clock; 1day buckets are UTC days
+        times = range(first, end + 1, step)
+        keys = [str(ts) for ts in times]
+        every = 300 if step <= 1800 else 3600   # each bucket's samples: its first, and its lowest and highest (but for 5 minutes)
+        n = step // every
         out: dict = {}
         for group in p["call_back"].split(","):
             named = {"outdoor": [("temperature", temp), ("humidity", humidity), ("dew_point", temp)], "rainfall": [("daily", rain_day)], "pressure": [("relative", pressure)], "wind": [("wind_gust", gust), ("wind_direction", direction), ("wind_speed", wind_speed)], "solar_and_uvi": [("uvi", uv_index), ("solar", lambda ts: uv_index(ts) * 80)]}
             fields: dict = {}
             for name, fn in named.get(group, [("temperature", temp)] if group == "indoor" else []):   # (no piezo gauge)
-                for ts in range(first, end + 1, step):
-                    samples = [fn(t) for t in range(ts, ts + step, 300 if step <= 1800 else 3600)]
-                    fields.setdefault(name, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, samples[0])
-                    if p["cycle_type"] != "5min":
-                        for suffix, val in (("_low", min(samples)), ("_high", max(samples))):
-                            fields.setdefault(name + suffix, {"unit": "%" if name == "humidity" else "℃", "list": {}})["list"][str(ts)] = written(name, val)
+                if not keys:
+                    continue
+                unit, write = "%" if name == "humidity" else "℃", writer(name)
+                samples = [fn(t) for t in range(first, times[-1] + step, every)]
+                if n == 1:
+                    fields[name] = {"unit": unit, "list": dict(zip(keys, map(write, samples)))}
+                    continue
+                buckets = [samples[i:i + n] for i in range(0, len(samples), n)]
+                fields[name] = {"unit": unit, "list": {k: write(b[0]) for k, b in zip(keys, buckets)}}
+                if p["cycle_type"] != "5min":
+                    fields[name + "_low"] = {"unit": unit, "list": {k: write(min(b)) for k, b in zip(keys, buckets)}}
+                    fields[name + "_high"] = {"unit": unit, "list": {k: write(max(b)) for k, b in zip(keys, buckets)}}
             out[group] = fields
         return out
 
@@ -320,3 +397,81 @@ async def archived_station(tmp_path, cache_file):
     await eco.start()
     fake.calls.clear()
     return eco, fake
+
+
+def draws(monkeypatch, render):
+    """ecobot-mcp's drawing (lib/chart_images.render, which the server in memory draws with, tests/served.py: the bot draws nothing
+    itself) stood in for by render(chart, tz) -> PNG bytes (or anything the test sends as the picture)."""
+    from lib import chart_images
+    monkeypatch.setattr(chart_images, "render", lambda chart, tz, dark=None: (render(chart, tz), bool(dark)))
+
+
+# ---------- the irrigation controller (lib/irrigation: the bot's and irrigation-mcp's) ----------
+TUYA_SECRET = "s3cret"
+TUYA_STATUS = [{"code": "switch", "value": False}, {"code": "battery_percentage", "value": 100}, {"code": "weather_delay", "value": "cancel"},
+               {"code": "countdown", "value": 0}, {"code": "work_state", "value": "idle"}, {"code": "use_time_one", "value": 40}]   # as the controller answered
+
+
+def tuya_config(tmp_path, **over) -> Config:
+    """The settings with the controller's three (client id "cid", secret TUYA_SECRET, device "dev1")."""
+    return config(tmp_path, tuya_device_id="dev1", tuya_client_id="cid", tuya_client_secret=TUYA_SECRET, **over)
+
+
+class FakeTuya:
+    """Stands in for the Tuya cloud: records the signed requests it gets and checks each signature."""
+
+    def __init__(self, status=None, fail_token_once=False):
+        self.calls, self.status, self.token_n, self.fail_token_once = [], status if status is not None else TUYA_STATUS, 0, fail_token_once
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        import json
+
+        from lib.irrigation.tuya import sign
+        h, path = request.headers, request.url.raw_path.decode()
+        body = request.content
+        token = h.get("access_token", "")
+        expected = sign("cid", TUYA_SECRET, token, h["t"], h["nonce"], request.method, path, body)   # signed over what was sent
+        assert h["sign"] == expected and h["client_id"] == "cid" and h["sign_method"] == "HMAC-SHA256"
+        if path.startswith("/v1.0/token"):
+            self.token_n += 1
+            return httpx.Response(200, json={"success": True, "result": {"access_token": f"tok{self.token_n}", "expire_time": 7200}})
+        self.calls.append((request.method, path, json.loads(body) if body else None, token))
+        if self.fail_token_once and token == "tok1":
+            self.fail_token_once = False
+            return httpx.Response(200, json={"success": False, "code": 1010, "msg": "token invalid"})
+        if path.endswith("/status"):
+            return httpx.Response(200, json={"success": True, "result": self.status})
+        return httpx.Response(200, json={"success": True, "result": True})
+
+
+class FakeController:
+    """The irrigation controller (lib/irrigation/tuya.Tuya's methods) in memory: its status, the commands it was sent, and `down` (it
+    can't be reached: IrrigationError)."""
+
+    def __init__(self, **status):
+        self.status_now = {"switch": False, "battery_percentage": 100, "weather_delay": "cancel", "work_state": "idle", **status}
+        self.commands, self.down = [], False
+
+    def _reachable(self):
+        from lib.irrigation import IrrigationError
+        if self.down:
+            raise IrrigationError("Tuya request failed (ConnectError)")
+
+    async def status(self):
+        self._reachable()
+        return dict(self.status_now)
+
+    async def delay(self, duration):
+        self._reachable()
+        self.commands.append(("delay", duration))
+        self.status_now["weather_delay"] = duration                      # the controller reports it
+
+    async def set_switch(self, on):
+        self._reachable()
+        self.commands.append(("switch", on))
+        self.status_now["switch"] = on
+
+    async def water(self, minutes):
+        self._reachable()
+        self.commands.append(("water", minutes))
+        self.status_now.update(switch=True, work_state="manual", countdown=minutes * 60)

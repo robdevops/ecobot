@@ -60,3 +60,9 @@ def test_at_hour_is_that_local_clock_time_on_either_side_of_a_daylight_saving_ch
     from lib.timeutil import at_hour
     assert at_hour(date(2026, 4, 5), 12, TZ) == int(datetime(2026, 4, 5, 2, tzinfo=UTC).timestamp())     # standard time, UTC+10
     assert at_hour(date(2026, 4, 4), 12, TZ) == int(datetime(2026, 4, 4, 1, tzinfo=UTC).timestamp())     # daylight time, UTC+11
+
+
+def test_when_gives_the_form_the_tools_use_in_their_time_field():
+    from lib.timeutil import when
+    assert when(int(datetime(2026, 10, 2, 18, 5, tzinfo=TZ).timestamp()), TZ) == "Fri 2 Oct 2026 6:05pm"
+    assert when(int(datetime(2026, 10, 2, 0, 7, tzinfo=TZ).timestamp()), TZ) == "Fri 2 Oct 2026 12:07am"

@@ -1,6 +1,15 @@
 """Telegram bot for a personal weather station (Ecowitt) and air-quality sensor (AirGradient),
 answered by a model through OpenRouter, with proactive alerts. Settings come from environment variables
 (see lib/config.py); run it under systemd with the unit's EnvironmentFile set.
+
+The bot is a client of ecobot-mcp (python -m ecobot_mcp, docs/ecobot-mcp.md 3.8 and step 6), reached over MCP at BOT_MCP_URL, which
+it can't start without (lib/weather.RemoteWeather): ecobot-mcp runs the sources, the alert log and the alert rules, and draws every
+picture; the bot's tools, instructions, station and alerts come from it. The bot does what only a Telegram bot can: the chats and their
+buttons, the model, and delivering the alerts.
+
+With BOT_IRRIGATION_MCP_URL set it is irrigation-mcp's client too (python -m irrigation_mcp, docs/ecobot-mcp.md 3.9 and step 8b,
+lib/irrigation_remote.py): its Irrigation button and menu call irrigation-mcp's tools, and irrigation://alerts is delivered as
+ecobot://alerts is. The controller itself (Tuya, the watchdog, the daily check) is irrigation-mcp's alone.
 """
 
 import asyncio
@@ -9,200 +18,166 @@ import dataclasses
 import logging
 import os
 import signal
-import time
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
-from lib.config import ROOT, Config
+from lib import auth_token
+from lib.config import RETIRED_TOKEN, Config
 
 
 from telegram import Update
 from telegram.error import InvalidToken, NetworkError
 from telegram.ext import Application, Defaults
 
-from lib import charts, intent
-from lib.airgradient import AirGradient
-from lib.airgradient import metrics as air_metrics
-from lib.alerts.forecast import ForecastMonitor
-from lib.alerts.irrigation import IrrigationMonitor
-from lib.alerts.menu import LABELS, available_kinds
-from lib.alerts.notify import AlertState, Notifier
-from lib.alerts.particulates import CHECK_SECONDS as PARTICULATES_CHECK_SECONDS, ParticulatesMonitor
-from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
-from lib.alerts.weather import WeatherMonitor
-from lib.bot import AHEAD_SECONDS, TURN_SECONDS, Bot, Tasks, polling_error
-from lib.ecowitt import Archive, Ecowitt
-from lib.ecowitt.source import HA_IMPORT_SECONDS
-from lib.forecast import Forecast
-from lib.irrigation import Tuya
-from lib.irrigation.watchdog import CHECK_SECONDS as VALVE_CHECK_SECONDS
+from lib import theme   # (DARKMODE: the bot asks ecobot-mcp for charts in its own theme)
+from lib.alerts.notify import AlertDelivery, AlertState, Notifier, ReadMark
+from lib.bot import TURN_SECONDS, Bot, Tasks, polling_error
+from lib.irrigation_remote import NAME as IRRIGATION_MCP, RemoteIrrigation
 from lib.llm import Agent
-from lib.logs import BUGS, LogFormat, on_journal, stream_handlers
-from lib.pollen import Pollen
-from lib.compose import Composer
-from lib.history import History
-from lib.sources import Source
-from lib.storage import Storage
-from lib.tools import Tools
-from lib.warm import every, safely
+from lib.netenv import docker_private_network
+from lib.logs import LogFormat, on_journal, stream_handlers
+from lib import model_tools
+from lib.version import commit_in, version   # noqa: F401 (commit_in: named here for the tests)
+from lib.warm import safely
+from lib.weather import RemoteWeather
 
 
 _format = LogFormat("%(levelname)s %(message)s", priority=on_journal())   # DEBUG and INFO to stdout, WARN and ERROR to stderr
 logging.basicConfig(level=logging.INFO, handlers=stream_handlers(_format))
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)   # the MCP client's: a line per request otherwise
 logging.getLogger("telegram.ext.Application").setLevel(logging.WARNING)  # "Application started" etc.
 log = logging.getLogger("ecobot")
 
-
-async def start_sources(cfg: Config) -> tuple[list[Source], Config]:
-    """Every configured data source that starts, and the settings in the time zone they run in. The weather station starts
-    first: it names its own time zone, which wins over TZ, so the air sensor and the optional website sources (pollen,
-    forecast, off unless switched on), and everything built after, use the station's; those three start side by side (each
-    waits on its own server). The forecast uses the station's location unless one is configured."""
-    sources: list[Source] = []
-    took: dict[str, float] = {}
-
-    async def start(kind: type[Source], *args, **kwargs) -> Source | None:
-        """A source made and started; one that fails either way is logged and left out (None)."""
-        source, started = None, time.monotonic()
-        try:
-            source = kind(*args, **kwargs)
-            await source.start()
-            return source
-        except Exception as e:
-            log.error("%s couldn't start (%s: %s) - continuing without it", kind.name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
-            if source is not None:
-                await safely(source.close)
-            return None
-        finally:
-            took[kind.name] = time.monotonic() - started
-    storage = None
-    if cfg.ecowitt or cfg.airgradient:
-        try:   # (in a thread: opening makes or upgrades its tables)
-            storage = await asyncio.to_thread(Storage, cfg.storage_path, cfg.tz)
-        except Exception as e:
-            log.error("The history file %s couldn't be opened (%s: %s) - continuing without the weather station and the air sensor",
-                      cfg.storage_path, type(e).__name__, e, exc_info=isinstance(e, BUGS))
-    if cfg.ecowitt and storage is not None and (eco := await start(Ecowitt, cfg, storage=storage)):
-        sources.append(eco)
-    eco = sources[0] if sources else None
-    if eco and str(eco.tz) != str(cfg.tz):
-        if os.getenv("TZ"):
-            log.warning("TZ=%s is not the weather station's time zone; using the station's, %s", os.getenv("TZ"), eco.tz)
-        cfg = dataclasses.replace(cfg, tz=eco.tz)
-    if not getattr(cfg.tz, "key", None):
-        log.warning("The time zone has no name, only an offset (%s), so daylight saving will put the times out: set TZ, "
-                    "e.g. TZ=Australia/Melbourne", cfg.tz)
-    starts = []
-    if cfg.airgradient and storage is not None:   # (one file and one Home Assistant client for both; the file is the station's to close, else the sensor's)
-        starts.append(start(AirGradient, cfg, storage=storage, owned=eco is None, **({"ha": eco.ha} if eco and eco.ha else {})))
-    if cfg.pollen:
-        starts.append(start(Pollen, cfg))
-    if cfg.forecast:
-        starts.append(start(Forecast, cfg, (eco.latitude, eco.longitude) if eco and None not in (eco.latitude, eco.longitude) else None))
-    sources += [s for s in await asyncio.gather(*starts) if s is not None]   # (in this order, whichever answers first)
-    if storage is not None and not sources:
-        storage.close()
-    if took:
-        log.debug("Sources started in %.1fs: %s", sum(took.values()), ", ".join(f"{name} {seconds:.1f}" for name, seconds in took.items()))
-    return sources, cfg
+STARTUP_WAIT = 30.0   # seconds the bot waits for ecobot-mcp at start (its station names the time zone) before it carries on without
 
 
-def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks) -> tuple[list[str], WeatherMonitor | None]:
-    """Hook up the alert monitor of every source that started and of the irrigation controller. The weather alerts start in
-    warm_up, once the station has been read. Returns the alert types now running, and the weather monitor."""
-    eco, air, pollen, forecast = (bot.by_name.get(name) for name in ("Ecowitt", "AirGradient", "Pollen", "Forecast"))
-    running: list[str] = []
-    weather = WeatherMonitor(eco, bot.state, notify, cfg.alert_cooldown_minutes * 60, cfg.rain_quiet_hours) if eco else None
-    if air:
-        tasks.start(every(PARTICULATES_CHECK_SECONDS, ParticulatesMonitor(air, bot.state, notify).check))
-        running += ParticulatesMonitor.KINDS
-    if forecast:
-        forecast.warmer.after.append(ForecastMonitor(forecast, bot.state, notify).check)   # after each refresh (in the day)
-        running += ForecastMonitor.KINDS
-    if pollen:
-        pollen.warmer.after.append(PollenAndAsthmaMonitor(pollen, bot.state, notify).check)  # after each refresh (in the day)
-        running += PollenAndAsthmaMonitor.KINDS
-    if bot.irrigation:   # the daily check (rain delay, battery) and the watchdog that closes the valve after a run
-        tasks.start(IrrigationMonitor(bot.irrigation, bot.state, notify, cfg.tz, cfg.irrigation_check_hour, eco, forecast).run())
-        tasks.start(every(VALVE_CHECK_SECONDS, bot.watchdog.check))
-        running += IrrigationMonitor.KINDS
-    return running, weather
+def start_alerts(cfg: Config, bot: Bot, notify: Notifier, tasks: Tasks, weather: RemoteWeather,
+                 irrigation: RemoteIrrigation | None = None) -> list:
+    """The alerts are the servers': ecobot-mcp's alert log read over MCP (ecobot://alerts) and, with irrigation-mcp, its own
+    (irrigation://alerts), each delivered (AlertDelivery) to the chats subscribed to its kinds, each with its own last id handled in
+    bot_state.json. Returns what keeps the time zone (the deliveries: follow_zone)."""
+    delivery = AlertDelivery(weather.alerts, notify, bot.state, cfg.tz, weather=weather)   # (its charts drawn by ecobot-mcp)
+    zoned: list = [delivery]
+    tasks.start(delivery.run())
+    if irrigation is not None:   # (its alerts have no chart)
+        watering = AlertDelivery(irrigation.alerts, notify, bot.state, cfg.tz, mark=ReadMark(bot.state, IRRIGATION_MCP),
+                                 unexpired_first=True)   # (at the first start: the battery or pause alerts of a check that came before)
+        zoned.append(watering)
+        tasks.start(watering.run())
+    return zoned
 
 
-async def warm_up(bot: Bot, weather: WeatherMonitor | None, running: list[str], tasks: Tasks, tg_bot=None):
-    """Fetch everything once, together, and log one summary line; then start what waited for it: the weather alerts, the
-    archives (copying each source's history into its cache), the keyboard's charts drawn ahead every few minutes."""
-    eco, air = bot.by_name.get("Ecowitt"), bot.by_name.get("AirGradient")
-
-    async def ecowitt_part():
-        # One request at a time (Ecowitt rate-limits): warm first, so the alerts' own look at the last 3 hours is answered
-        # from what was just fetched. A failed first refresh must not stop the alerts or the archive: safely() logs it
-        await safely(eco.warm, True)
-        try:
-            await weather.init()
-            eco.warmer.after.append(weather.check)  # checked on every fresh refresh
-            running[:0] = WeatherMonitor.KINDS
-            await weather.check()
-            if eco.fast is not None:   # Home Assistant: the rain alert looks at each new reading as it comes in, not only at the minute's refresh
-                eco.on_live.append(weather.check_rain)
-        except Exception as e:
-            log.error("Weather alerts couldn't start (%s: %s)", type(e).__name__, e, exc_info=isinstance(e, BUGS))
-        if eco.fast is not None:
-            tasks.start(eco.watch_live())
-        # The full history is copied into the cache in the background (a few minutes the first time), so questions rarely
-        # need Ecowitt inline
-        tasks.start(Archive(eco, eco.archive_pace).loop())
-        if eco.ranges_from_ha:   # the cloud's readings get their 5-minute bands from what Home Assistant kept, the days the bot was not watching too
-            tasks.start(every(HA_IMPORT_SECONDS, eco.import_ranges))
-
-    async def air_part():
-        await safely(air.warm, True)
-        tasks.start(air_history())   # even if the sensor was unreachable just now
-
-    async def air_history():
-        """What Home Assistant kept of the monitor (the readings the bot lacks, their bands, the minutes), then the days the cache lacks, then
-        Home Assistant again every HA_IMPORT_SECONDS."""
-        if air.ha:   # (first: it is quick, and holds the last days; the backfill can take minutes the first time)
-            await safely(air.import_history)
-        if air.cloud:
-            await safely(air_backfill)
-        if air.ha:
-            await every(HA_IMPORT_SECONDS, air.import_history)
-
-    async def air_backfill():
-        started = time.monotonic()
-        fetched, failed, total = await air.backfill()
-        log.info("Backfill AirGradient: %d days fetched, %d failed, %d days held, %.0fs", fetched, failed, total, time.monotonic() - started)
-
+def _zone(name: str | None):
     try:
-        await asyncio.gather(*([ecowitt_part()] if eco else []), *([air_part()] if air else []))
-    except Exception as e:
-        log.error("Startup fetch failed (%s: %s); the regular refreshes will catch up", type(e).__name__, e, exc_info=isinstance(e, BUGS))
-    if missing := [LABELS[k] for k in available_kinds(bot.by_name, bot.irrigation is not None) if k not in running]:
-        log.warning("Alerts NOT running: %s (see the error above)", ", ".join(missing))
-    if tg_bot is not None:
-        tasks.start(every(AHEAD_SECONDS, lambda: bot.draw_buttons_ahead(tg_bot)))
-
-
-def version() -> str:
-    """The checked-out commit, so the log shows which code is running."""
-    return commit_in(ROOT / ".git")
-
-
-def commit_in(git_dir) -> str:
-    """The short hash HEAD points at, read from the repository's files rather than by running git (which refuses a folder owned by
-    another user, as when the service runs as its own user). "unknown" when it cannot be read."""
-    try:
-        head = (git_dir / "HEAD").read_text().strip()
-        if head.startswith("ref:"):
-            ref = head.split(None, 1)[1]
-            try:
-                head = (git_dir / ref).read_text().strip()
-            except FileNotFoundError:   # after `git pack-refs` or gc the branch is a line in packed-refs
-                head = next(line.split()[0] for line in (git_dir / "packed-refs").read_text().splitlines()
-                            if line.endswith(f" {ref}"))
-        return head[:7] if len(head) >= 7 and all(c in "0123456789abcdef" for c in head.lower()) else "unknown"
+        return ZoneInfo(name) if name else None
     except Exception:
-        return "unknown"
+        return None
+
+
+def follow_zone(weather: RemoteWeather, bot: Bot, state: AlertState, zoned: list):
+    """The bot in the station's time zone whenever it is read (the first read, if ecobot-mcp couldn't be reached at start, or
+    another zone later): the bot's settings, the charts, the alerts' charts, and what start_alerts started (`zoned`: AlertDelivery,
+    IrrigationMonitor, whose wait for the check time is timed again). The zone is kept in bot_state.json, for a start while ecobot-mcp
+    can't be reached (connect)."""
+    def apply(zone):
+        if state.zone != str(zone):
+            state.zone = str(zone)
+            try:
+                state.save()
+            except Exception as e:
+                log.warning("Couldn't save the station's time zone (%s: %s)", type(e).__name__, e)
+        if str(zone) == str(bot.cfg.tz):
+            return
+        log.info("The weather station's time zone is %s: the bot runs in it from now on (it was %s)", zone, bot.cfg.tz)
+        bot.cfg = dataclasses.replace(bot.cfg, tz=zone)
+        bot.alert_charts.tz = zone
+        theme.configure(bot.cfg.dark_mode, zone)
+        for keeper in zoned:
+            keeper.tz = zone
+    weather.on_zone = apply
+    if weather.station_tz is not None:   # (read before this was hooked up)
+        apply(weather.station_tz)
+
+
+def mcp_token(cfg: Config):
+    """The token the bot sends ecobot-mcp: the first of AUTH_TOKENS; else the retired WEATHER_MCP_TOKEN, with a warning; else the one
+    ecobot-mcp generated in the data folder they share, read again for each connection (a function: ecobot-mcp may write it after the
+    bot starts: at a start of both, the bot may look before ecobot-mcp has written it). Never logged: only where it is."""
+    if cfg.auth_tokens:
+        if cfg.retired_mcp_token:
+            log.warning("%s is retired and ignored: the bot sends the first of AUTH_TOKENS", RETIRED_TOKEN)
+        return cfg.auth_tokens[0]
+    if cfg.retired_mcp_token:
+        log.warning("%s is retired: the bot sends it for now, but move it into AUTH_TOKENS (and into ecobot-mcp's AUTH_TOKENS, "
+                    "if it isn't there already)", RETIRED_TOKEN)
+        return cfg.retired_mcp_token
+    folder = cfg.state_path.parent
+    return lambda: auth_token.read(folder)
+
+
+def no_token_yet(cfg: Config, token) -> bool:
+    """Said (a warning) when ecobot-mcp couldn't be reached in time and the bot has no token to send it: the generated one isn't in the
+    data folder. Only then: at a start of both, the file can appear a moment after the bot first looks."""
+    if not callable(token) or token() is not None:
+        return False
+    log.warning("AUTH_TOKENS is not set and there is no token at %s: ecobot-mcp writes it there at its first start, on the same data "
+                "folder. Until it can be read the bot sends none and is refused; set AUTH_TOKENS (the same in both) if ecobot-mcp keeps "
+                "another folder", auth_token.path(cfg.state_path.parent))
+    return True
+
+
+async def connect(cfg: Config, stack: contextlib.AsyncExitStack, state: AlertState) -> tuple[RemoteWeather, Config]:
+    """The bot as ecobot-mcp's client (BOT_MCP_URL): the supervisor started (closed by `stack`), the first connection waited for up to
+    STARTUP_WAIT seconds; the settings in the station's time zone once it has been read, else in the one last read (kept in
+    bot_state.json), else in TZ's, with a warning. Read later, it is followed then (follow_zone)."""
+    kept = _zone(state.zone)
+    token = mcp_token(cfg)
+    weather = RemoteWeather(cfg.mcp_url, token, kept or cfg.tz)
+    supervisor = asyncio.create_task(weather.run())
+
+    async def stop():
+        supervisor.cancel()
+        await asyncio.gather(supervisor, return_exceptions=True)
+        await weather.close()
+    stack.push_async_callback(stop)
+    try:
+        await asyncio.wait_for(weather.listening.wait(), STARTUP_WAIT)
+    except TimeoutError:
+        no_token_yet(cfg, token)
+        log.warning("ecobot-mcp at %s isn't reachable yet: questions are told so until it is (the time zone is %s, %s, "
+                    "until its station is read)", cfg.mcp_url, "the station's last read" if kept else "TZ's", weather.tz)
+    if str(weather.tz) != str(cfg.tz):
+        cfg = dataclasses.replace(cfg, tz=weather.tz)
+    return weather, cfg
+
+
+TUYA_NAMES = ("IRRIGATION_TUYA_DEVICE_ID", "BOT_TUYA_DEVICE_ID", "TUYA_DEVICE_ID")   # (any of them set: the bot once ran the controller)
+
+
+def connect_irrigation(cfg: Config, stack: contextlib.AsyncExitStack, token) -> RemoteIrrigation | None:
+    """irrigation-mcp's client (BOT_IRRIGATION_MCP_URL), its supervisor started (closed by `stack`), not waited for: a press while it
+    can't be reached is told so. None without the setting (no Irrigation button, no irrigation alerts); then a Tuya setting still in the
+    environment (the bot ran the controller itself before step 8b) is a warning saying what to do."""
+    if not cfg.irrigation_mcp_url:
+        if any(os.getenv(name, "").strip() for name in TUYA_NAMES):
+            log.warning("The irrigation controller's settings are set but BOT_IRRIGATION_MCP_URL isn't: the controller is irrigation-mcp's "
+                        "now (python -m irrigation_mcp, the irrigation-mcp.service unit, or the irrigation-mcp container). Run it and set "
+                        "BOT_IRRIGATION_MCP_URL (systemd: http://127.0.0.1:8766/mcp) for the Irrigation button and its alerts "
+                        "(docs/configuration.md)")
+        return None
+    if urlsplit(cfg.irrigation_mcp_url).hostname in ("127.0.0.1", "localhost", "::1") and docker_private_network():
+        log.warning("BOT_IRRIGATION_MCP_URL is %s, but in a container on Docker's own network that is the bot's container, not "
+                    "irrigation-mcp's: set it to http://irrigation-mcp:8766/mcp (README: Docker)", cfg.irrigation_mcp_url)
+    irrigation = RemoteIrrigation(cfg.irrigation_mcp_url, token)
+    supervisor = asyncio.create_task(irrigation.run())
+
+    async def stop():
+        supervisor.cancel()
+        await asyncio.gather(supervisor, return_exceptions=True)
+        await irrigation.close()
+    stack.push_async_callback(stop)
+    return irrigation
 
 
 AsyncOpenAI = Timeout = None   # openai's, imported when the model's client is made (_client): the import takes half a second, more than all of lib
@@ -220,50 +195,38 @@ def _client(cfg: Config):
 
 async def main():
     log.info("Starting ecobot %s", version())
-    cfg = Config.from_env()
+    cfg = Config.from_env()   # (stops, saying so, without BOT_MCP_URL: the bot is ecobot-mcp's client and nothing else)
     _format.width = cfg.log_width   # a chat message in the log is cut to it from here on
     for name in ("ecobot", "lib"):   # the bot's own lines: the libraries keep theirs
         logging.getLogger(name).setLevel(cfg.log_level)
-    air_metrics.REQUIRE_CONSECUTIVE = cfg.antispike_require_consecutive
-    intent.FEELS_LIKE_IN_ALL = cfg.chart_all_feels_like
-    intent.VPD_IN_ALL = cfg.chart_all_vpd
     # Whatever starts is closed on the way out, the last started first, however the bot stops (a failure part-way included)
     async with contextlib.AsyncExitStack() as stack:
         app = (Application.builder().token(cfg.telegram_token).concurrent_updates(True)
                .defaults(Defaults(disable_notification=True))  # silent messages
                .connect_timeout(10).read_timeout(15).write_timeout(15)  # default 5s is tight
                .build())
-        handshake = asyncio.create_task(app.initialize())   # Telegram is asked who the bot is while the sources start
+        handshake = asyncio.create_task(app.initialize())   # Telegram is asked who the bot is while ecobot-mcp is reached
+        state = AlertState(cfg.state_path)
         try:
-            sources, cfg = await start_sources(cfg)   # in the weather station's time zone from here on
+            weather, cfg = await connect(cfg, stack, state)   # in the weather station's time zone from here on, once it is read
         except BaseException:
             handshake.cancel()
             raise
-        for source in sources:
-            stack.push_async_callback(safely, source.close)
-        if not sources:
-            handshake.cancel()
-            raise SystemExit("No data source is working - nothing to talk about")
-        by_name = {s.name: s for s in sources}
-        eco, air = by_name.get("Ecowitt"), by_name.get("AirGradient")
-        charts.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
-        composer = Composer(eco, air) if eco and air else None  # charts and comparisons across the two sources
-        history = await History.open(eco, air) if eco or air else None   # the readings tool: values at an interval, from the file
-        tools = Tools([t for s in sources for t in s.tools] + (composer.tools if composer else []) + (history.tools if history else []))
-        client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers only what it works out in code
+        theme.configure(cfg.dark_mode, cfg.tz)   # DARKMODE (in the station's time zone, as everything from here on)
+        client = _client(cfg) if cfg.openrouter_api_key else None   # without a key the bot answers its buttons and sends alerts, no more
         if client:
             stack.push_async_callback(safely, client.close)
         else:
-            log.warning("OPENROUTER_API_KEY is not set: running without the model, so answers are limited")
-        state = AlertState(cfg.state_path)
+            log.warning("BOT_OPENROUTER_API_KEY is not set: running without the model, so the bot answers its buttons and sends alerts, "
+                        "and a typed question is told the model isn't set up")
         if cfg.admin_only and not cfg.admin_chat_ids and not any(chat < 0 for chat in state.chats):
-            log.warning("Admin only is on but no group is known yet and ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
-                        "add it to a group, list your user id in ADMIN_CHAT_IDS, or set ADMIN_ONLY=off")
-        irrigation = Tuya(cfg) if cfg.irrigation else None
-        if irrigation:
-            stack.push_async_callback(safely, irrigation.close)
+            log.warning("Admin only is on but no group is known yet and BOT_ADMIN_CHAT_IDS is empty, so nobody can use the bot: "
+                        "add it to a group, list your user id in BOT_ADMIN_CHAT_IDS, or set BOT_ADMIN_ONLY=off")
         tasks = Tasks()   # everything that runs in the background, the bot's own uploads among it; cancelled first on the way out (tasks.close, below)
-        bot = Bot(cfg, Agent(client, cfg.openrouter_model, tools), sources, state, irrigation, tasks)
+        irrigation = connect_irrigation(cfg, stack, mcp_token(cfg))   # irrigation-mcp's client (BOT_IRRIGATION_MCP_URL), or None
+        # ecobot-mcp's tools over MCP (lib/weather.py): the model is offered them (lib/model_tools.py), and the bot's own code paths
+        # call them (the keyboard's charts, the Status picture, the alert charts and the period buttons)
+        bot = Bot(cfg, Agent(client, cfg.openrouter_model, model_tools.tools(weather)), state, irrigation, tasks, service=weather)
 
         bot.register(app)
         stop = asyncio.Event()
@@ -273,7 +236,7 @@ async def main():
             await handshake
             stack.push_async_callback(app.shutdown)   # one task runs everything, so connections open and close cleanly
         except InvalidToken:   # (its message names the token, so it is not shown)
-            raise SystemExit("TELEGRAM_BOT_TOKEN was rejected by Telegram: check it is the token @BotFather gave for this bot") from None
+            raise SystemExit("BOT_TELEGRAM_TOKEN was rejected by Telegram: check it is the token @BotFather gave for this bot") from None
         except NetworkError as e:   # (the host's network or DNS, most often): one line, not the library's pages of stack
             raise SystemExit(f"Can't reach Telegram ({type(e).__name__}: {e}): check the network and DNS of the machine or container") from None
         await app.start()
@@ -282,19 +245,18 @@ async def main():
                                         error_callback=polling_error)   # messages sent while starting are answered (lib.bot.PENDING_MAX_SECONDS)
         stack.push_async_callback(app.updater.stop)
         stack.push_async_callback(tasks.close)
-        for source in sources:
-            stack.push_async_callback(source.warmer.stop)
 
         log.info("Telegram: @%s, Model: %s", app.bot.username, cfg.openrouter_model if client else "none")
-        for source in sources:   # what each is reading, in the order they are listed
-            for line in source.startup_lines():
-                log.info("%s", line)
+        log.info("ecobot-mcp: %s (%s)", cfg.mcp_url, ", ".join(sorted(weather.names)) or "not reached yet")
+        if irrigation:
+            log.info("irrigation-mcp: %s", cfg.irrigation_mcp_url)
         notify = Notifier(app.bot, state, bot.alert_charts)   # the alerts' charts, kept with the bot's
-        await bot.publish_commands(app.bot)   # the / menu
-        running, weather = start_alerts(cfg, bot, notify, tasks)
-        for source in sources:   # keeping warm: everything questions need, refreshed before they arrive
-            tasks.start(source.warmer.run())
-        tasks.start(warm_up(bot, weather, running, tasks, app.bot))
+        # the / menu: the bot's own commands and ecobot-mcp's prompts, set again whenever the prompts are read (each connection, and
+        # when ecobot-mcp says they changed)
+        weather.on_prompts = lambda: tasks.start(bot.publish_commands(app.bot))
+        await bot.publish_commands(app.bot)
+        zoned = start_alerts(cfg, bot, notify, tasks, weather, irrigation)
+        follow_zone(weather, bot, state, zoned)
         await stop.wait()
 
 

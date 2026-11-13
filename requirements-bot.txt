@@ -1,0 +1,7 @@
+# The bot's packages (ecobot.py: the Telegram bot, a client of ecobot-mcp, docs/ecobot-mcp.md step 6b), and the Docker image ecobot's:
+# Telegram, the model's client, the MCP client (pinned as ecobot-mcp's: the two sides are upgraded together) and httpx (the irrigation
+# controller's client). No Pillow, no source's packages: the bot draws nothing and runs no source.
+httpx
+mcp==2.3.0
+openai
+python-telegram-bot>=22.8

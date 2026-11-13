@@ -3,7 +3,6 @@ local time (lib/warm.py SYNC_HOURS), every 15 minutes, and once at the start (or
 
 import logging
 import math
-import re
 import time
 from datetime import date
 
@@ -12,8 +11,6 @@ import httpx
 from ..config import Config
 from ..snapshots import Snapshots
 from ..sources import Source
-from ..timeutil import when
-from ..tools import Tool, Turn, json_result
 from ..warm import Warmer, in_sync_hours
 
 log = logging.getLogger(__name__)
@@ -26,13 +23,6 @@ MIN_HOURS = 20                    # a member's day counts only with this many ho
 HEADERS = {"User-Agent": "ecobot/1.0 (personal weather bot)"}
 FORECAST_REFRESH_SECONDS = 15 * 60
 FRESH_SECONDS = 10 * 60       # a question reuses a forecast this young
-
-DESCRIPTION = ("The weather forecast for the owner's location: today and the days ahead, "
-               "each with a summary, the lowest and highest temperature and the chance of at least 1 mm of rain. Use it for forecast "
-               "questions ('what's tomorrow like', 'will it rain this week'). days = how many days from today (default 7, "
-               "at most 7: the whole week; pass 1 for 'today' and 2 for 'tomorrow'). The result's \"lines\" are ready-made, emoji included: copy them as they are, and put the result's "
-               "\"place\" in parentheses after the forecast heading, e.g. (Melbourne).")
-PARAMETERS = {"type": "object", "properties": {"days": {"type": "integer", "description": "Days from today (default 7, at most 7)."}}}
 
 SOURCE = "Open-Meteo"
 WMO = {0: "☀️ Clear.", 1: "🌤️ Mostly clear.", 2: "⛅ Partly cloudy.", 3: "☁️ Overcast.", 45: "🌫️ Fog.", 48: "🌫️ Fog.", 51: "🌧️ Light drizzle.",
@@ -79,7 +69,7 @@ class Forecast(Source):
         self.tz, self.place = cfg.tz, cfg.place
         configured = (cfg.forecast_lat, cfg.forecast_lon)
         if configured != (None, None) and None in configured:
-            log.warning("FORECAST_LAT and FORECAST_LON go together: with only one set, the weather station's location is used")
+            log.warning("MCP_FORECAST_LAT and MCP_FORECAST_LON go together: with only one set, the weather station's location is used")
         self.location = configured if None not in configured else location if location and None not in location else None
         self.client = httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True, transport=transport)
         self.days: list[dict] | None = None
@@ -88,23 +78,15 @@ class Forecast(Source):
         self.store = Snapshots(cfg.storage_path)
         self._load()
         self.warmer = Warmer(self.warm, FORECAST_REFRESH_SECONDS)
-        self.tools = [Tool("weather_forecast", DESCRIPTION, PARAMETERS, self.handle)]
 
     async def start(self):
         if not self.location:
-            raise RuntimeError("no location: set FORECAST_LAT and FORECAST_LON (or the weather station supplies one)")
+            raise RuntimeError("no location: set MCP_FORECAST_LAT and MCP_FORECAST_LON (or the weather station supplies one)")
         try:
             await self.warm(True)
             self.summary = f"{SOURCE}: {len(self.days or [])} days (every {self.warmer.interval:g}s)"
         except Exception as e:
             log.warning("Forecast not readable yet: %s", e)
-
-    def describe(self) -> str:
-        return "Weather forecast for the owner's location (Open-Meteo) (people say \"forecast\")"
-
-    def wants(self, text: str) -> bool:
-        """Only forecast questions start a refresh; the report always uses what is cached."""
-        return bool(re.search(r"\bforecast\w*|\btomorrow\b|\bthis week\b", text, re.I))
 
     # ---------- kept on disk ----------
     def _load(self):
@@ -185,21 +167,3 @@ class Forecast(Source):
     def lines(self, count: int = 2) -> list[str]:
         today = self.now().date()
         return [f"{day_label(d['date'], today)}: {describe_day(d)}" for d in self.upcoming(count)]
-
-    async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        if self.days is None and not args.get("cached"):   # the report ("cached") never fetches
-            try:
-                await self.warm(True)
-            except Exception as e:
-                log.warning("Forecast not readable: %s", e)
-        try:
-            count = max(1, min(7, int(args.get("days") or 7)))
-        except (TypeError, ValueError):
-            count = 7
-        lines = self.lines(count)
-        if not lines:
-            return json_result({"error": "No forecast is available right now."})
-        if turn:
-            turn.forecast_shown.extend(self.upcoming(count))   # remembered for the chat once the answer is sent
-        stamped = {"time": when(int(self.fetched_at), self.tz)} if self.fetched_at else {}   # when it was last fetched
-        return json_result({"lines": lines, "place": self.place, "source": SOURCE, **stamped})

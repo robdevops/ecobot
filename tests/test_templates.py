@@ -2,38 +2,40 @@ import re
 from datetime import datetime
 from types import SimpleNamespace as NS
 
-from lib import intent, templates
+from lib import templates
 from lib.bot import Bot
 from tests.fakes import EVERY_SOURCE, TZ
+from tests.served import unreached
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=TZ)
 
 
 def test_a_button_label_is_its_sentence_without_the_emoji_and_typed_text_is_left_alone():
-    assert templates.sentence("\U0001f4cb Status") == "Report"
+    assert templates.sentence("\U0001f4cb Status") == templates.STATUS == "Status"
     assert templates.sentence("\U0001f4c8 Temperature") == "Temperature chart 1d"
     assert templates.sentence(templates.CAPABILITIES) == "What can you do?"
-    assert templates.sentence("report") is None and templates.sentence("Report") is None
+    assert templates.sentence("report") is None and templates.sentence("Status") is None and templates.sentence("Rain chart 1d") is None
     assert len(templates.SENTENCES) == 9
 
 
 def test_every_button_asks_something_the_bot_understands():
+    """Status is Status (the gauges and the report prompt: Bot.status); each chart button is a fixed call, a named reading's chart over a
+    day: summary with the readings the service reads its words as. (Help & Alerts is bot.on_message's: about and the alert settings.)"""
+    from lib.service.names import CATALOGUE
+
     def read(label):
-        return intent.read(templates.sentence(label), NOW)
-    assert read("\U0001f4cb Status").report
-    weather = read("\U0001f326️ Weather")
-    assert intent.wants_chart_all(templates.sentence("\U0001f326️ Weather")) and weather.chart_in_code
-    assert weather.chart_fields[0] == "temperature" and weather.chart_fields[-1] == "wind"
-    for label, groups in (("\U0001f327️ Rain", "rainfall"), ("\U0001f4c8 Temperature", "outdoor,indoor"),
-                          ("\U0001f4a7 Humidity", "outdoor,indoor"), ("\U0001f4a8 Wind", "wind")):
-        name, args, _ = read(label).fast
-        assert name == "weather_history" and args["chart"] is True and args["groups"] == groups and read(label).chart_in_code
-    assert read("\U0001f4a7 Humidity").chart_field == "humidity" and read("\U0001f327️ Rain").rain_caption
-    name, args, _ = read("\U0001f3ed Air Quality").fast
-    assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10", "co2", "voc_index", "nox_index"}
-    name, args, _ = read("\U0001f52c Particulates").fast
-    assert name == "air_quality" and args["chart"] is True and set(args["metrics"]) == {"pm1", "pm2_5", "pm10"}
-    assert read(templates.CAPABILITIES).about_the_bot
+        return templates.call(templates.sentence(label))
+    assert templates.sentence("\U0001f4cb Status") == templates.STATUS and read("\U0001f4cb Status") is None
+    for label, names in (("\U0001f327️ Rain", ["rainfall.rain"]), ("\U0001f4c8 Temperature", ["outdoor.temperature", "indoor.temperature"]),
+                         ("\U0001f4a7 Humidity", ["outdoor.humidity", "indoor.humidity"]), ("\U0001f4a8 Wind", ["wind.wind_speed", "wind.wind_direction"]),
+                         ("\U0001f3ed Air Quality", ["air.pm2_5", "air.pm10", "air.pm1", "air.co2", "air.voc_index", "air.nox_index"]),
+                         ("\U0001f52c Particulates", ["air.pm2_5", "air.pm10", "air.pm1"])):
+        tool, args = read(label)
+        assert tool == "summary" and args["chart"] is True and args["period"] == "1d", label
+        assert [r.name for r in CATALOGUE.resolve(args["readings"], default=None)] == names, label
+    tool, args = read("\U0001f326️ Weather")
+    readings = [r.name for r in CATALOGUE.resolve(args["readings"], default=None)]
+    assert readings[0] == "outdoor.temperature" and readings[-1] == "wind.wind_direction"
 
 
 def test_the_keyboard_is_persistent_and_has_every_button():
@@ -45,11 +47,14 @@ def test_the_keyboard_is_persistent_and_has_every_button():
 
 class Recorder(Bot):
     def __init__(self, state):
-        super().__init__(NS(tz=TZ), None, [], state)
+        super().__init__(NS(tz=TZ), None, state, service=unreached())   # (it asks nothing: respond and status are recorded)
         self.asked, self.alerts = [], 0
 
-    async def respond(self, update, context, text):
-        self.asked.append(text)
+    async def respond(self, update, context, text, call=None):
+        self.asked.append((text, call))
+
+    async def status(self, update, context):
+        self.asked.append("status")
 
     async def on_alerts(self, update, context):
         self.alerts += 1
@@ -66,10 +71,13 @@ def message(text, chat_type="private"):
 
 
 async def test_tapping_a_button_asks_its_sentence_and_capabilities_and_alerts_prints_both(alert_state):
+    """Status is Status; a chart button its sentence with its fixed call (no model); anything typed goes to the model as it is (no call),
+    "rain chart 1d" typed included (step 6c)."""
     bot = Recorder(alert_state)
-    for text in ("\U0001f4cb Status", "weather now", templates.CAPABILITIES):
+    for text in ("\U0001f4cb Status", "weather now", "\U0001f327️ Rain", "rain chart 1d", templates.CAPABILITIES):
         await bot.on_message(message(text)[0], NS(bot=NS(username="b", id=99)))
-    assert bot.asked == ["Report", "weather now"] and bot.alerts == 1       # capabilities are not sent to the model
+    assert bot.asked == ["status", ("weather now", None), ("Rain chart 1d", templates.CALLS["Rain chart 1d"]), ("rain chart 1d", None)]
+    assert bot.alerts == 1       # capabilities are not sent to the model
 
 
 async def test_start_carries_the_keyboard_in_private_chats_only_and_keyboard_off_removes_it(alert_state):
@@ -138,7 +146,7 @@ async def test_a_chat_with_an_old_or_no_keyboard_gets_the_current_one_with_its_n
     from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
-    bot = Bot(NS(tz=TZ), None, [], state)
+    bot = Bot(NS(tz=TZ), None, state, service=unreached())   # (the keyboard alone: ecobot-mcp is asked nothing)
     msg = Replies()
     assert bot._keyboard_stale(msg)                                    # never had it
     state.set_keyboard(1, "old1234")
@@ -154,7 +162,7 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
     from lib.alerts.notify import AlertState
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
-    bot = Bot(NS(tz=TZ), None, [], state)
+    bot = Bot(NS(tz=TZ), None, state, service=unreached())   # (the keyboard alone: ecobot-mcp is asked nothing)
     update, _ = message("/keyboard off")
     await bot.on_keyboard(update, NS(args=["off"]))
     assert state.keyboard(1) == templates.HIDDEN
@@ -167,7 +175,7 @@ async def test_start_and_keyboard_commands_record_which_keyboard_the_chat_has(tm
     assert state.keyboard(1) == templates.version()
 
 
-async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path):
+async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(serve, tmp_path):
     from lib.alerts.notify import AlertState
 
     class Agent:
@@ -176,7 +184,7 @@ async def test_a_reply_in_a_private_chat_carries_the_new_keyboard_once(tmp_path)
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "Rob")
     state.set_keyboard(1, "old1234")
-    bot = Bot(NS(tz=TZ), Agent(), [], state)
+    bot = Bot(NS(tz=TZ), Agent(), state, service=await serve())
 
     async def ask():
         update, sent = message("how hot is it")
@@ -207,15 +215,16 @@ def test_the_capabilities_list_adds_pollen_and_forecast_only_when_they_are_on():
     assert full[-3:] == ["• Pollen and thunderstorm asthma risk (October to December)", "• Forecast", "• History charts"]
 
 
-def test_every_chart_and_report_button_has_a_command_of_the_same_name():
-    assert templates.COMMANDS == {"report": "Report", "dashboard": "Dashboard", "status": "Report", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
+def test_every_chart_and_status_button_has_a_command_of_the_same_name():
+    """(/report is ecobot-mcp's report prompt now, step 6c: not one of the bot's own.)"""
+    assert templates.COMMANDS == {"status": "Status", "rain": "Rain chart 1d", "weather": "Weather chart 1d",
                                   "temperature": "Temperature chart 1d", "humidity": "Humidity chart 1d",
                                   "air_quality": "Air quality all metrics 1d", "particulates": "Particulates chart 1d",
                                   "wind": "Wind chart 1d"}
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) for name in templates.COMMANDS)          # what Telegram accepts as a command
 
 
-async def test_the_command_menu_is_sent_to_telegram_and_a_refusal_is_only_logged(caplog):
+async def test_the_command_menu_is_sent_to_telegram_and_a_refusal_is_only_logged(caplog, alert_state):
     sent = []
 
     class TG:
@@ -226,8 +235,10 @@ async def test_the_command_menu_is_sent_to_telegram_and_a_refusal_is_only_logged
         async def set_my_commands(self, commands):
             raise RuntimeError("no")
 
-    await Bot.publish_commands(TG())
-    await Bot.publish_commands(Refusing())
+    bot = Bot(NS(tz=TZ), None, alert_state, service=unreached())   # (ecobot-mcp not reached: no prompts, the bot's own commands alone)
+    await bot.publish_commands(TG())
+    await bot.publish_commands(TG())                         # the same menu again: not sent again
+    await Bot(NS(tz=TZ), None, alert_state, service=unreached()).publish_commands(Refusing())
     assert sent == [templates.MENU] and "Couldn't set the command menu: RuntimeError: no" in caplog.text
     known = {*templates.COMMANDS, "alerts", "usage", "keyboard", "reset"}
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) and 3 <= len(text) <= 256 and name in known for name, text in templates.MENU)

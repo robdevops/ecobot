@@ -1,6 +1,6 @@
 """The Ecowitt weather station as a data source, peer of AirGradient:
-start() finds the station, tools are what the model can call, warm()/poke() keep recent
-readings ready, readings() feeds the alert monitors."""
+start() finds the station, warm()/poke() keep recent readings ready, readings() feeds the alert monitors, and the service's tools
+(lib/service) read its file and its live reading."""
 
 import asyncio
 import logging
@@ -13,74 +13,23 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..config import Config
 from ..lines import RANGE_KEEP_DAYS
 from ..sources import Source
-from ..specs import ECOWITT_SOURCE
-from ..timeutil import local_epoch, naive_local, when
-from ..tools import Tool, Turn, json_result
+from ..timeutil import local_epoch, naive_local
 from ..warm import FAST_REFRESH_SECONDS, Warmer, safely
 from .api import FINE_CYCLES, EcowittAPI, GROUPS, unit_text
-from .calendar import PublicHolidays
-from .link import DESCRIPTION as LINK_DESCRIPTION, PARAMETERS as LINK_PARAMETERS, link_tool
-from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, days_tool
-from .dashboard import dashboard
-from .glance import glance
+from ..public_holidays import PublicHolidays
 from .fetch import Fetcher, Recent
 from .fallback import FallbackAPI, newest
 from .hass_api import HomeAssistantAPI
 from .homeassistant import HomeAssistant
 from .live import BUCKET, readings_in
-from ..series import READING_GROUPS, WEATHER, find
+from ..series import READING_GROUPS
 from ..storage import Storage
 from ..storage.catalogue import AIR
 from ..storage.write import MIN_READINGS
-from .query import HistoryQuery, KEEP_HOURS, chart_field, stack_names
+from .query import KEEP_HOURS
 from .reads import newest_minute_on
 
 log = logging.getLogger(__name__)
-
-DEFAULT_GROUPS = "outdoor,indoor"
-
-def parse_groups(value, default: str = DEFAULT_GROUPS) -> list[str]:
-    """'outdoor, indoor' or ['outdoor', 'indoor'] -> ['outdoor', 'indoor'] (plain group names only). A reading named instead of
-    its group ("humidity", "dew_point", "rain") becomes its group; a name Ecowitt has no such group for is dropped, since one
-    bad name fails the whole request."""
-    parts = value if isinstance(value, list) else str(value or default).split(",")
-    named = (p.split(".")[0].strip().lower() for p in parts if p.strip())
-    groups = (g if g in GROUPS else (r.group if (r := find(g)) else None) for g in named)
-    return list(dict.fromkeys(g for g in groups if g)) or default.split(",")
-
-HISTORY_PARAMS = {
-    "type": "object",
-    "properties": {
-        "start_date": {"type": "string", "description": "Start, 'YYYY-MM-DD HH:MM:SS' local time."},
-        "end_date": {"type": "string", "description": "End, 'YYYY-MM-DD HH:MM:SS' local time (today is fine: up to now)."},
-        "groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'. Add 'rainfall', "
-                                                    "'wind' or 'pressure' only if needed. Plain group names, not dotted fields."},
-        "chart_fields": {"type": "array", "items": {"type": "string", "enum": list(WEATHER)},
-                         "description": "To plot SEVERAL readings together ('plot temperature and rain'): which, in order, "
-                                        "one panel each on a shared time axis. The groups they need are fetched for you."},
-        "two_axes": {"type": "boolean", "description": "Set true to draw the chart_fields as ONE panel with a scale each "
-                                                       "(left and right axis) when the question says 'on two axes', 'dual axis' or 'overlay'."},
-        "average": {"type": "boolean", "description": "Set true only when the question asks for an average or mean: adds the "
-                                                      "period's average (and per day or month). Highs and lows are the default."},
-        "chart_field": {"type": "string", "description": "What the chart should plot when the question is about something other "
-                                                         "than temperature: the reading, e.g. 'humidity', 'pressure', 'wind', 'dew_point', 'solar' or 'uv' "
-                                                         "(a wind chart shows the average speed shaded up to the gusts). "
-                                                         "Omit for temperature."},
-        "chart": {"type": "boolean", "description": "Set true to send a chart with the answer: for trends over several "
-                                                    "days or longer, or when a graph/chart is asked for."},
-        "include_derived": {"type": "array", "items": {"type": "string", "enum": ["feels_like", "app_temp", "dew_point", "vpd"]},
-                            "description": "Only when the question asks about feels-like, apparent temperature, dew point or "
-                                           "VPD: which of them to include. Otherwise omit (they are left out by default)."},
-    },
-    "required": ["start_date", "end_date"],
-}
-HISTORY_DESCRIPTION = ("History from the owner's Ecowitt weather station: each day's low/high and the overall extremes "
-                       "with times, for any range up to 4 years. Resolution and units are handled automatically.")
-REALTIME_PARAMS = {
-    "type": "object",
-    "properties": {"groups": {"type": "string", "description": "Comma-separated group names, e.g. 'outdoor,indoor'."}},
-}
-REALTIME_DESCRIPTION = "Current readings from the owner's Ecowitt weather station."
 
 LIVE_GROUPS = list(READING_GROUPS)   # what the once-a-minute live reading asks for: everything "weather now" and the report show
 HA_IMPORT_SECONDS = 900                # how often Home Assistant's readings are folded into the 5-minute ranges ...
@@ -166,10 +115,6 @@ class Ecowitt(Source):
         self.created: datetime | None = None
         self.latitude: float | None = None  # the station's own location (the forecast uses it unless one is configured)
         self.longitude: float | None = None
-        self.tools = [Tool("weather_now", REALTIME_DESCRIPTION, REALTIME_PARAMS, self._realtime),
-                      Tool("weather_history", HISTORY_DESCRIPTION, HISTORY_PARAMS, self._history, source=ECOWITT_SOURCE),
-                      Tool("weather_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days, source=ECOWITT_SOURCE),
-                      Tool("weather_link", LINK_DESCRIPTION, LINK_PARAMETERS, self._link, source=ECOWITT_SOURCE)]
 
     async def start(self):
         devices = await self.api.devices()
@@ -211,47 +156,9 @@ class Ecowitt(Source):
         None for the archive's own."""
         return 0.0 if isinstance(self.api, HomeAssistantAPI) else None
 
-    def describe(self) -> str:
-        created = f", created {self.created:%Y-%m-%d %H:%M}" if self.created else ""
-        return f"Ecowitt weather station '{self.station_name}'{created} (people say \"ecowitt\" or \"weather\")"
-
     def fetcher(self, groups: list[str], urgent: bool = False) -> Fetcher:
         """urgent: for a question (its requests go before the background ones)."""
         return Fetcher(self.api, self.storage, self.fetches, self.mac, groups, self.tz, urgent, self.has_minutes)
-
-    # ---------- tools ----------
-    async def _history(self, args: dict, turn: Turn | None = None) -> str:
-        turn = turn or Turn()
-        groups = parse_groups(args.get("groups"))
-        groups += [g for n in stack_names(args, turn) if (g := WEATHER[n].group) not in groups]  # what "plot temperature and rain" needs
-        if (r := find(chart_field(args, turn) or "")) and r.group not in groups:      # ... and what a chart of one reading needs
-            groups.append(r.group)
-        return await HistoryQuery(self.fetcher(groups, urgent=not turn.ahead), args, turn).run()
-
-    async def _days(self, args: dict, turn: Turn | None = None) -> str:
-        return await days_tool(self.storage, self.mac, self.tz, args, turn)
-
-    async def _link(self, args: dict, turn: Turn | None = None) -> str:
-        return await link_tool(self.storage, self.mac, self.tz, args, turn or Turn())
-
-    async def _realtime(self, args: dict, turn: Turn | None = None) -> str:
-        groups = parse_groups(args.get("groups"))
-        data = await self._live_data(groups)
-        out, newest, emoji = {}, 0, {}
-        for grp, fields in data.items():
-            for name, obj in (fields.items() if isinstance(fields, dict) else ()):
-                if isinstance(obj, dict) and "value" in obj:
-                    out.setdefault(grp, {})[name] = f"{obj['value']} {obj.get('unit', '')}".strip()
-                    try:
-                        if tag := glance(grp, name, float(obj["value"])):
-                            emoji[f"{grp}.{name}"] = tag
-                    except (TypeError, ValueError):
-                        pass
-                    try:
-                        newest = max(newest, int(obj.get("time") or 0))
-                    except (TypeError, ValueError):
-                        pass
-        return json_result({"time": when(newest, self.tz) if newest else None, **out, **({"emoji": emoji} if emoji else {})})
 
     async def _live_data(self, groups: list[str], max_age: float = LIVE_FRESH_SECONDS, urgent: bool = True) -> dict:
         """The real_time data for these groups: the kept reading when it is under `max_age` old (a minute and a half for a question) and
@@ -304,11 +211,6 @@ class Ecowitt(Source):
                 await self.storage.write(lambda w: w.put_ranges(self.mac, found))
         except Exception as e:
             log.warning("Couldn't keep the live readings' ranges: %s", e)
-
-    async def dashboard(self, titles=None):
-        """The station's gauges (specs.Dashboard; those of these titles only, all when None): the live reading and each one's highs and
-        lows today, this month and this year; None when the station has no reading."""
-        return await dashboard(await self._live_data(LIVE_GROUPS), self.storage, self.mac, self.now().date(), titles)
 
     async def watch_live(self):
         """Ask Home Assistant for the live reading every few seconds, for ever. A reading newer than the last one found is kept for "weather
@@ -384,10 +286,6 @@ class Ecowitt(Source):
         await asyncio.gather(*(fetchers[cycle].get(cycle, start, now, refresh=fresh and cycle in FINE_CYCLES, load=False)
                                for cycle, start in windows.items()))
         return f"Ecowitt {sum(f.calls for f in fetchers.values())} req"
-
-    def wants(self, text: str) -> bool:
-        """Should a question start refreshing this source? Weather data is used by nearly all."""
-        return True
 
     async def readings(self, cycle: str, start: datetime, end: datetime,
                        groups: list[str] | None = None) -> list[tuple[int, dict]]:

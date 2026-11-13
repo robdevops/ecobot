@@ -4,7 +4,7 @@ import pytest
 from telegram.error import BadRequest
 
 from lib.alerts.notify import AlertState, Notifier
-from lib.alerts.pictures import Picture
+from lib.alerts.pictures import CHARTS, Picture
 from lib.alerts.menu import ALL, LABELS, TITLE, alert_keyboard, available_kinds, keyboard, title
 from lib.bot import Bot
 from lib.buttons import struck as strike
@@ -152,11 +152,12 @@ class Query:
         self.edits.append(("text", text, reply_markup))
 
 
-def make_bot(tmp_path, sources=("Ecowitt", "AirGradient", "Pollen", "Forecast")):
+async def make_bot(serve, tmp_path, sources=("Ecowitt", "AirGradient", "Pollen", "Forecast")):
+    """A bot over ecobot-mcp in memory as if it ran these sources (their alert types are the menus')."""
     state = AlertState(tmp_path / "s.json")
     state.add_chat(1, "private")
     state.add_chat(-5, "group")
-    bot = Bot(NS(tz=TZ), None, [NS(name=n) for n in sources], state)
+    bot = Bot(NS(tz=TZ), None, state, service=await serve(tools=[], sources=sources))
     return bot, state
 
 
@@ -170,8 +171,8 @@ async def press(bot, query, **kw):
     await bot.on_alert_button(NS(callback_query=query), kw.get("context") or ctx())
 
 
-async def test_the_alerts_menu_toggles_a_type_in_place_and_back_returns_to_the_two_buttons(tmp_path):
-    bot, state = make_bot(tmp_path)
+async def test_the_alerts_menu_toggles_a_type_in_place_and_back_returns_to_the_two_buttons(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path)
     q = Query("al:open:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     drawn = rows(q.edits[0][2])
@@ -188,17 +189,17 @@ async def test_the_alerts_menu_toggles_a_type_in_place_and_back_returns_to_the_t
     assert rows(q.edits[0][2]) == [[("🔔 Alerts ▸", "al:open:alerts"), ("🔊 Sound ▸", "al:open:sound")]]
 
 
-async def test_turning_off_every_type_the_bot_sends_unsubscribes_the_chat_from_all(tmp_path, monkeypatch):
+async def test_turning_off_every_type_the_bot_sends_unsubscribes_the_chat_from_all(serve, tmp_path, monkeypatch):
     from lib.alerts import menu
-    bot, state = make_bot(tmp_path, sources=("Ecowitt",))
+    bot, state = await make_bot(serve, tmp_path, sources=("Ecowitt",))
     for kind in ("rain", "gusts", "uv", "temps"):                      # the weather station's types, one by one
         await press(bot, Query(f"al:off:{kind}:alerts"))
     monkeypatch.setitem(menu.LABELS, "newthing", "new thing")
     assert state.chats[1].get("optin") and not state.subscribed(1, "newthing") and not state.subscribed(1, "particulates")
 
 
-async def test_the_alerts_message_keeps_its_summary_current_but_an_alert_keeps_its_text(tmp_path):
-    bot, state = make_bot(tmp_path)
+async def test_the_alerts_message_keeps_its_summary_current_but_an_alert_keeps_its_text(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path)
     q = Query("al:off:uv:alerts", text=f"{TITLE}\n✅ On: ...")
     await press(bot, q)
     assert q.edits[0][0] == "text" and "🔕 Off: UV" in q.edits[0][1]
@@ -207,8 +208,8 @@ async def test_the_alerts_message_keeps_its_summary_current_but_an_alert_keeps_i
     assert q.edits[0][0] == "markup"
 
 
-async def test_noop_unknown_kinds_and_unchanged_markup_are_harmless(tmp_path):
-    bot, state = make_bot(tmp_path, sources=("Ecowitt",))
+async def test_noop_unknown_kinds_and_unchanged_markup_are_harmless(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path, sources=("Ecowitt",))
     q = Query("al:noop")
     await press(bot, q)
     assert q.edits == [] and q.toast is None
@@ -226,8 +227,8 @@ async def test_noop_unknown_kinds_and_unchanged_markup_are_harmless(tmp_path):
         await press(bot, q)
 
 
-async def test_in_a_group_only_admins_may_change_alerts(tmp_path):
-    bot, state = make_bot(tmp_path)
+async def test_in_a_group_only_admins_may_change_alerts(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path)
     q = Query("al:off:rain:alerts", chat_type="supergroup", chat_id=-5)
     await press(bot, q, context=ctx("member"))
     assert q.toast == "Only group admins can change alerts" and state.muted(-5) == set() and q.edits == []
@@ -238,8 +239,8 @@ async def test_in_a_group_only_admins_may_change_alerts(tmp_path):
     assert state.muted(-5) == {"rain", "uv"}
 
 
-async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(tmp_path):
-    bot, state = make_bot(tmp_path)
+async def test_the_alerts_command_sends_the_menu_and_on_off_still_work(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path)
     replies = []
 
     async def reply_text(body, **kw):
@@ -260,17 +261,14 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     from lib.alerts.particulates import ParticulatesMonitor
     from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
     from lib.alerts.weather import WeatherMonitor
-    from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, gusts, rain, uv
-    from tests.test_forecast_alert import TODAY, FakeForecast, day
-    state = AlertState(tmp_path / "s.json")
-    state.add_chat(1, "chat")
-    kinds = []
-
-    async def notify(text, link=None, kind=None, **more):
-        kinds.append(kind)
+    from tests.test_alerts import FakePollen, FakeStation, T0, air_reading, asking, gusts, rain, store_and_log, uv
+    from tests.test_forecast_alert import FakeForecast, day
+    state, log, sent = store_and_log(tmp_path)
+    kinds = lambda: [e["kind"] for e in sent.events]
 
     async def weather(first, then):
-        mon = WeatherMonitor(FakeStation(first), state, notify)
+        mon = WeatherMonitor(FakeStation(first), state, log)
+        asking(mon, photo=None)
         await mon.check()
         mon.station.data = then
         await mon.check()
@@ -278,26 +276,21 @@ async def test_every_monitors_alert_names_its_type(tmp_path):
     await weather(rain(0, 0, 1, 1), rain(0, 0, 1, 1, *[0] * 13))
     await weather(gusts(10, 12), gusts(10, 12, 60))
     await weather(uv(3, 5, start=T0 + 86400), uv(3, 5, 10, 10, start=T0 + 86400))   # later than the readings above: the monitors share one state
-    assert kinds == ["rain", "rain", "gusts", "uv"]
-    kinds.clear()
-    mask = ParticulatesMonitor(NS(tz=TZ, link=None), state, notify)
+    assert kinds() == ["rain", "rain", "gusts", "uv"]
+    mask = ParticulatesMonitor(NS(tz=TZ, link=None), state, log)
+    asking(mask, photo=None)
     for pm in (80, 80, 20, 20):
         await mask.check(air_reading(pm))
-    assert kinds == ["particulates", "particulates"]
-    kinds.clear()
+    assert kinds()[4:] == ["particulates", "particulates"]
     pollen = FakePollen()
     pollen.grass = "High"
-    await PollenAndAsthmaMonitor(pollen, state, notify).check()
-    assert kinds == ["pollen_and_asthma"]
-    seen = []
-    notifier = Notifier(Sent(), state)
-
-    async def spy(text, **kw):
-        seen.append(kw["kind"])
-        return await notifier(text, **kw)
-    state.record_forecast(1, [day(0, pct=90)], TODAY)
-    await ForecastMonitor(FakeForecast([day(0, pct=5)]), state, spy).check()
-    assert seen == ["forecast"]
+    await PollenAndAsthmaMonitor(pollen, state, log).check()
+    assert kinds()[6:] == ["pollen_and_asthma"]
+    forecast = ForecastMonitor(FakeForecast([day(0, pct=90)]), state, log)
+    await forecast.check()
+    forecast.forecast.fetch([day(0, pct=5)])
+    await forecast.check()
+    assert kinds()[7:] == ["forecast"]
 
 
 def test_under_an_alert_one_bell_opens_the_alert_toggle_and_then_the_sound_toggle():
@@ -319,8 +312,8 @@ def test_under_an_alert_with_a_chart_refresh_sits_beside_the_bell_open_or_shut()
     assert opened == [[("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts")], [("Alert", "al:off:gusts:bell:gusts")]]
 
 
-async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays_open(tmp_path):
-    bot, state = make_bot(tmp_path)
+async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays_open(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path)
     q = Query("al:open:bell:uv", text="☀️ UV 10")
     await press(bot, q)
     assert rows(q.edits[0][-1]) == [[("🔔 ▾", "al:close:uv")], [("Alert", "al:off:uv:bell:uv")], [(strike("Sound"), "al:snd:uv:on:uv")]]
@@ -339,9 +332,9 @@ async def test_the_bell_under_an_alert_toggles_the_alert_and_its_sound_and_stays
     assert rows(q.edits[0][-1]) == [[("🔔 ▸", "al:open:bell:uv")]]
 
 
-async def test_the_bell_of_an_alert_type_the_bot_no_longer_sends_is_out_of_date(tmp_path):
+async def test_the_bell_of_an_alert_type_the_bot_no_longer_sends_is_out_of_date(serve, tmp_path):
     from lib.bot import STALE_BUTTON
-    bot, state = make_bot(tmp_path, sources=("Ecowitt",))                       # no pollen source any more
+    bot, state = await make_bot(serve, tmp_path, sources=("Ecowitt",))                       # no pollen source any more
     for data in ("al:open:bell:pollen_and_asthma", "al:off:pollen_and_asthma:bell:pollen_and_asthma"):
         q = Query(data, text="🌼 Grass pollen is High")
         await press(bot, q)
@@ -352,8 +345,8 @@ def test_the_title_stays_plain_words():
     assert title(set(), ["rain"]) == f"{TITLE}\n✅ On: rain\n🔕 Off: nothing"
 
 
-async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_returns(tmp_path):
-    bot, state = make_bot(tmp_path)
+async def test_the_sound_menu_toggles_every_type_in_private_chats_only_and_back_returns(serve, tmp_path):
+    bot, state = await make_bot(serve, tmp_path)
     state.set_kind(1, "gusts", False)
     q = Query("al:open:sound")
     await press(bot, q)
@@ -398,7 +391,7 @@ async def test_an_alert_has_a_sound_only_in_a_chat_that_turned_it_on_and_groups_
     assert [b[0] for b in rows(group["reply_markup"])[0]] == ["🔔 ▸"]
 
 
-async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path):
+async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(serve, tmp_path):
     from telegram.error import ChatMigrated
 
     class Moved(Sent):
@@ -413,7 +406,7 @@ async def test_a_chat_that_became_a_supergroup_is_followed_not_a_crash(tmp_path)
     await Notifier(bot, state)("It's raining", kind="rain")
     assert list(state.chats) == [-1005] and state.muted(-1005) == {"uv"} and [c for c, *_ in bot.sent] == [-1005]
     state.add_chat(-7, "H")                                                    # a press under an old alert of a moved group
-    bot2, _ = make_bot(tmp_path)
+    bot2, _ = await make_bot(serve, tmp_path)
     bot2.state = state
     q = Query("al:open:alerts", chat_type="supergroup", chat_id=-7)
     q.message.reply_markup = keyboard(set(), KINDS)
@@ -430,15 +423,16 @@ def test_every_alert_type_sent_is_registered_and_each_monitor_declares_what_it_s
     import re
     from pathlib import Path
     from lib.alerts.forecast import ForecastMonitor
-    from lib.alerts.irrigation import IrrigationMonitor
+    from lib.irrigation.check import IrrigationMonitor
     from lib.alerts.particulates import ParticulatesMonitor
     from lib.alerts.pollen_and_asthma import PollenAndAsthmaMonitor
     from lib.alerts.weather import WeatherMonitor
     monitors = [WeatherMonitor, ParticulatesMonitor, ForecastMonitor, PollenAndAsthmaMonitor, IrrigationMonitor]
     assert sorted(k for m in monitors for k in m.KINDS) == sorted(LABELS)       # every type has exactly one monitor
-    for m in monitors:
-        sent = set(re.findall(r'kind="(\w+)"', Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()))
-        assert sent == set(m.KINDS), m.__name__
+    for m in monitors:   # each kind named where it is appended to the log (the irrigation controller's: where it is sent)
+        text = Path(__import__(m.__module__, fromlist=["x"]).__file__).read_text()
+        sent = set(re.findall(r'kind="(\w+)"|_emit\("(\w+)"|append\("(\w+)"', text))
+        assert {k for found in sent for k in found if k} == set(m.KINDS), m.__name__
 
 
 class SentWithPhotos(Sent):
@@ -502,50 +496,46 @@ class ChartQuery(Query):
 
 
 def drawing(monkeypatch, photo=b"new png"):
-    """Alert charts drawn as `photo`; returns the list of (source, request) drawn."""
+    """Alert charts drawn as `photo`; returns the list of (the request, who was asked to draw it) drawn."""
     from lib.alerts import pictures
     drawn = []
 
-    async def chart(source, text, tz):
-        drawn.append((source.name, text))
+    async def chart(text, tz, weather):
+        drawn.append((text, weather))
         return Picture(photo, "Wind, today", None) if photo else None
     monkeypatch.setattr(pictures, "chart", chart)
     return drawn
 
 
-async def test_refresh_under_an_alerts_chart_draws_it_again_in_the_same_message_for_anyone(tmp_path, monkeypatch):
-    bot, _ = make_bot(tmp_path)
-    for source in bot.sources:
-        source.tz = TZ
+async def test_refresh_under_an_alerts_chart_draws_it_again_in_the_same_message_for_anyone(serve, tmp_path, monkeypatch):
+    bot, _ = await make_bot(serve, tmp_path)
     drawn = drawing(monkeypatch)
     q = ChartQuery("al:refresh:gusts", chat_type="supergroup", chat_id=-5)
     await press(bot, q, context=ctx("member"))                                   # not an admin: a redraw changes no setting
     (media, markup), = q.media
-    assert drawn == [("Ecowitt", "Wind chart 1d")] and q.toast is None
+    assert drawn == [(CHARTS["gusts"], bot.weather)] and q.toast is None                  # (drawn by ecobot-mcp)
     assert (media.media.input_file_content, media.caption) == (b"new png", "💨 Strong gusts: 55 km/h at 3:05pm.")   # the alert's text stays
     assert markup is q.message.reply_markup and q.edits == []
     q = ChartQuery("al:refresh:particulates", kind="particulates")
     await press(bot, q)
-    assert drawn[-1] == ("AirGradient", "Particulates chart 1d") and len(q.media) == 1
+    assert drawn[-1] == (CHARTS["particulates"], bot.weather) and len(q.media) == 1
 
 
-async def test_a_chart_that_cannot_be_drawn_again_leaves_the_alert_as_it_was(tmp_path, monkeypatch):
-    bot, _ = make_bot(tmp_path)
-    for source in bot.sources:
-        source.tz = TZ
+async def test_a_chart_that_cannot_be_drawn_again_leaves_the_alert_as_it_was(serve, tmp_path, monkeypatch):
+    bot, _ = await make_bot(serve, tmp_path)
     drawing(monkeypatch, photo=None)
     q = ChartQuery("al:refresh:uv", kind="uv")
     await press(bot, q)
     assert q.media == [] and "Couldn't draw the chart" in q.toast
     from lib.bot import STALE_BUTTON
-    gone, _ = make_bot(tmp_path, sources=("Pollen",))                            # no station any more
+    gone, _ = await make_bot(serve, tmp_path, sources=("Pollen",))                            # no station any more
     q = ChartQuery("al:refresh:uv", kind="uv")
     await press(gone, q)
     assert q.media == [] and q.toast == STALE_BUTTON
 
 
-async def test_the_bell_under_an_alerts_chart_keeps_its_refresh(tmp_path):
-    bot, _ = make_bot(tmp_path)
+async def test_the_bell_under_an_alerts_chart_keeps_its_refresh(serve, tmp_path):
+    bot, _ = await make_bot(serve, tmp_path)
     q = ChartQuery("al:open:bell:gusts")
     await press(bot, q)
     assert rows(q.edits[0][-1])[0] == [("🔔 ▾", "al:close:gusts"), ("🔄", "al:refresh:gusts")]
@@ -558,18 +548,23 @@ async def test_the_bell_under_an_alerts_chart_keeps_its_refresh(tmp_path):
 
 def alert_charts(clock):
     """An AlertCharts on an image cache that runs on `clock` (a one-element list of seconds)."""
-    from datetime import datetime
     from lib import periods
     from lib.alerts.pictures import AlertCharts
     images = periods.ImageCache(lambda: clock[0])
-    return AlertCharts(images, lambda: datetime(2026, 10, 2, 12, 0, tzinfo=TZ), clock=lambda: clock[0]), images
+    return AlertCharts(images, tz=TZ), images
 
 
-def test_every_alert_chart_has_the_key_of_the_same_typed_request():
+def test_every_alert_chart_has_the_key_of_its_fixed_call():
     from lib.alerts.pictures import CHARTS
+    from lib.periods import call_key
     charts, images = alert_charts([0.0])
-    assert {kind: charts.key(kind) for kind in CHARTS} == {"gusts": "wind chart 1d", "uv": "uv chart 1d", "temps": "temperature chart 1d",
-                                                           "particulates": "particulates chart 1d"}
+    day = {"period": "1d", "chart": True}
+    assert {kind: charts.call(kind) for kind in CHARTS} == {
+        "gusts": ("summary", {"readings": ["wind"], **day}),   # "Wind chart 1d", the Wind button's
+        "uv": ("summary", {"readings": ["uv"], **day}),
+        "temps": ("summary", {"readings": ["temperature"], **day}),
+        "particulates": ("summary", {"readings": ["pm2.5", "pm10", "pm1"], **day})}
+    assert charts.key("gusts") == call_key(*charts.call("gusts"))
     assert charts.key("rain") is None                                                     # an alert without a chart
 
 
@@ -578,29 +573,12 @@ def test_an_alert_sends_the_held_chart_only_when_it_draws_the_alerts_reading_and
     charts, images = alert_charts(clock)
     assert charts.held("gusts", 1000) is None                                             # nothing held
     charts.keep("gusts", Picture(b"png", "Wind, today", 900), since=1000)                # drawn for the alert about the reading at 1000
-    assert images.held("wind chart 1d").newest == 1000 and charts.held("gusts", 1000) == b"png"   # (it draws that reading, whatever its last point says)
+    assert images.held(charts.key("gusts")).newest == 1000 and charts.held("gusts", 1000) == b"png"   # (it draws that reading, whatever its last point says)
     assert charts.held("gusts", 1300) is None and charts.held("gusts", None) is None      # a newer reading, or one not known: drawn again
     charts.sent("gusts", NS(photo=(NS(file_id="small"), NS(file_id="large"))))
     assert charts.held("gusts", 1000) == "large" and charts.held("gusts", 700) == "large"  # the same data again: Telegram's copy
     clock[0] += images.CHART_TTL + 1
     assert charts.held("gusts", 1000) is None                                             # out of its time to live
-
-
-def test_an_alerts_chart_is_kept_warm_for_six_hours_from_the_alert_not_from_a_refresh():
-    from lib.alerts.pictures import AlertCharts
-    clock = [0.0]
-    charts, _ = alert_charts(clock)
-    assert charts.warm() == []
-    charts.sent("uv", NS(photo=(NS(file_id="large"),)), alerted=False)                   # a Refresh: not an alert
-    assert charts.warm() == []
-    charts.sent("uv", NS(photo=(NS(file_id="large"),)))
-    charts.sent("temps", None)                                                            # an alert whose picture Telegram refused still counts
-    assert charts.warm() == ["UV chart 1d", "Temperature chart 1d"]
-    clock[0] += AlertCharts.WARM_SECONDS - 1
-    assert charts.warm() == ["UV chart 1d", "Temperature chart 1d"]
-    charts.sent("uv", NS(photo=(NS(file_id="large"),)))                                  # alerted again: six more hours
-    clock[0] += 2
-    assert charts.warm() == ["UV chart 1d"]
 
 
 def test_refresh_sends_the_chart_drawn_ahead_since_the_message_was_last_changed_when_it_is_fresh():
@@ -609,10 +587,10 @@ def test_refresh_sends_the_chart_drawn_ahead_since_the_message_was_last_changed_
     charts, images = alert_charts(clock)
     shown = NS(date=datetime.now(timezone.utc) - timedelta(seconds=120), edit_date=None)
     assert charts.newer_than("gusts", shown) is None                                      # nothing held
-    images.put("wind chart 1d", b"ahead", "Wind, today")
+    images.put(charts.key("gusts"), b"ahead", "Wind, today")
     clock[0] += 60                                                                        # drawn a minute ago: since the message was sent
     assert charts.newer_than("gusts", shown) == b"ahead"
-    images.sent("wind chart 1d", NS(photo=(NS(file_id="large"),)))
+    images.sent(charts.key("gusts"), NS(photo=(NS(file_id="large"),)))
     assert charts.newer_than("gusts", shown) == "large"                                   # uploaded ahead: Telegram's copy
     edited = NS(date=shown.date, edit_date=datetime.now(timezone.utc) - timedelta(seconds=10))
     assert charts.newer_than("gusts", edited) is None                                     # the message changed after it was drawn
@@ -639,23 +617,22 @@ async def test_the_same_alert_again_sends_the_chart_kept_from_the_first_and_a_ne
     await notifier("Strong gusts", kind="gusts", chart=chart, since=1000)
     await notifier("Strong gusts", kind="gusts", chart=chart, since=1000)                 # the same reading: the chart kept, Telegram's copy
     assert drawn == [1] and [p for _, p, _ in bot.photos] == [b"png", "copy 1"]
-    assert images.held("wind chart 1d").file_id == "copy 2" and charts.warm() == ["Wind chart 1d"]   # (the copy last sent)
+    assert images.held(charts.key("gusts")).file_id == "copy 2"                                                # (the copy last sent)
     await notifier("Strong gusts", kind="gusts", chart=chart, since=1300)                 # a newer reading: drawn again
-    assert drawn == [1, 1] and bot.photos[-1][1] == b"png" and images.held("wind chart 1d").newest == 1300
+    assert drawn == [1, 1] and bot.photos[-1][1] == b"png" and images.held(charts.key("gusts")).newest == 1300
     await notifier("Strong gusts", kind="gusts", chart=chart)                             # the reading not said: drawn
     assert drawn == [1, 1, 1]
 
 
-async def test_refresh_sends_the_chart_drawn_ahead_and_otherwise_keeps_the_one_it_draws(tmp_path, monkeypatch):
+async def test_refresh_sends_the_chart_drawn_ahead_and_otherwise_keeps_the_one_it_draws(serve, tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
-    bot, _ = make_bot(tmp_path)
-    for source in bot.sources:
-        source.tz = TZ
+    bot, _ = await make_bot(serve, tmp_path)
     drawn = drawing(monkeypatch)
     q = ChartQuery("al:refresh:gusts")
     q.message.date, q.message.edit_date = datetime.now(timezone.utc) - timedelta(seconds=90), None
-    bot.images.put("wind chart 1d", b"ahead", "Wind, today")                              # drawn ahead since the alert went out
-    bot.images.sent("wind chart 1d", NS(photo=(NS(file_id="ahead copy"),)))
+    key = bot.alert_charts.key("gusts")
+    bot.images.put(key, b"ahead", "Wind, today")                                          # drawn ahead since the alert went out
+    bot.images.sent(key, NS(photo=(NS(file_id="ahead copy"),)))
     await press(bot, q)
     (media, _), = q.media
     assert drawn == [] and media.media == "ahead copy" and q.toast is None                # Telegram's copy, nothing drawn
@@ -667,5 +644,5 @@ async def test_refresh_sends_the_chart_drawn_ahead_and_otherwise_keeps_the_one_i
         return NS(photo=(NS(file_id="small"), NS(file_id="new copy")))
     q.edit_message_media = edit_message_media
     await press(bot, q)
-    assert drawn == [("Ecowitt", "Wind chart 1d")] and q.media[0][0].media.input_file_content == b"new png"
-    assert bot.images.held("wind chart 1d").file_id == "new copy" and bot.alert_charts.warm() == []   # (a Refresh starts no warm period)
+    assert drawn == [(CHARTS["gusts"], bot.weather)] and q.media[0][0].media.input_file_content == b"new png"
+    assert bot.images.held(key).file_id == "new copy"

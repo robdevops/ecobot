@@ -1,4 +1,4 @@
-"""The sensor's own web server, for the live reading: GET http://<device>/measures/current on the local network (AIRGRADIENT_LOCAL_URL,
+"""The sensor's own web server, for the live reading: GET http://<device>/measures/current on the local network (MCP_AIRGRADIENT_LOCAL_URL,
 e.g. http://airgradient_d83bda1c1e08.local). Nothing is asked of the cloud for it, and it is as fresh as the device's last measurement.
 The device only knows "now", so history, charts and the archive still come from the cloud.
 
@@ -117,7 +117,7 @@ class LocalSensor:
             self.address, self.retry_at = None, self.clock() + RETRY_SECONDS
             if self.working is not False:
                 log.warning("AirGradient: (%s) did not answer (%s: %s); %strying again in %d min%s", self.describe(), type(e).__name__, e,
-                            "using the cloud, " if self.cloud else "", RETRY_SECONDS // 60, local_name_hint(self.host, "AIRGRADIENT_LOCAL_URL"))
+                            "using the cloud, " if self.cloud else "", RETRY_SECONDS // 60, local_name_hint(self.host, "MCP_AIRGRADIENT_LOCAL_URL"))
             self.working = False
             return None
         self.working = True

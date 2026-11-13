@@ -21,13 +21,15 @@ CHARS_PER_TOKEN = 4
 # Tool results past twice a full query's data (10,000 tokens) get the chat a heads-up: that much input rides on every later step
 WARN_TOKENS = 2 * POINT_BUDGET * TOKENS_PER_POINT
 
+FALLBACK = "Sorry, I couldn't get an answer together - try a narrower question."   # the reply when the model's last answer is empty
+
 LIMIT_NOTICE = ("(System: tool limit reached. Answer now using only the data already fetched, "
                 "and briefly say if anything is missing.)")
 
 
 class Agent:
     def __init__(self, client: "AsyncOpenAI | None", model: str, tools: Tools):
-        self.client, self.model, self.tools = client, model, tools   # no client (no OPENROUTER_API_KEY): the tools are still called, the model never is
+        self.client, self.model, self.tools = client, model, tools   # no client (no BOT_OPENROUTER_API_KEY): the tools are still called, the model never is
 
     @property
     def ready(self) -> bool:
@@ -78,20 +80,18 @@ class Agent:
                 on_text(content)
         return content, [calls[i] for i in sorted(calls)], usage
 
-    async def run(self, messages: list[dict], system_prompt: str, effort: str, *,
-                  first_call: tuple[str, dict] | list[tuple[str, dict]] | None = None, tool_choice: str = "required",
-                  turn: Turn | None = None, on_text=None, on_heavy=None) -> str:
+    async def run(self, messages: list[dict], system_prompt: str, effort: str, *, tool_choice: str = "auto",
+                  turn: Turn | None = None, on_text=None, on_heavy=None, finish=None) -> str:
         """Runs the tool loop, appending assistant/tool turns to `messages` in place. The prompt
         is passed per question (not stored) so concurrent chats can't clash.
 
-        first_call (tool name, args), or a list of them, is what the bot already worked out (the fast path): the calls run
-        straight away, together, and the model is only invoked once the data is in. tool_choice is what the model's first
-        step may do with the tools: "required" makes it fetch fresh data first (weather questions), "auto" lets it just
-        reply (chat), "none" gives it no tools at all (a question about the bot itself). Every later step is "auto".
-        on_text(text so far) is called as each answer streams in (private chats show it as a draft).
+        tool_choice is what the model's first step may do with the tools ("auto": its own choice; every later step is "auto", the
+        last forced answer "none"). on_text(text so far) is called as each answer streams in (private chats show it as a draft).
         on_heavy(tokens) is called once, before the model is sent a lot of
         data: when the tool results of a question pass WARN_TOKENS (twice a 500-point query), so the chat can be told
-        first. The work carries on; nothing waits for a reply."""
+        first. The work carries on; nothing waits for a reply.
+        finish(calls, results) is asked after each step of the model's tool calls: text from it is the reply, and the turn ends there
+        with no further model call (a complete result, docs/ecobot-mcp.md 3.7)."""
         cache: dict = {}  # identical tool calls within one question are only made once
 
         async def call(name: str, args: str) -> str:
@@ -116,30 +116,23 @@ class Agent:
 
         llm_time = tool_time = 0.0
 
-        async def run_calls(calls: list[dict]):
-            """The calls ({"id", "name", "arguments"}), made together; their results join the messages."""
+        async def run_calls(calls: list[dict]) -> list[str]:
+            """The calls ({"id", "name", "arguments"}), made together; their results join the messages and are returned in order."""
             nonlocal tool_time
             t0 = time.monotonic()
             results = await asyncio.gather(*(call(c["name"], c["arguments"]) for c in calls))
             tool_time += time.monotonic() - t0
             messages.extend({"role": "tool", "tool_call_id": c["id"], "content": r} for c, r in zip(calls, results))
-            await heavy_check()
+            return results
 
-        first_step = 0
         try:
-            if first_call:
-                fast = [{"id": f"fast_{i}", "name": n, "arguments": json.dumps(a)}
-                        for i, (n, a) in enumerate(first_call if isinstance(first_call, list) else [first_call], 1)]
-                messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call(c) for c in fast]})
-                await run_calls(fast)
-                first_step = 1  # data is in; the model just answers (and may still call tools)
-            for step in range(first_step, MAX_STEPS + 1):
+            for step in range(MAX_STEPS + 1):
                 final = step == MAX_STEPS  # out of steps: force an answer from what we have
                 kwargs = {"model": self.model,
                           "messages": [{"role": "system", "content": system_prompt}, *messages],
                           "extra_body": {"reasoning": {"effort": effort}}}  # OpenRouter's setting for every model that reasons: none / low / medium / high
                 if self.tools.schemas:   # every tool, every time: the same list keeps the provider's cached prompt valid
-                    kwargs["tools"] = self.tools.schemas_for(turn)
+                    kwargs["tools"] = self.tools.schemas
                     kwargs["tool_choice"] = "none" if final or tool_choice == "none" else tool_choice if step == 0 else "auto"
                 if final:
                     log.warning("Tool step limit (%d) reached - asking for a final answer", MAX_STEPS)
@@ -152,8 +145,14 @@ class Agent:
                     entry["tool_calls"] = [_tool_call(tc) for tc in tool_calls]
                 messages.append(entry)
                 if not tool_calls or final:
-                    return content.strip() or "Sorry, I couldn't get an answer together - try a narrower question."
-                await run_calls(tool_calls)
+                    return content.strip() or FALLBACK
+                results = await run_calls(tool_calls)
+                if finish and (reply := finish(tool_calls, results)):
+                    log.info("The turn ended on a complete result (%s): no LLM %d",
+                             ", ".join(c["name"] for c in tool_calls), step + 2)
+                    messages.append({"role": "assistant", "content": reply})
+                    return reply
+                await heavy_check()
         finally:
             log.info("Timing: LLM %.1fs, tools %.1fs", llm_time, tool_time)
 

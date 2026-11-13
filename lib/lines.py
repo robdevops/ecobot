@@ -12,13 +12,13 @@ themselves (up to about 500 points) have a band only where the source gave them 
 import math
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from datetime import date, tzinfo
+from datetime import date, timedelta, tzinfo
 from itertools import accumulate
 from statistics import fmean
 from typing import NamedTuple
 
 from .specs import Line
-from .timeutil import SLOT, at_hour, local_date
+from .timeutil import SLOT, at_hour, day_bounds, local_date
 
 DAY = 86400
 SMOOTH_POINTS = 3                # a smoothed 5-minute line: each point is the mean of this many readings (15 minutes)
@@ -109,9 +109,55 @@ def _summarise(points, key) -> dict:
     return {k: (fmean(v), *extremes[k]) for k, v in means.items()}
 
 
+def day_of(tz: tzinfo):
+    """local_date(ts, tz) for readings mostly in time order: the day a reading is in is worked out once, and its span kept, so the
+    readings after it in the same day are placed by comparing two numbers (a span is kept only when its first and last second are of
+    that day: so where midnight is skipped or comes twice, every reading is still placed as local_date places it)."""
+    span = [1, 0, None]   # [start, end, day]: empty at first
+
+    def key(ts: int) -> date:
+        if span[0] <= ts <= span[1]:
+            return span[2]
+        day = local_date(ts, tz)
+        start, end = day_bounds(day, tz, True)
+        if start <= ts <= end and local_date(start, tz) == day == local_date(end, tz):
+            span[:] = start, end, day
+        return day
+    return key
+
+
 def daily_summary(points, tz: tzinfo) -> dict[date, tuple[float, float, float]]:
     """{local day: (mean, lowest low, highest high)}; see _summarise."""
-    return _summarise(points, lambda ts: local_date(ts, tz))
+    return _summarise(points, day_of(tz))
+
+
+def time_mean(means: dict[date, float], start: int, end: int, tz: tzinfo) -> float | None:
+    """The mean over [start, end] (epochs, both included) of these days' means, each day counting for the seconds of it inside: a part of
+    a day at either end for its hours, a whole day for its 24 (23 or 25 on a clock-change day), however many readings it had. A day's own
+    mean is of its half-hour means (daily_summary's, its day row's), so where every half hour is held this is the mean of the period's
+    half-hour means. None when no day is inside."""
+    weights = {d: min(b, end + 1) - max(a, start) for d in means for a, b in [day_bounds(d, tz)]}
+    inside = [d for d, w in weights.items() if w > 0]
+    return fmean([means[d] for d in inside], [weights[d] for d in inside]) if inside else None
+
+
+def readings_mean(points: list[tuple[int, float]], start: int, end: int, tz: tzinfo) -> float | None:
+    """The mean of these readings ((ts, value)) over [start, end], by time as a day row takes it: each day's mean of its half-hour means,
+    then the days by time_mean. So a day held only as hourly averages counts for its hours, as a day of 5-minute readings does, not for
+    its number of readings. (A reading's day is found among the period's midnights, not worked out for each of a year's readings.)"""
+    first = local_date(start, tz)
+    days = [first + timedelta(days=n) for n in range((local_date(end, tz) - first).days + 1)]
+    ends = [day_bounds(d, tz)[1] for d in days]
+    slots: dict[tuple[int, int], list] = {}   # (the day, the half hour): [sum, count]
+    for ts, value in points:
+        if start <= ts <= end:
+            got = slots.setdefault((bisect_right(ends, ts), ts // SLOT), [0.0, 0])
+            got[0] += value
+            got[1] += 1
+    means: dict[date, list[float]] = {}
+    for (day, _), (total, n) in slots.items():
+        means.setdefault(days[day], []).append(total / n)
+    return time_mean({d: fmean(m) for d, m in means.items()}, start, end, tz)
 
 
 def summary_by(points, key) -> dict:

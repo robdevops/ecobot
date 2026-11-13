@@ -20,9 +20,9 @@ from lib.config import Config  # noqa: E402
 
 
 async def main(days: int, pace: float):
-    cfg = Config.from_env()
+    cfg = Config.from_env(bot=False)   # (ecobot-mcp's settings: the sources)
     if not cfg.airgradient_cloud:
-        raise SystemExit("Set AIRGRADIENT_API_TOKEN and AIRGRADIENT_LOCATION_ID: the history comes from the cloud")
+        raise SystemExit("Set MCP_AIRGRADIENT_API_TOKEN and MCP_AIRGRADIENT_LOCATION_ID: the history comes from the cloud")
     air = AirGradient(cfg)
     try:
         before = await air.store.lacking()

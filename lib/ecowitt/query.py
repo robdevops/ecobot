@@ -4,16 +4,15 @@ The readings drawn are the period's at the resolution its length calls for: up t
 where the storage has it, else 30-minute: one request per week); longer, the 30-minute readings where the storage holds them all, else
 Ecowitt's daily records (10am to 10am in Melbourne: UTC days) and the newest days at 30 minutes. The records, the breakdown by day or by
 month and the averages come from the period's days instead (period.py): each whole day's row, worked out from the finest readings held
-for it, so a record's time is as close as those readings give it, and the part of a day at either end from its own readings.
+for it, so a record's time is as close as those readings give it, and the part of a day at either end from its own readings. An average
+weighs each of those days by the time of it the period holds.
 """
 
 import logging
 from datetime import date, datetime, time, timedelta
-from statistics import fmean
 
 from ..captions import AVERAGE_CHART_HINT, CHART_HINT, STACK_CHART_HINT, DIRECTION_CHART_HINT, wants_chart
-from ..lines import DAY, Plotted, Sample, build_line, how_drawn, shaded_up_to
-from ..daytable import grouping_in
+from ..lines import DAY, Plotted, Sample, build_line, how_drawn, shaded_up_to, time_mean
 from ..rain import rain_bars, rain_slots
 from ..timeutil import at_hour, day_bounds, day_text, local_date, now_local, parse_local, SLOT
 from ..storage.catalogue import text
@@ -301,7 +300,7 @@ class HistoryQuery:
                 if self.held:  # each month's low/high with when and date
                     for w, e in d.items():
                         _, row[f"{w}_when"], row[f"{w}_date"] = describe_time(e.ts, e.cycle, tz)
-        if (self.args.get("average") or self.turn.average_asked) and not key.startswith("rainfall"):  # a rain total has no mean
+        if (self.args.get("average") or self.turn.average_asked) and p.column.mode != "last":   # a rain counter (a total) has no mean; rain rate has
             self._add_averages(entry, {d.day: d.mean for d in p.days if d.mean is not None})
         return entry
 
@@ -337,21 +336,22 @@ class HistoryQuery:
         ("Oct 2026") when the period is broken down by month."""
         return day_text(day, year=False) if self.by_day else f"{day:%b %Y}"
 
-    def _add_averages(self, entry: dict, means: dict):
-        """The mean over the period, and per row of the breakdown (each day, or each month): the answer to "what was the average"."""
-        if not means:
+    def _add_averages(self, entry: dict, means: dict[date, float]):
+        """The mean over the period, and per row of the breakdown (each day, or each month): the answer to "what was the average". By
+        time, as a day row takes its own mean (lines.time_mean): each day's mean counts for the seconds of it the period holds, so the part
+        of a day at either end counts for its hours, not as a whole day, and a month for its time."""
+        span = self.f.epoch(self.start), self.f.epoch(self.end), self.tz
+        if (mean := time_mean(means, *span)) is None:
             return
         fmt = lambda v: f"{v:.1f}"
-        entry["average"] = fmt(fmean(means.values()))
-        table = entry.get("daily" if self.by_day else "monthly")
+        entry["average"] = fmt(mean)
+        table = entry.get("daily" if self.by_day else "monthly") or {}
+        rows: dict[str, dict[date, float]] = {}
         for d, v in means.items():
-            if table is not None and (label := self._label(d)) in table:
-                table[label].setdefault("_sum", []).append(v)
-        for table in (entry.get("daily"), entry.get("monthly")):
-            for row in (table or {}).values():
-                values = row.pop("_sum", None)
-                if values:
-                    row["avg"] = fmt(fmean(values))
+            if (label := self._label(d)) in table:
+                rows.setdefault(label, {})[d] = v
+        for label, days in rows.items():
+            table[label]["avg"] = fmt(time_mean(days, *span))
 
     def _chart_spec(self, series_out: dict, field: str | None = None) -> Chart | None:
         """Line chart: one line per group for the field asked about (`field`, else chart_field; temperature by default,
@@ -451,6 +451,8 @@ class HistoryQuery:
             line = self._shaded(self.lines.get(k), self.lines.get(band) if band else None)
         elif how == "days":
             line = self._shaded(self._day_line(k, at), self._day_line(band, at) if band else None)
+        elif k not in self.store:   # its figures came from the day rows, but no readings in the window to draw (a quiet last hours)
+            return None
         else:
             line = build_line(self._series_readings(k), self.tz, self.span.total_seconds(), smooth=k in SMOOTH_SERIES,
                               force_daily=self.turn.average_asked, until=now_local(self.tz).date())
@@ -475,8 +477,7 @@ class HistoryQuery:
             if day not in days and self.start.date() <= day <= self.end.date():
                 rain[day_bounds(day, self.tz)[0] + 12 * 3600] = mm
                 self.rain_from_daily = True
-        by = None if self.by_day else grouping_in(self.turn.text)
-        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, by=by, since=lo)
+        return rain_bars(rain, self.tz, self.start.date(), self.end.date(), until=hi, since=lo)
 
     def _stack_spec(self, names: list[str]) -> Chart | None:
         """The readings asked for, one panel each on a shared time axis (rain behind the first line); None if fewer than

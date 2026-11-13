@@ -2,7 +2,7 @@
 start() checks the monitor, tools are what the model can call, warm()/poke() keep recent
 readings ready, backfill() caches the monitor's whole history, current() feeds the alert monitor.
 
-Its readings come from each of its sources that is set (AIRGRADIENT_SOURCE; docs/storage-plan.md 3.12), each filling only what the ones
+Its readings come from each of its sources that is set (MCP_AIRGRADIENT_SOURCE; docs/storage-plan.md 3.12), each filling only what the ones
 before it lack: the monitor's own server (local.py: read every minute, each 5 minutes' readings averaged into a row with their lowest and
 highest as its band, and each reading kept as a minute), Home Assistant (homeassistant.py: its states of the monitor sampled the same way
 while the monitor does not answer the bot, and its history read back for the times the bot did not read it at all), and AirGradient's
@@ -16,11 +16,10 @@ AirGradient's documented API:
 
 Finished days are kept in the bot's file (readings.py, lib/storage), so questions are answered without asking
 AirGradient unless a day is missing. Reports AirGradient's corrected (calibrated) values
-where available, plus a US EPA AQI and band for PM2.5.
+where available, plus a US EPA AQI and band for PM2.5 and for PM10 (the US AQI is the higher).
 """
 
 import asyncio
-import copy
 import statistics
 import logging
 import time
@@ -30,24 +29,22 @@ from typing import NamedTuple
 
 import httpx
 
-from .. import intent
 from ..captions import CHART_HINT, wants_chart
 from ..config import Config
 from ..sources import Source
 from ..ecowitt.homeassistant import HomeAssistant
 from ..ecowitt.live import BUCKET
 from ..ecowitt.query import KEEP_HOURS, MINUTE_HOURS
-from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line
+from ..lines import RANGE_KEEP_DAYS, Plotted, Sample, build_line, readings_mean
 from ..panels import panel_for
-from ..specs import AIR_SOURCE, Chart, Line
+from ..specs import Chart, Line
 from ..storage import Storage
 from ..storage.catalogue import BOT, CLOUD, HOME_ASSISTANT
 from ..timeutil import day_bounds, day_text, local_date, local_epoch, parse_local, to_local, when
-from ..tools import Tool, Turn, json_result
+from ..tools import Turn
 from ..warm import Warmer
-from .days import DESCRIPTION as DAYS_DESCRIPTION, PARAMETERS as DAYS_PARAMETERS, air_days_tool
 from . import metrics
-from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, pm25_aqi, rating, value_of, without_spikes
+from .metrics import AIR_PANELS, ALL_METRICS, EXTRA, EXTRA_LABELS, EXTRA_UNITS, MARK_LOW, LABELS, METRICS, STORED, normalise, AQI_FROM, particle_aqi, rating, value_of, without_spikes
 from .homeassistant import (ANCHORS, MIN_COMPARED, checked, entity_ids, find_prefix, live as ha_live, minutes as ha_minutes, ranges as ha_ranges,
                             same_reading, verdicts)
 from .local import LocalSensor
@@ -78,36 +75,8 @@ BACKFILL_EMPTY_BEFORE_DATA = 365  # how far back to look for any data at all (a 
 BACKFILL_FAIL_STOP = 3            # this many failed requests in a row: give up until the next start
 BACKFILL_MAX_DAYS = 1460
 
-PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "chart": {"type": "boolean", "description": "Set true to send a chart (graph) with the answer. Without dates, "
-                                                    "it covers the last 24 hours."},
-        "metrics": {"type": "array", "items": {"type": "string", "enum": list(LABELS)},
-                    "description": "Which metrics to chart (several are drawn as panels in one image; "
-                                   "for 'all', list all six). Default: the reading the person named, else pm2_5."},
-        "start_date": {"type": "string", "description": "Start of a past period, 'YYYY-MM-DD HH:MM:SS' local time. "
-                                                        "Omit (with end_date) for the current reading."},
-        "end_date": {"type": "string", "description": "End of the past period, 'YYYY-MM-DD HH:MM:SS' local time."},
-    },
-}
-DESCRIPTION = ("Air quality from the owner's AirGradient outdoor sensor: PM2.5 (with US AQI and band), PM10, "
-               "PM1, CO2, VOC and NOx indexes, each with a traffic-light rating. No dates: the current reading. "
-               "With start_date/end_date (up to about a year): lowest, highest and average of each, with when they "
-               "happened. chart=true sends a graph.")
-
-
-def asked() -> tuple[str, dict]:
-    """air_quality as a question about the sensor's own temperature or humidity is offered it: those two as metrics too."""
-    parameters = copy.deepcopy(PARAMETERS)
-    parameters["properties"]["metrics"]["items"]["enum"] = [*LABELS, *EXTRA]
-    parameters["properties"]["metrics"]["description"] += " air_temperature and air_humidity are the sensor's own temperature and humidity."
-    return (DESCRIPTION + " With metrics air_temperature / air_humidity it gives the sensor's own temperature (°C) and humidity (%), only "
-            "when the question names the AirGradient's.", parameters)
-
-
 class Latest(NamedTuple):
-    """The latest reading as the air_quality tool gives it, and what the particulates alert also needs."""
+    """The latest reading (as the service's current reads it), and what the particulates alert also needs."""
     reading: dict                  # the sensor, the time, and each metric's value, unit and rating
     at: datetime | None            # when it was taken (UTC)
     sustained: dict[str, float]    # each metric's lowest over the last REQUIRE_CONSECUTIVE readings: what the air has been that long
@@ -127,7 +96,7 @@ class AirGradient(Source):
         owned: the file is this source's to close (so when it opened it, or no station has it)."""
         self.loc, self.tz = cfg.airgradient_location or "local", cfg.tz   # (the stored readings are kept under this)
         self.token = cfg.airgradient_token
-        self.cloud = cfg.airgradient_cloud    # without an account (or with AIRGRADIENT_SOURCE saying not) the cloud is never asked
+        self.cloud = cfg.airgradient_cloud    # without an account (or with MCP_AIRGRADIENT_SOURCE saying not) the cloud is never asked
         self.link = ("live chart", cfg.airgradient_dashboard) if cfg.airgradient_dashboard else None
         self.client = httpx.AsyncClient(timeout=15, transport=transport)
         self.local = LocalSensor(cfg.airgradient_local_url, cloud=self.cloud) if cfg.airgradient_local else None   # the monitor's own server
@@ -152,8 +121,6 @@ class AirGradient(Source):
         self._ha_said: set[str] = set()                       # what was said once about it: no sensor, a metric that is another variant
         self._verdict: dict[int, dict[str, tuple[int, int]]] = {HOME_ASSISTANT: {}, CLOUD: {}}   # per source, per metric: (five minutes compared, agreed)
         self._correction: str | None = None                   # how the monitor corrects its PM2.5, from its own configuration
-        self.tools = [Tool("air_quality", DESCRIPTION, PARAMETERS, self.handle, asked=asked, source=AIR_SOURCE),
-                      Tool("air_days", DAYS_DESCRIPTION, DAYS_PARAMETERS, self._days, source=AIR_SOURCE)]
 
     async def start(self):
         try:
@@ -306,13 +273,6 @@ class AirGradient(Source):
                             SOURCE_NAMES[src], label, v[1], v[0], FIX.get(name, "check the correction each applies"))
         return [row for r in rows if len(row := self._allowed(r, src)) > 1]
 
-    def describe(self) -> str:
-        return f"AirGradient outdoor air-quality sensor (location {self.loc}) (people say \"ag\", \"airgradient\", \"air gradient\", \"aq\" or \"air quality\")"
-
-    def wants(self, text: str) -> bool:
-        """Should a question start refreshing this source? Only air-quality questions."""
-        return intent.mentions_air(text)
-
     async def _get(self, kind: str, **params) -> dict | list:
         """The reply: an object for "current", a list of readings for "past". A period with no readings is an empty list (AirGradient
         says so with a 404); a reply of any other shape raises, so it is never stored as days without readings."""
@@ -342,7 +302,7 @@ class AirGradient(Source):
             return self._current[0]
 
     async def _fetch_current(self) -> dict:
-        """The live reading: from the monitor's own server when AIRGRADIENT_LOCAL_URL answers, else Home Assistant's states of it (each
+        """The live reading: from the monitor's own server when MCP_AIRGRADIENT_LOCAL_URL answers, else Home Assistant's states of it (each
         with the cloud's name for the sensor, last heard), else the cloud."""
         row, _ = await self._sample()
         if row is not None:
@@ -488,6 +448,20 @@ class AirGradient(Source):
         others = await self.store.load(lo, hi, srcs=(BOT, HOME_ASSISTANT))
         await self.store.merge(self._judge(CLOUD, got, others), self._final(day))
 
+    async def _held_day_rows(self, day: date) -> list[dict]:
+        """A day's readings as far as they are kept, whatever their age, nothing fetched: the stored ones (with the bucket being
+        averaged) when the bot keeps the readings itself or the day is finished, else the cloud's last fetch of it ([] when none)."""
+        if self._final(day) or self._sampled or (not self.cloud and (self.local or self._ha_ids)):
+            return self._with_bucket(day, await self.store.load_day(day))
+        cached = self._recent.get(day)
+        return cached[0] if cached else []
+
+    def _with_bucket(self, day: date, rows: list[dict]) -> list[dict]:
+        """A day's stored readings with the bucket being averaged as the last one, when it is that day's and not stored yet."""
+        if self._bucket and self._bucket[1] and local_date(self._bucket[0], self.tz) == day and self._bucket[0] not in {r["ts"] for r in rows}:
+            rows = [*rows, self._average(*self._bucket)]
+        return rows
+
     async def _recorded_day_rows(self, day: date) -> list[dict]:
         """An unfinished day (today, or one that has just ended) while the monitor or Home Assistant answers: the stored readings, the
         bucket being averaged as the last one, and the cloud asked, at most every GAP_RETRY_SECONDS, for the span of the buckets that are
@@ -500,9 +474,7 @@ class AirGradient(Source):
                 rows = await self.store.load_day(day)
             except Exception as e:   # the stored readings still stand
                 log.warning("AirGradient: couldn't fill the gaps of %s from the cloud: %s", day, e)
-        if self._bucket and self._bucket[1] and local_date(self._bucket[0], self.tz) == day and self._bucket[0] not in {r["ts"] for r in rows}:
-            rows = [*rows, self._average(*self._bucket)]
-        return rows
+        return self._with_bucket(day, rows)
 
     async def _complete_day(self, day: date) -> Held:
         """A finished day the bot holds readings of from the monitor or Home Assistant: the cloud is asked for the whole day once (one
@@ -576,29 +548,12 @@ class AirGradient(Source):
                     return fetched, failed, total
         return fetched, failed, total
 
-    # ---------- the tool ----------
-    async def handle(self, args: dict, turn: Turn | None = None) -> str:
-        """The air_quality tool: current reading, or a summary of a past period."""
-        turn = turn or Turn()
-        try:
-            turn.air_extra_used = turn.air_extra_used or any(m in EXTRA for m in args.get("metrics") or [])
-            chart = wants_chart(args, turn)
-            if args.get("start_date") or args.get("end_date") or chart:
-                return json_result(await self.history(args.get("start_date"), args.get("end_date"),
-                                                      chart=chart, metrics=args.get("metrics"), turn=turn))
-            return json_result(await self.current([m for m in args.get("metrics") or [] if m in EXTRA]))
-        except Exception as e:
-            log.warning("AirGradient request failed: %s", e)
-            return f"Error: couldn't read the air-quality sensor ({e})"
-
-    async def _days(self, args: dict, turn: Turn | None = None) -> str:
-        """The air_days tool: count, rank and total days from the stored readings."""
-        return await air_days_tool(self.store, self.tz, args, turn)
-
-    async def _previous_rows(self, ts: int, count: int) -> list[dict]:
-        """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first."""
+    async def _previous_rows(self, ts: int, count: int, held: bool = False) -> list[dict]:
+        """Up to `count` of today's cached readings just before `ts`, each within MAX_GAP_SECONDS of the next, oldest first (held:
+        only those already kept, nothing fetched)."""
         today = to_local(ts, self.tz).date()
-        earlier, got, after = [r for r in await self._day_rows(today) if r["ts"] < ts], [], ts
+        rows = await (self._held_day_rows(today) if held else self._day_rows(today))
+        earlier, got, after = [r for r in rows if r["ts"] < ts], [], ts
         for r in reversed(earlier):
             if len(got) >= count or after - r["ts"] > MAX_GAP_SECONDS:
                 break
@@ -606,15 +561,21 @@ class AirGradient(Source):
             after = r["ts"]
         return got
 
-    async def latest(self, extras: list[str] = ()) -> Latest:
-        """The latest reading. A rating (and PM2.5's AQI band) is the level the last two readings both reached, so a passing
+    async def latest(self, extras: list[str] = (), held: bool = False) -> Latest:
+        """The latest reading. A rating (and PM2.5's and PM10's AQI band) is the level the last two readings both reached, so a passing
         spike is not called poor until the next reading agrees; the value shown is always the latest one. The readings before it
-        come from today's history: when that can't be read, the latest is rated alone."""
-        row = await self._current_row()
+        come from today's history: when that can't be read, the latest is rated alone. held: nothing fetched, the reading it keeps
+        whatever its age and the readings before it it already has (LookupError when it keeps none)."""
+        if held:
+            if not self._current:
+                raise LookupError("no reading held")
+            row = self._current[0]
+        else:
+            row = await self._current_row()
         at = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")) if row.get("timestamp") else None
         need = metrics.REQUIRE_CONSECUTIVE - 1   # the readings before the latest that `sustained` takes in
         try:
-            earlier = await self._previous_rows(int(at.timestamp()), max(need, 1)) if at else []
+            earlier = await self._previous_rows(int(at.timestamp()), max(need, 1), held) if at else []
         except Exception as e:   # only the history failing: the latest reading still stands
             log.warning("AirGradient: today's readings unavailable (%s); rating the latest alone", e)
             earlier = []
@@ -630,18 +591,14 @@ class AirGradient(Source):
             reading[name] = {"value": v, "unit": unit, "rating": rating(name, rated)}
             if reading[name]["rating"] != rating(name, v):
                 reading[name]["rating_note"] = "rated on the last two readings: the previous one was lower"
-            if name == "pm2_5":
-                aqi, band = pm25_aqi(rated)
+            if name in AQI_FROM:   # (each particle's own US AQI: the US AQI is the higher, us_aqi)
+                aqi, band = particle_aqi(name, rated)
                 reading[name].update(aqi_us=aqi, band=band)
             sustained[name] = min([v, *(r[name] for r in held if name in r)])
         for name in extras:   # the sensor's own temperature and humidity, only when asked for: no rating
             if name in EXTRA and (v := value_of(row, name)) is not None:
                 reading[name] = {"value": v, "unit": EXTRA_UNITS[name]}
         return Latest(reading, at, sustained)
-
-    async def current(self, extras: list[str] = ()) -> dict:
-        """The latest reading as the air_quality tool gives it (see latest); `extras`: the sensor's own temperature and humidity, if asked."""
-        return (await self.latest(extras)).reading
 
     async def rows(self, t0: datetime, t1: datetime) -> tuple[list[dict], int, list[date]]:
         """(readings in [t0, t1] (naive local times), days that only exist as hourly averages, older days still waiting for
@@ -669,7 +626,8 @@ class AirGradient(Source):
         return [{**r, "_range": {**ranges[r["ts"]], **r.get("_range", {})}} if r["ts"] in ranges else r for r in rows]
 
     async def history(self, start: str | None, end: str | None, chart: bool = False,
-                      metrics: list[str] | None = None, turn: Turn | None = None) -> dict:
+                      metrics: list[str] | None = None, turn: Turn | None = None, daily: bool = False) -> dict:
+        """daily: the chart draws each whole day's average, one point a day (an average was asked for: the summary tool's `average`)."""
         turn = turn or Turn()
         now = self.now()
         try:   # a date the model sends, with or without an offset; a bad one is its mistake, not the sensor's
@@ -691,9 +649,10 @@ class AirGradient(Source):
                "readings": len(rows)}
         units = {**{name: unit for name, (_, unit) in METRICS.items()},
                  **{name: EXTRA_UNITS[name] for name in metrics or [] if name in EXTRA}}   # the sensor's own temperature and humidity, only when asked for
+        span = local_epoch(t0, self.tz), local_epoch(t1, self.tz)
         for name, unit in units.items():
             if pts := [(r["ts"], r[name]) for r in rows if name in r]:
-                out[name] = self._entry(name, pts, unit)
+                out[name] = self._entry(name, pts, unit, span)
         if trimmed:
             out["note_period"] = f"Only the last {MAX_DAYS} days can be covered per question; this covers {out['period']}."
         if hourly:
@@ -708,26 +667,28 @@ class AirGradient(Source):
         if chart and rows:
             asked = metrics or turn.air_named or ["pm2_5"]   # unnamed: the reading the person is asking about
             chart_spec = self._chart([m for m in (*ALL_METRICS, *EXTRA) if m in asked] or ["pm2_5"], rows, out["period"],
-                                     (t0.date(), t1.date()))
+                                     (t0.date(), t1.date()), daily)
             if chart_spec:
                 turn.charts.append(chart_spec)
                 out["chart"] = CHART_HINT
         return out
 
-    def _entry(self, name: str, pts: list[tuple[int, float]], unit: str) -> dict:
-        """A metric's lowest, highest and average over these readings ((ts, value)), with when the extremes happened; a rated metric
-        (METRICS) with the ratings of its high and average, and PM2.5 with their AQI and band too."""
+    def _entry(self, name: str, pts: list[tuple[int, float]], unit: str, span: tuple[int, int]) -> dict:
+        """A metric's lowest, highest and average over these readings ((ts, value)) of the period `span` (epochs), with when the extremes
+        happened; a rated metric (METRICS) with the ratings of its high and average, and PM2.5 and PM10 with their AQI and band too. The average is
+        by time, as the day rows take a day's (lines.readings_mean): an hourly reading of the older history counts for its hour, not as one
+        reading among a 5-minute hour's twelve."""
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         entry = {"unit": unit, "low": lo[1], "low_time": when(lo[0], self.tz), "high": hi[1], "high_time": when(hi[0], self.tz),
-                 "average": round(statistics.fmean(v for _, v in pts), 1)}
+                 "average": round(readings_mean(pts, *span, self.tz), 1)}
         if name in METRICS:
             entry["high_rating"], entry["average_rating"] = rating(name, hi[1]), rating(name, entry["average"])
-            if name == "pm2_5":
-                entry["high_aqi_us"], entry["high_band"] = pm25_aqi(hi[1])
-                entry["average_aqi_us"], entry["average_band"] = pm25_aqi(entry["average"])
+            if name in AQI_FROM:
+                entry["high_aqi_us"], entry["high_band"] = particle_aqi(name, hi[1])
+                entry["average_aqi_us"], entry["average_band"] = particle_aqi(name, entry["average"])
         return entry
 
-    def _line(self, name: str, rows: list[dict]) -> tuple[Line, Plotted] | None:
+    def _line(self, name: str, rows: list[dict], daily: bool = False) -> tuple[Line, Plotted] | None:
         """One metric as a chart line, in its own units, and how it was drawn. The record high/low are the true readings.
         The readings themselves while they fit the point budget; more than that are bucketed (30 minutes ... a day): each
         bucket's mean, its range shaded."""
@@ -737,19 +698,21 @@ class AirGradient(Source):
         gap = max(60, round(statistics.median(b[0] - a[0] for a, b in pairwise(pts))))
         spread = {r["ts"]: r["_range"][name] for r in rows if name in r and name in r.get("_range", {})}   # what the bot saw in a bucket it recorded
         plotted = build_line([Sample(t, v, *(((min(spread[t][0], v), max(spread[t][1], v)) if t in spread else (None, None))), gap)
-                              for t, v in pts], self.tz, pts[-1][0] - pts[0][0])
+                              for t, v in pts], self.tz, pts[-1][0] - pts[0][0], force_daily=daily,
+                             until=self.now().date() if daily else None)
         if plotted is None:
             return None
         lo, hi = min(pts, key=lambda p: p[1]), max(pts, key=lambda p: p[1])
         line = plotted.spec(LABELS.get(name) or EXTRA_LABELS[name], {"high": hi, **({"low": lo} if name in MARK_LOW else {})}, name)
-        line.on_line = True   # the readings themselves marked where they peak, as the answer gives them, not the top of the shading (one sample inside a reading)
+        line.on_line = not daily   # the readings themselves marked where they peak, as the answer gives them, not the top of the shading (one sample inside a reading); a day's average has the day's range as its band
         return line, plotted
 
-    def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None) -> Chart | None:
+    def _chart(self, names: list[str], rows: list[dict], period: str, days: tuple[date, date] | None = None,
+               daily: bool = False) -> Chart | None:
         """These metrics as one chart. One metric is drawn large, with its rating zones. Several go into panels on a
         shared time axis, grouped by AIR_PANELS (the particles together, the rest each alone). `period` is the subtitle's
         text for it, `days` its first and last day (for the caption)."""
-        drawn = {n: got for n in names if (got := self._line(n, rows))}
+        drawn = {n: got for n in names if (got := self._line(n, rows, daily))}
         if not drawn:
             return None
         if len(drawn) == 1:

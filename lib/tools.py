@@ -1,20 +1,15 @@
-"""The tools the model can call. Each data source contributes its own."""
+"""The tools the bot's model is offered (lib/service's ten, wrapped by lib/model_tools.py), and the Turn the engines take."""
 
-import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from .logs import BUGS, QUOTES
-from .specs import CHART_SOURCE, source_text
 
 log = logging.getLogger(__name__)
 
 MAX_OUTPUT_CHARS = 60000
-SOURCE_PARAMETER = {"type": "string", "description": "With a chart: where its data came from, written small under it. Name the site, "
-                                                     "tool or URL (e.g. 'Ecowitt weather station', 'AirGradient sensor', 'ecowitt.net'). "
-                                                     "Leave out to use the device the tool reads."}
 
 
 def json_result(out) -> str:
@@ -24,30 +19,26 @@ def json_result(out) -> str:
 
 @dataclass
 class Turn:
-    """What one question carries between the bot and the tools it calls (nothing is shared between questions)."""
-    charts: list = field(default_factory=list)   # chart specs the tools add; the bot renders them after the answer
-    chart_asked: bool = False                    # the person's words asked for a chart ("plot"), whatever the model sets
-    chart_field: str | None = None               # the one reading the question is about ("humidity"); None: temperature
-    chart_fields: list[str] = field(default_factory=list)   # readings asked to be seen together ("temperature and rain")
-    two_axes: bool = False                       # the words ask for two readings on one chart with a scale each ("on two axes")
-    air_extra: bool = False                      # the tools offer the air sensor's own temperature and humidity: the words name them, or this chat is still using them
-    air_extra_used: bool = False                 # a tool served them for this question
-    air_named: list[str] = field(default_factory=list)   # the air readings the person's words name, else their last messages' ("co2"): a chart's default
-    topics: set = field(default_factory=set)     # the guidance topics this question was given (intent.topics, and the chat's memory of them)
-    average_asked: bool = False                  # an average was asked for: the caption leads with it
-    text: str = ""                               # what the person said (a tool can check an argument against it)
-    readings: list[str] = field(default_factory=list)   # the readings the words name ("temperature", "rain"): a result can leave out the others
-    per_day: bool = False                        # day by day figures were asked for: a long period keeps every day, not only its extremes
-    result_chars: int = 0                        # the size of every tool result so far this question (what the model will be sent)
-    forecast_shown: list = field(default_factory=list)   # the forecast days the answer includes, remembered once it is sent
+    """What one call carries: the options an engine is driven with (set by the service from its own arguments: lib/service/summary.py,
+    days.py, relate.py, scan.py) and what it gives back (its charts, its timings); for the bot's model, the request's metadata and the
+    results it keeps. Nothing is shared between questions."""
+    charts: list = field(default_factory=list)   # chart specs the engines add
+    chart_asked: bool = False                    # draw a chart (the call's `chart`)
+    chart_field: str | None = None               # the one reading drawn; None: temperature
+    chart_fields: list[str] = field(default_factory=list)   # the readings drawn together, a panel each
+    two_axes: bool = False                       # two readings on one panel with a scale each
+    air_named: list[str] = field(default_factory=list)   # the air readings a chart of the air sensor draws
+    average_asked: bool = False                  # the figures and the chart as averages
+    readings: list[str] = field(default_factory=list)   # the readings asked for: a result leaves out the others
+    per_day: bool = False                        # a long period keeps every day, not only its extremes
+    ahead: bool = False                          # nobody is waiting (a background request): its fetches wait their turn
     times: dict = field(default_factory=dict)    # seconds spent by step ("data", "draw", "png"), for the reply's timing line in the log
-    ahead: bool = False                          # a chart drawn ahead, nobody waiting: its requests wait their turn
-
-    @classmethod
-    def of(cls, read, text: str, **more) -> "Turn":
-        """The Turn for a question as intent.read read it (`read`): what its words ask of a chart and of the figures."""
-        return cls(chart_asked=read.chart_asked, chart_field=read.chart_field, chart_fields=read.chart_fields, two_axes=read.two_axes, air_extra=read.air_extra,
-                   average_asked=read.average_asked, readings=read.readings, per_day=read.per_day, text=text, **more)
+    meta: dict = field(default_factory=dict)     # the request's metadata, all a service tool reads (lib/service/common.py: chart_points,
+                                                 # fetch, priority); over MCP, the request's _meta
+    results: list = field(default_factory=list)  # the bot's model: (tool, arguments, its whole result as data) of each call it made
+    pictures: dict = field(default_factory=dict)  # ... and the charts the service drew for it, by its place in `results`
+                                                  # (lib/weather.ChartImage each: the PNG, the chart's JSON, the theme)
+    result_chars: int = 0                        # the size of every result the model was sent so far this question
 
 
 @dataclass
@@ -55,30 +46,16 @@ class Tool:
     name: str
     description: str
     parameters: dict
-    handler: Callable[[dict, Turn], Awaitable[str]]   # (arguments, the question's Turn); a Turn is optional when called directly
-    asked: Callable[[], tuple[str, dict]] | None = None   # (description, parameters) a question that asks for the air sensor's own
-                                                          # temperature or humidity is offered instead (Turn.air_extra)
-    source: str | None = None   # the tool draws charts: where their data comes from unless the model says (specs.CHART_SOURCE);
-                                # "" leaves it to the tool. It is then offered a `source` argument (SOURCE_PARAMETER).
+    handler: Callable[[dict, Turn], Awaitable[str]]   # (arguments, the question's Turn)
 
-    def schema(self, turn: "Turn | None" = None) -> dict:
-        description, parameters = self.asked() if turn and turn.air_extra and self.asked else (self.description, self.parameters)
-        if self.source is not None:
-            parameters = {**parameters, "properties": {**parameters["properties"], "source": SOURCE_PARAMETER}}
-        return {"type": "function", "function": {"name": self.name, "description": description, "parameters": parameters}}
+    def schema(self) -> dict:
+        return {"type": "function", "function": {"name": self.name, "description": self.description, "parameters": self.parameters}}
 
 
 class Tools:
     def __init__(self, tools: list[Tool]):
         self.by_name = {t.name: t for t in tools}
         self.schemas = [t.schema() for t in tools]
-
-    def schemas_for(self, turn: "Turn | None") -> list[dict]:
-        """The tool list for this question: every tool, the same list as every other question's (so the provider's cached prompt holds),
-        except that a question asking for the air sensor's own temperature or humidity is offered them in the tools that can use them."""
-        if turn and turn.air_extra and any(t.asked for t in self.by_name.values()):
-            return [t.schema(turn) for t in self.by_name.values()]
-        return self.schemas
 
     async def call(self, name: str, raw_args: str, turn: Turn | None = None) -> str:
         """Run a tool for the model; failures come back as text the model can explain."""
@@ -90,23 +67,16 @@ class Tools:
         except json.JSONDecodeError as e:
             return f"Error: tool arguments were not valid JSON ({e})"
         log.debug("Tool call %s %s", name, raw_args, extra=QUOTES)
-        sourced = CHART_SOURCE.set(source_text(args.get("source") if isinstance(args, dict) else None) or tool.source or "")   # the charts this call draws
+        turn = turn if turn is not None else Turn()
         try:   # no time limit of its own: the question's (bot.TURN_SECONDS) runs from before the call
-            out = await tool.handler(args, turn or Turn())
+            out = await tool.handler(args, turn)
         except Exception as e:
             log.error("Tool %s failed: %s: %s", name, type(e).__name__, e, exc_info=isinstance(e, BUGS))
             return f"Error calling tool: {e}"
-        finally:
-            CHART_SOURCE.reset(sourced)
         out = out or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:
             log.warning("Tool %s output truncated: %d chars", name, len(out))
             out = out[:MAX_OUTPUT_CHARS] + "\n...[truncated - request a shorter range]"
         log.debug("Tool result %s: %s", name, out if len(out) < 90 else f"{len(out)} chars", extra=QUOTES)
-        if turn:
-            turn.result_chars += len(out)
+        turn.result_chars += len(out)
         return out
-
-    async def call_all(self, calls: list[tuple[str, dict]], turn: Turn | None = None) -> list[str]:
-        """The bot's own calls (name, arguments), made together; their results in the same order."""
-        return await asyncio.gather(*(self.call(name, json.dumps(args), turn) for name, args in calls))

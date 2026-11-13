@@ -1,6 +1,5 @@
-holidays
-httpx
-openai
-python-telegram-bot>=22.8
-pillow==13.0.0
-zeroconf
+# Everything, in one venv: ecobot-mcp (requirements-mcp.txt), the bot (requirements-bot.txt) and irrigation-mcp
+# (requirements-irrigation.txt), for the systemd install, which runs them from one checkout. With requirements-charts.txt (Pillow) for ecobot-mcp's chart images and Status picture.
+-r requirements-mcp.txt
+-r requirements-bot.txt
+-r requirements-irrigation.txt

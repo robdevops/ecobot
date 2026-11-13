@@ -4,14 +4,16 @@ December only).
 A warning when grass pollen or the thunderstorm asthma risk is High 🔴 or Extreme 🟣 (the scale is Low 🟢, Moderate 🟠, High 🔴, Extreme 🟣; "No data" counts
 as no reading). One alert per metric and day: another on a new day that is still High, and again when it rises (High to Extreme);
 none while it stays the same; none before 7:30 am. Once it drops below High the metric is ready to warn again.
+Each is an event in the alert log (lib/alert_log.py), with the pollen site as its link, news until the end of its day.
 """
 
 import logging
 import time
+from datetime import timedelta
 
 from ..pollen.parse import LEVEL_EMOJI, LEVELS
-from ..timeutil import day_text
-from .menu import kinds_of
+from ..timeutil import at_hour, day_text
+from .kinds import kinds_of
 
 log = logging.getLogger(__name__)
 
@@ -26,8 +28,9 @@ LINK = ("melbournepollen.com.au", "https://www.melbournepollen.com.au/")
 class PollenAndAsthmaMonitor:
     KINDS = kinds_of("Pollen")
 
-    def __init__(self, pollen, state, notify):
-        self.pollen, self.state, self.notify = pollen, state, notify
+    def __init__(self, pollen, state, alerts):
+        """state: the rules' store (AlertStore). alerts: the alert log."""
+        self.pollen, self.state, self.alerts = pollen, state, alerts
 
     async def check(self):
         if not self.pollen.in_season() or self.pollen.now().timetuple()[3:5] < ALERT_FROM:   # October to December only; not before 7:30 am
@@ -49,5 +52,13 @@ class PollenAndAsthmaMonitor:
                 m[key] = {"day": str(today), "level": reading["level"]}
                 for_day = reading.get("date")
                 when = f" (forecast for {day_text(for_day, year=False)})" if for_day and for_day != today else ""
-                await self.notify(f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}", link=LINK, kind="pollen_and_asthma")
+                self.alerts.append("pollen_and_asthma", f"{LEVEL_EMOJI[reading['level']]} {LABELS[key]} is {reading['level']}{when}.{ADVICE[key]}",
+                                   f"{LABELS[key]}: {reading['level']}",
+                                   {"metric": key, "level": reading["level"], "for": (for_day or today).isoformat()},
+                                   expires=self._end_of(for_day or today), link=LINK)
         self.state.save()
+
+    def _end_of(self, day) -> float:
+        """The epoch at which `day` (local) ends."""
+        tz = getattr(self.pollen, "tz", None)
+        return at_hour(day + timedelta(days=1), 0, tz) if tz else self.alerts.now() + 86400

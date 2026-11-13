@@ -11,7 +11,7 @@ NAMES = ("bot_state.json", "ecobot.sqlite")
 
 
 def configured(monkeypatch, **env):
-    for key, value in {"TELEGRAM_BOT_TOKEN": "t", "OPENROUTER_API_KEY": "x", "ECOWITT_API_KEY": "a", "ECOWITT_APP_KEY": "b", **env}.items():
+    for key, value in {"BOT_TELEGRAM_TOKEN": "t", "BOT_OPENROUTER_API_KEY": "x", "BOT_MCP_URL": "http://127.0.0.1:8765/mcp", **env}.items():
         monkeypatch.setenv(key, value)
     return Config.from_env()
 

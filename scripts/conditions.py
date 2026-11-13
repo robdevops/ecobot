@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fetch the pollen / thunderstorm asthma page and the forecast once, the way the bot does, and print what the report would show.
-Use it to check the real sites before switching POLLEN=on / FORECAST=on.
+Use it to check the real sites before switching MCP_POLLEN=on / MCP_FORECAST=on.
 
     python scripts/conditions.py --lat -37.8 --lon 144.9 [--district Central] [--raw]
 
@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.config import local_tz  # noqa: E402
+from lib.config import env, local_tz  # noqa: E402
 from lib.forecast import Forecast  # noqa: E402
 from lib.pollen import Pollen  # noqa: E402
 
@@ -29,7 +29,7 @@ async def main():
     ap.add_argument("--raw", action="store_true")
     args = ap.parse_args()
     cfg = SimpleNamespace(tz=local_tz(), pollen_district=args.district, forecast_lat=args.lat, forecast_lon=args.lon,
-                         place=os.getenv("PLACE", "Melbourne"), storage_path=os.path.join(tempfile.mkdtemp(), "ecobot.sqlite"))   # a scratch file: the bot's is left alone
+                         place=env("MCP_PLACE") or "Melbourne", storage_path=os.path.join(tempfile.mkdtemp(), "ecobot.sqlite"))   # a scratch file: the bot's is left alone
 
     pollen = Pollen(cfg)
     try:

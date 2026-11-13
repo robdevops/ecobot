@@ -1,34 +1,34 @@
 """Show exactly what the bot sends to the model for a question, without calling the model.
 
-Builds the real system prompt and tool definitions, runs the real reasoning/fast-path decisions, and
-runs the real tools against the bot's file (no network, no API keys). A recording stand-in plays the
-model: its first reply is a tool call you choose with --call (default: the call the model made for
-"hottest day where it also rained"), its second is a short answer. Every request the bot would send
-is printed in full.
+Builds the real system prompt (the bot's persona, the server's instructions and the time) and the service's tools as the model is
+offered them (lib/model_tools.py), reads the effort from the words, and runs the service's tools against the bot's file (no network, no
+API keys: the weather station is its file alone, so a tool that needs more answers with its error). A recording stand-in plays the
+model: its first reply is a tool call you choose with --call (default: the call for "hottest day where it also rained"), its second is a
+short answer. Every request the bot would send is printed in full.
 
     python scripts/show_request.py "hottest day where it also rained"
     python scripts/show_request.py --file /path/ecobot.sqlite --call '{"name": ..., "arguments": {...}}' "..."
-    python scripts/show_request.py --call '{"name": "readings", "arguments": {"metric": "outdoor.humidity", "start": "2026-11-08 20:47",
+    python scripts/show_request.py --call '{"name": "readings", "arguments": {"reading": "outdoor.humidity", "period": "last 5 hours",
         "interval": "1hour"}}' "humidity each hour for the last 5 hours"     # the readings tool, run on the file
 """
 
 import asyncio
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 from _common import parser  # noqa: E402  (also puts the repo on sys.path)
 from lib.config import data_dir, local_tz  # noqa: E402
 
-from lib import intent, prompt  # noqa: E402
-from lib.history import History  # noqa: E402
-from lib.airgradient import source as air  # noqa: E402
-from lib.ecowitt import days, source as station  # noqa: E402
+from lib import intent, model_tools, prompt  # noqa: E402
 from lib.llm import Agent  # noqa: E402
+from lib.service import Service  # noqa: E402
+from lib.service.context import Context  # noqa: E402
+from lib.service.instructions import instructions  # noqa: E402
 from lib.storage import FILE, Storage  # noqa: E402
-from lib.tools import Tool, Tools  # noqa: E402
+from lib.tools import Turn  # noqa: E402
 
 
 class Recorder:
@@ -48,10 +48,9 @@ class Recorder:
         return NS(choices=[NS(message=msg)], usage=None)
 
 
-def default_call(today):
-    return {"name": "weather_days", "arguments": {
-        "start_date": str(today - timedelta(days=1459)), "end_date": str(today - timedelta(days=1)),
-        "where": [{"field": "rain", "op": ">=", "value": 1}], "sort_by": "temp_max", "order": "desc", "limit": 3}}
+def default_call():
+    return {"name": "days", "arguments": {"where": [{"field": "rain", "op": ">=", "value": 1}], "sort_by": "temp_max", "order": "desc",
+                                          "limit": 3}}
 
 
 def banner(text):
@@ -75,33 +74,20 @@ async def main():
         storage.close()
         sys.exit(f"{args.file} has no station history")
 
-    async def days_handler(a):
-        return await days.days_tool(storage, macs[0], tz, a)
-
-    async def unavailable(a):
-        return "(not run by this script)"
-
-    air_sensor = next(iter(storage.sensors.all(kind="air")), None)
-    history = await History.open(NS(storage=storage, mac=macs[0], tz=tz),
-                                 NS(store=NS(storage=storage, sensor=lambda: air_sensor), tz=tz) if air_sensor else None)
-    tools = Tools([Tool("weather_now", station.REALTIME_DESCRIPTION, station.REALTIME_PARAMS, unavailable),
-                   Tool("weather_history", station.HISTORY_DESCRIPTION, station.HISTORY_PARAMS, unavailable),
-                   Tool("weather_days", days.DESCRIPTION, days.PARAMETERS, days_handler),
-                   Tool("air_quality", air.DESCRIPTION, air.PARAMETERS, unavailable), *history.tools])
+    station = NS(name="Ecowitt", storage=storage, mac=macs[0], tz=tz, latitude=None)   # (the file alone)
+    ctx = await Context.open(eco=station, tz=tz)
+    tools = model_tools.tools(Service.of(ctx))
     text = args.question
-    r = intent.read(text, now.replace(tzinfo=None))
-    system = prompt.build(now, {"Ecowitt": "Ecowitt weather station", "AirGradient": "AirGradient outdoor air-quality sensor"}, r.hints)
-    effort, fast = r.effort, r.fast
-    call = json.loads(args.call) if args.call else default_call(now.date())
+    system = prompt.build(now, instructions(ctx))
+    effort = intent.effort(text)
+    call = json.loads(args.call) if args.call else default_call()
 
     client = Recorder([call, "(the model's answer goes here)"])
     messages = [{"role": "user", "content": text}]
-    await Agent(client, "deepseek/deepseek-v4.1-flash-1017", tools).run(messages, system, effort, first_call=([fast[:2], *r.more] if r.more else fast[:2]) if fast else None,
-                                               tool_choice=r.tool_choice)
+    await Agent(client, "deepseek/deepseek-v4.1-flash-1017", tools).run(messages, system, effort, turn=Turn())
 
     banner("DECISIONS MADE IN CODE")
-    print(f"reasoning effort: {effort}   fast path: {fast[2] if fast else 'no (the model chooses the tool)'}   "
-          f"must call a tool first: {r.needs_data}")
+    print(f"reasoning effort: {effort}   (every typed question goes to the model)")
     first = client.requests[0]
     banner("REQUEST 1: settings")
     print(json.dumps({k: v for k, v in first.items() if k not in ("messages", "tools")}, indent=2))

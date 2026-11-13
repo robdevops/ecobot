@@ -1,4 +1,6 @@
 -r requirements.txt
+-r requirements-charts.txt
 pytest
 pytest-asyncio
+pytest-timeout
 pytest-xdist>=3.2

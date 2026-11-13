@@ -1,5 +1,5 @@
 """How the bot's log lines look: the message alone, marked WARN, ERROR or DEBUG when it is not an ordinary (INFO) line. Only a chat
-message (a request quoted last on a line) is shortened: put on one line and cut to the log width (LOG_WIDTH) with an ellipsis (…)
+message (a request quoted last on a line) is shortened: put on one line and cut to the log width (BOT_LOG_WIDTH) with an ellipsis (…)
 marking the cut. Every other line, and a traceback, is logged whole.
 
 DEBUG and INFO lines go to stdout, WARN and ERROR to stderr, so Docker (and its journald driver) tells them apart. Under systemd both go

@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, time as dtime, timedelta
 
 import httpx
@@ -82,18 +81,18 @@ async def test_today_and_the_next_days_come_from_open_meteo_by_local_date(tmp_pa
     today = datetime.now(TZ).date()
     assert forecast.lines() == ["Today: 🌧️ Rain. 11–16°C, 50% chance of at least 1 mm",
                                 f"{today + timedelta(days=1):%A}: ☀️ Clear. 12–20°C, 0% chance of at least 1 mm"]
-    out = json.loads(await forecast.handle({"days": 3}))
-    assert len(out["lines"]) == 3 and out["lines"][2] == f"{today + timedelta(days=2):%A}: ⛈️ Thunderstorm. 9–14°C, 75% chance of at least 1 mm"
-    assert out["place"] == "Melbourne" and out["source"] == "Open-Meteo" and "Tomorrow" not in " ".join(out["lines"])
-    assert "tag" not in out and {c for c in calls if isinstance(c, str)} == {"api.open-meteo.com", "ensemble-api.open-meteo.com"}
+    lines = forecast.lines(3)
+    assert len(lines) == 3 and lines[2] == f"{today + timedelta(days=2):%A}: ⛈️ Thunderstorm. 9–14°C, 75% chance of at least 1 mm"
+    assert forecast.place == "Melbourne" and "Tomorrow" not in " ".join(lines)
+    assert {c for c in calls if isinstance(c, str)} == {"api.open-meteo.com", "ensemble-api.open-meteo.com"}
     await forecast.close()
 
 
 async def test_the_place_is_the_configured_name(tmp_path):
     forecast, _ = make(tmp_path, place="Geelong")
     await forecast.start()
-    assert json.loads(await forecast.handle({}))["place"] == "Geelong"
-    assert json.loads(await forecast.handle({}))["time"]                    # when it was fetched, for the report's heading
+    assert forecast.place == "Geelong"
+    assert forecast.fetched_at                                                           # when it was fetched, for the text's heading
     await forecast.close()
 
 
@@ -117,19 +116,18 @@ async def test_the_station_location_is_used_when_none_is_configured_and_without_
     cfg = config(tmp_path, forecast=True)
     assert Forecast(cfg, (-37.8, 144.9)).location == (-37.8, 144.9)
     half = config(tmp_path, forecast=True, forecast_lat=-33.9)                       # one half alone is not a place: not paired with the station's
-    assert Forecast(half, (-37.8, 144.9)).location == (-37.8, 144.9) and "FORECAST_LAT and FORECAST_LON go together" in caplog.text
+    assert Forecast(half, (-37.8, 144.9)).location == (-37.8, 144.9) and "MCP_FORECAST_LAT and MCP_FORECAST_LON go together" in caplog.text
     assert Forecast(config(tmp_path, forecast=True, forecast_lat=-33.9, forecast_lon=151.2), (-37.8, 144.9)).location == (-33.9, 151.2)
-    with pytest.raises(RuntimeError, match="FORECAST_LAT"):
+    with pytest.raises(RuntimeError, match="MCP_FORECAST_LAT"):
         await Forecast(cfg).start()
 
 
-async def test_a_direct_forecast_question_shows_the_whole_week_unless_fewer_days_are_asked_for(tmp_path):
+async def test_the_lines_are_every_day_open_meteo_gave_unless_fewer_are_asked_for(tmp_path):
     forecast, _ = make(tmp_path)
     await forecast.start()
-    assert len(json.loads(await forecast.handle({}))["lines"]) == 3          # every day Open-Meteo gave (the test data has three)
-    assert len(json.loads(await forecast.handle({"days": 2}))["lines"]) == 2
-    assert len(json.loads(await forecast.handle({"days": "nonsense"}))["lines"]) == 3
-    assert len(json.loads(await forecast.handle({"days": 30}))["lines"]) == 3
+    assert len(forecast.lines(7)) == 3                                                   # every day Open-Meteo gave (the test data has three)
+    assert len(forecast.lines(2)) == 2
+    assert len(forecast.lines(30)) == 3
     await forecast.close()
 
 

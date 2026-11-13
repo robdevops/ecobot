@@ -1,12 +1,12 @@
-"""Charts across both sources, composed by the model from a fixed list of series and styles.
+"""Charts across both sources, composed from a fixed list of series and styles, and the air sensor against rain and the weather (the
+engines of lib/service's summary, relate and scan).
 
-The model names what to plot (`plot_chart`: up to four panels, each a series and a style); this module loads the data
+A call names what to plot (`plot_chart`: up to four panels, each a series and a style); this module loads the data
 from the caches, puts it on one time axis and hands the chart to the renderer. The model never supplies numbers or
 drawing code, so a chart the bot has never drawn before is still made from checked data. Only the cached readings are
 used for the weather station (nothing is fetched); AirGradient fills any missing days first, as its own tool does."""
 
 import asyncio
-import copy
 import logging
 from datetime import date, datetime, time, timedelta, tzinfo
 from statistics import fmean
@@ -21,8 +21,8 @@ from .series import WEATHER
 from .panels import panel_for, same_axis, two_axes
 from .specs import AIR_SOURCE, ECOWITT_SOURCE, Panel, Shares, stack
 from .rain import bar_layout, bar_of, rain_bars, rain_slots
-from .timeutil import SLOT, day_bounds, now_local, parse_period, period_parameters
-from .tools import Tool, Turn, json_result
+from .timeutil import SLOT, day_bounds, now_local, parse_period
+from .tools import Turn, json_result
 
 log = logging.getLogger(__name__)
 
@@ -30,43 +30,8 @@ MAX_PANELS = 4
 DEFAULT_DAYS = 30
 # Weather station series: name -> (group, field, label, unit); the composer draws the wind as its average speed
 SERIES = [*WEATHER, *ALL_METRICS]
-SERIES_ASKED = [*SERIES, *EXTRA]   # what a question that asks for the air sensor's own temperature or humidity is offered
+SERIES_ASKED = [*SERIES, *EXTRA]   # with the air sensor's own temperature and humidity
 STYLES = ("line", "bars", "rating")
-
-PLOT_DESCRIPTION = (
-    "Plot readings from the weather station and the air-quality sensor together on one time axis, one panel each: "
-    "'plot the traffic light rating of air quality against rainfall', 'plot PM2.5 and humidity'. Each panel is a series and "
-    "a style. Styles: 'line' (the reading; long periods are averaged, with the day's range shaded), 'bars' (rain only), "
-    "'rating' (air-quality series only: the share of time in good, poor and very poor, as traffic-light bars). "
-    "Bars and ratings are per hour for a few days, per 6 hours up to a month, per day beyond. Rain defaults to bars and "
-    "everything else to line. Default period: the last 30 days up to yesterday.")
-PLOT_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "panels": {"type": "array", "minItems": 1, "maxItems": MAX_PANELS, "description": "Top to bottom.",
-                   "items": {"type": "object", "properties": {"series": {"type": "string", "enum": SERIES},
-                                                              "style": {"type": "string", "enum": list(STYLES)}},
-                             "required": ["series"]}},
-        "two_axes": {"type": "boolean", "description": "Set true to draw the series on ONE panel with a left and a right axis: "
-                                                       "'on two axes', 'dual axis', 'overlay', 'combine them on one chart'."},
-        "invert_second_axis": {"type": "boolean", "description": "With two_axes: the right-hand axis runs top to bottom, so its lines fall as the "
-                                                                 "reading rises ('invert the second Y axis')."},
-        **period_parameters(DEFAULT_DAYS),
-    },
-    "required": ["panels"],
-}
-
-
-def plot_asked() -> tuple[str, dict]:
-    """plot_chart as a question about the air sensor's own temperature or humidity is offered it: those two series too, and same_axis."""
-    parameters = copy.deepcopy(PLOT_PARAMETERS)
-    parameters["properties"]["panels"]["items"]["properties"]["series"]["enum"] = SERIES_ASKED
-    parameters["properties"]["same_axis"] = {
-        "type": "boolean", "description": "Set true to draw the series as ONE panel on one axis, the lines over each other: "
-                                          "'plot airgradient humidity over ecowitt humidity'."}
-    return (PLOT_DESCRIPTION + " Also air_temperature and air_humidity: the AirGradient sensor's own temperature and humidity (ask for "
-            "them only by those names: plain temperature and humidity are the weather station's).", parameters)
-
 
 SCAN_DAYS = 90
 SCAN_MAX_DAYS = 400   # a longer scan is cut to its latest days: its time grows with the period
@@ -75,37 +40,8 @@ SCAN_AIR = ("pm2_5", "pm10", "co2", "voc_index", "nox_index")
 SCAN_WEATHER = {**{n: (WEATHER[n].group, WEATHER[n].field, WEATHER[n].label.lower(), WEATHER[n].unit)
                    for n in ("temperature", "humidity", "dew_point", "pressure")},
                 "wind_speed": ("wind", "wind_speed", "wind speed", "km/h"), "wind_gust": ("wind", "wind_gust", "wind gusts", "km/h")}
-SCAN_DESCRIPTION = (
-    "Which readings go with air quality? Scans every air-quality metric (PM2.5, PM10, CO2, VOC, NOx) against the weather "
-    "(temperature, humidity, dew point, pressure and its 3-hour change, wind speed, gusts, wind direction, rain), allowing for "
-    "the daily cycle and for chance, and reports only the relationships that stand out, with a plain verdict. Use it for 'is "
-    "there a correlation between air quality and other metrics', 'what affects air quality'. For rain alone use air_link. "
-    "Default period: the last 90 days.")
-SCAN_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "metric": {"type": "string", "enum": ["all", *SCAN_AIR], "description": "One air reading, or all (default)."},
-        **period_parameters(SCAN_DAYS),
-        "chart": {"type": "boolean", "description": "Set true for a chart of the strongest relationship found."},
-    },
-}
 LINK_DAYS = 60
 LINK_METRICS = ("pm2_5", "pm10")
-LINK_DESCRIPTION = (
-    "Does rain go with cleaner air? Reads the air-quality sensor (PM2.5 by default) and the weather station's rain together at "
-    "30-minute resolution and reports whether the air was cleaner in the hours after rain than before it, its level in wet and "
-    "dry periods, and wet days against dry days, with a plain verdict. Use it for 'is there a correlation between air quality "
-    "and rainfall', 'does rain clear the air'. Default period: the last 60 days.")
-LINK_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "metric": {"type": "string", "enum": list(LINK_METRICS), "description": "The air reading. Default pm2_5."},
-        **period_parameters(LINK_DAYS),
-        "chart": {"type": "boolean", "description": "Set true for a chart: the reading (with its rating zones) over rain bars."},
-    },
-}
-
-
 def _error(text: str) -> str:
     return json_result({"error": text})
 
@@ -128,9 +64,6 @@ class Composer:
 
     def __init__(self, eco, air):
         self.eco, self.air, self.tz = eco, air, eco.tz
-        self.tools = [Tool("plot_chart", PLOT_DESCRIPTION, PLOT_PARAMETERS, self.plot_chart, asked=plot_asked, source=""),
-                      Tool("air_link", LINK_DESCRIPTION, LINK_PARAMETERS, self.air_link, source=""),
-                      Tool("air_scan", SCAN_DESCRIPTION, SCAN_PARAMETERS, self.air_scan, source="")]
 
     def period(self, args: dict, default_days: int = DEFAULT_DAYS) -> tuple[date, date] | str:
         """(first, last) day, or an error text. The last day is at most yesterday: today is still settling."""
@@ -189,7 +122,6 @@ class Composer:
                 return _error(f"no cached readings of {name} for {first} to {last}")
             built.append(panel)
             summary.append(facts)
-        turn.air_extra_used = turn.air_extra_used or any(name in EXTRA for name, _ in asked)
         if (args.get("two_axes") or args.get("same_axis")) and any(name in EXTRA for name, _ in asked):
             for (name, _), panel in zip(asked, built):   # the station's readings next to the air sensor's own: say whose each is
                 if name in WEATHER and name != "rain":
@@ -273,7 +205,7 @@ class Composer:
         origin, days = day_bounds(first, self.tz)[0], (last - first).days + 1
         result = await asyncio.to_thread(scan.scan, {m: v[0] for m, v in air.items()}, weather, direction, speed, origin, days, self.tz)
         summary = scan.summarise(result, air_names, weather_names)
-        strongest = summary.pop("strongest")
+        strongest = summary.pop("strongest", None)   # (none when there was nothing to scan)
         out = {"period": f"{first} to {last}", "resolution": "30-minute slots; each pair compared within the day and day to day",
                "how_to_read": ("Open with `verdict`, then the relationships in `findings`, strongest first. These go together; they "
                                "do not cause each other (shared weather and season). If nothing stands out, say so and that the "

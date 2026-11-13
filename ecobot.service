@@ -1,24 +1,34 @@
-# Install as /etc/systemd/system/ecobot.service, with the code outside every home directory:
+# Install as /etc/systemd/system/ecobot.service, beside ecobot-mcp.service (README: "systemd"), with the code outside every home directory:
 #   sudo git clone <repo> /opt/ecobot && cd /opt/ecobot
-#   sudo python3.13 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt     # Python 3.13.5 (.python-version)
-# The files stay owned by root and readable by all: the service runs as a throw-away user (DynamicUser=) that cannot write to them,
+#   sudo python3.13 -m venv .venv && sudo .venv/bin/pip install -r requirements.txt -r requirements-charts.txt     # Python 3.13.5 (.python-version)
+#   sudo cp ecobot-mcp.service ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now ecobot-mcp.service ecobot.service
+# With the irrigation controller, irrigation-mcp.service too (see that file), and BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp.
+# The bot is ecobot-mcp's client (docs/ecobot-mcp.md step 6b): it runs no source and no alert rule of its own, and can't start without
+# BOT_MCP_URL=http://127.0.0.1:8765/mcp in /etc/ecobot.env. This unit pulls ecobot-mcp.service in and starts after it (Wants=, After=),
+# so the bot finds it up; ecobot-mcp restarting doesn't stop the bot, which waits for it and says so to anyone who asks meanwhile. It
+# wants irrigation-mcp.service and starts after it the same way, but only if that unit is installed: Wants= on a unit that isn't there
+# changes nothing, so the bot starts without it (and has no Irrigation button without BOT_IRRIGATION_MCP_URL).
+# The files stay owned by root and readable by all: the bot runs as a throw-away user (DynamicUser=) that cannot write to them,
 # so its bytecode goes to /var/cache/ecobot (CacheDirectory=, PYTHONPYCACHEPREFIX=) and is rebuilt on its own after an update.
 # Any other place needs only the WorkingDirectory and ExecStart lines changed.
-# The bot never opens the environment file itself: systemd loads it (TZ, OPENROUTER_*, ECOWITT_*, AIRGRADIENT_*, TUYA_*,
-# TELEGRAM_BOT_TOKEN, ...).
-# StateDirectory= gives the bot /var/lib/ecobot (the state file and the SQLite caches): the bot finds it through
-# STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older install kept in
-# the checkout (bot_state.json, *_cache.sqlite) are not read from there: with the service stopped, copy them into /var/lib/ecobot once;
-# systemd hands the folder to the dynamic user when it starts.
+# The bot never opens the environment file itself: systemd loads it (docs/configuration.md: its BOT_ settings and the shared ones such
+# as TZ and AUTH_TOKENS; the MCP_ ones are ecobot-mcp's and the IRRIGATION_ ones irrigation-mcp's, read by their units from the same
+# file). The irrigation controller's Tuya secrets are dropped here by every name they have had (UnsetEnvironment=): the bot never uses them.
+# StateDirectory= gives the bot /var/lib/ecobot (its state file, bot_state.json, and ecobot-mcp's token, which it reads there): the bot
+# finds it through STATE_DIRECTORY, so no DATA_DIR is needed, and it is the only place the sandbox below lets it write. Files an older
+# install kept in the checkout (bot_state.json, *_cache.sqlite) are not read from there: with both units stopped, copy them into
+# /var/lib/ecobot once; systemd hands the folder to the dynamic user when it starts.
 [Unit]
-Description=ecobot (Telegram weather and air-quality bot)
-After=network-online.target
-Wants=network-online.target
+Description=ecobot (Telegram weather and air-quality bot, a client of ecobot-mcp)
+After=network-online.target ecobot-mcp.service irrigation-mcp.service
+Wants=network-online.target ecobot-mcp.service irrigation-mcp.service
 
 [Service]
 DynamicUser=yes
 WorkingDirectory=/opt/ecobot
 EnvironmentFile=/etc/ecobot.env
+UnsetEnvironment=IRRIGATION_TUYA_CLIENT_ID BOT_TUYA_CLIENT_ID TUYA_CLIENT_ID IRRIGATION_TUYA_CLIENT_SECRET BOT_TUYA_CLIENT_SECRET TUYA_CLIENT_SECRET
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPYCACHEPREFIX=/var/cache/ecobot/pycache
 StateDirectory=ecobot
@@ -62,8 +72,8 @@ ProtectHostname=yes
 ProtectProc=invisible
 RestrictNamespaces=yes
 
-# Network: HTTPS to the weather, air, pollen, Tuya, Telegram and model APIs (AF_UNIX: the local name resolver; AF_NETLINK: listing
-# the network interfaces, which finding the air sensor by its .local name on the network needs)
+# Network: HTTPS to Telegram and the model, and ecobot-mcp's and irrigation-mcp's MCP ports (AF_UNIX: the local name resolver; AF_NETLINK: listing the
+# network interfaces)
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 # Resource limits

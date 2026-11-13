@@ -19,25 +19,30 @@ A Telegram bot for your Ecowitt weather station and AirGradient air sensor. Ask 
   - [Docker](#docker)
     - [Docker logging](#docker-logging)
     - [Docker networking](#docker-networking)
+  - [Irrigation](#irrigation)
+- [Web dashboard](#web-dashboard)
 - [Upgrading](#upgrading)
+  - [Renamed settings](#renamed-settings)
   - [systemd](#systemd-1)
   - [Docker](#docker-1)
 - [Configuration](#configuration)
 
 ## Features
 
-- **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?"
+- **Ask in plain words:** "how hot is it?", "will it rain?", "how many days was UV over 9 this year?" Anything you type is answered by the AI model with ecobot-mcp's tools.
 - **Charts on request:** any reading, with 1D, 7D, 1M, 3M and 1Y buttons to change the period, or two readings on one chart with a scale each.
-- **One-tap report:** `/report` shows weather, air quality, pollen and the forecast in one message, under gauges of the temperature, humidity and rain. `/dashboard` draws the station's gauges with the day's, month's and year's highs and lows.
+- **Buttons for the usual:** in a private chat a keyboard of instant charts (Rain, Weather, Temperature, Humidity, Air Quality, Particulates, Wind), and Status: one message, a picture of the temperature, humidity and rain gauges with a report of the weather, air quality, forecast and pollen under it, and a 🔄 to read it again (no AI model: it's instant). Each is a command too (`/rain`, `/status` ...).
+- **Commands from ecobot-mcp:** its prompts appear in Telegram's `/` menu: `/report`, `/now`, `/will_it_rain`, `/chart rain 7d`, `/rainfall last week` ... The words after the command fill the prompt in, and a prompt added to ecobot-mcp appears with no change to the bot.
+- **Web dashboard:** the gauges as a live page in any browser on your network, laid out to fill a phone, a tablet or a screen.
 - **Alerts:** rain, strong gusts, high UV, unhealthy air and temperature changes. Silent unless you turn sound on.
-- **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast.
-- **Cheap to run:** most answers are worked out by the bot itself, and the AI model is only called when it's needed.
+- **Irrigation:** water or pause a Tuya controller from the chat, and have it paused automatically when rain has fallen or is forecast. The controller has an MCP server of its own, irrigation-mcp, which the bot (and any other MCP client) talks to.
+- **A thin client:** the bot only talks to Telegram and the model; ecobot-mcp reads the sources, runs the alert rules and draws every picture. The buttons and alerts work without the model.
 
 ## Install
 
 Already installed? See [Upgrading](#upgrading).
 
-You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [OpenRouter API key](https://openrouter.ai/keys) for questions that need the AI model. Either way, start by putting your keys in one private file:
+You need a Telegram bot token from [@BotFather](https://t.me/BotFather), and optionally an [OpenRouter API key](https://openrouter.ai/keys) for typed questions and the `/report`-style commands (without one, the buttons and the alerts still work). Either way, start by putting your keys in one private file:
 
 ```
 sudo install -m 600 -o root -g root /dev/null /etc/ecobot.env
@@ -49,26 +54,33 @@ sudoedit /etc/ecobot.env
 
 ```
 # Telegram bot token from @BotFather
-TELEGRAM_BOT_TOKEN=
+BOT_TELEGRAM_TOKEN=
 
 # Your Telegram user id (ask @userinfobot), so the bot answers you
-ADMIN_CHAT_IDS=
+BOT_ADMIN_CHAT_IDS=
 
 # AI model (optional)
-OPENROUTER_API_KEY=
+BOT_OPENROUTER_API_KEY=
 
 # Weather station (optional)
-ECOWITT_API_KEY=
-ECOWITT_APP_KEY=
+MCP_ECOWITT_API_KEY=
+MCP_ECOWITT_APP_KEY=
 
 # AirGradient sensor (optional)
-AIRGRADIENT_API_TOKEN=
-AIRGRADIENT_LOCATION_ID=
+MCP_AIRGRADIENT_API_TOKEN=
+MCP_AIRGRADIENT_LOCATION_ID=
 ```
+
+Settings that start with `MCP_` are read by ecobot-mcp (the part that fetches the readings and runs the alert rules), the ones that
+start with `BOT_` by the Telegram bot, the `IRRIGATION_` ones by irrigation-mcp ([Irrigation](#irrigation), optional); the few without
+any, such as `TZ`, by all of them.
 
 ### systemd
 
-Needs Python 3.13.
+Needs Python 3.13. Two units run from one checkout and one venv: `ecobot-mcp` (`python -m ecobot_mcp`: the readings, the alerts, and an
+MCP server at `http://127.0.0.1:8765/mcp` that the bot and [other MCP clients](#other-mcp-clients) use) and `ecobot`, the Telegram bot,
+its client. The bot's unit pulls ecobot-mcp's in and starts after it. (A third, `irrigation-mcp`, is for an irrigation controller:
+[Irrigation](#irrigation).)
 
 ```
 sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
@@ -79,30 +91,49 @@ sudo python3.13 -m venv /opt/ecobot/.venv
 ```
 
 ```
-sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/ecobot/requirements-charts.txt
+```
+
+Tell the bot where ecobot-mcp is: add to `/etc/ecobot.env` (`sudoedit /etc/ecobot.env`)
+
+```
+BOT_MCP_URL=http://127.0.0.1:8765/mcp
+```
+
+No token is needed between them: at its first start ecobot-mcp makes one and keeps it in the data folder
+(`/var/lib/private/ecobot/auth_token`), where the bot reads it. To choose your own instead, set `AUTH_TOKENS=<token>` (both read it;
+the bot sends the first).
+
+Install both units, ecobot-mcp first:
+
+```
+sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
 ```
 
 ```
-sudo cp /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
-```
-
-```
-sudo systemctl enable --now ecobot
+sudo systemctl enable --now ecobot-mcp.service ecobot.service
 ```
 
 Watch the logs:
 
 ```
-journalctl -fu ecobot
+journalctl -fu ecobot-mcp -u ecobot
 ```
 
-Warnings and errors alone: `journalctl -p warning -u ecobot`.
+Warnings and errors alone: `journalctl -p warning -u ecobot-mcp -u ecobot`.
 
-Then message `/report` to your Telegram bot.
+Both run sandboxed as one user of their own, and keep their data in `/var/lib/private/ecobot`. Check that they run as the same user
+and the folder's owner is unchanged (the three numbers match): `systemctl show -p UID --value ecobot-mcp ecobot; stat -c %u /var/lib/private/ecobot`.
+The token for [other MCP clients](#other-mcp-clients): `sudo cat /var/lib/private/ecobot/auth_token`.
 
-The service runs sandboxed as its own user, and keeps its data in `/var/lib/private/ecobot`.
+Then message `/status` to your Telegram bot.
 
 ### Docker
+
+Docker runs two containers, each from its own image built from this repository: `ecobot-mcp` (the readings, the alerts, and an MCP
+server that the bot and other AI clients use) and `ecobot`, the Telegram bot, which is optional (and a third, `irrigation-mcp`, with an
+irrigation controller: [Irrigation](#irrigation)). No token is needed between them: at
+its first start ecobot-mcp makes one and keeps it in the data folder, where the bot reads it.
 
 ```
 sudo mkdir -p /var/lib/private/ecobot && sudo chown -R 10001:10001 /var/lib/private/ecobot
@@ -116,26 +147,59 @@ sudo git clone https://github.com/robdevops/ecobot /opt/ecobot
 cd /opt/ecobot
 ```
 
+To run the Telegram bot too (leave this out for ecobot-mcp alone):
+
+```
+echo "COMPOSE_PROFILES=bot" | sudo tee -a /opt/ecobot/.env
+```
+
 ```
 sudo docker compose up -d --build
 ```
 
-Watch the logs:
+Watch the logs: `sudo docker logs -tf ecobot-mcp` shows `MCP: http://...:8765/mcp`, and `sudo docker logs -tf ecobot` shows
+`ecobot-mcp: connected`. Then message `/status` to your Telegram bot.
+
+Docker uses the same data folder as the systemd units, so you can switch between them, one at a time. To go back to systemd:
+`sudo docker compose --profile bot down && sudo systemctl start ecobot-mcp ecobot`, with `BOT_MCP_URL=http://127.0.0.1:8765/mcp` added to
+`/etc/ecobot.env`. Take that line out again before going back to Docker: Docker sets its own, and one in `/etc/ecobot.env` wins over it.
+Only one ecobot-mcp runs on the data folder: a second stops at start, saying so in its log.
+
+#### Other MCP clients
+
+ecobot-mcp is published on port 8765 of every address your machine has, so other devices on your network (Claude Code on a laptop,
+say) can use it with a token: the one it generated (`sudo cat /var/lib/private/ecobot/auth_token`), or, better, one each: set
+`AUTH_TOKENS=<bot's token>,<laptop's token>` in `/etc/ecobot.env` (made with `openssl rand -hex 16`; the bot sends the first, and a
+token taken out is refused from the next start). Add your machine's IP address or name, as they write it in the URL, to
+`MCP_ALLOWED_HOSTS`, e.g. `http://192.168.1.5:8765/mcp` needs `192.168.1.5`. For Claude Code:
+`claude mcp add --transport http ecobot http://192.168.1.5:8765/mcp --header "Authorization: Bearer <token>"`. It is plain HTTP: keep it
+on your own network. Docker's published ports go around ufw's rules. To keep it to this machine only, change `8765:8765` in
+`compose.yaml` to `127.0.0.1:8765:8765`. A client that shows pictures can have the charts as images: add `?charts=png` to its URL.
+
+#### Charts in LibreChat (and other chat apps): `?charts=link`
+
+Some clients (LibreChat, with an Ollama endpoint, say) don't show an image a tool sends, but do show a markdown image in the model's
+reply. For those, add `?charts=link` to the MCP URL (`https://api.example.org/ecobot/mcp?charts=link`): each chart then comes as a
+link to its picture, `/charts/<id>.png` on ecobot-mcp's port, and the model is asked to put it in its reply as a markdown image. Your
+browser loads the picture, so the link has to be one it can reach: set `MCP_CHART_BASE_URL` to where your reverse proxy serves
+`/charts`, e.g. with nginx
 
 ```
-sudo docker logs -tf ecobot
+location /ecobot-charts/ { proxy_pass http://127.0.0.1:8765/charts/; }
 ```
 
-Then message `/report` to your Telegram bot.
-
-Docker uses the same data folder as the systemd service, so you can switch between them, one at a time. To go back to systemd: `sudo docker rm -f ecobot && sudo systemctl start ecobot`.
+and `MCP_CHART_BASE_URL=https://api.example.org/ecobot-charts`. Unset, the link is built from the address the MCP request came to
+(the proxy's `X-Forwarded-Proto` and `X-Forwarded-Host` when it sends them) with `/charts`. The pictures need no token and answer any
+`Host`: anyone who has a link can open it until it expires, so treat links as you would the chart itself. Each link's id is random
+and unguessable; the pictures are kept in memory for `MCP_CHART_LINK_HOURS` (24 by default), at most 500 of them and 64 MB in all
+(the oldest go first), and a restart of ecobot-mcp forgets them all (an old link then answers 404).
 
 #### Docker logging
 
-Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot`):
+Logs go to Docker's own rotated log; to send them to the journal instead (kept across upgrades, read with `journalctl -f CONTAINER_NAME=ecobot-mcp` or `CONTAINER_NAME=ecobot`):
 
 ```
-echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee /opt/ecobot/.env
+echo "COMPOSE_FILE=compose.yaml:compose.journald.yaml" | sudo tee -a /opt/ecobot/.env
 ```
 
 The bot writes warnings and errors to stderr and the rest to stdout, which Docker files in the journal at the priorities err and info, so `journalctl -p warning CONTAINER_NAME=ecobot` shows the warnings and errors alone.
@@ -144,15 +208,139 @@ To use both this and [Docker host network](#docker-networking), set `COMPOSE_FIL
 
 #### Docker networking
 
-`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or reconfigure the container for host network (then run the `docker compose` command again):
+`.local` names (mDNS) can't be found from Docker's private network: use IP addresses for config values, or put the containers on the host's network (then run the `docker compose` command again; the bot then reaches ecobot-mcp at 127.0.0.1, and irrigation-mcp, if you run it, with `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp`):
 
 ```
-echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee /opt/ecobot/.env
+echo "COMPOSE_FILE=compose.yaml:compose.host-network.yaml" | sudo tee -a /opt/ecobot/.env
 ```
+
+`/opt/ecobot/.env` holds one `COMPOSE_FILE=` line: to use more than one of these files, list them all in it, separated by `:`.
+
+### Irrigation
+
+Optional, for a Tuya smart irrigation timer. The controller has its own program, **irrigation-mcp** (`python -m irrigation_mcp`): an
+MCP server on port 8766 with the tools `irrigation_status`, `water`, `stop` and `delay`, which also closes the valve after every run
+(even across a restart) and checks once a day, at 18:00, whether to pause watering for rain (asking ecobot-mcp for the rain measured and
+the forecast) and whether the battery is low. The bot is its client: with `BOT_IRRIGATION_MCP_URL` set, the keyboard's Wind button
+becomes 🌱 Irrigation (status, water for 5 to 30 minutes, switch off, pause for 24 to 72 hours) and its battery and pause alerts reach
+the chats that want them. Without it the bot has no irrigation at all.
+
+Add the controller's Tuya cloud keys to `/etc/ecobot.env` ([docs/configuration.md](docs/configuration.md#irrigation-mcps-settings-irrigation_)):
+
+```
+IRRIGATION_TUYA_DEVICE_ID=
+IRRIGATION_TUYA_CLIENT_ID=
+IRRIGATION_TUYA_CLIENT_SECRET=
+```
+
+**systemd:** add `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` to `/etc/ecobot.env`, then install and start its unit beside the
+others (the bot's unit starts after it when it is installed, and runs without it when it isn't):
+
+```
+sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload
+```
+
+```
+sudo systemctl enable --now irrigation-mcp.service && sudo systemctl restart ecobot
+```
+
+Its log: `journalctl -fu irrigation-mcp`.
+
+**Docker:** add `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp` to `/etc/ecobot.env`, and the `irrigation` profile to
+`/opt/ecobot/.env` (`COMPOSE_PROFILES=bot,irrigation`), then `sudo docker compose up -d --build`. Its log: `sudo docker logs -tf
+irrigation-mcp`. Leave `IRRIGATION_ECOBOT_MCP_URL` out of `/etc/ecobot.env`: Docker sets it to the ecobot-mcp container.
+
+## Web dashboard
+
+ecobot-mcp also serves the station's and the air sensor's gauges as a live web page at `/dashboard` on its port, e.g. `http://deb1:8765/dashboard`
+(your machine's name or IP address). It shows every gauge with the day's, month's and year's highs and lows, drawn by the browser (plain HTML5, nothing fetched from
+the internet), and fits every tile on the screen in portrait or landscape where they stay readable (on a phone it scrolls). It
+updates by itself when a new reading arrives, and says "reconnecting…" while ecobot-mcp is away. This page is the dashboard: the
+Telegram bot has none of its own (its Status button sends a picture of the temperature, humidity and rain gauges alone).
+
+Temperature, humidity, pressure, rain, UV index and the US AQI come first; then the weather station's other gauges, then the air
+sensor's (when there is one). The air sensor's bands are on US standards:
+
+- **US AQI**, the higher of PM2.5's and PM10's (as AirNow gives it; "(PM10)" after the category when PM10 sets it), on a 0-500 dial with the EPA's six categories and colours (Good 0-50 green, Moderate 51-100 yellow,
+  Unhealthy for Sensitive Groups 101-150 orange, Unhealthy 151-200 red, Very Unhealthy 201-300 purple, Hazardous 301-500 maroon), the
+  category's name under the number;
+- **PM2.5** (µg/m³) on the EPA's 2024 breakpoints (9.0, 35.4, 55.4, 125.4, 225.4) and **PM10** on the EPA's (54, 154, 254, 354,
+  424), in the same colours; **PM1** on PM2.5's (it has no standard of its own, and is part of PM2.5);
+- **CO₂** (ppm): there is no EPA standard, so the usual US indoor guidance (from ASHRAE's): under 800 good, 800-1000 fair, 1000-1500
+  poor, 1500-2000 bad, 2000 and over very bad;
+- **VOC index** and **NOx index**, when the monitor reports them (Sensirion's indices, learnt from its own air: VOC 100 is its
+  average, NOx 1 its baseline): VOC under 100 low, 100-150 average, then elevated, high (250) and very high (400); NOx up to 20 low,
+  then elevated, high (150) and very high (300).
+
+On the air dials every category gets an equal share of the dial (as AirNow's AQI dial draws them), so "good" and "moderate" aren't
+squeezed into a sliver of a scale that runs to 500; the numbers round the dial are the breakpoints. The monitor's own temperature and
+humidity repeat the station's outdoor ones, so they have no gauge. The US AQI and each category's name are of the reading now, so they
+always agree with the needle and with the PM2.5 and PM10 dials (the alerts and the bot's words rate PM2.5 and PM10 on the last two
+readings, so a passing spike isn't called poor). The page's data never asks the air sensor: with its reading
+stale it shows the one it holds.
+
+A tile whose reading is missing just now (the station or the air sensor not sending it) is dimmed, its gauge at its floor (0, or the
+scale's low end where 0 isn't on it: pressure 950 hPa, CO₂ 400 ppm) with its highs and lows still beside it; when the reading comes
+back the tile brightens and its gauge rises in place. A reading the station or the monitor has never sent has no tile.
+
+It is read-only (the weather and air readings, nothing else), so it is open to anyone on your network: no token, and any name or address
+in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecobot-mcp has to listen beyond the machine itself:
+Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
+turn it off, set `MCP_DASHBOARD=off`.
+
+To put it on a site of its own behind a reverse proxy, map the site's root to `/dashboard/` (it answers there too), e.g. with nginx
+`location / { proxy_pass http://deb1:8765/dashboard/; }`. The live updates need nothing more: they tell nginx not to buffer them.
 
 ## Upgrading
 
-Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept. The log's first line, `Starting ecobot <commit>`, says which version is running.
+Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept; settings with an old name still work
+([Renamed settings](#renamed-settings)). The log's first line, `Starting ecobot <commit>`, says which version is running.
+
+### Renamed settings
+
+In November 2026 every setting got the name of the program that reads it: `MCP_` for ecobot-mcp's, `BOT_` for the bot's,
+`IRRIGATION_` for irrigation-mcp's, and none for the few all read. The old names still work: when a new name is unset and its old one is set, the old one is used, and the log says
+once at start which to rename (never their values). Rename them in `/etc/ecobot.env` when convenient, by hand from the table, or with the script, which shows what it
+would change (secrets masked) and changes the file only with `--write`, keeping a backup beside it:
+
+```
+sudo python3 /opt/ecobot/scripts/migrate_env.py /etc/ecobot.env
+```
+
+```
+sudo python3 /opt/ecobot/scripts/migrate_env.py /etc/ecobot.env --write
+```
+
+Then restart ecobot-mcp and the bot (and irrigation-mcp). Beyond the renames it moves `WEATHER_MCP_TOKEN` into `AUTH_TOKENS` (first, the token the bot
+sends), changes the old container name `ecobot-service` in a URL or allowed host to `ecobot-mcp`, and, where the irrigation
+controller's device id is set and `BOT_IRRIGATION_MCP_URL` isn't, adds `BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp` (systemd's;
+`http://irrigation-mcp:8766/mcp` in a file that names ecobot-mcp's container, `ecobot-mcp` or `ecobot-service`, as Docker's do); it stops, changing nothing, where
+an old and a new name are both set to different values.
+
+
+| Old name | New name |
+|---|---|
+| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY`, `ECOWITT_SOURCE` | `MCP_ECOWITT_API_KEY`, `MCP_ECOWITT_APP_KEY`, `MCP_ECOWITT_SOURCE` |
+| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID`, `AIRGRADIENT_DASHBOARD_URL`, `AIRGRADIENT_LOCAL_URL`, `AIRGRADIENT_SOURCE` | the same with `MCP_` in front |
+| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | `MCP_HOMEASSISTANT_URL`, `MCP_HOMEASSISTANT_TOKEN` |
+| `PLACE`, `POLLEN`, `POLLEN_DISTRICT`, `FORECAST`, `FORECAST_LAT`, `FORECAST_LON` | the same with `MCP_` in front |
+| `RAIN_QUIET_HOURS`, `ALERT_COOLDOWN_MINUTES`, `ANTISPIKE_REQUIRE_CONSECUTIVE` | the same with `MCP_` in front |
+| `CHART_ALL_FEELS_LIKE`, `CHART_ALL_VPD` | `MCP_CHART_ALL_FEELS_LIKE`, `MCP_CHART_ALL_VPD` |
+| `MCP_SERVICE_BIND`, `MCP_SERVICE_ALLOWED_HOSTS` | `MCP_BIND`, `MCP_ALLOWED_HOSTS` |
+| `MCP_SERVICE_TOKENS` | `AUTH_TOKENS` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_PRELOAD_CHAT` | `BOT_TELEGRAM_TOKEN`, `BOT_TELEGRAM_PRELOAD_CHAT` |
+| `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL` | `BOT_OPENROUTER_API_KEY`, `BOT_OPENROUTER_BASE_URL`, `BOT_OPENROUTER_MODEL` |
+| `ADMIN_ONLY`, `ADMIN_CHAT_IDS`, `LOG_WIDTH` | `BOT_ADMIN_ONLY`, `BOT_ADMIN_CHAT_IDS`, `BOT_LOG_WIDTH` |
+| `TUYA_DEVICE_ID`, `TUYA_CLIENT_ID`, `TUYA_CLIENT_SECRET`, `TUYA_BASE_URL`, and their names with `BOT_` in front (November 2026) | the same with `IRRIGATION_` in front (irrigation-mcp's) |
+| `BOT_IRRIGATION_CHECK_HOUR` (November 2026) | `IRRIGATION_CHECK_HOUR` again (irrigation-mcp's) |
+| (none: the bot ran the controller itself) | `BOT_IRRIGATION_MCP_URL`, the bot's way to irrigation-mcp ([Irrigation](#irrigation)) |
+| `WEATHER_MCP_URL` | `BOT_MCP_URL` |
+| `WEATHER_MCP_TOKEN` | retired: the bot sends the first of `AUTH_TOKENS`. Still sent, with a warning, while `AUTH_TOKENS` is unset |
+
+`TZ`, `DATA_DIR`, `LOG_LEVEL` and `DARKMODE` keep their names. In Docker, `docker/bot.env` sets `BOT_MCP_URL`, so an old
+`WEATHER_MCP_URL` in `/etc/ecobot.env` no longer overrides it: rename it if you set one.
+
+### Your data
 
 The weather station's and the air sensor's history lives in one file, `ecobot.sqlite`. A version from before 29 October 2026 kept it in `ecowitt_cache.sqlite`, the two files beside it, `airgradient_cache.sqlite` and `conditions_cache.sqlite`; the releases of that week moved them into the one file at start, so upgrade through one of those (commit 56a998c or earlier that week) if you still have the old files, then delete them.
 
@@ -163,12 +351,48 @@ cd /opt/ecobot && sudo git pull
 ```
 
 ```
-sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt
+sudo /opt/ecobot/.venv/bin/pip install -r /opt/ecobot/requirements.txt -r /opt/ecobot/requirements-charts.txt
 ```
 
+Copy both units in again (they change now and then), then restart ecobot-mcp and the bot:
+
 ```
-sudo systemctl restart ecobot
+sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart ecobot-mcp ecobot
 ```
+
+(Before November 2026 ecobot-mcp's unit ran `python -m ecobot_service`, its old name, and dropped the bot's secrets only by their old
+names: an old unit not yet copied in still starts, with a warning in its log saying to copy the new one.)
+
+With [irrigation-mcp](#irrigation) installed, copy its unit in again too and restart it:
+`sudo cp /opt/ecobot/irrigation-mcp.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart irrigation-mcp`.
+
+**From a bot that ran the irrigation controller itself (its `BOT_TUYA_...` or `TUYA_...` settings, before irrigation-mcp, November
+2026):** the bot no longer runs the controller: irrigation-mcp does, and the bot is its client. Until you set it up the bot has no
+Irrigation button and says so at start (nothing waters or pauses by itself meanwhile). After the `git pull` and `pip install` above, run
+the [settings script](#renamed-settings) with `--write`: it renames the Tuya settings to `IRRIGATION_TUYA_...` and adds
+`BOT_IRRIGATION_MCP_URL=http://127.0.0.1:8766/mcp`. Then install irrigation-mcp's unit and restart the bot, as in [Irrigation](#irrigation).
+At its first start irrigation-mcp takes over the bot's watchdog and daily-check state from `bot_state.json` (a run the old bot started
+is still closed, and no day is checked twice or skipped), and says so in its log.
+
+**From a bot that ran alone (no `ecobot-mcp.service` installed):** the bot no longer runs the sources and the alerts
+itself: ecobot-mcp does, and the bot is its client. Without `BOT_MCP_URL` the new bot stops at start, saying so. Your `MCP_` settings
+stay where they are: ecobot-mcp reads them from the same `/etc/ecobot.env` (the bot no longer does), and it uses the bot's data folder
+(the readings, the alert log and the rules' state carry over; both units run as the same user). Back that up first:
+`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`. Then, after the `git pull` and `pip install` above:
+
+1. Add to `/etc/ecobot.env`:
+   ```
+   BOT_MCP_URL=http://127.0.0.1:8765/mcp
+   ```
+2. Install ecobot-mcp's unit beside the bot's, and start it, then the bot:
+   ```
+   sudo cp /opt/ecobot/ecobot-mcp.service /opt/ecobot/ecobot.service /etc/systemd/system/ && sudo systemctl daemon-reload
+   ```
+   ```
+   sudo systemctl enable --now ecobot-mcp.service && sudo systemctl restart ecobot
+   ```
+3. Check that both run as the same user and the folder's owner is unchanged (the three numbers match):
+   `systemctl show -p UID --value ecobot-mcp ecobot; stat -c %u /var/lib/private/ecobot`
 
 ### Docker
 
@@ -177,14 +401,41 @@ cd /opt/ecobot && sudo git pull
 ```
 
 ```
-sudo docker compose up -d --build
+sudo docker rm -f ecobot-service 2>/dev/null; sudo docker compose up -d --build
 ```
 
-Compose replaces the container only if the image or the settings changed. To remove the old images and build cache that upgrades leave behind:
+(The first part removes the container ecobot-mcp had before November 2026, `ecobot-service`, which would keep port 8765; once it's gone
+it does nothing.)
+
+Compose replaces a container only if its image or settings changed. To remove the old images and build cache that upgrades leave behind:
 
 ```
 sudo docker image prune -f && sudo docker builder prune -f
 ```
+
+**From the layout with a container named `ecobot-service` (November 2026):** that container is now `ecobot-mcp`, from an image of
+its own (`ecobot-mcp`; the bot's is still `ecobot`). The command above removes the old container first, which would otherwise keep port 8765.
+
+Your token lines still work (`MCP_SERVICE_TOKENS` is read as `AUTH_TOKENS`, and `WEATHER_MCP_TOKEN` is ignored once that is set, with
+a warning): rename `MCP_SERVICE_TOKENS` to `AUTH_TOKENS` and delete `WEATHER_MCP_TOKEN`, or delete both to use the token ecobot-mcp
+generates. See [Renamed settings](#renamed-settings).
+
+**From a version before ecobot-mcp ran on its own (November 2026):** the bot ran everything itself; now `ecobot-mcp` does, and the
+bot is its client, under the `bot` profile. Back up first (`sudo cp -a /var/lib/private/ecobot /var/lib/private/ecobot.bak`), remove
+any `BOT_MCP_URL` (or `WEATHER_MCP_URL`) line from `/etc/ecobot.env` (Docker sets it), replace any `COMPOSE_PROFILES=service` in
+`/opt/ecobot/.env` with `COMPOSE_PROFILES=bot` (or add it), then:
+
+```
+sudo docker compose --profile bot down && sudo docker compose up -d --build
+```
+
+**From a bot that ran the irrigation controller itself (its `BOT_TUYA_...` or `TUYA_...` settings, before irrigation-mcp, November
+2026):** the controller is now the `irrigation-mcp` container's, under the `irrigation` profile, and the bot its client. Until it runs the
+bot has no Irrigation button and says so at start. Rename the Tuya settings to `IRRIGATION_TUYA_...` (by hand, or with the
+[settings script](#renamed-settings), which also adds `BOT_IRRIGATION_MCP_URL`, as `http://irrigation-mcp:8766/mcp` when the file names
+ecobot-mcp's container), make sure `/etc/ecobot.env` has `BOT_IRRIGATION_MCP_URL=http://irrigation-mcp:8766/mcp`,
+set `COMPOSE_PROFILES=bot,irrigation` in `/opt/ecobot/.env`, and run `sudo docker compose up -d --build`. At its first start
+irrigation-mcp takes over the bot's watchdog and daily-check state from `bot_state.json`, and says so in its log.
 
 ## Configuration
 
@@ -192,17 +443,20 @@ Settings are environment variables in `/etc/ecobot.env`. The ones you're most li
 
 | Variable | What it does |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Required. |
-| `ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
-| `OPENROUTER_API_KEY` | Enables the AI model. Without it the bot still does reports, charts, lookups and alerts. |
-| `ECOWITT_API_KEY`, `ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
-| `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `ECOWITT_SOURCE`). |
-| `AIRGRADIENT_API_TOKEN`, `AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
-| `AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
-| `AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
-| `POLLEN`, `FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
+| `BOT_TELEGRAM_TOKEN` | Required. |
+| `BOT_ADMIN_CHAT_IDS` | Telegram user ids allowed to use the bot, besides the admins of groups it is in. |
+| `BOT_OPENROUTER_API_KEY` | Enables the AI model, which answers everything typed (and the prompt commands such as `/report`). Without it the buttons (their charts and the Status gauges) and the alerts still work, and a typed question is told the model isn't set up. |
+| `MCP_ECOWITT_API_KEY`, `MCP_ECOWITT_APP_KEY` | Weather station through Ecowitt's cloud. |
+| `MCP_HOMEASSISTANT_URL`, `MCP_HOMEASSISTANT_TOKEN` | Weather station through Home Assistant (instead of the cloud, or with it as a fallback; `MCP_ECOWITT_SOURCE`). |
+| `MCP_AIRGRADIENT_API_TOKEN`, `MCP_AIRGRADIENT_LOCATION_ID` | Air sensor, via AirGradient's cloud. |
+| `MCP_AIRGRADIENT_LOCAL_URL` | Read the AirGradient sensor directly on your network e.g. `http://airgradient_<serial>.local` (use a fixed IP address for the URL in Docker, or see [Docker networking](#docker-networking)) |
+| `MCP_AIRGRADIENT_SOURCE` | Where the air sensor's readings come from: `auto` (the default) is each that is set, the sensor itself first, then Home Assistant (if it has the sensor), then the cloud, each filling only what the ones before it lack; `local`, `homeassistant` or `cloud` is that one alone. |
+| `MCP_POLLEN`, `MCP_FORECAST` | `on` to add pollen and thunderstorm asthma, or the daily forecast. |
+| `BOT_MCP_URL` | Required by the bot (systemd: `http://127.0.0.1:8765/mcp`; Docker sets it). ecobot-mcp's address: the bot is its client, fetches nothing and runs no alert rules itself, and reads none of the `MCP_` settings above. See [DEVELOPMENT.md](DEVELOPMENT.md#the-bot-as-ecobot-mcps-client). |
+| `BOT_IRRIGATION_MCP_URL` | Optional: irrigation-mcp's address (systemd `http://127.0.0.1:8766/mcp`, Docker `http://irrigation-mcp:8766/mcp`), for the Irrigation button and its alerts. See [Irrigation](#irrigation). |
+| `AUTH_TOKENS` | Optional. The tokens ecobot-mcp accepts (`token,token,...`, one per client); the bot sends the first. Unset, ecobot-mcp generates one at its first start and keeps it in the data folder (`auth_token`), where the bot reads it. |
 
-After editing the file, restart: `sudo systemctl restart ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
+After editing the file, restart: `sudo systemctl restart ecobot-mcp ecobot`, or for Docker `sudo docker compose up -d --force-recreate` (`docker restart` keeps the old settings).
 
 Every setting is in [docs/configuration.md](docs/configuration.md).
 

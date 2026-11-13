@@ -1,4 +1,5 @@
-"""The irrigation status message and its buttons. Pure: it only builds the text and the keyboard.
+"""The irrigation status message and its buttons, the bot's (the controller itself is irrigation-mcp's, which the bot calls:
+lib/irrigation_remote.py). Pure: it only builds the text and the keyboard.
 
 Collapsed: [💧 Water] [⏸ Pause] / [🔔 Alerts] [🔄]. While the valve is on, a [Water off ❌] row follows. While the timer is paused,
 Pause is [▶️ Unpause] (one press ends the pause) and Water is hidden. A press on Water, Pause or Alerts opens its options under the
@@ -16,9 +17,9 @@ import re
 
 from telegram import InlineKeyboardMarkup, MessageEntity
 
-from ..buttons import button, opener, toggle_button
-from ..entities import footer
-from .tuya import DELAYS, is_paused
+from .buttons import button, opener, toggle_button
+from .entities import footer
+from .irrigation.common import DELAYS, is_paused
 
 TITLE = "🌱 Irrigation"
 WATER_MINUTES = (5, 10, 20, 30)

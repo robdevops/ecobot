@@ -1,5 +1,6 @@
-"""weather_days: rank, filter and count days from the cache, checked against answers computed
-independently from the fake station's own functions."""
+"""The service's `days` tool over the station (lib/service/days.py, with lib/daytable.py and the day rows): rank, filter and count
+days from the cache, checked against answers computed independently from the fake station's own functions. (Until step 6c these ran
+against weather_days' own engine, tests/old_tools.py, deleted with it.)"""
 
 import json
 from datetime import datetime, timedelta
@@ -8,6 +9,9 @@ import pytest
 
 from lib.ecowitt import Ecowitt
 from tests.fakes import TZ, archived_station, config, ecowitt_transport, rain_day, temp
+from lib.service import days as days_tool
+from lib.service.context import Context
+from lib.specs import from_json
 
 
 def local_day(d):
@@ -31,8 +35,11 @@ async def station(tmp_path, archived_cache):
     await eco.close()
 
 
-async def ask(eco, **args):
-    return json.loads(await eco.tools[2].handler(args))
+async def ask(eco, start_date=None, end_date=None, **args):
+    """The days tool over this station, its period the dates (start_date to end_date, both whole days)."""
+    (tool,) = days_tool.tools(Context(eco=eco))
+    period = {**({"start": start_date} if start_date else {}), **({"end": end_date} if end_date else {})}
+    return json.loads(await tool.call({**period, **args}, None))
 
 
 def dates(eco, first_ago, last_ago):
@@ -116,20 +123,18 @@ async def test_nothing_cached_is_reported_not_guessed(tmp_path):
     await eco.start()
     first, last = dates(eco, 30, 1)
     out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "rain", "op": ">", "value": 0}])
-    assert out["days_checked"] == 0 and out["matching_days"] == 0 and "No cached readings" in out["note"]
+    assert out["days_checked"] == 0 and out["matching_days"] == 0 and "No readings are held for this period yet" in out["note"]
     assert not any(c.get("path") == "history" for c in fake.calls)  # it never fetches
     await eco.close()
 
 
 async def test_bad_input_gets_a_clear_error(station):
     eco, _ = station
-    assert "bad date" in (await ask(eco, start_date="soon", end_date="later"))["error"]
-    today = datetime.now(eco.tz).date()
-    assert "before end_date" in (await ask(eco, start_date=str(today), end_date=str(today)))["error"]
+    assert "'soon' isn't a date or time" in (await ask(eco, start_date="soon", end_date="later"))["error"]
     first, last = dates(eco, 10, 1)
-    assert "unusable" in (await ask(eco, start_date=str(first), end_date=str(last),
-                                    where=[{"field": "mood", "op": ">", "value": 1}]))["error"]
-    assert "sort_by" in (await ask(eco, start_date=str(first), end_date=str(last), sort_by="mood"))["error"]
+    assert "'mood' isn't a field of days" in (await ask(eco, start_date=str(first), end_date=str(last),
+                                                        where=[{"field": "mood", "op": ">", "value": 1}]))["error"]
+    assert "'mood' isn't a field of days" in (await ask(eco, start_date=str(first), end_date=str(last), sort_by="mood"))["error"]
 
 
 async def test_a_hotter_trace_rain_day_is_returned_for_a_footnote(station):
@@ -185,10 +190,13 @@ async def test_a_tie_is_not_reported_as_a_hotter_day(station):
 async def test_public_holidays_are_the_local_ones_not_the_models_guess(station):
     import holidays
     eco, _ = station
-    out = await ask(eco, start_date="2025-11-01", end_date="2026-02-28", only="public_holiday", sort_by="temp_max", limit=20)
+    today = datetime.now(TZ).date()
+    year = today.year - (1 if today >= today.replace(month=3, day=1) else 2)   # the last November to February that is over (and held)
+    first, last = datetime(year, 11, 1).date(), datetime(year + 1, 2, 28).date()
+    out = await ask(eco, start_date=str(first), end_date=str(last), only="public_holiday", sort_by="temp_max", limit=20)
     vic = holidays.country_holidays("AU", subdiv="VIC")
-    expected = {d for d in (datetime(2025, 11, 1).date() + timedelta(days=k) for k in range(120)) if d in vic}
-    assert out["days_checked"] == out["matching_days"] == len(expected) and len(expected) == 5   # Cup Day, Christmas, Boxing Day, New Year, Australia Day
+    expected = {d for d in (first + timedelta(days=k) for k in range((last - first).days + 1)) if d in vic}
+    assert out["days_checked"] == out["matching_days"] == len(expected) and len(expected) >= 5   # Cup Day, Christmas, Boxing Day, New Year, Australia Day (and a day in lieu)
     assert {r["date"] for r in out["days"]} == {label(d) for d in expected}
     names = {r["holiday"] for r in out["days"]}
     assert {"Melbourne Cup Day", "Christmas Day", "Boxing Day", "New Year's Day", "Australia Day"} <= names
@@ -199,19 +207,17 @@ async def test_public_holidays_are_the_local_ones_not_the_models_guess(station):
 async def test_weekends_and_unknown_places(station):
     from zoneinfo import ZoneInfo
 
-    from lib.ecowitt import days
     eco, _ = station
     out = await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="weekend", limit=10)   # two weekends
     assert out["days_checked"] == 4 and all(r["date"].startswith(("Sat", "Sun")) for r in out["days"])
     assert "error" in await ask(eco, start_date="2026-08-03", end_date="2026-08-16", only="bank_holiday")
-    elsewhere = await days.find_days(eco.storage, eco.mac, ZoneInfo("Europe/Paris"),
-                                     {"start_date": "2026-08-03", "end_date": "2026-08-16", "only": "public_holiday"},
-                                     datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None))
+    (tool,) = days_tool.tools(Context(eco=eco, tz=ZoneInfo("Europe/Paris")))
+    elsewhere = json.loads(await tool.call({"start": "2026-08-03", "end": "2026-08-16", "only": "public_holiday"}, None))
     assert "aren't known for this time zone" in elsewhere["error"]      # says so instead of guessing
 
 
 async def test_a_missing_holidays_package_is_explained_not_guessed(station, monkeypatch):
-    from lib.ecowitt import calendar
+    from lib import public_holidays as calendar
     eco, _ = station
     monkeypatch.setattr(calendar, "holidays", None)
     out = await ask(eco, start_date="2026-01-01", end_date="2026-02-01", only="public_holiday")
@@ -255,7 +261,7 @@ async def test_days_can_be_counted_by_any_reading_not_only_temperature_rain_and_
     dry = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "humidity_min", "op": "<", "value": 50}])
     assert dry["matching_days"] == 3 and dry["units"]["humidity_min"] == "%"
     bad = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "uvi", "op": ">=", "value": 9}])
-    assert "unusable condition" in bad["error"] and "uv_max" in bad["error"]
+    assert "'uvi' isn't a field of days" in bad["error"] and "uv_max" in bad["error"]
     assert fake.calls == []
 
 
@@ -282,28 +288,24 @@ async def test_count_only_gives_just_the_counts_and_group_by_month_gives_each_mo
 
 
 async def test_counts_per_month_or_year_are_drawn_as_a_bar_chart_with_a_title_that_says_the_condition(station):
-    from lib.tools import Turn
     eco, _ = station
     first, last = dates(eco, 70, 1)
     where = [{"field": "temp_max", "op": ">=", "value": 0}]
-    turn = Turn()
-    out = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="month"), turn))
-    assert len(turn.charts) == 1 and "chart" in out and "message" in out["chart"]
-    chart = turn.charts[0]
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True, group_by="month")
+    assert len(out["charts"]) == 1
+    chart = from_json(out["charts"][0])
     bars = chart.panels[0].bars
     assert chart.title == "Days with temperature ≥ 0 °C" and bars.per == "month" and bars.values
     assert [int(v) for v in bars.y] == list(out["by_month"].values()) and len(bars.x) == len(out["by_month"])
     assert f"{out['matching_days']:,} of {out['days_checked']:,} days" in chart.subtitle
     from lib.charts import render
     assert render(chart, eco.tz)[:4] == b"\x89PNG"
-    plain = Turn()                                                  # no group_by: a count, no chart
-    await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=where, count_only=True), plain)
-    assert plain.charts == []
+    plain = await ask(eco, start_date=str(first), end_date=str(last), where=where, count_only=True)   # no group_by: a count, no chart
+    assert "charts" not in plain
 
 
 async def test_a_total_highest_or_average_per_month_is_a_bar_chart_of_those_figures(station):
     from collections import defaultdict
-    from lib.tools import Turn
     eco, _ = station
     first, last = dates(eco, 70, 1)
     days = [first + timedelta(days=k) for k in range((last - first).days + 1)]
@@ -314,94 +316,55 @@ async def test_a_total_highest_or_average_per_month_is_a_bar_chart_of_those_figu
     for d in days:
         rain[f"{d:%Y-%m}"] += truth(d)[1]
         top[f"{d:%Y-%m}"] = max(top.get(f"{d:%Y-%m}", -1e9), truth(d)[0])
-    turn = Turn()
-    out = json.loads(await eco.tools[2].handler({**args, "stat": "sum", "of": "rain"}, turn))
+    out = await ask(eco, **args, stat="sum", of="rain")
     assert out["stat"]["what"] == "Total rain" and out["stat"]["unit"] == "mm" and "days" not in out
     assert {k: v for k, v in out["by_month"].items()} == {k: round(v, 1) for k, v in sorted(rain.items())}
-    bars = turn.charts[0].panels[0].bars
-    assert turn.charts[0].title == "Total rain" and bars.unit == "mm" and bars.per == "month" and bars.y == list(out["by_month"].values())
+    chart = from_json(out["charts"][0])
+    bars = chart.panels[0].bars
+    assert chart.title == "Total rain" and bars.unit == "mm" and bars.per == "month" and bars.y == list(out["by_month"].values())
 
-    hottest = json.loads(await eco.tools[2].handler({**args, "stat": "max", "of": "temp_max"}, Turn()))
+    hottest = await ask(eco, **args, stat="max", of="temp_max")
     assert hottest["stat"]["what"] == "Highest temperature" and hottest["by_month"] == {k: round(v, 1) for k, v in sorted(top.items())}
 
-    mean = json.loads(await eco.tools[2].handler({**args, "stat": "avg", "of": "temp_avg"}, Turn()))
+    mean = await ask(eco, **args, stat="avg", of="temp_avg")
     assert mean["stat"]["what"] == "Average temperature" and all(v is not None for v in mean["by_month"].values())
-    overall = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), stat="max", of="temp_max", count_only=True), Turn()))
+    overall = await ask(eco, start_date=str(first), end_date=str(last), stat="max", of="temp_max", count_only=True)
     assert overall["value"] == round(max(top.values()), 1) and "by_month" not in overall
-    bad = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), stat="max"), Turn()))
+    bad = await ask(eco, start_date=str(first), end_date=str(last), stat="max")
     assert "needs `of`" in bad["error"]
 
 
-async def test_a_holiday_filter_the_person_never_asked_for_is_dropped_but_a_requested_one_is_kept(station):
-    from lib.tools import Turn
-    eco, _ = station
-    first, last = dates(eco, 60, 1)
-    args = dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], count_only=True)
-    plain = json.loads(await eco.tools[2].handler(args, Turn(text="days over 0 degrees")))
-    strayed = json.loads(await eco.tools[2].handler({**args, "only": "weekend"}, Turn(text="days over 0 degrees")))
-    assert strayed["days_checked"] == plain["days_checked"] > 40            # the weekend filter was dropped: every day counted
-    asked = json.loads(await eco.tools[2].handler({**args, "only": "weekend"}, Turn(text="how many weekend days over 0 degrees")))
-    assert 0 < asked["days_checked"] < 20                                    # kept: only Saturdays and Sundays
-    direct = json.loads(await eco.tools[2].handler({**args, "only": "weekend"}))   # no question to check against (a direct call)
-    assert direct["days_checked"] == asked["days_checked"]
-
-
 async def test_a_chart_of_holiday_or_weekend_days_says_so_in_its_subtitle(station):
-    from lib.tools import Turn
     eco, _ = station
     first, last = dates(eco, 60, 1)
-    turn = Turn(text="how many weekend days over 0 degrees per month")
-    await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}],
-                                    count_only=True, group_by="month", only="weekend"), turn)
-    assert turn.charts[0].subtitle.endswith("weekends only  ·  per month") or "weekends only" in turn.charts[0].subtitle
-
-
-async def test_group_by_is_added_from_the_question_when_the_model_leaves_it_out(station):
-    from lib.tools import Turn
-    eco, _ = station
-    first, last = dates(eco, 60, 1)
-    args = dict(start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}], count_only=True)
-    turn = Turn(text="days over 0 degrees by month")
-    out = json.loads(await eco.tools[2].handler(args, turn))
-    assert "by_month" in out and len(turn.charts) == 1                       # the model said nothing about months; the words did
-    plain = Turn(text="how many days over 0 degrees")
-    assert "by_month" not in json.loads(await eco.tools[2].handler(args, plain)) and plain.charts == []
-
-
-def test_the_field_list_is_in_the_tool_schema_once_and_a_wrong_sort_or_of_field_is_still_caught():
-    from lib.ecowitt import days
-    props = days.PARAMETERS["properties"]
-    assert "enum" in props["where"]["items"]["properties"]["field"] and "enum" not in props["sort_by"] and "enum" not in props["of"]
-    from lib.daytable import validate
-    units = days.FIELD_UNITS
-    assert "sort_by must be one of" in validate({"sort_by": "nonsense"}, units) and "needs `of`" in validate({"stat": "sum", "of": "nonsense"}, units)
-    assert "of must be one of" in validate({"stat": "count", "of": "nonsense"}, units)   # a count needs no `of`, but a wrong one is caught
+    out = await ask(eco, start_date=str(first), end_date=str(last), where=[{"field": "temp_max", "op": ">", "value": 0}],
+                    count_only=True, group_by="month", only="weekend")
+    subtitle = from_json(out["charts"][0]).subtitle
+    assert subtitle.endswith("weekends only  ·  per month") or "weekends only" in subtitle
 
 
 async def test_a_wrong_of_with_a_plain_count_is_an_error_not_a_crash(station):
     eco, _ = station
     first, last = dates(eco, 10, 1)
     out = await ask(eco, start_date=str(first), end_date=str(last), of="nonsense")
-    assert "of must be one of" in out["error"]
-
-
-def test_the_description_names_every_field_and_which_have_a_lowest():
-    """The model learns the fields from the description. A reading whose lowest says nothing (0 every night or calm hour) has no _min."""
-    import re
-    from lib.ecowitt import days
-    both, max_only = (re.search(rf"(\w+(?:, \w+)*) \(_max {kind}\)", days.DESCRIPTION)[1].split(", ") for kind in ("and _min", "only"))
-    assert all(f"{n}_max" in days.FIELDS and f"{n}_min" in days.FIELDS for n in both)
-    assert all(f"{n}_max" in days.FIELDS and f"{n}_min" not in days.FIELDS for n in max_only)
-    assert {n.removesuffix("_max").removesuffix("_min").removesuffix("_avg") for n in days.FIELDS} == {"temp", "rain", "wind_gust", *both, *max_only}
+    assert "`of` names the field `stat` works on: send `stat` too" in out["error"]
 
 
 async def test_a_figure_per_month_with_no_matching_day_promises_no_chart(station):
     """Highest temperature per month on days over 99°: every month is None, so there is no bar to draw and the model must not be
     told a chart is attached."""
-    from lib.tools import Turn
     eco, _ = station
     first, last = dates(eco, 70, 1)
-    turn = Turn()
-    out = json.loads(await eco.tools[2].handler(dict(start_date=str(first), end_date=str(last), count_only=True, group_by="month",
-                                                     stat="max", of="temp_max", where=[{"field": "temp_max", "op": ">", "value": 99}]), turn))
-    assert out["by_month"] and all(v is None for v in out["by_month"].values()) and "chart" not in out and turn.charts == []
+    out = await ask(eco, start_date=str(first), end_date=str(last), count_only=True, group_by="month",
+                    stat="max", of="temp_max", where=[{"field": "temp_max", "op": ">", "value": 99}])
+    assert out["by_month"] and all(v is None for v in out["by_month"].values()) and "charts" not in out
+
+
+def test_the_old_day_tools_engines_are_gone():
+    """weather_days' and air_days' engines answer no one since the swap (the service's days reads the day rows itself): they are not in
+    lib (the tests' copy of them, tests/old_tools.py, went with step 6c)."""
+    from pathlib import Path
+    from lib.airgradient import days as air_days
+    from lib.ecowitt import days as station_days
+    assert not hasattr(station_days, "find_days") and not hasattr(air_days, "find_air_days")
+    assert not (Path(__file__).parent / "old_tools.py").exists()
