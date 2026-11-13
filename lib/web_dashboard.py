@@ -3,6 +3,14 @@
   - GET /dashboard (and /dashboard/, the same page): one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
     (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
+  - GET /dashboard/icon.png: the page's sun (its original, at ICON_SIZE px: lib/web_dashboard_icon.png) as a file, the page's own
+    icon (favicon and apple-touch-icon), named relative to the path the page was asked for (/dashboard: "dashboard/icon.png",
+    /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at. A file, not a data: URI in the page, because a
+    link preview can't fetch one: some apps (Signal, iMessage) take the page's icon as the preview's picture.
+    The page's Open Graph tags (og:title, og:image...) name the same file as this repository publishes it on GitHub (ICON_URL): WhatsApp
+    and Messenger want og:image as a full https address and take no page icon, and ecobot-mcp can't know its own public address
+    (nginx's `location / { proxy_pass http://deb1:8765/dashboard/; }` sends ecobot-mcp's own Host and /dashboard/), so nothing is set
+    for it. Only link previews fetch og:image: a browser opening the page fetches nothing from elsewhere;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
     tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
@@ -12,16 +20,17 @@
     comment every HEARTBEAT_SECONDS keeps a proxy from closing it.
 
 No token is asked for (it is the weather and air readings only) and the Host isn't checked: a browser opens it by the machine's name. The MCP
-endpoint keeps both. MCP_DASHBOARD off: none of the three routes is served (404). `close()` ends the open streams, so uvicorn's
+endpoint keeps both. MCP_DASHBOARD off: none of the four routes is served (404). `close()` ends the open streams, so uvicorn's
 graceful shutdown doesn't wait on them (ecobot_mcp's Uvicorn calls it once it stops accepting connections)."""
 
 import asyncio
+import html
 import json
 import logging
 from pathlib import Path
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from . import gauge_sheet
@@ -33,6 +42,12 @@ from .gauge_look import look, tile_json
 log = logging.getLogger(__name__)
 
 PAGE = Path(__file__).with_name("web_dashboard.html")
+ICON = Path(__file__).with_name("web_dashboard_icon.png")   # the page's sun, drawn large (its original, 534 px, at 512): WhatsApp asks 300 px, Facebook 200
+ICON_NAME, ICON_SIZE = "icon.png", 512
+ICON_URL = "https://raw.githubusercontent.com/robdevops/ecobot/main/lib/web_dashboard_icon.png"   # og:image: ICON as GitHub serves it (https, image/png)
+PREVIEW = "<!--link preview-->"   # where the page's Open Graph tags go: first in its head, before its icons (Slack reads 32 KB of it)
+TITLE = "Weather Dashboard"
+DESCRIPTION = "The weather station's and the air sensor's gauges, live."
 HEARTBEAT_SECONDS = 25.0     # a comment on an idle stream this often
 RETRY_MS = 5000              # how soon a browser connects again after its stream ends
 QUEUED = 4                   # events waiting on a stream that isn't read: more are dropped (one says it all: fetch again)
@@ -122,9 +137,32 @@ class WebDashboard:
         finally:
             self._streams.discard(queue)
 
+    # ---------- the link preview ----------
+    def icon_url(self, path: str) -> str:
+        """Where the icon is for a page asked for at `path`, relative to it (/dashboard: "dashboard/icon.png", /dashboard/: "icon.png"),
+        which a browser or a link preview resolves against the URL it was given."""
+        return ICON_NAME if path.endswith("/") else f"{path.rsplit('/', 1)[-1]}/{ICON_NAME}"
+
+    def preview(self, path: str) -> str:
+        """The Open Graph tags (and Twitter's card, read by Slack and Discord: "summary", a small square picture) and the page's icon links
+        for a page asked for at `path`."""
+        tags = [("og:type", "website"), ("og:title", TITLE), ("og:description", DESCRIPTION),
+                ("og:image", ICON_URL), ("og:image:type", "image/png"), ("og:image:width", str(ICON_SIZE)),
+                ("og:image:height", str(ICON_SIZE)), ("og:image:alt", "A sun")]
+        icon = html.escape(self.icon_url(path))
+        return "\n".join([*(f'<meta property="{k}" content="{html.escape(v)}">' for k, v in tags),
+                          '<meta name="twitter:card" content="summary">',
+                          # the page's own icon, the same picture: what a browser shows, and what some link previews take (Signal, iMessage)
+                          # (Signal, iMessage): a data: URI can't be fetched by one, a file beside the page needs no public URL
+                          f'<link rel="icon" type="image/png" href="{icon}">', f'<link rel="apple-touch-icon" href="{icon}">'])
+
     # ---------- the routes ----------
     async def page(self, request: Request):
-        return HTMLResponse(PAGE.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+        page = PAGE.read_text(encoding="utf-8").replace(PREVIEW, self.preview(request.url.path), 1)
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
+
+    async def icon(self, request: Request):
+        return Response(ICON.read_bytes(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
     async def data_route(self, request: Request):
         return JSONResponse(await self.data(), headers={"Cache-Control": "no-store"})
@@ -142,7 +180,7 @@ class WebDashboard:
         # The page at `path/` too, not a redirect to `path`: a redirect is built from the Host the request came with, so behind a proxy
         # that maps a site's root to `path/` it would send the browser to ecobot-mcp's own LAN address (the page finds its data either way)
         return [Route(path, self.page, methods=["GET"]), Route(f"{path}/", self.page, methods=["GET"]),
-                Route(f"{path}/data", self.data_route, methods=["GET"]),
+                Route(f"{path}/{ICON_NAME}", self.icon, methods=["GET"]), Route(f"{path}/data", self.data_route, methods=["GET"]),
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 

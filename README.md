@@ -291,6 +291,12 @@ turn it off, set `MCP_DASHBOARD=off`.
 To put it on a site of its own behind a reverse proxy, map the site's root to `/dashboard/` (it answers there too), e.g. with nginx
 `location / { proxy_pass http://deb1:8765/dashboard/; }`. The live updates need nothing more: they tell nginx not to buffer them.
 
+A link to the page shared in a chat app previews with its sun icon, "Weather Dashboard" and a line about it (the page's Open Graph
+tags), behind a proxy too, with nothing to set: the preview's picture is the icon as this repository publishes it on GitHub
+(`raw.githubusercontent.com`), since WhatsApp and Messenger want a full https address and ecobot-mcp can't know its own. Only the
+chat app fetches it; your browser loads the page's icon from ecobot-mcp (`/dashboard/icon.png`). Serve the site over https
+(Signal shows no preview for plain http). A chat app keeps a preview it has made: to see a new one, share the link with `?v=2` on the end.
+
 ## Upgrading
 
 Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept; settings with an old name still work
