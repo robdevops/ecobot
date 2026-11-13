@@ -179,3 +179,21 @@ def test_the_readme_installs_and_upgrades_irrigation_mcp_for_systemd_and_docker(
     systemd, docker = upgrade.split("### systemd", 1)[1].split("### Docker", 1)
     assert "irrigation-mcp.service" in systemd and "From a bot that ran the irrigation controller itself" in systemd
     assert "From a bot that ran the irrigation controller itself" in docker and "http://irrigation-mcp:8766/mcp" in docker
+
+
+def test_no_workflow_has_a_plain_value_yaml_would_read_as_a_mapping():
+    # A plain (unquoted) value with ": " in it, or ending in ":", is a YAML error, and GitHub then fails the workflow at once with no
+    # job (docker.yml's "Charts drawn … (the bot's draws none: it has no Pillow)" did). PyYAML isn't a dependency, so this reads the
+    # one-line `key: value` forms the workflows use, leaving block scalars (`run: |`) and quoted or flow values alone.
+    bad = []
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            m = re.match(r"^\s*(?:- )?[\w-]+: (.+)$", line)
+            if not m:
+                continue
+            value = re.sub(r"\s+#.*$", "", m.group(1)).strip()
+            if not value or value[0] in "\"'[{|>&*!":
+                continue
+            if ": " in value or value.endswith(":"):
+                bad.append(f"{path.name}:{n}: {line.strip()}")
+    assert not bad, "quote these values:\n" + "\n".join(bad)
