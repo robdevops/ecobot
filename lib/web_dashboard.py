@@ -3,13 +3,14 @@
   - GET /dashboard (and /dashboard/, the same page): one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
     (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
-  - GET /dashboard/icon.png: the page's sun (its original, at ICON_SIZE px: lib/web_dashboard_icon.png) as a file,
-    the page's own icon (favicon and apple-touch-icon) and its link preview's picture: the page's Open Graph tags (og:title, og:image...)
-    name it too. A file, not a data: URI in the page, because a link preview can't fetch one; some apps (Signal, iMessage) take the
-    page's icon as the preview's picture, the way they do a site's /favicon.png. Both name it relative to the path the page was asked for (/dashboard: "dashboard/icon.png",
-    /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at, with no public URL to set (nginx's
-    `location / { proxy_pass http://deb1:8765/dashboard/; }` sends ecobot-mcp's own Host and /dashboard/, which can't give one). Apps
-    that want og:image absolute and don't take the page's icon (WhatsApp, Messenger) preview the title and description alone;
+  - GET /dashboard/icon.png: the page's sun (its original, at ICON_SIZE px: lib/web_dashboard_icon.png) as a file, the page's own
+    icon (favicon and apple-touch-icon), named relative to the path the page was asked for (/dashboard: "dashboard/icon.png",
+    /dashboard/: "icon.png"), so it is right whatever path a proxy serves the page at. A file, not a data: URI in the page, because a
+    link preview can't fetch one: some apps (Signal, iMessage) take the page's icon as the preview's picture.
+    The page's Open Graph tags (og:title, og:image...) name the same file as this repository publishes it on GitHub (ICON_URL): WhatsApp
+    and Messenger want og:image as a full https address and take no page icon, and ecobot-mcp can't know its own public address
+    (nginx's `location / { proxy_pass http://deb1:8765/dashboard/; }` sends ecobot-mcp's own Host and /dashboard/), so nothing is set
+    for it. Only link previews fetch og:image: a browser opening the page fetches nothing from elsewhere;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
     tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
@@ -43,6 +44,7 @@ log = logging.getLogger(__name__)
 PAGE = Path(__file__).with_name("web_dashboard.html")
 ICON = Path(__file__).with_name("web_dashboard_icon.png")   # the page's sun, drawn large (its original, 534 px, at 512): WhatsApp asks 300 px, Facebook 200
 ICON_NAME, ICON_SIZE = "icon.png", 512
+ICON_URL = "https://raw.githubusercontent.com/robdevops/ecobot/main/lib/web_dashboard_icon.png"   # og:image: ICON as GitHub serves it (https, image/png)
 PREVIEW = "<!--link preview-->"   # where the page's Open Graph tags go: first in its head, before its icons (Slack reads 32 KB of it)
 TITLE = "Weather Dashboard"
 DESCRIPTION = "The weather station's and the air sensor's gauges, live."
@@ -145,12 +147,12 @@ class WebDashboard:
         """The Open Graph tags (and Twitter's card, read by Slack and Discord: "summary", a small square picture) and the page's icon links
         for a page asked for at `path`."""
         tags = [("og:type", "website"), ("og:title", TITLE), ("og:description", DESCRIPTION),
-                ("og:image", self.icon_url(path)), ("og:image:type", "image/png"), ("og:image:width", str(ICON_SIZE)),
+                ("og:image", ICON_URL), ("og:image:type", "image/png"), ("og:image:width", str(ICON_SIZE)),
                 ("og:image:height", str(ICON_SIZE)), ("og:image:alt", "A sun")]
         icon = html.escape(self.icon_url(path))
         return "\n".join([*(f'<meta property="{k}" content="{html.escape(v)}">' for k, v in tags),
                           '<meta name="twitter:card" content="summary">',
-                          # the page's own icon, the same file: what a browser shows, and what a link preview without og:image takes
+                          # the page's own icon, the same picture: what a browser shows, and what some link previews take (Signal, iMessage)
                           # (Signal, iMessage): a data: URI can't be fetched by one, a file beside the page needs no public URL
                           f'<link rel="icon" type="image/png" href="{icon}">', f'<link rel="apple-touch-icon" href="{icon}">'])
 

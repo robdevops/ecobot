@@ -27,7 +27,7 @@ from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from lib.web_dashboard import DESCRIPTION, ICON, PAGE, WebDashboard, air_readings_of, readings_of
+from lib.web_dashboard import DESCRIPTION, ICON, ICON_URL, PAGE, WebDashboard, air_readings_of, readings_of
 from tests.chart_samples import _air, _station
 from tests.fakes import TZ, StandInService, gauges_result
 from tests.test_mcp_listen import Serving, free_port, until
@@ -104,8 +104,10 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     html = page.text
     assert html.startswith("<!DOCTYPE html>") and "<script>" in html and "EventSource" in html
     links = re.findall(r'<link[^>]*href="([^"]*)"', html)                                            # (its icons: the file beside it, as the
-    assert preview_of(html)["og:image"] == "dashboard/icon.png"                                       # link preview's picture)
-    assert "https://" not in html and " src=" not in html and "data:" not in html and links == ["dashboard/icon.png"] * 2
+    assert preview_of(html)["og:image"] == ICON_URL                                                  # (the link preview's, on GitHub: only
+                                                                                                      # a preview fetches it, not the browser)
+    urls = [u for u in re.findall(r"https?://[^\s\"'<>]+", html) if u != "http://www.w3.org/2000/svg"]   # (the SVG namespace: a name)
+    assert urls == [ICON_URL] and " src=" not in html and "data:" not in html and links == ["dashboard/icon.png"] * 2
     assert "<title>Weather Dashboard</title>" in html                                                 # nothing fetched from elsewhere
     assert data.status_code == 200
     got = data.json()
@@ -136,8 +138,8 @@ async def test_the_page_answers_at_dashboard_slash_too_so_a_proxy_mapping_a_site
             plain = await http.get(f"{base}/dashboard")
             data = await http.get(f"{base}/dashboard/" + "data")          # the page at the site's root asks for /data: the proxy's /dashboard/data
     assert slash.status_code == 200 and "location" not in slash.headers
-    assert preview_of(slash.text)["og:image"] == "icon.png" and preview_of(plain.text)["og:image"] == "dashboard/icon.png"
-    same = lambda page: re.sub(r'="(?:dashboard/)?icon\.png"', '="ICON"', page)   # (og:image and the icon links)
+    assert preview_of(slash.text)["og:image"] == preview_of(plain.text)["og:image"] == ICON_URL
+    same = lambda page: re.sub(r'="(?:dashboard/)?icon\.png"', '="ICON"', page)   # (the icon links)
     assert same(slash.text) == same(plain.text)                         # the same page but for its picture, beside it as it was asked for
     assert data.status_code == 200 and "tiles" in data.json()
     script = slash.text
@@ -167,7 +169,7 @@ async def test_the_link_preview_names_the_sun_icon_beside_the_page_as_it_was_ask
             ranged = await http.get(f"{base}/dashboard/icon.png", headers={"Range": "bytes=0-32767"})   # (as Slack asks): all of it
     for page, image in ((plain, "dashboard/icon.png"), (slash, "icon.png")):
         tags = preview_of(page.text)
-        assert tags == {"og:type": "website", "og:title": "Weather Dashboard", "og:description": DESCRIPTION, "og:image": image,
+        assert tags == {"og:type": "website", "og:title": "Weather Dashboard", "og:description": DESCRIPTION, "og:image": ICON_URL,
                         "og:image:type": "image/png", "og:image:width": "512", "og:image:height": "512", "og:image:alt": "A sun",
                         "twitter:card": "summary"}                                                   # no og:url: the page's public URL isn't known
         head_start = page.text.index("<head>")
@@ -189,6 +191,7 @@ def test_the_icon_is_the_pages_own_sun_at_512_px():
     assert big.format == "PNG" and big.size == (512, 512)                 # Facebook asks 200 px, WhatsApp 300
     assert big.mode == "RGBA" and big.getpixel((0, 0))[3] == 0 and big.getpixel((256, 256))[3] == 255   # the sun on a clear ground
     assert "data:" not in PAGE.read_text()                                 # the page carries no icon of its own: it links this one
+    assert ICON_URL.endswith("/main/" + ICON.relative_to(Path(__file__).resolve().parent.parent).as_posix())   # og:image: this file on GitHub
 
 
 async def test_the_data_says_so_when_the_station_gives_nothing(server):
