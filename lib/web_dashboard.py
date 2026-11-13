@@ -1,6 +1,6 @@
 """The gauges as a live web page, served by ecobot-mcp beside /mcp (lib/mcp_server.py http_app), read-only and open to the LAN:
 
-  - GET /dashboard: one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
+  - GET /dashboard (and /dashboard/, the same page): one self-contained HTML5 page (web_dashboard.html: no framework, nothing fetched from elsewhere) whose script draws
     the gauges as inline SVG, with HTML titles and tables, in lib/gauge_look.py's colours and sizes, as the Status picture's PNG
     (lib/gauges.py) draws its three, without the tables; its tiles laid out to fill the window, portrait or landscape;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
@@ -139,7 +139,10 @@ class WebDashboard:
                                  headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
     def routes(self, path: str = "/dashboard") -> list[Route]:
-        return [Route(path, self.page, methods=["GET"]), Route(f"{path}/data", self.data_route, methods=["GET"]),
+        # The page at `path/` too, not a redirect to `path`: a redirect is built from the Host the request came with, so behind a proxy
+        # that maps a site's root to `path/` it would send the browser to ecobot-mcp's own LAN address (the page finds its data either way)
+        return [Route(path, self.page, methods=["GET"]), Route(f"{path}/", self.page, methods=["GET"]),
+                Route(f"{path}/data", self.data_route, methods=["GET"]),
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 

@@ -121,6 +121,22 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert mcp.status_code == 421 and no_token.status_code == 401                  # /mcp: the Host, then the token, as before
 
 
+async def test_the_page_answers_at_dashboard_slash_too_so_a_proxy_mapping_a_sites_root_there_gets_no_redirect_to_the_lan(server):
+    # nginx's `location / { proxy_pass http://deb1:8765/dashboard/; }` sends the site's root as /dashboard/ with ecobot-mcp's own Host:
+    # a redirect to /dashboard would be built from that Host, the LAN address, and break the page from the internet
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        async with httpx.AsyncClient(follow_redirects=False) as http:
+            slash = await http.get(f"{base}/dashboard/", headers={"Host": "192.168.1.208:8765"})
+            plain = await http.get(f"{base}/dashboard")
+            data = await http.get(f"{base}/dashboard/" + "data")          # the page at the site's root asks for /data: the proxy's /dashboard/data
+    assert slash.status_code == 200 and "location" not in slash.headers and slash.text == plain.text
+    assert data.status_code == 200 and "tiles" in data.json()
+    script = slash.text
+    assert 'location.pathname.replace(/\\/+$/, "")' in script and 'BASE + "/data"' in script and 'BASE + "/events"' in script
+
+
 async def test_the_data_says_so_when_the_station_gives_nothing(server):
     server._service = StandInService(current={"sensors": {}, "unavailable": {"station": "The weather station isn't answering right now."}})
     port = free_port()

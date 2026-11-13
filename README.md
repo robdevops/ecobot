@@ -288,6 +288,9 @@ in the URL (`MCP_ALLOWED_HOSTS` is only for `/mcp`, which keeps its token). ecob
 Docker publishes port 8765 already; under systemd set `MCP_BIND=0.0.0.0:8765`. It is plain HTTP: keep it on your own network. To
 turn it off, set `MCP_DASHBOARD=off`.
 
+To put it on a site of its own behind a reverse proxy, map the site's root to `/dashboard/` (it answers there too), e.g. with nginx
+`location / { proxy_pass http://deb1:8765/dashboard/; }`. The live updates need nothing more: they tell nginx not to buffer them.
+
 ## Upgrading
 
 Your keys in `/etc/ecobot.env` and the bot's data (`/var/lib/private/ecobot`) are kept; settings with an old name still work
