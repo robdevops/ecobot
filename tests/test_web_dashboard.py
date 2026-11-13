@@ -6,6 +6,9 @@ it) at a phone's, a tablet's and a desktop's sizes: every tile on the screen whe
 console error. With ECOBOT_SCREENSHOTS set, its screenshots are kept in that folder."""
 
 import asyncio
+import base64
+import html
+import io
 import json
 import re
 import os
@@ -24,7 +27,7 @@ from lib.gauge_look import look, tile_json
 from lib.mcp_server import AIR_URI, EcobotServer, WEATHER_URI, http_app
 from lib.service.context import Context
 from lib.service.names import Catalogue
-from lib.web_dashboard import air_readings_of, readings_of
+from lib.web_dashboard import DESCRIPTION, ICON, PAGE, WebDashboard, air_readings_of, readings_of
 from tests.chart_samples import _air, _station
 from tests.fakes import TZ, StandInService, gauges_result
 from tests.test_mcp_listen import Serving, free_port, until
@@ -100,7 +103,8 @@ async def test_the_page_and_its_data_are_served_without_a_token_to_any_host_and_
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
     html = page.text
     assert html.startswith("<!DOCTYPE html>") and "<script>" in html and "EventSource" in html
-    links = re.findall(r'<link[^>]*href="([^"]*)"', html)                                            # (the icon, carried in the page)
+    links = re.findall(r'<link[^>]*href="([^"]*)"', html)                                            # (the icon, carried in the page;
+    assert preview_of(html)["og:image"] == "dashboard/icon.png"                                       # only a link preview's is a file beside it)
     assert "https://" not in html and " src=" not in html and links and all(h.startswith("data:image/png;base64,") for h in links)
     assert "<title>Weather Dashboard</title>" in html                                                 # nothing fetched from elsewhere
     assert data.status_code == 200
@@ -131,10 +135,86 @@ async def test_the_page_answers_at_dashboard_slash_too_so_a_proxy_mapping_a_site
             slash = await http.get(f"{base}/dashboard/", headers={"Host": "192.168.1.208:8765"})
             plain = await http.get(f"{base}/dashboard")
             data = await http.get(f"{base}/dashboard/" + "data")          # the page at the site's root asks for /data: the proxy's /dashboard/data
-    assert slash.status_code == 200 and "location" not in slash.headers and slash.text == plain.text
+    assert slash.status_code == 200 and "location" not in slash.headers
+    assert preview_of(slash.text)["og:image"] == "icon.png" and preview_of(plain.text)["og:image"] == "dashboard/icon.png"
+    same = lambda page: page.replace('content="icon.png"', 'content="ICON"').replace('content="dashboard/icon.png"', 'content="ICON"')
+    assert same(slash.text) == same(plain.text)                         # the same page but for its picture, beside it as it was asked for
     assert data.status_code == 200 and "tiles" in data.json()
     script = slash.text
     assert 'location.pathname.replace(/\\/+$/, "")' in script and 'BASE + "/data"' in script and 'BASE + "/events"' in script
+
+
+PREVIEW_TAG = r'<meta (?:property|name)="((?:og|twitter):[^"]+)" content="([^"]*)">'
+
+
+def preview_of(page: str) -> dict:
+    """The page's Open Graph tags and Twitter card ({property or name: content})."""
+    return {k: html.unescape(v) for k, v in re.findall(PREVIEW_TAG, page)}
+
+
+async def test_the_link_preview_names_the_sun_icon_beside_the_page_as_it_was_asked_for(server):
+    # A chat app's link preview reads the page's Open Graph tags; its picture can't be the page's icon, a data: URI: so the icon is a
+    # file beside the page, named relative to the path the page was asked for, which is right behind any proxy: the site's root mapped
+    # to /dashboard/ (public https://site/ -> "icon.png" -> https://site/icon.png -> /dashboard/icon.png), or /dashboard passed as it is
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    async with Serving(http_app(server, tokens=(TOKEN,)), port):
+        async with httpx.AsyncClient() as http:
+            plain = await http.get(f"{base}/dashboard", headers={"Host": "deb1:8765"})
+            slash = await http.get(f"{base}/dashboard/", headers={"Host": "192.168.1.208:8765"})
+            icon = await http.get(f"{base}/dashboard/icon.png", headers={"Host": "deb1:8765"})        # no token, any Host
+            head = await http.head(f"{base}/dashboard/icon.png")
+            ranged = await http.get(f"{base}/dashboard/icon.png", headers={"Range": "bytes=0-32767"})   # (as Slack asks): all of it
+    for page, image in ((plain, "dashboard/icon.png"), (slash, "icon.png")):
+        tags = preview_of(page.text)
+        assert tags == {"og:type": "website", "og:title": "Weather Dashboard", "og:description": DESCRIPTION, "og:image": image,
+                        "og:image:type": "image/png", "og:image:width": "512", "og:image:height": "512", "og:image:alt": "A sun",
+                        "twitter:card": "summary"}                                                   # no og:url: the page's URL isn't known
+        head_start = page.text.index("<head>")
+        assert page.text.index('property="og:type"') - head_start < 100                              # first in the head: Slack reads 32 KB
+        assert page.text.index('name="twitter:card"') < page.text.index('rel="icon"') < 32_768          # (all of them before the icons)
+        assert "<!--link preview-->" not in page.text
+    assert icon.status_code == 200 and icon.headers["content-type"] == "image/png"
+    assert icon.content == ICON.read_bytes() and int(icon.headers["content-length"]) == len(icon.content) < 300_000   # WhatsApp: < 300 KB
+    assert "max-age=" in icon.headers["cache-control"] and "public" in icon.headers["cache-control"]
+    assert head.status_code == 200 and head.headers["content-type"] == "image/png"
+    assert ranged.status_code == 200 and ranged.content == icon.content
+
+
+def test_the_icon_is_the_pages_own_sun_at_512_px():
+    from PIL import Image
+    big = Image.open(io.BytesIO(ICON.read_bytes()))
+    assert big.format == "PNG" and big.size == (512, 512)                 # Facebook asks 200 px, WhatsApp 300
+    touch = re.search(r'<link rel="apple-touch-icon" href="data:image/png;base64,([^"]+)"', PAGE.read_text()).group(1)
+    small = Image.open(io.BytesIO(base64.b64decode(touch))).convert("RGBA")
+    assert small.size == (180, 180)
+    again = big.convert("RGBA").resize(small.size, Image.LANCZOS)          # the same picture, drawn bigger
+    diff = [abs(a - b) for p, q in zip(small.getdata(), again.getdata()) for a, b in zip(p, q)]
+    assert sum(diff) / len(diff) < 3 and sorted(diff)[int(len(diff) * 0.99)] < 30
+
+
+async def test_with_mcp_dashboard_url_the_preview_is_absolute_there_whatever_the_request(server):
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    async with Serving(http_app(server, tokens=(TOKEN,), dashboard_url="https://weather.example.org"), port):
+        root = preview_of((await get(f"{base}/dashboard/", Host="192.168.1.208:8765")).text)
+        plain = preview_of((await get(f"{base}/dashboard")).text)
+    assert root == plain
+    assert root["og:image"] == "https://weather.example.org/icon.png" and root["og:url"] == "https://weather.example.org/"
+    under = WebDashboard(server, public_url="https://example.org/dashboard/")
+    assert under.icon_url("/dashboard/") == "https://example.org/dashboard/icon.png"
+    assert preview_of(under.preview("/dashboard"))["og:url"] == "https://example.org/dashboard"
+
+
+def test_mcp_dashboard_url_is_read_without_its_trailing_slash(monkeypatch, tmp_path):
+    from lib.config import Config
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MCP_ECOWITT_API_KEY", "a")
+    monkeypatch.setenv("MCP_ECOWITT_APP_KEY", "b")
+    monkeypatch.delenv("MCP_DASHBOARD_URL", raising=False)
+    assert Config.from_env(bot=False).mcp_dashboard_url == ""
+    monkeypatch.setenv("MCP_DASHBOARD_URL", "https://weather.example.org/")
+    assert Config.from_env(bot=False).mcp_dashboard_url == "https://weather.example.org"
 
 
 async def test_the_data_says_so_when_the_station_gives_nothing(server):
@@ -228,7 +308,8 @@ async def test_with_mcp_dashboard_off_there_is_no_page_and_mcp_is_as_it_was(serv
     port = free_port()
     base = f"http://127.0.0.1:{port}"
     async with Serving(http_app(server, tokens=(TOKEN,), dashboard=False), port):
-        assert [(await get(f"{base}{path}")).status_code for path in ("/dashboard", "/dashboard/data", "/dashboard/events")] == [404] * 3
+        paths = ("/dashboard", "/dashboard/", "/dashboard/icon.png", "/dashboard/data", "/dashboard/events")
+        assert [(await get(f"{base}{path}")).status_code for path in paths] == [404] * 5
         assert (await get(f"{base}/mcp", Accept="text/event-stream")).status_code == 401
     lines = [r.getMessage() for r in caplog.records if r.name == "lib.mcp_server.requests"]
     assert any("refused: GET /dashboard/data -> 404" in line for line in lines), lines
