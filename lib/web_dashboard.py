@@ -14,7 +14,9 @@
     for it. Only link previews fetch og:image: a browser opening the page fetches nothing from elsewhere;
   - GET /dashboard/data: the tiles as JSON: the gauges' sheet (lib/gauge_sheet.py) from the service's `current` with context, answered
     from what is held (fetch off: a request never asks the station; the keep-warm keeps the live reading), as the Status picture's, each
-    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`) and the look;
+    tile's specs.Tile fields and whether it is dimmed, with the time of the reading (`as_of`), the look, and the station's rain rate now
+    (`rain_rate`, mm/h: its rain gauge's, or its piezo gauge's where that's the one reporting, which no tile shows; null with
+    neither), for the page's rain behind the tiles;
   - GET /dashboard/events: Server-Sent Events, a `readings` event whenever the gauges' readings in the station's kept live reading or the
     air sensor's latest change, told by the server's own change detection for ecobot://now/weather and ecobot://now/air
     (EcobotServer.publish_changes: nothing is fetched for it), so the page fetches the data again and moves its gauges in place. A
@@ -53,14 +55,28 @@ HEARTBEAT_SECONDS = 25.0     # a comment on an idle stream this often
 RETRY_MS = 5000              # how soon a browser connects again after its stream ends
 QUEUED = 4                   # events waiting on a stream that isn't read: more are dropped (one says it all: fetch again)
 NOT_ANSWERING = "The weather station isn't answering right now."
+RAIN_RATES = ("rainfall", "rainfall_piezo")   # where the station's rain rate is (current's groups): its rain gauge's first, then the piezo's
 
 
 def readings_of(live: dict | None) -> tuple | None:
-    """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading, and the gust counted into the
-    wind's Max. None without one."""
+    """What the gauges show now of a live reading ({group: {field: {value, ...}}}): each gauge's reading, the gust counted into the
+    wind's Max, and the piezo gauge's rain rate (the page's rain behind the tiles). None without one."""
     if not live:
         return None
-    return tuple(live_value(live, where) for g in GAUGES for where in (g.live, *([g.counted] if g.counted else [])))
+    return (*(live_value(live, where) for g in GAUGES for where in (g.live, *([g.counted] if g.counted else []))),
+            live_value(live, ("rainfall_piezo", "rain_rate")))   # (the piezo gauge's rain rate: the page's rain, with no gauge of its own)
+
+
+def rain_rate_of(result: dict, live: dict | None = None) -> float | None:
+    """The station's rain rate now (mm/h): in current's result, its rain gauge's, or, with no reading there, its piezo gauge's; then the
+    piezo gauge's in the station's kept live reading (`live`), which current gives only when it is named. None with none of them."""
+    sensors = result.get("sensors") or {}
+    for group in RAIN_RATES:
+        try:
+            return float(((sensors.get(group) or {}).get("rain_rate") or {})["value"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return live_value(live or {}, ("rainfall_piezo", "rain_rate"))
 
 
 def air_readings_of(row: dict | None) -> tuple | None:
@@ -84,23 +100,27 @@ class WebDashboard:
 
     # ---------- the data ----------
     async def data(self) -> dict:
-        """{as_of, tiles, look}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
+        """{as_of, tiles, look, rain_rate}, or with `unavailable` (and no tiles) when the station gives nothing. From what is held, whatever its age
         (fetch off): an open request on the LAN never asks the station (the keep-warm keeps the live reading, and the events come from it)."""
         tool = self.server.service.get("current")
         result = json.loads(await tool.call(gauge_sheet.call(), {"fetch": False})) if tool else {"error": "no current"}
         sheet = gauge_sheet.sheet(result)
-        out = {"as_of": result.get("as_of"), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look()}
+        out = {"as_of": result.get("as_of"), "tiles": [tile_json(t) for t in sheet.tiles] if sheet else [], "look": look(),
+               "rain_rate": rain_rate_of(result, self._kept_live())}
         if sheet is None:
             out["unavailable"] = (result.get("unavailable") or {}).get("station") or NOT_ANSWERING
         return out
+
+    def _kept_live(self) -> dict | None:
+        kept = getattr(self.server.ctx.eco, "_live", None)
+        return kept[1] if kept else None
 
     # ---------- the events ----------
     def _readings(self):
         """(the station's gauges' readings, the air sensor's) as they are kept."""
         try:
-            kept = getattr(self.server.ctx.eco, "_live", None)
             air = getattr(self.server.ctx.air, "_current", None)
-            return readings_of(kept[1] if kept else None), air_readings_of(air[0] if air else None)
+            return readings_of(self._kept_live()), air_readings_of(air[0] if air else None)
         except Exception as e:   # (never stops the publishing)
             log.warning("Dashboard: couldn't read the live reading: %s: %s", type(e).__name__, e)
             return None
@@ -185,4 +205,4 @@ class WebDashboard:
                 Route(f"{path}/events", self.events, methods=["GET"])]
 
 
-__all__ = ["WebDashboard", "air_readings_of", "readings_of"]
+__all__ = ["WebDashboard", "air_readings_of", "rain_rate_of", "readings_of"]

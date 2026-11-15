@@ -11,7 +11,9 @@
      colours and sizes (lib/gauge_look.py, sent with the data); redrawn on each /dashboard/events event, and every minute regardless.
      The tiles can be rearranged in the browser: dragged to reorder (a long press on a touch screen), hidden with their × or the
      remove zone, all put back with "reset preferences"; kept in localStorage ("ecobot.dashboard.v1"), nothing sent to the server.
-     A click or tap on a gauge zooms its tile to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back. -->
+     A click or tap on a gauge zooms its tile to fill the window, a gallery paged through by keys, swipes and drags; Esc goes back.
+     Behind everything, the weather as pixel art on one canvas (Sky): rain, smog, radiation, drips, leaves, heat and ice, each while the
+     readings call for it, its tile framed in red; "stop animations" in the strip stops them. -->
 <style>
   :root { --bg: #14191D; --ink: #E8EAED; --soft: #B8BDC2; }
   * { box-sizing: border-box; }
@@ -59,6 +61,12 @@
     transform: translateY(-100%); transition: transform 0.2s ease; }
   #remove.on { transform: none; }
   #remove.over { color: #FFFFFF; background: rgba(150, 34, 42, 0.95); }
+  /* The weather behind everything (Sky, below): one canvas, the window's size, fixed, first in the page; its pixels scaled up crisply */
+  #sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  #sky canvas { position: absolute; left: 0; top: 0; image-rendering: crisp-edges; image-rendering: pixelated; }
+  /* A tile whose reading calls up an effect behind the tiles (Sky): framed in red, its frame alone (thin, as the others') */
+  .tile.alert::before { border-color: #D9363E; }
+  .tile.alert:focus-visible::before { border-color: #FF9EA1; }
   #status { position: fixed; right: 0; bottom: 0; height: var(--status, 18px); padding: 0 10px; font-size: 12px;
     line-height: var(--status, 18px); color: var(--soft); background: rgba(20, 25, 29, 0.85); border-top-left-radius: 6px; z-index: 1; }
   #status .link { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
@@ -93,10 +101,695 @@
 </style>
 </head>
 <body>
+<div id="sky" aria-hidden="true"><canvas></canvas></div>
 <main id="grid" aria-live="polite"></main>
 <div id="message"></div>
 <div id="remove" aria-hidden="true">× remove</div>
 <div id="status">loading…</div>
+<script>
+"use strict";
+// ---------- the weather behind the tiles: pixel art on one canvas filling the window, behind everything ----------
+// Drawn at a low resolution (one art pixel: P CSS px, about a third of the window across) and scaled up crisply (image-rendering:
+// pixelated). Every sprite and texture is drawn once to a small offscreen canvas and blitted; one loop (at most 30 frames a second)
+// for every effect, each frame cleared once and drawn back to front (ORDER). The effects share a particle budget and a cap on their
+// strength together, so several at once are no busier or brighter than one strong one. Nothing runs while no effect is on or fading
+// out; the tab hidden, it waits; with reduced motion, one still, faint frame and no loop.
+//   Sky.set(want, animate): want {rain: 0-1 (its strength), smog: 0-5 (the AQI's band above Good), radiation, drips, leaves, heat: 0 or
+//   1, ice: how far below 0 °C it is (0: none)}; animate false (the page's "stop animations"): nothing drawn.
+//   Sky.state(): {effects, running, frames, cost (ms a frame, averaged), size: [art width, art height, P], levels, iceReach (art px)},
+//   for the tests.
+const Sky = (() => {
+  const holder = document.getElementById("sky"), canvas = holder.querySelector("canvas"), ctx = canvas.getContext("2d");
+  const STILL = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const FRAME_MS = 1000 / 30;          // the frame rate's cap: art moving a pixel at a time needs no more
+  const FADE_S = 1.5;                  // an effect fades in, and out, over this long
+  const ART_PX = 480;                  // the art's width (or height, if taller) about this many pixels: P = 3 on a laptop, 4 on 1920
+  const BUDGET = 1 / 400;              // the particles of every effect together: this many per art pixel² (480 x 300: 360)
+  const CAP = 1.5;                     // ... and their strengths together at most this (one strong effect: about 0.8)
+  const STILL_HINT = 0.5;              // reduced motion: the still frame this faint
+  const ORDER = ["smog", "heat", "radiation", "rain", "leaves", "drips", "ice"];   // back to front
+  let W = 0, H = 0, P = 3;             // the art's size (art px) and one art pixel's (CSS px)
+
+  // ---------- tools: seeded randomness, colours, dithering, noise, little canvases ----------
+  const seeded = (seed) => () => {     // (mulberry32: the same art every time)
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const random = seeded(1115);
+  const between = (a, b) => a + (b - a) * random();
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  // Ordered dithering (Bayer 4x4): a level 0-1 at pixel (x, y) as one of n shades (0 to n-1), or -1 for none
+  const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
+  const shadeOf = (v, x, y, n) => Math.min(n - 1, Math.floor(v * n + BAYER[(y & 3) * 4 + (x & 3)] - 1));
+  // Value noise, smooth, 0-1, repeating every `period` cells across (a texture that wraps sideways)
+  const hash = (i, j, s) => {
+    let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(s, 1442695041)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  function noise(x, y, period, s) {
+    const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const i0 = ((xi % period) + period) % period, i1 = (i0 + 1) % period;
+    const top = hash(i0, yi, s) + (hash(i1, yi, s) - hash(i0, yi, s)) * sx;
+    const bottom = hash(i0, yi + 1, s) + (hash(i1, yi + 1, s) - hash(i0, yi + 1, s)) * sx;
+    return top + (bottom - top) * sy;
+  }
+  function canvasOf(w, h) {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.ceil(w));
+    c.height = Math.max(1, Math.ceil(h));
+    return c;
+  }
+  // A canvas painted pixel by pixel: paint(x, y) gives a colour [r, g, b] (or [r, g, b, alpha 0-255]), or nothing for clear
+  function painted(w, h, paint) {
+    const c = canvasOf(w, h), g = c.getContext("2d"), img = g.createImageData(c.width, c.height), d = img.data;
+    for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+      const p = paint(x, y);
+      if (!p) continue;
+      const i = (y * c.width + x) * 4;
+      d[i] = p[0]; d[i + 1] = p[1]; d[i + 2] = p[2]; d[i + 3] = p.length > 3 ? p[3] : 255;
+    }
+    g.putImageData(img, 0, 0);
+    return c;
+  }
+  // A sprite from a pixel map: rows of characters, each a key of `palette` ({char: [r, g, b]}), any other character clear
+  const mapped = (rows, palette) => painted(rows[0].length, rows.length, (x, y) => palette[rows[y][x]]);
+  // ... mirrored and squeezed sideways to `scale` of its width (a leaf turning over): negative, mirrored
+  function squeezed(rows, scale) {
+    const w = rows[0].length, n = Math.max(1, Math.round(w * Math.abs(scale)));
+    return rows.map((row) => Array.from({length: n}, (_, i) => {
+      const j = Math.min(w - 1, Math.floor((i + 0.5) / n * w));
+      return row[scale < 0 ? w - 1 - j : j];
+    }).join(""));
+  }
+
+  // An effect: its level (0 off), how present it is (0-1: fading in and out), its strength (how bright at full) and the particles it
+  // would like (at full), resized to the window, stepped and drawn each frame. Each one below fills in its own.
+  function effect(own) {
+    const e = {level: 0, amount: 0, strength: () => 0.8, need: () => 0, resize() {}, step() {}, draw() {},
+               want(v) { e.level = v; },
+               fade(dt) { e.amount = STILL ? (e.level > 0 ? 1 : 0) : clamp(e.amount + (e.level > 0 ? dt : -dt) / FADE_S, 0, 1); },
+               alive: () => e.level > 0 || e.amount > 0};
+    return Object.assign(e, own(e));
+  }
+
+  // ---------- rain: streaks from the top right, three layers deep, splashing at the bottom ----------
+  const RAIN = ["#2A4560", "#3A6688", "#5A90B8", "#8FC2E2", "#D6F0FF"].map(rgb);
+  const rain = effect((e) => {
+    const SLANT = 0.45;                // px left for each px down
+    const LAYERS = [                   // far (short, dim, slow) to near; [tail, body, head] shades
+      {speed: 150, length: [3, 4], alpha: 0.55, shades: [0, 1, 2], share: 0.45},
+      {speed: 230, length: [5, 6], alpha: 0.8, shades: [1, 2, 3], share: 0.33},
+      {speed: 330, length: [8, 10], alpha: 1, shades: [1, 3, 4], share: 0.22, splash: true}];
+    // A streak: its bright head at the bottom left, its tail fading up to the right
+    const streak = (n, [tail, body, head]) => {
+      const w = Math.round((n - 1) * SLANT) + 1;
+      return painted(w, n, (x, y) => {
+        if (x !== Math.round((n - 1 - y) * SLANT)) return null;
+        const p = y / (n - 1);
+        return [...RAIN[p > 0.8 ? head : p > 0.35 ? body : tail], Math.round(255 * (0.3 + 0.7 * p))];
+      });
+    };
+    const sprites = LAYERS.map((l) => l.length.map((n) => streak(n, l.shades)));
+    // A splash, frame by frame: a bead, a crown, droplets thrown wider, falling back ([dx, dy, shade] from where the drop landed)
+    const SPLASH = [[[0, 0, 4], [0, -1, 3]],
+                    [[0, 0, 2], [-1, -1, 4], [1, -2, 3]],
+                    [[-2, -2, 3], [2, -3, 2], [0, 0, 1]],
+                    [[-3, -1, 2], [3, -2, 1]],
+                    [[-4, 0, 1], [3, -1, 1]]].map((dots) =>
+      painted(9, 5, (x, y) => { const d = dots.find(([dx, dy]) => dx + 4 === x && dy + 4 === y); return d && RAIN[d[2]]; }));
+    let drops = [], splashes = [], mist = null;
+    const spawn = (d, anywhere) => {
+      const l = LAYERS[d.layer];
+      d.sprite = sprites[d.layer][random() < 0.5 ? 0 : 1];
+      d.v = l.speed * between(0.85, 1.15);
+      d.y = anywhere ? between(-10, H) : between(-H * 0.25, -10);
+      d.x = between(0, W + H * SLANT);
+      d.floor = l.splash ? between(H * 0.8, H + 2) : H + 12;
+    };
+    return {
+      strength: () => 0.55 + 0.35 * e.level,
+      need: () => (W * H / 1000) * (0.1 + 2.4 * Math.pow(e.level, 1.5)),   // (light: about 85 drops on a laptop; heavy: 360)
+      resize() {
+        drops = [];
+        mist = painted(W, Math.ceil(H * 0.12), (x, y) => {   // heavy rain's spray, low down
+          const s = shadeOf(Math.pow(y / (H * 0.12), 2) * 0.55, x, y, 3);
+          return s < 0 ? null : RAIN[s];
+        });
+      },
+      step(dt, t, share) {
+        const n = Math.round(this.need() * share);
+        while (drops.length < n) {   // (the layers in their shares, far first: drawn back to front)
+          const k = drops.length / Math.max(n, 1);
+          const d = {layer: k < LAYERS[0].share ? 0 : k < LAYERS[0].share + LAYERS[1].share ? 1 : 2};
+          spawn(d, true);
+          drops.push(d);
+        }
+        if (drops.length > n) drops.length = n;
+        drops.sort((a, b) => a.layer - b.layer);
+        const pace = 0.8 + 0.4 * e.level, sway = SLANT * (1 + 0.12 * Math.sin(t * 0.37));
+        for (const d of drops) {
+          const fall = d.v * pace * dt;
+          d.y += fall;
+          d.x -= fall * sway;
+          if (d.y + d.sprite.height >= d.floor) {
+            if (d.floor < H && splashes.length < 40) splashes.push({x: d.x, y: d.floor, age: 0});
+            spawn(d, false);
+          }
+        }
+        for (const s of splashes) s.age += dt;
+        splashes = splashes.filter((s) => s.age < 0.24);
+      },
+      draw(g, alpha) {
+        let layer = -1;
+        for (const d of drops) {
+          if (d.layer !== layer) { layer = d.layer; g.globalAlpha = alpha * LAYERS[layer].alpha; }
+          g.drawImage(d.sprite, Math.round(d.x), Math.round(d.y));
+        }
+        g.globalAlpha = alpha * 0.8;
+        for (const s of splashes) g.drawImage(SPLASH[Math.min(4, Math.floor(s.age / 0.05))], Math.round(s.x) - 4, Math.round(s.y) - 4);
+        if (e.level > 0.6) { g.globalAlpha = alpha * (e.level - 0.6) * 0.9; g.drawImage(mist, 0, H - mist.height); }
+      },
+    };
+  });
+
+  // ---------- smog: banks of haze drifting low across the window, three deep; thicker, higher and redder with each AQI band ----------
+  const SMOG = [   // each band's four shades, dark to light: Moderate (ochre), USG (amber), Unhealthy (rust), Very Unhealthy, Hazardous (maroon)
+    ["#2A2616", "#433C21", "#5F552D", "#7C6E38"], ["#2D2216", "#4A3420", "#6A4A29", "#8A6132"],
+    ["#2B1B17", "#462820", "#62352B", "#7C4335"], ["#28181F", "#3E2330", "#563040", "#6C3C4E"],
+    ["#22101A", "#371722", "#4E1F2C", "#652938"]].map((r) => r.map(rgb));
+  const smog = effect((e) => {
+    const LAYERS = [{cell: 120, flat: 0.32, drift: 1.2, depth: 0.55, seed: 11}, {cell: 80, flat: 0.36, drift: 2.6, depth: 0.8, seed: 23},
+                    {cell: 52, flat: 0.42, drift: 5, depth: 1, seed: 37}];
+    let built = 0, textures = [];
+    function build(level) {
+      built = level;
+      const shades = SMOG[level - 1], reach = [0.45, 0.58, 0.72, 0.86, 1][level - 1], thick = [0.62, 0.72, 0.82, 0.92, 1][level - 1];
+      textures = LAYERS.map((l) => {
+        const cells = Math.max(2, Math.round(W / l.cell)), across = cells / W, down = 1 / (l.cell * l.flat);
+        const top = H * (1 - reach * (1.1 - 0.25 * l.depth));   // (the far banks reach higher)
+        const density = (x, y) => {   // 0-1: the banks, denser lower down
+          const low = clamp((y - top) / (H - top), 0, 1);   // (0 at the smog's top, 1 at the window's bottom)
+          const n = 0.65 * noise(x * across, y * down, cells, l.seed) + 0.35 * noise(x * across * 2, y * down * 2, cells * 2, l.seed + 1);
+          return clamp((n - 0.58 + low * 0.55) * 2.2, 0, 1) * Math.pow(low, 0.3) * thick * l.depth;
+        };
+        return painted(W, H, (x, y) => {
+          if (y < top) return null;
+          const v = density(x, y);
+          let s = shadeOf(v * 0.8, x, y, 4);
+          if (s >= 0 && v > 0.12 && density(x, y - 3) < v - 0.1) s = Math.min(3, s + 1);   // (a bank's top, catching the light)
+          return s < 0 ? null : shades[s];
+        });
+      });
+    }
+    return {
+      strength: () => [0.4, 0.48, 0.56, 0.64, 0.72][Math.max(1, built || e.level) - 1],
+      resize() { built = 0; },
+      step() { if (e.level > 0 && (e.level !== built || !textures.length)) build(e.level); },
+      draw(g, alpha, t) {
+        if (!built) return;
+        LAYERS.forEach((l, i) => {
+          const x = Math.floor((t * l.drift + i * W / 3) % W), y = Math.round(Math.sin(t * 0.07 + i * 2) * 1.5);
+          g.globalAlpha = alpha * (0.6 + 0.4 * l.depth);
+          g.drawImage(textures[i], x - W, y);
+          g.drawImage(textures[i], x, y);
+        });
+      },
+    };
+  });
+
+  // ---------- heat: a shimmering amber glow rising from the bottom, its ripples riding up and wavering sideways ----------
+  const HEAT = ["#3A1C0A", "#62300E", "#955015", "#C97B24", "#EFB05A"].map(rgb);
+  const heat = effect((e) => {
+    const SPAN = 0.34, PERIOD = 13, LINES = 7, RISE = 9, SPARE = 4;   // its height (of the window's); its ripples' spacing (px), how many
+    // differ before they repeat, their speed (px/s); the spare px each side for wavering
+    let glow = null, ripples = null, band = 0;
+    return {
+      strength: () => 0.75,
+      resize() {
+        band = Math.ceil(H * SPAN);
+        glow = painted(W + 2 * SPARE, band, (x, y) => {   // dithered, brightest at the bottom, in slow columns
+          const v = Math.pow(y / band, 2.2) * (0.55 + 0.35 * noise(x / 26, 0.5, Math.ceil((W + 2 * SPARE) / 26), 5));
+          const s = shadeOf(v, x, y, 3);
+          return s < 0 ? null : HEAT[s];
+        });
+        const across = W + 2 * SPARE;
+        ripples = painted(across, PERIOD * LINES, (x, y) => {   // wavy wisps, a bright crest over a dark trough, every PERIOD px
+          const line = Math.round(y / PERIOD) % LINES, wave = Math.round(1.4 * Math.sin(x * (0.08 + 0.015 * line) + line * 2.1) +
+                                                                    0.8 * Math.sin(x * 0.031 + line));
+          const row = y - line * PERIOD - wave;
+          if (row !== 0 && row !== 1) return null;
+          const lit = noise(x / (10 + line * 2), line * 3.7, Math.ceil(across / (10 + line * 2)), 9);   // (broken into wisps)
+          if (lit < 0.5) return null;
+          return row === 0 ? HEAT[lit > 0.72 ? 4 : 3] : HEAT[1];
+        });
+      },
+      draw(g, alpha, t) {
+        const top = H - band, rows = PERIOD * LINES, scroll = Math.floor(t * RISE) % rows;
+        for (let y = 0; y < band; y++) {
+          const k = y / band, dx = Math.round(Math.sin(y * 0.5 - t * 3.1) * (0.5 + 1.8 * k));   // (wavering more lower down)
+          g.globalAlpha = alpha * 0.85;
+          g.drawImage(glow, SPARE - dx, y, W, 1, 0, top + y, W, 1);
+          g.globalAlpha = alpha * Math.pow(k, 1.3) * 0.7;
+          g.drawImage(ripples, SPARE + dx, (y + scroll) % rows, W, 1, 0, top + y, W, 1);
+        }
+      },
+    };
+  });
+
+  // ---------- radiation: soft shafts of violet light coming in from the top, shimmering motes drifting down through them ----------
+  const RAD = ["#22153C", "#3C256A", "#6444A8", "#A287E6", "#EFE7FF"].map(rgb);
+  const radiation = effect((e) => {
+    // A mote's twinkle, frame by frame: a dim point, a bright one, a cross, a star
+    const MOTE = [["2"], ["4"], [".3.", "343", ".3."], ["..1..", "..3..", "13431", "..3..", "..1.."]]
+      .map((rows) => mapped(rows, {1: RAD[1], 2: RAD[2], 3: RAD[3], 4: RAD[4]}));
+    let shafts = [], motes = [], glow = null;
+    const shaft = (wide, long, slope) => painted(wide * 2 + long * Math.abs(slope) + 2, long, (x, y) => {
+      const k = y / long, half = wide * (0.6 + 0.6 * k), mid = wide + (slope < 0 ? long * -slope : 0) + y * slope;
+      const across = 1 - Math.abs(x - mid) / half;
+      if (across <= 0) return null;
+      const s = shadeOf(Math.pow(across, 1.2) * Math.pow(1 - k, 1.3) * 0.75, x, y, 4);
+      return s < 0 ? null : RAD[s];
+    });
+    const spawn = (m, anywhere) => {
+      m.x = between(0, W);
+      m.y = anywhere ? between(0, H * 0.75) : between(-6, 0);
+      m.v = between(5, 16);
+      m.end = between(H * 0.4, H * 0.85);
+      m.rate = between(2, 5);
+      m.phase = between(0, 7);
+    };
+    return {
+      strength: () => 0.8,
+      need: () => W * H / 2800,
+      resize() {
+        const r = seeded(77);
+        const n = Math.max(4, Math.round(W / 70));
+        shafts = Array.from({length: n}, (_, i) => ({
+          sprite: shaft(Math.round(10 + r() * 22), Math.round(H * (0.4 + r() * 0.5)), 0.12 + r() * 0.1),
+          x: (i + r() * 0.6) * W / n - 10, phase: r() * 7, drift: 0.6 + r() * 0.8}));
+        glow = painted(W, Math.ceil(H * 0.16), (x, y) => {
+          const s = shadeOf(Math.pow(1 - y / (H * 0.16), 2.4) * 0.6, x, y, 3);
+          return s < 0 ? null : RAD[s];
+        });
+        motes = [];
+      },
+      step(dt, t, share) {
+        const n = Math.round(this.need() * share);
+        while (motes.length < n) { const m = {}; spawn(m, true); motes.push(m); }
+        if (motes.length > n) motes.length = n;
+        for (const m of motes) {
+          m.y += m.v * dt;
+          if (m.y > m.end) spawn(m, false);
+        }
+      },
+      draw(g, alpha, t) {
+        g.globalAlpha = alpha * 0.8;
+        g.drawImage(glow, 0, 0);
+        for (const s of shafts) {
+          const span = W + s.sprite.width;
+          g.globalAlpha = alpha * (0.35 + 0.45 * Math.pow(Math.sin(t * 0.45 + s.phase), 2));
+          g.drawImage(s.sprite, Math.round(((s.x + t * s.drift) % span + span) % span - s.sprite.width), 0);
+        }
+        for (const m of motes) {
+          const twinkle = Math.sin(t * m.rate + m.phase), f = twinkle > 0.85 ? 3 : twinkle > 0.45 ? 2 : twinkle > -0.2 ? 1 : 0;
+          const sprite = MOTE[f], fadeOut = clamp((m.end - m.y) / 30, 0, 1);
+          g.globalAlpha = alpha * fadeOut;
+          g.drawImage(sprite, Math.round(m.x + Math.sin(t * 0.8 + m.phase) * 2) - (sprite.width >> 1), Math.round(m.y) - (sprite.height >> 1));
+        }
+      },
+    };
+  });
+
+  // ---------- leaves: autumn leaves tumbling past on the wind, three deep, a few streaks of the wind itself ----------
+  const LEAF_COLOURS = [   // [shadow, base, light] for: red, amber, ochre, green, brown; and the stem
+    ["#5A1915", "#922B20", "#C24C34"], ["#66290F", "#A94B1B", "#D87A33"], ["#62420F", "#9E7024", "#D2A142"],
+    ["#2C3F17", "#52702D", "#82A047"], ["#3B2816", "#664629", "#8C6840"]].map((r) => r.map(rgb));
+  const STEM = rgb("#2A1B0E");
+  const LEAF_SHAPES = [   // d shadow, m base, l light, v vein, s stem: far (small), middle, near (a maple, an elm, an oak)
+    [[".l.", "lmd", ".d."], ["llm.", "smmd", ".dd."]],
+    [["..l...", ".lml.d", "lmvmmd", ".mvmd.", "..s..."], ["..lll..", "slvvvmd", "..mmdd."]],
+    [[".....l.....", "..l..l..l..", "..ll.v.ll..", "l..lvvvl..d", ".lllmvmmmd.", "..lmmvmmd..", ".mmmmvmmmd.", "mmmmmvmmmdd",
+      "..mmdvmdd..", "....dsd....", ".....s....."],
+     ["....lll...", "..llmmmmm.", "ssvvvvvvvd", "..mmmmmdd.", "....ddd..."],
+     ["..l.l...", ".lmlmld.", "lmmvmmd.", ".lvmmvmd", "lmmvmmd.", ".dmvmd..", "..dsd...", "...s...."]]];
+  const TURN = [1, 0.7, 0.35, -0.35, -0.7, -1, -0.7, -0.35, 0.35, 0.7];   // a leaf turning over and back (negative: its underside)
+  const leaves = effect((e) => {
+    const LAYERS = [{speed: 45, alpha: 0.5, share: 0.4}, {speed: 75, alpha: 0.75, share: 0.35}, {speed: 115, alpha: 1, share: 0.25}];
+    // Each layer's leaves: each shape in each colour turning each way, as its frames
+    const transposed = (rows) => rows[0].split("").map((_, x) => rows.map((row) => row[x]).join(""));
+    const sprites = LEAF_SHAPES.map((shapes) => shapes.flatMap((rows) => LEAF_COLOURS.flatMap(([d, m, l]) => {
+      const under = [d, d, m];   // (its underside: darker)
+      // turning about its length, or end over end (squeezed on its side, then stood up again)
+      return [rows, transposed(rows)].map((map, axis) => TURN.map((k) => {
+        const squashed = axis ? transposed(squeezed(map, k)) : squeezed(map, k);
+        return mapped(squashed, k > 0 ? {d, m, l, v: l, s: STEM} : {d: under[0], m: under[1], l: under[2], v: under[1], s: STEM});
+      }));
+    })));
+    const STREAK = [rgb("#3A444C"), rgb("#4C5862")];
+    let flying = [], gusts = [];
+    const spawn = (f, anywhere) => {
+      const set = sprites[f.layer];
+      f.frames = set[Math.floor(random() * set.length)];
+      f.x = anywhere ? between(-10, W) : between(-40, -10);
+      f.y = between(H * 0.05, H * 0.95);
+      f.v = LAYERS[f.layer].speed * between(0.75, 1.25);
+      f.bob = between(3, 9);
+      f.phase = between(0, 7);
+      f.spin = between(6, 13);
+      f.sink = between(-4, 8);
+    };
+    const gust = (s, anywhere) => {
+      s.x = anywhere ? between(-60, W) : between(-200, -60);
+      s.y = Math.round(between(0, H));
+      s.length = Math.round(between(18, 60));
+      s.v = between(220, 320);
+    };
+    return {
+      strength: () => 0.8,
+      need: () => W * H / 2600,
+      resize() { flying = []; gusts = []; },
+      step(dt, t, share) {
+        const n = Math.round(this.need() * share);
+        while (flying.length < n) {
+          const k = flying.length / Math.max(n, 1);
+          const f = {layer: k < LAYERS[0].share ? 0 : k < LAYERS[0].share + LAYERS[1].share ? 1 : 2};
+          spawn(f, true);
+          flying.push(f);
+        }
+        if (flying.length > n) flying.length = n;
+        flying.sort((a, b) => a.layer - b.layer);
+        while (gusts.length < 3) { const s = {}; gust(s, true); gusts.push(s); }
+        const wind = 1 + 0.35 * Math.sin(t * 0.7) + 0.15 * Math.sin(t * 1.9);   // (it gusts)
+        for (const f of flying) {
+          f.x += f.v * wind * dt;
+          f.y += f.sink * dt;
+          if (f.x > W + 12 || f.y > H + 12 || f.y < -12) spawn(f, false);
+        }
+        for (const s of gusts) { s.x += s.v * dt; if (s.x > W) gust(s, false); }
+      },
+      draw(g, alpha, t) {
+        g.globalAlpha = alpha * 0.35;
+        for (const s of gusts) for (let i = 0; i < s.length; i += 2) {   // (dotted, brighter at its middle)
+          g.fillStyle = `rgb(${STREAK[Math.abs(i - s.length / 2) < s.length / 4 ? 1 : 0]})`;
+          g.fillRect(Math.round(s.x) + i, s.y + (i > s.length / 2 ? 1 : 0), 1, 1);
+        }
+        let layer = -1;
+        for (const f of flying) {
+          if (f.layer !== layer) { layer = f.layer; g.globalAlpha = alpha * LAYERS[layer].alpha; }
+          const frame = f.frames[Math.floor(t * f.spin + f.phase * 3) % f.frames.length];
+          const y = f.y + Math.sin(t * 1.7 + f.phase) * f.bob;
+          g.drawImage(frame, Math.round(f.x - frame.width / 2), Math.round(y - frame.height / 2));
+        }
+      },
+    };
+  });
+
+  // ---------- drips: water beading along the top edge, each drop swelling, stretching and falling ----------
+  const WATER = ["#1A2E41", "#2C5573", "#5793BC", "#A6D7F2", "#EFFAFF"].map(rgb);
+  const drips = effect((e) => {
+    const SIZES = [0.6, 1, 1.4, 1.9, 2.4, 2.9, 3.4];   // a bead's radius, swelling
+    // A bead of radius r: dark above, its body, a bright crescent low down where the light comes through, a glint high on the left
+    // A bead of radius r hanging from its tip: tapering up to where it clings, a round belly; lit from the top left: a white glint,
+    // its body, a bright crescent low inside where the light comes through, a dark rim on the right and below
+    const bead = (r) => {
+      const w = 2 * Math.ceil(r) + 1, cx = (w - 1) / 2, cy = Math.round(r * 1.3), h = cy + Math.ceil(r) + 1;
+      return painted(w, h, (x, y) => {
+        const dx = x - cx, dy = y - cy, far = Math.hypot(dx, dy);
+        const inside = dy >= 0 ? far <= r + 0.3 : Math.abs(dx) <= r * (y + 0.5) / cy + 0.2;   // (above its middle: the taper)
+        if (!inside) return null;
+        if (r < 1.2) return WATER[y === h - 1 ? 3 : 2];
+        if (x === Math.round(cx - r * 0.45) && y === Math.round(cy - r * 0.4)) return WATER[4];
+        if (dy > 0 && far > r - 0.7 && dx > -r * 0.5) return WATER[1];
+        if (dy > r * 0.2 && far > r - 1.7 && dx < r * 0.4) return WATER[3];
+        return WATER[2];
+      });
+    };
+    const beads = SIZES.map(bead);
+    const sizeOf = (r) => { const i = SIZES.findIndex((size) => size >= r - 0.01); return i < 0 ? SIZES.length - 1 : i; };
+    const FALLING = [painted(1, 4, (x, y) => WATER[y + 1]), painted(1, 6, (x, y) => [...WATER[Math.min(4, 1 + (y >> 1) + (y > 4))], 80 + 35 * y])];
+    let film = null, sites = [];
+    const site = (x) => ({x, state: "rest", wait: between(0, 3), r: 0, grow: between(0.35, 0.8), full: between(2.2, 3.4), neck: 0,
+                          hang: between(2, 5), drops: []});
+    return {
+      strength: () => 0.85,
+      need: () => W / 16,
+      resize() {
+        film = painted(W, 3, (x, y) => {   // the wet edge
+          const s = shadeOf([0.75, 0.45, 0.2][y] + 0.15 * Math.sin(x * 0.21), x, y, 3);
+          return s < 0 ? null : WATER[s + (y === 0 ? 1 : 0)];
+        });
+        sites = [];
+      },
+      step(dt, t, share) {
+        const n = Math.max(1, Math.round(this.need() * share));
+        if (sites.length !== n) sites = Array.from({length: n}, (_, i) => site(Math.round((i + between(0.2, 0.8)) * W / n)));
+        for (const s of sites) {
+          if (s.state === "rest") {
+            if ((s.wait -= dt) <= 0) { s.state = "swell"; s.r = SIZES[0]; s.neck = 0; }
+          } else if (s.state === "swell") {
+            s.r += s.grow * dt;
+            if (s.r >= s.full) s.state = "stretch";
+          } else if (s.state === "stretch") {
+            s.neck += 3 * dt;
+            if (s.neck >= s.hang) {   // let go: the drop falls, a little bead stays to swell again
+              s.drops.push({y: s.neck + 2 + s.r, v: 15, end: between(H * 0.3, H * 0.95)});
+              Object.assign(s, {state: "rest", wait: between(0.4, 2.5), r: 0, neck: 0, full: between(2.2, 3.4), hang: between(2, 5)});
+            }
+          }
+          for (const d of s.drops) { d.v += 260 * dt; d.y += d.v * dt; }
+          s.drops = s.drops.filter((d) => d.y < d.end);
+        }
+      },
+      draw(g, alpha) {
+        g.globalAlpha = alpha * 0.8;
+        g.drawImage(film, 0, 0);
+        for (const s of sites) {
+          g.globalAlpha = alpha;
+          if (s.state !== "rest") {
+            const sprite = beads[sizeOf(s.r)];
+            const neck = Math.floor(s.neck), top = 1 + neck;
+            if (neck > 0) { g.fillStyle = `rgb(${WATER[2]})`; g.fillRect(s.x, 2, 1, neck); }   // (stretching: a thread of water)
+            g.drawImage(sprite, s.x - (sprite.width >> 1), top);
+          }
+          for (const d of s.drops) {
+            const sprite = d.v > 140 ? FALLING[1] : FALLING[0];
+            g.globalAlpha = alpha * clamp((d.end - d.y) / 40, 0, 1);
+            g.drawImage(sprite, s.x, Math.round(d.y));
+          }
+        }
+      },
+    };
+  });
+
+  // ---------- ice: frost crystals branching in from the window's edges, thickest in the corners, growing slowly, melting back ----------
+  // The crystals are grown once for the window's size (each pixel: how far in it is, on the ice's own measure, and its shade); then
+  // shown out to `extent`, drawn to an offscreen canvas only when that has moved half a pixel, and blitted each frame.
+  const ICE = ["#132536", "#1F3D56", "#356A8E", "#69A9CF", "#B6E3F7", "#F2FCFF"].map(rgb);
+  const ice = effect((e) => {
+    const GROW = 2.2, MELT = 4;        // px a second
+    const GLINT = [mapped(["5"], {5: ICE[5]}), mapped([".4.", "454", ".4."], {4: ICE[4], 5: ICE[5]}),
+                   mapped(["..3..", "..4..", "34543", "..4..", "..3.."], {3: ICE[3], 4: ICE[4], 5: ICE[5]})];
+    let extent = 0, shownAt = -1, layer = null, img = null;
+    let crystals = null, crystalReach = null, crystalShade = null, rim = null, rimReach = null, glints = [];
+    const most = () => Math.min(W, H) * 0.13;
+    const reachFor = (degrees) => degrees <= 0 ? 0 :
+      Math.min(W, H) * (0.025 + 0.065 * Math.min(1, degrees / 5) + 0.03 * clamp((degrees - 5) / 5, 0, 1));
+    function grow() {
+      const reach = new Float32Array(W * H).fill(Infinity), shade = new Uint8Array(W * H), r = seeded(4242), m = Math.min(W, H);
+      const mark = (x, y, far, s) => {
+        x = Math.round(x); y = Math.round(y);
+        if (x < 0 || y < 0 || x >= W || y >= H) return;
+        const i = y * W + x;
+        if (far < reach[i]) { reach[i] = far; shade[i] = s; }
+      };
+      // A branch from (x, y) heading `angle`, `length` long, starting `from` in (k: its edge's corner stretch); side branches at 60°
+      const branch = (x, y, angle, length, from, k, depth) => {
+        const dx = Math.cos(angle), dy = Math.sin(angle);
+        let next = 3 + r() * 3;
+        for (let s = 0; s <= length; s += 0.6) {
+          mark(x + dx * s, y + dy * s, (from + s) / k, depth ? (length - s < 1.2 ? 2 : 1) : length - s < 1.8 ? 3 : 2);   // (a stem's tip lit)
+          if (depth < 2 && s >= next && length - s > 3) {
+            const side = (length - s) * (0.25 + r() * 0.25) * (depth ? 0.5 : 1), both = r() < 0.4, way = r() < 0.5 ? -1 : 1;
+            branch(x + dx * s, y + dy * s, angle + way * Math.PI / 3, side, from + s, k, depth + 1);
+            if (both) branch(x + dx * s, y + dy * s, angle - way * Math.PI / 3, side * (0.7 + r() * 0.3), from + s, k, depth + 1);
+            next = s + (depth ? 3 : 4) + r() * 5;
+          }
+        }
+      };
+      const edges = [[W, (p) => [p, 0], Math.PI / 2], [W, (p) => [p, H - 1], -Math.PI / 2], [H, (p) => [0, p], 0], [H, (p) => [W - 1, p], Math.PI]];
+      for (const [span, at, inward] of edges) {
+        for (let p = r() * 5; p < span; p += 5 + r() * 7) {
+          const corner = Math.pow(clamp(1 - Math.min(p, span - p) / (0.4 * m), 0, 1), 1.5), k = 1 + 1.1 * corner;
+          const toward = p < span / 2 ? -1 : 1;   // (in a corner, leaning along the diagonal, away from the other edge)
+          const tilt = (r() - 0.5) * 1.1 + corner * 0.55 * toward * (inward === Math.PI || inward === Math.PI / 2 ? -1 : 1);
+          const [x, y] = at(p);
+          branch(x, y, inward + tilt, most() * k * (0.3 + r() * 0.7), r() * 3, k, 0);
+        }
+      }
+      const list = [];
+      for (let i = 0; i < W * H; i++) if (reach[i] < Infinity) list.push(i);
+      crystals = Int32Array.from(list);
+      crystalReach = Float32Array.from(list, (i) => reach[i]);
+      crystalShade = Uint8Array.from(list, (i) => shade[i]);
+      const film = [], filmReach = [], deepest = most();   // the frost film between them: dithered, thicker in the corners
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const a = Math.min(x, W - 1 - x) + 1, b = Math.min(y, H - 1 - y) + 1, far = 3.5 * a * b / (a + b);
+        if (far < deepest) { film.push(y * W + x); filmReach.push(far); }
+      }
+      rim = Int32Array.from(film);
+      rimReach = Float32Array.from(filmReach);
+      layer = canvasOf(W, H);
+      img = layer.getContext("2d").createImageData(W, H);
+      shownAt = -1;
+    }
+    function show() {   // the ice out to `extent` drawn to its canvas
+      shownAt = extent;
+      const d = img.data, growing = extent < reachFor(e.level) - 0.5;
+      d.fill(0);
+      const put = (i, c, a = 255) => { d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = a; };
+      for (let j = 0; j < rim.length; j++) {
+        const v = 1 - rimReach[j] / Math.max(extent, 0.01);
+        if (v <= 0) continue;
+        const i = rim[j], s = shadeOf(v * 0.5, i % W, (i / W) | 0, 2);
+        if (s >= 0) put(i, ICE[s]);
+      }
+      for (let j = 0; j < crystals.length; j++) {
+        const far = crystalReach[j];
+        if (far > extent) continue;
+        put(crystals[j], ICE[growing && extent - far < 1.5 ? 4 : extent - far < 3 ? crystalShade[j] + 1 : crystalShade[j]]);
+      }
+      layer.getContext("2d").putImageData(img, 0, 0);
+    }
+    return {
+      strength: () => 0.6,
+      want(v) { e.level = v; if (STILL) extent = reachFor(v); },
+      fade() { e.amount = extent > 0 ? 1 : 0; },
+      alive: () => e.level > 0 || extent > 0,
+      reach: () => extent,
+      resize() { grow(); },
+      step(dt) {
+        const target = reachFor(e.level);
+        extent = extent < target ? Math.min(target, extent + GROW * dt) : Math.max(target, extent - MELT * dt);
+        e.amount = extent > 0 ? 1 : 0;
+        if (Math.abs(extent - shownAt) >= 0.5 || (extent === target && shownAt !== extent)) show();
+        for (const gl of glints) gl.age += dt;
+        glints = glints.filter((gl) => gl.age < gl.life);
+        if (glints.length < 6 && random() < dt * 4 && extent > 2) {   // a glint on a crystal that's there
+          for (let tries = 0; tries < 6; tries++) {
+            const j = Math.floor(random() * crystals.length);
+            if (crystalReach[j] <= extent && crystalShade[j] >= 2) {
+              glints.push({x: crystals[j] % W, y: (crystals[j] / W) | 0, age: 0, life: between(0.5, 1.1)});
+              break;
+            }
+          }
+        }
+      },
+      draw(g, alpha) {
+        if (shownAt !== extent) show();
+        g.globalAlpha = alpha;
+        g.drawImage(layer, 0, 0);
+        for (const gl of glints) {
+          const p = gl.age / gl.life, sprite = GLINT[p < 0.25 || p > 0.75 ? 0 : p < 0.4 || p > 0.6 ? 1 : 2];
+          g.drawImage(sprite, gl.x - (sprite.width >> 1), gl.y - (sprite.height >> 1));
+        }
+      },
+    };
+  });
+
+  const effects = {smog, heat, radiation, rain, leaves, drips, ice};
+
+  // ---------- the loop ----------
+  let animate = true, frame = 0, last = 0, clock = 0, frames = 0, cost = 0;
+  const alive = () => ORDER.some((k) => effects[k].alive());
+
+  function resize() {
+    P = Math.max(3, Math.round(Math.max(window.innerWidth, window.innerHeight) / ART_PX));
+    W = Math.ceil(window.innerWidth / P);
+    H = Math.ceil(window.innerHeight / P);
+    canvas.width = W;
+    canvas.height = H;
+    Object.assign(canvas.style, {width: `${W * P}px`, height: `${H * P}px`});
+    for (const k of ORDER) effects[k].resize();
+  }
+
+  function tick(dt) {
+    let need = 0;
+    for (const k of ORDER) { effects[k].fade(dt); if (effects[k].amount > 0 || effects[k].level > 0) need += effects[k].need(); }
+    const share = Math.min(1, W * H * BUDGET / Math.max(need, 1));
+    for (const k of ORDER) if (effects[k].alive()) effects[k].step(dt, clock, share);
+  }
+  function draw(faint = 1) {
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, W, H);
+    let sum = 0;
+    for (const k of ORDER) sum += effects[k].strength() * effects[k].amount;
+    const cap = Math.min(1, CAP / Math.max(sum, 1e-6)) * faint;
+    for (const k of ORDER) {
+      const fx = effects[k];
+      if (fx.amount > 0) fx.draw(ctx, fx.strength() * fx.amount * cap, clock);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function loop(now) {
+    frame = 0;
+    if (!animate || document.hidden) return;
+    if (now - last >= FRAME_MS - 4) {   // (30 a second: every other frame at 60 Hz)
+      const dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
+      clock += dt;
+      const start = performance.now();
+      tick(dt);
+      draw();
+      cost = frames ? cost * 0.95 + (performance.now() - start) * 0.05 : performance.now() - start;
+      frames++;
+    }
+    if (alive()) frame = requestAnimationFrame(loop);
+    else ctx.clearRect(0, 0, W, H);
+  }
+
+  function start() {
+    if (!animate || !alive()) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      ctx.clearRect(0, 0, W, H);
+      return;
+    }
+    if (STILL) {   // one still, faint frame: the particles where they'd be a few seconds in
+      clock = 4;
+      tick(0);
+      draw(STILL_HINT);
+      return;
+    }
+    if (!frame && !document.hidden) {
+      last = performance.now() - FRAME_MS;
+      frame = requestAnimationFrame(loop);
+    }
+  }
+
+  function set(want, on) {
+    animate = on;
+    if (!W) resize();
+    for (const k of ORDER) effects[k].want(want[k] || 0);
+    start();
+  }
+
+  let resizing = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizing);
+    resizing = setTimeout(() => { resize(); if (!frame) start(); }, 150);
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) start(); });
+
+  return {set, state: () => ({effects: ORDER.filter((k) => effects[k].level > 0), running: !!frame, frames, cost, size: [W, H, P],
+                              levels: Object.fromEntries(ORDER.map((k) => [k, effects[k].level])), iceReach: effects.ice.reach()})};
+})();
+</script>
 <script>
 "use strict";
 (() => {
@@ -427,17 +1120,18 @@
     if (!keyboard) return;
     const next = visible[at + 1] !== undefined ? visible[at + 1] : visible[at - 1];
     const d = next !== undefined && drawn.get(next);
-    const target = d ? d.box.querySelector(".close") : statusLine.querySelector(".link");
+    const target = d ? d.box.querySelector(".close") : statusLine.querySelector(".reset");
     if (target) target.focus();
   }
 
-  // What "reset preferences" puts back: every tile shown, in the default order (and whatever a later stage keeps)
+  // What "reset preferences" puts back: every tile shown, in the default order, the animations on (and whatever a later stage keeps)
   const resettable = () => prefs.hidden.length > 0;
   function reset() {
     Object.keys(prefs).forEach((k) => delete prefs[k]);
     Object.assign(prefs, blank());
     try { localStorage.removeItem(PREFS_KEY); } catch (e) { /* blocked: nothing was saved */ }
     reflow(arrange);
+    weather();
     showStatus();
   }
 
@@ -487,16 +1181,17 @@
 
   // ---------- the data ----------
   // The bottom strip: the time of the reading, then its links (only while they do something)
-  function link(words, action) {
+  function link(words, action, name) {
     const a = document.createElement("button");
-    Object.assign(a, {type: "button", className: "link", textContent: words});
+    Object.assign(a, {type: "button", className: `link ${name}`, textContent: words});
     a.addEventListener("click", action);
     return a;
   }
   function showStatus() {
     statusLine.classList.toggle("lost", lost);
     const parts = [lost ? "reconnecting…" : asOf ? `updated ${asOf.slice(11, 16)}` : ""];
-    if (resettable()) parts.push(link("reset preferences", reset));
+    if (calling()) parts.push(link(animated() ? "stop animations" : "start animations", toggleAnimations, "animations"));
+    if (resettable()) parts.push(link("reset preferences", reset, "reset"));
     statusLine.replaceChildren(...parts.flatMap((p, i) => i && parts[0] ? [" · ", p] : [p]));
   }
 
@@ -514,6 +1209,8 @@
     }
     if (press && press.engaged) press.rearrange = true;   // (mid-drag: the page's tiles stay put until it's dropped)
     else arrange();
+    real = conditionsOf(data);
+    weather();
   }
 
   let fetching = null;
@@ -943,6 +1640,58 @@
     }, WHEEL_IDLE_MS);
   }
 
+  // ---------- the weather behind the tiles: what the readings call for, the tiles framed in red, "stop animations" ----------
+  // Each effect while its reading is past its mark, on its tile (Sky draws them): rain while it rains (the station's rain rate above 0,
+  // stronger to 8 mm/h), smog from the US AQI's Moderate band up (1-5, a band each), radiation at a UV index of 11, drips at 95 %
+  // humidity, leaves on a wind above 50 km/h (the reading now, not the gust), heat at 40 °C, ice below 0 °C (how far below). A tile
+  // with no reading now calls for nothing.
+  const CALLED_BY = {rain: "Rain", smog: "US AQI", radiation: "UV index", drips: "Humidity", leaves: "Wind", heat: "Temperature",
+                     ice: "Temperature"};
+  const BANDS = [50, 100, 150, 200, 300];   // the US AQI's bands' upper edges, Good to Very Unhealthy (the tile's own bounds if it has them)
+  let real = {}, simulated = {}, conditions = {};
+  function conditionsOf(data) {
+    const now = (title) => {
+      const t = (data.tiles || []).find((tile) => idOf(tile) === title);
+      return t && typeof t.value === "number" ? t.value : null;
+    };
+    const rate = typeof data.rain_rate === "number" ? data.rain_rate : null, aqi = now("US AQI"), uvi = now("UV index");
+    const humidity = now("Humidity"), wind = now("Wind"), temperature = now("Temperature");
+    const aqiTile = (data.tiles || []).find((t) => idOf(t) === "US AQI"), bands = aqiTile && aqiTile.bounds && aqiTile.bounds.length > 2
+      ? aqiTile.bounds.slice(1, -1) : BANDS;
+    return {rain: rate > 0 ? 0.3 + 0.7 * Math.min(1, rate / 8) : 0,
+            smog: aqi === null ? 0 : Math.min(5, bands.filter((b) => aqi > b).length),
+            radiation: uvi !== null && uvi >= 11 ? 1 : 0, drips: humidity !== null && humidity >= 95 ? 1 : 0,
+            leaves: wind !== null && wind > 50 ? 1 : 0, heat: temperature !== null && temperature >= 40 ? 1 : 0,
+            ice: temperature !== null && temperature < 0 ? -temperature : 0};
+  }
+  const calling = () => Object.values(conditions).some((v) => v > 0);   // (any effect called for: the strip's link shows)
+  const animated = () => prefs.animations !== false;
+
+  // The effects called for, the readings' and the test links' together, to Sky and to the tiles' frames; the strip's link as it changes
+  function weather() {
+    const was = calling();
+    conditions = Object.fromEntries(Object.keys(CALLED_BY).map((k) => [k, Math.max(real[k] || 0, simulated[k] || 0)]));
+    Sky.set(conditions, animated());
+    const framed = new Set(Object.keys(CALLED_BY).filter((k) => conditions[k] > 0).map((k) => CALLED_BY[k]));
+    for (const [id, d] of drawn) d.box.classList.toggle("alert", framed.has(id));
+    if (calling() !== was) showStatus();
+  }
+
+  // "stop animations" / "start animations": kept with the preferences (the borders stay either way)
+  function toggleAnimations() {
+    const focused = document.activeElement && document.activeElement.classList.contains("animations");
+    if (animated()) prefs.animations = false;
+    else delete prefs.animations;
+    save();
+    weather();
+    showStatus();
+    if (focused) statusLine.querySelector(".animations").focus();
+  }
+
+  // The temporary test links (the block near the page's end) simulate conditions: {effect: level}, as conditionsOf's. Only the effects
+  // and the frames: the gauges keep their readings; nothing kept.
+  document.addEventListener("ecobot-fx", (e) => { simulated = e.detail || {}; weather(); });
+
   // ---------- the events: a new reading, fetched and drawn in place ----------
   let source = null;
   function listen() {
@@ -970,5 +1719,73 @@
   listen();
 })();
 </script>
+<!-- TEMPORARY: effect test links. A "test:" row at the bottom left, one link per effect, simulating its condition (the effect and its
+     tile's red frame, as a real one; the gauges keep their readings; nothing saved), and the same as a URL parameter: ?fx=rain,
+     ?fx=smog3,leaves,ice, ?fx=all (rain light, rain2 heavy, smog1-smog5, radiation, drips, leaves, heat, ice; "all"). To remove: delete
+     from here to "END TEMPORARY" (this style, the row and its script). The page's own listener for "ecobot-fx" then simply hears nothing. -->
+<style>
+  #fxtest { position: fixed; left: 0; bottom: 0; z-index: 1; height: 18px; max-width: calc(100vw - 230px); overflow-x: auto; overflow-y: hidden;
+    padding: 0 8px; font-size: 11px; line-height: 18px; white-space: nowrap; scrollbar-width: none; color: var(--soft);
+    background: rgba(20, 25, 29, 0.85); border-top-right-radius: 6px; opacity: 0.55; transition: opacity 0.15s ease; }
+  #fxtest:hover, #fxtest:focus-within { opacity: 1; }
+  #fxtest::-webkit-scrollbar { display: none; }
+  #fxtest button { font: inherit; color: inherit; background: none; border: 0; padding: 0 0 0 6px; cursor: pointer; }
+  #fxtest button.on { color: #FF9EA1; text-decoration: underline; text-underline-offset: 2px; }
+  #fxtest button:hover, #fxtest button:focus-visible { color: var(--ink); outline: none; }
+</style>
+<div id="fxtest" aria-label="Effect test links">test:</div>
+<script>
+"use strict";
+(() => {
+  // Each effect's simulated levels, one click a step (back to off after the last): as the page's conditions (rain: its strength;
+  // smog: its band; ice: degrees below 0 °C)
+  const STEPS = {rain: [0.35, 1], smog: [1, 2, 3, 4, 5], radiation: [1], drips: [1], leaves: [1], heat: [1], ice: [5]};
+  const ALL = {rain: 1, smog: 3, radiation: 1, drips: 1, leaves: 1, heat: 1, ice: 5};
+  const row = document.getElementById("fxtest");
+  let on = {};   // {effect: its step's index}
+  const name = (k) => k === "rain" ? ["rain", "rain2"][on[k]] : k === "smog" ? `smog${on[k] + 1}` : k;   // (in the URL)
+  const label = (k) => k in on ? (k === "rain" ? ["rain: light", "rain: heavy"][on[k]] : k === "smog" ? `smog ${on[k] + 1}` : k) : k;
+
+  function read(param) {   // ?fx=... into `on`
+    on = {};
+    for (const word of (param || "").split(",").map((w) => w.trim().toLowerCase()).filter(Boolean)) {
+      if (word === "all") Object.entries(ALL).forEach(([k, v]) => { on[k] = STEPS[k].indexOf(v); });
+      else if (word === "rain" || word === "rain1") on.rain = 0;
+      else if (word === "rain2" || word === "heavyrain") on.rain = 1;
+      else if (/^smog[1-5]?$/.test(word)) on.smog = Number(word.slice(4) || 1) - 1;
+      else if (word in STEPS) on[word] = 0;
+    }
+  }
+  function apply() {
+    const detail = Object.fromEntries(Object.entries(on).map(([k, i]) => [k, STEPS[k][i]]));
+    document.dispatchEvent(new CustomEvent("ecobot-fx", {detail}));
+    const url = new URL(location.href), words = Object.keys(on).map(name);
+    if (words.length) url.searchParams.set("fx", words.join(",")); else url.searchParams.delete("fx");
+    history.replaceState(history.state, "", url.pathname + url.search.replace(/%2C/g, ",") + url.hash);   // (no reload)
+    for (const b of row.querySelectorAll("button[data-fx]")) {
+      const k = b.dataset.fx;
+      b.textContent = label(k);
+      b.classList.toggle("on", k in on);
+    }
+  }
+  const button = (words, fx, action) => {
+    const b = document.createElement("button");
+    Object.assign(b, {type: "button", textContent: words});
+    if (fx) b.dataset.fx = fx;
+    b.addEventListener("click", action);
+    row.append(b);
+  };
+  for (const k of Object.keys(STEPS)) button(k, k, () => {
+    const next = k in on ? on[k] + 1 : 0;
+    if (next < STEPS[k].length) on[k] = next; else delete on[k];
+    apply();
+  });
+  button("all", null, () => { read("all"); apply(); });
+  button("clear", null, () => { on = {}; apply(); });
+  read(new URLSearchParams(location.search).get("fx"));
+  apply();
+})();
+</script>
+<!-- END TEMPORARY: effect test links -->
 </body>
 </html>
